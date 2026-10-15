@@ -25,12 +25,10 @@ namespace {
 
 /// The entry a handle names, or null when it is gone.
 LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Handle& hd) {
-    auto& c = ctx.carry;
     switch (hd.map) {
-        case SharedHistoryMap::Amb: {
-            const auto it = c.local_carry.find(std::make_tuple(hd.sta, hd.sat, hd.sig));
-            return it != c.local_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::Amb:
+            return net::getArc(ctx.entities.arcs, std::make_tuple(hd.sta, hd.sat, hd.sig),
+                               &net::ArcState::amb);
         case SharedHistoryMap::Zwd:
             return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::zwd);
         case SharedHistoryMap::Iono:
@@ -50,8 +48,8 @@ LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Han
 /// Visit every entry of the six carry maps that can hold history coefficients.
 template <typename Fn>
 void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
-    const auto& c = ctx.carry;
-    for (const auto& kv : c.local_carry) fn(kv.second);
+    net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                 [&](const ArcId&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.stations, &net::StationState::zwd,
                  [&](const StationId&, const LocalCarry& lc) { fn(lc); });
     net::forEach(ctx.entities.los, &net::LosState::iono_blk,

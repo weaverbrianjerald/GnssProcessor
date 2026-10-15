@@ -41,8 +41,11 @@ void networkBrdcWire(NetworkRunContext& ctx,
     auto& c = ctx.counters;
     auto& trace = traces.brdc_offset_trace;
 
+    std::map<std::string, int> nbp_prev_iode =
+        net::satMap(ctx.entities.sats, &net::SatelliteState::nbp_prev_iode);
     const auto rows = apriori.stampWire(sol, se.time, &LiveEphemerisStore::getInstance(),
-                                        ctx.carry.nbp_prev_iode);
+                                        nbp_prev_iode);
+    net::assignSat(ctx.entities, &net::SatelliteState::nbp_prev_iode, nbp_prev_iode);
     ++c.nbp_epochs;
     for (const auto& r : rows) {
         if (r.iode < 0) {

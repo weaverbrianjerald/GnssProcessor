@@ -198,12 +198,12 @@ int replayedClockDisc(const Harness& h, const NetworkSolPrepResult& r,
 
 TEST(NetworkSolPrepDiscTest, EphCutoverMarkLandsInRRecordAndReplays) {
     Harness h("eph");
-    h.ctx->carry.eph_cutover_disc_pending = {"G02"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::EphCutover, {"G02"});
 
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_EQ(r.retro_emit_sats.count("G02"), 1u);        // the fold under test
-    EXPECT_TRUE(h.ctx->carry.eph_cutover_disc_pending.empty());
+    EXPECT_TRUE((net::present(h.ctx->entities.sats, net::Disc::EphCutover) == 0));
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G02"), 1);   // live
@@ -214,12 +214,12 @@ TEST(NetworkSolPrepDiscTest, EphCutoverMarkLandsInRRecordAndReplays) {
 
 TEST(NetworkSolPrepDiscTest, CbExcursionMarkLandsInRRecordAndReplays) {
     Harness h("cbexc");
-    h.ctx->carry.cb_excursion_pending_bump = {"G03"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbExcursion, {"G03"});
 
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_EQ(r.retro_emit_sats.count("G03"), 1u);
-    EXPECT_TRUE(h.ctx->carry.cb_excursion_pending_bump.empty());
+    EXPECT_TRUE((net::present(h.ctx->entities.sats, net::Disc::CbExcursion) == 0));
     EXPECT_EQ(h.ctx->carry.cb_exc_bumps, 1);              // run-end telemetry intact
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
@@ -234,14 +234,14 @@ TEST(NetworkSolPrepDiscTest, IfPinReselectMarkLandsInRRecordAndReplays) {
     // re-selection: the emitted δtˢ↔dˢ split re-references, and the clock disc
     // counter (datum-change components only, no magnitude jump test) is
     // signalled by this mark alone, so the mark has to reach the R record.
-    h.ctx->carry.last_if_pin_sel["G02"]      = {"C1W", "C2W"};
+    net::putSat(h.ctx->entities, "G02", &net::SatelliteState::last_if_pin_sel) = {"C1W", "C2W"};
     h.ctx->carry.this_epoch_if_pin_sel["G02"] = {"C1W", "C5Q"};
 
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_EQ(r.retro_emit_sats.count("G02"), 1u);
     // The emit baseline advanced with the bump it pairs with.
-    EXPECT_EQ(h.ctx->carry.last_if_pin_sel.at("G02"),
+    EXPECT_EQ(*net::getSat(h.ctx->entities.sats, "G02", &net::SatelliteState::last_if_pin_sel),
               (std::pair<std::string, std::string>{"C1W", "C5Q"}));
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
@@ -252,12 +252,12 @@ TEST(NetworkSolPrepDiscTest, IfPinReselectMarkLandsInRRecordAndReplays) {
 
 TEST(NetworkSolPrepDiscTest, CbReseedMarkLandsInRRecordAndReplays) {
     Harness h("reseed");
-    h.ctx->carry.cb_reseed_disc_pending = {"G03"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbReseed, {"G03"});
 
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_EQ(r.retro_emit_sats.count("G03"), 1u);
-    EXPECT_TRUE(h.ctx->carry.cb_reseed_disc_pending.empty());
+    EXPECT_TRUE((net::present(h.ctx->entities.sats, net::Disc::CbReseed) == 0));
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G03"), 1);
@@ -272,11 +272,11 @@ TEST(NetworkSolPrepDiscTest, CbReseedMarkLandsInRRecordAndReplays) {
 
 TEST(NetworkSolPrepDiscTest, SameSatInFourQueuesStepsCountersOnce) {
     Harness h("dedupe");
-    h.ctx->carry.eph_cutover_disc_pending  = {"G01"};
-    h.ctx->carry.cb_excursion_pending_bump = {"G01"};
-    h.ctx->carry.last_if_pin_sel["G01"]      = {"C1W", "C2W"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::EphCutover, {"G01"});
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbExcursion, {"G01"});
+    net::putSat(h.ctx->entities, "G01", &net::SatelliteState::last_if_pin_sel) = {"C1W", "C2W"};
     h.ctx->carry.this_epoch_if_pin_sel["G01"] = {"C1W", "C5Q"};
-    h.ctx->carry.cb_reseed_disc_pending = {"G01"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbReseed, {"G01"});
 
     const NetworkSolPrepResult r = h.run();
 
@@ -302,16 +302,16 @@ TEST(NetworkSolPrepDiscTest, SameSatInFourQueuesStepsCountersOnce) {
 
 TEST(NetworkSolPrepDiscTest, AbsentSatStaysPendingAndUnserialized) {
     Harness h("absent");
-    h.ctx->carry.eph_cutover_disc_pending  = {"G09"};
-    h.ctx->carry.cb_excursion_pending_bump = {"G09"};
-    h.ctx->carry.cb_reseed_disc_pending     = {"G09"};
+    net::assignSatFlags(h.ctx->entities, net::Disc::EphCutover, {"G09"});
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbExcursion, {"G09"});
+    net::assignSatFlags(h.ctx->entities, net::Disc::CbReseed, {"G09"});
 
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_TRUE(r.retro_emit_sats.empty());
-    EXPECT_EQ(h.ctx->carry.eph_cutover_disc_pending.count("G09"), 1u);
-    EXPECT_EQ(h.ctx->carry.cb_excursion_pending_bump.count("G09"), 1u);
-    EXPECT_EQ(h.ctx->carry.cb_reseed_disc_pending.count("G09"), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::EphCutover)), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::CbExcursion)), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::CbReseed)), 1u);
     EXPECT_EQ(h.ctx->carry.cb_exc_bumps, 0);
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);

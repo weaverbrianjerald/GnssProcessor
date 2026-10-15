@@ -225,20 +225,20 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     const auto l1 = std::make_tuple(0, std::string("G07"), std::string("L1C"));
     const auto l2 = std::make_tuple(0, std::string("G07"), std::string("L2W"));
     const auto other = std::make_tuple(0, std::string("G05"), std::string("L1C"));
-    ctx.carry.local_carry[l1]    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
-    ctx.carry.local_carry[l2]    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
-    ctx.carry.local_carry[other] = LocalCarry{ 12.0, 1.0e-4, 100.0 };
+    net::putArc(ctx.entities, l1, &net::ArcState::amb)    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
+    net::putArc(ctx.entities, l2, &net::ArcState::amb)    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
+    net::putArc(ctx.entities, other, &net::ArcState::amb) = LocalCarry{ 12.0, 1.0e-4, 100.0 };
     net::putLos(ctx.entities, 0, "G07", &net::LosState::iono) = LocalCarry{ -91.0, 1.0e-2, 100.0 };
 
     ctx.carry.gl_act_cold_refloat.push_back({ 0, "G07" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res);
 
-    EXPECT_EQ(ctx.carry.local_carry.count(l1), 0u);
-    EXPECT_EQ(ctx.carry.local_carry.count(l2), 0u);
-    EXPECT_EQ(ctx.carry.local_carry.count(other), 1u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, l1, &net::ArcState::amb) != nullptr), 0u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, l2, &net::ArcState::amb) != nullptr), 0u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, other, &net::ArcState::amb) != nullptr), 1u);
     EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, 0, "G07", &net::LosState::iono) != nullptr), 0u);
     EXPECT_EQ(ctx.counters.gross_los.cold_amb_erased, 2);
-    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty()) << "the cold path never holds";
+    EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0)) << "the cold path never holds";
 }
 
 // A cold declaration folds the line of sight's code rows exactly as a σ-bar one does,

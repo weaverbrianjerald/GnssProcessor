@@ -44,7 +44,7 @@ constexpr const char* kSat  = "G22";
 constexpr const char* kSig1 = "L1C";
 constexpr const char* kSig2 = "L2W";
 
-using CarryMap = std::map<std::tuple<int, std::string, std::string>, LocalCarry>;
+using CarryMap = net::ArcTable;
 
 struct Harness {
     LogManager                    log_manager;
@@ -64,7 +64,7 @@ struct Harness {
         lc.value_abs   = 0.0;
         lc.var         = 1.0e-5;
         lc.last_seen_s = now_s - age_s;
-        carry[std::make_tuple(station, std::string(sat), std::string(sig))] = lc;
+        net::putArcIn(carry, std::make_tuple(station, std::string(sat), std::string(sig)), &net::ArcState::amb) = lc;
     }
     std::vector<std::pair<std::string, std::string>> targets(const CarryMap* c, bool* via) const {
         return networkWindupRestartTargets(*sm, 0, kSat, c, now_s, max_gap_s, via);

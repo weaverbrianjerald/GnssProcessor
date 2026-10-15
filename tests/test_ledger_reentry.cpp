@@ -95,7 +95,7 @@ struct Harness {
     SlipQcCounters          counters;
     RelevelEpochState       relevel;
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>  local_carry;
+    net::ArcTable  local_carry;
     ArcLedger               ledger;
     ArcReentryEpoch         sid;
     ArcReentryOutcomeMap    outcome;
@@ -126,7 +126,7 @@ struct Harness {
         lc.value_abs   = 0.0;
         lc.var         = 1.0e-5;
         lc.last_seen_s = pl_now_s - age_s;
-        local_carry[std::make_tuple(0, std::string(kSat), std::string(sig))] = lc;
+        net::putArcIn(local_carry, std::make_tuple(0, std::string(kSat), std::string(sig)), &net::ArcState::amb) = lc;
     }
 
     /// Admit both bands for @p n_epochs, then miss them for @p gap_ep, then build
@@ -148,7 +148,8 @@ struct Harness {
         pl_now_s = static_cast<double>(ep) * kDt;
         pl_max_gap_s = 900.0;
         // Re-stamp the carries so they sit inside the window at the new epoch.
-        for (auto& [key, lc] : local_carry) { (void)key; lc.last_seen_s = pl_now_s - 60.0; }
+        net::forEach(local_carry, &net::ArcState::amb,
+                     [&](const ArcId&, LocalCarry& lc) { lc.last_seen_s = pl_now_s - 60.0; });
         arcLedgerReentryPopulation(ledger, returning, ep, pl_now_s, pl_max_gap_s, sid);
         return ep;
     }

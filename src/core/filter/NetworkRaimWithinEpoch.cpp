@@ -371,8 +371,8 @@ static void weReaddStation(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspa
         for (const auto& pa : R.pl_amb) {
             const Eigen::Index rc = pa.col;
             if (refloat_cols.count(rc) == 0) continue;
-            if (ctx.carry.local_carry.count(std::make_tuple(
-                    static_cast<int>(i), pa.sat, pa.signal)) == 0)
+            if ((net::getArc(ctx.entities.arcs, std::make_tuple(
+                    static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb) != nullptr) == 0)
                 continue;
             bool carried = std::find(R.carry_cols.begin(), R.carry_cols.end(), rc)
                            != R.carry_cols.end();
@@ -1574,8 +1574,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
         for (const auto& fa : ctx.carry.relevel.free_ambs) {
             const auto parts = StateKeys::parseAmbiguityKey(fa.second);
             if (!parts) continue;
-            if (ctx.carry.local_carry.erase(
-                    std::make_tuple(fa.first, parts->satellite, parts->signal))) {
+            if (net::dropArc(ctx.entities.arcs, std::make_tuple(fa.first, parts->satellite, parts->signal), &net::ArcState::amb)) {
                 ++ctx.counters.n_wh_free_erases;
                 prmRespond(ctx.counters.prm_resp,
                            ResponseSite::AmbWithholdErase);   // card PRM phase 3a

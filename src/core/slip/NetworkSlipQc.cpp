@@ -44,8 +44,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
                                const std::vector<NetStation>& stations,
                                const std::vector<bool>& present,
                                int i_lo, int n_sta_total,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>& local_carry,
+                               net::ArcTable& arcs,
                                const SyncedEpoch& se,
                                const std::shared_ptr<spdlog::logger>& log) {
     // Alias block (INC-6): the relocated body reads the PASS-A buffer under its
@@ -80,11 +79,11 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
         if (!present[i]) continue;
         for (const auto& r : sta_repairs[i]) {
             if (r.dN == 0 || !(std::isfinite(r.lambda) && r.lambda > 0.0)) continue;
-            auto it = local_carry.find(std::make_tuple(i, r.satellite, r.signal));
-            if (it == local_carry.end()) continue;
+            auto it = net::getArc(arcs, std::make_tuple(i, r.satellite, r.signal), &net::ArcState::amb);
+            if (it == nullptr) continue;
             const int adn = (r.dN < 0) ? -r.dN : r.dN;
             if (r.frac <= t0_frac_max && adn <= t0_dn_max) {
-                it->second.value_abs += static_cast<double>(r.dN) * r.lambda;  // repair
+                it->value_abs += static_cast<double>(r.dN) * r.lambda;  // repair
                 ++n_t0_repairs;
                 if (n_t0_repairs <= 12)
                     t0_detail += fmt::format("{}{}/{}/{} dN={} f={:.2f}",
@@ -225,16 +224,16 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
 
 BridgeReplaceOutcome networkSlipBridgeV3Replace(
         const RelevelPend& pd, int sta, const std::string& sat,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+        net::ArcTable& arcs,
         double rho_if_gf, double max_abs_cyc, double max_sigma_cyc,
         double corrob_cyc, BridgeV3Solve* solved) {
     const auto bs = networkSlipBridgeV3Solve(pd, rho_if_gf,
                                              max_abs_cyc, max_sigma_cyc);
     if (solved) *solved = bs;
     if (!bs.ok) return BridgeReplaceOutcome::KernelReject;
-    auto it1 = carry.find({sta, sat, pd.sig1});
-    auto it2 = carry.find({sta, sat, pd.sig2});
-    if (it1 == carry.end() || it2 == carry.end())
+    auto it1 = net::getArc(arcs, {sta, sat, pd.sig1}, &net::ArcState::amb);
+    auto it2 = net::getArc(arcs, {sta, sat, pd.sig2}, &net::ArcState::amb);
+    if (it1 == nullptr || it2 == nullptr)
         return BridgeReplaceOutcome::NoCarry;
     // Per-band wavelengths for the cycle-domain corroboration.
     constexpr double c = 299792458.0;
@@ -243,17 +242,17 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
     const double lam1 = c / f1, lam2 = c / f2;
     const double L1 = pd.pre1 + bs.shift1_m;
     const double L2 = pd.pre2 + bs.shift2_m;
-    if (std::abs(L1 - it1->second.value_abs) / lam1 > corrob_cyc ||
-        std::abs(L2 - it2->second.value_abs) / lam2 > corrob_cyc)
+    if (std::abs(L1 - it1->value_abs) / lam1 > corrob_cyc ||
+        std::abs(L2 - it2->value_abs) / lam2 > corrob_cyc)
         return BridgeReplaceOutcome::CorrobReject;
-    it1->second.value_abs = L1;  it1->second.var = pd.pre_var1 + bs.var1_m2;
-    it2->second.value_abs = L2;  it2->second.var = pd.pre_var2 + bs.var2_m2;
+    it1->value_abs = L1;  it1->var = pd.pre_var1 + bs.var1_m2;
+    it2->value_abs = L2;  it2->var = pd.pre_var2 + bs.var2_m2;
     return BridgeReplaceOutcome::Applied;
 }
 
 BridgeReplaceOutcome networkSlipBridgeReplace(
         const RelevelPend& pd, int sta, const std::string& sat,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+        net::ArcTable& arcs,
         double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
         DeltaBridgeSolve* solved) {
     const auto bs = networkSlipDeltaBridgeSolve(pd.dn_wl, pd.sigma_wl,
@@ -262,9 +261,9 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
                                                 max_abs_cyc, max_sigma_cyc);
     if (solved) *solved = bs;
     if (!bs.ok) return BridgeReplaceOutcome::KernelReject;
-    auto it1 = carry.find({sta, sat, pd.sig1});
-    auto it2 = carry.find({sta, sat, pd.sig2});
-    if (it1 == carry.end() || it2 == carry.end())
+    auto it1 = net::getArc(arcs, {sta, sat, pd.sig1}, &net::ArcState::amb);
+    auto it2 = net::getArc(arcs, {sta, sat, pd.sig2}, &net::ArcState::amb);
+    if (it1 == nullptr || it2 == nullptr)
         return BridgeReplaceOutcome::NoCarry;
     // Per-band wavelengths for the cycle-domain corroboration (same derivation
     // as the kernel's).
@@ -278,14 +277,14 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
     // free re-level to within corrob_cyc.  Correct bridges err <= 0.5 cyc
     // against truth and the free level sits within ~2 cyc, while wrong bridges
     // erred 6–113 cyc in the audit, so agreement separates the populations.
-    if (std::abs(L1 - it1->second.value_abs) / lam1 > corrob_cyc ||
-        std::abs(L2 - it2->second.value_abs) / lam2 > corrob_cyc)
+    if (std::abs(L1 - it1->value_abs) / lam1 > corrob_cyc ||
+        std::abs(L2 - it2->value_abs) / lam2 > corrob_cyc)
         return BridgeReplaceOutcome::CorrobReject;
     // Replace value and var only (the local-step mutation rule).  The coupling
     // regression and last_seen belong to the current harvest, and a pure level
     // re-base leaves both valid.
-    it1->second.value_abs = L1;  it1->second.var = pd.pre_var1 + bs.var1_m2;
-    it2->second.value_abs = L2;  it2->second.var = pd.pre_var2 + bs.var2_m2;
+    it1->value_abs = L1;  it1->var = pd.pre_var1 + bs.var1_m2;
+    it2->value_abs = L2;  it2->var = pd.pre_var2 + bs.var2_m2;
     return BridgeReplaceOutcome::Applied;
 }
 
@@ -304,13 +303,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_pb_reref_sats,
                                std::set<std::string>* datum_amb_reref_sats,
                                std::set<std::string>* datum_mark_sats,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* datum_local_carry,
+                               net::ArcTable* datum_arcs,
                                RelevelEpochState* relevel,
                                std::map<std::tuple<int, std::string, std::string>,
                                         RelevelPend>* relevel_pend,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* bridge_local_carry,
+                               net::ArcTable* bridge_arcs,
                                NetworkSlipOracle* oracle,
                                const CommonBandEpoch* common_band) {
     // Alias block (INC-6 migration mechanic).
@@ -475,9 +472,8 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         if (!parts || parts->satellite != sat) continue;
                         if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                         sm.markAmbiguityPendingReseed(amb_key);
-                        if (datum_local_carry
-                            && datum_local_carry->erase(
-                                   std::make_tuple(i, parts->satellite, parts->signal)))
+                        if (datum_arcs
+                            && net::dropArc(*datum_arcs, std::make_tuple(i, parts->satellite, parts->signal), &net::ArcState::amb))
                             ++qc_cnt.datum_slip_carry_erases;   // retirement census (D)
                         ++n_marked;
                     }
@@ -501,7 +497,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
         // --- Bridge v2 pend sweep (once per epoch, serial): expire stale pends
         // and replace the ones whose MW integer arrived in the same epoch as the
         // T1 flag (their corroborating free re-level was harvested last epoch).
-        const bool bridge_v2 = relevel_pend && bridge_local_carry
+        const bool bridge_v2 = relevel_pend && bridge_arcs
                             && carry_warm
                             && config_.networkCycleSlipRelevelDeltaBridge();
         const double v2_max_cyc  = config_.networkCycleSlipRelevelBridgeMaxCycles();
@@ -515,7 +511,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             const int rsta = std::get<0>(key);
             const std::string& rsat = std::get<1>(key);
             const auto outcome = networkSlipBridgeReplace(
-                pd, rsta, rsat, *bridge_local_carry,
+                pd, rsta, rsat, *bridge_arcs,
                 v2_max_cyc, v2_max_sig, v2_corrob, &bs);
             switch (outcome) {
                 case BridgeReplaceOutcome::Applied:
@@ -545,7 +541,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             const int rsta = std::get<0>(key);
             const std::string& rsat = std::get<1>(key);
             const auto outcome = networkSlipBridgeV3Replace(
-                pd, rsta, rsat, *bridge_local_carry, kBridgeGfIfRho,
+                pd, rsta, rsat, *bridge_arcs, kBridgeGfIfRho,
                 v2_max_cyc, v2_max_sig, v2_corrob, &bs);
             switch (outcome) {
                 case BridgeReplaceOutcome::Applied: {
@@ -867,8 +863,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            const std::shared_ptr<spdlog::logger>& log,
                            std::set<std::string>* refsat_mark_sats,
                            RelevelEpochState* relevel,
-                           std::map<std::tuple<int, std::string, std::string>,
-                                    LocalCarry>* bridge_local_carry,
+                           net::ArcTable* bridge_arcs,
                            SlipQcCounters* bridge_cnt,
                            std::map<std::tuple<int, std::string, std::string>,
                                     RelevelPend>* relevel_pend,
@@ -1096,7 +1091,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         // arrives, measured at 1–2 epochs later; a same-epoch MW candidate is
         // stored in the pend (cand_idx below) and replaced at the next epoch's
         // sweep.
-        const bool bridge_on = relevel && bridge_local_carry && bridge_cnt
+        const bool bridge_on = relevel && bridge_arcs && bridge_cnt
                             && relevel_pend && carry_warm
                             && config_.networkCycleSlipRelevelDeltaBridge();
         std::map<std::tuple<int, std::string, std::string>, MwBridgeCand*> cand_idx;
@@ -1247,19 +1242,17 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             if (!sta_if_resets[sp->sta].empty()) {
                                 ++bridge_cnt->bridge_fallback_refsat;
                             } else {
-                                auto it1 = bridge_local_carry->find(
-                                    {sp->sta, sp->sat, sp->sig1});
-                                auto it2 = bridge_local_carry->find(
-                                    {sp->sta, sp->sat, sp->sig2});
-                                if (it1 == bridge_local_carry->end()
-                                    || it2 == bridge_local_carry->end()) {
+                                auto it1 = net::getArc(*bridge_arcs, {sp->sta, sp->sat, sp->sig1}, &net::ArcState::amb);
+                                auto it2 = net::getArc(*bridge_arcs, {sp->sta, sp->sat, sp->sig2}, &net::ArcState::amb);
+                                if (it1 == nullptr
+                                    || it2 == nullptr) {
                                     ++bridge_cnt->bridge_fallback_no_carry;
                                 } else {
                                     RelevelPend pd;
-                                    pd.pre1 = it1->second.value_abs;
-                                    pd.pre_var1 = it1->second.var;
-                                    pd.pre2 = it2->second.value_abs;
-                                    pd.pre_var2 = it2->second.var;
+                                    pd.pre1 = it1->value_abs;
+                                    pd.pre_var1 = it1->var;
+                                    pd.pre2 = it2->value_abs;
+                                    pd.pre_var2 = it2->var;
                                     pd.dif_m = sp->dd - med;
                                     pd.sigma_if_m = std::max(s_eff * emap, br_if_floor);
                                     pd.lambda_if = sp->lambda;
@@ -1435,7 +1428,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         const StateManager& sm, int i, const std::string& sat,
-        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
+        const net::ArcTable* arcs,
         double pl_now_s, double pl_max_gap_s, bool* via_carry,
         const ArcLedger* arc_ledger, RosterN3bCensus* n3b) {
     std::vector<std::pair<std::string, std::string>> targets;
@@ -1445,16 +1438,17 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         if (pp && pp->satellite == sat) targets.emplace_back(ak, pp->signal);
     }
     bool carry = false;
-    if (targets.empty() && local_carry != nullptr) {
+    if (targets.empty() && arcs != nullptr) {
         // The map key is (station index, satellite, signal) and orders
         // lexicographically, so one lower_bound walks this station-satellite group.
-        for (auto it = local_carry->lower_bound(std::make_tuple(i, sat, std::string{}));
-             it != local_carry->end() && std::get<0>(it->first) == i
-                 && std::get<1>(it->first) == sat;
-             ++it) {
-            const double age_s = pl_now_s - it->second.last_seen_s;
+        // The satellite's arcs at the station, in signal order (O8; rows without a
+        // leveling carry are not carry entries).
+        for (auto it = net::arcsFrom(*arcs, i, sat);
+             it != arcs->end() && net::arcOfLos(it->first, i, sat); ++it) {
+            if (!it->second.amb) continue;
+            const double age_s = pl_now_s - it->second.amb->last_seen_s;
             if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
-            const std::string& sig = std::get<2>(it->first);
+            const std::string sig = net::signalKey(it->first.signal);
             targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
         }
         // The arc identity from the arc ledger (card NOM step N3b): of the carry entries
@@ -1468,16 +1462,15 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         if (arc_ledger != nullptr) {
             std::vector<std::pair<std::string, std::string>> named;
             bool fallback = false;
-            for (auto it = local_carry->lower_bound(std::make_tuple(i, sat, std::string{}));
-                 it != local_carry->end() && std::get<0>(it->first) == i
-                     && std::get<1>(it->first) == sat;
-                 ++it) {
-                const double age_s = pl_now_s - it->second.last_seen_s;
+            for (auto it = net::arcsFrom(*arcs, i, sat);
+                 it != arcs->end() && net::arcOfLos(it->first, i, sat); ++it) {
+                if (!it->second.amb) continue;
+                const double age_s = pl_now_s - it->second.amb->last_seen_s;
                 if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
-                const ArcRecord* a = arc_ledger->find(it->first);
+                const ArcRecord* a = arc_ledger->find(net::arcTuple(it->first));
                 if (a == nullptr || a->ep_first_admitted < 0) fallback = true;
                 else if (a->adm_state == ArcState::Dead)       continue;
-                const std::string& sig = std::get<2>(it->first);
+                const std::string sig = net::signalKey(it->first.signal);
                 named.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
             }
             if (n3b != nullptr && fallback)
@@ -1511,8 +1504,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend,
                                    NetworkSlipOracle* oracle,
-                                   const std::map<std::tuple<int, std::string, std::string>,
-                                                  LocalCarry>* local_carry,
+                                   const net::ArcTable* arcs,
                                    double pl_now_s, double pl_max_gap_s,
                                    const ArcLedger* arc_ledger, RosterN3bCensus* n3b) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
@@ -1566,7 +1558,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // (gapReentryRespondArc).  Live-column order is the map's, as before.
             bool via_carry = false;
             const std::vector<std::pair<std::string, std::string>> targets =
-                networkWindupRestartTargets(sm, i, sat, local_carry, pl_now_s,
+                networkWindupRestartTargets(sm, i, sat, arcs, pl_now_s,
                                             pl_max_gap_s, &via_carry, arc_ledger, n3b);
             // Sim-only oracle: a restart steps every signal of the satellite, so
             // each signal is offered to the oracle independently (truth localizes
@@ -1815,7 +1807,7 @@ struct GapArcOutcome {
  * @param carry_invariant    The Card-4 DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
- * @param local_carry        The leveling carry map, read-only; it answers "is
+ * @param arcs        The leveling carry (the arc table), read-only; it answers "is
  *                           there anything to protect?".
  * @param pl_now_s           This epoch's continuous GPS seconds.
  * @param pl_max_gap_s       @c network.phase_leveling_max_gap_s.
@@ -1847,7 +1839,7 @@ GapArcOutcome gapReentryRespondArc(
     int i, const std::string& satellite, const std::string& sig,
     StateManager& sm, bool carry_invariant, bool carry_warm,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    const net::ArcTable& arcs,
     double pl_now_s, double pl_max_gap_s,
     std::uint8_t cause_bits, GapCause primary,
     GapReentryLedger& led, SlipQcCounters& qc_cnt, RelevelEpochState* relevel,
@@ -1871,9 +1863,9 @@ GapArcOutcome gapReentryRespondArc(
     // the Card-G classification applies, so the instrument and the response
     // agree on the population.
     {
-        const auto cit = local_carry.find(std::make_tuple(i, satellite, sig));
-        if (cit != local_carry.end()) {
-            const double gap_s = pl_now_s - cit->second.last_seen_s;
+        const auto cit = net::getArc(arcs, std::make_tuple(i, satellite, sig), &net::ArcState::amb);
+        if (cit != nullptr) {
+            const double gap_s = pl_now_s - cit->last_seen_s;
             out.pl_bridged = (gap_s >= 0.0 && gap_s <= pl_max_gap_s);
         }
     }
@@ -1915,19 +1907,15 @@ GapArcOutcome gapReentryRespondArc(
         // that tracked through this break and has no break of its own.
         const System sys = systemOfSat(satellite);
         const auto this_sig = SignalId::fromObsCode(sys, sig);
-        for (auto it = (count_unreachable
-                            ? local_carry.lower_bound(std::make_tuple(i, satellite,
-                                                                      std::string{}))
-                            : local_carry.end());
-             it != local_carry.end() && std::get<0>(it->first) == i
-                 && std::get<1>(it->first) == satellite;
-             ++it) {
-            const std::string& other = std::get<2>(it->first);
+        for (auto it = (count_unreachable ? net::arcsFrom(arcs, i, satellite) : arcs.end());
+             it != arcs.end() && net::arcOfLos(it->first, i, satellite); ++it) {
+            if (!it->second.amb) continue;   // not a carry entry (O8)
+            const std::string other = net::signalKey(it->first.signal);
             const auto other_sig = SignalId::fromObsCode(sys, other);
             if (other == sig || !other_sig || !this_sig) continue;
             if (other_sig->digit != this_sig->digit) continue;   // a different band
             if (present_sigs != nullptr && present_sigs->count(other) == 0) continue;
-            const double gap_s = pl_now_s - it->second.last_seen_s;
+            const double gap_s = pl_now_s - it->second.amb->last_seen_s;
             if (gap_s >= 0.0 && gap_s <= pl_max_gap_s) {
                 ++qc_cnt.gap_reentry_unreachable;              // once per arc
                 break;
@@ -2203,12 +2191,12 @@ bool gapReentryAlreadyFreed(const RelevelEpochState* relevel, int i,
 /// signal): a leveling carry entry last seen inside the max-gap window.  Used by
 /// the share to state whether its trigger was a carried signal.
 bool gapReentryCarryProtectable(
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    const net::ArcTable& arcs,
     int i, const std::string& satellite, const std::string& sig,
     double pl_now_s, double pl_max_gap_s) {
-    const auto cit = local_carry.find(std::make_tuple(i, satellite, sig));
-    if (cit == local_carry.end()) return false;
-    const double gap_s = pl_now_s - cit->second.last_seen_s;
+    const auto cit = net::getArc(arcs, std::make_tuple(i, satellite, sig), &net::ArcState::amb);
+    if (cit == nullptr) return false;
+    const double gap_s = pl_now_s - cit->last_seen_s;
     return gap_s >= 0.0 && gap_s <= pl_max_gap_s;
 }
 
@@ -2252,8 +2240,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 bool carry_invariant, bool carry_warm,
                                 std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                                 const RawSlipEpoch& raw, const SlipQcParams& qc,
-                                const std::map<std::tuple<int, std::string, std::string>,
-                                               LocalCarry>& local_carry,
+                                const net::ArcTable& arcs,
                                 double pl_now_s, double pl_max_gap_s,
                                 SlipQcCounters& qc_cnt,
                                 const SyncedEpoch& se, NetworkRunTraces& traces,
@@ -2373,7 +2360,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             if (sig.empty()) continue;
             const GapArcOutcome out =
                 gapReentryRespondArc(i, g.satellite, sig, sm, carry_invariant,
-                                     carry_warm, carry_slipped_ambs, local_carry,
+                                     carry_warm, carry_slipped_ambs, arcs,
                                      pl_now_s, pl_max_gap_s, cause_bits, primary,
                                      led, qc_cnt, relevel, present_ptr);
             sidRecordOutcome(sid_out, i, g.satellite, sig,
@@ -2527,7 +2514,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 out = gapReentryRespondArc(i, a.satellite, a.signal,
                                            *stations[static_cast<std::size_t>(i)].sm,
                                            carry_invariant, carry_warm,
-                                           carry_slipped_ambs, local_carry,
+                                           carry_slipped_ambs, arcs,
                                            pl_now_s, pl_max_gap_s,
                                            RelevelEpochState::kCauseGap, primary,
                                            led, qc_cnt, relevel,
@@ -2627,7 +2614,7 @@ void networkSlipDrainGapReentryPerSignal(
     int i_lo, int n_sta_total, bool carry_invariant, bool carry_warm,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const RawSlipEpoch& raw, const SlipQcParams& qc,
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    const net::ArcTable& arcs,
     double pl_now_s, double pl_max_gap_s, SlipQcCounters& qc_cnt,
     const SyncedEpoch& se, NetworkRunTraces& traces,
     const std::shared_ptr<spdlog::logger>& log, RelevelEpochState* relevel,
@@ -2685,9 +2672,9 @@ void networkSlipDrainGapReentryPerSignal(
         // event, clean ones included, so the tier can be audited for what it
         // declined to act on as well as for its actions.
         const bool pl_bridged = [&] {
-            const auto cit = local_carry.find(std::make_tuple(i, g.satellite, g.signal));
-            if (cit == local_carry.end()) return false;
-            const double gap_s = pl_now_s - cit->second.last_seen_s;
+            const auto cit = net::getArc(arcs, std::make_tuple(i, g.satellite, g.signal), &net::ArcState::amb);
+            if (cit == nullptr) return false;
+            const double gap_s = pl_now_s - cit->last_seen_s;
             return gap_s >= 0.0 && gap_s <= pl_max_gap_s;
         }();
         traces.emitEvent(se.time, "T0_gap", "sig_resume", g.satellite, sta_name,
@@ -2745,7 +2732,7 @@ void networkSlipDrainGapReentryPerSignal(
             const std::optional<LosId> los = coresumedLos(i, g.satellite);
             if (los && share_answered.insert(*los).second) {
                 ++sh.los_answered;
-                if (!gapReentryCarryProtectable(local_carry, i, g.satellite,
+                if (!gapReentryCarryProtectable(arcs, i, g.satellite,
                                                 share->trigger->signal, pl_now_s,
                                                 pl_max_gap_s))
                     ++sh.los_trigger_uncarried;
@@ -2784,7 +2771,7 @@ void networkSlipDrainGapReentryPerSignal(
             gapReentryRespondArc(i, g.satellite, g.signal,
                                  *stations[static_cast<std::size_t>(i)].sm,
                                  carry_invariant, carry_warm, carry_slipped_ambs,
-                                 local_carry, pl_now_s, pl_max_gap_s,
+                                 arcs, pl_now_s, pl_max_gap_s,
                                  RelevelEpochState::kCauseGap, primary,
                                  led, qc_cnt, relevel,
                                  /*present_sigs=*/nullptr,

@@ -796,7 +796,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     if (suspect_window > 0)
         arSuspectFoldEpoch(ctx.carry.ar_suspect, suspect_now_ep,
                            TimeUtils::continuousGpsSeconds(se.time), suspect_window,
-                           ctx.carry.relevel, ctx.carry.local_carry,
+                           ctx.carry.relevel, ctx.entities.arcs,
                            &ctx.counters.netar_suspect);
 
     // --- Producer-side network AR (Phase 2: DD fixability attempt, log only) ---

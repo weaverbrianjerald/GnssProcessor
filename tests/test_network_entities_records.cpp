@@ -32,6 +32,7 @@ using Ch = net::ChannelState;
 using L  = net::LosState;
 using G  = net::SatSignalState;
 using A  = net::SatelliteState;
+using R  = net::ArcState;
 
 /// A run context on the default configuration (the record functions read its knobs).
 struct Ctx {
@@ -400,8 +401,10 @@ TEST(NetworkEntitiesRecords, RecordRoundTripY) {
     EXPECT_EQ(net::getSat(r, "G05", &A::ura_refloat_horizon), nullptr);
 }
 
-/// Records C, R and A: a satellite set as a flag, written and restored wholesale.
-void flagRoundTrip(const char* tag, bool net::SatelliteState::*f) {
+/// Records C, R, A, X, QR and CBS: a satellite set as a flag or a discontinuity bit (D7),
+/// written and restored wholesale.
+template <class F>
+void flagRoundTrip(const char* tag, F f) {
     Ctx a, b;
     net::markSat(a.ctx.entities, "G24", f);
     net::markSat(a.ctx.entities, "E11", f);
@@ -418,7 +421,7 @@ TEST(NetworkEntitiesRecords, RecordRoundTripC) {
 }
 
 TEST(NetworkEntitiesRecords, RecordRoundTripR) {
-    flagRoundTrip("R", &A::ura_retro_sats);
+    flagRoundTrip("R", net::Disc::UraRetro);
 }
 
 TEST(NetworkEntitiesRecords, RecordRoundTripA) {
@@ -462,10 +465,178 @@ TEST(NetworkEntitiesRecords, SatelliteKeysRoundTripInTheOldOrder) {
     EXPECT_FALSE(net::satIdKey("G5").has_value());
     EXPECT_FALSE(net::satIdOf(e, "XYZ").has_value());
     EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Satellite)], 1);
-    EXPECT_TRUE(net::markSat(e, "G05", &A::ura_retro_sats));
-    EXPECT_FALSE(net::markSat(e, "G05", &A::ura_retro_sats));
-    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 1u);
-    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 0u);
+    EXPECT_TRUE(net::markSat(e, "G05", net::Disc::UraRetro));
+    EXPECT_FALSE(net::markSat(e, "G05", net::Disc::UraRetro));
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", net::Disc::UraRetro), 1u);
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", net::Disc::UraRetro), 0u);
+}
+
+// ---- Step N4e2: the datum and QC half of the satellite, and the re-placed EQS ----
+
+/// Records I, CBI and SV: a satellite-keyed map, written and restored wholesale.
+template <class V>
+void mapRoundTrip(const char* tag, std::optional<V> net::SatelliteState::*f, const V& v1,
+                  const V& v2) {
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", f) = v1;
+    net::putSat(a.ctx.entities, "E11", f) = v2;
+    net::markSat(a.ctx.entities, "G05", &A::retro_active);   // a row without the field
+    net::putSat(b.ctx.entities, "G10", f) = v1;               // replaced by the restore
+    roundTrip(tag, a.ctx, b.ctx);
+    EXPECT_EQ(net::satMap(b.ctx.entities.sats, f), (std::map<std::string, V>{{"E11", v2}, {"G24", v1}}))
+        << tag;
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripI) {
+    mapRoundTrip("I", &A::relevel_iode, 81, 7);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripCBI) {
+    using Pair = std::pair<std::string, std::string>;
+    mapRoundTrip("CBI", &A::code_bias_ifpin_pair, Pair{"C1C", "C2W"}, Pair{"C1X", "C5X"});
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripSV) {
+    // The SV rows serialize only beside the invariant-carry blob (network.state_snapshot_carry),
+    // so the record goes straight from the writer's DTO to the reader, as GG does.
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", &A::carry_vertex) = 1000001;
+    net::putSat(a.ctx.entities, "E11", &A::carry_vertex) = 1000002;
+    net::markSat(a.ctx.entities, "G05", &A::retro_active);   // a row without the field
+    net::putSat(b.ctx.entities, "G10", &A::carry_vertex) = 1000003;   // replaced by the restore
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("SV", a.ctx, snap);
+    EXPECT_EQ(snap.carry_sat_vertex, (std::map<std::string, int>{{"E11", 1000002}, {"G24", 1000001}}));
+    net::recordFromSnapshot("SV", snap, b.ctx);
+    EXPECT_EQ(net::satMap(b.ctx.entities.sats, &A::carry_vertex),
+              (std::map<std::string, int>{{"E11", 1000002}, {"G24", 1000001}}));
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripQR) {
+    flagRoundTrip("QR", &A::prev_clock_refloat);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripCBS) {
+    flagRoundTrip("CBS", &A::code_bias_seen);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripX) {
+    flagRoundTrip("X", net::Disc::EphCutover);
+    // D7: the causes are independent bits; restoring X leaves the other causes untouched.
+    Ctx a, b;
+    net::markSat(a.ctx.entities, "G24", net::Disc::EphCutover);
+    net::markSat(b.ctx.entities, "G24", net::Disc::CbReseed);
+    net::markSat(b.ctx.entities, "E11", net::Disc::EphCutover);
+    roundTrip("X", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::satSet(r, net::Disc::EphCutover), (std::set<std::string>{"G24"}));
+    EXPECT_EQ(net::satSet(r, net::Disc::CbReseed), (std::set<std::string>{"G24"}));
+    EXPECT_EQ(net::present(r, net::Disc::UraRetro), 0u);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripEQS) {
+    Ctx a, b;
+    net::putSig(a.ctx.entities, "G24_L1C", &G::eq34_sat_root) = "GOPE00CZE";
+    net::putSig(a.ctx.entities, "G07_L2W", &G::eq34_sat_root) = "WTZR00DEU";
+    net::putSig(a.ctx.entities, "E11_L5Q", &G::emitted_anchor) = "ZIM200CHE";   // a row without the field
+    net::putSig(b.ctx.entities, "G10_L1C", &G::eq34_sat_root) = "ONSA00SWE";    // replaced by the restore
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("EQS", a.ctx, snap);
+    EXPECT_EQ(snap.eq34_sat_root.begin()->first, "G07_L2W");   // the pre-N4e2 key shape and order
+    roundTrip("EQS", a.ctx, b.ctx);
+    EXPECT_EQ(net::sigMap(b.ctx.entities.sat_signals, &G::eq34_sat_root, '_'),
+              (std::map<std::string, std::string>{{"G07_L2W", "WTZR00DEU"}, {"G24_L1C", "GOPE00CZE"}}));
+}
+
+// ---- Step N4f1: the arcs' carries ----
+
+TEST(NetworkEntitiesRecords, RecordRoundTripL) {
+    Ctx a, b;
+    const LocalCarry l1{1.25, 1e-4, 1399161660.0};
+    const LocalCarry l2{-3.5, 2e-4, 1399161690.0};
+    net::putArc(a.ctx.entities, net::ArcTuple{3, "G05", "L2W"}, &R::amb) = l1;
+    net::putArc(a.ctx.entities, net::ArcTuple{0, "E11", "L5Q"}, &R::amb) = l2;
+    net::putArcAmb(a.ctx.entities, 1, "G24_L1C", &R::anchor_arc_age) = 7;   // a row without the field
+    net::putArc(b.ctx.entities, net::ArcTuple{9, "G10", "L1C"}, &R::amb) = l1;   // replaced by the restore
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("L", a.ctx, snap);
+    EXPECT_EQ(snap.local_carry.begin()->first, (net::ArcTuple{0, "E11", "L5Q"}));   // the old key and order
+    roundTrip("L", a.ctx, b.ctx);
+    const auto m = net::arcMap(b.ctx.entities.arcs, &R::amb);
+    ASSERT_EQ(m.size(), 2u);
+    const LocalCarry& r1 = m.at(net::ArcTuple{3, "G05", "L2W"});
+    EXPECT_DOUBLE_EQ(r1.value_abs, 1.25);
+    EXPECT_DOUBLE_EQ(r1.var, 1e-4);
+    EXPECT_DOUBLE_EQ(r1.last_seen_s, 1399161660.0);
+    EXPECT_EQ(r1.birth_ep, LocalCarry::kBirthEpRestored);   // the restored-arc convention
+    EXPECT_DOUBLE_EQ(m.at(net::ArcTuple{0, "E11", "L5Q"}).value_abs, -3.5);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripEQT) {
+    Ctx a, b;
+    net::putArcAmb(a.ctx.entities, 3, "G05_L2W", &R::eq34_prev_target) = 0.19;
+    net::putArcAmb(a.ctx.entities, 0, "E11_L5Q", &R::eq34_prev_target) = -0.38;
+    net::putArcAmb(a.ctx.entities, 1, "G24_L1C", &R::anchor_arc_age) = 7;      // a row without the field
+    net::putArcAmb(b.ctx.entities, 9, "G10_L1C", &R::eq34_prev_target) = 1.0;  // replaced by the restore
+    roundTrip("EQT", a.ctx, b.ctx);
+    EXPECT_EQ(net::arcAmbMap(b.ctx.entities.arcs, &R::eq34_prev_target),
+              (std::map<std::pair<int, std::string>, double>{{{0, "E11_L5Q"}, -0.38},
+                                                             {{3, "G05_L2W"}, 0.19}}));
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripEQR) {
+    Ctx a, b;
+    net::markArcAmb(a.ctx.entities, 3, "G05_L2W", &R::eq34_retained_edge);
+    net::markArcAmb(a.ctx.entities, 0, "E11_L5Q", &R::eq34_retained_edge);
+    net::putArcAmb(a.ctx.entities, 1, "G24_L1C", &R::anchor_arc_age) = 7;   // a row without the flag
+    net::markArcAmb(b.ctx.entities, 9, "G10_L1C", &R::eq34_retained_edge);  // replaced by the restore
+    roundTrip("EQR", a.ctx, b.ctx);
+    EXPECT_EQ(net::arcAmbSet(b.ctx.entities.arcs, &R::eq34_retained_edge),
+              (std::set<std::pair<int, std::string>>{{0, "E11_L5Q"}, {3, "G05_L2W"}}));
+}
+
+TEST(NetworkEntitiesRecords, ArcKeysRoundTripInTheOldOrderAndScanBounds) {
+    // O1 and O2: an old (station, satellite, signal) key converts and back, and the table
+    // iterates in the old key order; an empty component keeps its row.
+    const std::vector<net::ArcTuple> keys{{0, "", ""},          {0, "C19", "L2I"}, {0, "E05", "L1X"},
+                                          {0, "E05", "L5Q"},    {0, "G05", "L1C"}, {0, "G05", "L2W"},
+                                          {0, "G10", "L1C"},    {2, "G05", "L1C"}};
+    std::map<net::ArcTuple, int> old;
+    net::NetworkEntities e;
+    for (auto it = keys.rbegin(); it != keys.rend(); ++it) {
+        net::putArc(e, *it, &R::anchor_arc_age) = 1;
+        old[*it] = 1;
+    }
+    std::vector<net::ArcTuple> walked;
+    net::forEach(e.arcs, &R::anchor_arc_age,
+                 [&](const ArcId& id, int) { walked.push_back(net::arcTuple(id)); });
+    EXPECT_EQ(walked, keys);
+    // O8: a (station, satellite) scan and a station scan visit the rows the old
+    // lower_bound scans visited, in the same order.
+    for (const auto& [sta, sat] : std::vector<std::pair<int, std::string>>{
+             {0, "E05"}, {0, "G05"}, {1, "G05"}, {0, "R01"}, {2, "G05"}}) {
+        std::vector<net::ArcTuple> want, got;
+        for (auto it = old.lower_bound(std::make_tuple(sta, sat, std::string{}));
+             it != old.end() && std::get<0>(it->first) == sta && std::get<1>(it->first) == sat; ++it)
+            want.push_back(it->first);
+        for (auto it = net::arcsFrom(e.arcs, sta, sat);
+             it != e.arcs.end() && net::arcOfLos(it->first, sta, sat); ++it)
+            got.push_back(net::arcTuple(it->first));
+        EXPECT_EQ(got, want) << sta << " " << sat;
+    }
+    for (int sta : {0, 1, 2}) {
+        std::vector<net::ArcTuple> want, got;
+        for (auto it = old.lower_bound(std::make_tuple(sta, std::string{}, std::string{}));
+             it != old.end() && std::get<0>(it->first) == sta; ++it)
+            want.push_back(it->first);
+        for (auto it = net::arcsOfStation(e.arcs, sta);
+             it != e.arcs.end() && it->first.station.index == sta; ++it)
+            got.push_back(net::arcTuple(it->first));
+        EXPECT_EQ(got, want) << sta;
+    }
+    EXPECT_FALSE(net::arcKey(net::ArcTuple{0, "G5", "L1C"}).has_value());
+    EXPECT_FALSE(net::arcOf(e, net::ArcTuple{0, "G05", "C1C"}).has_value());   // a code, not a phase
+    EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Arc)], 1);
 }
 
 TEST(NetworkEntitiesRecords, EveryRecordRowIsDeclaredOnceAndRestoredInOrder) {

@@ -1707,7 +1707,7 @@ NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext&
  * @c n_cb_family_epochs and @c n_cb_family_switches.  Emits one "CLK_BASIS"/"held" event
  * when a satellite's hold begins (action "hold_begin", detail the selection against the
  * held pair) and one when it ends (action "hold_end", the same detail plus the pair now
- * pinned and what moved the pin there), against @c ctx.carry.last_if_pin_holds, which it
+ * pinned and what moved the pin there), against @c net::SatelliteState::last_if_pin_hold, which it
  * advances.  The hold baseline is not snapshotted, so at the first kept epoch after a
  * warm resume (@c ctx.carry.if_pin_holds_resume_pending, which it consumes) a hold found
  * is declared "hold_resumed" and counted apart from the holds begun, and a hold the
@@ -1716,7 +1716,7 @@ NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext&
  * "CLK_BASIS"/"continued" event per continued pair change; and one
  * "CB_DATUM"/"family_row" event per switch of a channel's realized row (the family row
  * and its partner, or the sum-to-zero row) against the last kept epoch's, advancing
- * @c ctx.carry.last_cb_family_partner.  A channel's first realization is recorded, not
+ * @c net::ChannelState::last_cb_family_partner.  A channel's first realization is recorded, not
  * declared.  Each first-sighting family prior row of the epoch
  * (@c ctx.carry.this_epoch_cb_family_births, card GFC step 2) is counted in
  * @c ctx.counters.cb_family_birth_by_band and declared as one "CB_DATUM" /

@@ -64,10 +64,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& last_snapshot_write_s = ctx.carry.last_snapshot_write_s;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& local_carry = ctx.carry.local_carry;
     const net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
-    auto& relevel_iode = ctx.carry.relevel_iode;
-    auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
     auto& ramp_lifted = ctx.carry.ramp_lifted;
@@ -158,26 +155,13 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         net::recordToSnapshot("C", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("J", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("K", ctx, snap);   // the satellites (N4e1)
-        // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
-        // optional trailing L field, filled only when the ratio ceiling is armed, so a
-        // default snapshot's L rows stay byte-identical.
-        const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
-        // Card SCL2 X2: the history is not snapshotted, so a row is written with its marginal
-        // variance (var plus its history coefficients' squared norm); off, var as before.
-        const bool shx_marg = ctx.knobs.carry_cpl_shx;
-        for (const auto& [key, lc] : local_carry) {
-            NetworkStateSnapshot::Local L{lc.value_abs,
-                                          shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
-                                          lc.last_seen_s};
-            if (l_var_first) L.var_first = lc.var_first;
-            snap.local_carry[key] = L;
-        }
+        net::recordToSnapshot("L", ctx, snap);   // the arcs' leveling carries (N4f1)
         net::recordToSnapshot("Z", ctx, snap);   // the station table's zwd (card NOM step N4a)
         net::recordToSnapshot("Y", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("R", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("A", ctx, snap);   // the satellites (N4e1)
-        snap.relevel_iode              = relevel_iode;              // eph cutover (card 6)
-        snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // eph cutover (card 6)
+        net::recordToSnapshot("I", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
+        net::recordToSnapshot("X", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
         // Resume frame state (§18.10, snapshot format v2), captured when
         // network.state_snapshot_frame_capture is armed: the per-(sat,signal)
         // phase-anchor incumbents and R2 sticky targets as of this epoch's election, the
@@ -276,12 +260,13 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 }
                 return !ents.empty();
             };
-            for (const auto& [key, lc] : local_carry) {
-                if (lc.coupling.empty()) continue;             // legacy-diagonal entry
-                if (!pack(lc.coupling)) { ++n_drop; continue; }
-                n_terms += static_cast<long long>(ents.size());
-                snap.coupling_rows[key] = ents;
-            }
+            net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                         [&](const ArcId& id, const LocalCarry& lc) {
+                             if (lc.coupling.empty()) return;          // legacy-diagonal entry
+                             if (!pack(lc.coupling)) { ++n_drop; return; }
+                             n_terms += static_cast<long long>(ents.size());
+                             snap.coupling_rows[net::arcTuple(id)] = ents;
+                         });
             net::forEach(sta_rows, &net::StationState::zwd,
                          [&](const StationId& id, const LocalCarry& lc) {
                              if (lc.coupling.empty()) return;
@@ -292,7 +277,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // The refloat set has no D-row carrier (a hard-refloated satellite is
             // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
             // (cards 1d/1g).
-            snap.clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
+            net::recordToSnapshot("QR", ctx, snap);   // the satellites (N4e2)
             ctx.carry.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
             ctx.carry.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
             ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
@@ -342,24 +327,22 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         if (nc.state_snapshot_datum_capture) {
             net::recordToSnapshot("EQD", ctx, snap);   // the constellation channels (N4b)
             net::recordToSnapshot("EQP", ctx, snap);   // the station signals (N4a)
-            snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
-            for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
-                snap.eq34_prev_target[{key.first, key.second}] = tgt;
+            net::recordToSnapshot("EQS", ctx, snap);   // the satellite signals (N4e2)
+            net::recordToSnapshot("EQT", ctx, snap);   // the arcs (N4f1)
             net::recordToSnapshot("EQE", ctx, snap);   // the lines of sight (N4c)
-            for (const auto& [idx, amb] : ctx.carry.eq34_retained_edges)
-                snap.eq34_retained_edges.emplace(idx, amb);
+            net::recordToSnapshot("EQR", ctx, snap);   // the arcs (N4f1)
             // Non-finite screen on the code-bias values only: the eq34 targets and
             // elevations are rounded or geometric quantities the election recomputes,
             // while code_bias_prev_ is the quantity the veteran-referenced sum-to-zero RHS
             // differences against.  A nan there would survive the parse (strtod accepts
             // it) and corrupt the restored datum, so it is dropped at the source.
             net::recordToSnapshot("CBP", ctx, snap);   // the constellation channels (N4b)
-            snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
+            net::recordToSnapshot("CBS", ctx, snap);   // the satellites (N4e2)
             // The IF-pin pair that produced those values, the third container of the same
             // kept-epoch lifecycle.  Without it the restore is inert on the IF-pin half:
             // `pair_same` reads false for every satellite, the split re-seeds to 0 and
             // every satellite disc-bumps.
-            snap.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
+            net::recordToSnapshot("CBI", ctx, snap);   // the satellites (N4e2)
             ctx.carry.snap_datum_rows_last =
                 static_cast<long long>(snap.eq34_datum_rx.size()
                                        + snap.eq34_rx_parent.size()
@@ -499,7 +482,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // branch) and its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a
         // warm resume reproduces the phase-ambiguity branch instead of re-converging one.
         if (nc.state_snapshot_carry) {
-            snap.carry_sat_vertex = ctx.carry.carry_sat_vertex;
+            net::recordToSnapshot("SV", ctx, snap);   // the satellites (N4e2)
             net::recordToSnapshot("GG", ctx, snap);   // the constellation channels (N4b, O6)
             std::ostringstream ccs;
             // Write-side shape knob (RTB-7(e)).  The blob is about 99 % of the snapshot at

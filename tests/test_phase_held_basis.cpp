@@ -54,6 +54,7 @@
 
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
+namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
 using GnssProcessor::localCarryYoung;
 using GnssProcessor::LogManager;
 using GnssProcessor::NetworkAmbiguityVehicle;
@@ -113,8 +114,8 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 bool basisEligible(const PhaseHeldBasis& h, int sta, const std::string& amb,
                    const std::string& sat, const std::string& sig) {
     if (h.min_age_ep > 0 && h.carry) {
-        const auto it = h.carry->find(std::make_tuple(sta, sat, sig));
-        if (it == h.carry->end() || localCarryYoung(it->second, h.now_ep, h.min_age_ep))
+        const LocalCarry* it = net::getArc(*h.carry, std::make_tuple(sta, sat, sig), &net::ArcState::amb);
+        if (it == nullptr || localCarryYoung(*it, h.now_ep, h.min_age_ep))
             return false;
     }
     if (h.flag_quiet_ep > 0 && h.flag_ep) {
@@ -270,11 +271,11 @@ TEST(PhaseHeldBasisTest, DeclaringAHandoverQueuesTheSatelliteForTheConsumer) {
 // =============================================================================
 
 TEST(PhaseHeldBasisTest, ElectionRefusesANewbornArc) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     LocalCarry young{0.0, 1e-3, 0.0};  young.birth_ep = 95;   // 5 epochs old
     LocalCarry mature{0.0, 1e-3, 0.0}; mature.birth_ep = 40;  // 60 epochs old
-    carry[{0, "G07", "L1C"}] = young;
-    carry[{1, "G07", "L1C"}] = mature;
+    net::putArcIn(carry, {0, "G07", "L1C"}, &net::ArcState::amb) = young;
+    net::putArcIn(carry, {1, "G07", "L1C"}, &net::ArcState::amb) = mature;
 
     PhaseHeldBasis h;
     h.on = true; h.min_age_ep = 10; h.now_ep = 100; h.carry = &carry;
@@ -285,7 +286,7 @@ TEST(PhaseHeldBasisTest, ElectionRefusesANewbornArc) {
 // "Never a newborn low arc" includes an arc that is not carried at all: a station
 // tracking the satellite for the first time this epoch has no age to qualify on.
 TEST(PhaseHeldBasisTest, ElectionRefusesAnArcWithNoCarry) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     PhaseHeldBasis h;
     h.on = true; h.min_age_ep = 10; h.now_ep = 100; h.carry = &carry;
     EXPECT_FALSE(basisEligible(h, 3, "G07_L1C", "G07", "L1C"));
@@ -296,8 +297,8 @@ TEST(PhaseHeldBasisTest, ElectionRefusesAnArcWithNoCarry) {
 // epochs after every resume (SPEC_event_harness §15.4: otherwise every restored arc in
 // the network reads as newborn).
 TEST(PhaseHeldBasisTest, ARestoredArcIsNotTreatedAsNewborn) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
-    carry[{0, "G07", "L1C"}] =
+    net::ArcTable carry;
+    net::putArcIn(carry, {0, "G07", "L1C"}, &net::ArcState::amb) =
         GnssProcessor::makeRestoredLocalCarry(0.0, 1e-3, 0.0, 0.5);
     PhaseHeldBasis h;
     h.on = true; h.min_age_ep = 10; h.now_ep = 3; h.carry = &carry;
@@ -305,10 +306,10 @@ TEST(PhaseHeldBasisTest, ARestoredArcIsNotTreatedAsNewborn) {
 }
 
 TEST(PhaseHeldBasisTest, ElectionRefusesARecentlyFlaggedArc) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     LocalCarry old{0.0, 1e-3, 0.0}; old.birth_ep = 10;
-    carry[{0, "G07", "L1C"}] = old;
-    carry[{1, "G07", "L1C"}] = old;
+    net::putArcIn(carry, {0, "G07", "L1C"}, &net::ArcState::amb) = old;
+    net::putArcIn(carry, {1, "G07", "L1C"}, &net::ArcState::amb) = old;
     std::map<std::pair<int, std::string>, long long> flags;
     flags[{0, "G07_L1C"}] = 97;    // 3 epochs ago: inside the 5-epoch quiet window
     flags[{1, "G07_L1C"}] = 90;    // 10 epochs ago: outside it
@@ -328,7 +329,7 @@ TEST(PhaseHeldBasisTest, ElectionRefusesARecentlyFlaggedArc) {
 // Both gates at 0 (off) refuse nothing, which is the behaviour without the gates.  The
 // non-zero defaults are the card's choice, and a 0 must never mean "refuse everything".
 TEST(PhaseHeldBasisTest, ZeroGatesRefuseNothing) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     std::map<std::pair<int, std::string>, long long> flags;
     flags[{0, "G07_L1C"}] = 100;
     PhaseHeldBasis h;
@@ -347,10 +348,10 @@ TEST(PhaseHeldBasisTest, ZeroGatesRefuseNothing) {
 // ordinary float state.  Otherwise the response would re-realize the datum in place,
 // which is the churn the card measured on the field.
 TEST(PhaseHeldBasisTest, AFlagOnTheBasisHolderDeposesIt) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     LocalCarry old{0.0, 1e-3, 0.0}; old.birth_ep = 10;
-    carry[{0, "G07", "L1C"}] = old;     // the incumbent basis holder
-    carry[{1, "G07", "L1C"}] = old;     // a qualifying successor
+    net::putArcIn(carry, {0, "G07", "L1C"}, &net::ArcState::amb) = old;     // the incumbent basis holder
+    net::putArcIn(carry, {1, "G07", "L1C"}, &net::ArcState::amb) = old;     // a qualifying successor
     std::map<std::pair<int, std::string>, long long> flags;
 
     PhaseHeldBasis h;
@@ -474,11 +475,11 @@ TEST(PhaseHeldBasisTest, LedgerUsabilityRefusesDegenerateEntries) {
 // a different ambiguity at the same station must not move the datum; the datum is held
 // so that it does not move for reasons unrelated to it.
 TEST(PhaseHeldBasisTest, AFlagElsewhereAtTheSameStationDoesNotDeposeTheIncumbent) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     LocalCarry old{0.0, 1e-3, 0.0}; old.birth_ep = 10;
-    carry[{0, "G07", "L1C"}] = old;    // the basis column
-    carry[{0, "G07", "L2W"}] = old;    // a sibling band at the same station
-    carry[{0, "G13", "L1C"}] = old;    // another satellite at the same station
+    net::putArcIn(carry, {0, "G07", "L1C"}, &net::ArcState::amb) = old;    // the basis column
+    net::putArcIn(carry, {0, "G07", "L2W"}, &net::ArcState::amb) = old;    // a sibling band at the same station
+    net::putArcIn(carry, {0, "G13", "L1C"}, &net::ArcState::amb) = old;    // another satellite at the same station
     std::map<std::pair<int, std::string>, long long> flags;
     flags[{0, "G07_L2W"}] = 100;       // flagged: the sibling band
     flags[{0, "G13_L1C"}] = 100;       // flagged: another satellite
@@ -498,7 +499,7 @@ TEST(PhaseHeldBasisTest, AFlagElsewhereAtTheSameStationDoesNotDeposeTheIncumbent
 // all, so there is no level to hold and no age to qualify on.  The run-end split keeps
 // the two apart, so a run shows which gate caused each deposition.
 TEST(PhaseHeldBasisTest, ArcDeathIsDistinguishableFromAFlag) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     std::map<std::pair<int, std::string>, long long> flags;
     PhaseHeldBasis h;
     h.on = true; h.min_age_ep = 10; h.flag_quiet_ep = 5; h.now_ep = 100;
@@ -506,6 +507,6 @@ TEST(PhaseHeldBasisTest, ArcDeathIsDistinguishableFromAFlag) {
     // No carry and no flag: refused, and the election attributes it to death (it tests
     // "no carry entry" first and "flagged" only when one exists).
     EXPECT_FALSE(basisEligible(h, 0, "G07_L1C", "G07", "L1C"));
-    EXPECT_EQ(carry.count(std::make_tuple(0, std::string("G07"), std::string("L1C"))), 0u);
+    EXPECT_EQ(net::getArc(carry, std::make_tuple(0, std::string("G07"), std::string("L1C")), &net::ArcState::amb), nullptr);
     EXPECT_EQ(flags.count({0, "G07_L1C"}), 0u);
 }

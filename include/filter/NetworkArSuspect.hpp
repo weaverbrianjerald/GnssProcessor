@@ -89,6 +89,7 @@
  */
 
 #include "common/GnssIdentity.hpp"      // LosId, StationId, SatId
+#include "app/NetworkEntities.hpp"      // net::ArcTable (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"   // LocalCarry, RelevelEpochState
 
 #include <array>
@@ -262,13 +263,12 @@ long long arSuspectEpochOfSecond(const std::deque<std::pair<long long, double>>&
  * @param now_s        This epoch's continuous-GPS second.
  * @param window_ep    The window; <= 0 makes the call a no-op.
  * @param relevel      This epoch's slip response state (free_ambs read).
- * @param local_carry  The leveling carry (stamps read).
+ * @param arcs         The arc table (the leveling carry's stamps read).
  * @param c            Counters; may be null.
  */
 void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int window_ep,
                         const RelevelEpochState& relevel,
-                        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>&
-                            local_carry,
+                        const net::ArcTable& arcs,
                         ArSuspectCounters* c);
 
 /// A corner's (or, OR-ed, a DD's) state at one search.

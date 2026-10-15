@@ -18,7 +18,7 @@
  *          carried clock untouched, so the re-level is deferred with relevel_iode in
  *          lock-step) and before the D2 / clock-osc prior injection and the solve.
  *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
- *          not.  Mutates ctx.carry.{relevel_iode, eph_cutover_disc_pending} and, through
+ *          not.  Mutates the satellite table (relevel_iode, the Disc::EphCutover bit) and, through
  *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
  *          prev_carry, prev_clk, the local_carry and zwd_carry coupling; with
  *          network.carry_rebase_complete also its owed sites).  Acts only when

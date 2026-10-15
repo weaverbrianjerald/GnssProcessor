@@ -411,7 +411,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     traces.emitEvent(t, "CLK_ANCHOR", "cta_decouple", sat, "", statistic, threshold,
                      "refloat", fmt::format("reason={};{}{}", reason, detail, seed_tag));
     if (ctx.knobs.cta_mark) {
-        ctx.carry.clk_anchor_disc_pending.insert(sat);
+        net::markSat(ctx.entities, sat, net::Disc::ClockAnchor);
         ++ctx.counters.cta_marks;
     }
     return true;

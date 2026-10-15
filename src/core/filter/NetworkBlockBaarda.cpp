@@ -320,11 +320,13 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const long long holdoff = ctx.knobs.bb_event_holdoff;
     for (const BlockBaardaHit& h : ctx.carry.bb_hits) {
         const std::string sname = stationName(stations, h.station);
-        const std::string key = sname + "\x1f" + h.sat;
-        auto it = ctx.carry.bb_event_last.find(key);
-        if (it != ctx.carry.bb_event_last.end() && now_ep - it->second < holdoff)
+        // The line of sight's holdoff clock (the station by NAME, O3; card NOM step N4e2).
+        const std::optional<LosId> hid = net::losOfName(ctx.entities, sname, h.sat);
+        const long long* last = hid ? net::get(ctx.entities.los, *hid, &net::LosState::bb_event_last)
+                                    : nullptr;
+        if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        ctx.carry.bb_event_last[key] = now_ep;
+        if (hid) net::put(ctx.entities.los, *hid, &net::LosState::bb_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column: emitEvent
         // formats statistic and threshold with a fixed 6 decimals, which prints a
         // small t_B from a well-conditioned block as 0.000000.

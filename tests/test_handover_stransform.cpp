@@ -468,7 +468,7 @@ struct PreviewBed {
         LocalCarry lc{3.0, 1e-4, 100.0};
         lc.coupling = {CoupledShared{SharedParamKind::Clock, "G05", "", 0, 0, 'C', 0, 0.5, -0.75, 0.5},
                        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, -0.5, 0.0, 0.0}};
-        ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))] = lc;
+        net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = lc;
         layout({"G02", "G05", "G32"});
     }
     ~PreviewBed() {
@@ -487,7 +487,7 @@ struct PreviewBed {
         networkHandoverStransformBeforeRows(fx->run(), e);
     }
     const CoupledShared& term(int i) {
-        return ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))]
+        return net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb)
             .coupling[static_cast<std::size_t>(i)];
     }
 };

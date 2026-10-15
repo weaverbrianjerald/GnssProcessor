@@ -246,8 +246,8 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     //     no leveling entry is re-estimated free either way, so the ordinary
     //     response is already the right one.
     if (!oracle.carry) { ++oracle.no_carry; return false; }
-    const auto cit = oracle.carry->find(key);
-    if (cit == oracle.carry->end()) { ++oracle.no_carry; return false; }
+    const auto cit = net::getArc(*oracle.carry, key, &net::ArcState::amb);
+    if (cit == nullptr) { ++oracle.no_carry; return false; }
 
     // (2) The window: (max(last_applied, carry.birth_s, now_s - window_s), now_s].
     //     See the header banner for why each term is there.  In particular the
@@ -263,7 +263,7 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     // the window falls back to the latency bound.  The sentinel is kept across
     // re-stashes, so the arc is never floored at the resume epoch by a later
     // harvest.
-    const double b_edge = cit->second.birth_s;
+    const double b_edge = cit->birth_s;
     const double lower  = std::max({arc.last_applied_s, b_edge, w_edge});
     // Which term bound (invariant #4).  Ties go to the most specific explanation
     // (applied, then birth, then window), so a reader can tell "the window is too
@@ -336,7 +336,7 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     // the ceiling a perfect repair costs no information, so the level keeps its
     // converged weight.  (An x_lin shift would be an exact solve no-op;
     // docs/SPEC_lane_slip_response.md §7.2.)
-    cit->second.value_abs += (sum_cyc + noise) * lambda;
+    cit->value_abs += (sum_cyc + noise) * lambda;
     arc.last_applied_s = now_s;
 
     ++oracle.applied;
@@ -449,7 +449,7 @@ void networkSlipOracleArm(NetworkRun& run, LogManager& log_manager_) {
     if (nc.slip_qc.oracle_relevel) {
         ctx.carry.slip_oracle =
             networkSlipOracleLoad(config_, stations, log_manager_, log);
-        ctx.carry.slip_oracle->carry = &ctx.carry.local_carry;
+        ctx.carry.slip_oracle->carry = &ctx.entities.arcs;
     }
 }
 

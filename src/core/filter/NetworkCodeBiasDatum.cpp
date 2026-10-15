@@ -332,10 +332,13 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
     // The previous-epoch code-bias values as the builder reads them ("<c>|<signal>" -> sat).
     const std::map<std::string, std::map<std::string, double>> code_bias_prev_ =
         net::channelMap(ctx.entities.constellations, &net::ChannelState::code_bias_prev);
-    auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
+    // The IF-pin pairs and the seen set as the builder reads them (card NOM step N4e2).
+    const std::map<std::string, std::pair<std::string, std::string>> code_bias_ifpin_pair_ =
+        net::satMap(ctx.entities.sats, &net::SatelliteState::code_bias_ifpin_pair);
     auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;
-    auto& code_bias_sat_seen_ = ctx.carry.code_bias_sat_seen_;
+    const std::set<std::string> code_bias_sat_seen_ =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::code_bias_seen);
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
     const bool   emit_clock_disc = ctx.knobs.emit_clock_disc;            // clock disc channel and per-constellation bump scoping (A2)
     const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero (card 2, W6)

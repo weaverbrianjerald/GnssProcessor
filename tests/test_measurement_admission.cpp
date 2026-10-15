@@ -71,6 +71,22 @@ using namespace GnssProcessor;
 
 namespace {
 
+/// The admission records of every station (card NOM step N4f1: StationState::adm_arc).
+std::size_t admArcs(const NetworkRunContext& ctx) {
+    std::size_t n = 0;
+    const net::StationTable& t = ctx.entities.stations;
+    for (auto it = t.begin(); it != t.end(); ++it) n += it->second.adm_arc.size();
+    return n;
+}
+
+/// The ADMISSION event rate-limit clocks of every station (StationState::adm_event_last).
+std::size_t admEvents(const NetworkRunContext& ctx) {
+    std::size_t n = 0;
+    const net::StationTable& t = ctx.entities.stations;
+    for (auto it = t.begin(); it != t.end(); ++it) n += it->second.adm_event_last.size();
+    return n;
+}
+
 constexpr std::size_t kPppCoreSize = 5;
 constexpr const char* kL1 = "L1C";
 constexpr const char* kL2 = "L2W";
@@ -393,7 +409,7 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
     EXPECT_EQ(0, a.channels) << "a skipped station screens no channel at all";
     EXPECT_EQ(0, a.reject_birth);
     EXPECT_TRUE(r.has("G07", kC1)) << "no verdict may be reached from an untrusted centre";
-    EXPECT_TRUE(ctx.carry.adm_arc.empty()) << "and no admission record may be created";
+    EXPECT_TRUE(admArcs(ctx) == 0) << "and no admission record may be created";
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +558,7 @@ TEST(MeasurementAdmission, StationGuardHoldsEverythingAndRejectsNothingIndividua
     EXPECT_EQ(6, a.station_held_channels) << "hold ALL of the station's screened bands";
     for (const auto& o : r.modeled[0])
         EXPECT_TRUE(o.observed.empty()) << o.satellite << " should be held";
-    EXPECT_TRUE(ctx.carry.adm_arc.empty())
+    EXPECT_TRUE(admArcs(ctx) == 0)
         << "and no admission record may be written from an epoch whose centre was "
            "untrusted — the next epoch must re-test from evidence";
     EXPECT_GT(a.refloat_ambs, 0)
@@ -567,8 +583,8 @@ TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
     EXPECT_EQ(0, a.epochs) << "the seam must return on its first line";
     EXPECT_EQ(0, a.channels);
     EXPECT_EQ(0, a.over_bound);
-    EXPECT_TRUE(ctx.carry.adm_arc.empty()) << "no record map may be allocated";
-    EXPECT_TRUE(ctx.carry.adm_event_last.empty());
+    EXPECT_TRUE(admArcs(ctx) == 0) << "no record map may be allocated";
+    EXPECT_EQ(admEvents(ctx), 0u);
     EXPECT_DOUBLE_EQ(-1.0, ctx.carry.adm_ep_tow) << "and no epoch-status column stamped";
     EXPECT_TRUE(r.slipped.empty());
     // Every observable of the corrupt channel is still there: disarmed means the
@@ -607,7 +623,7 @@ TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
     EXPECT_EQ(0, a.withheld_channels);
     EXPECT_EQ(0, a.reject_birth);
     EXPECT_TRUE(r.has("G07", kC1)) << "measure-only may not remove an observable";
-    EXPECT_TRUE(ctx.carry.adm_arc.empty())
+    EXPECT_TRUE(admArcs(ctx) == 0)
         << "and may not build admission records there is no response to use";
     EXPECT_DOUBLE_EQ(1000.0, ctx.carry.adm_ep_tow)
         << "the per-epoch census columns are stamped even measure-only";

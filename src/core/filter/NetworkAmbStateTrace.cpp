@@ -224,7 +224,6 @@ void networkAmbIfTraceStation(NetworkRun& run, const NetworkEpoch& ep,
     std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& local_carry = ctx.carry.local_carry;
     const StationAssembly& R = asm_res[i];
     const std::shared_ptr<PlHarvestBlock>& hblk = sb.blk;
     // ---- End of the bindings ----
@@ -326,11 +325,11 @@ void networkAmbIfTraceStation(NetworkRun& run, const NetworkEpoch& ep,
         const Eigen::MatrixXd Dpr = pr_ok ? Eigen::MatrixXd(Pm * Vpr * Pm) : Vpr;
         for (Eigen::Index r2 = 0; r2 < n; ++r2) {
             const TracedLos& t = g[static_cast<std::size_t>(r2)];
-            const auto lit = local_carry.find(std::make_tuple(
+            const auto lit = net::getArc(ctx.entities.arcs, std::make_tuple(
                 static_cast<int>(i), t.sat,
-                R.pl_amb[static_cast<std::size_t>(t.idx[0])].signal));
-            const long long age = (lit != local_carry.end() && lit->second.birth_ep > 0)
-                ? static_cast<long long>(ctx.counters.n_loop_epochs) - lit->second.birth_ep
+                R.pl_amb[static_cast<std::size_t>(t.idx[0])].signal), &net::ArcState::amb);
+            const long long age = (lit != nullptr && lit->birth_ep > 0)
+                ? static_cast<long long>(ctx.counters.n_loop_epochs) - lit->birth_ep
                 : -1;
             ctx.carry.amb_if_rows.push_back(fmt::format(
                 "{:.0f},{:.1f},{},{},{},{},{:.6e},{:.6e},{:.6e},{:.6e}\n",

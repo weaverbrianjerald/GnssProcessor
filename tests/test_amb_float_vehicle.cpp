@@ -61,6 +61,7 @@ using GnssProcessor::ambStateFormatRow;
 using GnssProcessor::ambStateRouteName;
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
+namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
 using GnssProcessor::LogManager;
 using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
@@ -926,16 +927,16 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
         CoupledShared{SharedParamKind::Clock,     "G07", "",    0, 0, 'C', 0, 0.8,  5.0, 0.1},
     };
     const std::tuple<int, std::string, std::string> other{4, "G09", "L1C"};   // another family
-    carry.local_carry[other] = lc;
+    net::putArc(carry_ent, other, &net::ArcState::amb) = lc;
     long long n_shift = 0, n_pb = 0, n_cpl = 0;
     GnssProcessor::declaredHandoverShiftCarry(carry, carry_ent, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
     EXPECT_EQ(n_cpl, 1);
     EXPECT_EQ(n_shift, 0);
-    const auto& coupling = carry.local_carry[other].coupling;
+    const auto& coupling = net::putArc(carry_ent, other, &net::ArcState::amb).coupling;
     EXPECT_DOUBLE_EQ(coupling[0].s_prev, 20.0 + delta);   // the shifted PB column
     EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal: untouched
     EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the clock: never moved by this
-    EXPECT_DOUBLE_EQ(carry.local_carry[other].value_abs, 0.0);   // another family's level stays
+    EXPECT_DOUBLE_EQ(net::putArc(carry_ent, other, &net::ArcState::amb).value_abs, 0.0);   // another family's level stays
 }
 
 // The transform is idempotent: a second application, with Δ read from the already

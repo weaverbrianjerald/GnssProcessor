@@ -426,8 +426,8 @@ void networkResponseLatchTally(NetworkRunContext& ctx) {
     for (const auto& key : lat.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(key.second);
         const bool carried = parts
-            && ctx.carry.local_carry.count(std::make_tuple(key.first, parts->satellite,
-                                                           parts->signal)) > 0;
+            && (net::getArc(ctx.entities.arcs, std::make_tuple(key.first, parts->satellite,
+                                                           parts->signal), &net::ArcState::amb) != nullptr) > 0;
         const auto c = lat.free_cause.find(key);
         const unsigned cause = (c != lat.free_cause.end()) ? c->second : 0u;
         ++C.prm_latch_unique;

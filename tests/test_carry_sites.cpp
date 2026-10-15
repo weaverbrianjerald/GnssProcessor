@@ -84,11 +84,11 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
     net::put(c_ent.constellations, System::GPS, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)["G01"] = next();
     const auto t = [&]() { return std::vector<CoupledShared>{
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
-    c.local_carry[{0, "G01", "L1C"}] = local(next(), t());
+    net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::amb) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::iono) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(next(), t());
-    c.gl_hold_amb[{0, "G01", "L1C"}] = local(next(), t());
+    net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::gl_hold_amb) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono_blk) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "",
@@ -330,7 +330,7 @@ TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
         net::putSat(e_ent, "G01", &net::SatelliteState::prev_clk).first -= d;
         long long n_expect = 4;   // the oscillator, two carried entries, the baseline
         if (cpl) {
-            e.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))]
+            net::putArc(e_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb)
                 .coupling[0].s_prev -= d;
             net::put(e_ent.stations, StationId{0}, &net::StationState::zwd).coupling[0].s_prev -= d;
             n_expect += 2;
@@ -359,7 +359,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
         prior(SharedParamKind::Clock, "E11", "", 0.1, 1e-4),
     };
     b.prev_carry[4].t_park_s = 500.0;
-    b.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))] = local(3.0, {
+    net::putArc(b_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb) = local(3.0, {
         term(SharedParamKind::Clock, "G01", "", 0.5, 1.2, 2e-4)});
     CarrySiteCounts counts;
     const ClockStransformResult rb =
@@ -379,7 +379,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(b.prev_carry[3].value, 0.7 - 1.0 * c0);
     EXPECT_EQ(b.prev_carry[4].value, 0.9) << "after the rows, an unregistered clock stays";
     EXPECT_EQ(b.prev_carry[5].value, 0.1);
-    EXPECT_EQ(b.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))]
+    EXPECT_EQ(net::putArc(b_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb)
                   .coupling[0].s_prev, 1.2) << "after the rows, the terms are re-harvested";
     EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PrevCarry)], 3);
     EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::AmbiguityCoupling)], 0);
@@ -393,7 +393,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
                     prior(SharedParamKind::Clock, "E11", "", 0.1, 1e-4)};
     w.prev_carry[2].t_park_s = 500.0;
     net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G04", 0.0};
-    w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))] = local(3.0, {
+    net::putArc(w_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb) = local(3.0, {
         term(SharedParamKind::Clock, "G01", "", 0.5, 1.2, 2e-4),
         term(SharedParamKind::Clock, "G04", "", -0.5, 0.0, 0.0),     // the pinned pivot
         term(SharedParamKind::Clock, "E11", "", 0.2, 0.1, 1e-4),
@@ -411,7 +411,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(w.prev_carry[3].value, 0.1);
     EXPECT_EQ(net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, -c0);
     const auto& cpl =
-        w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))].coupling;
+        net::putArc(w_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb).coupling;
     EXPECT_EQ(cpl[0].s_prev, 1.2 - c0);
     EXPECT_EQ(cpl[0].p_prev, 2e-4 + vq);
     EXPECT_EQ(cpl[1].s_prev, -c0);
@@ -432,8 +432,8 @@ TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
     const auto amb = [](int sta) {
         return std::make_tuple(sta, std::string("G01"), std::string("L1C"));
     };
-    c.local_carry[amb(0)] = local(5.0, {pbTerm("G01", 0.4), pbTerm("G02", -0.2)});
-    c.local_carry[amb(1)] = local(7.0, {pbTerm("G01", 0.4)});
+    net::putArc(c_ent, amb(0), &net::ArcState::amb) = local(5.0, {pbTerm("G01", 0.4), pbTerm("G02", -0.2)});
+    net::putArc(c_ent, amb(1), &net::ArcState::amb) = local(7.0, {pbTerm("G01", 0.4)});
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "G_RPB_L1C",
              &net::StationSignalState::rpb) = local(0.6, {});
     net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(0.1, {pbTerm("G01", 0.4)});
@@ -446,16 +446,16 @@ TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
     eq34ShiftCarry(c, c_ent, shift_sat, shift_rxg, shift_rpb, nv, nt);
     EXPECT_EQ(nv, 4);   // two ambiguities, the receiver phase bias, the G01 phase bias
     EXPECT_EQ(nt, 3);   // the G01 terms of the two ambiguities and of the wet delay
-    EXPECT_EQ(c.local_carry[amb(0)].value_abs, 5.0 + ((0.0 - 0.3) - 0.1));
-    EXPECT_EQ(c.local_carry[amb(1)].value_abs, 7.0 + (0.0 - 0.3));
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).value_abs, 5.0 + ((0.0 - 0.3) - 0.1));
+    EXPECT_EQ(net::putArc(c_ent, amb(1), &net::ArcState::amb).value_abs, 7.0 + (0.0 - 0.3));
     const std::pair<int, std::string> rpb_key{0, "G_RPB_L1C"};
     EXPECT_EQ(net::put(c_ent.stations, StationId{rpb_key.first}, &net::StationState::signals,
                        rpb_key.second, &net::StationSignalState::rpb).value_abs, 0.6 + 0.1);
     EXPECT_EQ(c.prev_carry[0].value, 0.4 + 0.3);
     EXPECT_EQ(c.prev_carry[1].value, -0.2);
     EXPECT_EQ(c.prev_carry[2].value, 1.0);
-    EXPECT_EQ(c.local_carry[amb(0)].coupling[0].s_prev, 0.4 + 0.3);
-    EXPECT_EQ(c.local_carry[amb(0)].coupling[1].s_prev, -0.2);
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).coupling[0].s_prev, 0.4 + 0.3);
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).coupling[1].s_prev, -0.2);
     EXPECT_EQ(net::put(c_ent.stations, StationId{0},
                        &net::StationState::zwd).coupling[0].s_prev, 0.4 + 0.3);
     const std::pair<int, std::string> iono_key{0, "G01"};
@@ -476,9 +476,9 @@ TEST(CarrySites, DeclaredHandoverThroughSitesFollowsTheRule) {
     };
     c.prev_carry = {prior(SharedParamKind::PhaseBias, "G23", "L2W", 0.4),
                     prior(SharedParamKind::PhaseBias, "G23", "L1C", -0.2)};
-    c.local_carry[amb(0, "L2W")] = local(2.5, {pbTerm("L2W", 0.4)});
-    c.local_carry[amb(1, "L2W")] = local(4.0, {pbTerm("L1C", -0.2)});
-    c.local_carry[amb(1, "L1C")] = local(6.0, {});
+    net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb) = local(2.5, {pbTerm("L2W", 0.4)});
+    net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb) = local(4.0, {pbTerm("L1C", -0.2)});
+    net::putArc(c_ent, amb(1, "L1C"), &net::ArcState::amb) = local(6.0, {});
     net::put(c_ent.stations, StationId{0},
              &net::StationState::zwd) = local(0.1, {pbTerm("L2W", 0.4)});   // exempt: stays
     const double delta = 2.5;
@@ -487,13 +487,13 @@ TEST(CarrySites, DeclaredHandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(a, 2);
     EXPECT_EQ(b, 1);
     EXPECT_EQ(t, 1);
-    EXPECT_EQ(c.local_carry[amb(0, "L2W")].value_abs, 0.0);
-    EXPECT_EQ(c.local_carry[amb(1, "L2W")].value_abs, 4.0 - delta);
-    EXPECT_EQ(c.local_carry[amb(1, "L1C")].value_abs, 6.0);
+    EXPECT_EQ(net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb).value_abs, 0.0);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb).value_abs, 4.0 - delta);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L1C"), &net::ArcState::amb).value_abs, 6.0);
     EXPECT_EQ(c.prev_carry[0].value, 0.4 + delta);
     EXPECT_EQ(c.prev_carry[1].value, -0.2);
-    EXPECT_EQ(c.local_carry[amb(0, "L2W")].coupling[0].s_prev, 0.4 + delta);
-    EXPECT_EQ(c.local_carry[amb(1, "L2W")].coupling[0].s_prev, -0.2);
+    EXPECT_EQ(net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb).coupling[0].s_prev, 0.4 + delta);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb).coupling[0].s_prev, -0.2);
     EXPECT_EQ(net::put(c_ent.stations, StationId{0}, &net::StationState::zwd).coupling[0].s_prev, 0.4);
 }
 

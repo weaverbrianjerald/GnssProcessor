@@ -56,7 +56,7 @@
  *    isolated-arc persistence gate uses.
  *  - **Response (the decoupling edge).**  The refloat vocabulary the T4
  *    attribution erase already uses, so the two responses stay consistent: erase
- *    the LOS's entries in @c ctx.carry.local_carry (its zero-q phase levels),
+ *    the LOS's entries in @c ctx.entities.arcs (its zero-q phase levels),
  *    erase @c ctx.carry.iono_carry / @c iono_blk_carry for the LOS (so its slant
  *    iono re-draws from the SH tie rather than from a value estimated jointly with
  *    a level that is no longer trusted), and mark its ambiguities pending-reseed.
@@ -522,7 +522,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * drives the state machine above.
  *
  * Mutates persistent carries.  The response erases (or, under
- * @c network.gross_los_bound, holds) @c ctx.carry.local_carry entries and marks
+ * @c network.gross_los_bound, holds) @c ctx.entities.arcs entries and marks
  * StateManager ambiguities pending-reseed for every declared LOS, and erases (or
  * holds) @c ctx.carry.iono_carry / @c iono_blk_carry for it.  The decision
  * rewrites @c ctx.carry.gl_state (and the stations' @c gross_los, @c gl2_sat_down), which

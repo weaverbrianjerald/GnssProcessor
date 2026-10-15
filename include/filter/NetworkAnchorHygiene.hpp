@@ -81,6 +81,7 @@
 #include <utility>
 #include <vector>
 
+#include "app/NetworkEntities.hpp"   // net::ArcTable (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"
 
 namespace spdlog { class logger; }
@@ -167,7 +168,7 @@ struct NetworkAnchorTallies {
 /**
  * @brief This epoch's anchor-host eligibility verdicts, handed to the election.
  *
- * A plain read-only view: @ref age aliases `ctx.carry.anchor_arc_age` (which the
+ * A plain read-only view: @ref age aliases `the arc table's anchor_arc_age` (which the
  * seam rebuilt this epoch) and @ref bridged names the keys whose gauge is realized
  * by an INC-2 bridge row instead of a pin.  Default-constructed (`active == false`,
  * `min_arc_ep == 0`), every predicate returns the ungated answer, so an election
@@ -182,8 +183,9 @@ struct AnchorHygiene {
     double fresh_pin_scale = 1.0;
     /// Ramp length in epochs; 0 = off (INC-3).
     int fresh_pin_ramp_ep = 0;
-    /// Alias of `ctx.carry.anchor_arc_age`; null when inactive.
-    const std::map<std::pair<int, std::string>, int>* age = nullptr;
+    /// The arc table, whose @c ArcState::anchor_arc_age the ages are read from (card NOM step
+    /// N4f1); null when inactive.
+    const net::ArcTable* age = nullptr;
     /// "sat_signal" keys realized by an open INC-2 bridge this epoch.  The election
     /// does not pin these (the bridge row is their datum) but keeps them in the
     /// shared set, and under eq34 treats them as spanning-forest roots.
@@ -192,8 +194,8 @@ struct AnchorHygiene {
     /// Consecutive-present epochs of arc (@p sta, @p amb); 0 when unknown/inactive.
     int arcAge(std::size_t sta, const std::string& amb) const {
         if (!age) return 0;
-        const auto it = age->find({static_cast<int>(sta), amb});
-        return it == age->end() ? 0 : it->second;
+        const int* a = net::getArcAmb(*age, static_cast<int>(sta), amb, &net::ArcState::anchor_arc_age);
+        return a == nullptr ? 0 : *a;
     }
     /// Whether arc (@p sta, @p amb) may host the datum for @p amb on a reattach.
     /// Always true when the gate is inactive or the threshold is 0.

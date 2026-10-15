@@ -208,7 +208,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // Card ARL: the producer AR search's suspect-corner mask is armed (the MW admission
     // records its unknown-integer identities only then).
     const bool ar_suspect_armed = ctx.knobs.ar_suspect_epochs > 0;
-    auto& local_carry = ctx.carry.local_carry;
+    net::ArcTable& arc_rows = ctx.entities.arcs;   // the leveling carry (card NOM step N4f1)
     auto& fr_if_slip = ctx.counters.fr_if_slip;
     // CB-ADM phase co-gate feed (see networkPassAHead_): null unless the flag is
     // armed and the census ran.  Withholds a quarantined signal's phase-bias state.
@@ -931,7 +931,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // phase-leveling T0 repair drain, the MW-detect / LLI refloat and the IF-phase
     // TD driver, in that order.
     networkSlipDrainT0Repairs(pa, config_, stations, present, i_lo, n_sta_total,
-                              local_carry, se, log);
+                              arc_rows, se, log);
 
     // Per-epoch re-level response state (SPEC_slip_relevel_walk §6): cleared here
     // (the harvest and the PASS-B inject consumed last epoch's sets after this point
@@ -1005,23 +1005,36 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // Card PRM phase 3a: the datum-station slip re-reference's carry erases, read off the
     // drain's own counter around the call (serial: between the two parallel regions).
     const long long dse0 = qc.counters.datum_slip_carry_erases;
+    // The datum re-reference queues as the drain takes them (card NOM step N4e2): copied in
+    // from the satellite table and written back when the drain may have changed them.
+    std::set<std::string> datum_reref_pb_sats =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_pb);
+    std::set<std::string> datum_reref_amb_sats =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_amb);
+    // The bridge v2 pends as the drains below take them (card NOM step N4f1): copied in from
+    // the lines of sight here and written back after the last drain.
+    std::map<net::ArcTuple, RelevelPend> relevel_pend = net::relevelPendMap(ctx.entities.los);
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, mw_carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
                               qc.counters, se, traces, log,
-                              datum_detect_on ? &ctx.carry.datum_reref_pb_sats : nullptr,
-                              datum_detect_on ? &ctx.carry.datum_reref_amb_sats : nullptr,
+                              datum_detect_on ? &datum_reref_pb_sats : nullptr,
+                              datum_detect_on ? &datum_reref_amb_sats : nullptr,
                               datum_detect_on ? &ctx.carry.refsat_mark_sats : nullptr,
-                              datum_detect_on ? &local_carry : nullptr,
+                              datum_detect_on ? &arc_rows : nullptr,
                               relevel_ptr,
-                              relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
-                              relevel_ptr ? &local_carry : nullptr,
+                              relevel_ptr ? &relevel_pend : nullptr,
+                              relevel_ptr ? &arc_rows : nullptr,
                               // Simulation-only oracle slip response: null unless
                               // network.cycle_slip.oracle_relevel armed the run,
                               // so the off path never reaches a hook call
                               // (structurally byte-identical, invariant #6).
                               ctx.carry.slip_oracle.get(),
                               common_band_ptr);
+    if (datum_detect_on) {
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, datum_reref_pb_sats);
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_amb, datum_reref_amb_sats);
+    }
     prmRespond(ctx.counters.prm_resp, ResponseSite::AmbDatumSlipErase,
                qc.counters.datum_slip_carry_erases - dse0);
 
@@ -1033,9 +1046,9 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                           config_.networkMarkRefsatResetDisc()
                               ? &ctx.carry.refsat_mark_sats : nullptr,
                           relevel_ptr,
-                          relevel_ptr ? &local_carry : nullptr,
+                          relevel_ptr ? &arc_rows : nullptr,
                           relevel_ptr ? &qc.counters : nullptr,
-                          relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                          relevel_ptr ? &relevel_pend : nullptr,
                           // The qualified raw verdicts (d_gf) and per-station
                           // empirical step scales (bridge v3 E4), only when the
                           // GF row is armed (nullptr keeps the off path inert).
@@ -1063,7 +1076,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     networkSlipDrainGfArcJump(qc, stations, present, i_lo, n_sta_total,
                               carry_invariant, carry_warm, carry_slipped_ambs,
                               se, traces, log, relevel_ptr,
-                              relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                              relevel_ptr ? &relevel_pend : nullptr,
                               common_band_ptr);
     // The producer AR search's suspect-corner mask (card ARL,
     // filter/NetworkArSuspect.hpp): every GF flag stamps its corner, whatever the drain
@@ -1087,9 +1100,9 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     networkSlipDrainWindupRestart(config_, stations, present, i_lo, n_sta_total,
                                   carry_invariant, carry_warm,
                                   carry_slipped_ambs, qc.counters, se, traces,
-                                  log, relevel_ptr, &ctx.carry.relevel_pend,
+                                  log, relevel_ptr, &relevel_pend,
                                   ctx.carry.slip_oracle.get(),    // simulation-only oracle
-                                  &local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                                  &arc_rows, pl_now_s, ctx.knobs.pl_max_gap_s,
                                   // The arc identity from the arc ledger (card NOM step N3b).
                                   ctx.roster.active ? &ctx.arc_ledger : nullptr,
                                   &ctx.counters.sid.n3b);
@@ -1146,10 +1159,10 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     networkSlipDrainGapReentry(stations, present, i_lo, n_sta_total,
                                carry_invariant, carry_warm, carry_slipped_ambs,
                                qc.epoch, qc.params,
-                               local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                               arc_rows, pl_now_s, ctx.knobs.pl_max_gap_s,
                                qc.counters, se, traces, log,
                                relevel_ptr,
-                               relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                               relevel_ptr ? &relevel_pend : nullptr,
                                sid.armed ? &sid : nullptr, sid_out,
                                ctx.roster.active ? &ctx.arc_ledger : nullptr);
 
@@ -1165,10 +1178,10 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     networkSlipDrainGapReentryPerSignal(stations, present, i_lo, n_sta_total,
                                         carry_invariant, carry_warm, carry_slipped_ambs,
                                         qc.epoch, qc.params,
-                                        local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                                        arc_rows, pl_now_s, ctx.knobs.pl_max_gap_s,
                                         qc.counters, se, traces, log,
                                         relevel_ptr,
-                                        relevel_ptr ? &ctx.carry.relevel_pend : nullptr,
+                                        relevel_ptr ? &relevel_pend : nullptr,
                                         sid.armed ? &sid : nullptr, sid_out);
 
     // ---- Injected free_epoch arc response (event harness, Study 1) ----------
@@ -1184,7 +1197,8 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                                      n_sta_total, carry_invariant, carry_warm,
                                      carry_slipped_ambs, ctx.inject, se, traces, log,
                                      relevel_ptr,
-                                     relevel_ptr ? &ctx.carry.relevel_pend : nullptr);
+                                     relevel_ptr ? &relevel_pend : nullptr);
+    net::assignRelevelPend(ctx.entities, relevel_pend);
 }
 
 void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch& ep,

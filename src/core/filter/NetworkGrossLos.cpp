@@ -583,9 +583,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     if (gl2_on) {
         // The decoupling edge: a satellite that was not stood down and now is.
         for (const auto& sat : sat_down_now) {
-            if (ctx.carry.gl2_sat_down.count(sat)) continue;
-            ctx.carry.gl2_sat_down.insert(sat);
-            ctx.carry.gl2_sat_since[sat] = se.time.tow;
+            if (!net::markSat(ctx.entities, sat, &net::SatelliteState::gl2_down)) continue;
+            net::putSat(ctx.entities, sat, &net::SatelliteState::gl2_since) = se.time.tow;
             ++tal.sat_standdowns;
             ++tal.sat_standdown_by_sat[sat];
             emitEvent("gross_los_sat_standdown", sat, "",
@@ -597,31 +596,31 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                                   gl2_wire ? "retro_disc+wire_withhold" : "retro_disc"));
         }
         // The re-coupling edge: a satellite that was stood down and is not any more.
-        for (auto it = ctx.carry.gl2_sat_down.begin(); it != ctx.carry.gl2_sat_down.end(); ) {
-            if (sat_down_now.count(*it)) { ++it; continue; }
-            const auto sit = ctx.carry.gl2_sat_since.find(*it);
+        for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::gl2_down)) {
+            if (sat_down_now.count(sat)) continue;
+            const double* since = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_since);
             ++tal.sat_released;
-            emitEvent("gross_los_sat_release", *it, "",
-                      static_cast<double>(sat_over_stations.count(*it)
-                                              ? sat_over_stations[*it] : 0),
+            emitEvent("gross_los_sat_release", sat, "",
+                      static_cast<double>(sat_over_stations.count(sat)
+                                              ? sat_over_stations[sat] : 0),
                       static_cast<double>(gl2_min_sta), "release",
                       fmt::format("n_sta_over={};standdown_tow={:.1f}",
-                                  sat_over_stations.count(*it) ? sat_over_stations[*it] : 0,
-                                  sit != ctx.carry.gl2_sat_since.end() ? sit->second : 0.0));
-            if (sit != ctx.carry.gl2_sat_since.end()) ctx.carry.gl2_sat_since.erase(sit);
-            it = ctx.carry.gl2_sat_down.erase(it);
+                                  sat_over_stations.count(sat) ? sat_over_stations[sat] : 0,
+                                  since != nullptr ? *since : 0.0));
+            net::dropSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_since);
+            net::unmarkSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_down);
         }
         // Route the currently stood-down set to the producer's consensus-fault
         // response.  The wire set is rebuilt every epoch, so a released satellite stops
         // being withheld in the same pass a newly faulted one starts.
-        ctx.carry.gl2_wire_pending.clear();
-        if (!ctx.carry.gl2_sat_down.empty()) {
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::wire_prune_pending, {});
+        const std::size_t n_down = net::present(ctx.entities.sats, &net::SatelliteState::gl2_down);
+        if (n_down > 0) {
             ++tal.sat_epochs;
-            tal.sat_epoch_max = std::max<long long>(
-                tal.sat_epoch_max, static_cast<long long>(ctx.carry.gl2_sat_down.size()));
-            for (const auto& sat : ctx.carry.gl2_sat_down) {
-                net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);   // the consensus path's disc bump
-                if (gl2_wire) ctx.carry.gl2_wire_pending.insert(sat);
+            tal.sat_epoch_max = std::max<long long>(tal.sat_epoch_max, static_cast<long long>(n_down));
+            for (const auto& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::gl2_down)) {
+                net::markSat(ctx.entities, sat, net::Disc::UraRetro);   // the consensus path's disc bump
+                if (gl2_wire) net::markSat(ctx.entities, sat, &net::SatelliteState::wire_prune_pending);
             }
         }
     }
@@ -643,7 +642,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             // edge, at the satellite's scale).  The release is counted
             // (sat_los_released) but does not emit the per-LOS clear event, which
             // states that the line of sight's data recovered; here they did not.
-            const bool sat_down = gl2_on && ctx.carry.gl2_sat_down.count(sat) > 0;
+            const bool sat_down = gl2_on && net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_down);
             if (sat_down && st.gross) {
                 st.gross = false;
                 st.over_streak = 0;
@@ -966,11 +965,11 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             if (pa.sat != sat) continue;
             const auto lk = std::make_tuple(si, pa.sat, pa.signal);
             if (gl_bound) {
-                const auto lit = ctx.carry.local_carry.find(lk);
-                if (lit != ctx.carry.local_carry.end()) {
-                    const LocalCarry h = glFreeze(lit->second);
-                    ctx.carry.gl_hold_amb[lk] = h;
-                    lit->second = h;
+                const auto lit = net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb);
+                if (lit != nullptr) {
+                    const LocalCarry h = glFreeze((*lit));
+                    net::putArc(ctx.entities, lk, &net::ArcState::gl_hold_amb) = h;
+                    (*lit) = h;
                     ++tal.bound_amb_held;
                     prmRespond(ctx.counters.prm_resp,
                                ResponseSite::AmbGrossHold);   // card PRM phase 3a
@@ -979,7 +978,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 // refloated.  Marking it would give the next assembly a free column,
                 // which is what the hold exists to prevent.
             } else {
-                if (ctx.carry.local_carry.erase(lk)) {
+                if (net::dropArc(ctx.entities.arcs, lk, &net::ArcState::amb)) {
                     ++ctx.counters.n_cr_gross_los;
                     prmRespond(ctx.counters.prm_resp,
                                ResponseSite::AmbGrossErase);   // card PRM phase 3a
@@ -1071,40 +1070,35 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     //     epoch, or a line of sight that has expired), so no carried level harvested
     //     while the fault was in the rows survives the response.
     for (const auto& [si, sat] : ctx.carry.gl_act_cold_refloat) {
-        const std::size_t n_before = ctx.carry.local_carry.size();
+        const std::size_t n_before = net::present(ctx.entities.arcs, &net::ArcState::amb);
         respond(si, sat);
-        for (auto it = ctx.carry.local_carry.begin(); it != ctx.carry.local_carry.end(); ) {
-            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
-                it = ctx.carry.local_carry.erase(it);
-            else
-                ++it;
-        }
+        for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
+             it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
+            it->second.amb.reset();
         tal.cold_amb_erased +=
-            static_cast<long long>(n_before - ctx.carry.local_carry.size());
+            static_cast<long long>(n_before - net::present(ctx.entities.arcs, &net::ArcState::amb));
     }
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : ctx.carry.gl_act_release) {
         net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono);
         net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
-        for (auto it = ctx.carry.gl_hold_amb.begin(); it != ctx.carry.gl_hold_amb.end(); ) {
-            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
-                it = ctx.carry.gl_hold_amb.erase(it);
-            else
-                ++it;
-        }
+        for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
+             it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
+            it->second.gl_hold_amb.reset();
     }
     // --- Re-apply the hold over whatever the harvest re-stashed (RF-3b B2).  This
     //     makes the prior fixed with zero process noise; without it, the harvest would
     //     re-level the held column from the same under-determined epoch as the erase,
     //     and the bound would have no effect.  The held iono entries are re-applied
     //     only in the same pass, i.e. only while at least one carried level is held.
-    if (gl_bound && !ctx.carry.gl_hold_amb.empty()) {
+    if (gl_bound && net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) > 0) {
         std::set<std::pair<int, std::string>> los_held;
-        for (const auto& [key, h] : ctx.carry.gl_hold_amb) {
-            ctx.carry.local_carry[key] = h;
-            los_held.insert({ std::get<0>(key), std::get<1>(key) });
-        }
+        net::ArcTable& arcs = ctx.entities.arcs;
+        net::forEach(arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, const LocalCarry& h) {
+            net::put(arcs, id, &net::ArcState::amb) = h;   // the row exists: no insert
+            los_held.insert({id.station.index, net::satKey(id.sat)});
+        });
         net::LosTable& los = ctx.entities.los;
         net::forEach(los, &net::LosState::gl_hold_iono, [&](const LosId& id, const LocalCarry& h) {
             net::put(los, id, &net::LosState::iono) = h;
@@ -1118,7 +1112,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         log->debug("Network (gross-LOS, RF-3b): applied {} declaration response(s) as {}; "
                    "{} carried level(s) and {} iono carr(ies) currently held.",
                    ctx.carry.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
-                   ctx.carry.gl_hold_amb.size(),
+                   net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb),
                    net::present(ctx.entities.los, &net::LosState::gl_hold_iono)
                        + net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk));
 }

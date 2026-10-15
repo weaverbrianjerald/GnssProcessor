@@ -123,7 +123,6 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         return R.qc_amb.empty() ? R.pl_amb : R.qc_amb;
     };
 
-    auto& local_carry = ctx.carry.local_carry;
     // Elevation power of the code weights: the mapping in which both ambiguity
     // variance floors are stated (ambFloatBirthFloor).  Read once per pass (RF-3a A1).
     const double amb_elev_power_ = config_.getCodeElevationPower();
@@ -861,7 +860,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             // 4).  The stamp is set here, at the flag, not at the
                             // response: the two are different edges.
                             if (ctx.knobs.pd_held_basis)
-                                ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
+                                net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
                                     static_cast<long long>(ctx.counters.n_loop_epochs);
                             // The producer AR search's suspect-corner mask (card ARL): a
                             // T4 drop or erase stamps the corner.  This site runs after the
@@ -873,8 +872,8 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                                   ctx.counters.n_loop_epochs)),
                                               kArSuspectRaim, &ctx.counters.netar_suspect);
                             const auto lane_lk = std::make_tuple(i, pa.sat, pa.signal);
-                            const auto lane_lit = local_carry.find(lane_lk);
-                            if (lane_lit != local_carry.end()) {
+                            const auto lane_lit = net::getArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                            if (lane_lit != nullptr) {
                                 // The entry is recorded before the erase (RF-1 §7.4 D3):
                                 // this is the class design §3.4 replaces with a bounded
                                 // drop, and its variance before the event exists only here.
@@ -897,7 +896,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                     // arms a floor.
                                     const double e_pa = pa.elev_deg;
                                     const auto o_t4 = ambFloatDropFloored(
-                                        lane_lit->second,
+                                        (*lane_lit),
                                         ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
                                                            e_pa, amb_elev_power_),
                                         ambFloatBirthFloor(amb_drop_floor_now_,
@@ -921,15 +920,15 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                                    ResponseSite::AmbRaimDrop);
                                     ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                      stations[i].name, pa.sat, pa.signal,
-                                                     lane_lit->second,
+                                                     (*lane_lit),
                                                      AmbDropCause::kT4Attrib);
                                     ++ctx.counters.n_amb_drop;
                                     ++ctx.counters.n_amb_drop_t4;
                                 } else {
                                 ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                                   stations[i].name, pa.sat, pa.signal,
-                                                  lane_lit->second, "t4_attrib");
-                                local_carry.erase(lane_lit);
+                                                  (*lane_lit), "t4_attrib");
+                                net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
                                 prmRespond(ctx.counters.prm_resp,
                                            ResponseSite::AmbRaimErase);   // card PRM phase 3a
                                 }
@@ -1089,7 +1088,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     {
                         // Flag stamp (RF-2 items 3 and 4); see the attribution site.
                         if (ctx.knobs.pd_held_basis)
-                            ctx.carry.amb_flag_ep[{static_cast<int>(i), pa.amb_key}] =
+                            net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
                                 static_cast<long long>(ctx.counters.n_loop_epochs);
                         // Suspect-corner stamp (card ARL), the next epoch's; see the
                         // attribution site.
@@ -1100,15 +1099,15 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                           kArSuspectRaim, &ctx.counters.netar_suspect);
                         const auto lane_lk =
                             std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
-                        const auto lane_lit = local_carry.find(lane_lk);
-                        if (lane_lit != local_carry.end()) {
+                        const auto lane_lit = net::getArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                        if (lane_lit != nullptr) {
                             // Entry record and bounded drop (RF-1 §7.4 D3, RF-1 step 4);
                             // see the attribution site.
                             if (ctx.knobs.amb_float_kf) {
                                 // Elevation-mapped floors (RF-3a A1); see the attribution site.
                                 const double e_pa = pa.elev_deg;
                                 const auto o_t3 = ambFloatDropFloored(
-                                    lane_lit->second,
+                                    (*lane_lit),
                                     ambFloatBirthFloor(ctx.knobs.amb_birth_var_floor,
                                                        e_pa, amb_elev_power_),
                                     ambFloatBirthFloor(amb_drop_floor_now_,
@@ -1130,15 +1129,15 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                                ResponseSite::AmbRaimDrop);
                                 ambStateNoteDrop(ctx, se.time.week, se.time.tow,
                                                  stations[i].name, pa.sat, pa.signal,
-                                                 lane_lit->second,
+                                                 (*lane_lit),
                                                  AmbDropCause::kT3Consensus);
                                 ++ctx.counters.n_amb_drop;
                                 ++ctx.counters.n_amb_drop_t3;
                             } else {
                             ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                               stations[i].name, pa.sat, pa.signal,
-                                              lane_lit->second, "t3_consensus");
-                            local_carry.erase(lane_lit);
+                                              (*lane_lit), "t3_consensus");
+                            net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::AmbRaimErase);   // card PRM phase 3a
                             }

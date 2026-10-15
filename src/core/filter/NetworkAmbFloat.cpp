@@ -133,7 +133,6 @@ void networkAmbFloatApplyDrops(
     long long week, double tow, double pl_now_s) {
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf) return;            // the vehicle owns this response
-    auto& local_carry = ctx.carry.local_carry;
     auto& relevel     = ctx.carry.relevel;
     auto& counters    = ctx.counters;
     const double floor_base = ctx.knobs.amb_birth_var_floor;
@@ -205,11 +204,10 @@ void networkAmbFloatApplyDrops(
         // lands even without a carry because a flagged arc with no carry is still not a
         // datum (RF-2 items 3 and 4).
         if (ctx.knobs.pd_held_basis)
-            ctx.carry.amb_flag_ep[{sta, amb_key}] = now_ep;
-        const auto it = local_carry.find(
-            std::make_tuple(sta, parts->satellite, parts->signal));
-        if (it == local_carry.end()) continue;      // nothing carried ⇒ nothing to drop
-        const bool acted = dropAt(it->second, sta, parts->satellite);
+            net::putAmbFlagEp(ctx.entities, sta, amb_key) = now_ep;
+        const auto it = net::getArc(ctx.entities.arcs, std::make_tuple(sta, parts->satellite, parts->signal), &net::ArcState::amb);
+        if (it == nullptr) continue;      // nothing carried ⇒ nothing to drop
+        const bool acted = dropAt((*it), sta, parts->satellite);
         if (acted) ++n_free;
         else       ++n_idem;
         // Card PRM phase 3a: a drop that changed the carried prior (the variance moved,
@@ -222,7 +220,7 @@ void networkAmbFloatApplyDrops(
             prmRespond(counters.prm_resp, reentry ? ResponseSite::AmbDropLatchReentry
                                                   : ResponseSite::AmbDropLatchSlip);
         }
-        note(it->first, it->second, AmbDropCause::kReLevelFree);
+        note(std::make_tuple(sta, parts->satellite, parts->signal), (*it), AmbDropCause::kReLevelFree);
     }
     // (2) The gap cliff.  An arc present this epoch whose sighting gap already exceeds the
     //     horizon: on the leveling vehicle the inject skips it and the harvest re-stashes
@@ -232,18 +230,17 @@ void networkAmbFloatApplyDrops(
     //     erase, §3.4's one remaining erase case.  The loop does not test presence, so an
     //     absent arc past the horizon is also dropped and counted here before the prune
     //     erases it.
-    for (auto it = local_carry.begin(); it != local_carry.end(); ++it) {
-        const double gap = pl_now_s - it->second.last_seen_s;
-        if (!(gap > max_gap_s)) continue;
-        const bool acted =
-            dropAt(it->second, std::get<0>(it->first), std::get<1>(it->first));
+    net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+        const double gap = pl_now_s - lc.last_seen_s;
+        if (!(gap > max_gap_s)) return;
+        const bool acted = dropAt(lc, id.station.index, net::satKey(id.sat));
         if (acted) ++n_stale;
         else       ++n_idem;
         // Card PRM phase 3a: a drop that changed the carried prior (as in loop (1)).
         if (acted || last_decoupled_idem)
             prmRespond(counters.prm_resp, ResponseSite::AmbDropStaleGap);
-        note(it->first, it->second, AmbDropCause::kStaleGap);
-    }
+        note(net::arcTuple(id), lc, AmbDropCause::kStaleGap);
+    });
 
     const long long n = n_free + n_stale;
     if (n > 0) {
@@ -318,7 +315,6 @@ long long networkAmbFloatDeclaredHandover(
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
     if (handovers.empty()) return 0;
-    auto& local_carry = ctx.carry.local_carry;
     auto& counters    = ctx.counters;
 
     long long n_shift_total = 0;
@@ -337,15 +333,15 @@ long long networkAmbFloatDeclaredHandover(
         for (std::size_t s = 0; s < stations.size(); ++s)
             if (stations[s].name == h.to) { to_idx = static_cast<int>(s); break; }
         if (to_idx < 0) { ++counters.n_amb_sts_refused_cold; continue; }
-        const auto in_it = local_carry.find(std::make_tuple(to_idx, sat, sig));
-        if (in_it == local_carry.end() || !std::isfinite(in_it->second.value_abs)) {
+        const auto in_it = net::getArc(ctx.entities.arcs, std::make_tuple(to_idx, sat, sig), &net::ArcState::amb);
+        if (in_it == nullptr || !std::isfinite(in_it->value_abs)) {
             // The ledger says continuous but the incoming anchor holds no live carry
             // this epoch: the same "no Δ" case, counted separately because it is a
             // ledger/carry disagreement rather than a cold election.
             ++counters.n_amb_sts_refused_no_level;
             continue;
         }
-        const double delta = in_it->second.value_abs;
+        const double delta = in_it->value_abs;
         if (!(std::abs(delta) > 0.0)) {
             // Already in the new basis (Δ = 0): the transform is the identity, so take
             // ownership of the family (no erase) and continue.  This is the common case
@@ -374,7 +370,7 @@ long long networkAmbFloatDeclaredHandover(
             ++counters.prm_pbhold_unmoved_at_shift;
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
-        const double x_post = in_it->second.value_abs;
+        const double x_post = in_it->value_abs;
         const bool ok = std::abs(x_post) <= kStsExactTolM;
         if (!ok) ++counters.n_amb_sts_selfcheck_fail;
         n_shift_total += n_shift;

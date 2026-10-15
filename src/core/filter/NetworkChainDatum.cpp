@@ -130,7 +130,8 @@ const std::map<std::string, std::string> anchor_incumbent =
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
-auto& eq34_sat_root = ctx.carry.eq34_sat_root;
+const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
+    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
 
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
@@ -138,10 +139,13 @@ auto& eq34_shift_total = ctx.carry.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
-auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
-auto& eq34_prev_target = ctx.carry.eq34_prev_target;
+// The arcs' retained edges and pin targets (card NOM step N4f1): copied in, written back at
+// the end of the election.
+std::set<std::pair<int, std::string>> eq34_retained_edges =
+    net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
+const std::map<std::pair<int, std::string>, double> eq34_prev_target =
+    net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_prev_target);
 auto& eq34_reref = ctx.carry.eq34_reref;
-auto& local_carry = ctx.carry.local_carry;
 net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
@@ -583,12 +587,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 double target = 0.0;
                 double carry_val = std::numeric_limits<double>::quiet_NaN();
                 if (eq34_round && anchor_incumbent.count(amb)) {
-                    auto lc = local_carry.find(std::make_tuple(
-                        static_cast<int>(ri), sat, grp_sig));
-                    if (lc != local_carry.end() && roundable) {
+                    auto lc = net::getArc(ctx.entities.arcs, std::make_tuple(
+                        static_cast<int>(ri), sat, grp_sig), &net::ArcState::amb);
+                    if (lc != nullptr && roundable) {
                         const double lam = grp_lambda;
                         if (std::isfinite(lam) && lam > 0.0) {
-                            carry_val = lc->second.value_abs;
+                            carry_val = lc->value_abs;
                             target = lam * std::round(carry_val / lam);
                         }
                     }
@@ -884,17 +888,16 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ctx.counters.n_resume_datum_first_reref +=
                 static_cast<long long>(eq34_reref.size());
         int n_erased = 0;
-        for (auto it = local_carry.begin(); it != local_carry.end();) {
-            const auto& key = it->first;   // (station idx, sat, signal)
-            if (eq34_reref.count({std::get<1>(key), std::get<2>(key)})) {
-                it = local_carry.erase(it);
+        // The re-referenced (sat, signal) keys' leveling carries, at every station.
+        net::eraseIf(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
+            if (eq34_reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) {
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
                 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);   // card PRM phase 3a
-            } else {
-                ++it;
+                return true;
             }
-        }
+            return false;
+        });
         eq34_erase_total += n_erased;
         if (n_erased > 0)
             log->debug("Network[eq34]: {} local ambiguity carry(ies) erased for "
@@ -980,8 +983,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             gname2idx[stations[i].name] = i;
         auto carryAlive = [&](size_t idx, const std::string& sat,
                               const std::string& sig) -> bool {
-            return local_carry.count(std::make_tuple(
-                static_cast<int>(idx), sat, sig)) != 0;
+            return (net::getArc(ctx.entities.arcs, std::make_tuple(
+                static_cast<int>(idx), sat, sig), &net::ArcState::amb) != nullptr) != 0;
         };
         eq34_retained_edges.clear();
         // Sat-side parents (amb → parent station) + their component roots.
@@ -1043,8 +1046,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             net::put(entities.stations, *sid, &net::StationState::signals, rxkey.substr(p1 + 1),
                      &net::StationSignalState::eq34_rx_parent) = sat;
     }
-    eq34_sat_root    = std::move(new_sat_root);
-    eq34_prev_target = std::move(new_prev_target);
+    net::assignSig(ctx.entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
+    net::assignArcAmb(ctx.entities, &net::ArcState::eq34_prev_target, new_prev_target);
+    net::assignArcAmbFlags(ctx.entities, &net::ArcState::eq34_retained_edge, eq34_retained_edges);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
     // can tell a rising arc from a setting one.  Rebuilt wholesale (a
     // pruned arc drops out); skipped when the longevity election is
@@ -1265,7 +1269,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
         // did not land; its arc re-elects from scratch in the next epoch.
         if (est_index_of[i] >= 0) {
             for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
-                ctx.carry.eq34_prev_target[{static_cast<int>(i), amb}] = tgt;
+                net::putArcAmb(ctx.entities, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = tgt;
                 ++ctx.counters.seed_round_deferred;
                 const double ay = std::abs(y);
                 if (ay > ctx.counters.seed_round_max_abs_y_m)

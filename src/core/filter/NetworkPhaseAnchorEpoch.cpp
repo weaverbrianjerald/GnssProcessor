@@ -60,7 +60,6 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     std::map<std::string, std::string> anchor_incumbent =
         net::sigMap(ctx.entities.sat_signals, &SG::anchor_incumbent, '_');
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-    auto& local_carry = ctx.carry.local_carry;
     auto& n_gated_epochs = ctx.counters.n_gated_epochs;
     auto& n_gated_key_epochs = ctx.counters.n_gated_key_epochs;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
@@ -184,7 +183,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                     static_cast<long long>(ctx.counters.n_loop_epochs);
                 cand_usable.free_ambs    = &ctx.carry.relevel.free_ambs;
                 cand_usable.slipped_ambs = &carry_slipped_ambs;
-                cand_usable.local_carry  = &ctx.carry.local_carry;
+                cand_usable.local_carry  = &ctx.entities.arcs;
             }
             // The phase datum as a held S-basis (RF-2,
             // docs/refound/RF-1_steps345_mechanism_2026-09-15.md).  Assembled here
@@ -193,6 +192,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // pointer below is then null.
             PhaseHeldBasis held_basis;
             std::map<std::string, PhaseBasisEntry> basis_view;   // phase_basis (N4d)
+            std::map<std::pair<int, std::string>, long long> flag_view;   // amb_flag_ep (N4f1)
             std::vector<std::map<std::string, double>> pd_elev_of;
             held_basis.on = ctx.knobs.pd_held_basis;
             if (held_basis.on) {
@@ -201,8 +201,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 held_basis.now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
                 basis_view = net::sigMap(ctx.entities.sat_signals, &SG::phase_basis, '_');
                 held_basis.basis   = &basis_view;
-                held_basis.flag_ep = &ctx.carry.amb_flag_ep;
-                held_basis.carry   = &ctx.carry.local_carry;
+                flag_view = net::ambFlagEpMap(ctx.entities.stations);
+                held_basis.flag_ep = &flag_view;
+                held_basis.carry   = &ctx.entities.arcs;
                 // This epoch's LOS elevations, the election's rank key (item 3).
                 pd_elev_of.assign(modeled.size(), {});
                 for (std::size_t mi = 0; mi < modeled.size(); ++mi)
@@ -506,7 +507,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        net::markSat(ctx.entities, pk->satellite, &net::SatelliteState::ura_retro_sats);
+                        net::markSat(ctx.entities, pk->satellite, net::Disc::UraRetro);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }
@@ -565,7 +566,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 // network.trace_amb_state off; the row writer itself stays
                 // knob-gated and does nothing there (card EV7 §6).
                 const int n_erased = networkApplyPhaseAnchorCarryReref(
-                        pa_reref, ctx.carry.local_carry,
+                        pa_reref, ctx.entities.arcs,
                         (ctx.knobs.trace_amb_state || !gate_drop_fams.empty())
                             ? &pa_reref_erased : nullptr);
                 for (const auto& [k, lc] : pa_reref_erased) {

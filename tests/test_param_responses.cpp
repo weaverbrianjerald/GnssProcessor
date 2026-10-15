@@ -342,8 +342,8 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     lat.free_ambs = {{0, a}, {1, b}, {2, c}};
     lat.free_cause[{0, a}] = RelevelEpochState::kCauseMw | RelevelEpochState::kCauseLli;
     lat.free_cause[{1, b}] = RelevelEpochState::kCauseGap;
-    ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))] = LocalCarry{};
-    ctx->carry.local_carry[std::make_tuple(2, std::string("G09"), std::string("L1C"))] = LocalCarry{};
+    net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
+    net::putArc(ctx->entities, std::make_tuple(2, std::string("G09"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
     networkResponseLatchTally(*ctx);
     const auto& C = ctx->counters;
     EXPECT_EQ(C.prm_latch_epochs, 1);

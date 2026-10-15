@@ -1196,8 +1196,7 @@ namespace GnssProcessor {
                                 ++ctr.arc_reentry;
                                 ++ctr.gap_any;
                                 const bool carried =
-                                    ctx.carry.local_carry.count(
-                                        std::make_tuple(static_cast<int>(i), o->satellite, key)) > 0;
+                                    (net::getArc(ctx.entities.arcs, std::make_tuple(static_cast<int>(i), o->satellite, key), &net::ArcState::amb) != nullptr);
                                 if (carried && step.gap_len_ep >= 2 && step.gap_len_ep <= 30)
                                     ++ctr.gap_2_30;
                             }
@@ -1446,7 +1445,7 @@ namespace GnssProcessor {
                 // measures, read off the admitted arc's own edge rather than the
                 // carry's re-stash stamp.
                 const bool carried =
-                    ctx.carry.local_carry.count(std::make_tuple(sta, sat, sig)) > 0;
+                    (net::getArc(ctx.entities.arcs, std::make_tuple(sta, sat, sig), &net::ArcState::amb) != nullptr);
                 if (step.transition == ArcTransition::Reentry && carried) {
                     ++ctr.carry_adm_gap_any;
                     if (step.gap_len_ep >= 2 && step.gap_len_ep <= 30) {
@@ -1588,24 +1587,22 @@ namespace GnssProcessor {
         // The raw side is the phase-1 number and stays; the admitted side is the one
         // a carry reader keys on, and the difference between them is the structural
         // gap phase 2 addresses.
-        for (const auto& [key, lc] : ctx.carry.local_carry) {
-            (void)lc;
+        net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
             ++ctr.lc_entries;
-            const ArcLedger::Key ak{ std::get<0>(key), std::get<1>(key), std::get<2>(key) };
+            const ArcLedger::Key ak = net::arcTuple(id);
             const ArcRecord* a = ctx.arc_ledger.find(ak);
             if (a == nullptr) {
                 ++ctr.lc_arc_unknown;
                 ++ctr.lc_adm_arc_unknown;
-                continue;
+                return;
             }
             if (a->state == ArcState::Dead) ++ctr.lc_arc_dead;
             if (a->adm_state == ArcState::Dead)        ++ctr.lc_adm_arc_dead;
             else if (a->adm_state == ArcState::Absent) ++ctr.lc_adm_arc_unknown;
-        }
+        });
         for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
             if (!a.modelled) continue;
-            const bool carried = ctx.carry.local_carry.count(
-                std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key))) > 0;
+            const bool carried = (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) != nullptr);
             if (carried) continue;
             if (a.state == ArcState::Tracking)     ++ctr.lc_tracking_no_entry;
             if (a.adm_state == ArcState::Tracking) ++ctr.lc_adm_tracking_no_entry;
@@ -1701,8 +1698,7 @@ namespace GnssProcessor {
             for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
                 if (!a.modelled) continue;
                 if (a.state != ArcState::Tracking && a.state != ArcState::Reentered) continue;
-                if (!ctx.carry.local_carry.count(
-                        std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key))))
+                if (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) == nullptr)
                     continue;
                 ++support[familyKey(std::get<1>(key), std::get<2>(key))];
             }
@@ -1754,8 +1750,7 @@ namespace GnssProcessor {
         for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
             if (a.state != ArcState::Reentered) continue;
             if (a.gap_len_ep < 2 || a.gap_len_ep > 30) continue;
-            if (!ctx.carry.local_carry.count(
-                    std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key))))
+            if (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) == nullptr)
                 continue;
             if (answered(std::get<0>(key), std::get<1>(key), std::get<2>(key)))
                 ++ctr.gap_2_30_answered;
@@ -1770,8 +1765,9 @@ namespace GnssProcessor {
         {
             const long long ep = ctx.arc_ledger.epochIndex();
             const double now_s = TimeUtils::continuousGpsSeconds(se.time);
-            for (const auto& [key, lc] : ctx.carry.local_carry) {
-                if (std::abs(lc.last_seen_s - now_s) > 1.0) continue;  // not stashed here
+            net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
+                if (std::abs(lc.last_seen_s - now_s) > 1.0) return;  // not stashed here
+                const net::ArcTuple key = net::arcTuple(id);
                 ++ctr.carry_entries_seen;
                 auto it = rs.carry_last_ep.find(key);
                 if (it != rs.carry_last_ep.end()) {
@@ -1789,7 +1785,7 @@ namespace GnssProcessor {
                 } else {
                     rs.carry_last_ep.emplace(key, ep);
                 }
-            }
+            });
             // Bound the memory: an entry last seen more than 60 epochs ago can no
             // longer produce a 2-to-30 epoch gap, and keeping it would only turn a
             // long return into a census row this class does not count.

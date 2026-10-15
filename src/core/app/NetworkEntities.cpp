@@ -41,6 +41,7 @@ const char* converterName(Converter c) {
     case Converter::ConstellationLetter: return "constellation letter";
     case Converter::Satellite: return "satellite";
     case Converter::SatSignal: return "satellite signal";
+    case Converter::Arc:       return "arc";
     case Converter::Count:       break;
     }
     return "?";
@@ -232,6 +233,9 @@ const std::vector<FieldDecl> kConstellationFields = {
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_age>},
     {"ddfrac_ref_prev", "ddfrac_ref_prev", Persist::ColdStart, "", "",
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_prev>},
+    // Step N4e2: re-placed from the satellite rows (its key is a channel).
+    {"last_cb_family_partner", "last_cb_family_partner", Persist::ColdStart, "", "",
+     nullptr, nullptr, &channelRows<&Ch::last_cb_family_partner>},
 };
 // ---- The satellite fields (step N4e1: the clock half) ----
 
@@ -270,12 +274,60 @@ void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<
     for (const std::string& sat : s) markSat(e, sat, f);
 }
 
+// ---- The discontinuity bits (step N4e2, decision D7) ----
+
+bool hasSat(const SatTable& t, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdKey(sat);
+    if (!id) return false;
+    const auto it = t.find(*id);
+    return it != t.end() && (it->second.disc_pending & static_cast<unsigned>(d)) != 0;
+}
+
+bool markSat(NetworkEntities& e, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdOf(e, sat);
+    if (!id) return true;
+    unsigned& bits = e.sats[*id].disc_pending;
+    const bool inserted = (bits & static_cast<unsigned>(d)) == 0;
+    bits |= static_cast<unsigned>(d);
+    return inserted;
+}
+
+std::size_t unmarkSat(SatTable& t, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdKey(sat);
+    if (!id) return 0;
+    const auto it = t.find(*id);
+    if (it == t.end() || (it->second.disc_pending & static_cast<unsigned>(d)) == 0) return 0;
+    it->second.disc_pending &= ~static_cast<unsigned>(d);
+    return 1;
+}
+
+std::size_t present(const SatTable& t, Disc d) {
+    std::size_t n = 0;
+    for (const auto& kv : t) n += (kv.second.disc_pending & static_cast<unsigned>(d)) ? 1 : 0;
+    return n;
+}
+
+std::set<std::string> satSet(const SatTable& t, Disc d) {
+    std::set<std::string> out;
+    for (const auto& [id, row] : t)
+        if (row.disc_pending & static_cast<unsigned>(d)) out.insert(satKey(id));
+    return out;
+}
+
+void assignSatFlags(NetworkEntities& e, Disc d, const std::set<std::string>& s) {
+    for (auto& kv : e.sats) kv.second.disc_pending &= ~static_cast<unsigned>(d);
+    for (const std::string& sat : s) markSat(e, sat, d);
+}
+
 namespace {
 
 using A = SatelliteState;
 
 template <auto F>
 std::size_t satRows(const NetworkEntities& e) { return present(e.sats, F); }
+
+template <Disc D>
+std::size_t discRows(const NetworkEntities& e) { return present(e.sats, D); }
 
 // Record K: satellite -> the two-state oscillator, field by field.
 void kToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
@@ -321,10 +373,10 @@ void cFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     assignSatFlags(ctx.entities, &A::c1_zoh_active, snap.c1_zoh_active);
 }
 void rToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
-    snap.ura_retro_sats = satSet(ctx.entities.sats, &A::ura_retro_sats);
+    snap.ura_retro_sats = satSet(ctx.entities.sats, Disc::UraRetro);
 }
 void rFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::ura_retro_sats, snap.ura_retro_sats);
+    assignSatFlags(ctx.entities, Disc::UraRetro, snap.ura_retro_sats);
 }
 void aToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.retro_active = satSet(ctx.entities.sats, &A::retro_active);
@@ -354,6 +406,46 @@ void lbNFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_n) = in.second;
 }
 
+// Records I, CBI and SV (step N4e2): satellite-keyed maps, written and restored wholesale.
+void iToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.relevel_iode = satMap(ctx.entities.sats, &A::relevel_iode);
+}
+void iFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::relevel_iode, snap.relevel_iode);
+}
+void cbiToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.code_bias_ifpin_pair = satMap(ctx.entities.sats, &A::code_bias_ifpin_pair);
+}
+void cbiFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::code_bias_ifpin_pair, snap.code_bias_ifpin_pair);
+}
+void svToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.carry_sat_vertex = satMap(ctx.entities.sats, &A::carry_vertex);
+}
+void svFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::carry_vertex, snap.carry_sat_vertex);
+}
+
+// Records X, QR and CBS (step N4e2): satellite sets as a bit or a flag, wholesale.
+void xToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.eph_cutover_disc_pending = satSet(ctx.entities.sats, Disc::EphCutover);
+}
+void xFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, Disc::EphCutover, snap.eph_cutover_disc_pending);
+}
+void qrToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.clock_refloat_sats = satSet(ctx.entities.sats, &A::prev_clock_refloat);
+}
+void qrFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::prev_clock_refloat, snap.clock_refloat_sats);
+}
+void cbsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.code_bias_sat_seen = satSet(ctx.entities.sats, &A::code_bias_seen);
+}
+void cbsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::code_bias_seen, snap.code_bias_sat_seen);
+}
+
 }  // namespace
 
 const std::vector<FieldDecl> kSatelliteFields = {
@@ -381,8 +473,8 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::readmit_seeded_s>},
     {"ura_refloat_horizon", "ura_refloat_horizon", Persist::Record, "Y", "", &yToSnapshot,
      &yFromSnapshot, &satRows<&A::ura_refloat_horizon>},
-    {"ura_retro_sats", "ura_retro_sats", Persist::Record, "R", "", &rToSnapshot, &rFromSnapshot,
-     &satRows<&A::ura_retro_sats>},
+    {"disc_pending", "ura_retro_sats", Persist::Record, "R", "", &rToSnapshot, &rFromSnapshot,
+     &discRows<Disc::UraRetro>},
     {"retro_active", "retro_active", Persist::Record, "A", "", &aToSnapshot, &aFromSnapshot,
      &satRows<&A::retro_active>},
     {"pb_hold_prev_clock_m", "pb_hold_prev_clock_m", Persist::ColdStart, "", "", nullptr, nullptr,
@@ -391,6 +483,43 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::pb_hold_frz_prev_clk>},
     {"cb_exc_prev_clk", "cb_exc_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::cb_exc_prev_clk>},
+    // Step N4e2: the datum and QC half.
+    {"nbp_prev_iode", "nbp_prev_iode", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::nbp_prev_iode>},
+    {"disc_pending", "clk_anchor_disc_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::ClockAnchor>},
+    {"prev_clock_refloat", "prev_clock_refloat_sats", Persist::Record, "QR", "", &qrToSnapshot,
+     &qrFromSnapshot, &satRows<&A::prev_clock_refloat>},
+    {"last_if_pin_sel", "last_if_pin_sel", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::last_if_pin_sel>},
+    {"last_if_pin_hold", "last_if_pin_holds", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::last_if_pin_hold>},
+    {"sbc_active", "sbc_active_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::sbc_active>},
+    {"relevel_iode", "relevel_iode", Persist::Record, "I", "", &iToSnapshot, &iFromSnapshot,
+     &satRows<&A::relevel_iode>},
+    {"disc_pending", "eph_cutover_disc_pending", Persist::Record, "X", "", &xToSnapshot,
+     &xFromSnapshot, &discRows<Disc::EphCutover>},
+    {"code_bias_ifpin_pair", "code_bias_ifpin_pair_", Persist::Record, "CBI", "", &cbiToSnapshot,
+     &cbiFromSnapshot, &satRows<&A::code_bias_ifpin_pair>},
+    {"code_bias_seen", "code_bias_sat_seen_", Persist::Record, "CBS", "", &cbsToSnapshot,
+     &cbsFromSnapshot, &satRows<&A::code_bias_seen>},
+    {"disc_pending", "cb_reseed_disc_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::CbReseed>},
+    {"gl2_down", "gl2_sat_down", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::gl2_down>},
+    {"gl2_since", "gl2_sat_since", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::gl2_since>},
+    {"wire_prune_pending", "gl2_wire_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &satRows<&A::wire_prune_pending>},
+    {"datum_reref_pb", "datum_reref_pb_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::datum_reref_pb>},
+    {"datum_reref_amb", "datum_reref_amb_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::datum_reref_amb>},
+    {"carry_vertex", "carry_sat_vertex", Persist::Record, "SV", "", &svToSnapshot, &svFromSnapshot,
+     &satRows<&A::carry_vertex>},
+    {"disc_pending", "cb_excursion_pending_bump", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::CbExcursion>},
 };
 // ---- The satellite-signal fields (step N4d) ----
 
@@ -423,7 +552,10 @@ std::optional<SatSignalId> satSignalOf(const NetworkEntities& e, const std::stri
 }
 
 std::string signalKey(const SignalId& s) {
-    return s == SignalId{} ? std::string() : s.obsCode(ObsType::Phase);
+    if (s == SignalId{}) return std::string();
+    // A two-character arc placeholder (null attribute, step N4f1) has no attribute to print.
+    return s.attribute == '\0' ? std::string{static_cast<char>(ObsType::Phase), s.digit}
+                                : s.obsCode(ObsType::Phase);
 }
 
 namespace {
@@ -446,6 +578,14 @@ void ptToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
 }
 void ptFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     assignSig(ctx.entities, &G::anchor_pin_target, snap.anchor_pin_target);
+}
+
+// Record EQS (step N4e2): "<sat>_<signal>" -> the component datum receiver, wholesale.
+void eqsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.eq34_sat_root = sigMap(ctx.entities.sat_signals, &G::eq34_sat_root, '_');
+}
+void eqsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSig(ctx.entities, &G::eq34_sat_root, snap.eq34_sat_root);
 }
 
 }  // namespace
@@ -472,6 +612,13 @@ const std::vector<FieldDecl> kSatSignalFields = {
      &satSignalRows<&G::smh_block>},
     {"smh_block_pending", "smh_block_pending", Persist::Pending, "", "", nullptr, nullptr,
      &satSignalRows<&G::smh_block_pending>},
+    // Step N4e2: re-placed from the satellite rows (their keys are satellite signals).
+    {"emitted_anchor", "emitted_anchor", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::emitted_anchor>},
+    {"emitted_anchor_s", "emitted_anchor_s", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::emitted_anchor_s>},
+    {"eq34_sat_root", "eq34_sat_root", Persist::Record, "EQS", "", &eqsToSnapshot,
+     &eqsFromSnapshot, &satSignalRows<&G::eq34_sat_root>},
 };
 namespace {
 
@@ -481,6 +628,14 @@ using SS = StationSignalState;
 /// The reach-table row count of a station field.
 template <auto F>
 std::size_t stationRows(const NetworkEntities& e) { return present(e.stations, F); }
+
+/// The cells of a member keyed below the station by a string (O4): the old map's size().
+template <auto F>
+std::size_t stationCells(const NetworkEntities& e) {
+    std::size_t n = 0;
+    for (const auto& kv : e.stations) n += (kv.second.*F).size();
+    return n;
+}
 
 /// The reach-table row count of a field keyed below the station.
 template <auto F>
@@ -568,6 +723,15 @@ const std::vector<FieldDecl> kStationFields = {
      &zwdToSnapshot, &zwdFromSnapshot, &stationRows<&S::zwd>},
     {"gross_los", "gl_sta_state", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::gross_los>},
+    {"cg_event_last", "cg_event_last", Persist::ColdStart, "", "",   // step N4e2, re-placed
+     nullptr, nullptr, &stationRows<&S::cg_event_last>},
+    // Step N4f1: re-placed from the arc rows (their old keys keep a string below the station).
+    {"amb_flag_ep", "amb_flag_ep", Persist::ColdStart, "", "",
+     nullptr, nullptr, &stationCells<&S::amb_flag_ep>},
+    {"adm_arc", "adm_arc", Persist::ColdStart, "", "",
+     nullptr, nullptr, &stationCells<&S::adm_arc>},
+    {"adm_event_last", "adm_event_last", Persist::ColdStart, "", "",
+     nullptr, nullptr, &stationCells<&S::adm_event_last>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -635,6 +799,14 @@ using LE = LosEventState;
 template <auto F>
 std::size_t losRows(const NetworkEntities& e) { return present(e.los, F); }
 
+/// The cells of a member keyed below the line of sight by a string (O4).
+template <auto F>
+std::size_t losCells(const NetworkEntities& e) {
+    std::size_t n = 0;
+    for (const auto& kv : e.los) n += (kv.second.*F).size();
+    return n;
+}
+
 template <auto F>
 std::size_t losEventRows(const NetworkEntities& e) { return present(e.los, &L::events, F); }
 
@@ -692,6 +864,10 @@ const std::vector<FieldDecl> kLosFields = {
     {"gross_los", "gl_state", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::gross_los>},
     {"gl_event_last", "gl_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
      &losRows<&L::gl_event_last>},
+    {"bb_event_last", "bb_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::bb_event_last>},   // step N4e2, re-placed from the satellite rows
+    {"relevel_pend", "relevel_pend", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losCells<&L::relevel_pend>},   // step N4f1, re-placed from the arc rows
     {"gl_hold_iono", "gl_hold_iono", Persist::ColdStart, "", "", nullptr, nullptr,
      &losRows<&L::gl_hold_iono>},
     {"gl_hold_iono_blk", "gl_hold_iono_blk", Persist::ColdStart, "", "", nullptr, nullptr,
@@ -719,7 +895,176 @@ const std::vector<FieldDecl> kLosFields = {
     {"prefit_event_last", "prefit_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
      &losEventRows<&LE::prefit_event_last>},
 };
-const std::vector<FieldDecl> kArcFields = {};
+// ---- The arc fields (step N4f1: the carries) ----
+
+namespace {
+
+/// The signal of an arc key.  "" is the satellite-wide @c SignalId{}; any other string is a
+/// phase observable of two or three characters ("L1C"; a fixture's placeholder "L0" or "LZZ"
+/// keeps its row), held as (digit, attribute, '\0' when absent), whose order is the order of
+/// the strings within a satellite (O1).
+std::optional<SignalId> arcSignalOf(const SatId& s, const std::string& sig) {
+    if (sig.empty()) return SignalId{};
+    if (sig.size() < 2 || sig.size() > 3 || sig[0] != static_cast<char>(ObsType::Phase)
+        || sig[1] == '\0' || (sig.size() == 3 && sig[2] == '\0'))
+        return std::nullopt;
+    return SignalId{s.sys, sig[1], sig.size() == 3 ? sig[2] : '\0'};
+}
+
+}  // namespace
+
+std::optional<ArcId> arcKey(const ArcTuple& k) {
+    const std::optional<SatId> s = satIdKey(std::get<1>(k));
+    if (!s) return std::nullopt;
+    const std::optional<SignalId> g = arcSignalOf(*s, std::get<2>(k));
+    if (!g) return std::nullopt;
+    return ArcId{StationId{std::get<0>(k)}, *s, *g};
+}
+
+std::optional<ArcId> arcKey(int station, const std::string& amb) {
+    const std::size_t cut = amb.find_first_of("_|");
+    if (cut == std::string::npos) return std::nullopt;
+    return arcKey(ArcTuple{station, amb.substr(0, cut), amb.substr(cut + 1)});
+}
+
+std::optional<ArcId> arcOf(const NetworkEntities& e, const ArcTuple& k) {
+    const std::optional<ArcId> id = arcKey(k);
+    if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::Arc)];
+    return id;
+}
+
+std::optional<ArcId> arcOfAmb(const NetworkEntities& e, int station, const std::string& amb) {
+    const std::optional<ArcId> id = arcKey(station, amb);
+    if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::Arc)];
+    return id;
+}
+
+ArcTuple arcTuple(const ArcId& id) {
+    return ArcTuple{id.station.index, satKey(id.sat), signalKey(id.signal)};
+}
+
+std::pair<int, std::string> arcPair(const ArcId& id) {
+    return {id.station.index, satKey(id.sat) + "_" + signalKey(id.signal)};
+}
+
+bool hasArcAmb(const ArcTable& t, int station, const std::string& amb, bool ArcState::*f) {
+    const std::optional<ArcId> id = arcKey(station, amb);
+    return id && has(t, *id, f);
+}
+
+bool markArcAmb(NetworkEntities& e, int station, const std::string& amb, bool ArcState::*f) {
+    const std::optional<ArcId> id = arcOfAmb(e, station, amb);
+    return id ? mark(e.arcs, *id, f) : true;
+}
+
+std::set<std::pair<int, std::string>> arcAmbSet(const ArcTable& t, bool ArcState::*f) {
+    std::set<std::pair<int, std::string>> out;
+    for (const auto& [id, row] : t)
+        if (row.*f) out.insert(arcPair(id));
+    return out;
+}
+
+void assignArcAmbFlags(NetworkEntities& e, bool ArcState::*f,
+                       const std::set<std::pair<int, std::string>>& s) {
+    for (auto& kv : e.arcs) kv.second.*f = false;
+    for (const auto& [idx, amb] : s) markArcAmb(e, idx, amb, f);
+}
+
+std::map<ArcTuple, RelevelPend> relevelPendMap(const LosTable& t) {
+    std::map<ArcTuple, RelevelPend> out;
+    for (const auto& [id, row] : t)
+        for (const auto& [pair, pd] : row.relevel_pend)
+            out.emplace_hint(out.end(), ArcTuple{id.station.index, satKey(id.sat), pair}, pd);
+    return out;
+}
+
+void assignRelevelPend(NetworkEntities& e, const std::map<ArcTuple, RelevelPend>& m) {
+    for (auto& kv : e.los) kv.second.relevel_pend.clear();
+    for (const auto& [k, pd] : m)
+        if (const std::optional<LosId> id = losOf(e, std::get<0>(k), std::get<1>(k)))
+            e.los[*id].relevel_pend[std::get<2>(k)] = pd;
+}
+
+std::map<std::pair<int, std::string>, long long> ambFlagEpMap(const StationTable& t) {
+    std::map<std::pair<int, std::string>, long long> out;
+    for (const auto& [id, row] : t)
+        for (const auto& [amb, ep] : row.amb_flag_ep)
+            out.emplace_hint(out.end(), std::make_pair(id.index, amb), ep);
+    return out;
+}
+
+namespace {
+
+using R = ArcState;
+
+template <auto F>
+std::size_t arcRows(const NetworkEntities& e) { return present(e.arcs, F); }
+
+// Record L: (station, sat, signal) -> the leveling carry's value, variance and last-seen time;
+// the marginal variance under card SCL2 X2, and the optional first-stash variance.
+void lToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
+    // optional trailing L field, filled only when the ratio ceiling is armed, so a
+    // default snapshot's L rows stay byte-identical.
+    const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
+    // Card SCL2 X2: the history is not snapshotted, so a row is written with its marginal
+    // variance (var plus its history coefficients' squared norm); off, var as before.
+    const bool shx_marg = ctx.knobs.carry_cpl_shx;
+    forEach(ctx.entities.arcs, &R::amb, [&](const ArcId& id, const LocalCarry& lc) {
+        NetworkStateSnapshot::Local L{lc.value_abs,
+                                      shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
+                                      lc.last_seen_s};
+        if (l_var_first) L.var_first = lc.var_first;
+        snap.local_carry[arcTuple(id)] = L;
+    });
+}
+void lFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    dropAll(ctx.entities.arcs, &R::amb);
+    for (const auto& [key, l] : snap.local_carry) {
+        // Restored-arc age (SPEC_event_harness section 15.4): the birth stamps are not
+        // snapshotted, so the entry is stamped with the restored-arc sentinel rather than
+        // left at 0.  A 0 means "never stashed" to the harvest's first-stash-wins rule,
+        // which would re-stamp every restored arc as born at the resume.  var_first stays 0
+        // on a file without the ratio field; the ratio ceiling then refuses the arc until
+        // it re-converges.
+        putArc(ctx.entities, key, &R::amb) =
+            makeRestoredLocalCarry(l.value_abs, l.var, l.last_seen_s, l.var_first);
+    }
+}
+
+// Records EQT and EQR: (station index, "sat_signal") -> the pin target / the retained edge,
+// written and restored wholesale.
+void eqtToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    for (const auto& [key, tgt] : arcAmbMap(ctx.entities.arcs, &R::eq34_prev_target))
+        snap.eq34_prev_target[key] = tgt;
+}
+void eqtFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignArcAmb(ctx.entities, &R::eq34_prev_target, snap.eq34_prev_target);
+}
+void eqrToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    for (const auto& key : arcAmbSet(ctx.entities.arcs, &R::eq34_retained_edge))
+        snap.eq34_retained_edges.insert(key);
+}
+void eqrFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignArcAmbFlags(ctx.entities, &R::eq34_retained_edge, snap.eq34_retained_edges);
+}
+
+std::size_t retainedRows(const NetworkEntities& e) { return present(e.arcs, &R::eq34_retained_edge); }
+
+}  // namespace
+
+const std::vector<FieldDecl> kArcFields = {
+    {"amb", "local_carry", Persist::Record, "L", "", &lToSnapshot, &lFromSnapshot,
+     &arcRows<&R::amb>},
+    {"gl_hold_amb", "gl_hold_amb", Persist::ColdStart, "", "", nullptr, nullptr,
+     &arcRows<&R::gl_hold_amb>},
+    {"eq34_prev_target", "eq34_prev_target", Persist::Record, "EQT", "", &eqtToSnapshot,
+     &eqtFromSnapshot, &arcRows<&R::eq34_prev_target>},
+    {"eq34_retained_edge", "eq34_retained_edges", Persist::Record, "EQR", "", &eqrToSnapshot,
+     &eqrFromSnapshot, &retainedRows},
+    {"anchor_arc_age", "anchor_arc_age", Persist::ColdStart, "", "", nullptr, nullptr,
+     &arcRows<&R::anchor_arc_age>},
+};
 
 const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"constellation", &kConstellationFields},
@@ -730,8 +1075,9 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "Z", "PA", "PT", "EQD", "EQP", "EQE",
-                                                  "CBP", "LB", "RC", "SD", "Y", "R", "A", "GG"};
+const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "L", "Z", "PA", "PT", "EQD", "EQP",
+                                                  "EQS", "EQT", "EQE", "EQR", "CBP", "CBS", "CBI", "LB",
+                                                  "RC", "SD", "QR", "Y", "R", "A", "I", "X", "SV", "GG"};
 
 // ===========================================================================
 // Record lookup

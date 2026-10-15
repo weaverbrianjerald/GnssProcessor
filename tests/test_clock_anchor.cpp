@@ -401,7 +401,7 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     EXPECT_EQ(ctx.counters.cta_resolves, 1);
     EXPECT_EQ(ctx.counters.cta_resolve_failed, 0);
     EXPECT_FALSE(ctx.carry.clk_anchor.sat.at("G03").anchored);       // decoupled
-    EXPECT_TRUE(ctx.carry.clk_anchor_disc_pending.count("G03") > 0);  // wire-marked
+    EXPECT_TRUE(net::hasSat(ctx.entities.sats, "G03", net::Disc::ClockAnchor));  // wire-marked
     EXPECT_EQ(ctx.counters.cta_marks, 1);
     // … and the emitted value follows the data, not the stale anchor.  Without
     // the re-solve the epoch would publish a clock pulled most of the 3 m toward

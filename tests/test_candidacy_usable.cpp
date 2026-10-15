@@ -159,7 +159,7 @@ AnchorCandidacyUsable armed(
         int min_age_ep,
         long long now_ep = 0,
         const std::set<std::pair<int, std::string>>* freed = nullptr,
-        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* lc =
+        const net::ArcTable* lc =
             nullptr,
         bool satellite_clause = false) {
     AnchorCandidacyUsable u;
@@ -508,13 +508,13 @@ TEST(CandidacyUsableElection, AYoungArcIsRefusedAndZeroDisablesTheTest) {
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
     ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
+    net::ArcTable lc;
     LocalCarry young{};
     young.birth_ep = 980;                       // 20 epochs old at now_ep 1000
-    lc[{1, kSat, kSig}] = young;
+    net::putArcIn(lc, {1, kSat, kSig}, &net::ArcState::amb) = young;
     LocalCarry mature{};
     mature.birth_ep = 100;                      // 900 epochs old
-    lc[{2, kSat, kSig}] = mature;
+    net::putArcIn(lc, {2, kSat, kSig}, &net::ArcState::amb) = mature;
 
     const Outcome young_refused = elect(r, incumbency("AAAA"), ledger,
                                         armed(60, 1000, nullptr, &lc), true);
@@ -537,10 +537,10 @@ TEST(CandidacyUsableElection, AnUnknownArcAgeReadsAsMature) {
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{1, ambKey()}] = {7.0, 1e-6, 1e-3};
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
+    net::ArcTable lc;
     LocalCarry restored{};
     restored.birth_ep = 0;                      // unstamped
-    lc[{1, kSat, kSig}] = restored;
+    net::putArcIn(lc, {1, kSat, kSig}, &net::ArcState::amb) = restored;
 
     const Outcome o = elect(r, incumbency("AAAA"), ledger,
                             armed(60, 1000, nullptr, &lc), true);

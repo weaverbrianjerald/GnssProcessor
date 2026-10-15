@@ -384,7 +384,7 @@ public:
      * already stores verbatim.  @ref restoreCarry consumes it and replaces the current
      * carry, round-tripping every field exactly (fmt shortest form ⇄ strtod is lossless).
      * The caller must also restore the ArcKey vertex numbering the blob references
-     * (@c ctx.carry.carry_sat_vertex and @c carry_group_id); otherwise the reconstructed
+     * (@c net::SatelliteState::carry_vertex and @c carry_group_id); otherwise the reconstructed
      * chords point at the wrong satellites or groups next epoch.  Those maps are ctx
      * state, not driver state.
      *
