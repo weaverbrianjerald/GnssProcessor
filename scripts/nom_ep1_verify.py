@@ -1057,8 +1057,10 @@ class Verifier:
             k = sum(1 for c in fz.calls if c.name == r.name)
             if k != r.sites:
                 R.fail("V8", f"row {r.name}: the frozen lambda calls it {k} times, the row says {r.sites}")
+        # Each entry spelled as the base spells its names (RENAMED), as bind_base binds it, so
+        # a re-spelled entry whose object the base has is not listed as gone.
         gone = [f"{d.cls} {d.name}" for d in declared.DECLARED
-                if any(not hits for _, hits in d.locate(fz))]
+                if any(not hits for _, hits in declared._respell(d, fz.fit.respelled).locate(fz))]
         R.note("V8", f"{len(fz.calls)} frozen calls: {n_rows} by rows, {n_nc} by declared "
                      "non-conversions" + (f"; declared entries with no object at this base: "
                                           f"{', '.join(gone)}" if gone else ""))
