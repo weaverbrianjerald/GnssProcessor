@@ -155,6 +155,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 class GnssConfig;
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
@@ -504,11 +506,12 @@ enum class GrossLosPhase {
  * @param log      "main_log".
  * @param stations [in/out] @c sm->markAmbiguityPendingReseed on a declaration.
  * @param asm_res  Per-station assembly: the ambiguity pool the response walks.
+ * @param events The epoch's events; reads the gross group's decisions, writes its releases.
  */
 void networkGrossLosAct(NetworkRunContext& ctx,
                         const std::shared_ptr<spdlog::logger>& log,
                         std::vector<NetStation>& stations,
-                        const std::vector<StationAssembly>& asm_res);
+                        const std::vector<StationAssembly>& asm_res, EpochEvents& events);
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
@@ -564,9 +567,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p est_index_of = ep.assembly.est_index_of: Station → reduced-system index (< 0 = absent
  *     from the solve).
  *   - @p now_s = ep.clock.pl_now_s: Continuous seconds (week·604800 + TOW) for the gap edge.
+ * @param events The epoch's events; written: gross.
  */
 void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep,
-                           GrossLosPhase phase = GrossLosPhase::Full);
+                           GrossLosPhase phase, EpochEvents& events);
 
 /**
  * @brief Republish each station's code-row σ scale from the declared set.

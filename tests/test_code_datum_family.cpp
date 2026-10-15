@@ -77,6 +77,7 @@
 #include <vector>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "app/NetworkSetupResult.hpp"
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
@@ -367,6 +368,7 @@ struct EmitHarness {
     std::unique_ptr<NetworkTestRun> fx;   ///< The run networkSolPrep's epoch form takes.
     NetworkRunContext*  ctx;              ///< fx->ctx()
     NetworkRunTraces*   traces;           ///< fx->traces(), opened in trace_dir
+    EpochEvents         ev;               ///< The events the seam reads (copied into the epoch).
     NetworkSetupResult& setup;            ///< fx->setup()
     NetworkEstimator&   est;              ///< fx->est()
     Eigen::VectorXd     x_s;
@@ -407,7 +409,8 @@ struct EmitHarness {
         e.solve.x_s = x_s;
         e.solve.plan = plan;
         e.clock.pl_now_s = 1000.0;
-        return networkSolPrep(fx->run(), e);
+        e.events = ev;
+        return networkSolPrep(fx->run(), e, e.events);
     }
 
     /// Destroy the traces unit (flush + close) and return the events CSV body.
@@ -424,8 +427,8 @@ struct EmitHarness {
     void change(const std::string& sat, const Pair& emitted, const Pair& from, const Pair& to,
                 PinOut o = PinOut::Continued) {
         net::putSat(ctx->entities, sat, &net::SatelliteState::last_if_pin_sel) = emitted;
-        ctx->carry.this_epoch_if_pin_sel[sat] = to;
-        ctx->carry.this_epoch_if_pin_changes[sat] = NetworkSbasis::PinPairChange{from, to, o};
+        ev.code_datum.this_epoch_if_pin_sel[sat] = to;
+        ev.code_datum.this_epoch_if_pin_changes[sat] = NetworkSbasis::PinPairChange{from, to, o};
     }
 };
 
@@ -1299,6 +1302,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsOnceAndDeclaresRowSwitches) {
     GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, logman, "kept"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents epoch_events;
     std::vector<Event> events;
     const auto sink = [&](const char* tier, const char* event, const std::string& sat,
                           const std::string&, std::optional<double>, std::optional<double>,
@@ -1308,18 +1312,18 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsOnceAndDeclaresRowSwitches) {
     const SignalId e1x = *SignalId::fromObsCode(System::Galileo, "C1X");
     const SignalId e5x = *SignalId::fromObsCode(System::Galileo, "C5X");
 
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);   // empty: nothing
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);   // empty: nothing
     EXPECT_TRUE(events.empty());
     EXPECT_EQ(ctx.counters.n_cb_family_epochs, 0u);
 
-    ctx.carry.this_epoch_if_pin_changes = {
+    epoch_events.code_datum.this_epoch_if_pin_changes = {
         {"E11", {{"C1C", "C5Q"}, {"C1C", "C5X"}, PinOut::Continued}},
         {"E12", {{"C1C", "C5X"}, {"C1C", "C5Q"}, PinOut::Reseeded}},
         {"E13", {{"C1C", "C5Q"}, {"C1X", "C5X"}, PinOut::LevelReseeded}}};
-    ctx.carry.this_epoch_cb_family_rows = {
+    epoch_events.code_datum.this_epoch_cb_family_rows = {
         {"E|C1X", {e1x, "C1C", Outcome::FamilyVeteran, 0}},
         {"E|C5X", {e5x, "C5Q", Outcome::NoCommon, 0}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     const auto& pc = ctx.counters.cb_pair_by_const.at(System::Galileo);
     EXPECT_EQ(pc.continued, 1);
     EXPECT_EQ(pc.reseeded, 1);
@@ -1336,11 +1340,11 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsOnceAndDeclaresRowSwitches) {
 
     // Band 1 falls back to the sum-to-zero row, then returns to the family row.
     events.clear();
-    ctx.carry.this_epoch_if_pin_changes.clear();
-    ctx.carry.this_epoch_cb_family_rows = {{"E|C1X", {e1x, "C1C", Outcome::Bridged, 0}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
-    ctx.carry.this_epoch_cb_family_rows = {{"E|C1X", {e1x, "C1C", Outcome::FamilyVeteran, 0}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_if_pin_changes.clear();
+    epoch_events.code_datum.this_epoch_cb_family_rows = {{"E|C1X", {e1x, "C1C", Outcome::Bridged, 0}}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
+    epoch_events.code_datum.this_epoch_cb_family_rows = {{"E|C1X", {e1x, "C1C", Outcome::FamilyVeteran, 0}}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     ASSERT_EQ(events.size(), 2u);
     EXPECT_EQ(events[0].tier, "CB_DATUM");
     EXPECT_EQ(events[0].event, "family_row");
@@ -1362,6 +1366,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, logman, "kept_hold"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents epoch_events;
     std::vector<Event> events;
     const auto sink = [&](const char* tier, const char* event, const std::string& sat,
                           const std::string&, std::optional<double>, std::optional<double>,
@@ -1372,9 +1377,9 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     const Hold h11{{"C1C", "C5Q"}, {"C1C", "C5X"}};
     const Hold h12{{"C1C", "C5Q"}, {"C1X", "C5X"}, /*reseeded=*/true};
 
-    ctx.carry.this_epoch_if_pin_holds = {{"E11", h11}, {"E12", h12}};
-    ctx.carry.this_epoch_cb_ifpin = {{"E11", h11.held}, {"E12", h12.held}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_if_pin_holds = {{"E11", h11}, {"E12", h12}};
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E11", h11.held}, {"E12", h12.held}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     ASSERT_EQ(events.size(), 2u);
     EXPECT_EQ(events[0].tier, "CLK_BASIS");
     EXPECT_EQ(events[0].event, "held");
@@ -1385,7 +1390,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     EXPECT_EQ(events[1].detail,
               "selected C1C+C5Q vs held C1X+C5X; marked by a channel-level re-seed");
 
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);   // the same holds: counted, not declared
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);   // the same holds: counted, not declared
     EXPECT_EQ(events.size(), 2u);
     const NetworkSbasis::CodeDatumPairCounts& c =
         ctx.counters.cb_pair_by_const.at(System::Galileo);
@@ -1400,11 +1405,11 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     // signals leave (the selection names its held pair again).  The release is also the
     // continued change's own event.
     events.clear();
-    ctx.carry.this_epoch_if_pin_holds.clear();
-    ctx.carry.this_epoch_cb_ifpin = {{"E11", {"C1C", "C5Q"}}, {"E12", h12.held}};
-    ctx.carry.this_epoch_if_pin_changes = {
+    epoch_events.code_datum.this_epoch_if_pin_holds.clear();
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E11", {"C1C", "C5Q"}}, {"E12", h12.held}};
+    epoch_events.code_datum.this_epoch_if_pin_changes = {
         {"E11", {h11.held, {"C1C", "C5Q"}, PinOut::Continued}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     ASSERT_EQ(events.size(), 3u);
     EXPECT_EQ(events[0].action, "hold_end");
     EXPECT_EQ(events[0].detail,
@@ -1418,15 +1423,15 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
 
     // A hold that ends with the satellite unpinned, and one that ends at a re-seeded change.
     events.clear();
-    ctx.carry.this_epoch_if_pin_changes.clear();
-    ctx.carry.this_epoch_if_pin_holds = {{"E13", h11}, {"E14", h11}};
-    ctx.carry.this_epoch_cb_ifpin = {{"E13", h11.held}, {"E14", h11.held}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
-    ctx.carry.this_epoch_if_pin_holds.clear();
-    ctx.carry.this_epoch_cb_ifpin = {{"E14", {"C1C", "C5Q"}}};
-    ctx.carry.this_epoch_if_pin_changes = {
+    epoch_events.code_datum.this_epoch_if_pin_changes.clear();
+    epoch_events.code_datum.this_epoch_if_pin_holds = {{"E13", h11}, {"E14", h11}};
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E13", h11.held}, {"E14", h11.held}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
+    epoch_events.code_datum.this_epoch_if_pin_holds.clear();
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E14", {"C1C", "C5Q"}}};
+    epoch_events.code_datum.this_epoch_if_pin_changes = {
         {"E14", {h11.held, {"C1C", "C5Q"}, PinOut::Reseeded}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     ASSERT_EQ(events.size(), 4u);
     EXPECT_EQ(events[0].action, "hold_begin");
     EXPECT_EQ(events[2].detail, "selected C1C+C5Q vs held C1C+C5X; not pinned now");
@@ -1437,13 +1442,13 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     EXPECT_EQ(c.hold_refused_gd, 0);
 
     // A re-seeded change whose hold the group-delay test refused is counted as such.
-    ctx.carry.this_epoch_cb_ifpin.clear();
-    ctx.carry.this_epoch_if_pin_changes = {
+    epoch_events.code_datum.this_epoch_cb_ifpin.clear();
+    epoch_events.code_datum.this_epoch_if_pin_changes = {
         {"E15", {{"C1C", "C7Q"}, {"C1C", "C5Q"}, PinOut::Reseeded, /*hold_refused_gd=*/true}}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     EXPECT_EQ(c.reseeded, 2);
     EXPECT_EQ(c.hold_refused_gd, 1);
-    ctx.carry.this_epoch_if_pin_changes.clear();
+    epoch_events.code_datum.this_epoch_if_pin_changes.clear();
 
     // The first kept epoch after a warm resume: the hold baseline was not restored, so a
     // hold found there is declared "hold_resumed" and not counted as begun; the latch is
@@ -1451,13 +1456,13 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     events.clear();
     const int begun_before = c.hold_begun;
     ctx.carry.resume.if_pin_holds = true;
-    ctx.carry.this_epoch_if_pin_holds = {{"E11", h11}};
-    ctx.carry.this_epoch_cb_ifpin = {{"E11", h11.held}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_if_pin_holds = {{"E11", h11}};
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E11", h11.held}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     EXPECT_FALSE(ctx.carry.resume.if_pin_holds);
-    ctx.carry.this_epoch_if_pin_holds = {{"E11", h11}, {"E16", h11}};
-    ctx.carry.this_epoch_cb_ifpin = {{"E11", h11.held}, {"E16", h11.held}};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_if_pin_holds = {{"E11", h11}, {"E16", h11}};
+    epoch_events.code_datum.this_epoch_cb_ifpin = {{"E11", h11.held}, {"E16", h11.held}};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     ASSERT_EQ(events.size(), 2u);
     EXPECT_EQ(events[0].sat, "E11");
     EXPECT_EQ(events[0].action, "hold_resumed");
@@ -1534,9 +1539,9 @@ TEST(CodeDatumFamilyTest, EmitSiteDeclaresNoReselectionForAHeldPair) {
     EmitHarness h("held");
     const Pair held{"C1W", "C2W"};
     net::putSat(h.ctx->entities, "G02", &net::SatelliteState::last_if_pin_sel) = held;
-    h.ctx->carry.this_epoch_if_pin_sel["G02"]   = held;
-    h.ctx->carry.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{{"C1C", "C2W"}, held};
-    h.ctx->carry.this_epoch_cb_ifpin["G02"]     = held;
+    h.ev.code_datum.this_epoch_if_pin_sel["G02"]   = held;
+    h.ev.code_datum.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{{"C1C", "C2W"}, held};
+    h.ev.code_datum.this_epoch_cb_ifpin["G02"]     = held;
 
     const NetworkSolPrepResult r = h.run();
 
@@ -1561,21 +1566,21 @@ TEST(CodeDatumFamilyTest, EmitSiteAttributesADroppedCbpinToAHold) {
     const Pair sel{"C1C", "C2W"};
     {
         EmitHarness h("split_held");
-        h.ctx->carry.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{sel, held};
-        h.ctx->carry.this_epoch_if_pin_real = {{"G02", held}, {"G03", sel}};
+        h.ev.code_datum.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{sel, held};
+        h.ev.code_datum.this_epoch_if_pin_real = {{"G02", held}, {"G03", sel}};
         h.run();
         EXPECT_EQ(h.ctx->counters.cb_pair_by_const.at(System::GPS).hold_split_decl, 1);
     }
     {
         EmitHarness h("split_plain");
-        h.ctx->carry.this_epoch_if_pin_real = {{"G02", held}, {"G03", sel}};
+        h.ev.code_datum.this_epoch_if_pin_real = {{"G02", held}, {"G03", sel}};
         h.run();
         EXPECT_EQ(h.ctx->counters.cb_pair_by_const.count(System::GPS), 0u);
     }
     {
         EmitHarness h("unanimous_held");
-        h.ctx->carry.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{sel, held};
-        h.ctx->carry.this_epoch_if_pin_real = {{"G02", held}, {"G03", held}};
+        h.ev.code_datum.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{sel, held};
+        h.ev.code_datum.this_epoch_if_pin_real = {{"G02", held}, {"G03", held}};
         h.run();
         EXPECT_EQ(h.ctx->counters.cb_pair_by_const.at(System::GPS).hold_split_decl, 0);
     }
@@ -1611,6 +1616,8 @@ TEST(CodeDatumFamilyTest, RunEndReadoutSaysInertOrCounts) {
         LogManager log; GnssConfig cfg;
         ASSERT_TRUE(loadWith("", cfg, log, "re_off"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EpochEvents epoch_events;
+    EpochEvents events;
         std::ostringstream oss;
         auto lg = captureLogger(oss);
         networkCodeDatumFamilyRunEnd(ctx, cfg, lg);
@@ -1623,6 +1630,8 @@ TEST(CodeDatumFamilyTest, RunEndReadoutSaysInertOrCounts) {
                              "    \"code_datum_pair_continuity\": true,\n",
                              cfg, log, "re_inert"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EpochEvents epoch_events;
+    EpochEvents events;
         std::ostringstream oss;
         auto lg = captureLogger(oss);
         networkCodeDatumFamilyRunEnd(ctx, cfg, lg);
@@ -1639,6 +1648,8 @@ TEST(CodeDatumFamilyTest, RunEndReadoutSaysInertOrCounts) {
                                    "    \"sat_gf_datum\": \"zero\",\n",
                              cfg, log, "re_absgf"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EpochEvents epoch_events;
+    EpochEvents events;
         std::ostringstream oss;
         auto lg = captureLogger(oss);
         networkCodeDatumFamilyRunEnd(ctx, cfg, lg);
@@ -1651,6 +1662,8 @@ TEST(CodeDatumFamilyTest, RunEndReadoutSaysInertOrCounts) {
         LogManager log; GnssConfig cfg;
         ASSERT_TRUE(loadWith(kArmedEffective, cfg, log, "re_on"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EpochEvents epoch_events;
+    EpochEvents events;
         ctx.counters.cb_pair_by_const[System::Galileo] = {17, 3, 1, 40, 2, 1, 5, 0, 4, 6};
         ctx.counters.n_if_pin_continued_undeclared = 15;
         ctx.counters.n_cb_family_epochs = 720;
@@ -1966,6 +1979,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsAndDeclaresBirthPriors) {
     GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, logman, "kept_birth"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents epoch_events;
     struct Row {
         std::string tier, event, sat, action, detail;
         std::optional<double> stat, thr;
@@ -1984,8 +1998,8 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsAndDeclaresBirthPriors) {
     a.seen_before = true;
     NetworkSbasis::FamilyBirthPrior b = a;
     b.sat = "E07"; b.born = Side::Both; b.mu_m = 0.0; b.n_veterans = 0; b.seen_before = false;
-    ctx.carry.this_epoch_cb_family_births = {a, b};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_cb_family_births = {a, b};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
 
     const auto& c = ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'});
     EXPECT_EQ(c.rows, 2);
@@ -2013,8 +2027,8 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsAndDeclaresBirthPriors) {
 
     // A kept epoch without prior rows adds nothing.
     events.clear();
-    ctx.carry.this_epoch_cb_family_births.clear();
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_cb_family_births.clear();
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
     EXPECT_TRUE(events.empty());
     EXPECT_EQ(ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'}).rows, 2);
 }
@@ -2066,6 +2080,8 @@ TEST(CodeDatumFamilyTest, RunEndReadsTheBirthPrior) {
         LogManager log; GnssConfig cfg;
         EXPECT_TRUE(loadWith(extra, cfg, log, tag));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+        EpochEvents epoch_events;
+    EpochEvents events;
         if (fill) fill(ctx);
         std::ostringstream oss;
         auto lg = captureLogger(oss);
@@ -2310,6 +2326,7 @@ TEST(CodeDatumFamilyTest, CodeBiasCarryMapReadsTheFoldDecisions) {
     GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, logman, "carry_map"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents epoch_events;
     const auto entry = [](SharedParamKind kind, const std::string& sat, const std::string& sig,
                           CarryDisposition d) {
         CarryPrior cp;
@@ -2385,7 +2402,7 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
         ctx.carry.readmit_now_s = TimeUtils::continuousGpsSeconds(at(tow));
         networkStashCarry(ctx, cfg, *traces, at(tow), est, x, plan, nullptr, nullptr, refloat,
                           /*registered_clock_sats=*/{}, /*shared_phase_keys=*/{}, keys,
-                          nullLogger());
+                          EpochEvents{}, nullLogger());
     };
     // The builder at this epoch, from the context's maps and (optionally) the carry.
     const auto build = [&](const NetworkEstimator& est, const std::vector<Pair>& keys,
@@ -2531,6 +2548,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsBirthSkipsAndDeclaresNoReference) {
     GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, logman, "kept_skip"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents epoch_events;
     std::vector<Event> events;
     const auto sink = [&](const char* tier, const char* event, const std::string& sat,
                           const std::string&, std::optional<double>, std::optional<double>,
@@ -2547,13 +2565,13 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsBirthSkipsAndDeclaresNoReference) {
     NetworkSbasis::FamilyBirthSkipRecord noref = seeded;
     noref.sat = "E05"; noref.why = Skip::NoReference; noref.side = Side::Secondary;
     noref.outcome = Outcome::Bridged;
-    ctx.carry.this_epoch_cb_family_birth_skips = {seeded, carried, noref};
+    epoch_events.code_datum.this_epoch_cb_family_birth_skips = {seeded, carried, noref};
     NetworkSbasis::FamilyBirthPrior loose;
     loose.sat = "E06"; loose.channel = e1x; loose.x_signal = "C1X"; loose.partner = "C1C";
     loose.born = Side::Both; loose.loosened = true; loose.mu_m = 0.02; loose.n_veterans = 3;
     loose.sigma_m = 0.1; loose.seen_before = true;
-    ctx.carry.this_epoch_cb_family_births = {loose};
-    networkCodeDatumFamilyKeptEpoch(ctx, sink);
+    epoch_events.code_datum.this_epoch_cb_family_births = {loose};
+    networkCodeDatumFamilyKeptEpoch(ctx, sink, epoch_events);
 
     const auto& c = ctx.counters.cb_family_birth_by_band.at({System::Galileo, '1'});
     EXPECT_EQ(c.rows, 1);

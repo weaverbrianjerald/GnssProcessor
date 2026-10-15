@@ -56,6 +56,7 @@
 #include <vector>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
@@ -1158,7 +1159,7 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
     // test, and an unarmed run allocates nothing beyond the empty vectors.
     NetworkCarryState carry;
     EXPECT_FALSE(carry.bb.enabled());
-    EXPECT_TRUE(carry.bb_hits.empty());
+    EXPECT_TRUE(EpochEvents{}.census.bb_hits.empty());
     EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::bb_event_last), 0u);  // N4e2
     // ...and it accepts nothing, so a mis-wired feed site cannot populate a
     // ladder that was not requested.

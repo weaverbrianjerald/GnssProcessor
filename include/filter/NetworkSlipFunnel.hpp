@@ -52,6 +52,7 @@ namespace GnssProcessor {
 
 struct NetworkRun;
 struct NetworkEpoch;
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /// The slip funnel (card C3c).  See the file comment for its producers, readers and invariants.
 struct NetworkSlipFunnel {
@@ -71,8 +72,9 @@ struct NetworkSlipFunnel {
  *               flat sets.
  * @param ep     The epoch (not read; the epoch form).
  * @param funnel The funnel (written: carry_slipped_ambs).
+ * @param events The epoch's events; written: slip (carry_innov_flat_now).
  */
-void networkSlipFunnelOpen(NetworkRun& run, const NetworkEpoch& ep, NetworkSlipFunnel& funnel);
+void networkSlipFunnelOpen(NetworkRun& run, const NetworkEpoch& ep, NetworkSlipFunnel& funnel, EpochEvents& events);
 
 /**
  * @brief Folds the raw subset into the funnel, after PASS A's slip scans.

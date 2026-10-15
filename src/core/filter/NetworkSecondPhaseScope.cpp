@@ -91,6 +91,7 @@ void networkSecondPhaseEpochTail(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunContext& ctx = run.ctx;
     const GnssConfig& config_ = run.config;
     const std::vector<NetStation>& stations = run.setup.stations;
+    const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
     // --- alias preamble (the seam contract) -------------------------------------
     if (!config_.networkSecondPhaseRowsActive()) return;   // unarmed: one flag test
@@ -101,7 +102,7 @@ void networkSecondPhaseEpochTail(NetworkRun& run, const NetworkEpoch& ep) {
     //     next epoch's slip scan, so here it holds this epoch's causes from every
     //     tier, the post-solve RAIM ones included.  A second-phase arc is one whose
     //     (satellite, signal) cell is open at that station this epoch.
-    for (const auto& [key, bits] : ctx.carry.relevel.free_cause) {
+    for (const auto& [key, bits] : relevel_ev.free_cause) {
         const int sta = key.first;
         if (sta < 0 || sta >= static_cast<int>(stations.size())) continue;
         const auto parts = StateKeys::parseAmbiguityKey(key.second);

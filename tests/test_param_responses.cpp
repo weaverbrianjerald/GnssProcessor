@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarrySites.hpp"
 #include "filter/NetworkParamRegistry.hpp"
@@ -335,7 +336,8 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     GnssConfig cfg;
     ASSERT_TRUE(loadGolden("sim", cfg));
     auto ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
-    auto& lat = ctx->carry.relevel;
+    EpochEvents events;
+    auto& lat = events.slip.relevel;
     const std::string a = StateKeys::makeAmbiguityKey("G05", "L1C");
     const std::string b = StateKeys::makeAmbiguityKey("G07", "L2W");
     const std::string c = StateKeys::makeAmbiguityKey("G09", "L1C");
@@ -344,7 +346,7 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     lat.free_cause[{1, b}] = RelevelEpochState::kCauseGap;
     net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
     net::putArc(ctx->entities, std::make_tuple(2, std::string("G09"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
-    networkResponseLatchTally(*ctx);
+    networkResponseLatchTally(*ctx, events);
     const auto& C = ctx->counters;
     EXPECT_EQ(C.prm_latch_epochs, 1);
     EXPECT_EQ(C.prm_latch_unique, 3);
@@ -360,7 +362,7 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     EXPECT_STREQ(latchCauseName(6), "gap_reentry");
     // An empty latch is not an epoch of the tally.
     lat.free_ambs.clear();
-    networkResponseLatchTally(*ctx);
+    networkResponseLatchTally(*ctx, events);
     EXPECT_EQ(C.prm_latch_epochs, 1);
 }
 

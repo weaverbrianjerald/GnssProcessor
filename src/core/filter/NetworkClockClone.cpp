@@ -5,6 +5,7 @@
  */
 
 #include "filter/NetworkClockClone.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"
 #include "common/GnssIdentity.hpp"            // letterOfSat, systemOfSat
@@ -22,7 +23,7 @@
 namespace GnssProcessor {
 
 void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
-                               const std::vector<std::string>& registered_clock_sats) {
+                               const std::vector<std::string>& registered_clock_sats, const EpochEvents& events) {
     if (!ctx.knobs.carry_cpl_clone) return;
     ClockCloneEpoch& E = ctx.carry.ccl;
     E.clear();
@@ -61,7 +62,7 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
                 if (!want && ctx.knobs.carry_cpl_dclone) {
                     const bool pb = cp.kind == SharedParamKind::PhaseBias;
                     want = !carryColumnPresent(est, cp) || cp.t_park_s > 0.0
-                        || (pb && (ctx.carry.eq34_reref.count({cp.sat, cp.signal})
+                        || (pb && (events.phase_datum.eq34_reref.count({cp.sat, cp.signal})
                                    || ctx.carry.phase_anchor_reref.count({cp.sat, cp.signal})));
                 }
             }
@@ -370,7 +371,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 const std::vector<char>& dinflate,
                                 const std::vector<char>& dreexp,
                                 const Eigen::MatrixXd& cov_eff, bool within_epoch_armed,
-                                std::map<std::string, double>* clk_prior_info) {
+                                std::map<std::string, double>* clk_prior_info, const EpochEvents& events) {
     if (!ctx.knobs.carry_cpl_clone) return false;
     ClockCloneEpoch& E = ctx.carry.ccl;
     if (!E.rows_on || (E.active.empty() && E.xactive.empty() && E.xdep.empty())) return false;
@@ -415,13 +416,13 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
     // constellation's clocks fold on their own columns, as before (counted).
     const CouplingExactEpoch& xe = ctx.carry.cxu_epoch;
     struct DenseHo {
-        const NetworkCarryState::StsDense* rec{nullptr};
+        const EpochEvents::Handover::StsDense* rec{nullptr};
         bool        ok{false};
         std::size_t a_q{0};   // the incoming pivot's dense key
     };
     std::map<char, DenseHo> dho;
-    for (const auto& [cc, rec] : ctx.carry.sts_dense) {
-        if (!ctx.carry.sts_consts.count(cc)) continue;
+    for (const auto& [cc, rec] : events.handover.sts_dense) {
+        if (!events.handover.sts_consts.count(cc)) continue;
         DenseHo h;
         h.rec = &rec;
         const auto aq = E.active.find(rec.q);
@@ -467,8 +468,8 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         // carry the rows conditioned on: the clock folds on its own column, the clone free.
         // Card SCL B2: a dense re-expression is the exception, when nothing else moved the
         // entry between the decision and the transform.
-        const bool sts = !ctx.carry.sts_consts.empty() && !k.sat.empty()
-                      && ctx.carry.sts_consts.count(letterOfSat(k.sat)) > 0;
+        const bool sts = !events.handover.sts_consts.empty() && !k.sat.empty()
+                      && events.handover.sts_consts.count(letterOfSat(k.sat)) > 0;
         const DenseHo* dh = sts ? denseOf(k.sat) : nullptr;
         const bool dense_ok = dh && dh->ok && dh->rec->clean.count(k.sat) > 0;
         if (dinflate[a] || (dreexp[a] && !dense_ok) || (sts && !dense_ok)
@@ -583,8 +584,8 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
         const NetworkEstimator::SharedPrior& kb = dkeys[b];
         if (kb.kind != SharedParamKind::Clock || kb.clone || kb.sat.empty()) return -1;
         const char cons = letterOfSat(kb.sat);   // the dense kernel's key
-        const auto it = ctx.carry.sts_dense.find(cons);
-        if (it == ctx.carry.sts_dense.end() || !ctx.carry.sts_consts.count(cons))
+        const auto it = events.handover.sts_dense.find(cons);
+        if (it == events.handover.sts_dense.end() || !events.handover.sts_consts.count(cons))
             return -1;
         return static_cast<Eigen::Index>(it->second.iq);
     };

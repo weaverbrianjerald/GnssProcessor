@@ -30,6 +30,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "app/NetworkSetupResult.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -102,6 +103,7 @@ struct Harness {
     std::unique_ptr<NetworkTestRun> fx;   ///< The run networkSolPrep's epoch form takes.
     NetworkRunContext*  ctx;              ///< fx->ctx()
     NetworkRunTraces*   traces;           ///< fx->traces(), opened in trace_dir
+    EpochEvents         ev;               ///< The events the seam reads (copied into the epoch).
     NetworkSetupResult& setup;            ///< fx->setup()
     NetworkEstimator&   est;              ///< fx->est()
     Eigen::VectorXd    x_s;
@@ -149,7 +151,8 @@ struct Harness {
         e.solve.x_s = x_s;
         e.solve.plan = plan;
         e.clock.pl_now_s = 1000.0;
-        return networkSolPrep(fx->run(), e);
+        e.events = ev;
+        return networkSolPrep(fx->run(), e, e.events);
     }
 
     /// Destroy the traces unit (flush + close) and return the events CSV body.
@@ -235,7 +238,7 @@ TEST(NetworkSolPrepDiscTest, IfPinReselectMarkLandsInRRecordAndReplays) {
     // counter (datum-change components only, no magnitude jump test) is
     // signalled by this mark alone, so the mark has to reach the R record.
     net::putSat(h.ctx->entities, "G02", &net::SatelliteState::last_if_pin_sel) = {"C1W", "C2W"};
-    h.ctx->carry.this_epoch_if_pin_sel["G02"] = {"C1W", "C5Q"};
+    h.ev.code_datum.this_epoch_if_pin_sel["G02"] = {"C1W", "C5Q"};
 
     const NetworkSolPrepResult r = h.run();
 
@@ -275,7 +278,7 @@ TEST(NetworkSolPrepDiscTest, SameSatInFourQueuesStepsCountersOnce) {
     net::assignSatFlags(h.ctx->entities, net::Disc::EphCutover, {"G01"});
     net::assignSatFlags(h.ctx->entities, net::Disc::CbExcursion, {"G01"});
     net::putSat(h.ctx->entities, "G01", &net::SatelliteState::last_if_pin_sel) = {"C1W", "C2W"};
-    h.ctx->carry.this_epoch_if_pin_sel["G01"] = {"C1W", "C5Q"};
+    h.ev.code_datum.this_epoch_if_pin_sel["G01"] = {"C1W", "C5Q"};
     net::assignSatFlags(h.ctx->entities, net::Disc::CbReseed, {"G01"});
 
     const NetworkSolPrepResult r = h.run();

@@ -6,6 +6,7 @@
 # Step N4f1 (the step column read N4f) re-placed four of the Arc rows whose old key keeps a string no ArcId reproduces (O4) onto the owner of its typed prefix (override): amb_flag_ep ((station, ambiguity key)), adm_arc ((station, "<sat>|<band>")) and adm_event_last ("event|station|sat|band", the station by name) to Station; relevel_pend ((station, sat, "sig1_sig2")) to Los.
 # Step N4g re-placed three telemetry rows by their readers (override): wh_era_len and wh_last_loop_ep (the withhold era's length and freshness: era_live drives wh_escalated, a RAIM decision) and snap_path (a run constant that gates the warm resume and the writer) stay in NetworkCarryState as run state; the other 82 telemetry rows moved to NetworkServiceCounters (D6). It added bb (the Block-Baarda run accumulator, a NetworkCarryState member the survey's parser missed: run.state ColdStart).
 # Decision D9 (step N4g): iono_carry (LosState::iono) and gl_hold_iono stay declared. The code proves both empty on every run (the only writer of each is the other, and both start empty), but deleting them retires the carry sites iono_coupling and hold_iono_coupling, rows of the run-end site table and the manifest param_sites record: an output move, left to a step that may move output.
+# Step N5a placed the N5a rows: 68 moved to EpochEvents (Epoch; rhs_trip_pending, read only within its epoch, re-placed from Latch); 22 stay in the run: EngineEpoch (cxu_epoch, ccl, shx, the post-fit sigma0 six, ep_h_sigma0_census), Pending (clm_seam_q, phase_anchor_reref, sts_carry_pivot, refsat_mark_sats, amb_state_rows, this_epoch_isc_obs, this_epoch_isc_pinned), ColdStart (pb_hold_coupled_step_m, pb_hold_frz_step_abs_m), Latch (the three latches).
 hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_access	files_carry_bind	write_like_sites	snap_writer	snap_reader	confidence	top_files
 1015	prev_carry	std::vector<CarryPrior>	vector	CarryPrior	run.state	cross-epoch	Record:D	N4g	27	25	46	1	1	auto	test_carry_sites:30 test_handover_stransform:24 test_handover_stransform_dense:19 NClockClone:5
 1019	nbp_prev_iode	std::map<std::string, int>	map	std::string	Satellite	cross-epoch	ColdStart	N4e2	1	1	0	0	0	auto	NBrdcWire:1
@@ -18,13 +19,13 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1050	cxu_stash_valid	bool	scalar		run.state	cross-epoch	ResumeSeeded	N4g	9	9	6	0	1	auto	test_network_shared_history:2 NBorderPrior:1 NBorderStash:1 NWarmResume:1
 1051	cxu_pivot	std::map<char, std::pair<std::string, double>>	map	char	Constellation	cross-epoch	ResumeSeeded	N4b	10	9	12	0	1	override	NPbHoldClone:4 test_carry_sites:3 test_handover_stransform:3 NBorderStash:2
 1055	pfq_pivot	std::map<char, std::string>	map	char	Constellation	cross-epoch	ResumeSeeded	N4b	4	4	4	0	1	override	NCarryDisposition:4 NBorderStash:2 NWarmResume:2 NCarryDisposition.hpp:1
-1056	cxu_epoch	CouplingExactEpoch	aggregate		run.state	per-epoch	Epoch	N5a	6	6	0	0	0	auto	NBorderPrior:5 NClockClone:2 test_handover_stransform_dense:2 NPbHoldClone:1
-1057	ccl	ClockCloneEpoch	aggregate		run.state	per-epoch	Epoch	N5a	11	10	0	0	0	auto	NClockClone:24 test_network_clock_clone:9 test_network_shared_history:7 NPbHoldClone:6
-1058	shx	SharedHistoryState	aggregate		run.state	per-epoch	Epoch	N5a	8	6	6	0	0	auto	test_network_shared_history:68 NSharedHistory:15 NPbHoldClone:10 ApplicationNAssembly:3
+1056	cxu_epoch	CouplingExactEpoch	aggregate		run.state	per-epoch	EngineEpoch	N5a	6	6	0	0	0	auto	NBorderPrior:5 NClockClone:2 test_handover_stransform_dense:2 NPbHoldClone:1
+1057	ccl	ClockCloneEpoch	aggregate		run.state	per-epoch	EngineEpoch	N5a	11	10	0	0	0	auto	NClockClone:24 test_network_clock_clone:9 test_network_shared_history:7 NPbHoldClone:6
+1058	shx	SharedHistoryState	aggregate		run.state	per-epoch	EngineEpoch	N5a	8	6	6	0	0	auto	test_network_shared_history:68 NSharedHistory:15 NPbHoldClone:10 ApplicationNAssembly:3
 1059	clm_info	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	1	1	1	0	0	auto	NClockLevel:3
 1060	clm_n	std::map<std::string, int>	map	std::string	Satellite	cross-epoch	Record:LB	N4e1	3	3	4	1	1	auto	NClockLevel:4 NStateSnapshotWrite:2 NWarmResume:1
 1061	clm_info_c	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	Record:LB	N4e1	3	3	2	0	1	override	NClockLevel:3 NStateSnapshotWrite:1 NWarmResume:1
-1062	clm_seam_q	std::map<std::string, double>	map	std::string	Satellite	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NBorderPrior:5 NCarryDisposition:3 NClockLevel:1
+1062	clm_seam_q	std::map<std::string, double>	map	std::string	Satellite	per-epoch	Pending	N5a	3	3	2	0	0	auto	NBorderPrior:5 NCarryDisposition:3 NClockLevel:1
 1063	clm_restore_raise_pending	bool	scalar		run.state	pending	ResumeHandoff	N4g	2	2	2	0	1	auto	NClockLevel:2 NWarmResume:1
 1065	clm_prev_clk	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	1	1	2	0	0	auto	NClockLevel:8
 1066	clm_prev_pclk	Eigen::MatrixXd	aggregate		run.state	cross-epoch	ColdStart	N4g	1	1	2	0	0	auto	NClockLevel:4
@@ -59,8 +60,8 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1174	this_epoch_cb_family_birth_skips	std::vector<NetworkSbasis::FamilyBirthSkipRecord>	vector	NetworkSbasis::FamilyBirthSkipRecord	run.state	per-epoch	Epoch	N5a	4	4	3	0	0	auto	NCodeBiasDatum:2 NSbasis:1 NSbasis.hpp:1 test_code_datum_family:1
 1180	last_cb_family_partner	std::map<std::string, std::string>	map	std::string	Constellation.channel	cross-epoch	ColdStart	N4e2	2	2	1	0	0	override	NSbasis:3 NSbasis.hpp:1
 1192	this_epoch_if_pin_real	std::map<std::string, std::pair<std::string, std::string>>	map	std::string	Satellite	per-epoch	Epoch	N5a	5	4	3	0	0	auto	test_network_estimator:5 test_code_datum_family:3 NClockLevel:2 NCodeBiasDatum:2
-1202	this_epoch_isc_obs	std::set<std::string>	set	std::string	SatSignal	per-epoch	Epoch	N5a	2	2	1	0	0	override	NCodeBiasDatum:2 NSolPrep:2
-1203	this_epoch_isc_pinned	std::set<std::string>	set	std::string	Satellite	per-epoch	Epoch	N5a	2	2	1	0	0	auto	NCodeBiasDatum:2 NSolPrep:2
+1202	this_epoch_isc_obs	std::set<std::string>	set	std::string	SatSignal	per-epoch	Pending	N5a	2	2	1	0	0	override	NCodeBiasDatum:2 NSolPrep:2
+1203	this_epoch_isc_pinned	std::set<std::string>	set	std::string	Satellite	per-epoch	Pending	N5a	2	2	1	0	0	auto	NCodeBiasDatum:2 NSolPrep:2
 1212	this_epoch_extra_band_held	std::set<std::string>	set	std::string	SatSignal	per-epoch	Epoch	N5a	2	2	2	0	0	override	NCodeBiasDatum:2 NSolPrep:2
 1227	anchor_incumbent	std::map<std::string, std::string>	map	std::string	SatSignal	cross-epoch	Record:PA	N4d	14	10	21	1	1	override	test_eq34_reattach_hygiene:10 test_network_arc_graph_oracles:9 test_resume_frame_restore:5 NWarmResume:3
 1228	this_epoch_anchor	std::map<std::string, std::string>	map	std::string	Satellite	per-epoch	Epoch	N5a	7	7	0	0	0	auto	test_network_arc_graph_oracles:3 NChainDatum:1 NOraclePin:1 NPhaseAnchorEpoch:1
@@ -84,7 +85,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1319	eq34_retained_edges	std::set<std::pair<int, std::string>>	set	std::pair<int, std::string>	Arc	cross-epoch	Record:EQR	N4f1	6	4	6	0	1	override	NWarmResume:5 test_resume_datum_restore:5 NStateSnapshotWrite:3 test_network_arc_graph_oracles:3
 1327	eq34_prev_target	std::map<std::pair<int, std::string>, double>	map	std::pair<int, std::string>	Arc	cross-epoch	Record:EQT	N4f1	7	5	8	0	1	override	test_resume_datum_restore:6 NWarmResume:5 test_network_arc_graph_oracles:4 NStateSnapshotWrite:3
 1334	eq34_reref	std::set<std::pair<std::string, std::string>>	set	std::pair<std::string, std::string>	SatSignal	per-epoch	Epoch	N5a	12	12	2	0	0	override	test_network_arc_graph_oracles:3 test_carry_disposition:2 NCarryDisposition:1 NChainDatum:1
-1345	phase_anchor_reref	std::set<std::pair<std::string, std::string>>	set	std::pair<std::string, std::string>	SatSignal	per-epoch	Epoch	N5a	9	9	4	0	0	override	NStashStatus:2 NPhaseDatum.hpp:2 test_carry_disposition:2 NCarryDisposition:1
+1345	phase_anchor_reref	std::set<std::pair<std::string, std::string>>	set	std::pair<std::string, std::string>	SatSignal	per-epoch	Pending	N5a	9	9	4	0	0	override	NStashStatus:2 NPhaseDatum.hpp:2 test_carry_disposition:2 NCarryDisposition:1
 1348	pa_reref_total	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	2	2	1	0	0	auto	NAnchorHygiene:2 NPhaseAnchorEpoch:1
 1348	pa_reref_erase_total	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	NPhaseDatum:2 NAmbFloat:1 NAnchorHygiene:1 NPhaseAnchorEpoch:1
 1363	anchor_arc_age	std::map<std::pair<int, std::string>, int>	map	std::pair<int, std::string>	Arc	cross-epoch	ColdStart	N4f1	3	3	0	0	0	verify	NAnchorHygiene.hpp:2 NAnchorHygiene:1 test_eq34_reattach_hygiene:1
@@ -108,7 +109,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1503	sts_c0	std::map<char, double>	map	char	Constellation	per-epoch	Epoch	N5a	2	2	3	0	0	override	NHandoverStransform:3 NSolPrep:2
 1521	sts_dense	std::map<char, StsDense>	map	char	Constellation	per-epoch	Epoch	N5a	4	4	3	0	0	override	test_handover_stransform_dense:7 NClockClone:3 NClockAnchor:2 NHandoverStransform:2
 1536	sts_pre	std::map<char, StsBeforeRows>	map	char	Constellation	per-epoch	Epoch	N5a	2	2	3	0	0	override	test_handover_stransform:11 NHandoverStransform:4
-1550	sts_carry_pivot	std::map<char, StsCarryDatum>	map	char	Constellation	per-epoch	Epoch	N5a	3	3	3	0	0	override	NHandoverStransform:6 test_handover_stransform:5 NBorderStash:1
+1550	sts_carry_pivot	std::map<char, StsCarryDatum>	map	char	Constellation	per-epoch	Pending	N5a	3	3	3	0	0	override	NHandoverStransform:6 test_handover_stransform:5 NBorderStash:1
 1555	prev_clk	std::map<std::string, std::pair<double, double>>	map	std::string	Satellite	cross-epoch	Record:J	N4e1	7	4	5	1	1	auto	test_network_product_io:3 NStateSnapshotWrite:2 NWarmResume:2 NStateSnapshot:2
 1559	clock_osc	std::map<std::string, ClockOsc>	map	std::string	Satellite	cross-epoch	Record:K	N4e1	10	7	8	1	1	auto	test_network_product_io:8 test_carry_sites:5 NStateSnapshotWrite:2 NWarmResume:2
 1569	relevel_iode	std::map<std::string, int>	map	std::string	Satellite	cross-epoch	Record:I	N4e2	5	3	3	1	1	auto	test_network_product_io:3 NStateSnapshotWrite:2 NWarmResume:2 NStateSnapshot:2
@@ -125,7 +126,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1641	local_carry	std::map<std::tuple<int, std::string, std::string>, LocalCarry>	map	std::tuple<int, std::string, std::string>	Arc	cross-epoch	Record:L	N4f1	50	38	69	1	1	override	test_carry_sites:20 test_network_gross_los:14 test_network_shared_history:11 NGrossLos:9
 1646	pl_prev_now_s	double	scalar		run.state	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	NLevelingCarry:2 NRxClockCarry:2 NLocalCarryHarvest:1 NSlantIonoCarry:1
 1651	rxclk_prev_now_s	double	scalar		run.state	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NRxClockCarry:3
-1664	amb_state_rows	std::vector<AmbStateRow>	vector	AmbStateRow	run.state	per-epoch	Epoch	N5a	2	2	3	0	0	auto	NAmbStateTrace:3 NLevelingCarry:1
+1664	amb_state_rows	std::vector<AmbStateRow>	vector	AmbStateRow	run.state	per-epoch	Pending	N5a	2	2	3	0	0	auto	NAmbStateTrace:3 NLevelingCarry:1
 1670	phase_basis	std::map<std::string, PhaseBasisEntry>	map	std::string	SatSignal	cross-epoch	ColdStart	N4d	3	3	3	0	0	verify	NPhaseAnchorEpoch:5 test_pb_hold_block:3 NPbHoldClone:1
 1678	amb_flag_ep	std::map<std::pair<int, std::string>, long long>	map	std::pair<int, std::string>	Station	cross-epoch	ColdStart	N4f1	7	7	5	0	0	override	NArcLife:3 NRaim:2 test_network_arc_life:2 NAmbFloat:1
 1687	slip_oracle	std::unique_ptr<NetworkSlipOracle>	aggregate		run.state	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	NSlipOracle:4 ApplicationNAssembly:3 NSlipOracle.hpp:2 NStationBuild.hpp:1
@@ -138,11 +139,11 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 1742	resume_pb_seam_pending	bool	scalar		run.state	pending	ResumeHandoff	N4g	2	2	2	0	1	auto	NEmitStore:2 NWarmResume:1
 1786	pb_hold	std::map<std::string, PbHoldKey>	map	std::string	SatSignal	cross-epoch	ColdStart	N4d	11	10	4	0	0	override	test_carry_sites:7 NPbHoldClone:4 test_pb_emit_hold:4 test_pb_hold_smoothed:2
 1790	pb_hold_dev_abs_m	std::vector<double>	vector	double	run.state	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	test_pb_emit_hold:4 NClosedLoopRunEnd:2 NPbHold:1 test_pb_hold_phase_clock:1
-1795	pb_hold_coupled_step_m	std::vector<double>	vector	double	run.state	per-epoch	Epoch	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 NPbHold:1 test_pb_hold_phase_clock:1
+1795	pb_hold_coupled_step_m	std::vector<double>	vector	double	run.state	per-epoch	ColdStart	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 NPbHold:1 test_pb_hold_phase_clock:1
 1799	pb_hold_prev_clock_m	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	3	2	1	0	0	auto	NCarrySites:1 NPbHold:1 test_carry_sites:1
 1804	pb_hold_frz_M	std::map<char, double>	map	char	Constellation	cross-epoch	ColdStart	N4b	3	3	2	0	0	override	test_pb_hold_phase_clock:8 NPbHold:2 NClosedLoopRunEnd:1
 1807	pb_hold_frz_prev_clk	std::map<std::string, double>	map	std::string	Satellite	cross-epoch	ColdStart	N4e1	1	1	3	0	0	auto	NPbHold:4
-1810	pb_hold_frz_step_abs_m	std::vector<double>	vector	double	run.state	per-epoch	Epoch	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 test_pb_hold_phase_clock:2 NPbHold:1
+1810	pb_hold_frz_step_abs_m	std::vector<double>	vector	double	run.state	per-epoch	ColdStart	N5a	3	3	1	0	0	auto	NClosedLoopRunEnd:2 test_pb_hold_phase_clock:2 NPbHold:1
 1813	pb_hold_frz_total_abs_m	std::vector<double>	vector	double	run.state	cross-epoch	ColdStart	N4g	2	2	1	0	0	auto	NClosedLoopRunEnd:2 NPbHold:1
 1817	smh_clone	std::map<std::string, PbHoldClone>	map	std::string	SatSignal	cross-epoch	ColdStart	N4d	6	6	36	0	0	override	test_pb_hold_smoothed:27 test_network_shared_history:23 test_pb_hold_block:9 NPbHoldClone:3
 1820	smh_pending	std::map<std::string, PbHoldClone>	map	std::string	SatSignal	pending	Pending	N4d	4	4	13	0	0	override	test_pb_hold_smoothed:14 test_pb_hold_block:3 NPbHoldClone:2 NPbHold:1
@@ -182,7 +183,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2020	arc_spike_streak	std::map<std::pair<int, std::string>, int>	map	std::pair<int, std::string>	Los	cross-epoch	ColdStart	N4c	2	2	0	0	0	override	NRaim:1 NRaim.hpp:1
 2029	ura_retro_sats	std::set<std::string>	set	std::string	Satellite	cross-epoch	Record:R	N4e1	8	6	6	1	1	auto	test_network_product_io:4 NStateSnapshotWrite:2 NWarmResume:2 NGrossLos:2
 2030	retro_active	std::set<std::string>	set	std::string	Satellite	cross-epoch	Record:A	N4e1	5	3	3	1	1	auto	test_network_product_io:3 NStateSnapshotWrite:2 NWarmResume:2 NStateSnapshot:2
-2043	refsat_mark_sats	std::set<std::string>	set	std::string	Satellite	per-epoch	Epoch	N5a	3	3	1	0	0	auto	NSolPrep:4 ApplicationNAssembly:2 NSlipQc.hpp:1
+2043	refsat_mark_sats	std::set<std::string>	set	std::string	Satellite	per-epoch	Pending	N5a	3	3	1	0	0	auto	NSolPrep:4 ApplicationNAssembly:2 NSlipQc.hpp:1
 2060	datum_reref_pb_sats	std::set<std::string>	set	std::string	Satellite	cross-epoch	ColdStart	N4e2	4	4	1	0	0	verify	NBorderStash:3 ApplicationNAssembly:1 NCoupling:1 NSlipQc.hpp:1
 2061	datum_reref_amb_sats	std::set<std::string>	set	std::string	Satellite	cross-epoch	ColdStart	N4e2	2	2	0	0	0	verify	ApplicationNAssembly:1 NSlipQc.hpp:1
 2069	relevel	RelevelEpochState	aggregate		run.state	per-epoch	Epoch	N5a	17	14	2	0	0	auto	test_gap_reentry_relevel:11 test_gap_reentry_coresumed:9 test_network_gf_arc_jump:9 NLevelingCarry:6
@@ -238,12 +239,12 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2224	staf_prev_tow	double	scalar		run.state	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NRaim:3
 2243	ddfold_degen_prev	std::set<std::string>	set	std::string	run.labels	cross-epoch	ColdStart	N4g	1	1	1	0	0	override	NInstallCarry:3
 2249	d5_calib_state_prev	std::string	aggregate		run.state	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NInstallCarry:4
-2256	ep_sigma0_pf	double	scalar		run.state	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NFrameDiag:3 NStashStatus:1 NFrameDiag.hpp:1
-2257	ep_sigma0_pf_code	double	scalar		run.state	per-epoch	Epoch	N5a	4	3	2	0	0	auto	NFrameDiag:3 NMdb:1 NStashStatus:1 NMdb.hpp:1
-2258	ep_sigma0_pf_phase	double	scalar		run.state	per-epoch	Epoch	N5a	4	3	2	0	0	auto	NFrameDiag:3 NMdb:1 NStashStatus:1 NMdb.hpp:1
-2259	ep_pf_rows	long long	scalar		run.state	per-epoch	Epoch	N5a	4	3	2	0	0	auto	NFrameDiag:4 NStashStatus:2 NMdb:1 NMdb.hpp:1
-2260	ep_pf_code_rows	long long	scalar		run.state	per-epoch	Epoch	N5a	3	2	1	0	0	auto	NFrameDiag:2 NMdb:1 NMdb.hpp:1
-2261	ep_pf_phase_rows	long long	scalar		run.state	per-epoch	Epoch	N5a	3	2	1	0	0	auto	NFrameDiag:2 NMdb:1 NMdb.hpp:1
+2256	ep_sigma0_pf	double	scalar		run.state	per-epoch	EngineEpoch	N5a	3	3	2	0	0	auto	NFrameDiag:3 NStashStatus:1 NFrameDiag.hpp:1
+2257	ep_sigma0_pf_code	double	scalar		run.state	per-epoch	EngineEpoch	N5a	4	3	2	0	0	auto	NFrameDiag:3 NMdb:1 NStashStatus:1 NMdb.hpp:1
+2258	ep_sigma0_pf_phase	double	scalar		run.state	per-epoch	EngineEpoch	N5a	4	3	2	0	0	auto	NFrameDiag:3 NMdb:1 NStashStatus:1 NMdb.hpp:1
+2259	ep_pf_rows	long long	scalar		run.state	per-epoch	EngineEpoch	N5a	4	3	2	0	0	auto	NFrameDiag:4 NStashStatus:2 NMdb:1 NMdb.hpp:1
+2260	ep_pf_code_rows	long long	scalar		run.state	per-epoch	EngineEpoch	N5a	3	2	1	0	0	auto	NFrameDiag:2 NMdb:1 NMdb.hpp:1
+2261	ep_pf_phase_rows	long long	scalar		run.state	per-epoch	EngineEpoch	N5a	3	2	1	0	0	auto	NFrameDiag:2 NMdb:1 NMdb.hpp:1
 2262	pf_epochs_total	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	2	2	1	0	0	auto	NFrameDiag:3 NFrameDiag.hpp:1
 2263	pf_empty_logged	bool	scalar		run.telemetry	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NFrameDiag:2
 2270	pf_rows_written	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NFrameDiag:3
@@ -262,7 +263,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2298	ep_pc_n_gt_10	long long	scalar		run.state	per-epoch	Epoch	N5a	2	2	2	0	0	auto	NPrefitCensus:1 NStashStatus:1
 2299	ep_pc_n_gt_1000	long long	scalar		run.state	per-epoch	Epoch	N5a	3	3	5	0	0	auto	test_prefit_census:3 NPrefitCensus:1 NStashStatus:1
 2300	ep_pc_rows	long long	scalar		run.state	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NPrefitCensus:2 NStashStatus:1 NEpochObservers.hpp:1
-2305	ep_h_sigma0_census	double	scalar		run.state	per-epoch	Epoch	N5a	5	5	2	0	0	auto	NPrefitCensus:3 NEmitStore:1 NRxCodeBiasCarryRunEnd:1 NSolveGlue:1
+2305	ep_h_sigma0_census	double	scalar		run.state	per-epoch	EngineEpoch	N5a	5	5	2	0	0	auto	NPrefitCensus:3 NEmitStore:1 NRxCodeBiasCarryRunEnd:1 NSolveGlue:1
 2306	h_sig0_census_nonzero	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	2	2	1	0	0	auto	NRxCodeBiasCarryRunEnd:2 NPrefitCensus:1
 2309	rhs_attrib_done	int	scalar		run.state	cross-epoch	ColdStart	N4g	3	3	1	0	0	auto	NRhsAttrib:2 NEpochAdmission:1 NRedundancyCensus:1
 2312	rhs_attrib_loc_warned	std::set<std::string>	set	std::string	run.labels	cross-epoch	ColdStart	N4g	1	1	0	0	0	override	NRhsAttrib:3
@@ -365,7 +366,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2623	topo_prev_cols	std::set<std::string>	set	std::string	run.labels	cross-epoch	ColdStart	N4g	1	1	3	0	0	override	NPrefitCensus:5
 2624	topo_seeded	bool	scalar		run.state	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NPrefitCensus:2
 2632	rhs_trip_eras	std::set<std::string>	set	std::string	run.labels	cross-epoch	ColdStart	N4g	1	1	0	0	0	override	NRhsAttrib:1
-2633	rhs_trip_pending	std::string	aggregate		run.state	pending	Latch	N5a	5	5	4	0	0	auto	NRhsAttrib:5 test_prefit_census:4 NRhsAttrib.hpp:2 NEpochAdmission:1
+2633	rhs_trip_pending	std::string	aggregate		run.state	pending	Epoch	N5a	5	5	4	0	0	auto	NRhsAttrib:5 test_prefit_census:4 NRhsAttrib.hpp:2 NEpochAdmission:1
 2634	rhs_prev_frame	std::unique_ptr<NetworkAttribFrame>	aggregate		run.state	cross-epoch	ColdStart	N4g	1	1	2	0	0	auto	NRhsAttrib:10
 2635	rhs_prev_oversize_logged	bool	scalar		run.telemetry	cross-epoch	ColdStart	N4g	1	1	1	0	0	auto	NRhsAttrib:2
 2650	dg_spec	NetDatumGraphSpectral	aggregate		run.state	cross-epoch	ColdStart	N4g	4	4	1	0	0	auto	NDatumGraph:3 NEpochAdmission:1 NRankGate:1 NDatumGraph.hpp:1

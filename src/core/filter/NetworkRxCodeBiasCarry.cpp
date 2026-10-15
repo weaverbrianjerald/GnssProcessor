@@ -395,6 +395,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
     // skips its stash.  Off => `cols` is untouched (byte-identical).
     const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
     SharedHistoryHarvest& shx_h = border.shx_h;
+    const std::set<std::string>& this_epoch_cb_reseed_channels = ep.events.code_datum.this_epoch_cb_reseed_channels;
     // ---- End of the bindings ----
     // --- RXCB-IN-BLOCK (card CTU section 14): harvest the receiver code biases -
     //     with their border regression and their row of the station's harvest
@@ -441,7 +442,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
             // (the cold start, where every channel seeds, is that case).
             if (ctx.param_inventory.rx_ifb.estimated_by_knob
                 && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
-                                       ctx.carry.this_epoch_cb_reseed_channels)
+                                       this_epoch_cb_reseed_channels)
                 && net::drop(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
                              &net::StationSignalState::rx_cb) > 0) {
                 ++stations[i].l5b.reseed_erase;
@@ -545,6 +546,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkPriorResidual& prires_est = run.engines.prires;
     double pl_now_s = ep.clock.pl_now_s;
     const bool   prires_rxcb = ctx.knobs.prires_rxcb;
+    const std::set<std::string>& this_epoch_cb_reseed_channels = ep.events.code_datum.this_epoch_cb_reseed_channels;
     // ---- End of the bindings ----
     // --- rx-CB carry: harvest, stash and prune -------------------------------
     // Outside the carry_warm bracket above on purpose: the receiver code-bias carry has
@@ -610,7 +612,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
             // repair; counted).
             if (ctx.param_inventory.rx_ifb.estimated_by_knob
                 && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
-                                       ctx.carry.this_epoch_cb_reseed_channels)
+                                       this_epoch_cb_reseed_channels)
                 && net::drop(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
                              cb_key, &net::StationSignalState::rx_cb) > 0) {
                 ++stations[i].l5b.reseed_erase;

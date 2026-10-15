@@ -20,6 +20,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRun;
 struct NetworkEpoch;
 struct NetworkRunEndView;
@@ -48,11 +50,12 @@ struct WithinEpochCulprits;     // filter/NetworkWithinEpochCulprits.hpp
  * @param handoff      [in/out] The post-fit hand-off: the tier's refloat and retro-feed sets.
  * @param we           [out] The tier's outcome (WithinEpochOutcome).
  * @return SkipEpoch when an undo cannot complete (exit WeRestoreFailed), else Proceed.
+ * @param events The epoch's events; writes solve (the tier's first-assess sigma0 and impulse meters).
  */
 EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
                                     Eigen::VectorXd& x_s, EpochWorkspace& ws,
                                     std::vector<int>& est_index_of, EpochDdBuild& dd_build,
-                                    NetworkPostFitHandoff& handoff, WithinEpochOutcome& we);
+                                    NetworkPostFitHandoff& handoff, WithinEpochOutcome& we, EpochEvents& events);
 
 /// The culprit the adaptation loop drops next (card NOM3 step SG2): its granularity and identity.
 struct WeChoice {
@@ -96,9 +99,10 @@ WeChoice weChooseCulprit(const std::map<std::pair<int, std::string>, double>& ar
  * @param we      [in/out] The tier's outcome (read; its per-constellation pools are permuted).
  * @param ceiling [out] The carve-out decision (Sigma0CeilingDecision).
  * @return SkipEpoch when the epoch is withheld (exit Sigma0Withheld), else Proceed.
+ * @param events The epoch's events; writes qc (the flight recorder's trip reason).
  */
 EpochAction networkSigma0Ceiling(NetworkRun& run, const NetworkEpoch& ep, WithinEpochOutcome& we,
-                                 Sigma0CeilingDecision& ceiling);
+                                 Sigma0CeilingDecision& ceiling, EpochEvents& events);
 
 /**
  * @brief The sigma0 exit's tail: the flight-recorder dump of the withheld epoch, then the free

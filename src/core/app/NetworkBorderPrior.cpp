@@ -245,7 +245,7 @@ namespace {
 /// records the edge's identity, its evidence gap, and the variance it re-coupled at).
 void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
                      const CarryPrior& cp, double seed_gap, double horizon_s,
-                     double var_eff, bool anchored) {
+                     double var_eff, bool anchored, EpochEvents& events) {
     const bool clk = cp.kind == SharedParamKind::Clock;
     if (clk) {
         ++ctx.counters.n_readmit_seeded_clk;
@@ -254,7 +254,7 @@ void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const Gns
     } else {
         ++ctx.counters.n_readmit_seeded_cb;
     }
-    ctx.carry.readmit_seed_check.push_back({cp.kind, cp.sat, cp.signal, cp.value, var_eff});
+    events.solve.readmit_seed_check.push_back({cp.kind, cp.sat, cp.signal, cp.value, var_eff});
     traces.emitEvent(t, "READMIT", clk ? "seed_clock" : "seed_code_bias", cp.sat, cp.signal,
                      seed_gap, horizon_s, "seed",
                      fmt::format("value={:.4f};var_eff={:.3e};anchored={}", cp.value, var_eff,
@@ -268,7 +268,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                NetworkEstimator& est, bool datum_changed,
                                const std::set<char>& changed_consts, double dt,
                                bool within_epoch_armed,
-                               const std::shared_ptr<spdlog::logger>& log) {
+                               const std::shared_ptr<spdlog::logger>& log, EpochEvents& events) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
@@ -313,7 +313,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
     // The half of the S-transform (queue 1(b), INC-1) that changes the solve.  When the
-    // transform re-expressed this constellation's carry (ctx.carry.sts_consts, filled by
+    // transform re-expressed this constellation's carry (events.handover.sts_consts, filled by
     // networkHandoverStransform earlier this epoch), the prior is valid in the incoming
     // datum and folds: the retired-datum skip below is released for exactly those keys,
     // and the retained rows are counted (invariant #4: transforms applied with
@@ -321,8 +321,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // epoch without a handover and whenever the knob is off, so the off path is
     // byte-identical.
     const auto sts_released = [&](const std::string& sat) {
-        return !ctx.carry.sts_consts.empty() && !sat.empty()
-            && ctx.carry.sts_consts.count(letterOfSat(sat)) > 0;
+        return !events.handover.sts_consts.empty() && !sat.empty()
+            && events.handover.sts_consts.count(letterOfSat(sat)) > 0;
     };
     // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
     // Set up the epoch clock that the stash (which has none of its own) and the guard
@@ -334,7 +334,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     const double now_s = (readmit_h > 0.0) ? TimeUtils::continuousGpsSeconds(t) : 0.0;
     if (readmit_h > 0.0) {
         ctx.carry.readmit_now_s = now_s;
-        ctx.carry.readmit_seed_check.clear();
         if (datum_changed) {
             const auto before = prev_carry.size();
             const auto parked_retired = [&](const CarryPrior& cp) {
@@ -375,7 +374,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 bool& seed_anchored) -> bool {
         if (cp.fold.disposition == CarryDisposition::Undecided) {   // no pass this epoch
             ++ctx.counters.prm_undecided_at_fold;
-            cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, now_s);
+            cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, now_s, events);
         }
         const CarryFoldDecision& d = cp.fold;
         // The SH prior: folded elsewhere, before the gate.
@@ -466,7 +465,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 clk_prior_info[cp.sat] = p.info;   // scalar clock carry info on this column (B7)
             priors.push_back(p);
             if (seed_gap > 0.0)
-                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored, events);
         }
         // With the gauge-free fold armed (card Q3 §2.1), the clock entries are folded
         // with the per-constellation common direction marginalized out, so the anchor
@@ -529,7 +528,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
             p.value = cp.value; p.info = 1.0 / var_eff;  // used on the diagonal paths only
             if (seed_gap > 0.0)
-                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored, events);
             const auto rit = prev_carry_cov.row.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
             if (rit == prev_carry_cov.row.end()) {
                 if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
@@ -624,7 +623,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 // Off, the clone fold returns false at once and the fold below is unchanged.
                 const bool ccl_fold = networkClockCloneDenseFold(
                     ctx, ws, est, dkeys, drow, dvar_eff, dinflate, dreexp, cov_eff,
-                    within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr);
+                    within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr, events);
                 if (!ccl_fold) {
                     est.contributionKind(ContributionKind::BorderCarryDense);   // card NOM N2a
                     est.addSharedPriorDense(dkeys, cov_eff,

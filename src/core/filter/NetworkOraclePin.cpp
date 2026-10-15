@@ -587,6 +587,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     const GnssTime& t = ep.se.time;
     const std::shared_ptr<spdlog::logger>& log = run.log;
     NetworkRunTraces& traces = run.traces;
+    const std::map<std::string, std::string>& this_epoch_anchor = ep.events.phase_datum.this_epoch_anchor;
     // ---- End of the bindings ----
     auto* pin = ctx.carry.oracle_pin.get();
     if (!pin) return;                    // the gate: no oracle_pin event (the driver's test went in card NOM3 step EP2)
@@ -610,7 +611,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     ++pin->epochs_active;
 
     networkOraclePinFit(*pin, stations, ctx.entities.arcs,
-                        ctx.carry.this_epoch_anchor, now_s, active);
+                        this_epoch_anchor, now_s, active);
 
     // --- the two edges of invariant #7, counted and identified ----------------
     // Both edges get a per-arc event row as well as a counter.  Counters alone are

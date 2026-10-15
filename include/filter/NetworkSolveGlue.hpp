@@ -92,6 +92,7 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /// What the post-fit tiers hand the epoch stash: seeded by the solve (the within-epoch tier's
@@ -247,9 +248,10 @@ bool networkClockModelWarm(NetworkRun& run);
  * @param datum          The clock datum (read: plan, datum_changed, changed_consts).
  * @param clk_model_warm Stage 9's verdict.
  * @param ws             [in/out] The replay capture the priors are recorded in.
+ * @param events The epoch's events; writes handover and solve (through the transform and the D2 inject).
  */
 void networkPostGatePriors(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
-                           bool clk_model_warm, EpochWorkspace& ws);
+                           bool clk_model_warm, EpochWorkspace& ws, EpochEvents& events);
 
 /**
  * @brief Stage 11: the shared solve and the card-1d checksum.
@@ -318,8 +320,9 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
  *   - @p buildCarryDdPriors = (removed: direct call in the T2 replay).
  *
  * @return The solve's result; action is SkipEpoch at the five exits (bookkeeping done here).
+ * @param events The epoch's events; written: handover, code_datum, solve, qc (rhs_trip_pending).
  */
 NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws,
-                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build);
+                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build, EpochEvents& events);
 
 } // namespace GnssProcessor

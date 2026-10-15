@@ -19,6 +19,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 class GnssConfig;
 struct NetworkRun;
 struct NetworkEpoch;
@@ -33,8 +35,9 @@ struct NetworkEpoch;
  * @param ep  The epoch, read: pass_a (present), columns (registered_code_keys, n_cb).
  * @param ws  [in/out] The replay capture (cap_H, cap_z, cap_row_kinds, cap_birth_*,
  *            cap_priors).
+ * @param events The epoch's events; writes code_datum.
  */
-void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws);
+void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws, EpochEvents& events);
 
 /**
  * @brief The (satellite, signal) inter-signal corrections some present station's data determine
@@ -70,10 +73,11 @@ std::set<std::string> networkExtraBandRoster(const std::vector<NetStation>& stat
  * @param ep          The epoch, read: columns (registered_code_keys).
  * @param cbd         The rows this epoch folded (read).
  * @param isc_bridged The bridging roster (read).
+ * @param events The epoch's events; writes code_datum (the realized pairs, the held extra-band keys).
  */
 void networkCodeBiasDatumRecord(NetworkRun& run, const NetworkEpoch& ep,
                                 const NetworkSbasis::CodeBiasDatumRows& cbd,
-                                const std::set<std::string>& isc_bridged);
+                                const std::set<std::string>& isc_bridged, EpochEvents& events);
 
 /**
  * @brief The first-N W6 summary line, gated on the estimability budget before the dump spends it.

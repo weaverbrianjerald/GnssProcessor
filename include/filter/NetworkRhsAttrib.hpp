@@ -868,7 +868,8 @@ void networkRhsAttribTrip(NetworkRun& run, const NetworkEpoch& ep);
  *               is armed; false otherwise.  After a true return
  *               @c ctx.carry.rhs_trip_pending is set; the first era to trip in
  *               an epoch names the dump.
+ * @param trip The epoch's trip reason (EpochEvents::Qc::rhs_trip_pending); set on a rising edge when empty.
  */
-bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active);
+bool networkRhsTripEdge(NetworkRunContext& ctx, std::string& trip, const char* kind, bool active);
 
 } // namespace GnssProcessor

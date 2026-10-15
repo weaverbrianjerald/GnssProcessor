@@ -62,6 +62,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRun;
 struct NetworkEpoch;
 
@@ -132,8 +134,9 @@ struct StationHarvestBlock {
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.
  * @param ep  This epoch after the solve: solve.x_s, solve.plan, assembly, columns,
  *            pass_a.shared_phase_keys and clock (carry_warm, pl_now_s) are read.
+ * @param events The epoch's events; writes harvest.
  */
-void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep);
+void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 /**
  * @brief The warm epoch's shared border: column identities, the datum-frame covariance and

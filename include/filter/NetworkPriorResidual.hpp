@@ -1261,6 +1261,7 @@ private:
 
 class GnssConfig;
 struct NetworkRunContext;   // app/NetworkRunContext.hpp    (included in the .cpp only)
+struct EpochEvents;         // app/NetworkEpoch.hpp
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cpp only)
 struct SyncedEpoch;         // rinex/MultiRinexSync.hpp     (included in the .cpp only)
 struct NetStation;          // filter/NetworkRunTypes.hpp   (included in the .cpp only)
@@ -1289,12 +1290,13 @@ struct NetStation;          // filter/NetworkRunTypes.hpp   (included in the .cp
  * @param se       This synced epoch (week/tow stamp).
  * @param stations Station roster; resolves a row's station index to its name.
  * @param prires   The accumulator, drained (its per-epoch buffer is consumed).
+ * @param events   The epoch's events; written: status (the census scalars the epoch-status row reads).
  */
 void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                               const std::shared_ptr<spdlog::logger>& log,
                               NetworkRunTraces& traces, const SyncedEpoch& se,
                               const std::vector<NetStation>& stations,
-                              NetworkPriorResidual& prires);
+                              NetworkPriorResidual& prires, EpochEvents& events);
 
 /**
  * @brief Run-end readout of the census (called by its row of the run-end table, the

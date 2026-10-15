@@ -99,9 +99,10 @@ enum class Persist : std::uint8_t {
     Pending,          ///< A hand-off consumed within a few epochs of being set.
     RunConst,         ///< Set once at setup and read for the run.
     WriterTelemetry,  ///< The snapshot writer's own counters.
-    Epoch,            ///< Rebuilt every epoch: a per-epoch value (step N5a moves it to EpochEvents).
-    Latch,            ///< Set at one epoch and consumed at the next (step N5a).
+    Epoch,            ///< A per-epoch value: a member of EpochEvents (app/NetworkEpoch.hpp), built with the epoch.
+    Latch,            ///< Set at one epoch and consumed at the next.
     ResumeHandoff,    ///< Set by the warm resume, consumed at the first leg epoch (step N4g).
+    EngineEpoch,      ///< Rebuilt every epoch by its owner but kept in the run: the run end or a held pointer reads it.
 };
 
 /// The name of a persistence class, as the reach table prints it.
@@ -1785,6 +1786,23 @@ extern const std::array<EntityFields, 6> kEntityFieldTables;
 /// The snapshot tags the reader restores, in today's restore order (design section 5);
 /// scripts/nom_n4_verify.py check V6 compares it with the reader's call order.
 extern const std::vector<const char*> kRestoreOrder;
+
+/**
+ * @brief One function that binds entity tables for writing: a row of @ref kEntityWriters.
+ *
+ * A function writes an entity table through a non-const binding in its opening block
+ * (`net::LosTable& los_rows = ctx.entities.los;`, or `NetworkEntities& e = ctx.entities;`
+ * for every table).  A read binds the table const.  scripts/nom_epoch_lint.py (check V12)
+ * fails a non-const binding missing from its row and a row no binding supports.
+ */
+struct EntityWriterRow {
+    const char* seam;     ///< The function's name.
+    const char* home;     ///< Its file under src/core/.
+    const char* tables;   ///< The tables it binds non-const, space-separated in name order; "all" for the whole set.
+};
+
+/// Every function that binds an entity table for writing (defined in NetworkEntities.cpp).
+extern const std::vector<EntityWriterRow> kEntityWriters;
 
 /**
  * @brief The declared Record row of a snapshot tag.

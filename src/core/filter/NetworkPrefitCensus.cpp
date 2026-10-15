@@ -340,12 +340,12 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const std::vector<NetStation>& stations,
                          const NetworkEstimator& est,
                          const std::vector<StationAssembly>& asm_res,
-                         const std::vector<int>& est_index_of) {
+                         const std::vector<int>& est_index_of, EpochEvents& events) {
     if (!ctx.knobs.pc_walk_on) return;
     (void)config_;   // arming is expressed entirely through the knob snapshot
-    // Cleared first, so an epoch the walk cannot serve leaves the epoch-status
-    // columns blank instead of repeating the previous epoch's numbers.
-    ctx.carry.ep_pc_rows = 0;
+    // The census scalars are epoch events: an epoch the walk cannot serve leaves the
+    // epoch-status columns blank instead of repeating the previous epoch's numbers.
+    EpochEvents::Census& census_ev = events.census;
 
     const bool   census_on   = ctx.knobs.pc_census_on;
     const bool   topo_on     = ctx.knobs.pc_topo_on;
@@ -578,17 +578,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // --- epoch scalars for the epoch-status row (INC-1) ----------------------
     if (census_on) {
         for (int t = 0; t < kNetDataClasses; ++t) {
-            ctx.carry.ep_pc_max_s[t]     = max_s[t];
-            ctx.carry.ep_pc_n_gt_10[t]   = n_gt_10[t];
-            ctx.carry.ep_pc_n_gt_1000[t] = n_gt_1k[t];
+            census_ev.ep_pc_max_s[t]     = max_s[t];
+            census_ev.ep_pc_n_gt_10[t]   = n_gt_10[t];
+            census_ev.ep_pc_n_gt_1000[t] = n_gt_1k[t];
             std::vector<double>& p = s_pool[t];
-            if (p.empty()) { ctx.carry.ep_pc_p99_s[t] = 0.0; continue; }
+            if (p.empty()) { census_ev.ep_pc_p99_s[t] = 0.0; continue; }
             const std::size_t k =
                 static_cast<std::size_t>(std::floor(0.99 * static_cast<double>(p.size() - 1)));
             std::nth_element(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(k), p.end());
-            ctx.carry.ep_pc_p99_s[t] = p[k];
+            census_ev.ep_pc_p99_s[t] = p[k];
         }
-        ctx.carry.ep_pc_rows = rows_epoch;
+        census_ev.ep_pc_rows = rows_epoch;
     }
 
     // --- topology ledger (INC-4) --------------------------------------------
@@ -856,9 +856,9 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
 //      call each, with the bindings of the frozen call site; the explicit forms
 //      above stay for their other callers. ----
 
-void networkPrefitCensus(NetworkRun& run, const NetworkEpoch& ep) {
+void networkPrefitCensus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
     networkPrefitCensus(run.ctx, run.config, run.log, run.traces, ep.se, run.setup.stations,
-                        run.engines.est, ep.assembly.asm_res, ep.assembly.est_index_of);
+                        run.engines.est, ep.assembly.asm_res, ep.assembly.est_index_of, events);
 }
 
 // ---- End of the epoch forms ----

@@ -261,6 +261,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
     const std::vector<NetStation>& stations = run.setup.stations;
+    const std::vector<BlockBaardaHit>& bb_hits = ep.events.census.bb_hits;
     // ---- End of the bindings ----
     if (!ctx.knobs.bb_on) return;   // the driver's gate (card NOM3 step EP2)
     (void)config_;
@@ -318,7 +319,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- per-block identities, rate-limited -------------------------------
     const long long now_ep = acc.epochs();
     const long long holdoff = ctx.knobs.bb_event_holdoff;
-    for (const BlockBaardaHit& h : ctx.carry.bb_hits) {
+    for (const BlockBaardaHit& h : bb_hits) {
         const std::string sname = stationName(stations, h.station);
         // The line of sight's holdoff clock (the station by NAME, O3; card NOM step N4e2).
         const std::optional<LosId> hid = net::losOfName(ctx.entities, sname, h.sat);
@@ -342,7 +343,6 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
                                      h.raw_formal ? 1 : 0));
         ++t.events;
     }
-    ctx.carry.bb_hits.clear();
 
     t.wall_ms += std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();

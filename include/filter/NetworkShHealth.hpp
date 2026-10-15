@@ -39,6 +39,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /**
  * @brief Run the T1a SH-field health probe for this epoch and update the carry LS-VCE
@@ -76,7 +77,8 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p prires_est = run.engines.prires.
  *   - @p datum_changed = ep.solve.datum_changed.
  *   - @p pl_now_s = ep.clock.pl_now_s.
+ * @param events The epoch's events; written: qc (rhs_trip_pending).
  */
-void networkShHealth(NetworkRun& run, const NetworkEpoch& ep);
+void networkShHealth(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 } // namespace GnssProcessor

@@ -484,7 +484,7 @@ struct PreviewBed {
     void preview() {
         NetworkEpoch& e = fx->newEpoch(GnssTime{2313, 276150.0});
         e.columns.registered_clock_sats = registered;
-        networkHandoverStransformBeforeRows(fx->run(), e);
+        networkHandoverStransformBeforeRows(fx->run(), e, e.events);
     }
     const CoupledShared& term(int i) {
         return net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb)
@@ -499,8 +499,8 @@ struct PreviewBed {
 TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivot) {
     PreviewBed B("rows_once");
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    const auto pre = B.fx->ep().events.handover.sts_pre.at('G');
     ASSERT_TRUE(pre.applied);
     ASSERT_EQ(pre.pivot, "G02");   // the lexically first registered clock (no sticky incumbent)
     EXPECT_EQ(pre.c0, -2.0);
@@ -523,8 +523,8 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
     // Skipped: the pivot is not adopted and the same pivot is elected again.
     const std::vector<CarryPrior> after = B.ctx->carry.prev_carry;
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    EXPECT_TRUE(B.ctx->carry.sts_pre.at('G').already);
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.at('G').already);
     EXPECT_EQ(B.ctx->counters.sts_pre_redetected, 1);
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 0);
     for (std::size_t i = 0; i < after.size(); ++i) {
@@ -538,10 +538,10 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
 TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
     PreviewBed B("rows_undo");
     B.preview();
-    ASSERT_TRUE(B.ctx->carry.sts_pre.at('G').applied);
+    ASSERT_TRUE(B.fx->ep().events.handover.sts_pre.at('G').applied);
     B.layout({"G01", "G02", "G05", "G32"});
     B.preview();
-    EXPECT_TRUE(B.ctx->carry.sts_pre.empty()) << "no handover: G01 is elected again";
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.empty()) << "no handover: G01 is elected again";
     EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
@@ -561,12 +561,12 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
 TEST(HandoverStransformBeforeRows, PreviewUndoesBeforeTransformingToAThirdPivot) {
     PreviewBed B("rows_third");
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.at('G').pivot, "G02");
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.at('G').pivot, "G02");
     B.layout({"G05", "G32"});   // G02 has left as well
     B.preview();
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    const auto pre = B.fx->ep().events.handover.sts_pre.at('G');
     ASSERT_TRUE(pre.applied);
     EXPECT_EQ(pre.pivot, "G05");
     EXPECT_EQ(pre.c0, -0.75);       // G05's level in the outgoing datum
@@ -578,12 +578,12 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesBeforeTransformingToAThirdPivot)
     EXPECT_EQ(B.ctx->carry.sts_carry_pivot.at('G').pivot, "G05");
 }
 
-// Off, the seam only clears its record.
+// Off, the record is empty (a record of the previous epoch does not reach this one).
 TEST(HandoverStransformBeforeRows, OffClearsTheRecordAndMovesNothing) {
     PreviewBed B("rows_off", /*armed=*/false);
-    B.ctx->carry.sts_pre['G'].pivot = "G02";   // a stale record
+    B.fx->ep().events.handover.sts_pre['G'].pivot = "G02";   // the previous epoch's record
     B.preview();
-    EXPECT_TRUE(B.ctx->carry.sts_pre.empty());
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.empty());
     EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), -0.75);

@@ -1118,8 +1118,7 @@ namespace GnssProcessor {
         // readmit_last_seen_ep: moved to net::SatelliteState::readmit_last_seen_ep (card NOM step N4e1, app/NetworkEntities.hpp).
         // readmit_marg: moved to net::SatelliteState::readmit_marg (card NOM step N4e1, app/NetworkEntities.hpp).
         // readmit_seeded_s: moved to net::SatelliteState::readmit_seeded_s (card NOM step N4e1, app/NetworkEntities.hpp).
-        struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
-        std::vector<ReadmitSeed> readmit_seed_check;            ///< this epoch's seeds, checked against the solve at the stash (mark-if-moved telemetry for every seeded kind)
+        // readmit_seed_check: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
         // ddfrac_ref_age, ddfrac_ref_prev: moved to net::ChannelState (card NOM step N4b, app/NetworkEntities.hpp).
         // prev_pivot: moved to net::ConstellationState::prev_pivot (card NOM step N4b, app/NetworkEntities.hpp).
         // c1_zoh_active: moved to net::SatelliteState::c1_zoh_active (card NOM step N4e1, app/NetworkEntities.hpp).
@@ -1140,47 +1139,15 @@ namespace GnssProcessor {
         // Both are populated only under emit_clock_disc, so the output is byte-identical
         // otherwise.  Not snapshotted: a warm resume has no prior for its first emit, so
         // it must not fabricate a disc it cannot verify.
-        std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_sel;
+        // this_epoch_if_pin_sel: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // last_if_pin_sel: moved to net::SatelliteState::last_if_pin_sel (card NOM step N4e2, app/NetworkEntities.hpp).
-        /// This epoch's ionosphere-free pin pair changes per satellite, with their outcome
-        /// (card GFC, @c network.code_datum_pair_continuity;
-        /// @c NetworkSbasis::CodeBiasDatumRows::if_pin_pair_changes).  The emit site
-        /// counts them once per kept epoch and leaves the pair re-selection discontinuity
-        /// undeclared for a continued satellite whose last emitted pair is the pair the
-        /// builder continued from.  A main-pass scratch with the discipline of
-        /// @ref this_epoch_if_pin_sel: cleared unconditionally each epoch before the
-        /// builder runs and read only at the emit site, which a withheld epoch never
-        /// reaches, so a withheld epoch's entry can neither be counted nor suppress a
-        /// later declaration.  Empty unless the arm is effective.
-        std::map<std::string, NetworkSbasis::PinPairChange> this_epoch_if_pin_changes;
-        /// This epoch's ionosphere-free pin pair holds per satellite: the satellites whose
-        /// pin kept the last kept epoch's pair while the selection named another (card
-        /// GFC, @c network.code_datum_pair_continuity;
-        /// @c NetworkSbasis::CodeBiasDatumRows::if_pin_pair_holds).  Main-pass scratch
-        /// with the discipline of @ref this_epoch_if_pin_changes.  Empty unless the arm
-        /// is effective.
-        std::map<std::string, NetworkSbasis::PinPairHold> this_epoch_if_pin_holds;
+        // this_epoch_if_pin_changes: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_if_pin_holds: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // last_if_pin_holds: moved to net::SatelliteState::last_if_pin_hold (card NOM step N4e2, app/NetworkEntities.hpp).
         // if_pin_holds_resume_pending: moved to NetworkCarryState::resume.if_pin_holds (ResumeHandoff, card NOM step N4g).
-        /// This epoch's secondary-family Galileo code-channel level realizations per
-        /// channel key (card GFC, @c network.code_datum_family_difference;
-        /// @c NetworkSbasis::CodeBiasDatumRows::family_rows).  Main-pass scratch with the
-        /// same discipline as @ref this_epoch_if_pin_changes.  Empty unless the arm is on
-        /// under the time link.
-        std::map<std::string, NetworkSbasis::FamilyRowRealization> this_epoch_cb_family_rows;
-        /// This epoch's first-sighting family prior rows, one record per row folded (card
-        /// GFC step 2, @c network.code_family_birth_prior_sigma_m;
-        /// @c NetworkSbasis::CodeBiasDatumRows::family_birth_priors).  Main-pass scratch with
-        /// the same discipline as @ref this_epoch_if_pin_changes: a row folded on a withheld
-        /// pass is neither counted nor declared (it is folded again at the next pass, whose
-        /// record replaces it).  Empty unless the prior is effective.
-        std::vector<NetworkSbasis::FamilyBirthPrior> this_epoch_cb_family_births;
-        /// This epoch's common satellites the first-sighting family prior folded no row on
-        /// (card GFC step 2; @c NetworkSbasis::CodeBiasDatumRows::family_birth_skips): a
-        /// READMIT seed or the D2 fold continuing a column without a previous value, or a
-        /// birth with no realized family mean.  Main-pass scratch with the same discipline
-        /// as @ref this_epoch_cb_family_births.  Empty unless the prior is effective.
-        std::vector<NetworkSbasis::FamilyBirthSkipRecord> this_epoch_cb_family_birth_skips;
+        // this_epoch_cb_family_rows: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_cb_family_births: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_cb_family_birth_skips: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // last_cb_family_partner: moved to net::ChannelState::last_cb_family_partner (card NOM step N4e2, app/NetworkEntities.hpp).
         // S-contract §1.5 declaration scratch: the realized code-bias datum pair per
         // satellite, recorded unconditionally (the only guard is a real dual-frequency pin,
@@ -1193,7 +1160,7 @@ namespace GnssProcessor {
         // (after card GFC's pair hold, when armed), so the declaration tracks the datum the
         // run realized.  Cleared each epoch; declaration-only, so the solve and every
         // emitted numeric value are untouched.
-        std::map<std::string, std::pair<std::string, std::string>> this_epoch_if_pin_real;
+        // this_epoch_if_pin_real: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         /// This epoch's per-(satellite, companion signal) inter-signal-correction verdicts,
         /// keyed `"sat|signal"` (RF-0f).  A key in @ref this_epoch_isc_obs means some
         /// present station tracked both that companion and the T_GD pin's band-2 signal on
@@ -1205,15 +1172,7 @@ namespace GnssProcessor {
         /// empty unless `network.sat_isc_state` is armed.
         std::set<std::string> this_epoch_isc_obs;
         std::set<std::string> this_epoch_isc_pinned;
-        /// This epoch's held extra-band code-bias columns, keyed `"sat|signal"` (card B5D):
-        /// a column on a band outside the pin pair that no present station determined and
-        /// that had no previous solved value to carry, so a level row in the channel's own
-        /// frame holds it and its bias is withheld from the wire (the RF-0f rule: a
-        /// consumer cannot tell a fabricated value from an estimate by value).  Filled by
-        /// the row builder through @c CodeBiasDatumRows, cleared each epoch by the solve
-        /// glue, read by the emit prep; empty unless `network.sat_gf_extra_band_free` is
-        /// armed.
-        std::set<std::string> this_epoch_extra_band_held;
+        // this_epoch_extra_band_held: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // Prioritized phase-bias anchor (network.phase_datum_prioritized).  All three maps
         // are keyed by the "sat_signal" ambiguity form and are empty and unread on the
         // legacy path:
@@ -1229,7 +1188,7 @@ namespace GnssProcessor {
         // network.state_snapshot_frame_capture and restored under
         // network.resume_frame_restore.
         // anchor_incumbent: moved to net::SatSignalState::anchor_incumbent (card NOM step N4d, app/NetworkEntities.hpp).
-        std::map<std::string, std::string> this_epoch_anchor;
+        // this_epoch_anchor: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
         // anchor_pin_target: moved to net::SatSignalState::anchor_pin_target (card NOM step N4d, app/NetworkEntities.hpp).
         /// Two-edge continuous handover ledger: each anchor-candidate station's absolute
         /// ambiguity estimate from the previous epoch's solve, so a handover can re-pin the
@@ -1295,8 +1254,8 @@ namespace GnssProcessor {
         // After PASS B's serial consume they are compared against the pins that landed
         // (folded by foldAmb/foldRpb and on a station that est.addStation accepted), which
         // covers the two silent loss paths that standing invariant #4 warns about.
-        std::map<std::string, int> eq34_epoch_declared;
-        std::map<std::string, int> eq34_epoch_bridged;
+        // eq34_epoch_declared: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
+        // eq34_epoch_bridged: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
         // Tree edges retained across the current gap because their local_carry is still
         // alive: {receiver index, "sat_signal"}.  Rebuilt at each election's sticky-map
         // update; read at the next election's recordEdge to count a gap re-pin.  Empty
@@ -1316,7 +1275,7 @@ namespace GnssProcessor {
         // PB keys for that epoch.  Their carried priors belong to the retired frame, and
         // folding them pulls the new frame by up to the full re-level with no signal on the
         // wire.  Always empty when eq34 is off.
-        std::set<std::pair<std::string, std::string>> eq34_reref;
+        // eq34_reref: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
         // PHASE_ANCHOR carry re-reference (queue item 1(d);
         // docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Per-epoch (sat, signal)
         // set of the anchor election's handovers: cleared and rebuilt at each anchor
@@ -1419,9 +1378,9 @@ namespace GnssProcessor {
         // Per-epoch L1 scalars (INC-3).  @c adm_ep_tow is the stamp the epoch-status writer
         // compares against, so an epoch the screen did not run on leaves the columns blank
         // instead of repeating stale numbers (the redun_ep_tow pattern).
-        double adm_ep_tow          = -1.0;
-        double ep_adm_sta_worst_z  = 0.0;  ///< median over screened stations of each station's worst |z| (m): the typical level.
-        double ep_adm_net_worst_z  = 0.0;  ///< network maximum |z| (m): the extreme.  Its identity goes to the events.
+        // adm_ep_tow: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
+        // ep_adm_sta_worst_z: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
+        // ep_adm_net_worst_z: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
 
         // Whether the last processed epoch moved the clock datum.  A clock-pivot handover
         // re-references every satellite phase bias by the pivot's clock (the phase
@@ -1429,50 +1388,10 @@ namespace GnssProcessor {
         // retired frame.  Written where datum_changed is computed (solve glue), read by the
         // next epoch's hygiene pass (bridge drop, reason=datum).
         bool last_datum_changed = false;
-        /// The constellations whose carried shared state the handover S-transform
-        /// re-expressed this epoch (queue item 1(b)).  The RTA-2 handover_affects skips that
-        /// consult this set release for exactly these constellations: the prior is valid in
-        /// the incoming datum, so it must fold, which is the essential half of the card
-        /// (§8.4 INC-1).  Rebuilt every epoch by networkHandoverStransform; empty on every
-        /// non-handover epoch and whenever the knob is off, so the off path is
-        /// byte-identical.
-        std::set<char> sts_consts;
-        /// The coefficient applied per constellation this epoch (constellation char -> c0,
-        /// metres), for the PIVOT event row and traces (queue item 1(b)).
-        std::map<char, double> sts_c0;
-        /// Card SCL B2 (network.handover_stransform_dense): what the dense kernel did for each
-        /// constellation it re-expressed this epoch, read by card SCL's clone fold (B1) and by
-        /// card Q3's anchor keep.  Rebuilt every epoch by networkHandoverStransform (cleared
-        /// beside sts_c0, and only an applied dense edge writes an entry), so it is empty on
-        /// every epoch without a dense edge and whenever the knob is off.
-        struct StsDense {
-            std::string q;                    ///< the incoming pivot
-            std::string p;                    ///< the outgoing pivot (the frame the block was in)
-            double      c0{0.0};              ///< the incoming pivot's carried level before (m)
-            double      pqq{0.0};             ///< its block variance before, P_qq (m^2)
-            std::size_t k_old{0};             ///< block size before the outgoing pivot was appended
-            int         iq{-1};               ///< the incoming pivot's block row
-            bool        p_added{false};       ///< the outgoing pivot was appended
-            bool        selfcheck_ok{true};   ///< the kernel's self-check
-            std::set<std::string> row_sats;   ///< the constellation's clocks with a block row (q included)
-            std::set<std::string> clean;      ///< ...whose carried entry equalled its fold decision before the transform
-        };
-        std::map<char, StsDense> sts_dense;
-        /// Card PRM phase 2 (network.handover_stransform_before_rows): what the handover
-        /// preview before PASS B did for each changed constellation this epoch, read by the
-        /// solve glue's transform for its bookkeeping.  Rebuilt every epoch by
-        /// networkHandoverStransformBeforeRows; empty with the knob off.
-        struct StsBeforeRows {
-            std::string pivot;              ///< the incoming pivot the preview elected
-            bool        already{false};     ///< the carry was already in that pivot's datum (a re-detection after a skipped epoch)
-            bool        applied{false};     ///< the transform moved the carry
-            double      c0{0.0};            ///< the coefficient applied (m)
-            double      var_q{0.0};         ///< the incoming pivot's carried variance (m^2)
-            long long   rows{0};            ///< carried clock entries re-expressed
-            double      x_q_post{0.0};      ///< the incoming pivot's carried level after it (expected 0)
-            bool        selfcheck_ok{true}; ///< the exactness self-check
-        };
-        std::map<char, StsBeforeRows> sts_pre;
+        // sts_consts: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
+        // sts_c0: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
+        // sts_dense: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
+        // sts_pre: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
         /// Card PRM phase 2: per constellation, the transform the preview applied to the
         /// carry (the incoming pivot, c0, var_q), held until the next stash, which re-expresses
         /// the carry in the solve's datum and clears the record.  A skipped epoch leaves it set:
@@ -1520,7 +1439,7 @@ namespace GnssProcessor {
         // the main pass and copied into code_bias_ifpin_pair_ at the harvest (kept epochs
         // only, as for code_bias_prev_, so a pair recorded on a withheld epoch never
         // advances the comparison baseline).  Cleared each epoch.
-        std::map<std::string, std::pair<std::string, std::string>> this_epoch_cb_ifpin;
+        // this_epoch_cb_ifpin: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // Satellites that re-seed this epoch (IF-pin split or a cold sum-to-zero channel).
         // A per-epoch scratch (cleared each epoch), populated in the main pass and merged
         // into cb_reseed_disc_pending only at the emit site, which every whole-epoch
@@ -1530,13 +1449,13 @@ namespace GnssProcessor {
         // emit-only discipline of this_epoch_if_pin_sel / last_if_pin_sel), and no erase is
         // needed that would destroy a bump legitimately deferred for a satellite re-seeded
         // while pruned from the emission.
-        std::set<std::string> this_epoch_cb_reseed;
+        // this_epoch_cb_reseed: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // The channels ("<constellation letter>|<signal>") whose sum-to-zero row re-seeded
         // this epoch (CodeBiasDatumRows::reseed_channels), cleared with
         // this_epoch_cb_reseed.  Read only by the harvest of card L5B
         // (network.estimate_rx_extra_band_code_delay), which erases the receiver IFB carry
         // entries of a re-seeded family.
-        std::set<std::string> this_epoch_cb_reseed_channels;
+        // this_epoch_cb_reseed_channels: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
         // Satellites whose code-bias split has ever been harvested: a later re-seed of one
         // of these is a return (disc bump), not a first appearance (seeded silently).
         // Accumulates for the whole process.  Snapshotted and restored with
@@ -1679,44 +1598,20 @@ namespace GnssProcessor {
         // gl_hold_iono: moved to net::LosState::gl_hold_iono (card NOM step N4c, app/NetworkEntities.hpp).
         // gl_hold_iono_blk: moved to net::LosState::gl_hold_iono_blk (card NOM step N4c, app/NetworkEntities.hpp).
         // gl_sta_state: moved to net::StationState::gross_los (card NOM step N4a, app/NetworkEntities.hpp).
-        /// Satellites whose records this epoch's emission must withhold because a declared
-        /// line of sight took their contributing station count below
-        /// @c network.gross_los_sat_min_stations (RF-3b B3, @c network.gross_los_emit_exclude).
-        /// Drained by @c networkSolPrep beside the GL-2 prune.  Rebuilt every screened epoch.
-        std::set<std::string> gl_emit_withhold;
-        /// Satellites this epoch's emission must mark with a per-satellite discontinuity
-        /// because a declared line of sight left their contributor set while enough
-        /// stations remained to emit (RF-3b B3).  Drained by @c networkSolPrep.
-        std::set<std::string> gl_emit_disc;
-        /// The lines of sight the decision half declared this epoch, deferred to the act
-        /// half, which must run after the carry harvest (RF-3b B3).  Rebuilt every screened
-        /// epoch; empty unless @c knobs.gl_emit_exclude split the seam in two.
-        std::vector<std::pair<int, std::string>> gl_act_declare;
-        /// The lines of sight the decision half released or expired this epoch; the act
-        /// half drops their hold (RF-3b B3).  Same lifecycle as @ref gl_act_declare.
-        std::vector<std::pair<int, std::string>> gl_act_release;
-        /// The stations the decision half declared (@c true) or released (@c false) this
-        /// epoch, deferred to the act half (RF-3b B3/B4).
-        std::vector<std::pair<int, bool>> gl_act_station;
-        /// The lines of sight whose carried ambiguity the act half erases this epoch under
-        /// the cold-start bound (card ICF response 1): a cold declaration, a standing cold
-        /// declaration whose bound was exceeded again, and the re-seed at a cold
-        /// declaration's release or expiry.  The act half applies the screen's erase and
-        /// sweeps every other carried ambiguity of the line of sight.  Same lifecycle as
-        /// @ref gl_act_declare; empty unless @c knobs.gl_cold_bound_m is positive.
-        std::vector<std::pair<int, std::string>> gl_act_cold_refloat;
+        // gl_emit_withhold: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
+        // gl_emit_disc: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
+        // gl_act_declare: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
+        // gl_act_release: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
+        // gl_act_station: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
+        // gl_act_cold_refloat: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
         // rx_clk_carry: moved to net::StationSignalState::rx_clk (card NOM step N4a, app/NetworkEntities.hpp).
         // rx_clk_rate: moved to net::StationSignalState::rx_clk_rate (card NOM step N4a, app/NetworkEntities.hpp).
         // iono_cs: moved to net::LosState::iono_cs (card NOM step N4c, app/NetworkEntities.hpp).
         // rpb_carry: moved to net::StationSignalState::rpb (card NOM step N4a, app/NetworkEntities.hpp).
         // rx_cb_carry: moved to net::StationSignalState::rx_cb (card NOM step N4a, app/NetworkEntities.hpp).
         // pc_carry: moved to net::LosState::pc (card NOM step N4c, app/NetworkEntities.hpp).
-        /// Card LGM: formatted rows of network_phase_colour.csv buffered at the harvest
-        /// and written by the driver after it (empty unless network.trace_phase_colour).
-        std::vector<std::string> pc_trace_rows;
-        /// Card AIL: formatted rows of network_amb_if.csv buffered at the harvest and
-        /// written by the driver after it (empty unless network.trace_amb_if).
-        std::vector<std::string> amb_if_rows;
+        // pc_trace_rows: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
+        // amb_if_rows: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
         // rxcb_lin_restore: moved to net::StationState::rxcb_lin_restore (card NOM step N4a, app/NetworkEntities.hpp).
         /// Per-station out-slots for the two RS-9 override tallies, sized once by
         /// @c networkApplyRxCbLinRestore and never resized: each station's
@@ -1761,14 +1656,7 @@ namespace GnssProcessor {
         // drops it, and the slip then surfaces to post-fit RAIM instead.
         // datum_reref_pb_sats: moved to net::SatelliteState::datum_reref_pb (card NOM step N4e2, app/NetworkEntities.hpp).
         // datum_reref_amb_sats: moved to net::SatelliteState::datum_reref_amb (card NOM step N4e2, app/NetworkEntities.hpp).
-        /// Per-epoch state of the slip re-level response (SPEC_slip_relevel_walk §6): the
-        /// latched free-epoch set, the deferred MW bridge candidates, and the bridged-band
-        /// set for the harvest-side statistics guard.  Filled by the PASS-A serial drains,
-        /// read by the PASS-B inject and the post-solve harvest, cleared at the next
-        /// epoch's PASS-A entry.  Not snapshotted (one-epoch lifetime; a resumed leg's
-        /// first epochs degrade to the path without the response, the conservative
-        /// direction, by the same argument as the pending re-reference queues above).
-        RelevelEpochState            relevel;
+        // relevel: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
         /// The producer AR search's suspect-corner ledger (card ARL,
         /// filter/NetworkArSuspect.hpp): per (station, satellite), the stamp of each slip
         /// cause's last event (the loop epoch of the first search that can act on it), and
@@ -1793,14 +1681,7 @@ namespace GnssProcessor {
         /// the fold runs with source lattice.  Not snapshotted.
         FixedCycleState              fixed_cycles;
         // relevel_pend: moved to net::LosState::relevel_pend (card NOM step N4f1, app/NetworkEntities.hpp).
-        /// What the gap re-entry response did to each arc at this epoch (card SID phase 3,
-        /// R4), recorded by the response and read by the roster's audit pass, where the
-        /// admitted-side census lives.  Cleared at the build seam, so it never describes a
-        /// previous epoch.  Written in both states of network.ledger_reentry (unarmed, the
-        /// raw tiers record their own outcomes), on every network run (the roster is built
-        /// on every run since card NOM step N3a).  Observatory: nothing in the solve reads
-        /// it.
-        ArcReentryOutcomeMap sid_reentry_outcome;
+        // sid_reentry_outcome: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
         /// The anchor election's own datum history per (satellite, signal) family (card SID
         /// phase 4, S2 / B1): what each coverage-gate drop edge left behind (the incumbent,
         /// the epoch, the per-station admitted generations) and the last epoch the family
@@ -1810,12 +1691,7 @@ namespace GnssProcessor {
         /// is a real first sighting (the same exemption the roster and the ledger take).
         /// Untouched unless network.ledger_screens.
         AnchorReentryState           sid_anchor_reentry;
-        /// The arcs whose leveling carry the gap prune retired at
-        /// network.phase_leveling_max_gap_s this epoch (card SID phase 3, R3a).  The prune
-        /// runs in the harvest seam, which has neither the trace bundle nor the epoch time,
-        /// so the keys are buffered here and the audit pass emits their
-        /// `ARC arc_death reason=horizon` rows.  Cleared as it is drained.
-        std::vector<ArcLedger::Key> sid_carry_prune_deaths;
+        // sid_carry_prune_deaths: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
         // Startup quality-ramp state (RTB-7(b/c)).  The degraded URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon and σ̂0-EWMA update count, the
@@ -1854,7 +1730,7 @@ namespace GnssProcessor {
         // The drained view the DD-prior build reads this epoch: a member of this set that
         // is not also in the epoch's raw funnel subset keeps its carried DD instead of
         // being refloated.  Rebuilt (cleared and filled) at the head of every epoch.
-        std::set<std::pair<int, std::string>> carry_innov_flat_now;
+        // carry_innov_flat_now: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
         // carry_innov_kill_suppressed: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
         // --- Per-epoch carry churn (SPEC_day129_frame_guards P1-1) ---
@@ -1872,8 +1748,10 @@ namespace GnssProcessor {
         // epoch-status row.  Trace only: nothing reads them back.
         long long carry_prev_born = 0, carry_prev_slipkills = 0,
                   carry_prev_innov_flags = 0, carry_prev_innov_retaps = 0;
-        long long ep_chord_births = 0, ep_slip_refloats = 0,
-                  ep_d5_flags = 0, ep_d5_retaps = 0;
+        // ep_chord_births: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
+        // ep_slip_refloats: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
+        // ep_d5_flags: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
+        // ep_d5_retaps: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
         // Per-epoch observability of the within-epoch RAIM tier (R0), parked here between
         // the solve glue (writer) and the epoch-status emit (reader).  It puts a null
         // sample of σ̂₀_first on disk (a trip event's detail span carries it only on
@@ -1882,10 +1760,10 @@ namespace GnssProcessor {
         // row, where es.n_refloat_sats counts only the clock-couple set, which is empty
         // unless clock_monitor_couple_raim.  Sentinels: < 0 = the tier did not assess this
         // epoch, and the columns stay blank ("unavailable is not 0").
-        double      ep_sigma0_first    = -1.0; ///< first-assess σ̂₀ (pre-adaptation)
-        int         ep_we_refloat_sats = -1;   ///< whole-sat refloats settled this epoch
-        double      ep_we_clk_move_max = -1.0; ///< max |final − primary| clock move (m)
-        std::string ep_we_clk_move_sat;        ///< identity of that max (invariant #7)
+        // ep_sigma0_first: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
+        // ep_we_refloat_sats: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
+        // ep_we_clk_move_max: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
+        // ep_we_clk_move_sat: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
 
         // --- Withhold-era continuity (A4).  Advanced only at epochs that reach the A4
         // decision; continuity uses the census freshness idiom
@@ -1954,11 +1832,11 @@ namespace GnssProcessor {
         // NetRowClass (obs_code, obs_phase, obs_other, iono_sh_row), which is also the
         // trace column order.  Nothing reads them back: the census is a tripwire, not an
         // input.
-        double    ep_pc_max_s[kNetDataClasses]{};
-        double    ep_pc_p99_s[kNetDataClasses]{};
-        long long ep_pc_n_gt_10[kNetDataClasses]{};
-        long long ep_pc_n_gt_1000[kNetDataClasses]{};
-        long long ep_pc_rows         = 0;   ///< data rows in this epoch's census (0 means blank columns)
+        // ep_pc_max_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_pc_p99_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_pc_n_gt_10: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_pc_n_gt_1000: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_pc_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
         /// H-rider (edge-queue §1.6 item 3a): this epoch's pooled robust prefit σ̂₀ for the
         /// H heartbeat (networkPrefitSigma0, computed pre-solve at the top of
         /// networkSolveGlue).  0.0 = unavailable (empty pool, or the knob is off), the
@@ -1985,7 +1863,7 @@ namespace GnssProcessor {
         // the first post-resume epoch, which correctly suppresses a spurious trip on the
         // resume seam itself (no baseline, so no delta and no trip).
         // cb_exc_prev_clk: moved to net::SatelliteState::cb_exc_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
-        std::set<std::string> cb_excursion_sats;            ///< this epoch's stash: mark these sats' CB carry inflate_q
+        // cb_excursion_sats: moved to EpochEvents::Qc (app/NetworkEpoch.hpp).
         // cb_excursion_pending_bump: moved to net::SatelliteState::disc_pending (net::Disc::CbExcursion) (card NOM step N4e2, app/NetworkEntities.hpp).
         // cb_exc_trips, cb_exc_reinits, cb_exc_bumps, cb_exc_nonpivot_would, cb_exc_max_median,
         // cb_exc_max_median_tow: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
@@ -2057,11 +1935,11 @@ namespace GnssProcessor {
         // Per-epoch L1 scalars.  redun_ep_tow is the stamp the epoch-status writer
         // compares against: a non-sweep epoch leaves the columns blank instead of
         // repeating a stale sweep's numbers (the "unavailable is not 0" convention).
-        double    redun_ep_tow           = -1.0;
-        long long ep_redun_rows          = 0;  ///< the denominator: data rows swept this epoch.  A raw uncheckable count cannot be interpreted without it.
-        long long ep_uncheckable_rows    = 0;
-        double    ep_uncheckable_max_s   = 0.0;
-        long long ep_unobservable_local  = 0;
+        // redun_ep_tow: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_redun_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_uncheckable_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_uncheckable_max_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_unobservable_local: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
         // redun_cov_warned, redun_closure_warned: moved to NetworkServiceCounters (card NOM step N4g,
         // decision D6).
 
@@ -2120,26 +1998,19 @@ namespace GnssProcessor {
         // matters).  Empty and unread unless ctx.knobs.prires_on, so an off run allocates
         // nothing.
         // prires_event_last: moved to net::LosState::events (LosEventState::prires_event_last) (card NOM step N4c, app/NetworkEntities.hpp).
-        /// Per-epoch L1 scalars.  prires_ep_tow is the stamp the epoch-status writer
-        /// compares against, so an epoch the census did not run leaves the columns blank
-        /// rather than repeating stale numbers ("unavailable is not 0"; a real 0-row epoch
-        /// and an un-run one say different things).
-        double    prires_ep_tow      = -1.0;
-        long long ep_prires_rows     = 0;   ///< the denominator: carried priors censused this epoch.
-        long long ep_prires_resp     = 0;   ///< of those, labelled responded (the positive control's population).
-        long long ep_prires_frame    = 0;   ///< of those, labelled frame (invariant-#7 edges).
-        long long ep_prires_reported = 0;   ///< of those, |t| above the trace threshold (nothing acted on them).
-        double    ep_prires_max_t    = 0.0; ///< the worst |t| this epoch, over every family and label.
+        // prires_ep_tow: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_prires_rows: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_prires_resp: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_prires_frame: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_prires_reported: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_prires_max_t: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
         // prires_trunc_warned: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         int       prires_last_flush_hour = -1; ///< content-hour bucket of the last ladder flush (durability: only health_trace flushes on its own).
-        /// Constraint-aware global σ̂₀: the three epoch-status scalars, stamped by the same
-        /// emission seam and gated by the same @ref prires_ep_tow stamp, so an epoch the
-        /// rider did not drain leaves them blank rather than repeating stale numbers.
-        bool      ep_s0g_formed = false;///< σ̂₀²_global was defined this epoch (Σr > 0); false means the column is blank, never 0.
-        double    ep_s0g_sigma0 = 0.0;  ///< σ̂₀_global (the square root, directly comparable to the median σ̂₀ it is measured against).
-        bool      ep_s0g_tension_def = false; ///< the tension ratio had a data side to divide by.
-        double    ep_s0g_tension = 0.0; ///< Σw·ê² / Σw·v²: the headline column.
-        int       ep_s0g_flags   = 0;   ///< @c NetworkPriorResidual::GlobalFlag bitmask: in-band degradation, never silent.
+        // ep_s0g_formed: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_s0g_sigma0: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_s0g_tension_def: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_s0g_tension: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_s0g_flags: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
 
         // --- BlockFormal LOS block census ---
         // Snapshot: exempt; observer state of a measure-only, forward-only instrument, the
@@ -2157,7 +2028,7 @@ namespace GnssProcessor {
         // families, so enabled() is false and every entry point is a single bool test; an
         // unarmed run allocates nothing beyond the empty vectors.
         NetworkBlockBaarda bb{{}, 0.0};        ///< the run accumulator; re-seated from config once at run start.
-        std::vector<BlockBaardaHit> bb_hits;   ///< this epoch's reportable blocks, drained by the emission seam.
+        // bb_hits: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
         // bb_event_last: moved to net::LosState::bb_event_last (card NOM step N4e2, app/NetworkEntities.hpp).
         // This census adds no network_epoch_status.csv columns, unlike the three censuses
         // above.  Its own network_block_baarda.csv already carries n_blocks / n_reported /
@@ -2182,7 +2053,7 @@ namespace GnssProcessor {
         // census).  Default-constructed unarmed, so enabled() is false and every entry
         // point is a single bool test.
         NetworkCongruence cg{false};           ///< the run accumulator; re-seated from config once at run start.
-        std::vector<CongruenceHit> cg_hits;    ///< this epoch's per-station records, drained by the emission seam.
+        // cg_hits: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
         // cg_event_last: moved to net::StationState::cg_event_last (card NOM step N4e2, app/NetworkEntities.hpp).
 
         // s0g_approx_warned, s0g_nodata_warned: moved to NetworkServiceCounters (card NOM step N4g,
@@ -2222,7 +2093,7 @@ namespace GnssProcessor {
         // site to the SB_FRAMEDIAG consumer (the A4 withhold path consumes its own, since
         // that epoch never reaches SB_FRAMEDIAG).
         std::set<std::string> rhs_trip_eras;   ///< QC eras currently active (latched, one trip each).
-        std::string rhs_trip_pending;          ///< this epoch's trip reason ("" = none); names the dump.
+        // rhs_trip_pending: moved to EpochEvents::Qc (app/NetworkEpoch.hpp).
         std::unique_ptr<NetworkAttribFrame> rhs_prev_frame;  ///< the retained previous epoch (null unless retention is on and sized in).
         // rhs_prev_oversize_logged: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
@@ -4156,6 +4027,7 @@ namespace GnssProcessor {
 
     struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
     struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct EpochEvents;             // app/NetworkEpoch.hpp
 
     /**
      * @brief Write the periodic atomic state snapshot (RTB-7(a)): on the first call, then
@@ -4257,13 +4129,14 @@ namespace GnssProcessor {
 
     /// @brief Fold the border carry stashed last epoch (the D2 diagonal or the C1 dense
     ///        fold), after the null-space rank gate.
+    /// @param events The epoch's events; reads handover and phase_datum, writes solve (the re-admission seeds).
     /// Defined in src/core/app/NetworkBorderPrior.cpp.
     void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                    NetworkRunTraces& traces, const GnssTime& t,
                                    NetworkEstimator& est, bool datum_changed,
                                    const std::set<char>& changed_consts, double dt,
                                    bool within_epoch_armed,
-                                   const std::shared_ptr<spdlog::logger>& log);
+                                   const std::shared_ptr<spdlog::logger>& log, EpochEvents& events);
 
     /**
      * @brief Build this epoch's inputs of the exact coupling time update (card CTU,
@@ -4342,6 +4215,7 @@ namespace GnssProcessor {
 
     /// @brief Stash the border carry (prev_carry, prev_carry_cov) for the next epoch's D2
     ///        fold, with the READMIT continuity bookkeeping.
+    /// @param events The epoch's events, read: the IF-pin pairs, the re-admission seeds, the code-bias excursion marks.
     /// Defined in src/core/app/NetworkBorderStash.cpp.
     void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                            NetworkRunTraces& traces, const GnssTime& t,
@@ -4353,6 +4227,7 @@ namespace GnssProcessor {
                            const std::vector<std::string>& registered_clock_sats,
                            const std::set<std::string>& shared_phase_keys,
                            const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                           const EpochEvents& events,
                            const std::shared_ptr<spdlog::logger>& log);
 
 } // namespace GnssProcessor

@@ -105,7 +105,7 @@ namespace GnssProcessor {
 struct NetworkEpochContractProbe {
     using SigPassAHead = EpochAction (Application::*)(NetworkRun&, const NetworkEpoch&, EpochPassA&);
     static constexpr SigPassAHead networkPassAHead_ = &Application::networkPassAHead_;
-    using SigPassASlipScan = void (Application::*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&);
+    using SigPassASlipScan = void (Application::*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&, EpochEvents&);
     static constexpr SigPassASlipScan networkPassASlipScan_ = &Application::networkPassASlipScan_;
     using SigAssemblyPrefilter = void (Application::*)(NetworkRun&, const NetworkEpoch&, EpochPassA&);
     static constexpr SigAssemblyPrefilter networkAssemblyPrefilter_ = &Application::networkAssemblyPrefilter_;
@@ -141,7 +141,7 @@ using SigParamInventoryNoteSatellites = void (*)(NetworkRun&, const NetworkEpoch
 static_assert(std::is_same_v<decltype(static_cast<SigParamInventoryNoteSatellites>(&networkParamInventoryNoteSatellites)), SigParamInventoryNoteSatellites>);
 using SigSignalIntegrity = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&);   // W2 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigSignalIntegrity>(&networkSignalIntegrity)), SigSignalIntegrity>);
-using SigMeasurementAdmission = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&);   // W2 adapter
+using SigMeasurementAdmission = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, NetworkSlipFunnel&, EpochEvents&);   // W2 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigMeasurementAdmission>(&networkMeasurementAdmission)), SigMeasurementAdmission>);
 using SigLevelAuthorityCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigLevelAuthorityCensus>(&networkLevelAuthorityCensus)), SigLevelAuthorityCensus>);
@@ -151,7 +151,7 @@ using SigOraclePinEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 di
 static_assert(std::is_same_v<decltype(static_cast<SigOraclePinEpoch>(&networkOraclePinEpoch)), SigOraclePinEpoch>);
 using SigClockLevelRestoreRaise = void (*)(NetworkRun&);   // W3 run
 static_assert(std::is_same_v<decltype(static_cast<SigClockLevelRestoreRaise>(&networkClockLevelRestoreRaise)), SigClockLevelRestoreRaise>);
-using SigHandoverStransformBeforeRows = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 adapter
+using SigHandoverStransformBeforeRows = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W2 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigHandoverStransformBeforeRows>(&networkHandoverStransformBeforeRows)), SigHandoverStransformBeforeRows>);
 using SigCarryDecide = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigCarryDecide>(&networkCarryDecide)), SigCarryDecide>);
@@ -159,17 +159,17 @@ using SigCouplingExactPrepare = void (*)(NetworkRun&, const NetworkEpoch&);   //
 static_assert(std::is_same_v<decltype(static_cast<SigCouplingExactPrepare>(&networkCouplingExactPrepare)), SigCouplingExactPrepare>);
 using SigBuildCarryDdPriors = void (*)(NetworkRun&, const NetworkEpoch&, EpochDdBuild&);   // W2 direct; EP1c: reads the funnel through ep
 static_assert(std::is_same_v<decltype(static_cast<SigBuildCarryDdPriors>(&networkBuildCarryDdPriors)), SigBuildCarryDdPriors>);
-using SigSolveGlue = NetworkSolveGlueResult (*)(NetworkRun&, const NetworkEpoch&, EpochWorkspace&, std::vector<int>&, EpochDdBuild&);   // W2 direct; EP1c: no funnel output
+using SigSolveGlue = NetworkSolveGlueResult (*)(NetworkRun&, const NetworkEpoch&, EpochWorkspace&, std::vector<int>&, EpochDdBuild&, EpochEvents&);   // W2 direct; EP1c: no funnel output
 static_assert(std::is_same_v<decltype(static_cast<SigSolveGlue>(&networkSolveGlue)), SigSolveGlue>);
-using SigInstallCarry = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 direct
+using SigInstallCarry = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigInstallCarry>(&networkInstallCarry)), SigInstallCarry>);
 using SigProducerAr = ArEpochFixes (*)(NetworkRun&, const NetworkEpoch&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigProducerAr>(&networkProducerAr)), SigProducerAr>);
-using SigGrossLosScreen = void (*)(NetworkRun&, const NetworkEpoch&, GrossLosPhase);   // W3 direct
+using SigGrossLosScreen = void (*)(NetworkRun&, const NetworkEpoch&, GrossLosPhase, EpochEvents&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigGrossLosScreen>(&networkGrossLosScreen)), SigGrossLosScreen>);
 using SigFixedCycles = FixedCycleEmission (*)(NetworkRun&, const NetworkEpoch&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigFixedCycles>(&networkFixedCycles)), SigFixedCycles>);
-using SigSolPrep = NetworkSolPrepResult (*)(NetworkRun&, const NetworkEpoch&);   // W3 adapter
+using SigSolPrep = NetworkSolPrepResult (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W3 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigSolPrep>(&networkSolPrep)), SigSolPrep>);
 using SigPbHoldCloneUpdate = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigPbHoldCloneUpdate>(&networkPbHoldCloneUpdate)), SigPbHoldCloneUpdate>);
@@ -181,13 +181,13 @@ using SigDdFrac = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigDdFrac>(&networkDdFrac)), SigDdFrac>);
 using SigShDevVtec = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigShDevVtec>(&networkShDevVtec)), SigShDevVtec>);
-using SigShHealth = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
+using SigShHealth = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigShHealth>(&networkShHealth)), SigShHealth>);
-using SigLeveling = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
+using SigLeveling = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigLeveling>(&networkLeveling)), SigLeveling>);
 using SigPostFitRaim = void (*)(NetworkRun&, const NetworkEpoch&, NetworkPostFitHandoff&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigPostFitRaim>(&networkPostFitRaim)), SigPostFitRaim>);
-using SigClockQc = void (*)(NetworkRun&, const NetworkEpoch&, NetworkPostFitHandoff&);   // W3 direct
+using SigClockQc = void (*)(NetworkRun&, const NetworkEpoch&, NetworkPostFitHandoff&, EpochEvents&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigClockQc>(&networkClockQc)), SigClockQc>);
 using SigPhaseVisibleMonitor = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigPhaseVisibleMonitor>(&networkPhaseVisibleMonitor)), SigPhaseVisibleMonitor>);
@@ -211,7 +211,7 @@ using SigShSpectrum = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigShSpectrum>(&networkShSpectrum)), SigShSpectrum>);
 using SigStationBlock = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigStationBlock>(&networkStationBlock)), SigStationBlock>);
-using SigPrefitCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 adapter
+using SigPrefitCensus = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W4 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigPrefitCensus>(&networkPrefitCensus)), SigPrefitCensus>);
 // Card NOM3 step PB1a: PASS B's serial stages, called by networkPassB_ (not by the spine) with
 // its run and epoch.  A stage that reads the assembly networkPassB_ is still writing takes it as
@@ -236,7 +236,7 @@ using SigAssemblyProduce = void (*)(NetworkRun&, const NetworkEpoch&,
                                     const std::unique_ptr<GlobalIonosphereMap>&,
                                     EpochAssembly&);   // PB1b stage S06, writes assembly
 static_assert(std::is_same_v<decltype(static_cast<SigAssemblyProduce>(&networkAssemblyProduce)), SigAssemblyProduce>);
-using SigRedundancyCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
+using SigRedundancyCensus = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigRedundancyCensus>(&networkRedundancyCensus)), SigRedundancyCensus>);
 using SigBlockBaardaEmit = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigBlockBaardaEmit>(&networkBlockBaardaEmit)), SigBlockBaardaEmit>);
@@ -250,7 +250,7 @@ using SigRhsAttribution = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 di
 static_assert(std::is_same_v<decltype(static_cast<SigRhsAttribution>(&networkRhsAttribution)), SigRhsAttribution>);
 using SigRhsAttribTrip = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigRhsAttribTrip>(&networkRhsAttribTrip)), SigRhsAttribTrip>);
-using SigStashStatus = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 direct
+using SigStashStatus = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // W3 direct
 static_assert(std::is_same_v<decltype(static_cast<SigStashStatus>(&networkStashStatus)), SigStashStatus>);
 using SigPbHoldCloneHarvest = void (*)(NetworkRun&, const NetworkEpoch&);   // W3 adapter
 static_assert(std::is_same_v<decltype(static_cast<SigPbHoldCloneHarvest>(&networkPbHoldCloneHarvest)), SigPbHoldCloneHarvest>);
@@ -264,15 +264,15 @@ static_assert(std::is_same_v<decltype(static_cast<SigWriteStateSnapshot>(&networ
 // Card NOM3 step EP2: the seams the driver's inline blocks became, and the admission.
 using SigAdmitEpoch = EpochAdmission (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigAdmitEpoch>(&networkAdmitEpoch)), SigAdmitEpoch>);
-using SigSlipFunnelOpen = void (*)(NetworkRun&, const NetworkEpoch&, NetworkSlipFunnel&);   // EP2 direct, funnel writer
+using SigSlipFunnelOpen = void (*)(NetworkRun&, const NetworkEpoch&, NetworkSlipFunnel&, EpochEvents&);   // EP2 direct, funnel writer
 static_assert(std::is_same_v<decltype(static_cast<SigSlipFunnelOpen>(&networkSlipFunnelOpen)), SigSlipFunnelOpen>);
 using SigSlipFunnelUnionRaw = void (*)(NetworkRun&, const NetworkEpoch&, NetworkSlipFunnel&);   // EP2 direct, funnel writer
 static_assert(std::is_same_v<decltype(static_cast<SigSlipFunnelUnionRaw>(&networkSlipFunnelUnionRaw)), SigSlipFunnelUnionRaw>);
-using SigPhaseAnchorEpoch = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&);   // EP2 direct, pass_a writer
+using SigPhaseAnchorEpoch = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&, EpochEvents&);   // EP2 direct, pass_a writer
 static_assert(std::is_same_v<decltype(static_cast<SigPhaseAnchorEpoch>(&networkPhaseAnchorEpoch)), SigPhaseAnchorEpoch>);
 using SigReceiverPhaseBiasAllocation = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigReceiverPhaseBiasAllocation>(&networkReceiverPhaseBiasAllocation)), SigReceiverPhaseBiasAllocation>);
-using SigAmbFloatDropEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+using SigAmbFloatDropEpoch = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // EP2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigAmbFloatDropEpoch>(&networkAmbFloatDropEpoch)), SigAmbFloatDropEpoch>);
 using SigCarryDriverBeginEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigCarryDriverBeginEpoch>(&networkCarryDriverBeginEpoch)), SigCarryDriverBeginEpoch>);
@@ -282,7 +282,7 @@ using SigCongruencePredict = void (*)(NetworkRun&, const NetworkEpoch&);   // EP
 static_assert(std::is_same_v<decltype(static_cast<SigCongruencePredict>(&networkCongruencePredict)), SigCongruencePredict>);
 using SigSectionTimersReadout = void (*)(NetworkRun&, const NetworkEpoch&, const EpochSectionTimers&);   // EP2 direct, kept parameter
 static_assert(std::is_same_v<decltype(static_cast<SigSectionTimersReadout>(&networkSectionTimersReadout)), SigSectionTimersReadout>);
-using SigObserveEpoch = void (*)(NetworkRun&, const NetworkEpoch&, NetworkObserverSlot);   // EP3 direct, the observer table's slot walk
+using SigObserveEpoch = void (*)(NetworkRun&, const NetworkEpoch&, NetworkObserverSlot, EpochEvents&);   // EP3 direct, the observer table's slot walk
 static_assert(std::is_same_v<decltype(static_cast<SigObserveEpoch>(&networkObserveEpoch)), SigObserveEpoch>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkGapResumeCensus)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkBufferedTraceDrains)), NetworkEpochObserver>);
@@ -299,8 +299,8 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkPostfitSigma0)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkShSpectrum)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkStationBlock)), NetworkEpochObserver>);
-static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkPrefitCensus)), NetworkEpochObserver>);
-static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkRedundancyCensus)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochRecorder>(&networkPrefitCensus)), NetworkEpochRecorder>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochRecorder>(&networkRedundancyCensus)), NetworkEpochRecorder>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkBlockBaardaEmit)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkCongruenceEmit)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkMdbFlush)), NetworkEpochObserver>);
@@ -313,7 +313,7 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&net::ne
 // Card NOM3 step HV1: the harvest by carried kind.  The orchestrator and the 19 functions it
 // calls take the epoch form and no epoch output (the harvest writes run state only); the two
 // post-resume steps read no epoch group and take the run only.
-using SigHvHarvestLocalCarries = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 orchestrator
+using SigHvHarvestLocalCarries = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // HV1 orchestrator
 static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestLocalCarries>(&networkHarvestLocalCarries)), SigHvHarvestLocalCarries>);
 using SigHvHarvestHandoverLedger = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestHandoverLedger>(&networkHarvestHandoverLedger)), SigHvHarvestHandoverLedger>);
@@ -327,13 +327,13 @@ using SigHvHarvestAmbiguityStation = void (*)(NetworkRun&, const NetworkEpoch&, 
 static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestAmbiguityStation>(&networkHarvestAmbiguityStation)), SigHvHarvestAmbiguityStation>);
 using SigHvAmbiguityMonitorFeeds = void (*)(NetworkRun&, const NetworkEpoch&, std::size_t, const PlAmb&, double, double);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvAmbiguityMonitorFeeds>(&networkAmbiguityMonitorFeeds)), SigHvAmbiguityMonitorFeeds>);
-using SigHvAmbIfTraceStation = void (*)(NetworkRun&, const NetworkEpoch&, const StationHarvestBlock&, std::size_t);   // HV1 direct
+using SigHvAmbIfTraceStation = void (*)(NetworkRun&, const NetworkEpoch&, const StationHarvestBlock&, std::size_t, EpochEvents&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvAmbIfTraceStation>(&networkAmbIfTraceStation)), SigHvAmbIfTraceStation>);
-using SigHvHarvestPhaseColourStation = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const StationHarvestBlock&, std::size_t);   // HV1 direct
+using SigHvHarvestPhaseColourStation = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const StationHarvestBlock&, std::size_t, EpochEvents&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestPhaseColourStation>(&networkHarvestPhaseColourStation)), SigHvHarvestPhaseColourStation>);
 using SigHvPrunePhaseColour = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvPrunePhaseColour>(&networkPrunePhaseColour)), SigHvPrunePhaseColour>);
-using SigHvPruneAmbiguities = void (*)(NetworkRun&, const NetworkEpoch&);   // HV1 direct
+using SigHvPruneAmbiguities = void (*)(NetworkRun&, const NetworkEpoch&, EpochEvents&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvPruneAmbiguities>(&networkPruneAmbiguities)), SigHvPruneAmbiguities>);
 using SigHvHarvestSlantIonoBlock = void (*)(NetworkRun&, const NetworkEpoch&, HarvestBorder&, const std::vector<StationHarvestBlock>&);   // HV1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigHvHarvestSlantIonoBlock>(&networkHarvestSlantIonoBlock)), SigHvHarvestSlantIonoBlock>);

@@ -7,6 +7,7 @@
  */
 
 #include "filter/NetworkArLattice.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"     // ctx.carry.ar_lattice, gl_act_*, ctx.counters.netar_lattice
 #include "config/GnssConfig.hpp"         // network.ambiguity_resolution.trace_lattice, fixed_cycles.*
@@ -277,7 +278,7 @@ bool ArLosScope::covers(const ArcId& a) const {
     return sats.count(a.sat) > 0 || stations.count(a.station) > 0 || los.count(LosId{a.station, a.sat}) > 0;
 }
 
-ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const WithinEpochCulprits& we) {
+ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const WithinEpochCulprits& we, const EpochEvents& events) {
     ArLatticeEvidence ev;
     auto addLos = [](ArLosScope& s, int station, const std::string& sat) {
         if (const std::optional<SatId> id = SatId::parse(sat)) s.los.insert(LosId{StationId{station}, *id});
@@ -291,10 +292,10 @@ ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const W
     // seam (network.gross_los_emit_exclude); otherwise they hold the last epoch's, already
     // acted on and read through the life stamp.
     if (ctx.knobs.gl_emit_exclude) {
-        for (const auto& [station, sat] : ctx.carry.gl_act_declare) addLos(ev.gross, station, sat);
-        for (const auto& [station, declared] : ctx.carry.gl_act_station)
+        for (const auto& [station, sat] : events.gross.gl_act_declare) addLos(ev.gross, station, sat);
+        for (const auto& [station, declared] : events.gross.gl_act_station)
             if (declared) ev.gross.stations.insert(StationId{station});
-        for (const auto& [station, sat] : ctx.carry.gl_act_cold_refloat) addLos(ev.gross, station, sat);
+        for (const auto& [station, sat] : events.gross.gl_act_cold_refloat) addLos(ev.gross, station, sat);
     }
     return ev;
 }
