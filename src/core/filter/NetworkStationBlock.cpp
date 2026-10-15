@@ -268,7 +268,7 @@ void networkStationBlock(NetworkRun& run, const NetworkEpoch& ep) {
     if (!ctx.knobs.trace_station_block) return;   // the driver's gate (card NOM3 step EP2)
     (void)config_;   // the toggle is expressed through which trace is open
     auto& t = traces.station_block_trace;
-    if (!t.is_open()) return;   // off path: the driver does not call this; guard kept
+    if (!t.is_open()) return;   // off path: kept for callers outside the driver
 
     // Cadence: one row set per emitted epoch, for emissions 1..20 and every 60th
     // thereafter.  The gate keys on n_emitted rather than on the seam running

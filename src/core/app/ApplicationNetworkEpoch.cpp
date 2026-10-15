@@ -42,8 +42,6 @@
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume
-#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
-#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (card 5, RTF-1)
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
@@ -58,12 +56,10 @@
 #include "filter/NetworkWlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
 #include "filter/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
 #include "filter/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
-#include "filter/NetworkPhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
 #include "filter/NetworkAmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
 #include "filter/NetworkAmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
 #include "filter/NetworkHandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
 #include "filter/NetworkChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
-#include "filter/NetworkAnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "filter/NetworkSignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "filter/NetworkMeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
 #include "filter/NetworkGrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
@@ -128,7 +124,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <chrono>
 #include <ctime>
 #include <deque>
 #include <random>

@@ -10,7 +10,6 @@
  */
 #include "filter/NetworkPhaseAnchorEpoch.hpp"
 
-#include "app/Application.hpp"
 #include "app/NetworkEpoch.hpp"   // NetworkEpoch
 #include "app/NetworkRun.hpp"     // NetworkRun
 #include "app/NetworkRunContext.hpp"
