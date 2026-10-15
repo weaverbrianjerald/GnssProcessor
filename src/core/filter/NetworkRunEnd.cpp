@@ -2,16 +2,25 @@
  * @file NetworkRunEnd.cpp
  * @brief The run-end table, kNetworkRunEndReports: every run-end report of the network
  *        producer in print order, with what it reports and its home file (card NOM step
- *        TD1b).  filter/NetworkRunEnd.hpp states how to add a row and the order constraints.
+ *        TD1b), one row per subsystem (card NOM2 step TD2), and the walk's two helpers.
+ *        filter/NetworkRunEnd.hpp states how to add a row and the order constraints.
  *
- * The rows below are written by scripts/nom_td_cut.py together with the reports themselves,
- * so the table and the cut cannot disagree.  Each row's report is declared in the header of
- * its home file.
+ * The rows were written by scripts/nom_td_cut.py (TD1b) and regrouped by subsystem by
+ * scripts/nom_td2_cut.py (TD2, proved by scripts/nom_td2_verify.py); since TD2 the table is
+ * edited by hand under the rules of the header.  Each row's report is declared in the header
+ * of its home file.
  */
 
 #include "filter/NetworkRunEnd.hpp"
 
-// ---- Written by scripts/nom_td_cut.py (card NOM step TD1b); change the generator, not this region ----
+#include <spdlog/details/log_msg_buffer.h>
+#include <spdlog/sinks/sink.h>
+#include <spdlog/spdlog.h>
+
+#include <string>
+#include <vector>
+
+// ---- The table (TD1b's generated region, regrouped by TD2; edited by hand since) ----
 
 #include "app/NetworkClosedLoopRunEnd.hpp"
 #include "app/NetworkReadmitRunEnd.hpp"
@@ -62,6 +71,7 @@
 #include "filter/NetworkOraclePin.hpp"
 #include "filter/NetworkParamInventory.hpp"
 #include "filter/NetworkParamRegistry.hpp"
+#include "filter/NetworkPhaseColourCarry.hpp"
 #include "filter/NetworkPhaseDatum.hpp"
 #include "filter/NetworkPhaseVisibleDiag.hpp"
 #include "filter/NetworkPrefitCensus.hpp"
@@ -72,6 +82,7 @@
 #include "filter/NetworkRankGate.hpp"
 #include "filter/NetworkRedundancyCensus.hpp"
 #include "filter/NetworkResponses.hpp"
+#include "filter/NetworkRxClockCarry.hpp"
 #include "filter/NetworkRxCodeBiasCarryRunEnd.hpp"
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkSbasisCompletion.hpp"
@@ -83,6 +94,7 @@
 #include "filter/NetworkSolPrep.hpp"
 #include "filter/NetworkStationBlock.hpp"
 #include "filter/NetworkWithinEpochCulprits.hpp"
+#include "filter/NetworkZwdCarry.hpp"
 #include "products/NetworkClockEmitRebase.hpp"
 #include "products/NetworkEmitRebase.hpp"
 #include "slip/NetworkCommonBandScope.hpp"
@@ -98,12 +110,10 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "app/NetworkRunArtifactsRunEnd.cpp", networkTraceCloseRunEnd},
     {"run timing: the epoch-loop wall, the D0 and D0b section timers",
      "app/NetworkRunTimingRunEnd.cpp", networkRunTimingRunEnd},
-    {"producer complete: epochs emitted, skipped and withheld",
-     "filter/NetworkEmitStore.cpp", networkEmitOutcomeRunEnd},
+    {"the emit store: epochs emitted, skipped and withheld; heartbeats of a writer that never opened; the product contract round trip (B6)",
+     "filter/NetworkEmitStore.cpp", networkEmitStoreRunEnd},
     {"stations in the solve and the addStation PD rejections",
      "app/NetworkSolveStationsRunEnd.cpp", networkSolveStationsRunEnd},
-    {"heartbeats of a deferred product writer that never opened",
-     "filter/NetworkEmitStore.cpp", networkDeferredHeartbeatsRunEnd},
     {"the observability rank gate and the datum-direction ratio",
      "filter/NetworkRankGate.cpp", networkRankGateRunEnd},
     {"S-basis completion (SBC)",
@@ -116,14 +126,12 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkWithinEpochCulprits.cpp", networkWithinEpochCulpritWithholdRunEnd},
     {"the KP prior and the CB-ADM code-pair admission",
      "filter/NetworkBiasAdmission.cpp", networkBiasAdmissionRunEnd},
-    {"phase-anchor hygiene: handover, cold fallback, PHASE_ANCHOR re-reference, eq34",
+    {"phase-anchor hygiene: handover, cold fallback, the anchor re-reference, eq34",
      "filter/NetworkAnchorHygiene.cpp", networkAnchorHygieneRunEnd},
-    {"the carried-phase RAIM pools: admissions and the re-host",
-     "filter/NetworkRaim.cpp", networkRaimPoolRunEnd},
-    {"the gross line-of-sight screen",
+    {"RAIM: the carried-phase pools and the re-host, the withhold era, the R2 station factor, the R4 rate hygiene",
+     "filter/NetworkRaim.cpp", networkRaimRunEnd},
+    {"the gross line-of-sight screen and its cold-start bound",
      "filter/NetworkGrossLos.cpp", networkGrossLosRunEnd},
-    {"the gross line-of-sight screen's cold-start bound",
-     "filter/NetworkGrossLos.cpp", networkGrossLosColdBoundRunEnd},
     {"the flicker and gap signal integrity",
      "filter/NetworkSignalIntegrity.cpp", networkSignalIntegrityRunEnd},
     {"the prior-residual census",
@@ -138,10 +146,10 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkCongruence.cpp", networkCongruenceRunEnd},
     {"the prefit tier: census, fuse, seed births, topology, recorder, attribution",
      "filter/NetworkPrefitCensus.cpp", networkPrefitCensusRunEnd},
-    {"the product-referenced measurement admission",
+    {"the product-referenced admission of measurements",
      "filter/NetworkMeasurementAdmission.cpp", networkMeasurementAdmissionRunEnd},
-    {"the PD-safe invariant-DD fold",
-     "filter/NetworkInvariantCarryDriver.cpp", networkCarryDdFoldRunEnd},
+    {"the invariant carry driver: the PD-safe DD fold, the card 4/M1 carry, the D5 gate and its map misses",
+     "filter/NetworkInvariantCarryDriver.cpp", networkInvariantCarryDriverRunEnd},
     {"the producer ambiguity-resolution search",
      "filter/NetworkProducerAr.cpp", networkProducerArRunEnd},
     {"the producer AR search's suspect-corner mask (card ARL)",
@@ -154,22 +162,20 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkEstimator.cpp", networkCarryAwareCovarianceRunEnd},
     {"the SD pre-reduce EWL rows and integer fix",
      "filter/NetworkSdEwlAr.cpp", networkSdEwlRunEnd},
-    {"slip QC: MW and LLI detections, the re-level response",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipMwRelevelRunEnd},
-    {"leveling-carry retirement census [B] and [A]; F3, the clock gate",
-     "filter/NetworkLevelingCarryRunEnd.cpp", networkLevelingRetirementRunEnd},
-    {"warm-resume restores: frame, coupling regressors, dense border",
-     "app/NetworkResumeRunEnd.cpp", networkResumeRestoreRunEnd},
+    {"slip QC: MW and LLI detections, re-level, wind-up, anchor-slip handovers, MW admission, IF-TD pairs and re-seed, datum stations, gaps, re-entry and the IF-TD reference gate",
+     "slip/NetworkSlipQcRunEnd.cpp", networkSlipQcRunEnd},
+    {"the phase-leveling carry: retirement families [A] to [D], the F3 local block, the response",
+     "filter/NetworkLevelingCarryRunEnd.cpp", networkLevelingCarryRunEnd},
+    {"the receiver-clock carry's jump gate (F3 block)",
+     "filter/NetworkRxClockCarry.cpp", networkRxClockCarryRunEnd},
+    {"warm resume: restores (frame, coupling regressors, dense border), then resume and snapshot (RTB-7, RS-2 to RS-9, the coupling capture)",
+     "app/NetworkResumeRunEnd.cpp", networkResumeRunEnd},
     {"re-admission continuity",
      "app/NetworkReadmitRunEnd.cpp", networkReadmitRunEnd},
     {"the DD fractional-cycle trace's reference identity",
      "filter/NetworkDdFrac.cpp", networkDdFracReferenceRunEnd},
     {"the seam-scoped ZWD re-seed",
-     "app/NetworkResumeRunEnd.cpp", networkZwdSeamRunEnd},
-    {"leveling-carry retirement census [C], [D] and the response",
-     "filter/NetworkLevelingCarryRunEnd.cpp", networkLevelingResponseRunEnd},
-    {"slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipWindupMwRunEnd},
+     "filter/NetworkZwdCarry.cpp", networkZwdSeamRunEnd},
     {"the extra-band code deweight",
      "filter/NetworkExtraBandScope.cpp", networkExtraBandScopeRunEnd},
     {"the second code channel",
@@ -178,75 +184,45 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkSecondPhaseScope.cpp", networkSecondPhaseScopeRunEnd},
     {"the common-band scope verdicts",
      "slip/NetworkCommonBandScope.cpp", networkCommonBandScopeRunEnd},
-    {"slip QC: IF-TD pairs",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipBandResponsesRunEnd},
-    {"slip QC: the IF-TD post-flag re-seed (card ARL)",
-     "slip/NetworkSlipQcRunEnd.cpp", networkIfTdReseedRunEnd},
     {"slip QC: the arc-scoped GF jump trigger (card ARL)",
      "slip/NetworkGfArcJump.cpp", networkGfArcJumpRunEnd},
-    {"the withhold era, the R2 station factor, the R4 rate hygiene",
-     "filter/NetworkRaim.cpp", networkRaimWithholdRunEnd},
     {"the LV-6 level-authority census",
      "filter/NetworkLevelAuthority.cpp", networkLevelAuthorityRunEnd},
-    {"slip QC: datum-station detection and LLI corroboration",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipDatumStationRunEnd},
     {"the sim-only oracle ambiguity pin",
      "filter/NetworkOraclePin.cpp", networkOraclePinRunEnd},
     {"the sim-only oracle slip response",
      "slip/NetworkSlipOracle.cpp", networkSlipOracleRunEnd},
-    {"slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipGapRefGateRunEnd},
-    {"slip QC: the co-resumed share of the per-signal gap re-entry",
-     "slip/NetworkSlipQcRunEnd.cpp", networkSlipGapCoresumedShareRunEnd},
     {"the eq34 chain datum: re-references, pin audit, seed round, slip-aware election",
      "filter/NetworkChainDatum.cpp", networkChainDatumRunEnd},
-    {"the card 4/M1 invariant carry",
-     "filter/NetworkInvariantCarryDriver.cpp", networkInvariantCarryRunEnd},
-    {"resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture",
-     "app/NetworkResumeRunEnd.cpp", networkResumeSnapshotRunEnd},
     {"the Iono-2 SH deviation carry",
      "filter/NetworkShDevVtec.cpp", networkShDevCarryRunEnd},
-    {"the receiver code-bias carry family",
+    {"the carried receiver code biases and their family",
      "filter/NetworkRxCodeBiasCarryRunEnd.cpp", networkRxCodeBiasCarryRunEnd},
-    {"the receiver extra-band code delay (card L5B)",
-     "filter/NetworkParamInventory.cpp", networkRxExtraBandDelayRunEnd},
-    {"the S-basis datum arms",
-     "filter/NetworkSbasis.cpp", networkSbasisDatumRunEnd},
-    {"card GFC's code-datum arms: pair continuity, family difference",
-     "filter/NetworkSbasis.cpp", networkCodeDatumFamilyRunEnd},
-    {"the D5 fine-slip innovation gate and its variants",
-     "filter/NetworkInvariantCarryDriver.cpp", networkD5GateRunEnd},
+    {"the S-basis datum arms and card GFC's code-datum arms",
+     "filter/NetworkSbasis.cpp", networkSbasisRunEnd},
     {"the CB-excursion guard (Phase 2.1)",
      "filter/NetworkClockQc.cpp", networkCbExcursionRunEnd},
-    {"the post-fit sigma0 and the post-fit rows",
-     "filter/NetworkFrameDiag.cpp", networkPostfitRunEnd},
+    {"frame diagnostics: the post-fit sigma0 and rows, the shared-normal spectrum trace",
+     "filter/NetworkFrameDiag.cpp", networkFrameDiagRunEnd},
     {"the ZP station-block trace",
      "filter/NetworkStationBlock.cpp", networkStationBlockRunEnd},
     {"the ambiguity vehicle and the joint-block PD-fallback bar",
      "filter/NetworkAmbFloat.cpp", networkAmbVehicleRunEnd},
-    {"the held S-basis (RF-2)",
-     "filter/NetworkPhaseDatum.cpp", networkHeldSbasisRunEnd},
+    {"the phase datum: the held S-basis (RF-2), the prioritized drop and heal, the anchored-union gate and its drop edge",
+     "filter/NetworkPhaseDatum.cpp", networkPhaseDatumRunEnd},
     {"the ambiguity-state trace",
      "filter/NetworkAmbStateTrace.cpp", networkAmbStateTraceRunEnd},
-    {"the shared-normal spectrum trace",
-     "filter/NetworkFrameDiag.cpp", networkShSpectrumRunEnd},
-    {"D5 flags missing from the carry map",
-     "filter/NetworkInvariantCarryDriver.cpp", networkD5MapMissRunEnd},
     {"the emit-layer frame re-base",
      "products/NetworkEmitRebase.cpp", networkEmitRebaseRunEnd},
     {"the clock emission re-base and frame hold",
      "products/NetworkClockEmitRebase.cpp", networkClockEmitRebaseRunEnd},
-    {"broadcast satellite health (HLT)",
-     "filter/NetworkHandoverStransform.cpp", networkSatHealthRunEnd},
-    {"the Q3 guarded temporal clock anchor",
+    {"satellite health (HLT) and clock-pivot handovers with their S-transform",
+     "filter/NetworkHandoverStransform.cpp", networkHandoverStransformRunEnd},
+    {"the Q3 guarded temporal anchor of the clock level",
      "filter/NetworkClockAnchor.cpp", networkClockAnchorRunEnd},
-    {"clock-pivot handovers and their S-transform",
-     "filter/NetworkHandoverStransform.cpp", networkPivotHandoverRunEnd},
-    {"the clock-runaway quarantine (RT0-5)",
-     "filter/NetworkSolPrep.cpp", networkClockRunawayRunEnd},
-    {"the prioritized-datum drop-and-heal",
-     "filter/NetworkPhaseDatum.cpp", networkDropHealRunEnd},
-    {"the coupling carry (cards 1, 1d)",
+    {"solution prep: the clock-runaway quarantine (RT0-5), the per-constellation sigma0 carve-out (RTA-10)",
+     "filter/NetworkSolPrep.cpp", networkSolPrepRunEnd},
+    {"the coupling carry (cards 1, 1d), reinit sources (1g) and gauge projection (1f)",
      "filter/NetworkCoupling.cpp", networkCouplingRunEnd},
     {"the CTU level monitor",
      "filter/NetworkClockLevel.cpp", networkClockLevelMonitorRunEnd},
@@ -254,40 +230,32 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkBrdcWire.cpp", networkBrdcWireRunEnd},
     {"the phase-visible consistency (PVN)",
      "filter/NetworkPhaseVisibleDiag.cpp", networkPhaseVisibleRunEnd},
-    {"the pivot-frame clock noise (PFQ)",
-     "filter/NetworkCarryDisposition.cpp", networkPivotFrameQRunEnd},
     {"the exact coupling time update (CTU, WSX, SCL, SCL2)",
      "filter/NetworkCouplingExact.cpp", networkCouplingExactRunEnd},
-    {"coupling reinit sources (1g) and gauge projection (1f)",
-     "filter/NetworkCoupling.cpp", networkCouplingProjectionRunEnd},
     {"the LS-VCE carry-variance monitor and factor",
      "filter/NetworkCarryVceRunEnd.cpp", networkCarryVceRunEnd},
-    {"the anchored-union coverage gate and its drop edge",
-     "filter/NetworkPhaseDatum.cpp", networkPhaseDatumGatesRunEnd},
     {"the marker to ARP roster reduction (UPO)",
      "app/ApplicationNetworkSetup.cpp", networkMarkerArpRunEnd},
-    {"the per-constellation sigma0 carve-out (RTA-10)",
-     "filter/NetworkSolPrep.cpp", networkPerConstellationRunEnd},
     {"the parameter model as armed",
      "filter/NetworkParamRegistry.cpp", networkParamModelRunEnd},
-    {"parameters as armed (NOM N1)",
+    {"the receiver extra-band code delay (card L5B) and parameters as armed (NOM N1)",
      "filter/NetworkParamInventory.cpp", networkParamInventoryRunEnd},
     {"contributions as armed (NOM N2a)",
      "filter/NetworkContributions.cpp", networkContributionsRunEnd},
-    {"signals as planned (NOM N3a)",
-     "app/SignalRoster.cpp", networkSignalRosterPlanRunEnd},
-    {"the fold's dispositions of the carried border (PRM 1b)",
+    {"the signal roster: signals as planned (NOM N3a), the roster and the arc ledger (SID phase 1)",
+     "app/SignalRoster.cpp", networkSignalRosterRunEnd},
+    {"the roster's site census (NOM N3b)",
+     "app/SignalRosterSites.cpp", networkSignalRosterSitesRunEnd},
+    {"the pivot-frame clock noise (PFQ) and the fold's dispositions of the carried border (PRM 1b)",
      "filter/NetworkCarryDisposition.cpp", networkCarryDispositionRunEnd},
     {"the carried references per site (PRM 2)",
      "filter/NetworkCarrySites.cpp", networkCarrySitesRunEnd},
     {"the declared responses of the carried instances (PRM 3a)",
      "filter/NetworkResponses.cpp", networkResponsesRunEnd},
     {"the phase-colour state (LGM)",
-     "filter/NetworkLevelingCarryRunEnd.cpp", networkPhaseColourRunEnd},
+     "filter/NetworkPhaseColourCarry.cpp", networkPhaseColourRunEnd},
     {"the run manifest's complete record",
      "app/NetworkRunArtifactsRunEnd.cpp", networkRunManifestCompleteRunEnd},
-    {"the product contract round trip (B6)",
-     "filter/NetworkEmitStore.cpp", networkProductContractRunEnd},
     {"flag rates, the run summary and the shared-product line",
      "app/NetworkRunArtifactsRunEnd.cpp", networkRunSummaryRunEnd},
     {"the closed-loop integer-recovery harness",
@@ -296,10 +264,6 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkInject.cpp", networkInjectRunEnd},
     {"the canonical-pair admission (CPA)",
      "filter/NetworkCanonicalPairAdmission.cpp", networkCanonicalPairRunEnd},
-    {"the signal roster and the arc ledger (SID phase 1)",
-     "app/SignalRoster.cpp", networkSignalRosterRunEnd},
-    {"the roster's site census (NOM N3b)",
-     "app/SignalRosterSites.cpp", networkSignalRosterSitesRunEnd},
     {"the all-channel census (SID phase 6b)",
      "filter/NetworkChannelAll.cpp", networkChannelAllRunEnd},
     {"the second constellation (GAL)",
@@ -310,4 +274,80 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
 
 } // namespace GnssProcessor
 
-// ---- End of the generated region ----
+// ---- End of the table ----
+
+namespace GnssProcessor {
+
+int networkRunEndSections(const NetworkRunEndView& v,
+                          std::initializer_list<NetworkRunEndReport> sections) {
+    int verdict = 0;
+    for (NetworkRunEndReport section : sections) {
+        const int rc = section(v);
+        if (rc != 0) verdict = rc;
+    }
+    return verdict;
+}
+
+namespace {
+
+/// Holds the main-log messages one report writes, whole (time, thread, level, text), so
+/// the walk can put the report's heading line ahead of them and then write each to the
+/// logger's own sinks exactly as the logger would have.
+class HeldRunEndLines final : public spdlog::sinks::sink {
+public:
+    void log(const spdlog::details::log_msg& msg) override { held.emplace_back(msg); }
+    void flush() override {}
+    void set_pattern(const std::string&) override {}
+    void set_formatter(std::unique_ptr<spdlog::formatter>) override {}
+
+    std::vector<spdlog::details::log_msg_buffer> held;
+};
+
+/// Writes one message to the logger's sinks, as spdlog::logger::sink_it_ does (the level
+/// test of each sink, then the logger's flush policy).
+void writeToSinks(const spdlog::logger& lg, const spdlog::details::log_msg& msg) {
+    for (const spdlog::sink_ptr& sink : lg.sinks())
+        if (sink->should_log(msg.level)) sink->log(msg);
+    if (msg.level != spdlog::level::off && msg.level >= lg.flush_level())
+        for (const spdlog::sink_ptr& sink : lg.sinks()) sink->flush();
+}
+
+/// The held lines, after the heading when the logger prints at info.
+void writeHeld(const spdlog::logger& lg, const char* name,
+               const std::vector<spdlog::details::log_msg_buffer>& held) {
+    if (held.empty()) return;
+    if (lg.should_log(spdlog::level::info)) {
+        const std::string text = std::string("Network[run-end] ") + name;
+        spdlog::details::log_msg heading(lg.name(), spdlog::level::info, text);
+        heading.time = held.front().time;
+        heading.thread_id = held.front().thread_id;
+        writeToSinks(lg, heading);
+    }
+    for (const spdlog::details::log_msg_buffer& msg : held) writeToSinks(lg, msg);
+}
+
+} // namespace
+
+int networkRunEndWithHeading(spdlog::logger& lg, const char* name,
+                             const std::function<int()>& report) {
+    auto holder = std::make_shared<HeldRunEndLines>();
+    std::vector<spdlog::sink_ptr> sinks{holder};
+    lg.sinks().swap(sinks);                  // the report writes to the holder
+    int rc = 0;
+    try {
+        rc = report();
+    } catch (...) {
+        lg.sinks().swap(sinks);              // the logger's own sinks again
+        writeHeld(lg, name, holder->held);
+        throw;
+    }
+    lg.sinks().swap(sinks);
+    writeHeld(lg, name, holder->held);
+    return rc;
+}
+
+int networkRunEndCallRow(const NetworkRunEndRow& row, const NetworkRunEndView& v) {
+    return networkRunEndWithHeading(*v.log, row.name, [&] { return row.report(v); });
+}
+
+} // namespace GnssProcessor

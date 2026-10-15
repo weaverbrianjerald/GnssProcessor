@@ -376,30 +376,18 @@ double phaseBiasShiftOf(const std::map<std::pair<std::string, std::string>, doub
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the coupling carry (cards 1, 1d).
+ * @brief Run-end report: the coupling carry (cards 1, 1d), reinit sources (1g) and gauge projection
+ *        (1f).
  *
- * The coupling carry (cards 1, 1d): the carry volume.
- *
- * Gate: `carry_cpl_cond`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkCoupling.cpp, print in this order, each gated on its own knob:
+ *   - networkCouplingCarryRunEnd: the coupling carry (cards 1, 1d).
+ *   - networkCouplingProjectionRunEnd: coupling reinit sources (1g) and gauge projection (1f).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
 int networkCouplingRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: coupling reinit sources (1g) and gauge projection (1f).
- *
- * The coupling rows' realization-step reinit sources (card 1g) and their datum-gauge
- * projection (card 1f).
- *
- * Gate: each section under its own condition, as in the teardown: `carry_cpl_cond &&
- * ctx.knobs.carry_cpl_reinit`; `carry_cpl_cond && ctx.knobs.carry_cpl_gauge`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkCouplingProjectionRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

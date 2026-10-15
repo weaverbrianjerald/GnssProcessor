@@ -1,9 +1,11 @@
 #pragma once
 /**
  * @file NetworkLevelingCarryRunEnd.hpp
- * @brief Run-end reports of the phase-leveling carry: the retirement census and the phase-colour state (card LGM).
+ * @brief Run-end report of the phase-leveling carry: the retirement census and the F3 local
+ *        block (its phase-colour and receiver-clock jump-gate lines moved beside their
+ *        harvests in card NOM2 step TD2).
  *
- * The run-end reports defined in NetworkLevelingCarryRunEnd.cpp; each is a row of kNetworkRunEndReports
+ * The run-end report defined in NetworkLevelingCarryRunEnd.cpp, one row of kNetworkRunEndReports
  * (filter/NetworkRunEnd.hpp).
  */
 
@@ -14,46 +16,19 @@ namespace GnssProcessor {
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: leveling-carry retirement census [B] and [A]; F3, the clock gate.
+ * @brief Run-end report: the phase-leveling carry: retirement families [A] to [D], the F3 local
+ *        block, the response.
  *
- * The leveling-carry retirement census, families [B] (the cliff) and [A] (departures),
- * on every run; then the F3 local block and the receiver-clock jump gate, each under
- * its own knob. The first part of the census; networkLevelingResponseRunEnd prints
- * families [C] and [D] after the resume, re-admission, DD-reference and ZWD lines.
- *
- * Gate: each section under its own condition, as in the teardown: always;
- * `ctx.knobs.pl_local_block`; `config_.networkCarryRxClockInBlock()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkLevelingRetirementRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: leveling-carry retirement census [C], [D] and the response.
- *
- * The leveling-carry retirement census, families [C] (one-solve refloats) and [D] and
- * the response line, on every run, with a note on the float vehicle.
- *
- * Gate: each section under its own condition, as in the teardown: always;
- * `ctx.knobs.amb_float_kf`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkLevelingCarryRunEnd.cpp, print in this order, each gated on its own knob:
+ *   - networkLevelingRetirementRunEnd: leveling-carry retirement census [B] and [A]; F3, the clock
+ *     gate.
+ *   - networkLevelingResponseRunEnd: leveling-carry retirement census [C], [D] and the response.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkLevelingResponseRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the phase-colour state (LGM).
- *
- * The phase-colour state's edges (card LGM): births, carried folds, harvests and erases.
- *
- * Gate: returns 0 at once unless `ctx.knobs.pc_on`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPhaseColourRunEnd(const NetworkRunEndView& v);
+int networkLevelingCarryRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

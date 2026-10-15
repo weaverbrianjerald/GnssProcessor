@@ -124,47 +124,19 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: producer complete: epochs emitted, skipped and withheld.
+ * @brief Run-end report: the emit store: epochs emitted, skipped and withheld; heartbeats of a
+ *        writer that never opened; the product contract round trip (B6).
  *
- * The "Network producer complete" line: epochs emitted and skipped, the skips withheld
- * by the observability gate and by the A4 sigma0 ceiling, of the synced epochs. Printed
- * on every run; graders read it as the run's headline.
- *
- * Gate: prints always.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkEmitOutcomeRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: heartbeats of a deferred product writer that never opened.
- *
- * Withheld-epoch heartbeats buffered for the deferred v2 product writer when the writer
- * never opened (card RTA-10): the run never emitted and no product file exists.
- *
- * Gate: prints under `!setup.pending_h_pre_open.empty()`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkEmitStore.cpp, print in this order, each gated on its own knob:
+ *   - networkEmitOutcomeRunEnd: producer complete: epochs emitted, skipped and withheld.
+ *   - networkDeferredHeartbeatsRunEnd: heartbeats of a deferred product writer that never opened.
+ *   - networkProductContractRunEnd: the product contract round trip (B6).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkDeferredHeartbeatsRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the product contract round trip (B6).
- *
- * The serialized-contract round trip (B6): closes the product writer, reads the product
- * back, checks its contract and the per-receipt contracts (RTA-5), and writes
- * network_contract_check.csv; on a run that emitted nothing, the writer-never-opened
- * record. It closes the product writer, so it precedes the closed-loop summary.
- *
- * Gate: each section under its own condition, as in the teardown: `contract_pending &&
- * !prod_path.empty()`; `product_writer && !prod_path.empty()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkProductContractRunEnd(const NetworkRunEndView& v);
+int networkEmitStoreRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
