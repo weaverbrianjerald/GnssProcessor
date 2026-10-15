@@ -12,6 +12,7 @@ Each page ends with a working result.
 | 5 | [Debugging](05_debugging.md) | The IDE opened on the project, launch arguments set, a breakpoint hit in the epoch loop | 2 hours |
 | 6 | [First tasks](06_first_tasks.md) | A list of small open tasks, each with its files and a definition of done | as needed |
 | 7 | [Network tour](07_network_tour.md) | One network run read from its tables: what it estimates, its eight stages, where a quantity lives | 1 day, when a task touches the network |
+| 8 | [Adding a network parameter](08_adding_a_network_parameter.md) | The recipe for a new per-station state of the network producer, with the wet delay as the worked example | ½ day, when a task adds a station state |
 
 Afterwards, [CONTRIBUTING.md](../../CONTRIBUTING.md) is the one-page reference: the five
 rules, the merge-request checklist, and a table that maps each kind of change to its

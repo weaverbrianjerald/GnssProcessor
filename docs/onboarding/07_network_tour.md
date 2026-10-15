@@ -268,4 +268,6 @@ A change to network behaviour starts as a card with its gates written before the
 run, is graded on both the simulated and the real bed against the baseline, and reaches
 the goldens only by the author's decision.
 
-Next: back to [6 · First tasks](06_first_tasks.md), or the network card a task names.
+Next: [8 · Adding a network parameter](08_adding_a_network_parameter.md) when a task adds a
+per-station state; otherwise back to [6 · First tasks](06_first_tasks.md), or the network
+card a task names.
