@@ -543,9 +543,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  * @param via_carry     Set to true when the targets came from the carry (may be null).
  * @param arc_ledger    The run's arc ledger, or null.  Given, the carry targets are named
- *                      by the ledger (card NOM step N3b): its admitted, not-dead arcs of
- *                      the (station, satellite), in signal order, each with a carry entry
- *                      inside the horizon.  The carry walk is still formed and compared.
+ *                      by the ledger (card NOM step N3b): the carry entries of the
+ *                      (station, satellite) inside the horizon, in signal order, whose
+ *                      ledger record is admitted and not dead.  A carried arc the ledger
+ *                      holds no admission for (one admitted before a warm resume, which
+ *                      restores the carry and not the ledger) is named by the carry, as
+ *                      the census's fallback.  The carry walk is still formed and compared.
  * @param n3b           The N3b census (site @c windup_restart_arcs), or null.
  * @return The targets, live columns first-and-only when any exist.
  */

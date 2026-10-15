@@ -1457,27 +1457,31 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
             const std::string& sig = std::get<2>(it->first);
             targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
         }
-        // The arc identity from the arc ledger (card NOM step N3b): the ledger names the
-        // (station, satellite)'s arcs, its admitted records that are not dead, in signal
-        // order, and the carry gives each its value (an entry inside the horizon).  The
-        // walk above is the rule this replaces; every restart compares the two (census
-        // site windup_restart_arcs, 0 on every census arm), so the targets are the walk's.
+        // The arc identity from the arc ledger (card NOM step N3b): of the carry entries
+        // inside the horizon (the arcs with a value), in signal order, the ledger keeps
+        // its admitted records that are not dead.  Where the ledger holds no admission
+        // for a carried arc, the arc's admission predates the ledger (a warm resume
+        // restores the carry, not the ledger) and the carry answers, counted as the
+        // site's fallback, as the latch answers for the roster reads.  The walk above is
+        // the rule this replaces; every restart compares the two (census site
+        // windup_restart_arcs, 0 on every census arm), and the targets are the ledger's.
         if (arc_ledger != nullptr) {
             std::vector<std::pair<std::string, std::string>> named;
-            const auto& arcs = arc_ledger->arcs();
-            for (auto it = arcs.lower_bound(std::make_tuple(i, sat, std::string{}));
-                 it != arcs.end() && std::get<0>(it->first) == i
+            bool fallback = false;
+            for (auto it = local_carry->lower_bound(std::make_tuple(i, sat, std::string{}));
+                 it != local_carry->end() && std::get<0>(it->first) == i
                      && std::get<1>(it->first) == sat;
                  ++it) {
-                const ArcRecord& a = it->second;
-                if (a.ep_first_admitted < 0 || a.adm_state == ArcState::Dead) continue;
-                const auto cit = local_carry->find(it->first);
-                if (cit == local_carry->end()) continue;
-                const double age_s = pl_now_s - cit->second.last_seen_s;
+                const double age_s = pl_now_s - it->second.last_seen_s;
                 if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
+                const ArcRecord* a = arc_ledger->find(it->first);
+                if (a == nullptr || a->ep_first_admitted < 0) fallback = true;
+                else if (a->adm_state == ArcState::Dead)       continue;
                 const std::string& sig = std::get<2>(it->first);
                 named.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
             }
+            if (n3b != nullptr && fallback)
+                ++n3b->fallback[static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs)];
             if (n3b != nullptr) {
                 std::string walk, ledger;
                 for (const auto& t : targets) walk += (walk.empty() ? "" : ",") + t.second;

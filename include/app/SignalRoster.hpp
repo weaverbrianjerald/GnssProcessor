@@ -351,7 +351,8 @@ namespace GnssProcessor {
     struct RosterN3bCensus {
         std::array<RosterSiteCount, kRosterN3bSites> count{};  ///< per site.
         /// Per read site: reads the roster (or the ledger) could not answer, so the site's
-        /// own rule answered (the first epoch of a constellation, before its latch).
+        /// own rule answered (the first epoch of a constellation, before its latch; at the
+        /// wind-up restart, a restart with a carried arc admitted before a warm resume).
         std::array<long long, kRosterN3bSites> fallback{};
         /// Per site: "what disagreed" -> occurrences (the run-end lines print the largest).
         std::array<std::map<std::string, long long>, kRosterN3bSites> detail{};
