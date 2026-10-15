@@ -158,10 +158,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     auto& stations = setup.stations;
     const int n_threads = setup.n_threads;
-    const int seam_threads = setup.seam_threads;
     const bool carry_par = setup.carry_par;
-    NetworkProductEmitter& emitter = *setup.emitter;
-    ClosedLoopTally& cl_tally = run.closed_loop;
     NetworkRunContext& ctx = run.ctx;
     NetworkRunTraces& traces = run.traces;
     SlipQcChannel& slip_qc = run.engines.slip_qc;
@@ -175,8 +172,6 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     const bool   pl_on         = ctx.knobs.pl_on;
     const int    pl_warmup     = ctx.knobs.pl_warmup;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
-    NetworkCarryVce& carry_vce_est = run.engines.carry_vce;
-    NetworkPriorResidual& prires_est = run.engines.prires;
     const bool   ura_on        = ctx.knobs.ura_on;
     const bool   raim_on       = ctx.knobs.raim_on;
     const double start_offset_s = ctx.knobs.start_offset_s;
@@ -191,7 +186,6 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
-    NetworkEmitEngines& emit_engines = run.emit;
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     auto& carry_group_id = ctx.carry.carry_group_id;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
@@ -246,7 +240,6 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
                                                           se_admit, se_cpa_scratch);
     // The epoch: everything the stages below hand each other (app/NetworkEpoch.hpp).
     NetworkEpoch ep(se);
-    EpochWorkspace& ws = ep.ws;
 
     // Signal-roster seam (app/SignalRoster.cpp, card SID phase 1).  It sits
     // immediately after the canonical-pair admission returns the epoch, for the
@@ -260,7 +253,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // (the roster tracker, the ledger re-entry response, the anchor hygiene, the
     // ledger emit), so with none armed the solve and the wire are unchanged.
     networkSubBegin(run, SB_ROSTER);
-    networkBuildSignalRoster(ctx, config_, log, traces, se, stations);
+    networkBuildSignalRoster(run, ep);
     networkSubEnd(run, SB_ROSTER);
 
     // Reduced-RHS class attribution: the estimator's shared-info capture recorder
@@ -336,7 +329,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The satellite ids of no modelled constellation, and of SBAS (card NOM N0b), counted
     // on every processed epoch before any model reads its observations.  Measure-only;
     // the count is printed under the parameter table in the run-end tail.
-    networkParamInventoryNoteSatellites(ctx.param_inventory, se);
+    networkParamInventoryNoteSatellites(run, ep);
 
     // Per-epoch section-timer baseline (D0).  Deltas of the estimator's run-cumulative
     // accumulators against this snapshot give this epoch's reduce, solve, cov-inverse
@@ -345,7 +338,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // when the toggle is off.
     NetworkNormalEquations::SectionTimers sec_t0;
     std::chrono::steady_clock::time_point sec_epoch_t0;
-    double& sec_asm_ms_epoch = ep.assembly.sec_asm_ms_epoch;
+    const double& sec_asm_ms_epoch = ep.assembly.sec_asm_ms_epoch;
     if (ctx.knobs.sec_timers_on) {
         sec_t0 = est.sectionTimers();
         sec_epoch_t0 = std::chrono::steady_clock::now();
@@ -438,15 +431,12 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // ApplicationNetworkAssembly.cpp.  networkPassAHead_ models the legacy pivot
     // (with its skip bookkeeping; SkipEpoch ends the epoch) and seeds the legacy
     // shared set; the SB_SLIP wall times the scan.
-    if (networkPassAHead_(se, ctx, setup, traces, modeled, present,
-                          shared_phase_keys) == EpochAction::SkipEpoch)
+    if (networkPassAHead_(run, ep, ep.pass_a) == EpochAction::SkipEpoch)
         return LoopSignal::Next;
 
     networkSubBegin(run, SB_SLIP);   // block 1: PASS-A slip scans, pre-assembly (D0b)
     ++slip_qc.epoch_idx;   // monotonic processed-epoch index (card G gap arithmetic)
-    networkPassASlipScan_(se, ctx, setup, traces, dt, pl_now_s, carry_warm,
-                          modeled, present, shared_phase_keys,
-                          carry_slipped_raw, slip_qc);
+    networkPassASlipScan_(run, ep, ep.pass_a, ep.funnel);
     // The union preserves the funnel's previous contents: the PASS-A drains in
     // NetworkSlipQc.cpp only insert, so routing their writes through
     // carry_slipped_raw changes nothing downstream.
@@ -457,9 +447,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The raw slip observables and the cross-station observability pre-filter live in
     // ApplicationNetworkAssembly.cpp; the writer-before-prune ordering contract is
     // structural inside networkAssemblyPrefilter_.
-    int& n_dropped_sats = ep.pass_a.n_dropped_sats;
-    networkAssemblyPrefilter_(se, ctx, setup, traces, slip_qc,
-                              modeled, present, n_dropped_sats);
+    networkAssemblyPrefilter_(run, ep, ep.pass_a);
 
     // Flicker / gap signal integrity.  Classifies every present (station, satellite)
     // line of sight against its own band history, publishes the per-station phase
@@ -478,10 +466,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The epoch unit is slip_qc.epoch_idx, the counter the gap instrument uses, so
     // their re-entry totals are directly comparable.  No-op unless
     // network.signal_integrity.census.
-    networkSignalIntegrity(ctx, config_, log, traces, se.time, slip_qc.epoch_idx,
-                           stations, present, modeled,
-                           carry_slipped_ambs, carry_slipped_raw,
-                           carry_invariant, carry_warm);
+    networkSignalIntegrity(run, ep, ep.pass_a, ep.funnel);
     // Product-referenced measurement admission, the first layer of the defence in
     // depth (this screen, then the prefit fuse).  It is the absolute test for a
     // channel whose code and phase are displaced together, the class every
@@ -505,10 +490,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // code-bias / clock states the election could otherwise pin, and would otherwise
     // leave the ≥ 2-station code-bias coverage gate counting a station that feeds it
     // nothing.  No-op unless network.adm_screen or network.adm_trace.
-    networkMeasurementAdmission(ctx, config_, log, traces, se.time,
-                                slip_qc.epoch_idx, stations, present, modeled,
-                                carry_slipped_ambs, carry_slipped_raw,
-                                carry_invariant, carry_warm);
+    networkMeasurementAdmission(run, ep, ep.pass_a, ep.funnel);
     // The final shared phase-bias set, and which station anchors (gauge-pins) each
     // (sat,signal).  Two realizations of the same minimum constraint (exactly one
     // ambiguity pin per phase-bias freedom):
@@ -1062,20 +1044,10 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // SkipEpoch below (an empty-system epoch still gets its census row) and upstream
     // of every withhold decision (the census measures through withhold eras).
     // Measure-only; no-op unless armed.
-    networkLevelAuthorityCensus(ctx, config_, log, traces, se,
-                                setup.stations, modeled, present);
+    networkLevelAuthorityCensus(run, ep);
 
-    std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
-    std::vector<std::pair<std::string, std::string>>& registered_code_keys = ep.columns.registered_code_keys;
-    std::vector<std::string>& col_desc = ep.columns.col_desc;
-    int& n_clock = ep.columns.n_clock;
-    int& n_pb = ep.columns.n_pb;
-    int& n_cb = ep.columns.n_cb;
-    int& n_present = ep.columns.n_present;
-    if (networkAssemblyRegisterColumns_(se, ctx, setup, traces, est, present,
-                                        shared_phase_keys, registered_clock_sats,
-                                        registered_code_keys, col_desc,
-                                        n_clock, n_pb, n_cb, n_present)
+    const int& n_present = ep.columns.n_present;
+    if (networkAssemblyRegisterColumns_(run, ep, ep.columns)
         == EpochAction::SkipEpoch)
         return LoopSignal::Next;
 
@@ -1090,7 +1062,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // than a new SubBlock, because a new timer slot would change the section-timing
     // artifact for every run, armed or not.  Off by default ⇒ clears the map and
     // returns ⇒ byte-identical.
-    networkSdEwlAr(ctx, config_, log, traces, setup, se, pl_now_s, modeled, present);
+    networkSdEwlAr(run, ep);
 
     // --- Oracle ambiguity pin, simulation only (filter/NetworkOraclePin) --------
     // Its position is fixed by three constraints: after networkElectPhaseAnchors
@@ -1104,7 +1076,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // `oracle_pin` event the pointer is null, no branch is reachable, and the output
     // is byte-identical.
     if (ctx.carry.oracle_pin)
-        networkOraclePinEpoch(ctx, config_, stations, se.time, log, traces);
+        networkOraclePinEpoch(run, ep);
 
     // The bounded drop (RF-1 step 4, docs/refound/RF-1_float_ambiguities_design.md
     // §3.4), applied serially here: after PASS A's slip scans have latched
@@ -1132,17 +1104,16 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // epoch's D2 fold decision, which card PRM phase 1b makes once here (after the
     // seam's level noise is set) and the fold, later in networkSolveGlue, reads too.
     // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
-    networkClockLevelRestoreRaise(ctx, log);   // card CTU G5: once, the first leg epoch after a warm resume
+    networkClockLevelRestoreRaise(run);   // card CTU G5: once, the first leg epoch after a warm resume
     // Card PRM phase 2 (network.handover_stransform_before_rows): a clock-pivot handover's
     // S-transform before the decision and PASS B, through the traversal of carried
     // references, so the fold decision, the exact update's prepare and the coupling rows
     // read the re-expressed carry; the solve glue's transform then does the bookkeeping.
     // After the restore raise, so the two compose in the order the solve glue applied
     // them.  No-op off (it clears its per-epoch record and returns).
-    networkHandoverStransformBeforeRows(ctx, config_, log, traces, setup.sat_health, est,
-                                        se.time, registered_clock_sats);
-    networkCarryDecide(ctx, est, se.time, dt);
-    networkCouplingExactPrepare(ctx, est, se.time, dt, log);
+    networkHandoverStransformBeforeRows(run, ep);
+    networkCarryDecide(run, ep);
+    networkCouplingExactPrepare(run, ep);
     networkSubEnd(run, SB_PREASM);   // close pre-assembly; the assembly wall below is timed separately (D0b)
 
     // --- PASS B (in ApplicationNetworkAssembly.cpp): networkPassB_ owns the D0
@@ -1152,29 +1123,14 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // since INC-7b), and the serial consume.  The failed / empty-epoch skip keeps its
     // bookkeeping inside (SkipEpoch return).
     ep.assembly.asm_res = std::vector<StationAssembly>(stations.size());
-    std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
-    int& total_pins = ep.assembly.total_pins;
     // est-station index per station (the order addStation was called) so the
     // post-solve back-substitution can recover each present station's local
     // slant-iono block; -1 for stations not added this epoch.
     ep.assembly.est_index_of = std::vector<int>(stations.size(), -1);
-    std::vector<int>& est_index_of = ep.assembly.est_index_of;
-    if (networkPassB_(se, ctx, setup, traces, est,
-                      carry_slipped_ambs, carry_slipped_raw,
-                      carry_warm, pl_now_s,
-                      modeled, present, shared_phase_keys,
-                      registered_clock_sats, registered_code_keys,
-                      n_clock, n_pb, n_present,
-                      asm_res, est_index_of, total_pins,
-                      sec_asm_ms_epoch, timing.asm_wall_ms) == EpochAction::SkipEpoch)
+    if (networkPassB_(run, ep, ep.pass_a, ep.assembly) == EpochAction::SkipEpoch)
         return LoopSignal::Next;
     networkSubBegin(run, SB_GAUGEBUILD); // carry-driver lambda, pre-DD-build (D0b)
 
-    // Reverse map (group key → chord ArcKey → ambiguity state key) so a
-    // post-solve innovation flag (group, chord) maps back to its (station, ambiguity) for
-    // the next epoch's slip funnel.  Rebuilt with the blocks each buildCarryDdPriors call
-    // (the last call before the solve is authoritative).  Empty unless carry_innov_gate.
-    std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key = ep.dd_build.carry_arc_amb_key;
 
     // --- Arc-resumption bridge classification.  Instrumentation only: nothing
     //     below changes a decision.  Of the arcs that came back after a tracking
@@ -1290,6 +1246,18 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
         }
     }
 
+    networkSubEnd(run, SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
+    networkSubBegin(run, SB_DDBUILD);    // carry_driver.beginEpoch + buildCarryDdPriors, W·Pᶻ·Wᵀ (D0b)
+    if (carry_invariant) {
+        // The z-store predict (q_z·Δt on the carried DD covariance) runs once per
+        // epoch; the build and fold may re-run on the RAIM re-solve.  D5 v2 passes the
+        // epoch time (σ̂₀² reporting bucket) and a clean flag, always clean here: under
+        // carry_invariant the eq34 datum re-realizes freely, so there is no re-level
+        // burst to gate, and the robust geometric mean absorbs the event tail at
+        // content hour 4 on its own.
+        const double dt = std::isfinite(carry_prev_tow) ? (se.time.tow - carry_prev_tow) : 0.0;
+        carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0, se.time.tow, /*clean=*/true);
+    }
     // Builds this epoch's DD-prior blocks from the eq34 election tree and folds the
     // carried invariant DDs into the producer solve.  Each arc (receiver, satellite)
     // ambiguity on a (const,signal) is resolved to its estimator (station, local
@@ -1305,50 +1273,11 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // read from the epoch workspace's ws.we_culprits.  The solve glue's T2 block
     // adapts that member while it runs and clears it when it ends (card WCF), so the
     // primary build here reads it empty.
-    auto buildCarryDdPriors = [&]() {
-        networkBuildCarryDdPriors(ctx, config_, log, carry_driver, est, stations, asm_res,
-                                  est_index_of, shared_phase_keys, carry_arc_amb_key,
-                                  carry_slipped_ambs, carry_slipped_raw, ws.we_culprits);
-    };
-    networkSubEnd(run, SB_GAUGEBUILD);   // close gauge build and carry-driver setup (D0b)
-    networkSubBegin(run, SB_DDBUILD);    // carry_driver.beginEpoch + buildCarryDdPriors, W·Pᶻ·Wᵀ (D0b)
-    if (carry_invariant) {
-        // The z-store predict (q_z·Δt on the carried DD covariance) runs once per
-        // epoch; the build and fold may re-run on the RAIM re-solve.  D5 v2 passes the
-        // epoch time (σ̂₀² reporting bucket) and a clean flag, always clean here: under
-        // carry_invariant the eq34 datum re-realizes freely, so there is no re-level
-        // burst to gate, and the robust geometric mean absorbs the event tail at
-        // content hour 4 on its own.
-        const double dt = std::isfinite(carry_prev_tow) ? (se.time.tow - carry_prev_tow) : 0.0;
-        carry_driver.beginEpoch(dt > 0.0 ? dt : 0.0, se.time.tow, /*clean=*/true);
-    }
-    { CarryEigenScope es(carry_par, n_threads); buildCarryDdPriors(); }  // parallel_carry: thread W·Pᶻ·Wᵀ
+    { CarryEigenScope es(carry_par, n_threads); networkBuildCarryDdPriors(run, ep, ep.dd_build, ep.funnel); }  // parallel_carry: thread W·Pᶻ·Wᵀ
     networkSubEnd(run, SB_DDBUILD);      // close buildCarryDdPriors, the card-4 DD-cov projection (D0b)
     networkSubBegin(run, SB_SOLVEGLUE);  // pre-solve prep + clock predict + solve + within-epoch re-solve (D0b)
-    ep.solve = networkSolveGlue(ctx, config_, log, traces, setup, est, ws, se, asm_res, est_index_of,
-                                present, shared_phase_keys, registered_clock_sats, registered_code_keys,
-                                col_desc, n_clock, n_pb, n_cb, n_present, total_pins,
-                                carry_warm, dt, pl_now_s,
-                                buildCarryDdPriors);
-    NetworkSolveGlueResult& sg_ = ep.solve;
-    if (sg_.action == EpochAction::SkipEpoch) return LoopSignal::Next;
-    auto& x_s = sg_.x_s;
-    auto& plan = sg_.plan;
-    auto& changed_consts = sg_.changed_consts;
-    auto& datum_changed = sg_.datum_changed;
-    auto& clk_model_warm = sg_.clk_model_warm;
-    auto& clock_refloat_sats = sg_.handoff.clock_refloat_sats;
-    auto& retro_flag_sats = sg_.handoff.retro_flag_sats;
-    auto& retro_feed = sg_.retro_feed;
-    auto& n_arc_refloat_epoch = sg_.handoff.n_arc_refloat_epoch;
-    auto& n_adapt = sg_.n_adapt;
-    auto& sigma0_adapt = sg_.sigma0_adapt;
-    auto& perconst_active = sg_.perconst_active;
-    auto& perconst_publish = sg_.perconst_publish;
-    auto& perconst_dec_withhold = sg_.perconst_dec_withhold;
-    auto& perconst_stats = sg_.perconst_stats;
-    auto& we_t2_opp = sg_.we_t2_opp;
-    auto& we_t2_flag = sg_.we_t2_flag;
+    ep.solve = networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.funnel);
+    if (ep.solve.action == EpochAction::SkipEpoch) return LoopSignal::Next;
     networkSubEnd(run, SB_SOLVEGLUE);   // close solve glue; net excludes the internal solve/reduce (D0b)
     networkSubBegin(run, SB_INSTALL);   // carry_driver.installPosterior, DD posterior mean/cov readback (D0b)
     // Installs the DD posterior (mean and covariance) back into the carry from the
@@ -1359,15 +1288,11 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // epoch, not only RAIM-armed ones.  A failure resets the carry (a safe cold
     // start).  No-op when off.
     if (carry_invariant) {
-        networkInstallCarry(ctx, config_, log, traces, carry_driver, est, x_s, plan, se, stations,
-                            slip_qc, carry_arc_amb_key, carry_par,
-                            n_threads, seam_threads);
+        networkInstallCarry(run, ep);
     }
     networkSubEnd(run, SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
     networkSubBegin(run, SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
-    ep.ar_fixes = networkProducerAr(ctx, config_, log, traces, se, est, x_s, stations,
-                                    est_index_of, asm_res, plan, log_dir_);
-    const ArEpochFixes& ar_fixes = ep.ar_fixes;
+    ep.ar_fixes = networkProducerAr(run, ep);
     networkSubEnd(run, SB_NETAR);      // close producer AR / pre-emit tail (D0b)
     networkSubBegin(run, SB_SOLPREP);  // toSolutionEpoch + per-satellite discontinuity signalling (D0b)
     // Decision half of the gross-LOS screen (RF-3b B3,
@@ -1378,9 +1303,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // slot would change the section-timing artifact for every run, armed or not (as
     // for networkSdEwlAr).  Unreachable unless network.gross_los_emit_exclude.
     if (ctx.knobs.gl_emit_exclude)
-        networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
-                              asm_res, est_index_of, pl_now_s,
-                              GrossLosPhase::Decide);
+        networkGrossLosScreen(run, ep, GrossLosPhase::Decide);
     // The fixed-cycle fold (card FCF, filter/NetworkFixedCycles.hpp) and the ledger of
     // fixed cycles it steps (filter/NetworkArLattice.hpp, card AGT's lattice, moved here
     // from SB_NETAR at step FCF-3): the search's fixed L1/L2 pairs, or the pairs the ledger
@@ -1389,20 +1312,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // above.  Under fold emit with an accepted held solve, solution prep and the emitter
     // read the held vector (x_emit); every other seam keeps the float x_s.  Unreachable
     // unless the fold is armed or network.ambiguity_resolution.trace_lattice.
-    ep.fixed_cycles = networkFixedCycles(ctx, config_, log, traces, se, est, x_s,
-                                         plan.shared_datum, ar_fixes, sg_.we_landed,
-                                         stations);
-    const Eigen::VectorXd& x_emit = ep.x_emit();
-    ep.prep = networkSolPrep(ctx, config_, log, traces, setup, se, est, x_emit,
-                             plan, pl_now_s, datum_changed, changed_consts,
-                             sigma0_adapt, perconst_active, perconst_publish,
-                             perconst_dec_withhold, perconst_stats);
-    NetworkSolPrepResult& sp_ = ep.prep;
-    auto& sol = sp_.sol;
-    auto& epoch_withheld_consts = sp_.epoch_withheld_consts;
-    auto& global_bump = sp_.global_bump;
-    auto& serialized_consts = sp_.serialized_consts;
-    auto& retro_emit_sats = sp_.retro_emit_sats;
+    ep.fixed_cycles = networkFixedCycles(run, ep);
+    ep.prep = networkSolPrep(run, ep);
     networkSubEnd(run, SB_SOLPREP);     // close sol-prep and discontinuity signalling (D0b)
     // Whether this epoch's solution reached the wire.  Every whole-epoch withhold
     // (observability gate, A4 sigma0 ceiling) `continue`s or returns before
@@ -1413,35 +1324,25 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     const std::size_t n_emitted_before = ctx.counters.n_emitted;
     // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
     // hold reads them at emit.  No-op off.
-    networkPbHoldCloneUpdate(ctx, log, est, x_s, ws, plan.shared_datum);
+    networkPbHoldCloneUpdate(run, ep);
     networkSubBegin(run, SB_EMITSTORE); // block 7: re-base + store push + solution CSV (D0b)
-    networkEmitStore(ctx, config_, log, traces, setup, se, est, x_emit, pl_now_s,
-                     datum_changed, sigma0_adapt, sol, epoch_withheld_consts, global_bump,
-                     serialized_consts, retro_emit_sats, emit_engines, present,
-                     est_index_of, modeled, shared_phase_keys, carry_slipped_ambs,
-                     we_t2_opp, we_t2_flag, cl_tally);
+    networkEmitStore(run, ep, ep.prep.sol);
     networkSubEnd(run, SB_EMITSTORE);   // close block 7: emit/store, order-sensitive, serial (D0b)
     ep.emitted = ctx.counters.n_emitted != n_emitted_before;
     networkSubBegin(run, SB_IONODIAG);  // block 4a: iono / ZWD / anchor-info viz traces (D0b)
-    networkIonoDiag(ctx, config_, log, traces, setup, ws, se, est, x_s, plan, asm_res,
-                    est_index_of, modeled, registered_clock_sats);
+    networkIonoDiag(run, ep);
     networkSubEnd(run, SB_IONODIAG);   // close block 4a, iono/ZWD/anchor traces (D0b)
     networkSubBegin(run, SB_DDFRAC);   // block 6: cross-station DD fractional-residual trace, B5 (D0b)
-    networkDdFrac(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                  est_index_of);
+    networkDdFrac(run, ep);
     networkSubEnd(run, SB_DDFRAC);       // close block 6, dd-frac B5 (D0b)
     networkSubBegin(run, SB_SHDEV_VTEC); // block 4b: T5 SH-deviation carry KF + VTEC coefficient trace (D0b)
-    networkShDevVtec(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                     est_index_of, modeled);
+    networkShDevVtec(run, ep);
     networkSubEnd(run, SB_SHDEV_VTEC);  // close block 4b, T5 sh-dev + VTEC trace (D0b)
     networkSubBegin(run, SB_T1A);       // block 3: T1a SH health probe (D0b)
-    networkShHealth(ctx, config_, log, traces, setup, se, est, x_s, asm_res, est_index_of,
-                    modeled, carry_vce_est, prires_est, datum_changed, pl_now_s);
+    networkShHealth(run, ep);
     networkSubEnd(run, SB_T1A);        // close block 3, T1a health (D0b)
     networkSubBegin(run, SB_LEVELING); // block 5: phase-leveling carry harvest (D0b)
-    networkLeveling(ctx, config_, log, traces, setup, se, est, x_s, plan, asm_res,
-                    est_index_of, carry_vce_est, prires_est, carry_warm, pl_now_s,
-                    registered_clock_sats, registered_code_keys, shared_phase_keys);
+    networkLeveling(run, ep);
     networkSubEnd(run, SB_LEVELING);   // close block 5, leveling (D0b)
     networkSubBegin(run, SB_RAIM);     // block 2: post-fit network RAIM + median-polish attribution (D0b)
     // RAIM pool re-host: `carry_warm` requires network.phase_leveling, so gating on
@@ -1450,10 +1351,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the re-hosted arming condition (already ANDed with raim_on and the resolved
     // carry_invariant).
     if (raim_on && (carry_warm || ctx.knobs.raim_ci_on)) {
-        networkPostFitRaim(ctx, config_, log, traces, se,
-                           stations, asm_res, est_index_of, present, x_s, est,
-                           plan.shared_datum, clock_refloat_sats, retro_flag_sats,
-                           retro_feed, n_arc_refloat_epoch, prires_est);
+        networkPostFitRaim(run, ep, ep.solve.handoff);
     }
     // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18), the
     // only acting post-fit tier that screens code.  It sits inside this bracket,
@@ -1469,20 +1367,15 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // above, before the emission, and this call is the deferred response half, which
     // belongs at this site for the ordering reason above.  Unarmed, this one call does
     // both halves.
-    networkGrossLosScreen(ctx, config_, log, traces, se, stations, est, x_s,
-                          asm_res, est_index_of, pl_now_s,
-                          ctx.knobs.gl_emit_exclude ? GrossLosPhase::Act
-                                                    : GrossLosPhase::Full);
+    networkGrossLosScreen(run, ep,
+                          ctx.knobs.gl_emit_exclude ? GrossLosPhase::Act : GrossLosPhase::Full);
     networkSubEnd(run, SB_RAIM);       // close block 2, RAIM (D0b)
     networkSubBegin(run, SB_CLOCKUPD); // block 8: two-state clock update + fault QC + retro-flag feed (D0b)
-    networkClockQc(ctx, config_, log, traces, ws, se, est, x_s,
-                   registered_clock_sats, datum_changed, changed_consts,
-                   clk_model_warm, pl_now_s, dt,
-                   clock_refloat_sats, retro_flag_sats, retro_feed);
+    networkClockQc(run, ep, ep.solve.handoff);
     networkSubEnd(run, SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
     // The phase-visible consistency instrument (card PVN): measure-only, after the
     // epoch's last re-solve, while the fold capture in ws still holds the prior.
-    networkPhaseVisibleMonitor(ctx, traces, se, est, x_s, ws);
+    networkPhaseVisibleMonitor(run, ep);
     // Roster disagreement pass (app/SignalRoster.cpp, card SID phase 1).  It sits here
     // because this is the first point at which every input of P4 exists in one scope:
     // the arc-level tracker's rows were built in PASS A, local_carry is post-harvest
@@ -1496,16 +1389,13 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // Phase 2 adds `modeled` and `present`: the admitted row set that feeds the
     // second lifecycle.  They are in the same scope as every other input of the pass,
     // which is why the pass runs here and not at the build seam.
-    networkSignalRosterAudit(ctx, config_, log, traces, se, stations, modeled, present,
-                             slip_qc.epoch.computed ? &slip_qc.epoch : nullptr,
-                             carry_slipped_ambs, sol,
-                             ep.emitted);
+    networkSignalRosterAudit(run, ep);
     // Fold half of the ledger emit (card SID phase 5a, E1).  It runs here and not at
     // the emit site because the ledger's admitted machine is advanced by the audit
     // pass immediately above: an admitted arc birth at this epoch does not exist
     // before that pass runs.  Read-only; every class is a counter plus an ARC event.
     // Disarmed, or with no capture from this epoch, it returns on its first line.
-    networkLedgerEmitFold(ctx, traces, se);
+    networkLedgerEmitFold(run, ep);
     // Epoch tail of the second phase channel (card SID phase 6a, R3 + R4).  It sits
     // here for the same reason as the pass above: this is the first point at which
     // both of its inputs are final.  `relevel.free_cause` carries every tier's
@@ -1513,27 +1403,25 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // SB_RAIM) and is not cleared until the next epoch's slip scan, and the
     // phase-datum anchors have been elected.  Read-only; every class is a counter.
     // Disarmed, it returns on its first line.
-    networkSecondPhaseEpochTail(ctx, config_, stations);
+    networkSecondPhaseEpochTail(run, ep);
     // All-channel census (card SID phase 6b), folded here beside the tail above
     // because it reads the same two republished cell sets plus the stations' own
     // state maps, all final at this point.  Measure-only; it returns on its first
     // line unless the widening is active.
-    networkChannelAllEpoch(ctx, config_, stations, modeled, present);
+    networkChannelAllEpoch(run, ep);
     // Second-constellation census (card GAL): inter-system bias columns, satellites
     // per constellation, and the non-GPS-only station-epochs.  It sits here for the
     // same reason as the census above: `present` is final.  Measure-only; it returns
     // on its first line unless a constellation other than GPS is active.
-    networkMultiGnssEpoch(ctx, config_, stations, modeled, present);
+    networkMultiGnssEpoch(run, ep);
     // Parameters as armed (card NOM N1): every parameter instance with its treatment,
     // from the inventory PASS B drained, written once after the first emitted epoch.
     // Trace class; it returns on its first line once the table is out.
-    networkParamInventoryEpochTail(ctx, log, traces, nc,
-                                   ep.emitted);
+    networkParamInventoryEpochTail(run, ep);
     // Contributions as armed (card NOM N2a): every contribution to the normal equations
     // by its declared kind (the station side drained after PASS B, this epoch's shared
     // folds from the estimator), written once after the first emitted epoch.  Trace class.
-    networkContributionsEpochTail(ctx, est, log, traces, nc,
-                                  ep.emitted);
+    networkContributionsEpochTail(run, ep);
     networkSubEnd(run, SB_ROSTER);
     // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  It runs before
     // the stash/status block, because the epoch-status row written there reads the
@@ -1553,18 +1441,16 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // stations, so a station cannot standardize its own coordinate fault away.
     if (ctx.knobs.cg_on) ctx.carry.cg.beginEpoch(pl_now_s, se.time.tow);
     if (ctx.knobs.trace_postfit_on)
-        networkPostfitSigma0(ctx, config_, log, traces, se, stations, est, x_s,
-                             asm_res, est_index_of, &modeled);
+        networkPostfitSigma0(run, ep);
     if (ctx.knobs.trace_sh_spectrum)
-        networkShSpectrum(ctx, config_, log, traces, se, est);
+        networkShSpectrum(run, ep);
     // Per-station local-block audit (card ZP, SPEC_event_harness §24.10).
     // Measure-only (const accessors on the solved estimator); it belongs in this
     // group because it is the station-side companion of the shared-side spectrum
     // above.  Its cadence gate (emitted epochs 1..20, then every 60th) lives in the
     // seam, so the driver carries no counter.
     if (ctx.knobs.trace_station_block)
-        networkStationBlock(ctx, config_, log, traces, se, stations, est, x_s,
-                            asm_res, est_index_of);
+        networkStationBlock(run, ep);
     // Prefit innovation census, seed-birth tripwire and topology ledger
     // (docs/SPEC_prefit_census_observability.md INC-1/3/4), all on one walk of this
     // epoch's assembled row stacks.  It is first in the measure-only group: it costs
@@ -1572,8 +1458,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the free tier the redundancy census escalates from.  The master knob keeps an
     // unarmed run out of the translation unit entirely.
     if (ctx.knobs.pc_walk_on)
-        networkPrefitCensus(ctx, config_, log, traces, se, stations, est,
-                            asm_res, est_index_of);
+        networkPrefitCensus(run, ep);
     // Redundancy / testability census (docs/SPEC_redundancy_census.md).  It runs
     // before networkRhsAttribution: a flight-recorder trip epoch forces a full sweep,
     // and the trip predicate is the attribution's own (unconsumed) window test, so the
@@ -1581,8 +1466,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // Measure-only; the master knob keeps an unarmed run out of the translation unit
     // entirely.
     if (ctx.knobs.redun_census_on)
-        networkRedundancyCensus(ctx, config_, log, traces, se, stations, est,
-                                plan.shared_datum, asm_res, est_index_of, x_s);
+        networkRedundancyCensus(run, ep);
     // Block-Baarda drain (docs/SPEC_redundancy_census.md BB-INC-1..3): drains this
     // epoch's LOS-block ladders, writes network_block_baarda.csv and emits the block
     // identities.  The feed is inside the census above (the block sweep inherits its
@@ -1590,7 +1474,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // it.  The accumulator carries nothing forward, so an epoch that swept blocks and
     // never reached here does not report them.
     if (ctx.knobs.bb_on)
-        networkBlockBaardaEmit(ctx, config_, log, traces, se, stations);
+        networkBlockBaardaEmit(run, ep);
     // Congruence drain (docs/SPEC_redundancy_census.md CG-INC-1..3): drains this
     // epoch's per-station coordinate-offset records, writes network_congruence.csv and
     // emits the identities of the flagged stations.  The feed is inside the census
@@ -1599,7 +1483,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the sweep site), so its position relative to the block census's own emit is
     // free.
     if (ctx.knobs.cg_on)
-        networkCongruenceEmit(ctx, config_, log, traces, se, stations);
+        networkCongruenceEmit(run, ep);
     // MDB drain (docs/SPEC_redundancy_census.md MDB-INC-1): aggregates this epoch's
     // Baarda MDB rows, writes network_mdb.csv, emits the reporting events and
     // reconciles the uncheckable join.  Both orderings matter: after
@@ -1609,7 +1493,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // in SB_RAIM and in the census; this is only the drain, and the accumulator is
     // stamped so an epoch that fed rows and never reached here leaks nothing forward.
     if (ctx.knobs.mdb_on)
-        networkMdbFlush(ctx, config_, log, traces, se);
+        networkMdbFlush(run, ep);
     // Structural S-basis dimension (docs/SPEC_datum_graph_census.md): predicted from
     // this epoch's admitted support topology and reconciled against the spectral count
     // the solve glue handed forward.  It is measure-only: it reads the registration
@@ -1619,43 +1503,32 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // predicate.  The master knob keeps an unarmed run out of the translation unit
     // entirely.
     if (ctx.knobs.dg_on)
-        networkDatumGraphCensus(ctx, config_, log, traces, se, stations, modeled,
-                                est_index_of, plan, shared_phase_keys,
-                                registered_code_keys, registered_clock_sats,
-                                datum_changed);
+        networkDatumGraphCensus(run, ep);
     if (est.attribArmed())
-        networkRhsAttribution(ctx, config_, log, traces, se, stations, est,
-                              plan.shared_datum, asm_res, est_index_of, &x_s);
+        networkRhsAttribution(run, ep);
     // Flight recorder (INC-5): consumes a trip raised anywhere earlier this epoch
     // (clock runaway, a00-band exit; the A4 withhold consumes its own,
     // since that epoch never reaches here), then retains this epoch as the next trip's
     // "before" frame.  Last in the group, so a trip dump sees the same kernel state
     // every other diagnostic just read.
-    networkRhsAttribTrip(ctx, config_, log, traces, se, stations, est,
-                         plan.shared_datum, asm_res, est_index_of, &x_s);
+    networkRhsAttribTrip(run, ep);
     networkSubEnd(run, SB_FRAMEDIAG);
     networkSubBegin(run, SB_STASH_STATUS); // D2/C1/SH carry re-stash + VCE fold + epoch-status QC (D0b)
-    networkStashStatus(ctx, config_, log, traces, setup, se, est, x_s, plan, carry_vce_est,
-                       prires_est, clock_refloat_sats, n_arc_refloat_epoch, registered_clock_sats,
-                       registered_code_keys, retro_emit_sats, shared_phase_keys,
-                       sigma0_adapt, total_pins, dt,
-                       datum_changed, changed_consts, n_clock, n_present, n_pb, n_cb,
-                       n_dropped_sats, n_adapt);
+    networkStashStatus(run, ep);
     // Card SMH: the clones re-harvested on the stash just written, and the clones of
     // the generations that started at this epoch's emit born on it.  No-op off.
-    networkPbHoldCloneHarvest(ctx, est, x_s, TimeUtils::continuousGpsSeconds(se.time));
+    networkPbHoldCloneHarvest(run, ep);
     // The level monitor of card CTU reads the post-fit code and the block the stash
     // just wrote; with the bound raise armed it raises that block before the next
     // fold.  It runs only on a kept epoch, which is every epoch that reaches here.
     // No-op off.
-    networkClockLevelMonitor(ctx, traces, se.time, est, x_s, asm_res, est_index_of,
-                             datum_changed);
+    networkClockLevelMonitor(run, ep);
     // Drains this epoch's buffered carry-state rows (RF-1 §7.4).  It is last inside
     // the bracket because this is the first point after every row source has run: the
     // leveling harvest and the gap prune (SB_LEVELING), the T4 / T3 refloats (SB_RAIM)
     // and the phase-anchor carry re-reference (the datum block).  A no-op with an
     // empty buffer, which is every unarmed run.
-    networkAmbStateTrace(ctx, log, traces);
+    networkAmbStateTrace(run, ep);
     // Card LGM: drain the phase-colour trace rows buffered at the harvest.
     if (!ctx.carry.pc_trace_rows.empty()) {
         if (traces.phase_colour_trace.is_open())
@@ -1722,14 +1595,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkStateSnapshotWrite.cpp
     // (INC-4).  It stays after the prev_week/prev_tow advance, so the snapshot
     // captures this epoch.
-    networkWriteStateSnapshot(ctx, config_, se.time, pl_now_s, emitter, carry_driver,
-                              stations,              // CN rows (RS-8 §21.16; the latch
-                                                     //   lives in the station models)
-                                                     //   and RL x_lin rows (RS-9 §21.18)
-                              log,
-                              &emit_engines.clk_rebase,  // frame rows, v2 (§18.10)
-                              &emit_engines.rebase,      // emit-layer ER rows (RS-5 §21.10)
-                              setup.consumer.get()); // consumer snapshot beside each history copy (card CC (B))
+    networkWriteStateSnapshot(run, ep);
     return LoopSignal::Next;
 }
 
