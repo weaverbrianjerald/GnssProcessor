@@ -1159,7 +1159,7 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
     NetworkCarryState carry;
     EXPECT_FALSE(carry.bb.enabled());
     EXPECT_TRUE(carry.bb_hits.empty());
-    EXPECT_TRUE(carry.bb_event_last.empty());
+    EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::bb_event_last), 0u);  // N4e2
     // ...and it accepts nothing, so a mis-wired feed site cannot populate a
     // ladder that was not requested.
     NetworkBlockBaarda::Input in;

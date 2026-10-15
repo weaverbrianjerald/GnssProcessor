@@ -307,10 +307,13 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     for (const CongruenceHit& h : ctx.carry.cg_hits) {
         if (!h.reported) continue;
         const std::string sname = stationName(stations, h.station);
-        auto it = ctx.carry.cg_event_last.find(sname);
-        if (it != ctx.carry.cg_event_last.end() && now_ep - it->second < holdoff)
+        // The station's holdoff clock (by NAME, O3; card NOM step N4e2).
+        const std::optional<StationId> sid = net::stationOfName(ctx.entities, sname);
+        const long long* last =
+            sid ? net::get(ctx.entities.stations, *sid, &net::StationState::cg_event_last) : nullptr;
+        if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        ctx.carry.cg_event_last[sname] = now_ep;
+        if (sid) net::put(ctx.entities.stations, *sid, &net::StationState::cg_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column, because
         // emitEvent formats statistic and threshold with a fixed 6 decimals, which
         // prints a small t_i as 0.000000.

@@ -66,8 +66,6 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& prev_carry = ctx.carry.prev_carry;
     auto& local_carry = ctx.carry.local_carry;
     const net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
-    auto& relevel_iode = ctx.carry.relevel_iode;
-    auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
     auto& ramp_lifted = ctx.carry.ramp_lifted;
@@ -176,8 +174,8 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         net::recordToSnapshot("Y", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("R", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("A", ctx, snap);   // the satellites (N4e1)
-        snap.relevel_iode              = relevel_iode;              // eph cutover (card 6)
-        snap.eph_cutover_disc_pending  = eph_cutover_disc_pending;  // eph cutover (card 6)
+        net::recordToSnapshot("I", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
+        net::recordToSnapshot("X", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
         // Resume frame state (§18.10, snapshot format v2), captured when
         // network.state_snapshot_frame_capture is armed: the per-(sat,signal)
         // phase-anchor incumbents and R2 sticky targets as of this epoch's election, the
@@ -292,7 +290,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // The refloat set has no D-row carrier (a hard-refloated satellite is
             // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
             // (cards 1d/1g).
-            snap.clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
+            net::recordToSnapshot("QR", ctx, snap);   // the satellites (N4e2)
             ctx.carry.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
             ctx.carry.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
             ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
@@ -342,7 +340,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         if (nc.state_snapshot_datum_capture) {
             net::recordToSnapshot("EQD", ctx, snap);   // the constellation channels (N4b)
             net::recordToSnapshot("EQP", ctx, snap);   // the station signals (N4a)
-            snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
+            net::recordToSnapshot("EQS", ctx, snap);   // the satellite signals (N4e2)
             for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
                 snap.eq34_prev_target[{key.first, key.second}] = tgt;
             net::recordToSnapshot("EQE", ctx, snap);   // the lines of sight (N4c)
@@ -354,12 +352,12 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // differences against.  A nan there would survive the parse (strtod accepts
             // it) and corrupt the restored datum, so it is dropped at the source.
             net::recordToSnapshot("CBP", ctx, snap);   // the constellation channels (N4b)
-            snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
+            net::recordToSnapshot("CBS", ctx, snap);   // the satellites (N4e2)
             // The IF-pin pair that produced those values, the third container of the same
             // kept-epoch lifecycle.  Without it the restore is inert on the IF-pin half:
             // `pair_same` reads false for every satellite, the split re-seeds to 0 and
             // every satellite disc-bumps.
-            snap.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
+            net::recordToSnapshot("CBI", ctx, snap);   // the satellites (N4e2)
             ctx.carry.snap_datum_rows_last =
                 static_cast<long long>(snap.eq34_datum_rx.size()
                                        + snap.eq34_rx_parent.size()
@@ -499,7 +497,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // branch) and its ArcKey vertex numbering (sat→vertex, (const,signal)→group), so a
         // warm resume reproduces the phase-ambiguity branch instead of re-converging one.
         if (nc.state_snapshot_carry) {
-            snap.carry_sat_vertex = ctx.carry.carry_sat_vertex;
+            net::recordToSnapshot("SV", ctx, snap);   // the satellites (N4e2)
             net::recordToSnapshot("GG", ctx, snap);   // the constellation channels (N4b, O6)
             std::ostringstream ccs;
             // Write-side shape knob (RTB-7(e)).  The blob is about 99 % of the snapshot at

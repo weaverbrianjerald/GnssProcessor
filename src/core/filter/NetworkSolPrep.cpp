@@ -88,14 +88,10 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the pivots, datum_rx (N4b)
     auto& this_epoch_if_pin_sel = ctx.carry.this_epoch_if_pin_sel;
     auto& this_epoch_if_pin_real = ctx.carry.this_epoch_if_pin_real;
-    auto& last_if_pin_sel = ctx.carry.last_if_pin_sel;
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-    auto& emitted_anchor = ctx.carry.emitted_anchor;
 
     auto& eq34_emitted_pdr = ctx.carry.eq34_emitted_pdr;
-    auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& this_epoch_cb_reseed = ctx.carry.this_epoch_cb_reseed;
-    auto& cb_reseed_disc_pending = ctx.carry.cb_reseed_disc_pending;
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
     auto& ramp_lifted = ctx.carry.ramp_lifted;
@@ -427,12 +423,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // term).  The set is empty unless network.gross_los_sat_standdown and
     // network.gross_los_sat_wire_withhold are both on, so otherwise the output is
     // byte-identical.
-    if (!ctx.carry.gl2_wire_pending.empty()) {
+    if (net::present(ctx.entities.sats, &net::SatelliteState::wire_prune_pending) > 0) {
         std::set<std::string> gl2_pruned;
         std::vector<NetworkSatSolution> gl2_kept;
         gl2_kept.reserve(sol.sats.size());
         for (auto& gs : sol.sats) {
-            if (ctx.carry.gl2_wire_pending.count(gs.sat)) gl2_pruned.insert(gs.sat);
+            if (net::hasSat(ctx.entities.sats, gs.sat, &net::SatelliteState::wire_prune_pending)) gl2_pruned.insert(gs.sat);
             else                                          gl2_kept.push_back(std::move(gs));
         }
         if (!gl2_pruned.empty()) {
@@ -461,7 +457,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // output is byte-identical.
     if (!ctx.carry.gl_emit_disc.empty()) {
         for (const auto& gsat : ctx.carry.gl_emit_disc)
-            net::markSat(ctx.entities, gsat, &net::SatelliteState::ura_retro_sats);
+            net::markSat(ctx.entities, gsat, net::Disc::UraRetro);
         ctx.counters.gross_los.emit_disc_marked +=
             static_cast<long long>(ctx.carry.gl_emit_disc.size());
     }
@@ -690,7 +686,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // both tiers flag it in one epoch.
     if (!ctx.carry.refsat_mark_sats.empty()) {
         for (const std::string& sat : ctx.carry.refsat_mark_sats)
-            net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);
+            net::markSat(ctx.entities, sat, net::Disc::UraRetro);
         ctx.carry.refsat_mark_sats.clear();
     }
     // The drain must be armed whenever a source queues into ura_retro_sats, not only
@@ -709,7 +705,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // original `ura_retro`, and the output is byte-identical.
     if ((ura_retro || mark_refsat || datum_detect || ctx.knobs.pd_held_basis
          || ctx.knobs.gl_emit_exclude)
-        && net::present(ctx.entities.sats, &net::SatelliteState::ura_retro_sats) > 0) {
+        && net::present(ctx.entities.sats, net::Disc::UraRetro) > 0) {
         // The R record must describe only bumps that landed in the emitted product
         // (P0-1, RT0-5).  A flagged satellite absent from this epoch's emission (its
         // constellation quarantined above, or the satellite itself gone) is not
@@ -724,9 +720,9 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
         std::set<std::string> present_sats;
         for (const auto& s : sol.sats) present_sats.insert(s.sat);
         std::set<std::string> retro_pending;
-        for (const auto& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::ura_retro_sats))
+        for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::UraRetro))
             (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::ura_retro_sats, retro_pending);   // absent sats wait for their next emit
+        net::assignSatFlags(ctx.entities, net::Disc::UraRetro, retro_pending);   // absent sats wait for their next emit
         if (!retro_emit_sats.empty())
             // The union drain (Card MS): every source of ura_retro_sats arrives here
             // (URA-retro QC contamination, the reference-satellite mark, the
@@ -755,12 +751,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // the satellite present.  The landed mark is folded into retro_emit_sats (the Q3
     // trap-1 rule, see the CLK_ANCHOR block below), so the R record carries it to a
     // NetworkProductIO replay.
-    if (!eph_cutover_disc_pending.empty()) {
+    if (net::present(ctx.entities.sats, net::Disc::EphCutover) > 0) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
-        for (const auto& sat : eph_cutover_disc_pending)
+        for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::EphCutover))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        eph_cutover_disc_pending = std::move(still_pending);
+        net::assignSatFlags(ctx.entities, net::Disc::EphCutover, still_pending);
         if (!mark.empty()) {
             // One event, one step: a satellite the B1 retro drain above already marked
             // this epoch does not have its counters bumped twice.  Every landed mark is
@@ -793,12 +789,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // present, and the landed mark folds into retro_emit_sats (Q3 trap-1) so a replay
     // reproduces the counters from the R record.  The set is empty unless
     // network.cb_excursion_reinit is on, so otherwise the output is byte-identical.
-    if (!ctx.carry.cb_excursion_pending_bump.empty()) {
+    if (net::present(ctx.entities.sats, net::Disc::CbExcursion) > 0) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
-        for (const auto& sat : ctx.carry.cb_excursion_pending_bump)
+        for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::CbExcursion))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        ctx.carry.cb_excursion_pending_bump = std::move(still_pending);
+        net::assignSatFlags(ctx.entities, net::Disc::CbExcursion, still_pending);
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
             // landed mark, since the counter-only path is invisible to replay (see the
@@ -827,12 +823,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // replay reproduces the marks from the serialized R records.  The set is empty
     // unless network.clock_temporal_anchor and network.clock_anchor_mark are both on,
     // so otherwise the output is byte-identical.
-    if (!ctx.carry.clk_anchor_disc_pending.empty()) {
+    if (net::present(ctx.entities.sats, net::Disc::ClockAnchor) > 0) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
-        for (const auto& sat : ctx.carry.clk_anchor_disc_pending)
+        for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::ClockAnchor))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        ctx.carry.clk_anchor_disc_pending = std::move(still_pending);
+        net::assignSatFlags(ctx.entities, net::Disc::ClockAnchor, still_pending);
         if (!mark.empty()) {
             // A satellite a block above (the B1 retro drain, an eph-cutover or a
             // CB-excursion landing) already marked this epoch must not have its
@@ -899,15 +895,15 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
                 ++ctx.counters.n_if_pin_continued_unemitted;
         for (const auto& [sat, sel] : this_epoch_if_pin_sel) {
             if (!present.count(sat)) continue;   // not emitted this epoch: baseline untouched
-            const auto prev = last_if_pin_sel.find(sat);
-            if (prev != last_if_pin_sel.end() && prev->second != sel) {
+            const auto* prev = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::last_if_pin_sel);
+            if (prev != nullptr && *prev != sel) {
                 const auto change = changes.find(sat);
                 const bool continued = change != changes.end()
                                     && change->second.outcome == PinOutcome::Continued;
-                const bool cont = continued && change->second.from == prev->second
+                const bool cont = continued && change->second.from == *prev
                                && change->second.to == sel
                                && !this_epoch_cb_reseed.count(sat)
-                               && !cb_reseed_disc_pending.count(sat);
+                               && !net::hasSat(ctx.entities.sats, sat, net::Disc::CbReseed);
                 if (cont) {
                     ++ctx.counters.n_if_pin_continued_undeclared;
                 } else {
@@ -918,10 +914,10 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
                     emitEvent("CLK_BASIS", cont ? "reselect_continued" : "reselect", sat, "",
                               std::nullopt, std::nullopt,
                               cont ? "if_pin_reference_continued" : "if_pin_reference_moved",
-                              prev->second.first + "+" + prev->second.second +
+                              prev->first + "+" + prev->second +
                                   "->" + sel.first + "+" + sel.second);
             }
-            last_if_pin_sel[sat] = sel;   // advance the emit baseline (emitted sats only)
+            net::putSat(ctx.entities, sat, &net::SatelliteState::last_if_pin_sel) = sel;   // advance the emit baseline (emitted sats only)
         }
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
@@ -956,13 +952,13 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     // trap-1) so the R record carries it to a replay.  Both sets are filled only under
     // code_datum_time_linked, so otherwise the block does nothing and the output is
     // byte-identical.
-    for (const auto& sat : this_epoch_cb_reseed) cb_reseed_disc_pending.insert(sat);
-    if (!cb_reseed_disc_pending.empty()) {
+    for (const auto& sat : this_epoch_cb_reseed) net::markSat(ctx.entities, sat, net::Disc::CbReseed);
+    if (net::present(ctx.entities.sats, net::Disc::CbReseed) > 0) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
-        for (const auto& sat : cb_reseed_disc_pending)
+        for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::CbReseed))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        cb_reseed_disc_pending = std::move(still_pending);
+        net::assignSatFlags(ctx.entities, net::Disc::CbReseed, still_pending);
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
             // landed mark, since the counter-only path is invisible to replay (see the
@@ -1025,8 +1021,8 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
     if (phase_datum_prioritized) {
         int n_handover = 0;
         for (const auto& [amb, sta] : this_epoch_anchor) {
-            auto it = emitted_anchor.find(amb);
-            if (it != emitted_anchor.end() && it->second != sta) {
+            const std::string* prev = net::getSig(ctx.entities.sat_signals, amb, &net::SatSignalState::emitted_anchor);
+            if (prev != nullptr && *prev != sta) {
                 const auto amb_parts = StateKeys::parseAmbiguityKey(amb);   // "G01_L1C"
                 // Under eq34 (Card 3) the handover is a tree-edge reattach: the emitted
                 // δ̃_s steps by an exact integer number of cycles (the chain path
@@ -1048,17 +1044,17 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
                           phase_datum_eq34 ? "eq34_reattach" : "anchor_handover",
                           amb_parts ? amb_parts->satellite : amb, sta,
                           std::nullopt, std::nullopt, "reanchor",
-                          it->second + "->" + sta);
+                          *prev + "->" + sta);
                 ++n_handover;
             }
-            emitted_anchor[amb] = sta;
+            net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor) = sta;
             // eq34 reattach hygiene, warm conditioning: stamp the time this key's datum
             // was last realized and emitted.  The eligibility block applies only while
             // that memory is fresh (see filter/NetworkAnchorHygiene.hpp).  The stamp
             // follows the emit-only discipline of the baseline above: a withheld epoch
             // must not refresh it, or a long withhold would look warm indefinitely.
             if (anchor_hygiene_on)
-                ctx.carry.emitted_anchor_s[amb] =
+                net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor_s) =
                     TimeUtils::continuousGpsSeconds(se.time);
         }
         if (n_handover > 0)

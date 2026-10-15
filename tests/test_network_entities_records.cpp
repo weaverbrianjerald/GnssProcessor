@@ -400,8 +400,10 @@ TEST(NetworkEntitiesRecords, RecordRoundTripY) {
     EXPECT_EQ(net::getSat(r, "G05", &A::ura_refloat_horizon), nullptr);
 }
 
-/// Records C, R and A: a satellite set as a flag, written and restored wholesale.
-void flagRoundTrip(const char* tag, bool net::SatelliteState::*f) {
+/// Records C, R, A, X, QR and CBS: a satellite set as a flag or a discontinuity bit (D7),
+/// written and restored wholesale.
+template <class F>
+void flagRoundTrip(const char* tag, F f) {
     Ctx a, b;
     net::markSat(a.ctx.entities, "G24", f);
     net::markSat(a.ctx.entities, "E11", f);
@@ -418,7 +420,7 @@ TEST(NetworkEntitiesRecords, RecordRoundTripC) {
 }
 
 TEST(NetworkEntitiesRecords, RecordRoundTripR) {
-    flagRoundTrip("R", &A::ura_retro_sats);
+    flagRoundTrip("R", net::Disc::UraRetro);
 }
 
 TEST(NetworkEntitiesRecords, RecordRoundTripA) {
@@ -462,10 +464,87 @@ TEST(NetworkEntitiesRecords, SatelliteKeysRoundTripInTheOldOrder) {
     EXPECT_FALSE(net::satIdKey("G5").has_value());
     EXPECT_FALSE(net::satIdOf(e, "XYZ").has_value());
     EXPECT_EQ(e.reach.failures[static_cast<std::size_t>(net::Converter::Satellite)], 1);
-    EXPECT_TRUE(net::markSat(e, "G05", &A::ura_retro_sats));
-    EXPECT_FALSE(net::markSat(e, "G05", &A::ura_retro_sats));
-    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 1u);
-    EXPECT_EQ(net::unmarkSat(e.sats, "G05", &A::ura_retro_sats), 0u);
+    EXPECT_TRUE(net::markSat(e, "G05", net::Disc::UraRetro));
+    EXPECT_FALSE(net::markSat(e, "G05", net::Disc::UraRetro));
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", net::Disc::UraRetro), 1u);
+    EXPECT_EQ(net::unmarkSat(e.sats, "G05", net::Disc::UraRetro), 0u);
+}
+
+// ---- Step N4e2: the datum and QC half of the satellite, and the re-placed EQS ----
+
+/// Records I, CBI and SV: a satellite-keyed map, written and restored wholesale.
+template <class V>
+void mapRoundTrip(const char* tag, std::optional<V> net::SatelliteState::*f, const V& v1,
+                  const V& v2) {
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", f) = v1;
+    net::putSat(a.ctx.entities, "E11", f) = v2;
+    net::markSat(a.ctx.entities, "G05", &A::retro_active);   // a row without the field
+    net::putSat(b.ctx.entities, "G10", f) = v1;               // replaced by the restore
+    roundTrip(tag, a.ctx, b.ctx);
+    EXPECT_EQ(net::satMap(b.ctx.entities.sats, f), (std::map<std::string, V>{{"E11", v2}, {"G24", v1}}))
+        << tag;
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripI) {
+    mapRoundTrip("I", &A::relevel_iode, 81, 7);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripCBI) {
+    using Pair = std::pair<std::string, std::string>;
+    mapRoundTrip("CBI", &A::code_bias_ifpin_pair, Pair{"C1C", "C2W"}, Pair{"C1X", "C5X"});
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripSV) {
+    // The SV rows serialize only beside the invariant-carry blob (network.state_snapshot_carry),
+    // so the record goes straight from the writer's DTO to the reader, as GG does.
+    Ctx a, b;
+    net::putSat(a.ctx.entities, "G24", &A::carry_vertex) = 1000001;
+    net::putSat(a.ctx.entities, "E11", &A::carry_vertex) = 1000002;
+    net::markSat(a.ctx.entities, "G05", &A::retro_active);   // a row without the field
+    net::putSat(b.ctx.entities, "G10", &A::carry_vertex) = 1000003;   // replaced by the restore
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("SV", a.ctx, snap);
+    EXPECT_EQ(snap.carry_sat_vertex, (std::map<std::string, int>{{"E11", 1000002}, {"G24", 1000001}}));
+    net::recordFromSnapshot("SV", snap, b.ctx);
+    EXPECT_EQ(net::satMap(b.ctx.entities.sats, &A::carry_vertex),
+              (std::map<std::string, int>{{"E11", 1000002}, {"G24", 1000001}}));
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripQR) {
+    flagRoundTrip("QR", &A::prev_clock_refloat);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripCBS) {
+    flagRoundTrip("CBS", &A::code_bias_seen);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripX) {
+    flagRoundTrip("X", net::Disc::EphCutover);
+    // D7: the causes are independent bits; restoring X leaves the other causes untouched.
+    Ctx a, b;
+    net::markSat(a.ctx.entities, "G24", net::Disc::EphCutover);
+    net::markSat(b.ctx.entities, "G24", net::Disc::CbReseed);
+    net::markSat(b.ctx.entities, "E11", net::Disc::EphCutover);
+    roundTrip("X", a.ctx, b.ctx);
+    const net::SatTable& r = b.ctx.entities.sats;
+    EXPECT_EQ(net::satSet(r, net::Disc::EphCutover), (std::set<std::string>{"G24"}));
+    EXPECT_EQ(net::satSet(r, net::Disc::CbReseed), (std::set<std::string>{"G24"}));
+    EXPECT_EQ(net::present(r, net::Disc::UraRetro), 0u);
+}
+
+TEST(NetworkEntitiesRecords, RecordRoundTripEQS) {
+    Ctx a, b;
+    net::putSig(a.ctx.entities, "G24_L1C", &G::eq34_sat_root) = "GOPE00CZE";
+    net::putSig(a.ctx.entities, "G07_L2W", &G::eq34_sat_root) = "WTZR00DEU";
+    net::putSig(a.ctx.entities, "E11_L5Q", &G::emitted_anchor) = "ZIM200CHE";   // a row without the field
+    net::putSig(b.ctx.entities, "G10_L1C", &G::eq34_sat_root) = "ONSA00SWE";    // replaced by the restore
+    NetworkStateSnapshot snap;
+    net::recordToSnapshot("EQS", a.ctx, snap);
+    EXPECT_EQ(snap.eq34_sat_root.begin()->first, "G07_L2W");   // the pre-N4e2 key shape and order
+    roundTrip("EQS", a.ctx, b.ctx);
+    EXPECT_EQ(net::sigMap(b.ctx.entities.sat_signals, &G::eq34_sat_root, '_'),
+              (std::map<std::string, std::string>{{"G07_L2W", "WTZR00DEU"}, {"G24_L1C", "GOPE00CZE"}}));
 }
 
 TEST(NetworkEntitiesRecords, EveryRecordRowIsDeclaredOnceAndRestoredInOrder) {

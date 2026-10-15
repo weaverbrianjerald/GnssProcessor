@@ -1005,12 +1005,18 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // Card PRM phase 3a: the datum-station slip re-reference's carry erases, read off the
     // drain's own counter around the call (serial: between the two parallel regions).
     const long long dse0 = qc.counters.datum_slip_carry_erases;
+    // The datum re-reference queues as the drain takes them (card NOM step N4e2): copied in
+    // from the satellite table and written back when the drain may have changed them.
+    std::set<std::string> datum_reref_pb_sats =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_pb);
+    std::set<std::string> datum_reref_amb_sats =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_amb);
     networkSlipDrainMwRefloat(pa, config_, stations, present, modeled, i_lo,
                               n_sta_total, carry_invariant, mw_carry_warm,
                               carry_slipped_ambs, qc.epoch, qc.params, qc.hist,
                               qc.counters, se, traces, log,
-                              datum_detect_on ? &ctx.carry.datum_reref_pb_sats : nullptr,
-                              datum_detect_on ? &ctx.carry.datum_reref_amb_sats : nullptr,
+                              datum_detect_on ? &datum_reref_pb_sats : nullptr,
+                              datum_detect_on ? &datum_reref_amb_sats : nullptr,
                               datum_detect_on ? &ctx.carry.refsat_mark_sats : nullptr,
                               datum_detect_on ? &local_carry : nullptr,
                               relevel_ptr,
@@ -1022,6 +1028,10 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                               // (structurally byte-identical, invariant #6).
                               ctx.carry.slip_oracle.get(),
                               common_band_ptr);
+    if (datum_detect_on) {
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, datum_reref_pb_sats);
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_amb, datum_reref_amb_sats);
+    }
     prmRespond(ctx.counters.prm_resp, ResponseSite::AmbDatumSlipErase,
                qc.counters.datum_slip_carry_erases - dse0);
 

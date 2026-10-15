@@ -583,9 +583,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     if (gl2_on) {
         // The decoupling edge: a satellite that was not stood down and now is.
         for (const auto& sat : sat_down_now) {
-            if (ctx.carry.gl2_sat_down.count(sat)) continue;
-            ctx.carry.gl2_sat_down.insert(sat);
-            ctx.carry.gl2_sat_since[sat] = se.time.tow;
+            if (!net::markSat(ctx.entities, sat, &net::SatelliteState::gl2_down)) continue;
+            net::putSat(ctx.entities, sat, &net::SatelliteState::gl2_since) = se.time.tow;
             ++tal.sat_standdowns;
             ++tal.sat_standdown_by_sat[sat];
             emitEvent("gross_los_sat_standdown", sat, "",
@@ -597,31 +596,31 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                                   gl2_wire ? "retro_disc+wire_withhold" : "retro_disc"));
         }
         // The re-coupling edge: a satellite that was stood down and is not any more.
-        for (auto it = ctx.carry.gl2_sat_down.begin(); it != ctx.carry.gl2_sat_down.end(); ) {
-            if (sat_down_now.count(*it)) { ++it; continue; }
-            const auto sit = ctx.carry.gl2_sat_since.find(*it);
+        for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::gl2_down)) {
+            if (sat_down_now.count(sat)) continue;
+            const double* since = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_since);
             ++tal.sat_released;
-            emitEvent("gross_los_sat_release", *it, "",
-                      static_cast<double>(sat_over_stations.count(*it)
-                                              ? sat_over_stations[*it] : 0),
+            emitEvent("gross_los_sat_release", sat, "",
+                      static_cast<double>(sat_over_stations.count(sat)
+                                              ? sat_over_stations[sat] : 0),
                       static_cast<double>(gl2_min_sta), "release",
                       fmt::format("n_sta_over={};standdown_tow={:.1f}",
-                                  sat_over_stations.count(*it) ? sat_over_stations[*it] : 0,
-                                  sit != ctx.carry.gl2_sat_since.end() ? sit->second : 0.0));
-            if (sit != ctx.carry.gl2_sat_since.end()) ctx.carry.gl2_sat_since.erase(sit);
-            it = ctx.carry.gl2_sat_down.erase(it);
+                                  sat_over_stations.count(sat) ? sat_over_stations[sat] : 0,
+                                  since != nullptr ? *since : 0.0));
+            net::dropSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_since);
+            net::unmarkSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_down);
         }
         // Route the currently stood-down set to the producer's consensus-fault
         // response.  The wire set is rebuilt every epoch, so a released satellite stops
         // being withheld in the same pass a newly faulted one starts.
-        ctx.carry.gl2_wire_pending.clear();
-        if (!ctx.carry.gl2_sat_down.empty()) {
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::wire_prune_pending, {});
+        const std::size_t n_down = net::present(ctx.entities.sats, &net::SatelliteState::gl2_down);
+        if (n_down > 0) {
             ++tal.sat_epochs;
-            tal.sat_epoch_max = std::max<long long>(
-                tal.sat_epoch_max, static_cast<long long>(ctx.carry.gl2_sat_down.size()));
-            for (const auto& sat : ctx.carry.gl2_sat_down) {
-                net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);   // the consensus path's disc bump
-                if (gl2_wire) ctx.carry.gl2_wire_pending.insert(sat);
+            tal.sat_epoch_max = std::max<long long>(tal.sat_epoch_max, static_cast<long long>(n_down));
+            for (const auto& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::gl2_down)) {
+                net::markSat(ctx.entities, sat, net::Disc::UraRetro);   // the consensus path's disc bump
+                if (gl2_wire) net::markSat(ctx.entities, sat, &net::SatelliteState::wire_prune_pending);
             }
         }
     }
@@ -643,7 +642,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             // edge, at the satellite's scale).  The release is counted
             // (sat_los_released) but does not emit the per-LOS clear event, which
             // states that the line of sight's data recovered; here they did not.
-            const bool sat_down = gl2_on && ctx.carry.gl2_sat_down.count(sat) > 0;
+            const bool sat_down = gl2_on && net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_down);
             if (sat_down && st.gross) {
                 st.gross = false;
                 st.over_streak = 0;

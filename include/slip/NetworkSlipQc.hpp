@@ -486,9 +486,9 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * per-satellite disc mark at the next emit, and emits the `datum_reref` event.
  *
  * @param datum_pb_reref_sats  Per-satellite PhaseBias skip-stash queue
- *                             (ctx.carry.datum_reref_pb_sats); nullptr: off.
+ *                             (net::SatelliteState::datum_reref_pb, copied in); nullptr: off.
  * @param datum_amb_reref_sats Per-satellite deferred all-station ambiguity reseed
- *                             queue (ctx.carry.datum_reref_amb_sats).
+ *                             queue (net::SatelliteState::datum_reref_amb, copied in).
  * @param datum_mark_sats      Per-satellite disc-mark queue at the next emit
  *                             (ctx.carry.refsat_mark_sats, the Edge-1 piece-2
  *                             mark-and-serialize path).

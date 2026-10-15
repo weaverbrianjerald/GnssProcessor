@@ -79,8 +79,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& local_carry = ctx.carry.local_carry;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
-    auto& relevel_iode = ctx.carry.relevel_iode;
-    auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
     auto& ramp_lifted = ctx.carry.ramp_lifted;
@@ -457,7 +455,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         if (have_eq34) {
                             net::recordFromSnapshot("EQD", snap, ctx);   // the constellation channels (N4b)
                             net::recordFromSnapshot("EQP", snap, ctx);   // the station signals (N4a)
-                            ctx.carry.eq34_sat_root  = snap.eq34_sat_root;
+                            net::recordFromSnapshot("EQS", snap, ctx);   // the satellite signals (N4e2)
                             ctx.carry.eq34_prev_target.clear();
                             for (const auto& [key, tgt] : snap.eq34_prev_target)
                                 ctx.carry.eq34_prev_target[{key.first, key.second}] = tgt;
@@ -488,7 +486,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         }
                         if (have_cb) {
                             net::recordFromSnapshot("CBP", snap, ctx);   // the constellation channels (N4b)
-                            ctx.carry.code_bias_sat_seen_  = snap.code_bias_sat_seen;
+                            net::recordFromSnapshot("CBS", snap, ctx);   // the satellites (N4e2)
                             // Restore also the IF-pin pair those values were solved under.
                             // Restoring the values without the pair is worse than restoring
                             // neither: `pair_same` would read false everywhere, so the IF-pin
@@ -496,7 +494,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // every one of those re-seeds bump.  A pair that did change
                             // across the seam still trips the test and bumps, because the
                             // resume's previous kept epoch is the writer's.
-                            ctx.carry.code_bias_ifpin_pair_ = snap.code_bias_ifpin_pair;
+                            net::recordFromSnapshot("CBI", snap, ctx);   // the satellites (N4e2)
                             datum_cb_restored = true;
                             long long n_cbp = 0;
                             for (const auto& [fam, per_sat] : snap.code_bias_prev)
@@ -922,7 +920,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // set is the only way the first warm epoch's pre-pass (the
                             // prev_clock_refloat_sats loop in ApplicationNetworkAssembly.cpp)
                             // behaves as a continuous epoch's would.
-                            ctx.carry.prev_clock_refloat_sats = snap.clock_refloat_sats;
+                            net::recordFromSnapshot("QR", snap, ctx);   // the satellites (N4e2)
                             ctx.counters.n_resume_cpl_seed_reinit = n_seed;
 
                             log->info("Network (resume coupling restore): ARMED at the resume "
@@ -1089,8 +1087,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // disc, so a warm resume does not re-level against a stale baseline (or
                     // lose a pending forced bump).  Both are empty in an sp3 snapshot or one
                     // written before card 6, and the first brdc_rts epoch then re-seeds.
-                    relevel_iode             = snap.relevel_iode;
-                    eph_cutover_disc_pending = snap.eph_cutover_disc_pending;
+                    net::recordFromSnapshot("I", snap, ctx);   // the satellites (N4e2)
+                    net::recordFromSnapshot("X", snap, ctx);   // the satellites (N4e2)
                     // Without the datum restore, the time-linked code-bias previous-value
                     // map re-seeds empty here.  A satellite emitted before the snapshot
                     // whose split re-seeds is a re-reference the consumer has to see, so the
@@ -1190,7 +1188,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // (shared and emitter state stay warm), so the resume degrades to
                     // RTB-7(a).
                     if (nc.state_snapshot_carry && !snap.carry_state.empty()) {
-                        ctx.carry.carry_sat_vertex = snap.carry_sat_vertex;
+                        net::recordFromSnapshot("SV", snap, ctx);   // the satellites (N4e2)
                         net::recordFromSnapshot("GG", snap, ctx);   // the constellation channels (N4b)
                         std::istringstream cs(snap.carry_state);
                         std::string cerr;
@@ -1200,7 +1198,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // rejected unless every chord and arc binds to these live maps,
                             // instead of re-keying chords onto the wrong satellites (RE-4).
                             std::set<int> satv, gids;
-                            for (const auto& sv : ctx.carry.carry_sat_vertex) satv.insert(sv.second);
+                            net::forEach(ctx.entities.sats, &net::SatelliteState::carry_vertex,
+                                         [&](const SatId&, int v) { satv.insert(v); });
                             net::forEach(ctx.entities.constellations,
                                          &net::ConstellationState::channels,
                                          &net::ChannelState::group_id,
@@ -1213,7 +1212,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "— the invariant carry COLD-STARTS (branch not "
                                       "reproduced; shared/emitter state stay warm).", cerr);
                             carry_driver.reset();
-                            ctx.carry.carry_sat_vertex.clear();
+                            net::dropAll(ctx.entities.sats, &net::SatelliteState::carry_vertex);
                             net::dropAll(ctx.entities.constellations,
                                          &net::ConstellationState::channels,
                                          &net::ChannelState::group_id);
@@ -1288,7 +1287,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                            &net::ConstellationState::prev_pivot),
                               net::present(ctx.entities.constellations,
                                            &net::ConstellationState::last_pivot),
-                              net::present(ctx.entities.sats, &net::SatelliteState::ura_retro_sats),
+                              net::present(ctx.entities.sats, net::Disc::UraRetro),
                               net::present(ctx.entities.sats, &net::SatelliteState::ura_refloat_horizon),
                               n_emitted);
                 }

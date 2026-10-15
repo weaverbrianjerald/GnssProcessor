@@ -65,6 +65,7 @@
 #include "filter/NetworkArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "filter/NetworkGrossLos.hpp"       // GrossLosState
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone
+#include "filter/NetworkSbasis.hpp"         // NetworkSbasis::PinPairHold
 #include "filter/NetworkSignalIntegrity.hpp"   // SignalIntegrityArc
 #include "slip/NetworkRawObservables.hpp"   // IonoCsState
 #include "filter/NetworkRunTypes.hpp"   // LocalCarry, SdEwlFix
@@ -157,6 +158,18 @@ struct ByLetter {
     bool operator()(System a, System b) const { return traitsOf(a).letter < traitsOf(b).letter; }
 };
 
+/**
+ * @brief The causes of a pending per-satellite wire discontinuity (decision D7): one bit of
+ *        @ref SatelliteState::disc_pending per drain-on-emission queue.
+ */
+enum class Disc : unsigned {
+    UraRetro    = 1u << 0,  ///< A post-emit QC tier's retro-bump (B1).  Record R.
+    EphCutover  = 1u << 1,  ///< An ephemeris roll without its prior version (card 6).  Record X.
+    CbExcursion = 1u << 2,  ///< A code-bias carry excursion (SPEC_day129_frame_guards 2.1).
+    ClockAnchor = 1u << 3,  ///< A decoupled temporal clock anchor (Q3).
+    CbReseed    = 1u << 4,  ///< A time-linked code-bias datum re-seed.
+};
+
 /// One signal family of a constellation, in @ref ConstellationState::channels: each member
 /// has its own key space (the signal string its old key carried after the constellation,
 /// O4), and a cell is present in a member exactly when the old map held (constellation, key).
@@ -188,6 +201,13 @@ struct ChannelState {
     /// Last reference elected for the (constellation, signal): the switch detector.  Was
     /// @c NetworkCarryState::ddfrac_ref_prev.  ColdStart.
     std::optional<std::string> ddfrac_ref_prev;
+    /// The family-difference partner the secondary-family channel's level was realized
+    /// against at the last kept epoch, "" for the sum-to-zero row (card GFC): the baseline a
+    /// switch between the two rows is declared against, advanced only on kept epochs.
+    /// Empty unless the family-difference arm is on under the time link.  Was
+    /// @c NetworkCarryState::last_cb_family_partner ("<constellation>|<signal>"; step N4e2,
+    /// re-placed from the satellite rows).  ColdStart.
+    std::optional<std::string> last_cb_family_partner;
 };
 
 /// One constellation's carried state (step N4b).  The constellation's own fields are keyed
@@ -286,18 +306,18 @@ struct SatelliteState {
     /// sat -> epochs remaining of post-refloat URA inflation.
     /// Was @c NetworkCarryState::ura_refloat_horizon.  Record Y.
     std::optional<int> ura_refloat_horizon;
-    /// Retro-bump (B1; P0-2/P1-3): per satellite, tier-independent, edge-triggered.
-    /// ura_retro_sats = sats a post-emit QC tier flagged last epoch, applied as a
-    /// per-sat discontinuity at the sat's next actual emit (markSatDiscontinuity): a
-    /// flagged sat absent from an emitted epoch (RT0-5 quarantine, vanish) stays
-    /// pending here instead of being consumed without landing.  retro_active = sats
-    /// currently flagged and already bumped, so a sat that stays flagged during
-    /// recovery is bumped once (on its rising edge), with no per-constellation reset
-    /// storm.
-    /// Here: the satellite is pending its retro-bump.
-    /// Was @c NetworkCarryState::ura_retro_sats.  Record R.
-    bool ura_retro_sats{false};
-    /// The satellite is flagged and already bumped (see @ref ura_retro_sats).
+    /// The causes of a pending wire discontinuity, one bit per drain-on-emission queue
+    /// (decision D7, @ref Disc): set when a source queues the satellite, cleared when its
+    /// mark lands at an emitted epoch where the satellite is present (a satellite absent
+    /// from the emission keeps the bit).  Each queue drains at its own place in the emit
+    /// preparation, in satellite order.  Was @c NetworkCarryState::ura_retro_sats (Record
+    /// R), @c eph_cutover_disc_pending (Record X), @c cb_excursion_pending_bump,
+    /// @c clk_anchor_disc_pending and @c cb_reseed_disc_pending (Pending).
+    unsigned disc_pending{0};
+    /// Retro-bump (B1; P0-2/P1-3): per satellite, tier-independent, edge-triggered.  The
+    /// satellite is flagged and already bumped (its @ref Disc::UraRetro bit is the pending
+    /// bump), so a satellite that stays flagged during recovery is bumped once, on its
+    /// rising edge, with no per-constellation reset storm.
     /// Was @c NetworkCarryState::retro_active.  Record A.
     bool retro_active{false};
     /// Satellite -> the clock (m) this producer emitted at that satellite's previous
@@ -312,6 +332,64 @@ struct SatelliteState {
     /// sat -> previous epoch's solved clock (m)
     /// Was @c NetworkCarryState::cb_exc_prev_clk.  ColdStart.
     std::optional<double> cb_exc_prev_clk;
+
+    // ---- Step N4e2: the datum and QC half ----
+
+    /// Card NBP: the satellite's previous wire stamp (IODE), for the switch flag of the O
+    /// trace and the run-end switch count.  Empty unless the native broadcast clock a
+    /// priori is armed.  Was @c NetworkCarryState::nbp_prev_iode.  ColdStart.
+    std::optional<int> nbp_prev_iode;
+    /// The clock-monitor refloat flag at the last stash: hard-refloat mode skip-stashes the
+    /// satellite, so the D2 stash cannot carry the flag (card 1d).  Was
+    /// @c NetworkCarryState::prev_clock_refloat_sats.  Record QR.
+    bool prev_clock_refloat{false};
+    /// The ionosphere-free pin pair (sig1, sig2) of the last emitted product, compared and
+    /// advanced only at the emit site, so a withheld epoch leaves it untouched.  Populated
+    /// only under emit_clock_disc; not snapshotted (a warm resume has no prior for its
+    /// first emit).  Was @c NetworkCarryState::last_if_pin_sel.  ColdStart.
+    std::optional<std::pair<std::string, std::string>> last_if_pin_sel;
+    /// The pin pair hold of the last kept epoch (card GFC), the baseline the begin and the
+    /// end of a hold are declared against, advanced only on kept epochs.  Telemetry only,
+    /// not snapshotted.  Was @c NetworkCarryState::last_if_pin_holds.  ColdStart.
+    std::optional<NetworkSbasis::PinPairHold> last_if_pin_hold;
+    /// The satellite participates in a datum direction constrained last epoch (the
+    /// completion rows, standing invariant #7): present here but in no direction this epoch
+    /// is the release edge.  Was @c NetworkCarryState::sbc_active_sats.  ColdStart.
+    bool sbc_active{false};
+    /// The broadcast-ephemeris IODE the satellite's carried clock state is referenced to,
+    /// advanced at the eph-cutover re-level (before the solve, also on withheld epochs).
+    /// Empty and inert unless brdc_rts.  Was @c NetworkCarryState::relevel_iode.  Record I.
+    std::optional<int> relevel_iode;
+    /// The IF-pin reference pair {sig1, sig2} that produced the code-bias datum's previous
+    /// values (@ref ChannelState::code_bias_prev), with the same kept-epoch lifecycle.  Was
+    /// @c NetworkCarryState::code_bias_ifpin_pair_.  Record CBI.
+    std::optional<std::pair<std::string, std::string>> code_bias_ifpin_pair;
+    /// The satellite's code-bias split has been harvested before: a later re-seed is a
+    /// return (disc bump), not a first appearance.  Accumulates for the process.  Was
+    /// @c NetworkCarryState::code_bias_sat_seen_.  Record CBS.
+    bool code_bias_seen{false};
+    /// Stood down (GL-2, section 24.19): the per-LOS declarations are refused and the
+    /// satellite routes to the consensus-fault response.  Empty unless knobs.gl2_on; one
+    /// epoch of evidence, re-earned.  Was @c NetworkCarryState::gl2_sat_down.  ColdStart.
+    bool gl2_down{false};
+    /// TOW at which the stand-down edge fired, for the release event's detail (GL-2).
+    /// Was @c NetworkCarryState::gl2_sat_since.  ColdStart.
+    std::optional<double> gl2_since;
+    /// To prune from the next emission (GL-2), drained by @c networkSolPrep; rebuilt every
+    /// screened epoch.  Empty when network.gross_los_sat_wire_withhold is off.  Was
+    /// @c NetworkCarryState::gl2_wire_pending.  Pending.
+    bool wire_prune_pending{false};
+    /// A slip at the gauge-pinned datum receiver queued the satellite's shared phase-bias
+    /// skip-stash (consumed and cleared at this epoch's stash).  Not snapshotted.  Was
+    /// @c NetworkCarryState::datum_reref_pb_sats.  ColdStart.
+    bool datum_reref_pb{false};
+    /// The same slip queued the network-wide ambiguity reseed, applied at the first drain
+    /// after the skip-stash.  Was @c NetworkCarryState::datum_reref_amb_sats.  ColdStart.
+    bool datum_reref_amb{false};
+    /// The satellite's stable vertex id in the invariant-carry graph (a disjoint high
+    /// range, numbered in first-sighting order).  Was @c NetworkCarryState::carry_sat_vertex.
+    /// Record SV.
+    std::optional<int> carry_vertex;
 };
 
 /// One open INC-2 bridge: the key's gauge is realized by a soft shared row at
@@ -434,6 +512,24 @@ struct SatSignalState {
     /// Card SMD: hold keys whose block clone waits for a birth (as @c smh_pending).
     /// Was @c NetworkCarryState::smh_block_pending.  Pending.
     std::optional<PbHoldClone> smh_block_pending;
+    /// The anchor station name of the last emitted product, advanced only at emit (mirrors
+    /// the pivots); a change against it drives the per-satellite handover discontinuity.
+    /// Never erased: a returning key is a first sighting, not a fault.  Was
+    /// @c NetworkCarryState::emitted_anchor ("sat_signal"; step N4e2, re-placed from the
+    /// satellite rows).  ColdStart.
+    std::optional<std::string> emitted_anchor;
+    /// The continuous-GPS second at which the key's datum was last realized and emitted
+    /// (eq34 reattach hygiene, warm conditioning): advanced at the emit site of
+    /// @ref emitted_anchor and read only by filter/NetworkAnchorHygiene.  Empty unless the
+    /// card is armed; not snapshotted.  Was @c NetworkCarryState::emitted_anchor_s (step
+    /// N4e2, re-placed from the satellite rows).  ColdStart.
+    std::optional<double> emitted_anchor_s;
+    /// The satellite signal's component datum receiver r1 last epoch (card 3): a root
+    /// change shifts the whole component frame, so it re-references every satellite even
+    /// where all tree edges survived.  Replaced wholesale per election.  Was
+    /// @c NetworkCarryState::eq34_sat_root ("sat_signal"; step N4e2, re-placed from the
+    /// satellite rows).  Record EQS.
+    std::optional<std::string> eq34_sat_root;
 };
 
 /// The station-level dispositions (RF-3b B4, @c network.gross_los_station_tier),
@@ -583,6 +679,10 @@ struct StationState {
     /// (station index, constellation)).  Not snapshotted (the SD EWL block of
     /// NetworkCarryState states why).  Was @c NetworkCarryState::sd_ewl_fix.  ColdStart.
     std::optional<SdEwlFixes> sd_ewl_fix;
+    /// Census-epoch index of the station's last emitted CONGRUENCE event (the rate limit).
+    /// Was @c NetworkCarryState::cg_event_last (keyed by station NAME, O3; step N4e2,
+    /// re-placed from the satellite rows).  ColdStart.
+    std::optional<long long> cg_event_last;
     /// The members keyed below the station.
     std::map<std::string, StationSignalState> signals;
 };
@@ -647,6 +747,10 @@ struct LosState {
     /// Empty at the default holdoff 0.  Was @c NetworkCarryState::gl_event_last
     /// ("station\x1fsat").  ColdStart.
     std::optional<long long> gl_event_last;
+    /// Census-epoch index of the last emitted BLOCKBAARDA event of the line of sight (the
+    /// rate limit).  Was @c NetworkCarryState::bb_event_last ("station\x1fsat", the station
+    /// by NAME, O3; step N4e2, re-placed from the satellite rows).  ColdStart.
+    std::optional<long long> bb_event_last;
     /// The held per-LOS iono carry (RF-3b B2), same lifecycle as the held ambiguity levels.
     /// Was @c NetworkCarryState::gl_hold_iono.  ColdStart.
     std::optional<LocalCarry> gl_hold_iono;
@@ -1187,6 +1291,28 @@ std::set<std::string> satSet(const SatTable& t, bool SatelliteState::*f);
 
 /// Replaces flag @p f with the satellites of @p s: the old set's assignment.  Serial code only.
 void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<std::string>& s);
+
+// ---- The discontinuity bits (decision D7): the flag forms over one bit of disc_pending ----
+
+/// True when bit @p d of satellite @p sat is set (no count): the old set's @c count().
+bool hasSat(const SatTable& t, const std::string& sat, Disc d);
+
+/// Sets bit @p d of satellite @p sat; true when it was not set: the old set's
+/// @c insert().second.  Serial code only (counted on a failed conversion).
+bool markSat(NetworkEntities& e, const std::string& sat, Disc d);
+
+/// Clears bit @p d of satellite @p sat; 1 when it was set: the old set's @c erase(key).
+std::size_t unmarkSat(SatTable& t, const std::string& sat, Disc d);
+
+/// The number of satellites with bit @p d set: the old set's @c size().
+std::size_t present(const SatTable& t, Disc d);
+
+/// Bit @p d as the satellite-string set its drain and the snapshot take, in id order.
+std::set<std::string> satSet(const SatTable& t, Disc d);
+
+/// Replaces bit @p d with the satellites of @p s: the old set's assignment (a drain writing
+/// back its still-pending satellites).  Serial code only.
+void assignSatFlags(NetworkEntities& e, Disc d, const std::set<std::string>& s);
 
 /// Field @p f as the satellite-string-keyed map its readers and the snapshot take, in id
 /// order (the string order of the keys, O1).

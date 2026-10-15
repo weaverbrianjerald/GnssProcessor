@@ -76,7 +76,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         // re-flag re-arms the bump.  ura_retro_sats is consumed at the next emit.
         if (ura_retro) {
             for (const std::string& sat : flagged_now)
-                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(ctx.entities, sat, &net::SatelliteState::ura_retro_sats);
+                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(ctx.entities, sat, net::Disc::UraRetro);
             net::assignSatFlags(ctx.entities, &net::SatelliteState::retro_active, flagged_now);
         }
 
@@ -106,10 +106,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
-    auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;
-    auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
-    auto& code_bias_sat_seen_ = ctx.carry.code_bias_sat_seen_;
     auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
@@ -167,7 +164,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // alone would leave the clock-QC half of the feed empty, and the widening would cover
     // only the reref sources without any indication.
     if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
-        prev_clock_refloat_sats = clock_refloat_sats;
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::prev_clock_refloat, clock_refloat_sats);
     // The satellite clock is stashed to prev_carry only in scalar-carry mode.  Under
     // network.clock_model the clock is carried by clock_osc and is not stashed here; the
     // two-state model is its only cross-epoch memory.
@@ -203,7 +200,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // level, in lock-step with the network-wide ambiguity reseed that the slip drain
         // defers until this skip has been consumed.  The set is empty unless the toggle
         // is armed ⇒ byte-identical.
-        if (ctx.carry.datum_reref_pb_sats.count(parts->satellite)) continue;
+        if (net::hasSat(ctx.entities.sats, parts->satellite, &net::SatelliteState::datum_reref_pb)) continue;
         if (harvest_pb_levels) {
             // Guarded: this runs before the carry_invariant skip below, so it is the one
             // site that queries a phase-bias column for every shared key on a path that
@@ -233,7 +230,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // Cleared wholesale: a queued satellite with no phase-bias key this epoch had nothing
     // stashed to skip, and prev_carry is rebuilt from scratch above, so no stale carry is
     // left to guard against.
-    if (!ctx.carry.datum_reref_pb_sats.empty()) ctx.carry.datum_reref_pb_sats.clear();
+    if (net::present(ctx.entities.sats, &net::SatelliteState::datum_reref_pb) > 0)
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, {});
     // Refresh the time-linked previous-value map from this kept epoch's solved code
     // biases.  Cleared and rebuilt (a departed satellite drops out, so its return
     // re-seeds that satellite alone) in lock-step with the D2 carry, with the same
@@ -247,7 +245,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // Advance the IF-pin comparison baseline to this kept epoch's pairs (a pair
         // recorded on an epoch that was then withheld never reaches here, so the
         // baseline tracks emitted / kept datum realizations only).
-        code_bias_ifpin_pair_ = this_epoch_cb_ifpin;
+        net::assignSat(ctx.entities, &net::SatelliteState::code_bias_ifpin_pair, this_epoch_cb_ifpin);
     }
     for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
@@ -269,7 +267,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             if (std::isfinite(v)) {
                 net::put(cons_rows, systemOfSat(kv.first), &net::ConstellationState::channels,
                          kv.second, &net::ChannelState::code_bias_prev)[kv.first] = v;
-                code_bias_sat_seen_.insert(kv.first);
+                net::markSat(ctx.entities, kv.first, &net::SatelliteState::code_bias_seen);
             }
         }
     }

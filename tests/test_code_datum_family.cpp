@@ -423,7 +423,7 @@ struct EmitHarness {
     /// this epoch as @p to and last emitted as @p emitted.
     void change(const std::string& sat, const Pair& emitted, const Pair& from, const Pair& to,
                 PinOut o = PinOut::Continued) {
-        ctx->carry.last_if_pin_sel[sat]       = emitted;
+        net::putSat(ctx->entities, sat, &net::SatelliteState::last_if_pin_sel) = emitted;
         ctx->carry.this_epoch_if_pin_sel[sat] = to;
         ctx->carry.this_epoch_if_pin_changes[sat] = NetworkSbasis::PinPairChange{from, to, o};
     }
@@ -1432,7 +1432,7 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     EXPECT_EQ(events[2].detail, "selected C1C+C5Q vs held C1C+C5X; not pinned now");
     EXPECT_EQ(events[3].detail,
               "selected C1C+C5Q vs held C1C+C5X; pinned C1C+C5Q (re-seeded)");
-    EXPECT_TRUE(ctx.carry.last_if_pin_holds.empty());
+    EXPECT_EQ(net::present(ctx.entities.sats, &net::SatelliteState::last_if_pin_hold), 0u);
     EXPECT_EQ(c.reseeded, 1);
     EXPECT_EQ(c.hold_refused_gd, 0);
 
@@ -1481,7 +1481,7 @@ TEST(CodeDatumFamilyTest, EmitSiteLeavesAMatchingContinuedReselectionUndeclared)
     EXPECT_EQ(r.retro_emit_sats.count("G02"), 0u);
     EXPECT_EQ(h.ctx->counters.n_if_pin_continued_undeclared, 1u);
     EXPECT_EQ(h.ctx->counters.n_if_pin_continued_declared, 0u);
-    EXPECT_EQ(h.ctx->carry.last_if_pin_sel.at("G02"), (Pair{"C1C", "C2W"}));
+    EXPECT_EQ(*net::getSat(h.ctx->entities.sats, "G02", &net::SatelliteState::last_if_pin_sel), (Pair{"C1C", "C2W"}));
     EXPECT_EQ(h.ctx->counters.cb_pair_by_const.at(System::GPS).continued, 1);
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G02"), 0);
@@ -1507,7 +1507,7 @@ TEST(CodeDatumFamilyTest, EmitSiteDeclaresAContinuedReselectionOtherwise) {
     {
         EmitHarness h("pending");
         h.change("G03", {"C1W", "C2W"}, {"C1W", "C2W"}, {"C1C", "C2W"});
-        h.ctx->carry.cb_reseed_disc_pending = {"G03"};
+        net::assignSatFlags(h.ctx->entities, net::Disc::CbReseed, {"G03"});
         const NetworkSolPrepResult r = h.run();
         EXPECT_EQ(r.retro_emit_sats.count("G03"), 1u);
         EXPECT_EQ(h.ctx->counters.n_if_pin_continued_declared, 1u);
@@ -1524,7 +1524,7 @@ TEST(CodeDatumFamilyTest, EmitSiteDefersAContinuedSatelliteOutsideTheEmission) {
     EXPECT_TRUE(r.retro_emit_sats.empty());
     EXPECT_EQ(h.ctx->counters.n_if_pin_continued_unemitted, 1u);
     EXPECT_EQ(h.ctx->counters.n_if_pin_continued_undeclared, 0u);
-    EXPECT_EQ(h.ctx->carry.last_if_pin_sel.at("G09"), (Pair{"C1W", "C2W"}));
+    EXPECT_EQ(*net::getSat(h.ctx->entities.sats, "G09", &net::SatelliteState::last_if_pin_sel), (Pair{"C1W", "C2W"}));
 }
 
 // A held satellite at the emit site: its recorded selection is the held pair, which is
@@ -1533,7 +1533,7 @@ TEST(CodeDatumFamilyTest, EmitSiteDefersAContinuedSatelliteOutsideTheEmission) {
 TEST(CodeDatumFamilyTest, EmitSiteDeclaresNoReselectionForAHeldPair) {
     EmitHarness h("held");
     const Pair held{"C1W", "C2W"};
-    h.ctx->carry.last_if_pin_sel["G02"]         = held;
+    net::putSat(h.ctx->entities, "G02", &net::SatelliteState::last_if_pin_sel) = held;
     h.ctx->carry.this_epoch_if_pin_sel["G02"]   = held;
     h.ctx->carry.this_epoch_if_pin_holds["G02"] = NetworkSbasis::PinPairHold{{"C1C", "C2W"}, held};
     h.ctx->carry.this_epoch_cb_ifpin["G02"]     = held;
@@ -1541,7 +1541,7 @@ TEST(CodeDatumFamilyTest, EmitSiteDeclaresNoReselectionForAHeldPair) {
     const NetworkSolPrepResult r = h.run();
 
     EXPECT_EQ(r.retro_emit_sats.count("G02"), 0u);
-    EXPECT_EQ(h.ctx->carry.last_if_pin_sel.at("G02"), held);
+    EXPECT_EQ(*net::getSat(h.ctx->entities.sats, "G02", &net::SatelliteState::last_if_pin_sel), held);
     EXPECT_EQ(h.ctx->counters.cb_pair_by_const.at(System::GPS).held, 1);
     EXPECT_EQ(h.ctx->counters.cb_pair_by_const.at(System::GPS).hold_begun, 1);
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
@@ -2394,8 +2394,8 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
         armBirthPrior(h, 0.10);
         h.code_bias_prev       = net::channelMap(ctx.entities.constellations,
                                                  &net::ChannelState::code_bias_prev);
-        h.code_bias_sat_seen   = ctx.carry.code_bias_sat_seen_;
-        h.code_bias_ifpin_pair = ctx.carry.code_bias_ifpin_pair_;
+        h.code_bias_sat_seen   = net::satSet(ctx.entities.sats, &net::SatelliteState::code_bias_seen);
+        h.code_bias_ifpin_pair = net::satMap(ctx.entities.sats, &net::SatelliteState::code_bias_ifpin_pair);
         if (with_carry) h.carry = networkCodeBiasCarryMap(ctx);
         return h.build(est, keys);
     };

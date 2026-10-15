@@ -42,7 +42,6 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
-    auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     const net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
     const SyncedEpoch& se = ep.se;
     const std::set<std::pair<int, std::string>>& carry_slipped_ambs = ep.funnel.carry_slipped_ambs;
@@ -62,7 +61,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
             if (i < 0 || i >= static_cast<int>(stations.size())) continue;
             const char cons =
                 g.satellite.empty() ? '\0' : letterOfSat(g.satellite);
-            const auto svit = carry_sat_vertex.find(g.satellite);
+            const int* svit = net::getSat(ctx.entities.sats, g.satellite, &net::SatelliteState::carry_vertex);
             for (const std::string& sig : {g.sig1, g.sig2}) {
                 if (sig.empty()) continue;
                 const std::string amb_key = StateKeys::makeAmbiguityKey(g.satellite, sig);
@@ -95,14 +94,14 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 //     up a chord that cannot exist and report "never bridged" for
                 //     everything.
                 bool dd_bridged = false;
-                if (carry_invariant && svit != carry_sat_vertex.end() && cons != '\0') {
+                if (carry_invariant && svit != nullptr && cons != '\0') {
                     // The per-band group of `sig` (one cell: the key is (constellation, signal)).
                     const int* gid = net::get(cons_rows, systemOfSat(g.satellite),
                                               &net::ConstellationState::channels, sig,
                                               &net::ChannelState::group_id);
                     double zg = 0.0, vg = 0.0;
                     if (gid != nullptr && *gid != 0
-                        && carry_driver.carriedChordValue(*gid, ArcKey(i, svit->second), zg, vg))
+                        && carry_driver.carriedChordValue(*gid, ArcKey(i, *svit), zg, vg))
                         dd_bridged = true;
                 }
                 const bool bridged = (pl_bridged || dd_bridged) && !slip_marked;

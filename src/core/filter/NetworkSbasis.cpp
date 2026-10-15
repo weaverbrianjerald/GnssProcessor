@@ -2065,7 +2065,7 @@ void networkCodeDatumFamilyKeptEpoch(
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
         ++c.held;
         if (hold.reseeded) ++c.held_reseeded;
-        if (ctx.carry.last_if_pin_holds.count(sat) != 0) continue;
+        if (net::getSat(ctx.entities.sats, sat, &net::SatelliteState::last_if_pin_hold) != nullptr) continue;
         if (after_resume) {
             ++c.hold_resumed;
             emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_resumed",
@@ -2076,7 +2076,7 @@ void networkCodeDatumFamilyKeptEpoch(
                       startText(hold));
         }
     }
-    for (const auto& [sat, hold] : ctx.carry.last_if_pin_holds) {
+    for (const auto& [sat, hold] : net::satMap(ctx.entities.sats, &net::SatelliteState::last_if_pin_hold)) {
         if (holds.count(sat) != 0) continue;
         ++ctx.counters.cb_pair_by_const[systemOfSat(sat)].hold_ended;
         // What ended it, from the pair the satellite is pinned on now: still the held pair
@@ -2105,7 +2105,7 @@ void networkCodeDatumFamilyKeptEpoch(
         emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_end",
                   holdText(hold) + ending);
     }
-    ctx.carry.last_if_pin_holds = holds;
+    net::assignSat(ctx.entities, &net::SatelliteState::last_if_pin_hold, holds);
     // The pin pair changes of this kept epoch (network.code_datum_pair_continuity).
     for (const auto& [sat, change] : ctx.carry.this_epoch_if_pin_changes) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
@@ -2135,15 +2135,22 @@ void networkCodeDatumFamilyKeptEpoch(
     for (const auto& [chan, r] : rows) {
         ctx.counters.cb_family_by_band[{r.channel.sys, r.channel.digit}].add(r);
         const std::string partner = r.familyRow() ? r.partner : std::string();
-        const auto last = ctx.carry.last_cb_family_partner.find(chan);
-        if (last != ctx.carry.last_cb_family_partner.end() && last->second != partner) {
+        // The channel's partner at the last kept epoch ("<c>|<signal>", card NOM step N4e2).
+        const auto ch = net::channelOfKey(ctx.entities, chan);
+        const std::string* last =
+            ch ? net::get(ctx.entities.constellations, ch->first, &net::ConstellationState::channels,
+                          ch->second, &net::ChannelState::last_cb_family_partner)
+               : nullptr;
+        if (last != nullptr && *last != partner) {
             ++ctx.counters.n_cb_family_switches;
             emitEvent("CB_DATUM", "family_row", "", "", std::nullopt, std::nullopt,
                       partner.empty() ? "to_sum_to_zero" : "to_family_difference",
-                      chan + ": " + rowText(last->second) + "->" + rowText(partner) + " ("
+                      chan + ": " + rowText(*last) + "->" + rowText(partner) + " ("
                           + NetworkSbasis::familyRowOutcomeName(r.outcome) + ")");
         }
-        ctx.carry.last_cb_family_partner[chan] = partner;
+        if (ch)
+            net::put(ctx.entities.constellations, ch->first, &net::ConstellationState::channels,
+                     ch->second, &net::ChannelState::last_cb_family_partner) = partner;
     }
     // The first-sighting family prior of this kept epoch (card GFC step 2,
     // network.code_family_birth_prior_sigma_m): each soft row folded on this kept epoch,

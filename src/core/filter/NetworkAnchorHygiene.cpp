@@ -174,9 +174,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     const double prior_horizon_s = ctx.knobs.prior_realization_max_gap_s;
     auto priorFresh = [&](const std::string& amb) {
         if (!(prior_horizon_s > 0.0)) return true;   // conditioning off: every key is fresh, so the block always applies
-        const auto it = ctx.carry.emitted_anchor_s.find(amb);
-        if (it == ctx.carry.emitted_anchor_s.end()) return false;   // never emitted
-        const double age = now_s - it->second;
+        const double* emitted_s =
+            net::getSig(ctx.entities.sat_signals, amb, &net::SatSignalState::emitted_anchor_s);
+        if (emitted_s == nullptr) return false;   // never emitted
+        const double age = now_s - *emitted_s;
         return age >= 0.0 && age <= prior_horizon_s;
     };
     std::set<std::string> blocked;    // keys leaving the anchored set this epoch

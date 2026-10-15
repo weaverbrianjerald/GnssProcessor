@@ -130,7 +130,8 @@ const std::map<std::string, std::string> anchor_incumbent =
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
-auto& eq34_sat_root = ctx.carry.eq34_sat_root;
+const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
+    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
 
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
@@ -1043,7 +1044,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             net::put(entities.stations, *sid, &net::StationState::signals, rxkey.substr(p1 + 1),
                      &net::StationSignalState::eq34_rx_parent) = sat;
     }
-    eq34_sat_root    = std::move(new_sat_root);
+    net::assignSig(ctx.entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
     eq34_prev_target = std::move(new_prev_target);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
     // can tell a rising arc from a setting one.  Rebuilt wholesale (a

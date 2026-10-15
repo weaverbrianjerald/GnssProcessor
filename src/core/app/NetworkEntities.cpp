@@ -232,6 +232,9 @@ const std::vector<FieldDecl> kConstellationFields = {
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_age>},
     {"ddfrac_ref_prev", "ddfrac_ref_prev", Persist::ColdStart, "", "",
      nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_prev>},
+    // Step N4e2: re-placed from the satellite rows (its key is a channel).
+    {"last_cb_family_partner", "last_cb_family_partner", Persist::ColdStart, "", "",
+     nullptr, nullptr, &channelRows<&Ch::last_cb_family_partner>},
 };
 // ---- The satellite fields (step N4e1: the clock half) ----
 
@@ -270,12 +273,60 @@ void assignSatFlags(NetworkEntities& e, bool SatelliteState::*f, const std::set<
     for (const std::string& sat : s) markSat(e, sat, f);
 }
 
+// ---- The discontinuity bits (step N4e2, decision D7) ----
+
+bool hasSat(const SatTable& t, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdKey(sat);
+    if (!id) return false;
+    const auto it = t.find(*id);
+    return it != t.end() && (it->second.disc_pending & static_cast<unsigned>(d)) != 0;
+}
+
+bool markSat(NetworkEntities& e, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdOf(e, sat);
+    if (!id) return true;
+    unsigned& bits = e.sats[*id].disc_pending;
+    const bool inserted = (bits & static_cast<unsigned>(d)) == 0;
+    bits |= static_cast<unsigned>(d);
+    return inserted;
+}
+
+std::size_t unmarkSat(SatTable& t, const std::string& sat, Disc d) {
+    const std::optional<SatId> id = satIdKey(sat);
+    if (!id) return 0;
+    const auto it = t.find(*id);
+    if (it == t.end() || (it->second.disc_pending & static_cast<unsigned>(d)) == 0) return 0;
+    it->second.disc_pending &= ~static_cast<unsigned>(d);
+    return 1;
+}
+
+std::size_t present(const SatTable& t, Disc d) {
+    std::size_t n = 0;
+    for (const auto& kv : t) n += (kv.second.disc_pending & static_cast<unsigned>(d)) ? 1 : 0;
+    return n;
+}
+
+std::set<std::string> satSet(const SatTable& t, Disc d) {
+    std::set<std::string> out;
+    for (const auto& [id, row] : t)
+        if (row.disc_pending & static_cast<unsigned>(d)) out.insert(satKey(id));
+    return out;
+}
+
+void assignSatFlags(NetworkEntities& e, Disc d, const std::set<std::string>& s) {
+    for (auto& kv : e.sats) kv.second.disc_pending &= ~static_cast<unsigned>(d);
+    for (const std::string& sat : s) markSat(e, sat, d);
+}
+
 namespace {
 
 using A = SatelliteState;
 
 template <auto F>
 std::size_t satRows(const NetworkEntities& e) { return present(e.sats, F); }
+
+template <Disc D>
+std::size_t discRows(const NetworkEntities& e) { return present(e.sats, D); }
 
 // Record K: satellite -> the two-state oscillator, field by field.
 void kToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
@@ -321,10 +372,10 @@ void cFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     assignSatFlags(ctx.entities, &A::c1_zoh_active, snap.c1_zoh_active);
 }
 void rToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
-    snap.ura_retro_sats = satSet(ctx.entities.sats, &A::ura_retro_sats);
+    snap.ura_retro_sats = satSet(ctx.entities.sats, Disc::UraRetro);
 }
 void rFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::ura_retro_sats, snap.ura_retro_sats);
+    assignSatFlags(ctx.entities, Disc::UraRetro, snap.ura_retro_sats);
 }
 void aToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.retro_active = satSet(ctx.entities.sats, &A::retro_active);
@@ -354,6 +405,46 @@ void lbNFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_n) = in.second;
 }
 
+// Records I, CBI and SV (step N4e2): satellite-keyed maps, written and restored wholesale.
+void iToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.relevel_iode = satMap(ctx.entities.sats, &A::relevel_iode);
+}
+void iFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::relevel_iode, snap.relevel_iode);
+}
+void cbiToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.code_bias_ifpin_pair = satMap(ctx.entities.sats, &A::code_bias_ifpin_pair);
+}
+void cbiFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::code_bias_ifpin_pair, snap.code_bias_ifpin_pair);
+}
+void svToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.carry_sat_vertex = satMap(ctx.entities.sats, &A::carry_vertex);
+}
+void svFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSat(ctx.entities, &A::carry_vertex, snap.carry_sat_vertex);
+}
+
+// Records X, QR and CBS (step N4e2): satellite sets as a bit or a flag, wholesale.
+void xToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.eph_cutover_disc_pending = satSet(ctx.entities.sats, Disc::EphCutover);
+}
+void xFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, Disc::EphCutover, snap.eph_cutover_disc_pending);
+}
+void qrToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.clock_refloat_sats = satSet(ctx.entities.sats, &A::prev_clock_refloat);
+}
+void qrFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::prev_clock_refloat, snap.clock_refloat_sats);
+}
+void cbsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.code_bias_sat_seen = satSet(ctx.entities.sats, &A::code_bias_seen);
+}
+void cbsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSatFlags(ctx.entities, &A::code_bias_seen, snap.code_bias_sat_seen);
+}
+
 }  // namespace
 
 const std::vector<FieldDecl> kSatelliteFields = {
@@ -381,8 +472,8 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::readmit_seeded_s>},
     {"ura_refloat_horizon", "ura_refloat_horizon", Persist::Record, "Y", "", &yToSnapshot,
      &yFromSnapshot, &satRows<&A::ura_refloat_horizon>},
-    {"ura_retro_sats", "ura_retro_sats", Persist::Record, "R", "", &rToSnapshot, &rFromSnapshot,
-     &satRows<&A::ura_retro_sats>},
+    {"disc_pending", "ura_retro_sats", Persist::Record, "R", "", &rToSnapshot, &rFromSnapshot,
+     &discRows<Disc::UraRetro>},
     {"retro_active", "retro_active", Persist::Record, "A", "", &aToSnapshot, &aFromSnapshot,
      &satRows<&A::retro_active>},
     {"pb_hold_prev_clock_m", "pb_hold_prev_clock_m", Persist::ColdStart, "", "", nullptr, nullptr,
@@ -391,6 +482,43 @@ const std::vector<FieldDecl> kSatelliteFields = {
      &satRows<&A::pb_hold_frz_prev_clk>},
     {"cb_exc_prev_clk", "cb_exc_prev_clk", Persist::ColdStart, "", "", nullptr, nullptr,
      &satRows<&A::cb_exc_prev_clk>},
+    // Step N4e2: the datum and QC half.
+    {"nbp_prev_iode", "nbp_prev_iode", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::nbp_prev_iode>},
+    {"disc_pending", "clk_anchor_disc_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::ClockAnchor>},
+    {"prev_clock_refloat", "prev_clock_refloat_sats", Persist::Record, "QR", "", &qrToSnapshot,
+     &qrFromSnapshot, &satRows<&A::prev_clock_refloat>},
+    {"last_if_pin_sel", "last_if_pin_sel", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::last_if_pin_sel>},
+    {"last_if_pin_hold", "last_if_pin_holds", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::last_if_pin_hold>},
+    {"sbc_active", "sbc_active_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::sbc_active>},
+    {"relevel_iode", "relevel_iode", Persist::Record, "I", "", &iToSnapshot, &iFromSnapshot,
+     &satRows<&A::relevel_iode>},
+    {"disc_pending", "eph_cutover_disc_pending", Persist::Record, "X", "", &xToSnapshot,
+     &xFromSnapshot, &discRows<Disc::EphCutover>},
+    {"code_bias_ifpin_pair", "code_bias_ifpin_pair_", Persist::Record, "CBI", "", &cbiToSnapshot,
+     &cbiFromSnapshot, &satRows<&A::code_bias_ifpin_pair>},
+    {"code_bias_seen", "code_bias_sat_seen_", Persist::Record, "CBS", "", &cbsToSnapshot,
+     &cbsFromSnapshot, &satRows<&A::code_bias_seen>},
+    {"disc_pending", "cb_reseed_disc_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::CbReseed>},
+    {"gl2_down", "gl2_sat_down", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::gl2_down>},
+    {"gl2_since", "gl2_sat_since", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::gl2_since>},
+    {"wire_prune_pending", "gl2_wire_pending", Persist::Pending, "", "", nullptr, nullptr,
+     &satRows<&A::wire_prune_pending>},
+    {"datum_reref_pb", "datum_reref_pb_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::datum_reref_pb>},
+    {"datum_reref_amb", "datum_reref_amb_sats", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satRows<&A::datum_reref_amb>},
+    {"carry_vertex", "carry_sat_vertex", Persist::Record, "SV", "", &svToSnapshot, &svFromSnapshot,
+     &satRows<&A::carry_vertex>},
+    {"disc_pending", "cb_excursion_pending_bump", Persist::Pending, "", "", nullptr, nullptr,
+     &discRows<Disc::CbExcursion>},
 };
 // ---- The satellite-signal fields (step N4d) ----
 
@@ -448,6 +576,14 @@ void ptFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
     assignSig(ctx.entities, &G::anchor_pin_target, snap.anchor_pin_target);
 }
 
+// Record EQS (step N4e2): "<sat>_<signal>" -> the component datum receiver, wholesale.
+void eqsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.eq34_sat_root = sigMap(ctx.entities.sat_signals, &G::eq34_sat_root, '_');
+}
+void eqsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignSig(ctx.entities, &G::eq34_sat_root, snap.eq34_sat_root);
+}
+
 }  // namespace
 
 const std::vector<FieldDecl> kSatSignalFields = {
@@ -472,6 +608,13 @@ const std::vector<FieldDecl> kSatSignalFields = {
      &satSignalRows<&G::smh_block>},
     {"smh_block_pending", "smh_block_pending", Persist::Pending, "", "", nullptr, nullptr,
      &satSignalRows<&G::smh_block_pending>},
+    // Step N4e2: re-placed from the satellite rows (their keys are satellite signals).
+    {"emitted_anchor", "emitted_anchor", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::emitted_anchor>},
+    {"emitted_anchor_s", "emitted_anchor_s", Persist::ColdStart, "", "", nullptr, nullptr,
+     &satSignalRows<&G::emitted_anchor_s>},
+    {"eq34_sat_root", "eq34_sat_root", Persist::Record, "EQS", "", &eqsToSnapshot,
+     &eqsFromSnapshot, &satSignalRows<&G::eq34_sat_root>},
 };
 namespace {
 
@@ -568,6 +711,8 @@ const std::vector<FieldDecl> kStationFields = {
      &zwdToSnapshot, &zwdFromSnapshot, &stationRows<&S::zwd>},
     {"gross_los", "gl_sta_state", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::gross_los>},
+    {"cg_event_last", "cg_event_last", Persist::ColdStart, "", "",   // step N4e2, re-placed
+     nullptr, nullptr, &stationRows<&S::cg_event_last>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -692,6 +837,8 @@ const std::vector<FieldDecl> kLosFields = {
     {"gross_los", "gl_state", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::gross_los>},
     {"gl_event_last", "gl_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
      &losRows<&L::gl_event_last>},
+    {"bb_event_last", "bb_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
+     &losRows<&L::bb_event_last>},   // step N4e2, re-placed from the satellite rows
     {"gl_hold_iono", "gl_hold_iono", Persist::ColdStart, "", "", nullptr, nullptr,
      &losRows<&L::gl_hold_iono>},
     {"gl_hold_iono_blk", "gl_hold_iono_blk", Persist::ColdStart, "", "", nullptr, nullptr,
@@ -730,8 +877,9 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "Z", "PA", "PT", "EQD", "EQP", "EQE",
-                                                  "CBP", "LB", "RC", "SD", "Y", "R", "A", "GG"};
+const std::vector<const char*> kRestoreOrder = {"V", "C", "J", "K", "Z", "PA", "PT", "EQD", "EQP", "EQS",
+                                                  "EQE", "CBP", "CBS", "CBI", "LB", "RC", "SD", "QR",
+                                                  "Y", "R", "A", "I", "X", "SV", "GG"};
 
 // ===========================================================================
 // Record lookup

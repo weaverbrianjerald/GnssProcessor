@@ -2079,6 +2079,7 @@ struct FrozenStationMaps {
     std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
     std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
     std::map<std::string, std::string> anchor_incumbent;               ///< "sat_signal" -> station (N4d)
+    std::map<std::string, std::string> eq34_sat_root;                  ///< "sat_signal" -> station (N4e2)
     explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
     ~FrozenStationMaps() { store(); }
     FrozenStationMaps(const FrozenStationMaps&) = delete;
@@ -2089,6 +2090,7 @@ struct FrozenStationMaps {
         const net::NetworkEntities& e = ctx.entities;
         eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
         anchor_incumbent = net::sigMap(e.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+        eq34_sat_root = net::sigMap(e.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
         eq34_prev_el.clear();
         net::forEach(e.los, &net::LosState::eq34_prev_el, [&](const LosId& id, double el) {
             eq34_prev_el[{static_cast<size_t>(id.station.index), net::satKey(id.sat)}] = el;
@@ -2106,6 +2108,7 @@ struct FrozenStationMaps {
     void store() {
         net::NetworkEntities& e = ctx.entities;
         net::assignSig(e, &net::SatSignalState::anchor_incumbent, anchor_incumbent);
+        net::assignSig(e, &net::SatSignalState::eq34_sat_root, eq34_sat_root);
         net::dropAll(e.los, &net::LosState::eq34_prev_el);
         for (const auto& [key, el] : eq34_prev_el)
             net::putLos(e, static_cast<int>(key.first), key.second, &net::LosState::eq34_prev_el) = el;
@@ -2148,7 +2151,7 @@ FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the fro
 auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
 auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
-auto& eq34_sat_root = ctx.carry.eq34_sat_root;
+auto& eq34_sat_root = station_maps.eq34_sat_root;   // card NOM step N4e2 shim
 auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
 auto& eq34_erase_total = ctx.carry.eq34_erase_total;
@@ -3260,7 +3263,9 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
             }
             if (chance(rng, 0.04)) {
                 const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
-                both([&](NetworkCarryState& c) { c.eq34_sat_root[amb] = sta; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putSig(c, amb, &net::SatSignalState::eq34_sat_root) = sta;
+                });
             }
         }
         for (const auto& [cons, sig] : kChainSignals) {
@@ -3329,7 +3334,9 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     };
     if (cells(f, &net::StationSignalState::eq34_rx_parent)
         != cells(l, &net::StationSignalState::eq34_rx_parent)) return "eq34_rx_parent";
-    if (a.eq34_sat_root != b.eq34_sat_root) return "eq34_sat_root";
+    if (net::sigMap(f.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_')
+        != net::sigMap(l.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_'))
+        return "eq34_sat_root";
     const auto prevEl = [](const NetworkRunContext& c) {
         std::map<LosId, double> out;
         net::forEach(c.entities.los, &net::LosState::eq34_prev_el,

@@ -221,13 +221,13 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
             // Release edge (invariant #7's re-coupling): a satellite constrained last
             // epoch and in no direction now has been re-observed, and the data take
             // over from the held level.
-            for (const auto& s : ctx.carry.sbc_active_sats)
+            for (const auto& s : net::satSet(ctx.entities.sats, &net::SatelliteState::sbc_active))
                 if (!now_active.count(s)) {
                     ++ctx.counters.n_sbc_release;
                     emitEvent("GATE", "sbc_release", s, "", std::nullopt, std::nullopt,
                               "reobserved", "held combination re-determined by data");
                 }
-            ctx.carry.sbc_active_sats.swap(now_active);
+            net::assignSatFlags(ctx.entities, &net::SatelliteState::sbc_active, now_active);
             if (ctx.counters.n_sbc_epochs == 1)
                 log->info("Network (SBC): first completion at TOW {:.1f} — realized "
                           "S-basis dimension {} vs declared {}; {} extra direction(s) "
@@ -240,15 +240,15 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
                            "direction(s) (realized dim {} vs declared {}).",
                            se.time.tow, sbc.n_extra, sbc.observed,
                            plan.declared_dimension);
-        } else if (!ctx.carry.sbc_active_sats.empty()) {
+        } else if (net::present(ctx.entities.sats, &net::SatelliteState::sbc_active) > 0) {
             // Clean epoch (no extras): every satellite constrained on an earlier epoch
             // has been re-observed, so emit its release and clear the set.
-            for (const auto& s : ctx.carry.sbc_active_sats) {
+            for (const auto& s : net::satSet(ctx.entities.sats, &net::SatelliteState::sbc_active)) {
                 ++ctx.counters.n_sbc_release;
                 emitEvent("GATE", "sbc_release", s, "", std::nullopt, std::nullopt,
                           "reobserved", "held combination re-determined by data");
             }
-            ctx.carry.sbc_active_sats.clear();
+            net::assignSatFlags(ctx.entities, &net::SatelliteState::sbc_active, {});
         }
     }
 }

@@ -958,7 +958,8 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // widen the reinit feed to the realization-step sources and honour it with κ off (Card 1g); requires carry_cpl_cond (enforced at load)
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
+    const std::set<std::string> prev_clock_refloat_sats =
+        net::satSet(ctx.entities.sats, &net::SatelliteState::prev_clock_refloat);
     net::NetworkEntities& entities = ctx.entities;   // tu_reinit: the satellite signals (N4d)
 
     // Coupling-row time update (Card 1d, network.carry_coupling_time_update): record
@@ -1015,7 +1016,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         // The datum-slip re-realization marks whole satellites (the slip is on the
         // pin-holder's arc, not on one signal), so it uses the satellite-wide
         // wildcard.
-        for (const std::string& sat : ctx.carry.datum_reref_pb_sats)
+        for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_pb))
             net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
     }
 }

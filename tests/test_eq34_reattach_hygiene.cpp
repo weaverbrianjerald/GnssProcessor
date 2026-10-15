@@ -182,7 +182,7 @@ GnssTime epochAt(double tow) {
 /// scenario therefore establishes this first, which also matches the field case: the
 /// network was emitting the key seconds before it re-hosted.
 void markRealizedAt(NetworkRunContext& ctx, const std::string& amb, double tow) {
-    ctx.carry.emitted_anchor_s[amb] = TimeUtils::continuousGpsSeconds(epochAt(tow));
+    net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor_s) = TimeUtils::continuousGpsSeconds(epochAt(tow));
 }
 
 /// Which station (if any) holds the tree-edge pin for @p amb?

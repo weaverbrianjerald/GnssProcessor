@@ -500,7 +500,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 // rule).  The reinit lands in the next epoch's fold, so the bump is
                 // queued for the next emit (consumed in NetworkSolPrep).
                 for (const std::string& s2 : mark)
-                    ctx.carry.cb_excursion_pending_bump.insert(s2);
+                    net::markSat(ctx.entities, s2, net::Disc::CbExcursion);
 
                 std::string marked;
                 for (const std::string& s2 : mark) marked += (marked.empty() ? "" : ";") + s2;
@@ -557,11 +557,11 @@ int networkCbExcursionRunEnd(const NetworkRunEndView& v) {
                   "Do NOT read this run as evidence the guard works.",
                   config_.getNetworkConfig().cb_excursion_median_m,
                   ctx.carry.cb_exc_max_median);
-    if (!ctx.carry.cb_excursion_pending_bump.empty())
+    if (net::present(ctx.entities.sats, net::Disc::CbExcursion) > 0)
         log->warn("Network (Phase 2.1): {} queued code-bias discontinuity bump(s) "
                   "never landed (their satellites were absent from every subsequent "
                   "emission) — the reinit stepped a value the product did not signal.",
-                  ctx.carry.cb_excursion_pending_bump.size());
+                  net::present(ctx.entities.sats, net::Disc::CbExcursion));
     return 0;
 }
 
