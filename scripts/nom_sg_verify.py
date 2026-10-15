@@ -246,6 +246,9 @@ def s1_coverage(fz, rows, rep):
                     covered.setdefault(n, []).append(fn.name)
                 for sub in item.subs:
                     rep.check("S1", sub.cls in CLASSES, f"{fn.name}: substitution class {sub.cls}")
+                    if sub.cls == "COMMENT_EDIT":
+                        same = [l.strip() for l in S.code_lines(sub.old) if l.strip()] ==                                [l.strip() for l in S.code_lines(sub.new) if l.strip()]
+                        rep.check("S1", same, f"{fn.name}: COMMENT_EDIT changes code")
             else:
                 rep.check("S1", item.cls in CLASSES, f"{fn.name}: generated class {item.cls}")
     for d in rows.DROPS:
@@ -572,6 +575,36 @@ def s7_homes(tree, base, rep):
         rep.check("S7", f'"{home}", {name}}}' in table, f"run-end table row of {name} does not name {home}")
 
 
+TEXT_MOVES = [("src/core/filter/NetworkContributions.cpp",
+               '"networkSolveGlue, a-priori clock anchor (NetworkSolveGlue.cpp)"',
+               '"networkFoldColdClockAnchor (NetworkClockAnchor.cpp)"'),
+              ("src/core/filter/NetworkResponses.cpp", '"NetworkSolveGlue.cpp within-epoch replay"',
+               '"NetworkRaimWithinEpoch.cpp within-epoch replay"'),
+              ("src/core/filter/NetworkResponses.cpp", "\"NetworkSolveGlue.cpp a withheld epoch's free response\"",
+               "\"NetworkRaimWithinEpoch.cpp a withheld epoch's free response\"")]
+
+
+def s7_sg3(tree, base, rep):
+    """SG3: the three printed citations moved (declared text moves, decision 11), and the RHS
+    trip's explicit form retired for networkRhsAttribTripAt (decision 12), its body unchanged."""
+    for path, old, new in TEXT_MOVES:
+        t = tree.read(path) or ""
+        rep.check("S7", t.count(new) == 1 and old not in t, f"{path}: the citation {new} is not moved")
+    cpp = tree.read("src/core/filter/NetworkRhsAttrib.cpp") or ""
+    hpp = tree.read("include/filter/NetworkRhsAttrib.hpp") or ""
+    rep.check("S7", "networkRhsAttribTrip(NetworkRunContext&" not in cpp + hpp, "the explicit trip form remains")
+    rep.check("S7", cpp.count("void networkRhsAttribTripAt(") == 1 and hpp.count("void networkRhsAttribTripAt(") == 1,
+              "networkRhsAttribTripAt is not defined and declared once")
+    frozen = S.git_show(base, "src/core/filter/NetworkRhsAttrib.cpp")
+    fb = frozen[frozen.index("    if (!ctx.knobs.rec_on) return;"):]
+    fb = fb[:fb.index(LF + "}" + LF)]
+    nb = cpp[cpp.index("    if (!ctx.knobs.rec_on) return;"):] if "    if (!ctx.knobs.rec_on) return;" in cpp else ""
+    nb = nb[:nb.index(LF + "}" + LF)] if nb else ""
+    rep.check("S7", fb == nb, "networkRhsAttribTripAt's body differs from the explicit form's")
+    rep.check("S7", "networkRhsAttribTripAt(run, ep, ep.solve.plan.shared_datum, ep.assembly.est_index_of, "
+              "&ep.solve.x_s);" in cpp, "the epoch form does not forward the epoch's datum, map and solution")
+
+
 def s8_docs(rows, tree, rep, docs=None):
     headers = list((tree.root / "include" / "filter").glob("*.hpp"))
     for fn in rows.FUNCTIONS:
@@ -751,6 +784,7 @@ def s2_chain(base, rep):
 def run_all(base, tree, rows, verbose=False, only=None, stage=None):
     import nom_sg_cut as C
     stage = stage or C.CURRENT
+    S.ACTIVE["stage"] = stage
     canon, units, order, fz_of, docs = units_for(base, rows, stage)
     rep = Report(verbose)
     todo = only or CHECKS
@@ -778,6 +812,8 @@ def run_all(base, tree, rows, verbose=False, only=None, stage=None):
         s6_exits(fz, rows, tree, rep)
     if "S7" in todo:
         s7_homes(tree, base, rep)
+        if stage == "sg3":
+            s7_sg3(tree, base, rep)
     if "S10" in todo:
         s10_replay(tree, rep, stage)
     if "S12" in todo:
@@ -889,6 +925,13 @@ CONTROLS = [
     ("C22", "T2's replay is forwarded with a copy of its state", ["S2", "S10"],
      mut_file(WE, "            return weReplay(run, ep, datum, ws, est_index_of, dd_build, funnel, st);",
               "            WeEpochState copy = st; return weReplay(run, ep, datum, ws, est_index_of, dd_build, funnel, copy);")),
+    # SG3 (the retired explicit form)
+    ("C24", "the trip's epoch form forwards no solution", ["S7"],
+     mut_file("src/core/filter/NetworkRhsAttrib.cpp", "ep.assembly.est_index_of, &ep.solve.x_s);",
+              "ep.assembly.est_index_of, nullptr);")),
+    ("C25", "the sigma0 tail passes the epoch's map instead of the solve's", ["S2", "S11"],
+     mut_file(WE, "    networkRhsAttribTripAt(run, ep, plan.shared_datum, est_index_of, nullptr);",
+              "    networkRhsAttribTripAt(run, ep, plan.shared_datum, ep.assembly.est_index_of, nullptr);")),
     ("C23", "weChooseCulprit binds the dropped satellites by value", ["S3"],
      mut_file(WE, "    const std::set<std::string>& drop_sats = culprits.sats;",
               "    const std::set<std::string> drop_sats = culprits.sats;")),
@@ -897,7 +940,7 @@ CONTROLS = [
 
 def _swap_tail(tree):
     t = tree.read(WE)
-    a = t.index("    networkRhsAttribTrip(ctx, config_, log, traces, se, setup.stations, est,")
+    a = t.index("    networkRhsAttribTrip")
     b = t.index("    if (ctx.knobs.wh_free_erase) {", a)
     c = t.index("\n    }\n", t.index("ResponseSite::AmbWithholdErase", b)) + 7
     tree.overlay[WE] = t[:a] + t[b:c] + t[a:b] + t[c:]

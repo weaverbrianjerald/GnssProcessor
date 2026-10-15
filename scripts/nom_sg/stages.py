@@ -170,8 +170,8 @@ class G:
 class Sub:
     """A declared substitution inside a piece: exact frozen lines -> new lines (frozen indent)."""
 
-    def __init__(self, cls, old, new):
-        self.cls = cls
+    def __init__(self, cls, old, new, stage="sg1"):
+        self.cls, self.stage = cls, stage   # the sub-step that declares it
         self.old = old if isinstance(old, list) else [old]
         self.new = new if isinstance(new, list) else [new]
 
@@ -309,10 +309,17 @@ def resolve(fz, piece):
     return a, b
 
 
+STAGES = ["sg1", "sg2", "sg3"]
+ACTIVE = {"stage": "sg3"}   # the sub-step being rendered or verified (set by the tools)
+
+
 def apply_subs(lines, subs):
-    """The frozen lines with each declared substitution applied exactly once."""
+    """The frozen lines with each declared substitution of the active sub-step (or an earlier
+    one) applied exactly once."""
     out = list(lines)
     for s in subs:
+        if STAGES.index(s.stage) > STAGES.index(ACTIVE["stage"]):
+            continue
         k = len(s.old)
         hits = [i for i in range(len(out) - k + 1) if out[i:i + k] == s.old]
         assert len(hits) == 1, f"substitution {s.cls} {s.old[0]!r}: {len(hits)} matches"

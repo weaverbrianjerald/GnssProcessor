@@ -241,9 +241,11 @@ void networkKaulaMargin(NetworkRun& run) {
     const std::shared_ptr<spdlog::logger>& log = run.log;
     NetworkEstimator& est = run.engines.est;
     // ---- End of the bindings ----
-    // The K2 anti-fragility margin of the KP prior is logged once, on the same reduced
-    // system the gate is about to judge (lambda_max here equals the gate's, and the
-    // reduction includes the clock datum rows).  The CB-ADM card rejected a loose prior
+    // The K2 anti-fragility margin of the KP prior is logged once, on the reduced system
+    // after the KP prior and the clock datum rows and before the SBC rows.  lambda_max
+    // here equals the gate's only on an epoch where SBC folds nothing and no clock-clone
+    // view is formed (the gate then judges the clone-marginalized view; card NOM3 step
+    // SG, decision 13).  The CB-ADM card rejected a loose prior
     // whose information sat at the rank cutoff, so this one must sit at least 2
     // decades above it; a margin under 2 decades logs a warning (card KP).
     if (config_.networkCbKaulaPrior() && !ctx.counters.kp_margin_logged

@@ -122,8 +122,8 @@ def render_fn(fz, fn, canon, names, locals_map=None, globals_=(), doc=None):
     return out
 
 
-STAGE_ORDER = ["sg1", "sg2"]
-CURRENT = "sg2"
+STAGE_ORDER = S.STAGES
+CURRENT = "sg3"
 
 
 def sg2_frozen():
@@ -221,6 +221,7 @@ def main(argv=None):
     fz = S.Frozen(S.git_show(a.base, S.SG_CPP))
     if a.survey:
         return 0 if survey(fz) else 1
+    S.ACTIVE["stage"] = a.stage or CURRENT
     regs = regions(fz, a.stage or CURRENT)
     bad = 0
     for home, region in regs.items():

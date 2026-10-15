@@ -55,6 +55,10 @@ CLASSES = {
     "REBIND": "one binding per name read after the block; no later write",
     # SG2: a catch clause's body becomes a helper's body.
     "CATCH_BODY": "EXTRACT's obligations; the catch header, the call and any jump stay",
+    # SG3: a comment corrected (decision 13); the comment-stripped text is unchanged.
+    "COMMENT_EDIT": "the old and new lines are equal with comments blanked (S1 checks it)",
+    # SG3: the RHS trip's explicit form retired; its one solve-side call takes the ...At form.
+    "RETIRE_FORM": "the same objects: run and ep bind what the explicit arguments named",
     # SG2: a type declared with a local moves to a header type (enum class Kind -> WeChoice::Kind).
     "TYPE_MOVE": "the enumerators are the same, in the same order; `using Kind = WeChoice::Kind;` binds the name",
     # SG2: a function-local constant becomes a file-scope constexpr with the same name and value.

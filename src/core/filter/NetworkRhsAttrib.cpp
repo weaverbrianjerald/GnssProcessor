@@ -1992,15 +1992,20 @@ bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active) {
     return false;
 }
 
-void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
-                          const std::shared_ptr<spdlog::logger>& log,
-                          const NetworkRunTraces& traces, const SyncedEpoch& se,
-                          const std::vector<NetStation>& stations,
-                          const NetworkEstimator& est,
-                          const NetworkEstimator::Datum& plan_datum,
-                          const std::vector<StationAssembly>& asm_res,
-                          const std::vector<int>& est_index_of,
-                          const Eigen::VectorXd* x_s) {
+void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
+                            const NetworkEstimator::Datum& plan_datum,
+                            const std::vector<int>& est_index_of, const Eigen::VectorXd* x_s) {
+    // ---- From the run and the epoch (card NOM3 step SG3: the former explicit parameters, each
+    //      bound under its former name; the body below is unchanged) ----
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    const NetworkRunTraces& traces = run.traces;
+    const SyncedEpoch& se = ep.se;
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const NetworkEstimator& est = run.engines.est;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    // ---- End of the bindings ----
     if (!ctx.knobs.rec_on) return;
     const auto& nc = config_.getNetworkConfig();
     auto& ctr = ctx.counters.pc;
@@ -2068,9 +2073,7 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
 //      above stay for their other callers. ----
 
 void networkRhsAttribTrip(NetworkRun& run, const NetworkEpoch& ep) {
-    networkRhsAttribTrip(run.ctx, run.config, run.log, run.traces, ep.se, run.setup.stations,
-                         run.engines.est, ep.solve.plan.shared_datum, ep.assembly.asm_res,
-                         ep.assembly.est_index_of, &ep.solve.x_s);
+    networkRhsAttribTripAt(run, ep, ep.solve.plan.shared_datum, ep.assembly.est_index_of, &ep.solve.x_s);
 }
 
 // ---- End of the epoch forms ----
