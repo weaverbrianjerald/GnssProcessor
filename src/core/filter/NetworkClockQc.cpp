@@ -81,8 +81,6 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
     const double clk_model_max_gap = ctx.knobs.clk_model_max_gap;  // gap bound for clock-model reseed, drift reset and C1 zero-order hold (R11)
     const bool   trace_flag_rates = ctx.knobs.trace_flag_rates;
 
-    auto& prev_clk = ctx.carry.prev_clk;
-    auto& clock_osc = ctx.carry.clock_osc;
 
     auto& n_emitted = ctx.counters.n_emitted;
     auto& fr_clk_model = ctx.counters.fr_clk_model;
@@ -121,8 +119,8 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
         if (datum_changed && !scoped_handover) {
             // Card PRM phase 3a: the entries the wipe removes.
             prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe,
-                       static_cast<long long>(clock_osc.size()));
-            clock_osc.clear();   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
+                       static_cast<long long>(net::present(ctx.entities.sats, &net::SatelliteState::clock_osc)));
+            net::dropAll(ctx.entities.sats, &net::SatelliteState::clock_osc);   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
             // Record the datum-change oscillator wipe as an event; nothing else reports it (T5, V2).
             emitEvent("T5_clock_model", "datum_osc_wipe", "", "", std::nullopt, std::nullopt,
                       "clear_osc", "datum re-reference");
@@ -136,13 +134,12 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // That is one epoch earlier than the global wipe, which skips the whole
             // update block.
             if (datum_changed) {
-                for (auto oit = clock_osc.begin(); oit != clock_osc.end();) {
-                    if (datumChangeAffectsKey(oit->first, changed_consts, /*scoped=*/true)) {
-                        oit = clock_osc.erase(oit);
-                        prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);   // card PRM phase 3a
-                    } else
-                        ++oit;
-                }
+                net::eraseIf(ctx.entities.sats, &net::SatelliteState::clock_osc, [&](const SatId& id, const ClockOsc&) {
+                    if (!datumChangeAffectsKey(net::satKey(id), changed_consts, /*scoped=*/true))
+                        return false;
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);   // card PRM phase 3a
+                    return true;
+                });
                 std::string consts;
                 for (char c : changed_consts) {
                     if (!consts.empty()) consts += ',';
@@ -192,7 +189,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 auto zit = z_of.find(sat);
                 if (zit == z_of.end()) continue;
                 const double z   = zit->second;
-                ClockOsc&    osc = clock_osc[sat];
+                ClockOsc&    osc = net::putSat(ctx.entities, sat, &net::SatelliteState::clock_osc);
                 auto pit = clk_pred.find(sat);
                 if (pit == clk_pred.end() || !osc.init) {
                     // Seed (first warm epoch of this satellite, or its carried state was
@@ -351,7 +348,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             bool   have_jump  = false;
             double jump       = 0.0;
             bool   flag_jump  = false;
-            const auto pit = prev_clk.find(sat);
+            const std::pair<double, double>* pit = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::prev_clk);
             // Jump only across adjacent epochs of a stable datum: a handover shifts every
             // clock of the re-referenced constellation (common mode, not a per-sat fault)
             // and a long gap makes the step meaningless; both fall back to the absolute
@@ -360,10 +357,10 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // running through another constellation's handover.  With it off,
             // handover_affects == datum_changed and the legacy all-constellation
             // suppression is byte-identical.
-            if (pit != prev_clk.end() && !handover_affects(sat) && dt > 0.0
-                && (pl_now_s - pit->second.second) <= 1.5 * dt) {
+            if (pit && !handover_affects(sat) && dt > 0.0
+                && (pl_now_s - pit->second) <= 1.5 * dt) {
                 have_jump = true;
-                jump      = jref - pit->second.first;   // datum-invariant under sum-to-zero (jref=dev), raw under pin (jref=v)
+                jump      = jref - pit->first;   // datum-invariant under sum-to-zero (jref=dev), raw under pin (jref=v)
                 flag_jump = std::abs(jump) > clk_mon_jump;
             }
             const bool ext       = clock_refloat_sats.count(sat) > 0;  // within-epoch / post-fit RAIM
@@ -384,7 +381,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                     << sat << ',' << fmt::format("{:.4f}", v) << ','
                     << fmt::format("{:.4f}", med) << ',' << fmt::format("{:.4f}", dev) << ',';
                 if (have_jump)
-                    clk_mon_trace << fmt::format("{:.4f}", pit->second.first) << ','
+                    clk_mon_trace << fmt::format("{:.4f}", pit->first) << ','
                                   << fmt::format("{:.4f}", jump) << ',';
                 else
                     clk_mon_trace << ",,";
@@ -399,8 +396,8 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // reinitialized, so drop its history (next epoch's recovery must not read as a
             // fresh jump); otherwise record this epoch's jump reference (jref) + time as the
             // next adjacent baseline (raw v in pin mode; de-meaned dev in sum-to-zero mode).
-            if (refloated) prev_clk.erase(sat);
-            else           prev_clk[sat] = {jref, pl_now_s};
+            if (refloated) net::dropSat(ctx.entities.sats, sat, &net::SatelliteState::prev_clk);
+            else           net::putSat(ctx.entities, sat, &net::SatelliteState::prev_clk) = {jref, pl_now_s};
         }
         if (n_new > 0)
             log->warn("Network[clock-monitor]: TOW {:.1f} reinitialized {} satellite clock(s) [{}] "
@@ -439,7 +436,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
     // Off (default): the whole block is skipped; no baseline map is maintained, no
     // set is written and no bump is queued, so the output is byte-identical.
     if (nc.cb_excursion_reinit && nc.cb_excursion_median_m > 0.0) {
-        auto& prev = ctx.carry.cb_exc_prev_clk;
+        // prev: the satellites' previous solved clocks, SatelliteState::cb_exc_prev_clk (N4e1).
         auto& mark = ctx.carry.cb_excursion_sats;
         mark.clear();   // per-epoch handoff to this epoch's stash
 
@@ -452,9 +449,9 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             const double v = x_s(col);
             if (!std::isfinite(v)) continue;
             now[sat] = v;
-            const auto pit = prev.find(sat);
-            if (pit == prev.end()) continue;
-            const double d = std::abs(v - pit->second);
+            const double* pit = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::cb_exc_prev_clk);
+            if (!pit) continue;
+            const double d = std::abs(v - *pit);
             deltas.push_back(d);
             if (d > nc.cb_excursion_median_m) jumpers.push_back(sat);
         }
@@ -524,7 +521,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                                       med > 0.0 ? mx / med : 0.0, jumpers.size()));
             }
         }
-        prev = std::move(now);
+        net::assignSat(ctx.entities, &net::SatelliteState::cb_exc_prev_clk, now);
     }
 }
 

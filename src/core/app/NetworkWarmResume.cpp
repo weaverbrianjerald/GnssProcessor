@@ -76,15 +76,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& snap_path = ctx.carry.snap_path;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& c1_zoh_active = ctx.carry.c1_zoh_active;
-    auto& prev_clk = ctx.carry.prev_clk;
-    auto& clock_osc = ctx.carry.clock_osc;
     auto& local_carry = ctx.carry.local_carry;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
-    auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
-    auto& ura_retro_sats = ctx.carry.ura_retro_sats;
-    auto& retro_active = ctx.carry.retro_active;
     auto& relevel_iode = ctx.carry.relevel_iode;
     auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
@@ -279,16 +273,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "epoch.", prev_carry.size());
                     }
                     net::recordFromSnapshot("V", snap, ctx);   // the constellation pivots (N4b)
-                    c1_zoh_active = snap.c1_zoh_active;
-                    prev_clk      = snap.prev_clk;
-                    clock_osc.clear();
-                    for (const auto& [sat, o] : snap.clock_osc) {
-                        ClockOsc c;
-                        c.x0 = o.x0; c.x1 = o.x1;
-                        c.p00 = o.p00; c.p01 = o.p01; c.p11 = o.p11;
-                        c.t_last = o.t_last; c.init = o.init;
-                        clock_osc[sat] = c;
-                    }
+                    net::recordFromSnapshot("C", snap, ctx);   // the satellites (N4e1)
+                    net::recordFromSnapshot("J", snap, ctx);   // the satellites (N4e1)
+                    net::recordFromSnapshot("K", snap, ctx);   // the satellites (N4e1)
                     local_carry.clear();
                     for (const auto& [key, l] : snap.local_carry) {
                         // Restored-arc age (SPEC_event_harness §15.4): the birth stamps
@@ -361,8 +348,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "INERT this run; the first election re-pins cold exactly "
                                       "as an unarmed resume.");
                         } else {
-                            ctx.carry.anchor_incumbent  = snap.anchor_incumbent;
-                            ctx.carry.anchor_pin_target = snap.anchor_pin_target;
+                            net::recordFromSnapshot("PA", snap, ctx);   // the satellite signals (N4d)
+                            net::recordFromSnapshot("PT", snap, ctx);   // the satellite signals (N4d)
                             ctx.counters.n_resume_frame_anchors =
                                 static_cast<long long>(snap.anchor_incumbent.size());
                             ctx.counters.n_resume_frame_targets =
@@ -615,10 +602,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // Card CTU G5: the level information of the writer's monitor, and
                     // the raise it arms for the first leg epoch.
                     if (ctx.knobs.clm_on && !snap.level_info.empty()) {
-                        for (const auto& [sat, in] : snap.level_info) {
-                            ctx.carry.clm_info_c[sat] = in.first;
-                            ctx.carry.clm_n[sat] = in.second;
-                        }
+                        net::recordFromSnapshot("LB", snap, ctx);   // the satellites (N4e1)
                         ctx.carry.clm_restore_raise_pending = ctx.knobs.clm_restore_raise;
                         log->info("Network (card CTU G5): {} satellite(s) of contrast-frame level "
                                   "information restored from the snapshot's LB rows{}.",
@@ -926,8 +910,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                          std::numeric_limits<double>::infinity());
                             long long n_seed = 0, n_loose = 0;
                             const auto seedClock = [&](const std::string& sat) {
-                                ctx.carry.tu_reinit_hist[{SharedParamKind::Clock, sat,
-                                                          std::string{}}] = t_seed;
+                                net::putSig(ctx.entities, sat, "", &net::SatSignalState::tu_reinit)
+                                    [SharedParamKind::Clock] = t_seed;   // the satellite-wide wildcard
                                 ++n_seed;
                             };
                             for (const auto& [sat, ca] : snap.clock_anchor)
@@ -1098,9 +1082,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                   ctx.knobs.resume_d5_warmup_ep);
                     }
                     ura_sigma0_ewma     = snap.ura_sigma0_ewma;
-                    ura_refloat_horizon = snap.ura_refloat_horizon;
-                    ura_retro_sats      = snap.ura_retro_sats;
-                    retro_active        = snap.retro_active;
+                    net::recordFromSnapshot("Y", snap, ctx);   // the satellites (N4e1)
+                    net::recordFromSnapshot("R", snap, ctx);   // the satellites (N4e1)
+                    net::recordFromSnapshot("A", snap, ctx);   // the satellites (N4e1)
                     // Restore the eph-cutover re-level baseline and any pending forced
                     // disc, so a warm resume does not re-level against a stale baseline (or
                     // lose a pending forced bump).  Both are empty in an sp3 snapshot or one
@@ -1297,13 +1281,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               snap_path.string(), snap.wall_utc, first_live_s - snap_s,
                               horizon_s, generation_id, prev_carry.size(), local_carry.size(),
                               net::present(sta_rows,
-                                           &net::StationState::zwd), clock_osc.size(), prev_clk.size(),
+                                           &net::StationState::zwd),
+                              net::present(ctx.entities.sats, &net::SatelliteState::clock_osc),
+                              net::present(ctx.entities.sats, &net::SatelliteState::prev_clk),
                               net::present(ctx.entities.constellations,
                                            &net::ConstellationState::prev_pivot),
                               net::present(ctx.entities.constellations,
                                            &net::ConstellationState::last_pivot),
-                              ura_retro_sats.size(),
-                              ura_refloat_horizon.size(), n_emitted);
+                              net::present(ctx.entities.sats, &net::SatelliteState::ura_retro_sats),
+                              net::present(ctx.entities.sats, &net::SatelliteState::ura_refloat_horizon),
+                              n_emitted);
                 }
             }
         }

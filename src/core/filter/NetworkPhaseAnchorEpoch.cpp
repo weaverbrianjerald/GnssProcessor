@@ -53,7 +53,12 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     auto& stations = setup.stations;
     NetworkRunContext& ctx = run.ctx;
     NetworkRunTraces& traces = run.traces;
-    auto& anchor_incumbent = ctx.carry.anchor_incumbent;
+    // The satellite-signal fields the election reads and writes (card NOM step N4d), as the
+    // old "sat_signal"-keyed maps its pure interface takes; written back to the table right
+    // after the election, so every later reader sees the table.
+    using SG = net::SatSignalState;
+    std::map<std::string, std::string> anchor_incumbent =
+        net::sigMap(ctx.entities.sat_signals, &SG::anchor_incumbent, '_');
     auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
     auto& local_carry = ctx.carry.local_carry;
     auto& n_gated_epochs = ctx.counters.n_gated_epochs;
@@ -187,13 +192,15 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // epoch's elevations; `on` is false on every unarmed run, and the
             // pointer below is then null.
             PhaseHeldBasis held_basis;
+            std::map<std::string, PhaseBasisEntry> basis_view;   // phase_basis (N4d)
             std::vector<std::map<std::string, double>> pd_elev_of;
             held_basis.on = ctx.knobs.pd_held_basis;
             if (held_basis.on) {
                 held_basis.min_age_ep    = ctx.knobs.pa_min_age_ep;
                 held_basis.flag_quiet_ep = ctx.knobs.pa_flag_quiet_ep;
                 held_basis.now_ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-                held_basis.basis   = &ctx.carry.phase_basis;
+                basis_view = net::sigMap(ctx.entities.sat_signals, &SG::phase_basis, '_');
+                held_basis.basis   = &basis_view;
                 held_basis.flag_ep = &ctx.carry.amb_flag_ep;
                 held_basis.carry   = &ctx.carry.local_carry;
                 // This epoch's LOS elevations, the election's rank key (item 3).
@@ -223,10 +230,12 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             pd_reentry.led     = &ctx.arc_ledger;
             pd_reentry.state   = &ctx.carry.sid_anchor_reentry;
             pd_reentry.now_ep  = ctx.arc_ledger.epochIndex();
+            std::map<std::string, double> pin_target =   // anchor_pin_target (N4d)
+                net::sigMap(ctx.entities.sat_signals, &SG::anchor_pin_target, '_');
             networkElectPhaseAnchors(ctx.knobs.pd_sticky, stations, present, cnd, hyg,
                                      ctx.counters.hyg,
                                      anchor_incumbent,
-                                     ctx.carry.anchor_pin_target,
+                                     pin_target,
                                      this_epoch_anchor,
                                      shared_phase_keys,
                                      hv_on ? &ctx.carry.handover : nullptr,
@@ -256,6 +265,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                      // the election tests `observe` on its first
                                      // line (card SID phase 4).
                                      &pd_reentry);
+            net::assignSig(ctx.entities, &SG::anchor_incumbent, anchor_incumbent);
+            net::assignSig(ctx.entities, &SG::anchor_pin_target, pin_target);
+            if (held_basis.on) net::assignSig(ctx.entities, &SG::phase_basis, basis_view);
             // Both edges of the gate are events (card EV7 §6, F2).  One row per drop
             // edge, with the identities on either side (what left, which station was
             // anchoring it, which stations still carry it) and `handled` saying
@@ -478,10 +490,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 for (const auto& h : handovers) {
                     const auto pk = StateKeys::parseAmbiguityKey(h.amb);
                     if (!pk) continue;
-                    const auto be = ctx.carry.phase_basis.find(h.amb);
-                    const double dlt =
-                        (be != ctx.carry.phase_basis.end())
-                            ? (be->second.value - be->second.prev_value) : 0.0;
+                    const PhaseBasisEntry* be =
+                        net::getSig(ctx.entities.sat_signals, h.amb, &SG::phase_basis);
+                    const double dlt = be ? (be->value - be->prev_value) : 0.0;
                     // Cold-mark rule (RF-2d, network.phase_datum_held_mark_cold):
                     // |value − prev_value| is the between-station level difference, not
                     // the wire step.  A continuous pin is the successor's level in the
@@ -495,7 +506,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        ctx.carry.ura_retro_sats.insert(pk->satellite);
+                        net::markSat(ctx.entities, pk->satellite, &net::SatelliteState::ura_retro_sats);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }
@@ -506,10 +517,8 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                      fmt::format("from={};basis={:.6f};prev={:.6f};marked={}",
                                                  h.from.empty() ? std::string("(none)")
                                                                 : h.from,
-                                                 be != ctx.carry.phase_basis.end()
-                                                     ? be->second.value : 0.0,
-                                                 be != ctx.carry.phase_basis.end()
-                                                     ? be->second.prev_value : 0.0,
+                                                 be ? be->value : 0.0,
+                                                 be ? be->prev_value : 0.0,
                                                  steps ? 1 : 0));
                 }
             if (!pa_reref.empty()) {

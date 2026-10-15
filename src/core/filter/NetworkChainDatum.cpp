@@ -124,7 +124,10 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys) {
 auto& prev_carry = ctx.carry.prev_carry;
-auto& anchor_incumbent = ctx.carry.anchor_incumbent;
+// The incumbent anchors as the old "sat_signal"-keyed map (card NOM step N4d): read-only
+// until the wholesale replacement at the end of the election, which writes the table.
+const std::map<std::string, std::string> anchor_incumbent =
+    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
@@ -937,14 +940,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
         // frame (PbHold is exempt from the shift).  Measure-only.
-        for (const auto& [hk, hv] : ctx.carry.pb_hold) {
-            (void)hv;
-            const auto bar = hk.find('|');
-            if (bar == std::string::npos) continue;
-            const auto sh = shift_sat.find({hk.substr(0, bar), hk.substr(bar + 1)});
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_hold,
+                     [&](const SatSignalId& id, const net::PbHoldKey&) {
+            const auto sh = shift_sat.find({net::satKey(id.sat), net::signalKey(id.signal)});
             if (sh != shift_sat.end() && sh->second != 0.0)
                 ++ctx.counters.prm_pbhold_unmoved_at_shift;
-        }
+        });
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }
@@ -1028,7 +1029,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             new_prev_target.emplace(k, tgt);
         }
     }
-    anchor_incumbent = this_epoch_anchor;
+    net::assignSig(entities, &net::SatSignalState::anchor_incumbent, this_epoch_anchor);
     // The receiver-side parents are replaced wholesale ("<name>|<c>|<sigma>" -> sat).
     net::dropAll(entities.stations, &net::StationState::signals,
                  &net::StationSignalState::eq34_rx_parent);

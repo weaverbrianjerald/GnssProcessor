@@ -29,6 +29,8 @@
 
 namespace GnssProcessor {
 
+using SG = net::SatSignalState;   // the clones live in the satellite-signal table (card NOM step N4d)
+
 namespace {
 
 /// The key of a clone term in the dense carry's identity.
@@ -80,7 +82,7 @@ void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHol
     q.queued_ep  = ep;
     q.rebirth    = true;
     q.block      = true;
-    ctx.carry.smh_block_pending.emplace(key, q);
+    net::emplaceSig(ctx.entities, key, &SG::smh_block_pending, q);
 }
 
 /// Card SMH section 9's engagement test for a clone of either map: @c Withdrawn when card
@@ -559,7 +561,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     // ---- End of the bindings ----
     (void)log;
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
-    auto& clones = ctx.carry.smh_clone;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // the clones (card NOM step N4d)
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
     // Card SCL2 X2b (amendment A1): a row still pending from an earlier epoch never reached
     // its compression; it takes the per-row term before it advances (no-op off).
@@ -574,12 +576,13 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     // and the birth is queued again for the first stash at which the anchor holds.  The
     // constellation's pinned clock has no anchor fold and passes nothing: exempt from the
     // second test.
-    auto& blocks = ctx.carry.smh_block;   // card SMD's block clones
+    // Card SMD's block clones: SatSignalState::smh_block.
     if (ctx.knobs.cta_on) {
-        for (auto& [key, c] : clones) {
-            if (!c.alive) continue;
+        net::forEach(sigs, &SG::smh_clone, [&](const SatSignalId& id, PbHoldClone& c) {
+            const std::string key = net::holdKey(id);
+            if (!c.alive) return;
             const PbHoldCloneDeath why = engagementDeath(ctx, c);
-            if (why == PbHoldCloneDeath::None) continue;
+            if (why == PbHoldCloneDeath::None) return;
             killClone(ctx, c, why);
             PbHoldClone q;
             q.sat        = c.sat;
@@ -587,15 +590,16 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             q.generation = c.generation;
             q.queued_ep  = ep;
             q.rebirth    = true;
-            ctx.carry.smh_pending.emplace(key, q);   // a newer generation's entry wins
-        }
-        for (auto& [key, c] : blocks) {
-            if (!c.alive) continue;
+            net::emplaceSig(ctx.entities, key, &SG::smh_pending, q);   // a newer generation's entry wins
+        });
+        net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
+            const std::string key = net::holdKey(id);
+            if (!c.alive) return;
             const PbHoldCloneDeath why = engagementDeath(ctx, c);
-            if (why == PbHoldCloneDeath::None) continue;
+            if (why == PbHoldCloneDeath::None) return;
             killBlock(ctx, c, why, ep);
             queueBlockBirth(ctx, key, c, ep);
-        }
+        });
     }
 
     // Card SMD section 3: a block clone follows the phase datum's declared steps of its pair
@@ -607,9 +611,9 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     {
         const auto& pa_reref   = ctx.carry.phase_anchor_reref;
         const auto& eq34_reref = ctx.carry.eq34_reref;
-        const auto& basis      = ctx.carry.phase_basis;
-        for (auto& [key, c] : blocks) {
-            if (!c.alive) continue;
+        net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
+            const std::string key = net::holdKey(id);
+            if (!c.alive) return;
             PbHoldFollow f = PbHoldFollow::None;
             for (const std::string& sg : c.pv_pair.sig) {
                 if (pa_reref.count({c.sat, sg}) || eq34_reref.count({c.sat, sg})) {
@@ -619,30 +623,25 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             }
             if (f == PbHoldFollow::None) {
                 for (const std::string& sg : c.pv_pair.sig) {
-                    const auto bit = basis.find(StateKeys::makeAmbiguityKey(c.sat, sg));
-                    if (bit != basis.end() && bit->second.elected_ep == ep) {
+                    const PhaseBasisEntry* bit = net::getSig(
+                        sigs, StateKeys::makeAmbiguityKey(c.sat, sg), &SG::phase_basis);
+                    if (bit && bit->elected_ep == ep) {
                         f = PbHoldFollow::Tenure;
                         break;
                     }
                 }
             }
-            if (f == PbHoldFollow::None) continue;
+            if (f == PbHoldFollow::None) return;
             c.follow = f;
             ++ctx.counters.smh_pv_follow[static_cast<int>(f)];
             killBlock(ctx, c, PbHoldCloneDeath::Followed, ep);
             queueBlockBirth(ctx, key, c, ep);
-        }
+        });
     }
 
     bool any = false;
-    for (const auto& [key, c] : clones) {
-        (void)key;
-        if (c.alive) { any = true; break; }
-    }
-    for (const auto& [key, c] : blocks) {
-        (void)key;
-        if (c.alive) { any = true; break; }
-    }
+    net::forEach(sigs, &SG::smh_clone, [&](const SatSignalId&, const PbHoldClone& c) { any = any || c.alive; });
+    net::forEach(sigs, &SG::smh_block, [&](const SatSignalId&, const PbHoldClone& c) { any = any || c.alive; });
     if (!any) return;
 
     const CouplingExactEpoch& xe0 = ctx.carry.cxu_epoch;
@@ -867,18 +866,17 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         }
     };
 
-    for (auto& [key, c] : clones) {
-        (void)key;
-        if (!c.alive) continue;
+    net::forEach(sigs, &SG::smh_clone, [&](const SatSignalId&, PbHoldClone& c) {
+        if (!c.alive) return;
         PbHoldCloneStep st = pbHoldCloneAdvance(in, c);
         if (!st.ok) {
             killClone(ctx, c, st.death);
-            continue;
+            return;
         }
         shx_attach(st, c.shx);
         if (!ccl_marg(st, c.shx)) {
             killClone(ctx, c, PbHoldCloneDeath::RowFailed);
-            continue;
+            return;
         }
         // A row that had dense terms and lost every one of them carries nothing: the
         // clone is unlinked (a clone born on the pinned clock has no dense term at all).
@@ -888,7 +886,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
                 if (t.p_prev > 0.0) mx = std::max(mx, std::abs(t.coeff));
             if (!(mx > 1e-3)) {
                 killClone(ctx, c, PbHoldCloneDeath::Unlinked);
-                continue;
+                return;
             }
         }
         // The frame-free passed motion (section 10): the parent's step against the prior
@@ -907,7 +905,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         if (!pinned_parent) {
             if (!(pcol >= 0 && pcol < nx) || !std::isfinite(prior_p)) {
                 killClone(ctx, c, PbHoldCloneDeath::ParentOutside);
-                continue;
+                return;
             }
             step_p = x_s(pcol) - prior_p;
         }
@@ -940,7 +938,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             }
         }
         c.vpost = c.var + c.shx.pendingVar(ep) + q;   // X2b: the pending share is the row's
-    }
+    });
 
     // Card SMD: the block clones, both rows on one lifetime.  The clock row takes card SMH's
     // rule; the phase-visible row takes the same rule over its functional {c: 1, pair: -w_j}.
@@ -970,12 +968,13 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         }
         return q;
     };
-    for (auto& [key, c] : blocks) {
-        if (!c.alive) continue;
+    net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
+        const std::string key = net::holdKey(id);
+        if (!c.alive) return;
         PbHoldCloneStep sc = pbHoldCloneAdvance(in, c);
         if (!sc.ok) {
             killBlock(ctx, c, sc.death, ep);
-            continue;
+            return;
         }
         const std::vector<PbHoldCloneOwn> own = pbHoldCloneOwnPv(c.pv_pair);
         PbHoldCloneStep sd = pbHoldCloneAdvanceRow(in, c.sat, own, c.pv_terms, c.pv_value,
@@ -987,7 +986,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             } else {
                 killBlock(ctx, c, sd.death, ep);
             }
-            continue;
+            return;
         }
         // Card SCL: both rows re-expressed off the clones (no-op off); card SCL2 X2b: each
         // row's history terms first.
@@ -995,11 +994,11 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         shx_attach(sd, c.pv_shx);
         if (!ccl_marg(sc, c.shx) || !ccl_marg(sd, c.pv_shx)) {
             killBlock(ctx, c, PbHoldCloneDeath::RowFailed, ep);
-            continue;
+            return;
         }
         if (unlinked(sc) || unlinked(sd)) {
             killBlock(ctx, c, PbHoldCloneDeath::Unlinked, ep);
-            continue;
+            return;
         }
         // The frame-free steps (card SMH section 10): the clock's, and each pair phase bias's
         // against the prior mean the solve folded.
@@ -1011,7 +1010,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         if (!pinned_parent) {
             if (!(pcol >= 0 && pcol < nx) || !std::isfinite(prior_c)) {
                 killBlock(ctx, c, PbHoldCloneDeath::ParentOutside, ep);
-                continue;
+                return;
             }
             step_c = x_s(pcol) - prior_c;
         }
@@ -1033,7 +1032,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         if (lost) {
             killBlock(ctx, c, PbHoldCloneDeath::PairLost, ep);
             queueBlockBirth(ctx, key, c, ep);
-            continue;
+            return;
         }
         double step_d = step_c;
         for (std::size_t j = 0; j < np; ++j) step_d -= c.pv_pair.w[j] * step_p[j];
@@ -1083,7 +1082,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         for (std::size_t j = 0; j < np; ++j) gown[pb_col[j]] -= c.pv_pair.w[j];
         c.pv_pd = quad(gown);
         c.pv_dw = sd.parent_in_s ? sd.dW : 0.0;
-    }
+    });
 }
 
 void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
@@ -1101,10 +1100,10 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
     // row the update kept pending; a row it did not reach takes the per-row term here, before
     // the re-harvest (no-op off and when every row was projected).
     networkSharedHistoryFinalizeHoldRows(ctx, static_cast<long long>(ctx.counters.n_loop_epochs));
-    auto& clones  = ctx.carry.smh_clone;
-    auto& pending = ctx.carry.smh_pending;
-    if (clones.empty() && pending.empty() && ctx.carry.smh_block.empty()
-        && ctx.carry.smh_block_pending.empty()) return;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // the clones and births (N4d)
+    if (net::present(sigs, &SG::smh_clone) == 0 && net::present(sigs, &SG::smh_pending) == 0
+        && net::present(sigs, &SG::smh_block) == 0
+        && net::present(sigs, &SG::smh_block_pending) == 0) return;
 
     const bool stash_now = ctx.carry.cxu_stash_valid
                            && std::abs(ctx.carry.cxu_stash_s - now_s) <= 1e-6;
@@ -1134,30 +1133,28 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
     };
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
 
-    for (auto& [key, c] : clones) {
-        (void)key;
-        if (!c.alive) continue;
+    net::forEach(sigs, &SG::smh_clone, [&](const SatSignalId&, PbHoldClone& c) {
+        if (!c.alive) return;
         if (!stash_now) {
             killClone(ctx, c, PbHoldCloneDeath::NoStash);
-            continue;
+            return;
         }
         if (c.updated_ep != ep) {
             killClone(ctx, c, PbHoldCloneDeath::Missed);
-            continue;
+            return;
         }
         c.terms   = pbHoldCloneRebase(c.terms, stash, pinned, fallback);
         c.stamp_s = now_s;
-    }
+    });
 
-    for (auto pit_pending = pending.begin(); pit_pending != pending.end();) {
-        const std::string& key = pit_pending->first;
-        PbHoldClone c = pit_pending->second;
+    net::eraseIf(sigs, &SG::smh_pending, [&](const SatSignalId& id, const PbHoldClone& pend) {
+        const std::string key = net::holdKey(id);
+        PbHoldClone c = pend;
         // A generation that has ended takes its pending birth with it.
-        const auto hit = ctx.carry.pb_hold.find(key);
-        if (hit == ctx.carry.pb_hold.end() || hit->second.generation != c.generation) {
+        const net::PbHoldKey* hit = net::getSig(sigs, key, &SG::pb_hold);
+        if (!hit || hit->generation != c.generation) {
             ++ctx.counters.smh_pending_dropped;
-            pit_pending = pending.erase(pit_pending);
-            continue;
+            return true;
         }
         const std::string parent = sharedCarryKey(SharedParamKind::Clock, c.sat, "");
         PbHoldCloneTerm t;
@@ -1186,8 +1183,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
             // Waits for a later stash; the key carries the phase-clock transfer meanwhile.
             if (stash_now && sit != stash.end()) ++ctx.counters.smh_defer_loose;
             else                                 ++ctx.counters.smh_defer_nostash;
-            ++pit_pending;
-            continue;
+            return false;
         }
         if (c.queued_ep >= 0 && ep > c.queued_ep) {
             ++ctx.counters.smh_births_deferred;
@@ -1221,31 +1217,28 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
                 if (pd > 0.0) c.f0 = (pcc.P(a, a) - pcc.P(a, b)) / pd;
             }
         }
-        clones[key]  = c;
-        pit_pending  = pending.erase(pit_pending);
-    }
+        net::put(sigs, id, &SG::smh_clone) = c;
+        return true;
+    });
 
     // Card SMD: the block clones, re-harvested row by row, and born under card SMH's rule
     // when the stash also holds the satellite's phase biases on two bands (the pair, fixed
     // for the clone's life).
-    auto& blocks   = ctx.carry.smh_block;
-    auto& bpending = ctx.carry.smh_block_pending;
-    for (auto& [key, c] : blocks) {
-        (void)key;
-        if (!c.alive) continue;
+    net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
+        if (!c.alive) return;
         if (!stash_now) {
             killBlock(ctx, c, PbHoldCloneDeath::NoStash, ep);
-            continue;
+            return;
         }
         if (c.updated_ep != ep) {
             killBlock(ctx, c, PbHoldCloneDeath::Missed, ep);
-            continue;
+            return;
         }
         c.terms    = pbHoldCloneRebase(c.terms, stash, pinned, fallback);
         c.pv_terms = pbHoldCloneRebase(c.pv_terms, stash, pinned, fallback);
         c.stamp_s  = now_s;
-    }
-    if (bpending.empty()) return;
+    });
+    if (net::present(sigs, &SG::smh_block_pending) == 0) return;
     std::map<std::string, std::map<std::string, double>> pb_var_of;   // sat -> signal -> stashed variance
     if (stash_now) {
         for (const CarryPrior& cp : ctx.carry.prev_carry) {
@@ -1254,14 +1247,13 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
             if (sit != stash.end()) pb_var_of[cp.sat][cp.signal] = sit->second.second;
         }
     }
-    for (auto bit = bpending.begin(); bit != bpending.end();) {
-        const std::string& key = bit->first;
-        PbHoldClone c = bit->second;
-        const auto hit = ctx.carry.pb_hold.find(key);
-        if (hit == ctx.carry.pb_hold.end() || hit->second.generation != c.generation) {
+    net::eraseIf(sigs, &SG::smh_block_pending, [&](const SatSignalId& id, const PbHoldClone& pend) {
+        const std::string key = net::holdKey(id);
+        PbHoldClone c = pend;
+        const net::PbHoldKey* hit = net::getSig(sigs, key, &SG::pb_hold);
+        if (!hit || hit->generation != c.generation) {
             ++ctx.counters.smh_pv_pending_dropped;
-            bit = bpending.erase(bit);
-            continue;
+            return true;
         }
         const std::string parent = sharedCarryKey(SharedParamKind::Clock, c.sat, "");
         PbHoldCloneTerm t;
@@ -1287,16 +1279,14 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         } else {
             if (stash_now && sit != stash.end()) ++ctx.counters.smh_pv_defer_anchor;
             else                                 ++ctx.counters.smh_pv_defer_nostash;
-            ++bit;
-            continue;
+            return false;
         }
         PbHoldPair pair;
         if (const auto pv = pb_var_of.find(c.sat); pv != pb_var_of.end())
             pair = pbHoldClonePickPair(c.sat, pv->second);
         if (pair.sig.empty()) {
             ++ctx.counters.smh_pv_defer_nopair;
-            ++bit;
-            continue;
+            return false;
         }
         if (on_pinned) ++ctx.counters.smh_pv_births_pinned;
         else           ++ctx.counters.smh_pv_births;
@@ -1356,18 +1346,18 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         c.follow     = PbHoldFollow::None;
         c.died_ep    = -1;
         c.updated_ep = ep;
-        blocks[key]  = c;
-        bit          = bpending.erase(bit);
-    }
+        net::put(sigs, id, &SG::smh_block) = c;
+        return true;
+    });
 }
 
 void networkPbHoldBlockAtHold(NetworkRunContext& ctx, const std::string& key,
                               unsigned generation, bool pb_marked, double epoch_s,
                               const std::function<double(const std::string&)>& bar) {
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
-    const auto it = ctx.carry.smh_block.find(key);
-    if (it == ctx.carry.smh_block.end()) return;
-    PbHoldClone& c = it->second;
+    PbHoldClone* const cp = net::getSig(ctx.entities.sat_signals, key, &SG::smh_block);
+    if (!cp) return;
+    PbHoldClone& c = *cp;
     if (c.generation != generation) return;
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
     if (!c.alive) {

@@ -73,14 +73,14 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
     const std::string sig = (kind == SharedParamKind::Clock) ? "" : "L1C";
     c.prev_carry = {prior(kind, "G01", sig, next())};
     net::put(c_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G01", next()};
-    c.clock_osc["G01"].x0 = next();
-    c.clock_osc["G01"].init = true;
-    c.prev_clk["G01"] = {next(), 100.0};
-    c.cb_exc_prev_clk["G01"] = next();
-    c.pb_hold_prev_clock_m["G01"] = next();
-    c.pb_level_prev["G01_L1C"] = next();
-    c.pin_bridge["G01_L1C"].value = next();
-    c.pb_hold["G01|L1C"].held_m = next();
+    net::putSat(c_ent, "G01", &net::SatelliteState::clock_osc).x0 = next();
+    net::putSat(c_ent, "G01", &net::SatelliteState::clock_osc).init = true;
+    net::putSat(c_ent, "G01", &net::SatelliteState::prev_clk) = {next(), 100.0};
+    net::putSat(c_ent, "G01", &net::SatelliteState::cb_exc_prev_clk) = next();
+    net::putSat(c_ent, "G01", &net::SatelliteState::pb_hold_prev_clock_m) = next();
+    net::putSig(c_ent, "G01_L1C", &net::SatSignalState::pb_level_prev) = next();
+    net::putSig(c_ent, "G01_L1C", &net::SatSignalState::pin_bridge).value = next();
+    net::putSig(c_ent, "G01|L1C", &net::SatSignalState::pb_hold).held_m = next();
     net::put(c_ent.constellations, System::GPS, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)["G01"] = next();
     const auto t = [&]() { return std::vector<CoupledShared>{
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
@@ -318,16 +318,16 @@ TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
             c.prev_carry.push_back(prior(SharedParamKind::Clock, "G01", "", 0.4));
             c.prev_carry.back().t_park_s = 1000.0;              // parked: moves too
             c.prev_carry.push_back(prior(SharedParamKind::Clock, "G02", "", -0.9));
-            c.clock_osc["G02"].x0 = 0.5;                        // not initialized: stays
+            net::putSat(c_ent, "G02", &net::SatelliteState::clock_osc).x0 = 0.5;                        // not initialized: stays
         };
         NetworkCarryState c, e; net::NetworkEntities c_ent, e_ent;   // not copyable: built twice
         build(c, c_ent);
         build(e, e_ent);
         const double d = 0.25;
-        e.clock_osc["G01"].x0 -= d;
+        net::putSat(e_ent, "G01", &net::SatelliteState::clock_osc).x0 -= d;
         for (CarryPrior& cp : e.prev_carry)
             if (cp.kind == SharedParamKind::Clock && cp.sat == "G01") cp.value -= d;
-        e.prev_clk["G01"].first -= d;
+        net::putSat(e_ent, "G01", &net::SatelliteState::prev_clk).first -= d;
         long long n_expect = 4;   // the oscillator, two carried entries, the baseline
         if (cpl) {
             e.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))]
@@ -339,7 +339,7 @@ TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
         EXPECT_EQ(ephCutoverShiftCarry(c, c_ent, "G01", d, cpl, &counts), n_expect);
         EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::ClockOsc)], 1);
         EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), referencedDoubles(e, e_ent))) << "cpl=" << cpl;
-        EXPECT_EQ(c.clock_osc["G02"].x0, 0.5);
+        EXPECT_EQ(net::putSat(c_ent, "G02", &net::SatelliteState::clock_osc).x0, 0.5);
     }
 }
 
@@ -631,7 +631,7 @@ TEST(CarrySites, EphRelevelCompleteMovesTheOwedSites) {
                 return carrySiteSpec(s).role == CarryRefRole::Regression && !cpl;
             });
             EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-            EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
+            EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
             if (!complete) {
                 NetworkCarryState f; net::NetworkEntities f_ent;
                 populateEverySite(f, f_ent);
@@ -677,8 +677,8 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
         expectOwedMoved(CarryMechanism::Eq34Shift, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
-        EXPECT_EQ(c.pin_bridge.at("G01_L1C").value, e.pin_bridge.at("G01_L1C").value);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01_L1C", &net::SatSignalState::pin_bridge)).value, (*net::getSig(e_ent.sat_signals, "G01_L1C", &net::SatSignalState::pin_bridge)).value);
         if (!complete) {
             NetworkCarryState f; net::NetworkEntities f_ent;
             populateEverySite(f, f_ent, SharedParamKind::PhaseBias);
@@ -722,7 +722,7 @@ TEST(CarrySites, DeclaredHandoverCompleteMovesTheOwedSites) {
         expectOwedMoved(CarryMechanism::DeclaredHandover, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
         if (!complete) {
             NetworkCarryState f; net::NetworkEntities f_ent;
             populateEverySite(f, f_ent, SharedParamKind::PhaseBias);

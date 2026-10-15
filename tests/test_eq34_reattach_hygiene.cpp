@@ -256,7 +256,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     // absent station; its loss is what forces the reattach (a live incumbent is exempt
     // from the age test, since keeping it is not a reattach).
     ageArcs(ctx, *cfg, c, 6);
-    ctx.carry.anchor_incumbent["G29_" + std::string(kSig)] = "GONE";
+    net::putSig(ctx.entities, "G29_" + std::string(kSig), &net::SatSignalState::anchor_incumbent) = "GONE";
     const AnchorHygiene hyg =
         runHygiene(ctx, *cfg, c, 2000.0, { { 0, "G29_" + std::string(kSig) } });
 
@@ -293,7 +293,7 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     // The incumbent is a station that is not present at all (its arc ended), which
     // forces a reattach.  Both live arcs are one epoch old.
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);   // emitted one epoch ago: warm memory exists
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
 
@@ -339,7 +339,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     Census c = makeCensus(spec);
     attachStateManagers(c, spec, log, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 1000.0);
 
     // Epoch 1 blocks.  The key then stays out, epoch after epoch, until the arcs reach
@@ -353,7 +353,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
         EXPECT_EQ(hyg.arcAge(0, "G29_L1C"), ep);
         // The incumbent entry still names the absent station "GONE": the election,
         // which replaces the incumbent map, does not run inside this loop.
-        EXPECT_EQ(ctx.carry.anchor_incumbent.count("G29_L1C"), 1u);
+        EXPECT_EQ((net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::anchor_incumbent) ? 1u : 0u), 1u);
     }
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 1) << "one HOLD, not one per epoch";
     EXPECT_EQ(ctx.counters.hyg.blocked_key_epochs, kMin - 1);
@@ -397,7 +397,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";   // an incumbent, but never emitted
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";   // an incumbent, but never emitted
         runHygiene(ctx, *cfg, c, 1000.0);
         EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
         EXPECT_GT(ctx.counters.hyg.reattach_cold_allowed_no_prior, 0);
@@ -413,7 +413,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 1000.0 - 900.0);   // 900 s ago > 600 s horizon
         runHygiene(ctx, *cfg, c, 1000.0);
         EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
@@ -461,14 +461,14 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.pin_bridge_on);
     ASSERT_GT(ctx.knobs.pin_bridge_info, 0.0);
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);
-    ctx.carry.pb_level_prev["G29_L1C"] = -1.234;   // the harvested solved level
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::pb_level_prev) = -1.234;   // the harvested solved level
 
     AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
     ASSERT_EQ(ctx.counters.hyg.bridges_opened, 1);
     EXPECT_TRUE(hyg.isBridged("G29_L1C"));
-    EXPECT_EQ(ctx.carry.pin_bridge.at("G29_L1C").value, -1.234);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).value, -1.234);
     // Bridging replaces the drop: the key stays in the shared set (its column is solved)
     // and is not pinned.
     EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
@@ -489,13 +489,13 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     // been folded max_ep times.  (The row injection increments the fold counter; this
     // test sets it directly because it covers the lifetime rule, not the fold plumbing.)
     for (int k = 0; k < 3; ++k) {
-        ctx.carry.pin_bridge.at("G29_L1C").folds = k;
+        (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = k;
         Census c2 = makeCensus(spec);
         attachStateManagers(c2, spec, log, *cfg);
         hyg = runHygiene(ctx, *cfg, c2, 1030.0 + 30.0 * k);
         EXPECT_TRUE(hyg.isBridged("G29_L1C")) << "dropped early at folds=" << k;
     }
-    ctx.carry.pin_bridge.at("G29_L1C").folds = 3;   // == phase_datum_bridge_max_ep
+    (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = 3;   // == phase_datum_bridge_max_ep
     Census c3 = makeCensus(spec);
     attachStateManagers(c3, spec, log, *cfg);
     hyg = runHygiene(ctx, *cfg, c3, 1200.0);
@@ -529,9 +529,9 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 970.0);
-        ctx.carry.pb_level_prev["G29_L1C"] = 0.5;
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::pb_level_prev) = 0.5;
         ASSERT_TRUE(runHygiene(ctx, *cfg, c, 1000.0).isBridged("G29_L1C"));
 
         Census c2 = makeCensus(spec);
@@ -548,7 +548,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         EXPECT_EQ(ctx.counters.hyg.bridge_drop_slip, 1) << "feed " << feed;
         // ...and it does not immediately re-open on the slipped level.
         EXPECT_EQ(ctx.counters.hyg.bridges_opened, 1) << "feed " << feed;
-        EXPECT_EQ(ctx.carry.pin_bridge.count("G29_L1C"), 0u) << "feed " << feed;
+        EXPECT_EQ((net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge) ? 1u : 0u), 0u) << "feed " << feed;
     }
 }
 
@@ -571,7 +571,7 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
     Census c = makeCensus(spec);
     attachStateManagers(c, spec, log, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);
     ctx.carry.anchor_age_resume_seed = true;      // set by networkTryWarmResume
 
@@ -612,13 +612,13 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     EXPECT_EQ(ctx.knobs.eq34_min_arc_ep, 0);
     EXPECT_FALSE(ctx.knobs.pin_bridge_on);
 
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
 
     // No state allocated, no counter touched, no key removed.
     EXPECT_FALSE(hyg.active);
     EXPECT_TRUE(ctx.carry.anchor_arc_age.empty());
-    EXPECT_TRUE(ctx.carry.pin_bridge.empty());
+    EXPECT_TRUE((net::present(ctx.entities.sat_signals, &net::SatSignalState::pin_bridge) == 0));
     EXPECT_EQ(ctx.counters.hyg.epochs, 0);
     EXPECT_EQ(ctx.counters.hyg.arcs_tracked, 0);
     EXPECT_EQ(c.cnd.union_keys.size(), 2u);

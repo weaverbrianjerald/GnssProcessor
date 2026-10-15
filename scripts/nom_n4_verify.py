@@ -34,8 +34,10 @@ import re
 import subprocess
 import sys
 
-STEP_OF = {'station': 'N4a', 'constellation': 'N4b', 'los': 'N4c', 'sat_signal': 'N4d',
-           'satellite': 'N4e', 'arc': 'N4f'}
+# The TSV step(s) of each entity that have landed (the satellite is split: N4e1 the clock
+# half, N4e2 the datum and QC half, whose step adds 'N4e2' here).
+STEP_OF = {'station': ('N4a',), 'constellation': ('N4b',), 'los': ('N4c',),
+           'sat_signal': ('N4d',), 'satellite': ('N4e1',), 'arc': ('N4f',)}
 ROW_STRUCTS = {'station': ['StationState', 'StationSignalState'],
                'constellation': ['ConstellationState', 'ChannelState'],
                'los': ['LosState', 'LosEventState'], 'sat_signal': ['SatSignalState'],
@@ -103,7 +105,7 @@ def tsv_rows(tree, entity):
         if line.startswith('#') or line.startswith('hpp_line'):
             continue
         c = line.split('\t')
-        if len(c) >= 9 and c[8] == STEP_OF[entity]:
+        if len(c) >= 9 and c[8] in STEP_OF[entity]:
             rows.append({'field': c[1], 'key': c[4], 'entity': c[5], 'persist': c[7]})
     return rows
 
@@ -234,9 +236,12 @@ def v4(tree, entity):
 
 
 # The row-inserting or resetting calls: the generic ones (N4.0) and the keyed forms of N4b
-# (the letter maps) and N4c (the line-of-sight forms, eraseIf).
+# (the letter maps), N4c (the line-of-sight forms, eraseIf), N4d (the satellite-signal forms)
+# and N4e1 (the satellite forms).
 WRITE_RE = re.compile(r'\bnet::(put|mark|drop|dropAll|unmark|putLos|dropLos|assignLos|'
-                      r'assignLosFlags|eraseIf|assignLetterMap|mergeLetterMap)\s*\(')
+                      r'assignLosFlags|eraseIf|assignLetterMap|mergeLetterMap|putSig|dropSig|'
+                      r'emplaceSig|assignSig|putSat|dropSat|markSat|unmarkSat|assignSat|'
+                      r'assignSatFlags)\s*\(')
 
 
 def functions_of(text):

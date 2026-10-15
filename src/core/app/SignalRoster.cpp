@@ -1664,13 +1664,15 @@ namespace GnssProcessor {
         // does not make.
         {
             std::set<std::string> now;
-            for (const auto& [amb, sta] : ctx.carry.anchor_incumbent) {
+            net::forEach(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent,   // id order = key order (N4d)
+                         [&](const SatSignalId& id, const std::string& sta) {
+                const std::string amb = net::ambKey(id);
                 (void)sta;
                 now.insert(amb);
-                if (rs.anchor_prev.count(amb)) continue;
+                if (rs.anchor_prev.count(amb)) return;
                 ++ctr.anchor_first_sightings;
                 const auto parts = StateKeys::parseAmbiguityKey(amb);
-                if (!parts) continue;
+                if (!parts) return;
                 const std::string& sat = parts->satellite;
                 const std::string& sig = parts->signal;
                 bool returned = false;
@@ -1684,7 +1686,7 @@ namespace GnssProcessor {
                     }
                 }
                 if (returned) ++ctr.anchor_first_sighting_reentry;
-            }
+            });
             rs.anchor_prev.swap(now);
         }
 

@@ -971,9 +971,13 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // armed (invariant #4).  Only the armed run passes a non-null pointer into the
     // drains, so off is byte-identical.
     CommonBandEpoch common_band;
+    // The incumbent anchors as the "sat_signal"-keyed map the scope's prefix scan reads
+    // (card NOM step N4d; key order is id order, O1).
+    const std::map<std::string, std::string> anchor_view =
+        net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
     networkCommonBandVerdictEpoch(pa, config_, stations, present, i_lo,
                                   n_sta_total, se, traces, log,
-                                  &ctx.carry.anchor_incumbent, common_band);
+                                  &anchor_view, common_band);
     {
         auto& C = ctx.counters;
         C.n_cb_verdicts          += common_band.verdicts;

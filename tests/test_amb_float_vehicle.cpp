@@ -494,7 +494,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
 
     NetworkEstimator est;
     GnssProcessor::GlobalVtecShConfig shc{};
-    std::map<std::tuple<GnssProcessor::SharedParamKind, std::string, std::string>, double> tu_hist;
+    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history (card NOM step N4d)
     const NetworkEstimator::Datum datum{};          // no shared border, nothing to pin
     const std::vector<Eigen::Index> carried{kColN1, kColN2};
 

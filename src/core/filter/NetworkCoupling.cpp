@@ -129,8 +129,11 @@ bool CouplingRowBuilder::tuReinitSince(const CoupledShared& cs, double since_s) 
     // whether or not the border time update is armed.
     if (!carry_cpl_tu && !carry_cpl_reinit) return false;
     const auto hit = [&](const std::string& sig) {
-        const auto it = tu_reinit_hist.find({cs.kind, cs.sat, sig});
-        return it != tu_reinit_hist.end() && it->second > since_s;
+        const std::map<SharedParamKind, double>* h =
+            net::getSig(sat_signals, cs.sat, sig, &net::SatSignalState::tu_reinit);
+        if (!h) return false;
+        const auto it = h->find(cs.kind);
+        return it != h->end() && it->second > since_s;
     };
     // On-path telemetry for card 1g (invariant #4).  The run's departed-term total
     // moves for many reasons and cannot show whether the per-signal widening acts;
@@ -153,11 +156,9 @@ bool CouplingRowBuilder::readmitDiverted(const CoupledShared& cs) {
     // still settling from the cold seed, so conditioning a stiff carried row on it
     // injects that settling as row bias (and F3's dense L⁻¹ then mixes it into every
     // ambiguity of the station block).
-    if (!readmit_marg || readmit_marg->empty() || cs.kind == SharedParamKind::VtecSh
-        || cs.sat.empty())
-        return false;
-    const auto it = readmit_marg->find(cs.sat);
-    if (it == readmit_marg->end() || loop_ep >= it->second) return false;
+    if (!sats || cs.kind == SharedParamKind::VtecSh || cs.sat.empty()) return false;
+    const long long* until = net::getSat(*sats, cs.sat, &net::SatelliteState::readmit_marg);
+    if (!until || loop_ep >= *until) return false;
     ++R.cpl_readmit_diverted;
     return true;
 }
@@ -958,7 +959,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
-    auto& tu_reinit_hist = ctx.carry.tu_reinit_hist;
+    net::NetworkEntities& entities = ctx.entities;   // tu_reinit: the satellite signals (N4d)
 
     // Coupling-row time update (Card 1d, network.carry_coupling_time_update): record
     // the (kind, sat) shared keys whose carried state folds this epoch with the loose
@@ -994,12 +995,12 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     if (carry_cpl_tu || carry_cpl_reinit) {
         for (const CarryPrior& cp : prev_carry)
             if (cp.inflate_q)
-                tu_reinit_hist[{cp.kind, cp.sat, std::string{}}] = pl_now_s;
+                net::putSig(entities, cp.sat, "", &net::SatSignalState::tu_reinit)[cp.kind] = pl_now_s;
         for (const std::string& sat : prev_clock_refloat_sats) {
-            tu_reinit_hist[{SharedParamKind::Clock, sat, std::string{}}] = pl_now_s;
+            net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::Clock] = pl_now_s;
             if (!(clk_mon_reinit_sig > 0.0)) {
-                tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
-                tu_reinit_hist[{SharedParamKind::CodeBias, sat, std::string{}}] = pl_now_s;
+                net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
+                net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::CodeBias] = pl_now_s;
             }
         }
     }
@@ -1008,14 +1009,14 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         // datum's re-references: both are sets of (sat, signal), which is exactly
         // the granularity at which a phase-bias datum is realized.
         for (const auto& [sat, sig] : ctx.carry.phase_anchor_reref)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
+            net::putSig(entities, sat, sig, &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
         for (const auto& [sat, sig] : ctx.carry.eq34_reref)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
+            net::putSig(entities, sat, sig, &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
         // The datum-slip re-realization marks whole satellites (the slip is on the
         // pin-holder's arc, not on one signal), so it uses the satellite-wide
         // wildcard.
         for (const std::string& sat : ctx.carry.datum_reref_pb_sats)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
+            net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
     }
 }
 

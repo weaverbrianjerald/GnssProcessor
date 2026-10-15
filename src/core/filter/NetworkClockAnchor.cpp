@@ -401,10 +401,9 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     // data rejecting the seeded pre-gap realization (invariant #7's mark-if-moved),
     // attributed in the event detail and counted.
     std::string seed_tag;
-    if (!ctx.carry.readmit_seeded_s.empty()) {
-        const auto rs = ctx.carry.readmit_seeded_s.find(sat);
-        if (rs != ctx.carry.readmit_seeded_s.end()
-            && ctx.carry.readmit_now_s - rs->second <= kReadmitVerifyWindowS) {
+    if (net::present(ctx.entities.sats, &net::SatelliteState::readmit_seeded_s) > 0) {
+        const double* rs = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::readmit_seeded_s);
+        if (rs && ctx.carry.readmit_now_s - *rs <= kReadmitVerifyWindowS) {
             ++ctx.counters.n_readmit_seed_moved;
             seed_tag = ";readmit_seed_moved";
         }

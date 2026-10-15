@@ -32,6 +32,7 @@
 
 #include "filter/NetworkRunTypes.hpp"   // CoupledShared / CplRowRaw / LocalCarry / StationAssembly / SharedParamKind (via NetworkEstimator.hpp)
 #include "filter/NetworkCouplingExact.hpp"  // CouplingExactEpoch / CouplingExactRow (card CTU)
+#include "app/NetworkEntities.hpp"   // net::SatSignalTable (the reinit history, card NOM step N4d)
 
 #include <Eigen/Dense>
 
@@ -193,11 +194,13 @@ struct CouplingRowBuilder {
     /// (kind, sat, signal) key as well as the sat-wide wildcard (card 1g,
     /// network.carry_coupling_reinit_sources).  See @ref CouplingRowBuilder::tuReinitSince.
     bool                       carry_cpl_reinit;
-    /// Reinit history (cards 1d, 1g): (kind, sat, signal) → content time of the last
-    /// reinit fold; read-only here.  An empty signal is the sat-wide wildcard: the
-    /// clock-QC and datum-slip feeds mark a whole satellite, and the realization-step
-    /// feeds mark one (sat, signal) family.
-    const std::map<std::tuple<SharedParamKind, std::string, std::string>, double>& tu_reinit_hist;
+    /// The satellite signals, for their reinit history (cards 1d, 1g;
+    /// @c net::SatSignalState::tu_reinit): kind → content time of the last reinit fold;
+    /// read-only here (uncounted lookups, safe in the parallel produce).  The
+    /// satellite-wide @c SignalId{} is the wildcard: the clock-QC and datum-slip feeds
+    /// mark a whole satellite, and the realization-step feeds mark one (sat, signal)
+    /// family.
+    const net::SatSignalTable& sat_signals;
     StationAssembly&           R;                 ///< this thread's own PASS-B slot (= asm_res[i])
 
     std::vector<PendCplRow>    crows{};    ///< scalar-path pending rows (card 1)
@@ -208,8 +211,9 @@ struct CouplingRowBuilder {
     /// row is conditioned on a column whose realization is still settling from its cold
     /// re-registration.  This edge is the source of the network-wide DD episodes after
     /// eclipse re-admission clusters; see SPEC_amb_iono_split_overcount §6.9 for the
-    /// measurement.  Null = off.
-    const std::map<std::string, long long>* readmit_marg{nullptr};
+    /// measurement.  The windows are @c net::SatelliteState::readmit_marg of this table
+    /// (card NOM step N4e1; uncounted lookups, safe in the parallel produce).  Null = off.
+    const net::SatTable* sats{nullptr};
     long long                                loop_ep{0};   ///< this epoch's n_loop_epochs (the expiry basis)
     /// The exact conditional time update (card CTU, network.carry_coupling_exact_update):
     /// this epoch's inputs, built serially before the produce loop.  Null = off (the card

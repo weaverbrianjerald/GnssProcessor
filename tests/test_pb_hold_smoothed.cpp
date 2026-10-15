@@ -553,18 +553,18 @@ TEST(PbHoldSmoothedTest, TheHoldWritesTheClonesTransferAndRevertsContinuously) {
     auto e1 = smhEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
     EXPECT_DOUBLE_EQ(pbOf(e1, "G32"), 1.0);
-    ASSERT_EQ(ctx->carry.smh_pending.count("G32|L1W"), 1u);
+    ASSERT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_pending) ? 1u : 0u), 1u);
     // The stash of epoch 1 gives G32 a clone (the harvest's birth, by hand here).
-    PbHoldClone c = ctx->carry.smh_pending.at("G32|L1W");
+    PbHoldClone c = (*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_pending));
     c.alive = true;
     c.value = 5.0;
     c.c_ref = 5.0;
-    ctx->carry.smh_clone["G32|L1W"] = c;
-    ctx->carry.smh_pending.clear();
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = c;
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     // Epoch 2: the clone revised c(t0) by +3 cm with no step of the clock: the passed motion
     // is -3 cm, and the held bias follows the revision.
-    ctx->carry.smh_clone["G32|L1W"].phi        = -0.03;
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 2;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).phi        = -0.03;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 2;
     auto e2 = smhEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 1.03, 1e-12);
@@ -572,7 +572,7 @@ TEST(PbHoldSmoothedTest, TheHoldWritesTheClonesTransferAndRevertsContinuously) {
     // G12 and G05 had no clone: they carry the phase-clock transfer from the start.
     EXPECT_NEAR(pbOf(e2, "G12"), 2.0, 1e-12);
     // Epoch 3: the clone dies; the key reverts with its last transfer.
-    ctx->carry.smh_clone["G32|L1W"].alive = false;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).alive = false;
     auto e3 = smhEpoch(160.0, {{"G32", 10.0, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
     step(e3, 3);
     EXPECT_NEAR(pbOf(e3, "G32"), 1.03, 1e-12) << "continuous at the switch";
@@ -633,18 +633,18 @@ TEST(PbHoldSmoothedTest, TheBridgeKeepsTheMedianAndTheRebornCloneContinuesIt) {
     };
     auto e1 = smhEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
-    EXPECT_EQ(ctx->carry.smh_pending.at("G32|L1W").queued_ep, 1);
-    ctx->carry.smh_clone["G32|L1W"] = liveClone("G32", 5.0, 1);
-    ctx->carry.smh_pending.clear();
+    EXPECT_EQ((*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_pending)).queued_ep, 1);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = liveClone("G32", 5.0, 1);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     // Epoch 2: the clone's revision +3 cm (passed motion -3 cm).
-    ctx->carry.smh_clone["G32|L1W"].phi        = -0.03;
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 2;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).phi        = -0.03;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 2;
     auto e2 = smhEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 1.03, 1e-12);
     // Epoch 3: the anchor withdraws G32's clock: the key bridges, continuous, not reverted.
-    ctx->carry.smh_clone["G32|L1W"].alive = false;
-    ctx->carry.smh_clone["G32|L1W"].death = PbHoldCloneDeath::Withdrawn;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).alive = false;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).death = PbHoldCloneDeath::Withdrawn;
     auto e3 = smhEpoch(160.0, {{"G32", 10.0, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
     step(e3, 3);
     EXPECT_NEAR(pbOf(e3, "G32"), 1.03, 1e-12) << "continuous at the switch to the bridge";
@@ -657,9 +657,9 @@ TEST(PbHoldSmoothedTest, TheBridgeKeepsTheMedianAndTheRebornCloneContinuesIt) {
     EXPECT_NEAR(pbOf(e4, "G32"), 1.06, 1e-12);
     // Epoch 5: the clone is born again (the anchor holds) and revises its c(t_b) by +2 cm:
     // its transfer continues the bridge's.
-    ctx->carry.smh_clone["G32|L1W"] = liveClone("G32", 7.0, 4);
-    ctx->carry.smh_clone["G32|L1W"].phi        = -0.02;
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 5;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = liveClone("G32", 7.0, 4);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).phi        = -0.02;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 5;
     auto e5 = smhEpoch(220.0, {{"G32", 10.05, 2.1}, {"G12", 20.02, 3.1}, {"G05", 30.02, 4.1}});
     step(e5, 5);
     EXPECT_NEAR(pbOf(e5, "G32"), 1.08, 1e-12) << "the reborn clone's transfer is on top of the bridge's";
@@ -687,16 +687,16 @@ TEST(PbHoldSmoothedTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
     };
     auto e1 = smhEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
-    ctx->carry.smh_clone["G32|L1W"] = liveClone("G32", 5.0, 1);
-    ctx->carry.smh_pending.clear();
-    ctx->carry.smh_clone["G32|L1W"].phi        = -0.03;
-    ctx->carry.smh_clone["G32|L1W"].updated_ep = 2;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = liveClone("G32", 5.0, 1);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).phi        = -0.03;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = 2;
     auto e2 = smhEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
     EXPECT_NEAR(pbOf(e2, "G32"), 1.03, 1e-12);
     // Epoch 3: the anchor withdraws G32's clock, which moves 5 cm this epoch.
-    ctx->carry.smh_clone["G32|L1W"].alive = false;
-    ctx->carry.smh_clone["G32|L1W"].death = PbHoldCloneDeath::Withdrawn;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).alive = false;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).death = PbHoldCloneDeath::Withdrawn;
     auto e3 = smhEpoch(160.0, {{"G32", 10.05, 1.7}, {"G12", 20.0, 2.7}, {"G05", 30.0, 3.7}});
     step(e3, 3);
     EXPECT_NEAR(pbOf(e3, "G32"), 1.08, 1e-12) << "the bridge takes this epoch's clock step";
@@ -728,10 +728,10 @@ TEST(PbHoldSmoothedTest, AZeroPassedMotionWritesThePhaseClockTransfer) {
     };
     auto e1 = smhEpoch(100.0, {{"G32", 10.0, 1.0}, {"G12", 20.0, 2.0}, {"G05", 30.0, 3.0}});
     step(e1, 1);
-    ctx->carry.smh_clone["G32|L1W"] = liveClone("G32", 5.0, 1);
-    ctx->carry.smh_pending.clear();
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone) = liveClone("G32", 5.0, 1);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
     for (int ep = 2; ep <= 4; ++ep) {
-        ctx->carry.smh_clone["G32|L1W"].updated_ep = ep;
+        net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_clone).updated_ep = ep;
         const double k = static_cast<double>(ep - 1);
         auto e = smhEpoch(100.0 + 30.0 * k, {{"G32", 10.0 + 0.05 * k, 1.0},
                                               {"G12", 20.0 + 0.02 * k, 2.0},
@@ -750,7 +750,7 @@ TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
     ASSERT_TRUE(ctx->knobs.cta_on) << "the loader requires the anchor";
     ctx->counters.n_loop_epochs = 7;
     for (const char* s : {"G32", "G12", "G05", "G07"})
-        ctx->carry.smh_clone[std::string(s) + "|L1W"] = liveClone(s, 1.0, 6);
+        net::putSig(ctx->entities, std::string(s) + "|L1W", &net::SatSignalState::smh_clone) = liveClone(s, 1.0, 6);
     auto& an = ctx->carry.clk_anchor;
     an.sat["G32"].anchored = true;  an.sat["G32"].folded_anchored = true;
     an.tripped.insert("G32");                                  // withdrawn this epoch
@@ -760,14 +760,14 @@ TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
     NetworkEpoch& e = fx->newEpoch(GnssTime{});   // an empty workspace and datum, the run's estimator
     e.solve.x_s = Eigen::VectorXd::Zero(1);
     networkPbHoldCloneUpdate(fx->run(), e);
-    const auto& cl = ctx->carry.smh_clone;
+    const auto cl = net::sigMap(ctx->entities.sat_signals, &net::SatSignalState::smh_clone, '|');
     EXPECT_EQ(cl.at("G32|L1W").death, PbHoldCloneDeath::Withdrawn);
     EXPECT_EQ(cl.at("G12|L1W").death, PbHoldCloneDeath::Disengaged);
     // The engaged and the pinned clones go on to the exact route, which this empty epoch
     // cannot give them: a structural death, no re-birth.
     EXPECT_EQ(cl.at("G05|L1W").death, PbHoldCloneDeath::Unfactored);
     EXPECT_EQ(cl.at("G07|L1W").death, PbHoldCloneDeath::Unfactored);
-    const auto& pend = ctx->carry.smh_pending;
+    const auto pend = net::sigMap(ctx->entities.sat_signals, &net::SatSignalState::smh_pending, '|');
     ASSERT_EQ(pend.size(), 2u);
     EXPECT_TRUE(pend.at("G32|L1W").rebirth);
     EXPECT_EQ(pend.at("G32|L1W").queued_ep, 7);
@@ -780,17 +780,17 @@ TEST(PbHoldSmoothedTest, ABirthWaitsForTheAnchorAndForAStashedClock) {
     NetworkRunContext* ctx = &fx->ctx();
     auto& carry = ctx->carry;
     for (const char* s : {"G32", "G12", "G05"}) {
-        NetworkCarryState::PbHoldKey k;
+        net::PbHoldKey k;
         k.generation = 1;
-        carry.pb_hold[std::string(s) + "|L1W"] = k;
+        net::putSig(ctx->entities, std::string(s) + "|L1W", &net::SatSignalState::pb_hold) = k;
     }
-    carry.pb_hold["G05|L1W"].generation = 2;   // G05's pending birth is of an ended generation
+    net::putSig(ctx->entities, "G05|L1W", &net::SatSignalState::pb_hold).generation = 2;   // G05's pending birth is of an ended generation
     for (const char* s : {"G32", "G12", "G05"}) {
         PbHoldClone pc;
         pc.sat = s; pc.signal = "L1W"; pc.generation = 1; pc.queued_ep = 1;
-        carry.smh_pending[std::string(s) + "|L1W"] = pc;
+        net::putSig(ctx->entities, std::string(s) + "|L1W", &net::SatSignalState::smh_pending) = pc;
     }
-    carry.smh_pending["G12|L1W"].rebirth = true;
+    net::putSig(ctx->entities, "G12|L1W", &net::SatSignalState::smh_pending).rebirth = true;
     // The stash holds G32's clock only; G12's clock is anchored but not stashed.
     CarryPrior cp{};
     cp.kind = SharedParamKind::Clock; cp.sat = "G32"; cp.value = 3.0; cp.var = 0.01;
@@ -811,12 +811,12 @@ TEST(PbHoldSmoothedTest, ABirthWaitsForTheAnchorAndForAStashedClock) {
     EXPECT_EQ(ctx->counters.smh_pending_dropped, 1) << "G05's generation ended";
     EXPECT_EQ(ctx->counters.smh_defer_loose, 1);
     EXPECT_EQ(ctx->counters.smh_defer_nostash, 1);
-    EXPECT_EQ(carry.smh_clone.count("G32|L1W"), 0u);
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_clone) ? 1u : 0u), 0u);
     harvest(2);
     carry.clk_anchor.sat["G32"].anchored = true;                // the anchor engages
     harvest(3);
-    ASSERT_EQ(carry.smh_clone.count("G32|L1W"), 1u);
-    const PbHoldClone& c = carry.smh_clone.at("G32|L1W");
+    ASSERT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_clone) ? 1u : 0u), 1u);
+    const PbHoldClone& c = (*net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_clone));
     EXPECT_TRUE(c.alive);
     EXPECT_DOUBLE_EQ(c.value, 3.0);
     EXPECT_DOUBLE_EQ(c.c_ref, 3.0);
@@ -827,20 +827,20 @@ TEST(PbHoldSmoothedTest, ABirthWaitsForTheAnchorAndForAStashedClock) {
     EXPECT_DOUBLE_EQ(ctx->counters.smh_defer_ep[0], 2.0);
     EXPECT_EQ(ctx->counters.smh_defer_loose, 2);
     EXPECT_EQ(ctx->counters.smh_rebirths, 0);
-    EXPECT_EQ(carry.smh_pending.count("G12|L1W"), 1u) << "still waiting for a stashed clock";
-    EXPECT_EQ(carry.smh_pending.count("G32|L1W"), 0u);
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G12|L1W", &net::SatSignalState::smh_pending) ? 1u : 0u), 1u) << "still waiting for a stashed clock";
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_pending) ? 1u : 0u), 0u);
     // A withdrawal in the stash's own epoch defers the birth even with the anchor set.
-    carry.smh_pending.clear();
-    carry.smh_clone.clear();
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
+    net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_clone);
     PbHoldClone pc;
     pc.sat = "G32"; pc.signal = "L1W"; pc.generation = 1; pc.queued_ep = 3; pc.rebirth = true;
-    carry.smh_pending["G32|L1W"] = pc;
+    net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_pending) = pc;
     carry.clk_anchor.tripped.insert("G32");
     harvest(4);
-    EXPECT_EQ(carry.smh_clone.count("G32|L1W"), 0u);
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_clone) ? 1u : 0u), 0u);
     carry.clk_anchor.tripped.clear();
     harvest(5);
-    EXPECT_EQ(carry.smh_clone.count("G32|L1W"), 1u);
+    EXPECT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_clone) ? 1u : 0u), 1u);
     EXPECT_EQ(ctx->counters.smh_rebirths, 1);
 }
 
