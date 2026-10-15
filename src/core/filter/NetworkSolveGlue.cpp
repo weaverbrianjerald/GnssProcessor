@@ -256,8 +256,7 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
 
 /// The solve of one epoch: the stages in order, the exits through kSolveSkips (card NOM3 step SG; Doxygen at the declaration).
 NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws,
-                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build,
-                                        NetworkSlipFunnel& funnel) {
+                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build) {
     networkCensusSigma0(run, ep, est_index_of);
     networkCodeBiasDatum(run, ep, ws);
     SolveDatum datum;
@@ -305,7 +304,7 @@ NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep,
     NetworkPostFitHandoff handoff;
     networkClockAnchorGuardEpoch(run, ep, datum, handoff, x_s, ws);
     WithinEpochOutcome we;
-    if (networkWithinEpochAdapt(run, ep, datum, x_s, ws, est_index_of, dd_build, funnel, handoff, we)
+    if (networkWithinEpochAdapt(run, ep, datum, x_s, ws, est_index_of, dd_build, handoff, we)
             == EpochAction::SkipEpoch)
         return networkSolveSkip(run, ep, SolveSkip::WeRestoreFailed,
                                 SolveSkipFacts::of(datum, we, est_index_of));

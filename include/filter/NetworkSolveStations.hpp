@@ -36,7 +36,7 @@ struct EpochAssembly;           // app/NetworkEpoch.hpp
  * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
  *           ep.clock.carry_warm (carry_warm).
  * @param pass_a [in/out] present: a dropped station is cleared. Bindings: pass_a.modeled
- *               (modeled), pass_a.present (present).
+ *               (modeled, read only since card NOM3 step EP1c), pass_a.present (present).
  * @param assembly [in/out] est_index_of, total_pins. Bindings: assembly.asm_res (asm_res),
  *                 assembly.est_index_of (est_index_of), assembly.total_pins (total_pins).
  * @return false when the legacy pivot's block was refused (the epoch is then skipped by

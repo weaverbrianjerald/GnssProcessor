@@ -50,7 +50,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     NetworkSetupResult& setup = run.setup;
     const SyncedEpoch& se = ep.se;
-    NetworkEstimator& est = run.engines.est;
+    const NetworkEstimator& est = run.engines.est;
     const Eigen::VectorXd& x_s = ep.solve.x_s;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     NetworkCarryVce& carry_vce_est = run.engines.carry_vce;

@@ -49,7 +49,7 @@ void networkShHealth(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     NetworkSetupResult& setup = run.setup;
     const SyncedEpoch& se = ep.se;
-    NetworkEstimator& est = run.engines.est;
+    const NetworkEstimator& est = run.engines.est;
     const Eigen::VectorXd& x_s = ep.solve.x_s;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;

@@ -21,12 +21,10 @@
  *   se            const SyncedEpoch&   construction              the admission (before construction)
  *   clock         EpochClock           the epoch top             the driver, once
  *   funnel        NetworkSlipFunnel    the funnel's opening      networkSlipFunnelOpen, networkPassASlipScan_ (raw subset), networkSlipFunnelUnionRaw,
- *                                                                networkSignalIntegrity, networkMeasurementAdmission (filter/NetworkSlipFunnel.hpp);
- *                                                                declared writable, read only (EP1c makes them const): networkBuildCarryDdPriors,
- *                                                                networkSolveGlue (its replay's DD rebuild)
+ *                                                                networkSignalIntegrity, networkMeasurementAdmission (filter/NetworkSlipFunnel.hpp)
  *   pass_a        EpochPassA           PASS A's sizing           networkPassAHead_, networkPassASlipScan_, networkAssemblyPrefilter_,
  *                                                                networkSignalIntegrity, networkMeasurementAdmission, networkPhaseAnchorEpoch
- *                                                                (shared_phase_keys), networkPassB_ (modeled, present)
+ *                                                                (shared_phase_keys), networkPassB_ (present; modeled is read only)
  *   columns       EpochColumns         networkAssemblyRegisterColumns_   that seam only
  *   assembly      EpochAssembly        networkPassB_             networkPassB_; est_index_of also networkSolveGlue (each T2 replay rebuilds it)
  *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call), networkSolveGlue

@@ -11,8 +11,8 @@
  * function and the solve's replay now call it directly over the run and the epoch.  The function owns no
  * state; the carry switches are read from NetworkKnobs (card NOM step TD1a).  One input
  * carries state across epochs or passes and needs care: carry_slipped_ambs, the
- * driver's per-epoch slip funnel, passed by reference.  Every other argument keeps the
- * name of the former runNetwork() capture.
+ * driver's per-epoch slip funnel, read through the epoch (card NOM3 step EP1c).  Every
+ * other argument keeps the name of the former runNetwork() capture.
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
@@ -38,7 +38,6 @@ struct NetworkRunContext;
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and install them
@@ -54,12 +53,11 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *            (config_), run.log (log), run.setup.stations (stations).
  * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.assembly.asm_res
  *           (asm_res), ep.assembly.est_index_of (est_index_of), ep.pass_a.shared_phase_keys
- *           (shared_phase_keys), ep.funnel.carry_slipped_raw (carry_slipped_raw),
- *           ep.ws.we_culprits (we_culprits).
+ *           (shared_phase_keys), ep.funnel.carry_slipped_ambs (carry_slipped_ambs),
+ *           ep.funnel.carry_slipped_raw (carry_slipped_raw), ep.ws.we_culprits (we_culprits).
+ *           The funnel is read only (card NOM3 step EP1c removed its writable parameter).
  * @param dd_build [in/out] The DD build's reverse map (ep.dd_build), written:
  *     dd_build.carry_arc_amb_key (carry_arc_amb_key).
- * @param funnel [in/out] The slip funnel (ep.funnel), written: funnel.carry_slipped_ambs
- *     (carry_slipped_ambs).
  *
  * The former parameters, by binding:
  *   - @p ctx = run.ctx.
@@ -72,7 +70,7 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p est_index_of = ep.assembly.est_index_of.
  *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
  *   - @p carry_arc_amb_key = dd_build.carry_arc_amb_key.
- *   - @p carry_slipped_ambs = funnel.carry_slipped_ambs.
+ *   - @p carry_slipped_ambs = ep.funnel.carry_slipped_ambs.
  *   - @p carry_slipped_raw = ep.funnel.carry_slipped_raw: The raw-detector subset of this
  *     epoch's slip funnel (card 4, M1, D5 v4). Every raw-observable inserter writes both sets
  *     (NetworkSlipQc via the PASS-A binding, networkSignalIntegrity,
@@ -85,8 +83,7 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *     something only on a T2 re-solve's rebuild; each rebuild that reads a culprit is counted,
  *     with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
  */
-void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdBuild& dd_build,
-                               NetworkSlipFunnel& funnel);
+void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdBuild& dd_build);
 
 /**
  * @brief The DD carry's z-store predict (q_z times the TOW step on the carried DD covariance),

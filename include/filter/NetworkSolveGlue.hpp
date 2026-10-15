@@ -51,7 +51,7 @@
  * One access path per object: the solve writes ws, est_index_of and dd_build, and inside the
  * solve a stage reaches them only through those parameters, never through ep.ws,
  * ep.assembly.est_index_of or ep.dd_build.  The one place the two paths meet is EP1's DD build:
- * the within-epoch replay calls networkBuildCarryDdPriors(run, ep, dd_build, funnel), which
+ * the within-epoch replay calls networkBuildCarryDdPriors(run, ep, dd_build), which
  * reads the culprit sets as ep.ws.we_culprits while stage 13 adapts the sets through its ws
  * parameter.  They are one object because the spine passes ep.ws and every stage receives the
  * solve's own ws by reference (card WCF; never a copy).
@@ -93,7 +93,6 @@ struct NetworkRunTraces;
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /// What the post-fit tiers hand the epoch stash: seeded by the solve (the within-epoch tier's
 /// refloats), extended by networkPostFitRaim and networkClockQc, read by networkStashStatus.
@@ -290,8 +289,6 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
  *     within-epoch culprit sets the T2 block adapts and clears (card WCF).
  * @param est_index_of [in/out] ep.assembly.est_index_of, rebuilt by each replay.
  * @param dd_build [in/out] ep.dd_build, rewritten by each replay's DD rebuild.
- * @param funnel [in/out] ep.funnel, which the DD rebuild declares writable (it only reads it;
- *     step EP1c makes both const and removes this parameter).
  *
  * The former parameters, by binding:
  *   - @p ctx = run.ctx.
@@ -323,7 +320,6 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
  * @return The solve's result; action is SkipEpoch at the five exits (bookkeeping done here).
  */
 NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws,
-                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build,
-                                        NetworkSlipFunnel& funnel);
+                                        std::vector<int>& est_index_of, EpochDdBuild& dd_build);
 
 } // namespace GnssProcessor

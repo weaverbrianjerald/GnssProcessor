@@ -462,10 +462,10 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // read from the epoch workspace's ws.we_culprits.  The solve glue's T2 block
     // adapts that member while it runs and clears it when it ends (card WCF), so the
     // primary build here reads it empty.
-    { CarryEigenScope es(carry_par, n_threads); networkBuildCarryDdPriors(run, ep, ep.dd_build, ep.funnel); }  // parallel_carry: thread W·Pᶻ·Wᵀ
+    { CarryEigenScope es(carry_par, n_threads); networkBuildCarryDdPriors(run, ep, ep.dd_build); }  // parallel_carry: thread W·Pᶻ·Wᵀ
     networkSubEnd(run, SB_DDBUILD);      // close networkBuildCarryDdPriors, the card-4 DD-cov projection (D0b)
     networkSubBegin(run, SB_SOLVEGLUE);  // pre-solve prep + clock predict + solve + within-epoch re-solve (D0b)
-    ep.solve = networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.funnel);
+    ep.solve = networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build);
     if (ep.solve.action == EpochAction::SkipEpoch) return LoopSignal::Next;
     networkSubEnd(run, SB_SOLVEGLUE);   // close solve glue; net excludes the internal solve/reduce (D0b)
     networkSubBegin(run, SB_INSTALL);   // carry_driver.installPosterior, DD posterior mean/cov readback (D0b)

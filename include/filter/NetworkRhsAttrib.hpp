@@ -753,9 +753,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
- *            run.engines.est (est). Read: run.config (config_), run.log (log), run.traces
- *            (traces), run.setup.stations (stations).
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx). Read:
+ *            run.config (config_), run.log (log), run.traces (traces), run.setup.stations
+ *            (stations), run.engines.est (est).
  * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
  *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
  *           ep.assembly.est_index_of (est_index_of), &ep.solve.x_s (x_s).
