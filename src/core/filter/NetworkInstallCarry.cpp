@@ -373,8 +373,8 @@ void networkInstallCarry(
             // evidence" (Card 4 D5 v4, network.carry_invariant_innov_retap_only).
             //
             // The funnel entry above is unconditional: every side consumer (the Iono-2 v3k
-            // erase classifier, anchor hygiene, the PB emit filter, Card G's bridge
-            // classifier) reads the full union.  This set only
+            // erase classifier, anchor hygiene, Card G's bridge classifier) reads the full
+            // union.  This set only
             // decides whether the arc is also excluded from next epoch's A_old membership,
             // i.e. whether the DD the gate just re-tapped in-epoch is also discarded and
             // refloated from nothing.

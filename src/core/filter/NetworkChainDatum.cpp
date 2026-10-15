@@ -164,7 +164,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // fractional bias is its own estimable RPB state δ_{r,σ} and is not
     // part of the pin).  With full visibility (regional case) this is
     // the Odijk Eq-34 star (CC-R).  The shared set is the ungated union
-    // (as in the ensemble datum); the chain pins fix the enlarged
+    // (as in the retired ensemble datum); the chain pins fix the enlarged
     // (receiver+satellite) gauge.  Per (const,σ) component with n_c
     // stations and m_c sats: (n_c+m_c−1) tree-edge ambiguity pins + 1
     // RPB pin = n_c+m_c, the gauge dimension.  Every RPB-carrying

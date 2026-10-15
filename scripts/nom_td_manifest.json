@@ -268,7 +268,13 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 497,
+     "from": "\"coupling rows), the clock-constraint rows, the SH prior, the phase hold, \"",
+     "to": "\"coupling rows), the clock-constraint rows, the SH prior, \""
+    }
+   ],
    "drops": [],
    "inserts": [],
    "label": "the observability rank gate and the datum-direction ratio",
@@ -1997,7 +2003,28 @@
      "new": "return 0;"
     }
    ],
-   "subs": [],
+   "subs": [
+    {
+     "line": 3653,
+     "from": "\"distinct funnel arc(s) re-tapped ({} raw-step-coincident) — the row count \"",
+     "to": "\"distinct funnel arc(s) re-tapped ({} raw-step-coincident) — the arc count, \""
+    },
+    {
+     "line": 3654,
+     "from": "\"double-counts a pair chord flagged on BOTH bands (WL-3 joint block), the \"",
+     "to": "\"one per (station, ambiguity) and epoch, is what actually re-taps; both \""
+    },
+    {
+     "line": 3655,
+     "from": "\"arc count is what actually re-taps; both use the exact-epoch evidence the \"",
+     "to": "\"counts use the exact-epoch raw-step evidence the v3 corroboration gate \""
+    },
+    {
+     "line": 3656,
+     "from": "\"network_d5_flags.csv raw_stepped column reports.  [G3 decision \"",
+     "to": "\"reads.  [G3 decision \""
+    }
+   ],
    "drops": [],
    "inserts": [],
    "label": "slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate",

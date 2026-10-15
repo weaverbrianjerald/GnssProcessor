@@ -145,9 +145,8 @@ constexpr const char* kStsRxClock =
 constexpr const char* kD4BridgeRoot =
     "a bridged satellite is a root of the chain with a known zero shift (by construction)";
 constexpr const char* kPbHoldEmit =
-    "held_m is a held emitted value in the emit frame: moving it needs its own design (card "
-    "CLV accumulates an emit-side transfer instead), so it is exempt from "
-    "network.carry_rebase_complete too";
+    "held_m is a held emitted value in the emit frame: moving it needs its own design, so "
+    "it is exempt from network.carry_rebase_complete too";
 
 /// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete,
 /// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its

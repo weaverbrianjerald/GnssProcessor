@@ -182,7 +182,7 @@ namespace GnssProcessor {
 enum class PriorResidualLabel : int {
     Clean     = 0,  ///< Nothing fired.  A high |t| here is a miss: a stale stiff prior with no wired response, the standing invariant #1 gap the census looks for.
     Responded = 1,  ///< An independent mechanism already fired (pending reseed, slip refloat, D5, RAIM exclusion, rx-CB innovation withhold).  The positive control: a statistic with power must show a shifted |t| distribution here.
-    Frame     = 2   ///< A datum handover, eq34 re-reference, inflated-q reinit or phase hold.  A frame step, not noise, and an invariant #7 re-coupling edge whose |t| measures how much the edge moves.
+    Frame     = 2   ///< A datum handover, eq34 or anchored-election re-reference, inflated-q reinit or Q3 anchor refloat.  A frame step, not noise, and an invariant #7 re-coupling edge whose |t| measures how much the edge moves.
 };
 inline constexpr int kPriorResidualLabels = 3;
 
@@ -474,9 +474,10 @@ public:
         /// applies unchanged: above-threshold rows have to feed sigma0, because
         /// censoring biases sigma0 low and, under misspecification, the flagged
         /// rows are the calibration signal.  The only admissible false is a row
-        /// whose null dispersion is undefined (a `phase_hold` pinned posterior,
-        /// or a fold variance the site could not reconstruct): it is excluded
-        /// because the null does not exist, never because the value is large.
+        /// whose null dispersion is undefined (a `cta_refloat` clock the anchor
+        /// guard un-folded, or a fold variance the site could not reconstruct):
+        /// it is excluded because the null does not exist, never because the
+        /// value is large.
         bool   calibrate = true;
         /// The fold variance is a nominal recompute that the mechanism did not
         /// use.  The row is reported raw formal (t == s, flagged) instead of
@@ -484,7 +485,7 @@ public:
         /// @c calibrate = false is implied.
         bool   var_nominal = false;
         PriorResidualCorrob corrob = PriorResidualCorrob::NoEvidence;  ///< caller-supplied raw-observable verdict (INC-3); when corroboration is armed and @ref setCorroborator installed a resolver, the resolver's consensus replaces it.
-        const char* mech = "";       ///< mechanism tag for the trace ("reseed", "eq34_reref", "inflate_q", "phase_hold", "handover", "gap", ...).
+        const char* mech = "";       ///< mechanism tag for the trace ("reseed", "eq34_reref", "inflate_q", "cta_refloat", "handover", "gap", ...).
     };
 
     /// A row that exceeded @ref reportSigma, buffered for the emission seam.
@@ -536,7 +537,7 @@ public:
         double    r_prior = 0.0;   ///< Σ r over those same rows (the partial redundancy the census already forms).
         long long n_prior = 0;     ///< rows behind the two sums above.
         long long n_prior_unfolded = 0;///< census rows skipped: the prior did not enter this epoch's solve, so it is not a constraint and moves neither sum.
-        long long n_prior_nominal  = 0;///< census rows skipped: the fold variance is a nominal recompute the mechanism never used, so w = 1/fold_var does not describe the fold (the `phase_hold` population).
+        long long n_prior_nominal  = 0;///< census rows skipped: the fold variance is a nominal recompute the mechanism never used, so w = 1/fold_var does not describe the fold (the `cta_refloat` and rx-CB `gap` populations).
         long long n_prior_rneg     = 0;///< census rows skipped: post_var > fold_var, a (prior, posterior) pair that does not describe one fold.  The numerator term is real and the redundancy is not; admitting one without the other is the bias the rider exists to remove.
         void reset() { *this = GlobalSums{}; }
     };
@@ -922,7 +923,7 @@ public:
         //  * unfolded:    not a constraint this epoch;
         //  * var_nominal: the fold variance is a recompute the mechanism never
         //                 used, so w = 1/fold_var does not describe the fold and
-        //                 both sums would be wrong (this is also the `phase_hold`
+        //                 both sums would be wrong (this is also the `cta_refloat`
         //                 population, whose null dispersion is undefined);
         //  * r_negative:  post_var > fold_var is a (prior, posterior) pair that
         //                 does not describe one fold.  Its w·ê² is a real

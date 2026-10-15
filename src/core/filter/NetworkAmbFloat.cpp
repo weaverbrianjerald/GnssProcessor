@@ -186,10 +186,10 @@ void networkAmbFloatApplyDrops(
     // free_epoch response with one), an unknown bit or no recorded cause is the slip row.
     constexpr unsigned kReentryBits =
         RelevelEpochState::kCauseGap | RelevelEpochState::kCauseWindup;
-    // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the lane
-    //     observatory, the phase-datum candidacy screen, the anchor-slip handover staging
-    //     and the harvest's own statistics guards all read it, and re-pointing them is a
-    //     separate change.  Only the response the set invokes changes here.
+    // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the
+    //     phase-datum candidacy screen, the anchor-slip handover staging and the harvest's
+    //     own statistics guards all read it, and re-pointing them is a separate change.
+    //     Only the response the set invokes changes here.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(amb_key);
         if (!parts) continue;

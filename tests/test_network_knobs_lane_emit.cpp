@@ -8,11 +8,11 @@
  * the driver and into NetworkKnobs::snapshot, so the driver, the DD-prior build, the
  * install, the emit store and the run end read one bool each.  The lane and dump flags
  * went with the retired MW/WL lane keys (cards WL-1, WL-2, WL-3, UWL-1), the two filter
- * switches with the PB emission-continuity filter.  The
- * conjunctions here are the driver's, copied from ApplicationNetwork.cpp as it stood at
- * main 3c44046; every posture checks each knob against them, and each armed posture also
- * checks that the switches it targets are on, so a posture the loader quietly disarms
- * cannot pass by reading all-false on both sides.
+ * switches with the PB emission-continuity filter.  The conjunctions here are the
+ * driver's, copied from ApplicationNetwork.cpp as it stood at main 3c44046; every posture
+ * checks each knob against them, and each armed posture also checks that the switches it
+ * targets are on, so a posture the loader quietly disarms cannot pass by reading
+ * all-false on both sides.
  */
 
 #include <gtest/gtest.h>
@@ -113,4 +113,18 @@ TEST(NetworkKnobsLaneEmit, CarryInvariantArmsTheEmitReBaseByDefault) {
     ASSERT_TRUE(cfg.networkCarryInvariant());
     const NetworkKnobs k = expectDriverSwitches(cfg);
     EXPECT_TRUE(k.emit_rebase_on);   // on by default under carry_invariant (spec D7)
+}
+
+TEST(NetworkKnobsLaneEmit, InnovationGatePostureArmsTheGate) {
+    // The armed counterpart of the gate switch: without it the mirror compares false with
+    // false on every posture, and a loader that quietly disarmed the gate would pass.
+    GnssConfig cfg;
+    const std::string extra = std::string(kCarryInvariant) +
+        "    \"carry_invariant_innov_gate\": true,\n";
+    ASSERT_TRUE(loadInto("innov_gate", networkConfig(extra), cfg));
+    ASSERT_TRUE(cfg.networkCarryInvariant());
+    ASSERT_TRUE(cfg.networkCarryInvariantInnovGate());
+    const NetworkKnobs k = expectDriverSwitches(cfg);
+    EXPECT_TRUE(k.carry_innov_gate);
+    EXPECT_TRUE(k.emit_rebase_on);
 }

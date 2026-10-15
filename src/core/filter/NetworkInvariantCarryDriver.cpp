@@ -134,7 +134,6 @@ void NetworkInvariantCarryDriver::resetCarryState_() {
     carried_.clear();
     block_meta_.clear();
     last_innov_flags_.clear();
-    last_innov_sigmas_.clear();
     last_innov_terms_.clear();
     innov_flat_.clear();       // corroboration set is cleared with the carry (D5 v3)
 }
@@ -854,7 +853,6 @@ void NetworkInvariantCarryDriver::installPosterior(
     const NetworkEstimator& est, const Eigen::VectorXd& x_s,
     const NetworkEstimator::Datum& datum, int n_threads) {
     last_innov_flags_.clear();
-    last_innov_sigmas_.clear();
     last_innov_terms_.clear();
     last_innov_warmup_.clear();    // index-aligned with last_innov_flags_ (RS-2b)
     last_fold_rebirths_.clear();   // fold-time rebirths (PD-safe INC-2a)
@@ -987,13 +985,12 @@ void NetworkInvariantCarryDriver::installPosterior(
                              v(i) * v(i), var))
                 continue;
             // Inside the post-resume warm-up a trip is only recorded.  The flag is recorded
-            // (so it reaches the CSV and the epoch's n_d5_flags) and counted, ẑ and Pᶻ are
-            // left alone, and the warm-up mark tells the caller to keep the arc out of the
-            // slip funnel.  innov_retaps is not incremented: N flags with 0 re-taps
-            // shows that the window was open. (RS-2b)
+            // (so it reaches the epoch's n_d5_flags) and counted, ẑ and Pᶻ are left alone,
+            // and the warm-up mark tells the caller to keep the arc out of the slip funnel.
+            // innov_retaps is not incremented: N flags with 0 re-taps shows that the window
+            // was open. (RS-2b)
             if (cfg_.innov_diagnostic_only) {
                 last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
-                last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
                 last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
                 last_innov_warmup_.push_back(1);
                 ++counters_.innov_flags;
@@ -1005,7 +1002,6 @@ void NetworkInvariantCarryDriver::installPosterior(
             cb.Pz.col(i).setZero();
             cb.Pz(i, i) = sigma0 * sigma0 * var;
             last_innov_flags_.emplace_back(bm.group, bm.chords[static_cast<std::size_t>(i)]);
-            last_innov_sigmas_.push_back(std::abs(v(i)) / std::sqrt(var));
             last_innov_terms_.push_back({bm.zhat(i), v(i), var, sigma0, cb.z(i)});
             last_innov_warmup_.push_back(0);
             ++counters_.innov_flags;

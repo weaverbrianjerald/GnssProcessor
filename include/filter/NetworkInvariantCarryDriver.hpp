@@ -232,7 +232,7 @@ public:
         bool tree_edge{false};   ///< election spanning-tree edge (gauge pin) vs chord (a carried DD).
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
-        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills. (card 4, C3c).
+        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills (card 4, C3c).
         double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
     };
 
@@ -599,14 +599,13 @@ public:
     /// refreshed every @ref installPosterior (card 4, D5).
     const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
 
-    /// The formally standardized innovation |v_i|/√Cov(v)_ii of each flag in
-    /// @ref lastInnovFlags, index-aligned (compare against k·σ̂₀ for the gate margin).
-    /// Refreshed with the flags every @ref installPosterior (a D5 diagnostic).
-    const std::vector<double>& lastInnovFlagSigmas() const { return last_innov_sigmas_; }
-
     /**
      * @brief The terms behind each flag in @ref lastInnovFlags, index-aligned, so the
-     *        standardized innovation can be decomposed offline (D5 diagnostic, churn card).
+     *        standardized innovation can be decomposed (D5 diagnostic, churn card).
+     *
+     * No production path reads them since the D5 flag dump that wrote them out was
+     * retired with the MW/WL lane layer; the unit suite reads @c var_v to check that
+     * every flag the carried-only gate lets through has an informative prior.
      *
      * The churn decomposition measured per-chord standardized innovations (`std_innov`)
      * that stayed large and nearly flat for hours (median 76σ, 98.9 % of inter-flag gaps
@@ -836,7 +835,6 @@ private:
     std::vector<CarriedBlock> carried_;      ///< the carry as of the previous @ref installPosterior.
     std::vector<BlockMeta>    block_meta_;   ///< layout of the blocks returned by the last @ref buildDdPriors.
     std::vector<std::pair<int, ArcKey>> last_innov_flags_;  ///< (group, chord) flagged at the last install (D5).
-    std::vector<double> last_innov_sigmas_;  ///< |v|/√Cov(v) per flag, aligned with last_innov_flags_ (D5 diagnostic).
     std::vector<InnovTerms> last_innov_terms_;  ///< the (ẑ, v, Cov(v)_ii, σ̂₀, z_post) behind each flag, aligned with last_innov_flags_; see @ref lastInnovFlagTerms (D5 diagnostic).
     std::vector<char> last_innov_warmup_;       ///< 1 where the flag at the same index was suppressed by the post-resume D5 warm-up (counted, not re-tapped); see @ref lastInnovWarmupSuppressed (RS-2b).
     std::vector<FoldRebirth> last_fold_rebirths_;  ///< blocks rebirthed at the last install; see @ref lastFoldRebirths (PD-safe INC-2a).

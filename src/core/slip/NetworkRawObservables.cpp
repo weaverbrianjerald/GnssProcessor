@@ -329,8 +329,8 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
                 // When the pair changed, the two MW values sit on different
                 // wide-lane wavelengths: d_mw is still a level change, but it has
                 // no meaning in cycles of the current pair's lane.  The step is
-                // flagged, not suppressed: the slip cards use it and the lane
-                // observatory rejects it.
+                // flagged, not suppressed: the slip cards use it, and a consumer that
+                // converts d_mw into cycles of one lane refuses it (RawVerdict::pair_changed).
                 v.pair_changed = (pit->second.obs.sig1 != r.sig1)
                               || (pit->second.obs.sig2 != r.sig2);
                 v.d_mw = r.mw_m - pit->second.obs.mw_m;

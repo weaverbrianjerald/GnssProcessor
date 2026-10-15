@@ -1578,10 +1578,10 @@ namespace GnssProcessor {
         /// @c arc_erase: the diagnostic sub-knob (§9 study 1): "erase" (the default
         /// and the production T4 path) | "free_epoch" (act as a detector refloat
         /// instead: keep the @c LocalCarry entry, latch the free-epoch set, no iono
-        /// co-erase) | "erase_keep_iono" | "erase_no_reseed" (the production erase
-        /// minus the one named action) | "erase_no_funnel" (now acts as "erase": the
-        /// C3c queue it withheld belonged to the retired RAIM carry-invariant refloat
-        /// actuator; see filter/NetworkInject.hpp).
+        /// co-erase) | "erase_no_reseed" (the production erase minus the reseed mark) |
+        /// "erase_keep_iono" and "erase_no_funnel" (both now act as "erase": the
+        /// diagonal iono carry the first kept and the C3c queue the second withheld
+        /// belonged to retired mechanisms; see filter/NetworkInject.hpp).
         /// Harness only: it changes what the injected event does, never what a real
         /// attribution does.
         std::string mode;

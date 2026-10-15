@@ -14,7 +14,8 @@
  *   networkCouplingExactPrepare   card CTU: the exact coupling update's inputs, built from
  *                                 the stash the D2 fold reads and the fold's own per-key
  *                                 decision.
- * File order: SH-VTEC, pin bridge, readmitNoteSeed, D2, coupling preparation, clock model.  The stash the D2 fold reads is written by networkStashCarry
+ * File order: SH-VTEC, pin bridge, readmitNoteSeed, D2, coupling preparation, clock
+ * model.  The stash the D2 fold reads is written by networkStashCarry
  * (NetworkBorderStash.cpp).
  *
  * networkInjectShVtecPrior, networkInjectD2CarryPrior and networkInjectClockOscPrior open
@@ -273,9 +274,9 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     const bool   scoped_handover = ctx.knobs.scoped_handover;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
-    // The per-key rules (the phase hold, the eq34 and anchored-election re-reference sets,
-    // the clock oscillator, the registry's process noise, the reinit variance, the B4
-    // floors and the VCE apply factor) are in the decision made before PASS B
+    // The per-key rules (the eq34 and anchored-election re-reference sets, the clock
+    // oscillator, the registry's process noise, the reinit variance, the B4 floors and the
+    // VCE apply factor) are in the decision made before PASS B
     // (filter/NetworkCarryDisposition, card PRM phase 1b), whose carryFoldVarEff is the one
     // chain both branches below fold through, so the diagonal and the C1 dense fold cannot
     // drift apart: the dense branch's diagonal is var_eff, and the marginal prior on any one
@@ -358,8 +359,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
     // Card PRM phase 1b: both branches read each entry's fold decision, made once before
     // PASS B by networkCarryDecide (filter/NetworkCarryDisposition) and read by the coupling
-    // rows too: the clauses in the fold's order (the SH prior and the phase hold fold their
-    // keys elsewhere; a frame re-reference, the clock oscillator and a park do not fold; a
+    // rows too: the clauses in the fold's order (the SH prior folds its keys elsewhere; a
+    // frame re-reference, the clock oscillator and a park do not fold; a
     // monitor-flagged clock folds at the reinit variance; a seed at q over the gap since its
     // park; a clock under the Q3 anchor at the anchor's increment), the B4 floors, the VCE
     // factor and the switch-on seam's level noise (dense branch).  The fold adds the clause

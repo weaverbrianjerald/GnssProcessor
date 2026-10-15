@@ -7744,8 +7744,8 @@ namespace GnssProcessor {
                           "— the refloat is what COMPLETES a real slip's reset (measured 0.48 cyc, "
                           "GATE 10b), so invariant #1 is narrowed, never removed.  The funnel "
                           "INSERT is unchanged: the Iono-2 v3k erase classifier and every other "
-                          "consumer still see the entry.  Watch the "
-                          "run-end suppressed-kill counter: 0 means nothing reached it.");
+                          "consumer still see the entry.  Watch the run-end suppressed-kill "
+                          "counter: 0 means nothing reached it.");
                 if (network_carry_invariant_innov_corroborate_)
                     log->warn("Network (Card 4 D5 v4): .carry_invariant_innov_corroborate is ALSO "
                               "armed.  v3 suppresses the measured-and-flat flags one level "

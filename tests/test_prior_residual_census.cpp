@@ -720,7 +720,7 @@ TEST(PriorResidualCensusTest, UnfoldedAndUnusableRowsMoveNeitherGlobalSum) {
     // (a) an unfolded Responded refloat, the population whose folded-form misuse
     //     inflates |t| by ~3e6 in case 10.  Here it enters neither sum.
     c.addRow(row(1.0, 1e-4, 1.0, /*folded=*/false, PriorResidualLabel::Responded));
-    // (b) a nominal fold variance (the phase_hold population).
+    // (b) a nominal fold variance (the cta_refloat population).
     auto nom = row(1.0, 4e-4, 1e-4);  nom.var_nominal = true;  nom.calibrate = false;
     c.addRow(nom);
     // (c) post_var > fold_var: the coupling-carry pair.

@@ -11,8 +11,8 @@
  * cutoff as the gate it protects (NetworkEstimator::kNullSpaceTol), which the
  * throw-before / pass-after gate assertions here pin down.
  *
- * The INC-8b functions of the same seam (candidate census, ensemble datum,
- * prioritized anchor election with incumbent carry) are not tested in this
+ * The INC-8b functions of the same seam (candidate census, prioritized anchor
+ * election with incumbent carry) are not tested in this
  * file; the fixture below is kept reusable for them.
  */
 

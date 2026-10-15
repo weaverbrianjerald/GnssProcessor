@@ -5,9 +5,9 @@
  *        docs/refound/PRM_parameter_registry_2026-09-29.md sections 4.3, 4.4 and 15).
  *
  * The D2 fold (`networkInjectD2CarryPrior`) decides, for every carried border entry, whether
- * it folds, at which process noise, and under which rule: the phase hold, a frame
- * re-reference, the clock oscillator, the READMIT park and seed, the clock monitor's reinit,
- * the Q3 anchor, the B4 floors, the VCE factor, the switch-on seam's level noise.  The
+ * it folds, at which process noise, and under which rule: a frame re-reference, the clock
+ * oscillator, the READMIT park and seed, the clock monitor's reinit, the Q3 anchor, the B4
+ * floors, the VCE factor, the switch-on seam's level noise.  The
  * coupling rows of card CTU's exact update are built in PASS B, before the fold runs, and
  * need the same decision, so until this card they read a mirror of the fold, clause for
  * clause, beside it.  @ref networkCarryDecide makes the decision once, before PASS B, and
@@ -55,10 +55,10 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
 /**
  * @brief Decide one carried border entry's fold for this epoch, without side effects.
  *
- * The clauses in the fold's order: a VtecSh entry and a phase bias under the phase hold are
- * @c Held (folded by the SH inject and the hold, before the gate); a phase bias whose frame
- * was re-referenced this epoch (eq34 or the anchored election) is @c Reref; a clock under the
- * clock oscillator model is @c OnOscillator; a parked entry is @c Parked unless its column
+ * The clauses in the fold's order: a VtecSh entry is @c Held (folded by the SH inject,
+ * before the gate); a phase bias whose frame was re-referenced this epoch (eq34 or the
+ * anchored election) is @c Reref; a clock under the clock oscillator model is
+ * @c OnOscillator; a parked entry is @c Parked unless its column
  * is back inside the seed horizon (@c Seeded, at q over the gap since the park); a clock the
  * monitor flagged is @c Reinit; otherwise the entry folds at q of its kind over the driver's
  * step, a clock under the armed anchor at the anchor's increment (@c Anchored or @c Loose,

@@ -182,8 +182,8 @@ namespace GnssProcessor {
         MwArcZdMean out;
         // Lagged Welford variance of the mean = M2_lag / (n_lag(n_lag-1)); NaN below
         // two samples.  All reads below use the lagged snapshot (stats as of the end
-        // of the previous epoch): per SPEC_mw_wl_card §3.3, the layer's same-epoch
-        // read must be independent of the current epoch's observations.
+        // of the previous epoch): per SPEC_mw_wl_card §3.3, a same-epoch read (the SD
+        // pre-reduce EWL rows) must be independent of the current epoch's observations.
         auto varOfMean = [](const MwArcStats& a) -> double {
             if (a.count_lag < 2) return std::numeric_limits<double>::quiet_NaN();
             const double n = static_cast<double>(a.count_lag);
@@ -1952,8 +1952,8 @@ namespace GnssProcessor {
         // mean past kWlLockDriftMaxCyc and trips drift demotion below; for
         // a noise outlier the 1/n weighting keeps the mean shift negligible.
         // Lagged snapshot before this epoch's value folds in: arcZdMean serves
-        // these so the MW-WL layer's same-epoch read never re-ingests the
-        // current observations (SPEC_mw_wl_card §3.3 double-count guard).
+        // these so a same-epoch read (the SD pre-reduce EWL rows) never re-ingests
+        // the current observations (SPEC_mw_wl_card §3.3 double-count guard).
         stats.mean_lag  = stats.mean;
         stats.M2_lag    = stats.M2;
         stats.count_lag = stats.count;

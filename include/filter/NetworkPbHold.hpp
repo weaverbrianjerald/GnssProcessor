@@ -99,11 +99,12 @@ struct SyncedEpoch;
  *    1), and a @c PB_HOLD / @c gen_start event is emitted with action @c first or
  *    @c gap.
  *  - otherwise: overwrite @c NetworkPhaseBias::bias_m with the held value and record
- *    |estimate - held| into the run-end distribution.  With card LAH (@c network.emit_pb_hold_phase_clock) armed, the held value is
- *    shifted by the satellite's common-removed clock change since the generation
- *    started, @f$\tilde c(t) - \tilde c(t_0)@f$ (see the file header), so the
- *    phase-visible clock is held; an epoch without the satellite's clock reuses the
- *    last transfer, and a generation started without one is held plainly.
+ *    |estimate - held| into the run-end distribution.  With card LAH
+ *    (@c network.emit_pb_hold_phase_clock) armed, the held value is shifted by the
+ *    satellite's common-removed clock change since the generation started,
+ *    @f$\tilde c(t) - \tilde c(t_0)@f$ (see the file header), so the phase-visible
+ *    clock is held; an epoch without the satellite's clock reuses the last transfer,
+ *    and a generation started without one is held plainly.
  *
  * In both cases the entry is stamped with its generation, which travels to the
  * consumer on @c SsrPhaseBiasEntry::hold_generation and to the file on the

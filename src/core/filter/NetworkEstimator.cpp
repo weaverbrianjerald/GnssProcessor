@@ -1702,7 +1702,7 @@ int networkRankGateRunEnd(const NetworkRunEndView& v) {
                       "it starts counting real directions as gauge.  ATTRIBUTE THE FOLD "
                       "instead.  ⚠ The ratio is measured on the reduced normals AS THE GATE "
                       "SEES THEM, i.e. AFTER the station blocks (which carry the Card-1 "
-                      "coupling rows), the clock-constraint rows, the SH prior, the phase hold, "
+                      "coupling rows), the clock-constraint rows, the SH prior, "
                       "the pin bridge and any SBC rows — but BEFORE the D2/C1 dense carry fold "
                       "and the clock-osc prior, which are applied later and are therefore NOT "
                       "observable in this number.  So the candidates it CAN indict are the "

@@ -1000,6 +1000,13 @@ POST_CUT = {
         why="C4 (card WL-3): the LF-1 lane-fold timing line",
         drops=_span((289, 294)),
     ),
+    "networkRankGateRunEnd": dict(
+        why="review round (C11): the phase hold (Fix A) among the pre-gate folds of the card DG warning",
+        subs=[
+            (497, "\"coupling rows), the clock-constraint rows, the SH prior, the phase hold, \"",
+             "\"coupling rows), the clock-constraint rows, the SH prior, \""),
+        ],
+    ),
     "networkRaimPoolRunEnd": dict(
         why="C29: the RAIM carry-invariant refloat actuator (queued/drained line, mismatch check); the flagged-but-unacted warning reworded",
         drops=_span((1002, 1009), (1016, 1021)),
@@ -1091,6 +1098,19 @@ POST_CUT = {
         label="slip QC: IF-TD pairs",
         drops=_span((3207, 3238), (3241, 3290), (3295, 3313), (3320, 3357), (3364, 3373)),
         no_alias=['slip_qc'],
+    ),
+    "networkSlipGapRefGateRunEnd": dict(
+        why="review round (C4, C6): the D5 attribution clause named the WL-3 joint block and the D5 flag dump",
+        subs=[
+            (3653, "\"distinct funnel arc(s) re-tapped ({} raw-step-coincident) — the row count \"",
+             "\"distinct funnel arc(s) re-tapped ({} raw-step-coincident) — the arc count, \""),
+            (3654, "\"double-counts a pair chord flagged on BOTH bands (WL-3 joint block), the \"",
+             "\"one per (station, ambiguity) and epoch, is what actually re-taps; both \""),
+            (3655, "\"arc count is what actually re-taps; both use the exact-epoch evidence the \"",
+             "\"counts use the exact-epoch raw-step evidence the v3 corroboration gate \""),
+            (3656, "\"network_d5_flags.csv raw_stepped column reports.  [G3 decision \"",
+             "\"reads.  [G3 decision \""),
+        ],
     ),
     "networkChainDatumRunEnd": dict(
         why="card AGT (not the deletion): the slip-aware election's arcLife text",

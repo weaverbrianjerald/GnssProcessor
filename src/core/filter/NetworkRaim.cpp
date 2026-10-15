@@ -816,12 +816,11 @@ void networkPostFitRaim(NetworkRunContext& ctx,
                 // staged by the injector with a diagnostic mode.  Every flag
                 // below is `true` on the production path, so an unarmed run
                 // executes the same path as without the sub-knob.
-                bool inj_iono = true, inj_reseed = true;
+                bool inj_reseed = true;
                 const std::set<std::string>* inj_sigs = nullptr;
                 if (!inject_arc_mode.empty()) {
                     const auto mit = inject_arc_mode.find({ i, sat });
                     if (mit != inject_arc_mode.end()) {
-                        inj_iono   = (mit->second != "erase_keep_iono");
                         inj_reseed = (mit->second != "erase_no_reseed");
                         const auto sit = inject_arc_sigs.find({ i, sat });
                         if (sit != inject_arc_sigs.end() && !sit->second.empty())

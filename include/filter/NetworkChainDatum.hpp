@@ -22,8 +22,8 @@
  *
  * Split out of Application::runNetwork at decomposition INC-8b (see
  * docs/SPEC_inc8b_election_split.md).  Sibling of @ref NetworkPhaseDatum, which owns
- * the candidate census consumed here, the two non-chain realizations (ensemble
- * datum, anchor election) and the drop-and-heal.  Owns no state: every carry object
+ * the candidate census consumed here, the non-chain realization (the anchor
+ * election) and the drop-and-heal.  Owns no state: every carry object
  * is a reference into the caller's NetworkRunContext.
  *
  * Ordering contract: this function mutates persistent carries before the solve.  It

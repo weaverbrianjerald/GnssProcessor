@@ -928,7 +928,7 @@ struct SlipQcCounters {
     long long d5_retaps_stepped{0};     ///< …flag rows coincident with a raw step at the same (station, satellite, epoch); the same evidence the v3 corroboration gate reads.
     /// Distinct (station, ambiguity) pairs inserted into the C3c funnel at each
     /// epoch, summed over the run: the true re-tap count (one per arc that will
-    /// re-tap fresh), free of the per-band double counting above.  Taken from the
+    /// re-tap fresh), de-duplicated per (station, ambiguity) and epoch.  Taken from the
     /// funnel set's own insert result, so it cannot drift from what the funnel does.
     long long d5_retap_ambs{0};
     long long d5_retap_ambs_stepped{0}; ///< …of those, coincident with a raw step at the same (station, satellite, epoch).

@@ -4,20 +4,21 @@
  *        EP0) equal the expressions runNetwork computed before they moved.
  *
  * Card NOM3 step EP0 moved the values runNetwork derived from the configuration, once in
- * its setup or again on every epoch (the section timers, the resolved clock anchor sigma, the SH-deviation switches, the VCE monitor's families, the
- * Galileo top band, the streaming source, the within-epoch tier, the phase-datum switches,
- * the max-duration and decimation limits, the constant half of the RHS attribution window,
- * the trace switches, the configuration half of the leveling warm-up and the float
- * vehicle's birth-floor arm), into NetworkKnobs::snapshot (the Galileo top band has since
- * gone with the UWL lane tier).  The expressions in
- * driverValues() are the driver's, copied from ApplicationNetwork.cpp as it stood before
- * the step (main 8326da3 with steps HV0 and WCF), with one substitution: where the driver
- * tested the SH model (setup.sh_model), the copy tests network.estimate_iono_sh, under
- * which setup builds it.  The election's ledger read is checked too: the driver's two
- * conjunctions, with ctx.roster.active true as it is on every network run, against the
- * existing knobs it now reads.  The gap-resume census arm is not a knob: the census reads
- * the slip-QC parameters' own predicate (SlipQcParams::collectsResumptions), which its
- * case checks against the driver's former expression.
+ * its setup or again on every epoch (the section timers, the resolved clock anchor sigma,
+ * the SH-deviation switches, the VCE monitor's families, the Galileo top band, the
+ * streaming source, the within-epoch tier, the phase-datum switches, the max-duration and
+ * decimation limits, the constant half of the RHS attribution window, the trace switches,
+ * the configuration half of the leveling warm-up and the float vehicle's birth-floor
+ * arm), into NetworkKnobs::snapshot (the Galileo top band has since gone with the UWL lane
+ * tier).  The expressions in driverValues() are the driver's, copied from
+ * ApplicationNetwork.cpp as it stood before the step (main 8326da3 with steps HV0 and
+ * WCF), with one substitution: where the driver tested the SH model (setup.sh_model), the
+ * copy tests network.estimate_iono_sh, under which setup builds it.  The election's
+ * ledger read is checked too: the driver's two conjunctions, with ctx.roster.active true
+ * as it is on every network run, against the existing knobs it now reads.  The gap-resume
+ * census arm is not a knob: the census reads the slip-QC parameters' own predicate
+ * (SlipQcParams::collectsResumptions), which its case checks against the driver's former
+ * expression.
  *
  * Every posture checks each knob against its expression; each armed posture also checks
  * the value it targets (a switch on, a band digit), so a posture the loader quietly

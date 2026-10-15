@@ -619,7 +619,7 @@ namespace GnssProcessor {
             double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²); for a reconstructed SD arc this is a conservative (over-counted) upper bound, because the common pivot variance cancels in a closed cycle.
             std::size_t count{ 0 };                                                ///< Lagged Welford sample count (min across the arc and, if reconstructed, its pivot).
             double      lambda_wl{ 0.0 };                                          ///< cached wide-lane wavelength (m).
-            bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a uniform frame, so the WL layer skips mixed-frame cycles.
+            bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a uniform frame, so the SD pre-reduce EWL rows skip mixed-frame pairs.
             bool        valid{ false };                                            ///< the arc exists, has ≥2 lagged samples, and a finite ZD mean/variance was recovered.
             /// The (satellite, signal-pair) arc key is present in the accumulator,
             /// i.e. the detector currently holds an arc (of any age) on this exact
@@ -717,9 +717,9 @@ namespace GnssProcessor {
             /** Lagged snapshot of {mean, M2, count} as of the end of the previous
              *  processed epoch (copied at the top of the per-epoch statistics
              *  update).  @ref arcZdMean serves these, so a same-epoch consumer
-             *  (the MW-WL layer, SPEC_mw_wl_card §3.3) never re-ingests the
-             *  current epoch's observations (the guard against counting 1/n of
-             *  the information twice).  Frame rule: every constant-shift
+             *  (the SD pre-reduce EWL rows) never re-ingests the current epoch's
+             *  observations (SPEC_mw_wl_card §3.3, the guard against counting 1/n
+             *  of the information twice).  Frame rule: every constant-shift
              *  re-reference of @c mean (BSSD pivot S-transform, in-house
              *  bias-commit re-anchor) shifts @c mean_lag by the same constant, so
              *  the lagged value is always expressed in the arc's current frame. */

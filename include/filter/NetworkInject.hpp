@@ -18,8 +18,9 @@
  * Eight kinds exist.  Four are corruptions of the producer's input (@c slip,
  * @c outage, @c sat_clock_step, @c rx_clock_step) and are applied to a per-epoch
  * mutable copy of the @c SyncedEpoch at the top of the epoch body: before
- * @c computeModels, every T0 detector, the raw-observable pass and assembly.  One site suffices because everything
- * downstream derives from it: @c PppModel::computeModels builds both
+ * @c computeModels, every T0 detector, the raw-observable pass and assembly.  One
+ * site suffices because everything downstream derives from it:
+ * @c PppModel::computeModels builds both
  * @c PppObservation::observed (phase in metres, via the wavelength) and
  * @c PppObservation::raw_observed (phase in cycles, read by MW, GF and IF-TD)
  * from the same @c RinexObservation @c measurements entry.  Changing one scalar
@@ -161,6 +162,9 @@ namespace GnssProcessor {
      *
      * The C3c queue column was the queue of the RAIM carry-invariant refloat actuator,
      * which was retired; nothing is queued now, so @c erase_no_funnel acts as @c erase.
+     * The LOS iono carry that @c erase_keep_iono kept was the retired diagonal slant
+     * ionosphere carry (@c network.carry_iono); the in-block carry, when armed, is
+     * co-erased in every erase mode, so @c erase_keep_iono acts as @c erase too.
      *
      * Harness only: the mode changes what the injected erase does.  A real
      * attribution is unchanged on every path, and an unarmed run cannot reach

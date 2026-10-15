@@ -105,14 +105,14 @@ struct NetworkSatSolution {
     double                                  rho{0.0};
     /// Level step of this satellite since its previous emission (m) (card CLV; the
     /// producer's re-base was removed, so only a wire written with it carries a nonzero
-    /// step).  The code-only level re-base moved its clock
-    /// record and each of its phase-bias records by this amount, so the phase side
-    /// that the consumer applies (-clock + phase bias) did not move.  Serialized as
-    /// the C-record @c lvl= token (written only when nonzero, so an unarmed wire is
-    /// byte-identical) and read back by NetworkProductReader, because the emitter's
-    /// phase-bias value-jump test subtracts it from each phase-bias step before
-    /// testing.  The producer and a replay use the same arithmetic, so a replay
-    /// reproduces every declaration.  0 unless the wire declares a step.
+    /// step).  The code-only level re-base moved its clock record and each of its
+    /// phase-bias records by this amount, so the phase side that the consumer applies
+    /// (-clock + phase bias) did not move.  Serialized as the C-record @c lvl= token
+    /// (written only when nonzero, so an unarmed wire is byte-identical) and read back
+    /// by NetworkProductReader, because the emitter's phase-bias value-jump test
+    /// subtracts it from each phase-bias step before testing.  The producer and a
+    /// replay use the same arithmetic, so a replay reproduces every declaration.  0
+    /// unless the wire declares a step.
     double                                  level_step_m{0.0};
     /// Card CLV return plan R-A (removed from the producer; read from an old wire): per code-bias
     /// signal, the FOLLOW STEP of a free same-band column since this satellite's previous
