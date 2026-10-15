@@ -982,6 +982,15 @@ REMOVED = {
 }
 
 
+# After the cut: the reports card NOM3 step SG moved beside their per-epoch code (bodies
+# byte-identical, scripts/nom_sg_verify.py S7).  The rows above keep the TD1b homes, the frozen
+# record this script's verifier reads; func -> the home since step SG.
+MOVED_BY_SG = {
+    "networkRankGateRunEnd": "filter/NetworkRankGate",
+    "networkSbasisCompletionRunEnd": "filter/NetworkSbasisCompletion",
+    "networkWithinEpochRaimRunEnd": "filter/NetworkRaimWithinEpoch",
+}
+
 def _span(*pairs):
     """Frozen line numbers of the inclusive ranges (a, b), for a drop list."""
     return [i for a, b in pairs for i in range(a, b + 1)]

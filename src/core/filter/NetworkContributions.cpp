@@ -292,7 +292,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "1/sigma^2, sigma = network.apriori_clock_anchor_sigma_m when set, else 3 m on the "
      "brdc_rts a priori or filter.initial_std.sat_clock; folded when sigma < 100 m, not on the "
      "broadcast-anchored clock datum",
-     "networkSolveGlue, a-priori clock anchor (NetworkSolveGlue.cpp)", false, nullptr},
+     "networkFoldColdClockAnchor (NetworkClockAnchor.cpp)", false, nullptr},
     // --- Pins, gauges, DD blocks ---
     {CK::ClockPivotPin, "clock_pivot_pin", CC::Pins, CG::InSolve, CS::Satellite, CU::Pins,
      bit(PK::SatClock), "exact (Dirichlet elimination at the reduced normals' scale)",

@@ -487,6 +487,10 @@ namespace GnssProcessor {
         /// the refsat/retro mark queue; it joins the SolPrep drain condition.
         bool datum_station_detect{};
         double ura_refloat_inflate{};
+        /// The retro-bump / URA-inflate feed is armed (B1, P0-2): ura_retro or an inflate
+        /// factor above 1.  The within-epoch tier and the post-fit tiers then fill the feed
+        /// (card NOM3 step SG; before it, a local of the solve).
+        bool retro_feed{};
         bool raim_on{};
         double raim_k{};
         double raim_s0_floor{};

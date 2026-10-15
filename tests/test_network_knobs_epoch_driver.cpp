@@ -401,3 +401,19 @@ TEST(NetworkKnobsEpochDriver, VceFlushScheduleStartsUnanchored) {
     EXPECT_EQ(carry->last_vce_hour, -1);
     EXPECT_EQ(carry->first_vce_s, -1.0);
 }
+
+// Card NOM3 step SG: the retro-bump / URA-inflate feed, formerly a local of the solve
+// (`ura_retro || ura_refloat_inflate > 1.0`), is a knob read by the within-epoch tier and the
+// solve's result.
+TEST(NetworkKnobsEpochDriver, RetroFeedIsEitherUraConsumer) {
+    GnssConfig off;
+    ASSERT_TRUE(loadInto("retro_off", networkConfig(""), off));
+    const NetworkKnobs k_off = NetworkKnobs::snapshot(off, off.getNetworkConfig());
+    EXPECT_FALSE(k_off.retro_feed);
+    EXPECT_EQ(k_off.retro_feed, k_off.ura_retro || k_off.ura_refloat_inflate > 1.0);
+    GnssConfig inflate;
+    ASSERT_TRUE(loadInto("retro_inflate", networkConfig("    \"ura_refloat_inflate\": 2.0,\n"), inflate));
+    const NetworkKnobs k = NetworkKnobs::snapshot(inflate, inflate.getNetworkConfig());
+    EXPECT_EQ(k.retro_feed, k.ura_retro || k.ura_refloat_inflate > 1.0);
+    EXPECT_TRUE(k.retro_feed);
+}

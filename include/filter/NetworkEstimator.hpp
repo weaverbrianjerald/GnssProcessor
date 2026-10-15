@@ -1649,25 +1649,6 @@ private:
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the observability rank gate and the datum-direction ratio.
- *
- * The observability rank gate (card DG): its calibration line when the tolerance is not
- * the default, the two causes of an over-specified withhold, and the invariant-#7
- * datum-direction information ratio that tells them apart (measured in
- * NetworkFrameDiag).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol`;
- * `ctx.counters.n_gate_withheld_over > 0`; `ctx.counters.ddi_epochs > 0 &&
- * ctx.counters.ddi_dirs == 0`; `ctx.counters.ddi_epochs > 0 && ctx.counters.ddi_dirs >
- * 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkRankGateRunEnd(const NetworkRunEndView& v);
-
-/**
  * @brief Run-end report: the carry-aware covariance mode.
  *
  * The carry-aware covariance readback on every carry_invariant run, armed or not: the

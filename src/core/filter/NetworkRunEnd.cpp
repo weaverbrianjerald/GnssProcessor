@@ -68,10 +68,13 @@
 #include "filter/NetworkPriorResidual.hpp"
 #include "filter/NetworkProducerAr.hpp"
 #include "filter/NetworkRaim.hpp"
+#include "filter/NetworkRaimWithinEpoch.hpp"
+#include "filter/NetworkRankGate.hpp"
 #include "filter/NetworkRedundancyCensus.hpp"
 #include "filter/NetworkResponses.hpp"
 #include "filter/NetworkRxCodeBiasCarryRunEnd.hpp"
 #include "filter/NetworkSbasis.hpp"
+#include "filter/NetworkSbasisCompletion.hpp"
 #include "filter/NetworkSdEwlAr.hpp"
 #include "filter/NetworkSecondCodeScope.hpp"
 #include "filter/NetworkSecondPhaseScope.hpp"
@@ -102,13 +105,13 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
     {"heartbeats of a deferred product writer that never opened",
      "filter/NetworkEmitStore.cpp", networkDeferredHeartbeatsRunEnd},
     {"the observability rank gate and the datum-direction ratio",
-     "filter/NetworkEstimator.cpp", networkRankGateRunEnd},
+     "filter/NetworkRankGate.cpp", networkRankGateRunEnd},
     {"S-basis completion (SBC)",
-     "filter/NetworkSbasis.cpp", networkSbasisCompletionRunEnd},
+     "filter/NetworkSbasisCompletion.cpp", networkSbasisCompletionRunEnd},
     {"the datum graph census",
      "filter/NetworkDatumGraph.cpp", networkDatumGraphRunEnd},
     {"within-epoch RAIM: the WE-CI screen and the T2 responses",
-     "filter/NetworkRaim.cpp", networkWithinEpochRaimRunEnd},
+     "filter/NetworkRaimWithinEpoch.cpp", networkWithinEpochRaimRunEnd},
     {"the T2 culprit withhold on the DD carry: both ends of the hand-off (card WCF)",
      "filter/NetworkWithinEpochCulprits.cpp", networkWithinEpochCulpritWithholdRunEnd},
     {"the KP prior and the CB-ADM code-pair admission",

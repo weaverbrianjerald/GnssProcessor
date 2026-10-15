@@ -231,21 +231,6 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: within-epoch RAIM: the WE-CI screen and the T2 responses.
- *
- * The within-epoch RAIM tier: the WE-CI code and ionosphere screen
- * (network.raim_we_code_iono) and the T2 within-epoch responses with their failed
- * re-solves (network.raim_within_epoch).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRaimWeCodeIono()`; `config_.networkRaimWithinEpoch()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkWithinEpochRaimRunEnd(const NetworkRunEndView& v);
-
-/**
  * @brief Run-end report: the carried-phase RAIM pools: admissions and the re-host.
  *
  * The carried-phase RAIM pools: their admissions per contribution kind (card NOM N2b,

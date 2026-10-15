@@ -359,4 +359,19 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+// ---- Solve stage 1 (card NOM3 step SG) ----
+
+/**
+ * @brief Stage 1 of the network solve: the census-fed H sigma0 of this epoch
+ *        (ctx.carry.ep_h_sigma0_census), computed once before any H line so every H site of the
+ *        epoch, the gate's withhold included, reads the same value.  Measure-only; 0.0 when the
+ *        feed is off or the pool is empty (H-rider).
+ * @param run          The run: ctx carry (ep_h_sigma0_census, h_sig0_census_nonzero) is written.
+ * @param ep           The epoch, read: assembly (asm_res).
+ * @param est_index_of The solve's station-slot map (read; the solve's own parameter, one access
+ *                     path).
+ */
+void networkCensusSigma0(NetworkRun& run, const NetworkEpoch& ep,
+                         const std::vector<int>& est_index_of);
+
 } // namespace GnssProcessor

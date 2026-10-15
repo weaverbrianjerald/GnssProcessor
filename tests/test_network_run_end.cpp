@@ -27,7 +27,7 @@
 #include "filter/NetworkLedgerEmit.hpp"
 #include "filter/NetworkMultiGnss.hpp"
 #include "filter/NetworkParamInventory.hpp"
-#include "filter/NetworkRaim.hpp"
+#include "filter/NetworkRaimWithinEpoch.hpp"
 #include "filter/NetworkResponses.hpp"
 #include "filter/NetworkWithinEpochCulprits.hpp"
 
