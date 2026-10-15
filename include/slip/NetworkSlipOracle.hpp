@@ -338,4 +338,19 @@ int networkSlipOracleRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+struct NetworkRun;
+class LogManager;
+
+/**
+ * @brief Loads the oracle slip response (simulation only) when network.cycle_slip.oracle_relevel is armed.
+ *
+ * Throws on a missing or mis-pointed fixture, before any trace file opens.  Setup builder (card
+ * NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx.carry.slip_oracle.
+ * @param log_manager_ The application's logging manager (Application::log_manager_).
+ */
+void networkSlipOracleArm(NetworkRun& run, LogManager& log_manager_);
+
 } // namespace GnssProcessor

@@ -10,7 +10,10 @@
  *
  * It reads the run and the epoch and writes only its own instrument state (counters,
  * trace rows, events, run-manifest records, its own carried accumulators): nothing the
- * solve, the wire or a later non-observer stage reads.  It gates itself on the knob that
+ * solve or the wire reads.  The one later reader allowed is the epoch-status row: the
+ * FrameDiag observers networkPostfitSigma0 and networkPrefitCensus fill the epoch-status
+ * values (e.g. ctx.carry.ep_pc_rows) that networkStashStatus writes out (see the FrameDiag
+ * note below).  It gates itself on the knob that
  * arms it, on its first line after its bindings, so an unarmed observer returns at once.
  *
  * The spine (Application::networkProcessEpoch_, app/ApplicationNetworkEpoch.cpp) calls

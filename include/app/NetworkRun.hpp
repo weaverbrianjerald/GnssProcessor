@@ -132,4 +132,31 @@ EpochSectionTimers networkSectionTimersBegin(NetworkRun& run);
 void networkSectionTimersReadout(NetworkRun& run, const NetworkEpoch& ep,
                                  const EpochSectionTimers& sec);
 
+
+/**
+ * @brief Arms the D0 per-epoch section timers of the estimator and the carry driver, and resets them.
+ *
+ * Off (network.trace_section_timers unset): no clock reads, and no log line.  Setup builder
+ * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.est and run.engines.carry_driver (their timers).
+ */
+void networkSectionTimersArm(NetworkRun& run);
+
+class LogManager;
+
+/**
+ * @brief Arms the run before its first epoch.
+ *
+ * In order: the snapshot path and fingerprint, the warm resume and its two restores (canonical
+ * signals, code-bias linearization points), the event injector, canonical-pair admission, the
+ * signal roster and the ledger emit.  Setup builder (card NOM3 step EP4): called once from
+ * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx (carry, injector, admission, roster and ledger state) and run.setup.stations.
+ * @param log_manager_ The application's logging manager (Application::log_manager_).
+ */
+void networkRunArm(NetworkRun& run, LogManager& log_manager_);
+
 } // namespace GnssProcessor

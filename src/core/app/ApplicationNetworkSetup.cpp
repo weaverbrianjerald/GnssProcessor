@@ -150,6 +150,9 @@
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunEnd.hpp"
 #include <spdlog/spdlog.h>
+#include "app/NetworkRun.hpp"
+#include "app/NetworkRunContext.hpp"
+#include "logging/NetworkRunTraces.hpp"
 
 namespace GnssProcessor {
 
@@ -1757,5 +1760,21 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// Setup builder (card NOM3 step EP4); documented at its declaration in app/NetworkSetupResult.hpp.
+void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
+    // ---- End of the bindings ----
+    // The marker → ARP roster census is measured in networkSetup_, which runs
+    // before this context exists.  It is copied into the counters because the
+    // run-end readout and the run manifest read ctx.counters, and both report it
+    // in either knob state (card UPO).
+    ctx.counters.marker_arp_armed         = config_.networkStationMarkerToArp();
+    ctx.counters.n_marker_arp_ecc         = setup.n_marker_arp_ecc;
+    ctx.counters.n_marker_arp_reduced     = setup.n_marker_arp_reduced;
+    ctx.counters.n_marker_arp_over_1cm    = setup.n_marker_arp_over_1cm;
+    ctx.counters.n_marker_arp_no_record   = setup.n_marker_arp_no_record;
+    ctx.counters.marker_arp_max_h         = setup.marker_arp_max_h;
+    ctx.counters.marker_arp_max_h_station = setup.marker_arp_max_h_station;
+}
 
 } // namespace GnssProcessor

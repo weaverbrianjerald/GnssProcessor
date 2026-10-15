@@ -1328,4 +1328,17 @@ int networkPriorResidualRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+struct NetworkRun;
+
+/**
+ * @brief Installs the prior-residual census's corroboration resolver when corroboration is armed.
+ *
+ * A census arm.  The resolver reads run.engines.slip_qc's evidence per epoch.  Setup builder
+ * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.prires (its corroborator).
+ */
+void networkPriorResidualArm(NetworkRun& run);
+
 }  // namespace GnssProcessor

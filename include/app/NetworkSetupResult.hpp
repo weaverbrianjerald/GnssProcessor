@@ -210,4 +210,19 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+struct NetworkRunContext;
+
+/**
+ * @brief Copies the marker -> ARP roster census measured by networkSetup_ into the run's service counters.
+ *
+ * The run-end readout and the run manifest read the counters, and both report the census in
+ * either knob state (card UPO).  Setup builder (card NOM3 step EP4): called once from
+ * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param ctx The run context; its service counters are filled.
+ * @param config_ The configuration (the marker -> ARP knob's arming state).
+ * @param setup The setup result that measured the census.
+ */
+void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup);
+
 } // namespace GnssProcessor
