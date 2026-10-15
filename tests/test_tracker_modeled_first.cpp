@@ -402,7 +402,7 @@ struct UnreachableHarness {
     SlipQcCounters          counters;
     RelevelEpochState       relevel;
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>  local_carry;
+    net::ArcTable  local_carry;
     double                  pl_now_s{ 270390.0 };
     double                  pl_max_gap_s{ 900.0 };
     SyncedEpoch             se;
@@ -428,7 +428,7 @@ struct UnreachableHarness {
         LocalCarry lc{};
         lc.var         = 1.0e-5;
         lc.last_seen_s = pl_now_s - age_s;
-        local_carry[std::make_tuple(0, std::string("G14"), std::string(sig))] = lc;
+        net::putArcIn(local_carry, std::make_tuple(0, std::string("G14"), std::string(sig)), &net::ArcState::amb) = lc;
     }
     /// The tracker's pair at re-entry, and the signals actually tracked now.
     void addResumption(const std::vector<std::string>& tracked_now) {

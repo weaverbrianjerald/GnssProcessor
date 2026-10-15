@@ -369,7 +369,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
 int networkOraclePinFit(
         NetworkOraclePin& pin,
         const std::vector<NetStation>& stations,
-        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+        const net::ArcTable& arcs,
         const std::map<std::string, std::string>& anchor_of,
         double now_s,
         const std::vector<std::size_t>& active) {
@@ -424,26 +424,27 @@ int networkOraclePinFit(
     // are invariant to that constant (header, property 3).
     std::map<std::pair<int, std::string>,
              std::vector<std::pair<int, double>>> obs;   // (sta, band) -> [(anchor idx, g)]
-    for (const auto& [key, lc] : carry) {
+    net::forEach(arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
+        const net::ArcTuple key = net::arcTuple(id);
         const int sta = std::get<0>(key);
-        if (sta < 0 || sta >= n_sta) continue;
+        if (sta < 0 || sta >= n_sta) return;
         const std::string& sat = std::get<1>(key);
         const std::string& sig = std::get<2>(key);
         const auto fit = fams.find({sat, sig});
-        if (fit == fams.end()) continue;                 // family has no usable anchor
-        if (fit->second.a == sta) continue;              // the anchor's own arc: t_sj is its level
+        if (fit == fams.end()) return;                 // family has no usable anchor
+        if (fit->second.a == sta) return;              // the anchor's own arc: t_sj is its level
         const std::string fam_key = StateKeys::makeAmbiguityKey(sat, sig);
         if (stations[static_cast<std::size_t>(sta)].pinned_amb_targets.count(fam_key))
-            continue;                                    // gauge-pinned here too (eq34 / legacy)
+            return;                                    // gauge-pinned here too (eq34 / legacy)
         const auto tit = pin.truth.find(key);
-        if (tit == pin.truth.end() || !(tit->second.lambda_m > 0.0)) continue;
-        if (!std::isfinite(lc.value_abs)) continue;
+        if (tit == pin.truth.end() || !(tit->second.lambda_m > 0.0)) return;
+        if (!std::isfinite(lc.value_abs)) return;
         const double lam_n_r = tit->second.lambda_m
                              * networkOraclePinTrueN(tit->second, now_s);
         obs[{sta, sig}].emplace_back(
             fit->second.a,
             lc.value_abs - fit->second.target - (lam_n_r - fit->second.lam_n_a));
-    }
+    });
 
     // ---- resolve v, band by band, by determination (no re-estimation) -------
     // Alternating "beta from the anchors, u from the medians" to a tolerance does
@@ -555,11 +556,11 @@ int networkOraclePinFit(
     double sum2 = 0.0, mx = 0.0;
     long long n = 0;
     for (const auto& [key, p] : pin.table) {
-        const auto cit = carry.find(key);
-        if (cit == carry.end() || !std::isfinite(cit->second.value_abs)) continue;
+        const LocalCarry* cit = net::getArc(arcs, key, &net::ArcState::amb);
+        if (cit == nullptr || !std::isfinite(cit->value_abs)) continue;
         const auto tit = pin.truth.find(key);
         if (tit == pin.truth.end() || !(tit->second.lambda_m > 0.0)) continue;
-        const double d = (cit->second.value_abs - p.value_m) / tit->second.lambda_m;
+        const double d = (cit->value_abs - p.value_m) / tit->second.lambda_m;
         sum2 += d * d;
         mx = std::max(mx, std::abs(d));
         ++n;
@@ -608,7 +609,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     }
     ++pin->epochs_active;
 
-    networkOraclePinFit(*pin, stations, ctx.carry.local_carry,
+    networkOraclePinFit(*pin, stations, ctx.entities.arcs,
                         ctx.carry.this_epoch_anchor, now_s, active);
 
     // --- the two edges of invariant #7, counted and identified ----------------
@@ -636,11 +637,11 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     for (const auto& [k, p] : pin->table) {
         if (pin->prev_keys.count(k)) continue;           // entry edge only
         const int sta = std::get<0>(k);
-        const auto cit = ctx.carry.local_carry.find(k);
+        const auto cit = net::getArc(ctx.entities.arcs, k, &net::ArcState::amb);
         const auto tit = pin->truth.find(k);
         const double lam = (tit != pin->truth.end()) ? tit->second.lambda_m : 0.0;
-        const double before = (cit != ctx.carry.local_carry.end())
-                                  ? cit->second.value_abs
+        const double before = (cit != nullptr)
+                                  ? cit->value_abs
                                   : std::numeric_limits<double>::quiet_NaN();
         // The actuation delta: how far this arc's carried level sits from the
         // truth-consistent value the pin is about to hold it at.  NaN when the arc

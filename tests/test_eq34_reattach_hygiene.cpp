@@ -617,7 +617,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 
     // No state allocated, no counter touched, no key removed.
     EXPECT_FALSE(hyg.active);
-    EXPECT_TRUE(ctx.carry.anchor_arc_age.empty());
+    EXPECT_EQ(net::present(ctx.entities.arcs, &net::ArcState::anchor_arc_age), 0u);
     EXPECT_TRUE((net::present(ctx.entities.sat_signals, &net::SatSignalState::pin_bridge) == 0));
     EXPECT_EQ(ctx.counters.hyg.epochs, 0);
     EXPECT_EQ(ctx.counters.hyg.arcs_tracked, 0);
@@ -640,7 +640,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 // observable is a weight deep inside the parallel assembly).  It decays monotonically
 // to exactly 1 and never tightens a pin beyond the hard-pin weight.
 TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
-    std::map<std::pair<int, std::string>, int> age;
+    net::ArcTable age;   // the arcs' anchor ages (card NOM step N4f1)
     AnchorHygiene hyg;
     hyg.active = true;
     hyg.min_arc_ep = 5;
@@ -650,16 +650,16 @@ TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
 
     double prev = 1e300;
     for (int a = 0; a <= 12; ++a) {
-        age[{ 0, "G29_L1C" }] = a;
+        age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = a;
         const double s = hyg.pinSigmaScale(0, "G29_L1C");
         EXPECT_GE(s, 1.0) << "age " << a << ": the ramp may only LOOSEN a datum pin";
         EXPECT_LE(s, 10.0) << "age " << a;
         EXPECT_LE(s, prev) << "age " << a << ": the ramp must be monotone";
         prev = s;
     }
-    age[{ 0, "G29_L1C" }] = 5;   // at the threshold: still fully fresh
+    age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = 5;   // at the threshold: still fully fresh
     EXPECT_DOUBLE_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 10.0);
-    age[{ 0, "G29_L1C" }] = 10;  // ramp end: fully hard again
+    age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = 10;  // ramp end: fully hard again
     EXPECT_DOUBLE_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 }
 

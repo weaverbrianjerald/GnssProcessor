@@ -96,7 +96,7 @@ struct Harness {
     SlipQcCounters             counters;
     RelevelEpochState          relevel;
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>  local_carry;
+    net::ArcTable  local_carry;
     /// Continuous-GPS seconds of this epoch, and the FLD63 chain's max-gap
     /// window.  The default carry is stamped 210 s back (7 × 30 s epochs = the
     /// default `gap_epochs`), well inside the window: the state the PASS-B inject
@@ -130,10 +130,10 @@ struct Harness {
         lc.value_abs   = 0.0;
         lc.var         = 1.0e-5;            // the field's fold_var scale
         lc.last_seen_s = pl_now_s - age_s;
-        local_carry[std::make_tuple(0, std::string(kSat), std::string(sig))] = lc;
+        net::putArcIn(local_carry, std::make_tuple(0, std::string(kSat), std::string(sig)), &net::ArcState::amb) = lc;
     }
     void dropCarry(const char* sig) {
-        local_carry.erase(std::make_tuple(0, std::string(kSat), std::string(sig)));
+        net::dropArc(local_carry, std::make_tuple(0, std::string(kSat), std::string(sig)), &net::ArcState::amb);
     }
 
     /// Push one resumption for @ref kSat at station 0.

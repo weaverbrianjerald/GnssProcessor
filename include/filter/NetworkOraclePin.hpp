@@ -113,6 +113,7 @@
  * epoch, and regardless of the F3 local block.
  */
 
+#include "app/NetworkEntities.hpp"      // net::ArcTable (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry
 #include "filter/NetworkOraclePinScope.hpp"  // OraclePinScope + its grammar (shared with the loader)
 #include "slip/NetworkSlipOracle.hpp"   // NetworkSlipOracle::TruthSlip + its CSV parser
@@ -279,7 +280,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
  *
  * @param pin        Run-scope state (table and counters are written).
  * @param stations   Roster (names, `pinned_amb_targets`).
- * @param carry      `ctx.carry.local_carry`: the fit's observations
+ * @param arcs       `ctx.entities.arcs`: the fit's observations
  *                   (@ref LocalCarry::value_abs, never `x_lin`).
  * @param anchor_of  `ctx.carry.this_epoch_anchor`: "<sat>_<sig>" -> anchor station name.
  * @param now_s      Continuous-GPS seconds of this epoch.
@@ -291,7 +292,7 @@ std::unique_ptr<NetworkOraclePin> networkOraclePinLoad(
 int networkOraclePinFit(
     NetworkOraclePin& pin,
     const std::vector<NetStation>& stations,
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+    const net::ArcTable& arcs,
     const std::map<std::string, std::string>& anchor_of,
     double now_s,
     const std::vector<std::size_t>& active);

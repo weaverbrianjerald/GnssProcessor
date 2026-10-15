@@ -76,7 +76,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& snap_path = ctx.carry.snap_path;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& local_carry = ctx.carry.local_carry;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
@@ -274,18 +273,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     net::recordFromSnapshot("C", snap, ctx);   // the satellites (N4e1)
                     net::recordFromSnapshot("J", snap, ctx);   // the satellites (N4e1)
                     net::recordFromSnapshot("K", snap, ctx);   // the satellites (N4e1)
-                    local_carry.clear();
-                    for (const auto& [key, l] : snap.local_carry) {
-                        // Restored-arc age (SPEC_event_harness §15.4): the birth stamps
-                        // are not snapshotted, so the entry is stamped with the restored-arc
-                        // sentinel rather than left at 0.  A 0 means "never stashed" to the
-                        // harvest's first-stash-wins rule, which would re-stamp every
-                        // restored arc as born at the resume.  var_first stays 0 on a file
-                        // without the ratio field; the ratio ceiling then refuses the arc
-                        // until it re-converges.
-                        local_carry[key] = makeRestoredLocalCarry(
-                            l.value_abs, l.var, l.last_seen_s, l.var_first);
-                    }
+                    // The arcs' leveling carries (card NOM step N4f1), with the restored-arc
+                    // age convention (SPEC_event_harness §15.4, makeRestoredLocalCarry).
+                    net::recordFromSnapshot("L", snap, ctx);
                     // The Z rows (the station table's zwd, card NOM step N4a).  Same
                     // restored-entry convention as the L rows above.  The ZWD carry has no
                     // age reader and its harvest replaces the whole entry (so the sentinel
@@ -377,17 +367,16 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // is armed (the map is not read otherwise).
                             std::size_t n_ledger_primed = 0;
                             if (ctx.knobs.pd_handover_continuous) {
-                                for (const auto& [key, lc] : ctx.carry.local_carry) {
-                                    if (!(lc.var > 0.0) || !std::isfinite(lc.value_abs)) continue;
+                                net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                                             [&](const ArcId& id, const LocalCarry& lc) {
+                                    if (!(lc.var > 0.0) || !std::isfinite(lc.value_abs)) return;
                                     AnchorHandoverLedger::Entry e;
                                     e.value = lc.value_abs;
                                     e.var   = lc.var;
                                     e.var_first = lc.var_first;
-                                    ctx.carry.handover.value_abs[{std::get<0>(key),
-                                        StateKeys::makeAmbiguityKey(std::get<1>(key),
-                                                                    std::get<2>(key))}] = e;
+                                    ctx.carry.handover.value_abs[net::arcPair(id)] = e;
                                     ++n_ledger_primed;
-                                }
+                                });
                             }
                             ctx.counters.n_resume_frame_ledger =
                                 static_cast<long long>(n_ledger_primed);
@@ -456,13 +445,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             net::recordFromSnapshot("EQD", snap, ctx);   // the constellation channels (N4b)
                             net::recordFromSnapshot("EQP", snap, ctx);   // the station signals (N4a)
                             net::recordFromSnapshot("EQS", snap, ctx);   // the satellite signals (N4e2)
-                            ctx.carry.eq34_prev_target.clear();
-                            for (const auto& [key, tgt] : snap.eq34_prev_target)
-                                ctx.carry.eq34_prev_target[{key.first, key.second}] = tgt;
+                            net::recordFromSnapshot("EQT", snap, ctx);   // the arcs (N4f1)
                             net::recordFromSnapshot("EQE", snap, ctx);   // the lines of sight (N4c)
-                            ctx.carry.eq34_retained_edges.clear();
-                            for (const auto& [idx, amb] : snap.eq34_retained_edges)
-                                ctx.carry.eq34_retained_edges.emplace(idx, amb);
+                            net::recordFromSnapshot("EQR", snap, ctx);   // the arcs (N4f1)
                             ctx.counters.n_resume_datum_eq34_rx =
                                 static_cast<long long>(snap.eq34_datum_rx.size());
                             ctx.counters.n_resume_datum_eq34_edges =
@@ -849,9 +834,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 };
                             long long n_rows = 0, n_zrows = 0, n_terms = 0, n_miss = 0;
                             for (const auto& [key, ents] : snap.coupling_rows) {
-                                const auto it = local_carry.find(key);
-                                if (it == local_carry.end()) { ++n_miss; continue; }
-                                rebuild(ents, it->second);
+                                const auto it = net::getArc(ctx.entities.arcs, key, &net::ArcState::amb);
+                                if (it == nullptr) { ++n_miss; continue; }
+                                rebuild(ents, (*it));
                                 ++n_rows;
                                 n_terms += static_cast<long long>(ents.size());
                             }
@@ -898,8 +883,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // restored on the D rows, and the first warm epoch's serial
                             // pre-pass writes it at pl_now_s, above every restored stamp.
                             double t_seed = 0.0;
-                            for (const auto& [k2, lc] : local_carry)
-                                t_seed = std::max(t_seed, lc.last_seen_s);
+                            net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                                         [&](const ArcId&, const LocalCarry& lc) {
+                                             t_seed = std::max(t_seed, lc.last_seen_s);
+                                         });
                             net::forEach(sta_rows, &net::StationState::zwd,
                                          [&](const StationId&, const LocalCarry& lc) {
                                              t_seed = std::max(t_seed, lc.last_seen_s);
@@ -1278,7 +1265,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               "sighting sets, pending bumps, last-seen stamps) restored; "
                               "n_emitted {} (carry stays warm).",
                               snap_path.string(), snap.wall_utc, first_live_s - snap_s,
-                              horizon_s, generation_id, prev_carry.size(), local_carry.size(),
+                              horizon_s, generation_id, prev_carry.size(), net::present(ctx.entities.arcs, &net::ArcState::amb),
                               net::present(sta_rows,
                                            &net::StationState::zwd),
                               net::present(ctx.entities.sats, &net::SatelliteState::clock_osc),

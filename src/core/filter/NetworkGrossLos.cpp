@@ -965,11 +965,11 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             if (pa.sat != sat) continue;
             const auto lk = std::make_tuple(si, pa.sat, pa.signal);
             if (gl_bound) {
-                const auto lit = ctx.carry.local_carry.find(lk);
-                if (lit != ctx.carry.local_carry.end()) {
-                    const LocalCarry h = glFreeze(lit->second);
-                    ctx.carry.gl_hold_amb[lk] = h;
-                    lit->second = h;
+                const auto lit = net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb);
+                if (lit != nullptr) {
+                    const LocalCarry h = glFreeze((*lit));
+                    net::putArc(ctx.entities, lk, &net::ArcState::gl_hold_amb) = h;
+                    (*lit) = h;
                     ++tal.bound_amb_held;
                     prmRespond(ctx.counters.prm_resp,
                                ResponseSite::AmbGrossHold);   // card PRM phase 3a
@@ -978,7 +978,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 // refloated.  Marking it would give the next assembly a free column,
                 // which is what the hold exists to prevent.
             } else {
-                if (ctx.carry.local_carry.erase(lk)) {
+                if (net::dropArc(ctx.entities.arcs, lk, &net::ArcState::amb)) {
                     ++ctx.counters.n_cr_gross_los;
                     prmRespond(ctx.counters.prm_resp,
                                ResponseSite::AmbGrossErase);   // card PRM phase 3a
@@ -1070,40 +1070,35 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     //     epoch, or a line of sight that has expired), so no carried level harvested
     //     while the fault was in the rows survives the response.
     for (const auto& [si, sat] : ctx.carry.gl_act_cold_refloat) {
-        const std::size_t n_before = ctx.carry.local_carry.size();
+        const std::size_t n_before = net::present(ctx.entities.arcs, &net::ArcState::amb);
         respond(si, sat);
-        for (auto it = ctx.carry.local_carry.begin(); it != ctx.carry.local_carry.end(); ) {
-            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
-                it = ctx.carry.local_carry.erase(it);
-            else
-                ++it;
-        }
+        for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
+             it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
+            it->second.amb.reset();
         tal.cold_amb_erased +=
-            static_cast<long long>(n_before - ctx.carry.local_carry.size());
+            static_cast<long long>(n_before - net::present(ctx.entities.arcs, &net::ArcState::amb));
     }
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : ctx.carry.gl_act_release) {
         net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono);
         net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
-        for (auto it = ctx.carry.gl_hold_amb.begin(); it != ctx.carry.gl_hold_amb.end(); ) {
-            if (std::get<0>(it->first) == si && std::get<1>(it->first) == sat)
-                it = ctx.carry.gl_hold_amb.erase(it);
-            else
-                ++it;
-        }
+        for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
+             it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
+            it->second.gl_hold_amb.reset();
     }
     // --- Re-apply the hold over whatever the harvest re-stashed (RF-3b B2).  This
     //     makes the prior fixed with zero process noise; without it, the harvest would
     //     re-level the held column from the same under-determined epoch as the erase,
     //     and the bound would have no effect.  The held iono entries are re-applied
     //     only in the same pass, i.e. only while at least one carried level is held.
-    if (gl_bound && !ctx.carry.gl_hold_amb.empty()) {
+    if (gl_bound && net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) > 0) {
         std::set<std::pair<int, std::string>> los_held;
-        for (const auto& [key, h] : ctx.carry.gl_hold_amb) {
-            ctx.carry.local_carry[key] = h;
-            los_held.insert({ std::get<0>(key), std::get<1>(key) });
-        }
+        net::ArcTable& arcs = ctx.entities.arcs;
+        net::forEach(arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, const LocalCarry& h) {
+            net::put(arcs, id, &net::ArcState::amb) = h;   // the row exists: no insert
+            los_held.insert({id.station.index, net::satKey(id.sat)});
+        });
         net::LosTable& los = ctx.entities.los;
         net::forEach(los, &net::LosState::gl_hold_iono, [&](const LosId& id, const LocalCarry& h) {
             net::put(los, id, &net::LosState::iono) = h;
@@ -1117,7 +1112,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         log->debug("Network (gross-LOS, RF-3b): applied {} declaration response(s) as {}; "
                    "{} carried level(s) and {} iono carr(ies) currently held.",
                    ctx.carry.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
-                   ctx.carry.gl_hold_amb.size(),
+                   net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb),
                    net::present(ctx.entities.los, &net::LosState::gl_hold_iono)
                        + net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk));
 }

@@ -38,7 +38,6 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunContext& ctx = run.ctx;
     NetworkRunTraces& traces = run.traces;
     SlipQcChannel& slip_qc = run.engines.slip_qc;
-    auto& local_carry = ctx.carry.local_carry;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
@@ -81,9 +80,9 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 //     would fold across the break.
                 bool pl_bridged = false;
                 {
-                    const auto cit = local_carry.find(std::make_tuple(i, g.satellite, sig));
-                    if (cit != local_carry.end()) {
-                        const double gap = pl_now_s - cit->second.last_seen_s;
+                    const auto cit = net::getArc(ctx.entities.arcs, std::make_tuple(i, g.satellite, sig), &net::ArcState::amb);
+                    if (cit != nullptr) {
+                        const double gap = pl_now_s - cit->last_seen_s;
                         pl_bridged = (gap >= 0.0 && gap <= pl_max_gap_s);
                     }
                 }

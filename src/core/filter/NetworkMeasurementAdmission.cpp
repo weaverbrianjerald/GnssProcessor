@@ -167,7 +167,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
     const bool revet_census_wanted = revet && ctx.knobs.adm_revet_census;
 
     auto& ctr  = ctx.counters.adm;
-    auto& arcs = ctx.carry.adm_arc;
+    net::StationTable& sta_rows = ctx.entities.stations;   // adm_arc, adm_event_last (N4f1, O4)
     ++ctr.epochs;
 
     // The warm-resume restore rule (INC-1, second clause).  The record map is not
@@ -201,14 +201,17 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
     // precedent).
     auto holdoff_ok = [&](const char* event, const std::string& station,
                           const std::string& sat, char band) {
-        const std::string k = fmt::format("{}|{}|{}|{}", event, station, sat, band);
-        auto it = ctx.carry.adm_event_last.find(k);
-        if (it != ctx.carry.adm_event_last.end()
-            && epoch_idx - it->second < kAdmEventHoldoffEp) {
+        // The station's clock (the station by NAME, O3), keyed below it by "event|sat|band".
+        const std::optional<StationId> sid = net::stationOfName(ctx.entities, station);
+        if (!sid) return true;
+        const std::string k = fmt::format("{}|{}|{}", event, sat, band);
+        std::map<std::string, long long>& last = sta_rows[*sid].adm_event_last;
+        auto it = last.find(k);
+        if (it != last.end() && epoch_idx - it->second < kAdmEventHoldoffEp) {
             ++ctr.events_held;
             return false;
         }
-        ctx.carry.adm_event_last[k] = epoch_idx;
+        last[k] = epoch_idx;
         return true;
     };
 
@@ -517,10 +520,11 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                 bool evented = false;
 
                 if (screen) {
-                    auto it = arcs.find({si, ck});
+                    std::map<std::string, MeasurementAdmissionArc>& arcs =
+                        sta_rows[StationId{si}].adm_arc;   // the station's records (O4)
+                    auto it = arcs.find(ck);
                     const bool first = (it == arcs.end());
-                    if (first) it = arcs.emplace(std::make_pair(si, ck),
-                                                 MeasurementAdmissionArc{}).first;
+                    if (first) it = arcs.emplace(ck, MeasurementAdmissionArc{}).first;
                     MeasurementAdmissionArc& a = it->second;
                     // The previous screened epoch, captured before it is overwritten.
                     // `last_ep` advances only on epochs this seam screened the
@@ -859,13 +863,16 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
     }
 
     // --- record ageing (memory bound only) ---------------------------------
-    for (auto it = arcs.begin(); it != arcs.end();) {
-        if (seen.count(it->first) || epoch_idx - it->second.last_ep <= kAdmArcForgetEp) {
-            ++it;
-            continue;
+    for (auto& [sid, row] : sta_rows) {   // the stations in roster order, as the old (si, ck) keys
+        for (auto it = row.adm_arc.begin(); it != row.adm_arc.end();) {
+            if (seen.count({sid.index, it->first})
+                || epoch_idx - it->second.last_ep <= kAdmArcForgetEp) {
+                ++it;
+                continue;
+            }
+            ++ctr.arcs_forgotten;
+            it = row.adm_arc.erase(it);
         }
-        ++ctr.arcs_forgotten;
-        it = arcs.erase(it);
     }
 
     if (ctr.epochs == 1)

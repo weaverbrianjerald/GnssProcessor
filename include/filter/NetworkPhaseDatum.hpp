@@ -38,6 +38,7 @@
  */
 
 #include "filter/NetworkEstimator.hpp"
+#include "app/NetworkEntities.hpp"        // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
 #include "filter/NetworkPhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule (card EV7 §6)
@@ -208,7 +209,7 @@ struct PhaseHeldBasis {
     /// restored-arc convention (@ref localCarryYoung), so a warm-resume-restored entry
     /// reads mature instead of being refused for min_age epochs after every resume.
     /// An arc with no carry entry is refused as newborn.  Null: no age gate.
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* carry = nullptr;
+    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
     // ---- write-back (per call; the driver sums them into the run-end readout) ----
     long long n_held = 0;             ///< families re-pinned at their frozen basis value this epoch.
     /// New basis entries written: every election that did not re-pin a retained
@@ -317,14 +318,13 @@ struct AnchorCandidacyUsable {
     /// This epoch's DD invariant-carry slip funnel, same encoding; the vehicle on
     /// carry_invariant lineages.  Both sets are consulted.
     const std::set<std::pair<int, std::string>>* slipped_ambs = nullptr;
-    /// `ctx.carry.local_carry`, keyed (station index, sat, signal), read only for
+    /// `ctx.entities.arcs`, keyed (station index, sat, signal), read only for
     /// @c birth_ep through @ref localCarryYoung.  An unknown age counts as mature (the
     /// restored-entry convention): a null map, no entry for the arc, or a
     /// non-positive @c birth_ep, meaning never stashed (0) or warm-resume-restored
     /// (@ref LocalCarry::kBirthEpRestored).  The age test then passes and the ledger
     /// verdict and the freed test decide.
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>*
-        local_carry = nullptr;
+    const net::ArcTable* local_carry = nullptr;   ///< The arc table (its @c ArcState::amb, N4f1).
 };
 
 /**
@@ -591,7 +591,7 @@ int networkStageAnchorSlipHandovers(
  *
  * @param reref        This epoch's re-referenced (sat, signal) families
  *                     (ctx.carry.phase_anchor_reref).  Empty: returns 0 immediately.
- * @param local_carry  ctx.carry.local_carry: the phase-leveling per-station
+ * @param arcs         ctx.entities.arcs: the phase-leveling per-station
  *                     ambiguity carry, keyed (station idx, sat, signal).  Inert
  *                     (empty map) unless network.phase_leveling.
  * @param erased_out   [out, optional] RF-1 §7.4; null on every unarmed run.  Receives
@@ -606,7 +606,7 @@ int networkStageAnchorSlipHandovers(
  */
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        net::ArcTable& arcs,
         std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
             erased_out = nullptr);
 

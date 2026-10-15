@@ -64,7 +64,6 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& last_snapshot_write_s = ctx.carry.last_snapshot_write_s;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& local_carry = ctx.carry.local_carry;
     const net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
@@ -156,20 +155,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         net::recordToSnapshot("C", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("J", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("K", ctx, snap);   // the satellites (N4e1)
-        // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
-        // optional trailing L field, filled only when the ratio ceiling is armed, so a
-        // default snapshot's L rows stay byte-identical.
-        const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
-        // Card SCL2 X2: the history is not snapshotted, so a row is written with its marginal
-        // variance (var plus its history coefficients' squared norm); off, var as before.
-        const bool shx_marg = ctx.knobs.carry_cpl_shx;
-        for (const auto& [key, lc] : local_carry) {
-            NetworkStateSnapshot::Local L{lc.value_abs,
-                                          shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
-                                          lc.last_seen_s};
-            if (l_var_first) L.var_first = lc.var_first;
-            snap.local_carry[key] = L;
-        }
+        net::recordToSnapshot("L", ctx, snap);   // the arcs' leveling carries (N4f1)
         net::recordToSnapshot("Z", ctx, snap);   // the station table's zwd (card NOM step N4a)
         net::recordToSnapshot("Y", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("R", ctx, snap);   // the satellites (N4e1)
@@ -274,12 +260,13 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 }
                 return !ents.empty();
             };
-            for (const auto& [key, lc] : local_carry) {
-                if (lc.coupling.empty()) continue;             // legacy-diagonal entry
-                if (!pack(lc.coupling)) { ++n_drop; continue; }
-                n_terms += static_cast<long long>(ents.size());
-                snap.coupling_rows[key] = ents;
-            }
+            net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                         [&](const ArcId& id, const LocalCarry& lc) {
+                             if (lc.coupling.empty()) return;          // legacy-diagonal entry
+                             if (!pack(lc.coupling)) { ++n_drop; return; }
+                             n_terms += static_cast<long long>(ents.size());
+                             snap.coupling_rows[net::arcTuple(id)] = ents;
+                         });
             net::forEach(sta_rows, &net::StationState::zwd,
                          [&](const StationId& id, const LocalCarry& lc) {
                              if (lc.coupling.empty()) return;
@@ -341,11 +328,9 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             net::recordToSnapshot("EQD", ctx, snap);   // the constellation channels (N4b)
             net::recordToSnapshot("EQP", ctx, snap);   // the station signals (N4a)
             net::recordToSnapshot("EQS", ctx, snap);   // the satellite signals (N4e2)
-            for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
-                snap.eq34_prev_target[{key.first, key.second}] = tgt;
+            net::recordToSnapshot("EQT", ctx, snap);   // the arcs (N4f1)
             net::recordToSnapshot("EQE", ctx, snap);   // the lines of sight (N4c)
-            for (const auto& [idx, amb] : ctx.carry.eq34_retained_edges)
-                snap.eq34_retained_edges.emplace(idx, amb);
+            net::recordToSnapshot("EQR", ctx, snap);   // the arcs (N4f1)
             // Non-finite screen on the code-bias values only: the eq34 targets and
             // elevations are rounded or geometric quantities the election recomputes,
             // while code_bias_prev_ is the quantity the veteran-referenced sum-to-zero RHS

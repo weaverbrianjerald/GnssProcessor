@@ -2080,6 +2080,9 @@ struct FrozenStationMaps {
     std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
     std::map<std::string, std::string> anchor_incumbent;               ///< "sat_signal" -> station (N4d)
     std::map<std::string, std::string> eq34_sat_root;                  ///< "sat_signal" -> station (N4e2)
+    std::map<net::ArcTuple, LocalCarry> local_carry;                   ///< (station, sat, signal) (N4f1)
+    std::map<std::pair<int, std::string>, double> eq34_prev_target;    ///< (station, "sat_signal") (N4f1)
+    std::set<std::pair<int, std::string>> eq34_retained_edges;         ///< (station, "sat_signal") (N4f1)
     explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
     ~FrozenStationMaps() { store(); }
     FrozenStationMaps(const FrozenStationMaps&) = delete;
@@ -2091,6 +2094,9 @@ struct FrozenStationMaps {
         eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
         anchor_incumbent = net::sigMap(e.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
         eq34_sat_root = net::sigMap(e.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
+        local_carry = net::arcMap(e.arcs, &net::ArcState::amb);
+        eq34_prev_target = net::arcAmbMap(e.arcs, &net::ArcState::eq34_prev_target);
+        eq34_retained_edges = net::arcAmbSet(e.arcs, &net::ArcState::eq34_retained_edge);
         eq34_prev_el.clear();
         net::forEach(e.los, &net::LosState::eq34_prev_el, [&](const LosId& id, double el) {
             eq34_prev_el[{static_cast<size_t>(id.station.index), net::satKey(id.sat)}] = el;
@@ -2109,6 +2115,9 @@ struct FrozenStationMaps {
         net::NetworkEntities& e = ctx.entities;
         net::assignSig(e, &net::SatSignalState::anchor_incumbent, anchor_incumbent);
         net::assignSig(e, &net::SatSignalState::eq34_sat_root, eq34_sat_root);
+        net::assignArc(e, &net::ArcState::amb, local_carry);
+        net::assignArcAmb(e, &net::ArcState::eq34_prev_target, eq34_prev_target);
+        net::assignArcAmbFlags(e, &net::ArcState::eq34_retained_edge, eq34_retained_edges);
         net::dropAll(e.los, &net::LosState::eq34_prev_el);
         for (const auto& [key, el] : eq34_prev_el)
             net::putLos(e, static_cast<int>(key.first), key.second, &net::LosState::eq34_prev_el) = el;
@@ -2159,10 +2168,10 @@ auto& eq34_shift_total = ctx.carry.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
-auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
-auto& eq34_prev_target = ctx.carry.eq34_prev_target;
+auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
+auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
 auto& eq34_reref = ctx.carry.eq34_reref;
-auto& local_carry = ctx.carry.local_carry;
+auto& local_carry = station_maps.local_carry;   // card NOM step N4f1 shim
 auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
@@ -3181,6 +3190,7 @@ struct ChainEpoch {
     PhaseDatumCandidates                       cnd;
     std::set<std::pair<int, std::string>>      slipped;
     std::map<std::pair<int, std::string>, int> age;
+    net::ArcTable                              age_arcs;   ///< @ref age as the arc table (N4f1)
     AnchorHygiene                              hyg;
 };
 
@@ -3246,14 +3256,16 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                 LocalCarry lc{};
                 lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
                 lc.var       = 1e-4;
-                both([&](NetworkCarryState& c) { c.local_carry[key] = lc; });
+                bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
             } else if (chance(rng, 0.08)) {
-                both([&](NetworkCarryState& c) { c.local_carry.erase(key); });
+                bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
             }
             if (chance(rng, 0.1)) {
                 const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
                                                   : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
-                both([&](NetworkCarryState& c) { c.eq34_prev_target[{static_cast<int>(i), amb}] = t; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putArcAmb(c, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = t;
+                });
             }
             if (chance(rng, 0.03)) {
                 const std::string sta = chance(rng, 0.9) ? w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))] : "ZZZZ";
@@ -3345,8 +3357,12 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     };
     if (prevEl(f) != prevEl(l)) return "eq34_prev_el";
     if (a.eq34_reref != b.eq34_reref) return "eq34_reref";
-    if (a.eq34_prev_target != b.eq34_prev_target) return "eq34_prev_target";
-    if (a.eq34_retained_edges != b.eq34_retained_edges) return "eq34_retained_edges";
+    if (net::arcAmbMap(f.entities.arcs, &net::ArcState::eq34_prev_target)
+        != net::arcAmbMap(l.entities.arcs, &net::ArcState::eq34_prev_target))
+        return "eq34_prev_target";
+    if (net::arcAmbSet(f.entities.arcs, &net::ArcState::eq34_retained_edge)
+        != net::arcAmbSet(l.entities.arcs, &net::ArcState::eq34_retained_edge))
+        return "eq34_retained_edges";
     if (a.eq34_epoch_declared != b.eq34_epoch_declared) return "eq34_epoch_declared";
     if (a.eq34_epoch_bridged != b.eq34_epoch_bridged) return "eq34_epoch_bridged";
     if (a.eq34_reref_total != b.eq34_reref_total) return "eq34_reref_total";
@@ -3355,8 +3371,10 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (a.eq34_cpl_sprev_total != b.eq34_cpl_sprev_total) return "eq34_cpl_sprev_total";
     if (a.eq34_gap_repin_total != b.eq34_gap_repin_total) return "eq34_gap_repin_total";
     if (a.eq34_mismatch_epochs != b.eq34_mismatch_epochs) return "eq34_mismatch_epochs";
-    if (a.local_carry.size() != b.local_carry.size()) return "local_carry size";
-    for (auto ia = a.local_carry.begin(), ib = b.local_carry.begin(); ia != a.local_carry.end(); ++ia, ++ib)
+    const auto lca = net::arcMap(f.entities.arcs, &net::ArcState::amb);
+    const auto lcb = net::arcMap(l.entities.arcs, &net::ArcState::amb);
+    if (lca.size() != lcb.size()) return "local_carry size";
+    for (auto ia = lca.begin(), ib = lcb.begin(); ia != lca.end(); ++ia, ++ib)
         if (ia->first != ib->first || ia->second.value_abs != ib->second.value_abs) return "local_carry entry";
     if (cells(f, &net::StationSignalState::rpb) != cells(l, &net::StationSignalState::rpb))
         return "rpb_carry entry";
@@ -3458,7 +3476,8 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         }
         for (int ep = 0; ep < 40; ++ep) {
             ChainEpoch e = nextChainEpoch(rng, w, hyg_shape);
-            e.hyg.age = e.hyg.active ? &e.age : nullptr;
+            e.age_arcs = net::arcAmbTableOf(e.age, &net::ArcState::anchor_arc_age);
+            e.hyg.age = e.hyg.active ? &e.age_arcs : nullptr;
             perturbChainCarry(rng, w, e, ctx_f, ctx_l);
             std::vector<NetStation> st_f(w.names.size()), st_l(w.names.size());
             for (std::size_t i = 0; i < w.names.size(); ++i) st_f[i].name = st_l[i].name = w.names[i];

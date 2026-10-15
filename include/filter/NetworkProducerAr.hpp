@@ -295,13 +295,13 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *     NEQ-export gates) and `knobs.carry_aware_covariance`, and adds to the `counters.netar_*`
  *     run-end tallies. With `knobs.ar_suspect_epochs` > 0 (card ARL, the suspect-corner mask,
  *     filter/NetworkArSuspect.hpp) it also folds this epoch's `carry.relevel` latch and
- *     `carry.local_carry` stamps into `carry.ar_suspect` at loop epoch
+ *     `entities.arcs` stamps into `carry.ar_suspect` at loop epoch
  *     `counters.n_loop_epochs`, keeps every DD with a suspect corner out of the search, counts
  *     the corners it releases back into the search and what their DDs get there
  *     (`carry.ar_suspect.masking`), and adds to `counters.netar_suspect`. Under
  *     `network.ambiguity_resolution.cycle_basis` (card AGT) it reads each family's memory in
  *     `carry.ar_basis` (the last search's links, basis and arc lives), the arc ledger,
- *     `carry.local_carry`, `carry.amb_flag_ep` and `carry.relevel.free_ambs` (the arc life
+ *     `entities.arcs`, `the station table's amb_flag_ep` and `carry.relevel.free_ambs` (the arc life
  *     stamps, filter/NetworkArcLife.hpp), stores the memory back after the search and adds to
  *     `counters.netar_cycle`. Under `trace_lattice` it also reads `carry.relevel.free_cause`
  *     (each freed arc's cause bits, for the observatory's attribution). Taken whole for

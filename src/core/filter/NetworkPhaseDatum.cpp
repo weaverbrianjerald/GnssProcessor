@@ -314,13 +314,12 @@ void networkElectPhaseAnchors(
         if (held->min_age_ep > 0 && held->carry) {
             const auto p = StateKeys::parseAmbiguityKey(amb);
             if (!p) return false;
-            const auto it = held->carry->find(
-                std::make_tuple(static_cast<int>(i), p->satellite, p->signal));
+            const auto it = net::getArc(*held->carry, std::make_tuple(static_cast<int>(i), p->satellite, p->signal), &net::ArcState::amb);
             // An arc with no carry is newborn by definition and is refused.  An
             // entry with a non-positive birth stamp reads as mature (the
             // restored-arc convention).
-            if (it == held->carry->end()
-                || localCarryYoung(it->second, held->now_ep, held->min_age_ep)) {
+            if (it == nullptr
+                || localCarryYoung((*it), held->now_ep, held->min_age_ep)) {
                 ++held->n_refused_young;
                 return false;
             }
@@ -403,10 +402,9 @@ void networkElectPhaseAnchors(
             return true;
         const auto parts = StateKeys::parseAmbiguityKey(amb);
         if (!parts) return true;
-        const auto it = cand_usable->local_carry->find(
-                {static_cast<int>(i), parts->satellite, parts->signal});
-        if (it == cand_usable->local_carry->end()) return true;   // never carried ⇒ unknown
-        return !localCarryYoung(it->second, cand_usable->now_ep,
+        const auto it = net::getArc(*cand_usable->local_carry, {static_cast<int>(i), parts->satellite, parts->signal}, &net::ArcState::amb);
+        if (it == nullptr) return true;   // never carried ⇒ unknown
+        return !localCarryYoung((*it), cand_usable->now_ep,
                                 cand_usable->min_age_ep);
     };
 
@@ -1208,28 +1206,24 @@ int networkStageAnchorSlipHandovers(
 
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        net::ArcTable& arcs,
         std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
             erased_out) {
-    if (reref.empty() || local_carry.empty()) return 0;
+    if (reref.empty()) return 0;
     // Same erase as eq34 D4 (NetworkChainDatum.cpp): drop the family's per-station
     // ambiguity carries at every station.  The frame stepped, so the carried floats
     // are stale; they refloat next epoch.
     int n_erased = 0;
-    for (auto it = local_carry.begin(); it != local_carry.end();) {
-        const auto& key = it->first;   // (station idx, sat, signal)
-        if (reref.count({std::get<1>(key), std::get<2>(key)})) {
-            // Capture the entry before the erase (RF-1 §7.4, D3).  This whole-family,
-            // every-station refloat is what design §3.6 replaces with a declared,
-            // exact S-transformation (step 5); the captured inventory is the
-            // before/after that arm is graded on.
-            if (erased_out) erased_out->emplace_back(key, it->second);
-            it = local_carry.erase(it);
-            ++n_erased;   // returned; the caller folds it into the retirement census
-        } else {
-            ++it;
-        }
-    }
+    net::eraseIf(arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
+        if (!reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) return false;
+        // Capture the entry before the erase (RF-1 §7.4, D3).  This whole-family,
+        // every-station refloat is what design §3.6 replaces with a declared,
+        // exact S-transformation (step 5); the captured inventory is the
+        // before/after that arm is graded on.
+        if (erased_out) erased_out->emplace_back(net::arcTuple(id), lc);
+        ++n_erased;   // returned; the caller folds it into the retirement census
+        return true;
+    });
     return n_erased;
 }
 

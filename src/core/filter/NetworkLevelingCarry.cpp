@@ -236,7 +236,6 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
     // loader warns that the knob is inert without them).  A single const bool, so the
     // off path never reaches a block branch.
     const bool   pl_blk_on = ctx.knobs.pl_blk_on;
-    auto& local_carry = ctx.carry.local_carry;
     // ---- End of the bindings ----
 
     if (!legacy_local_inject) return;
@@ -303,8 +302,8 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
             // Card PRM phase 3a: counted only for an arc with a carried entry
             // (read-only find; a new arc has no prior to skip).  Per station:
             // this is the parallel produce phase.
-            if (local_carry.find(std::make_tuple(i, parts->satellite, parts->signal))
-                != local_carry.end())
+            if (net::getArc(ctx.entities.arcs, std::make_tuple(i, parts->satellite, parts->signal), &net::ArcState::amb)
+                != nullptr)
                 ++R.prm_amb_pending_reseed_skip;
             continue;
         }
@@ -329,9 +328,9 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
                 // restart) is the re-entry row; any other cause, or none, is the
                 // slip row.  free_cause is written only by the serial PASS A
                 // drains, so this find reads a settled map.
-                if (local_carry.find(std::make_tuple(i, parts->satellite,
-                                                     parts->signal))
-                    != local_carry.end()) {
+                if (net::getArc(ctx.entities.arcs, std::make_tuple(i, parts->satellite,
+                                                     parts->signal), &net::ArcState::amb)
+                    != nullptr) {
                     constexpr unsigned kReentryBits =
                         RelevelEpochState::kCauseGap
                         | RelevelEpochState::kCauseWindup;
@@ -350,11 +349,10 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
         }
         if (!std::isfinite(x_lin(amb_idx))) continue;  // non-finite state → don't inject
 
-        const auto cit = local_carry.find(
-            std::make_tuple(i, parts->satellite, parts->signal));
-        if (cit == local_carry.end()) continue;       // no carry yet (new arc)
-        const double gap = pl_now_s - cit->second.last_seen_s;
-        if (carryPastHorizon(pl_now_s, cit->second.last_seen_s, pl_max_gap_s)) {
+        const auto cit = net::getArc(ctx.entities.arcs, std::make_tuple(i, parts->satellite, parts->signal), &net::ArcState::amb);
+        if (cit == nullptr) continue;       // no carry yet (new arc)
+        const double gap = pl_now_s - cit->last_seen_s;
+        if (carryPastHorizon(pl_now_s, cit->last_seen_s, pl_max_gap_s)) {
             // The gap cliff (SPEC_withhold_era_release §8).  The entry is
             // not erased here, only not injected, so this arc solves free
             // this epoch and the harvest re-stashes it from one epoch of
@@ -381,20 +379,20 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
         // column PD-held by the prior alone; the §3.4 floor is not
         // load-bearing here, and this guards the opposite (lock-in)
         // direction.
-        double var_eff = cit->second.var + pl_q_amb * std::max(0.0, gap);
+        double var_eff = cit->var + pl_q_amb * std::max(0.0, gap);
         if (pl_blk_on) {
             // Deferred route (F3).  Membership uses the same positivity
             // predicate the inline route applies to the tail.  (F3 reads the
             // same finished tail as its Σ diagonal, and its scalar screen is
             // the row build's own.)
             if (!(pl_finish_var(var_eff, parts->satellite) > 0.0)) continue;
-            pl_pend.push_back(PlPend{col, amb_idx, &cit->second, var_eff,
+            pl_pend.push_back(PlPend{col, amb_idx, cit, var_eff,
                                      std::max(0.0, gap), parts->satellite,
                                      parts->signal});
             continue;
         }
         var_eff = pl_finish_var(var_eff, parts->satellite);
-        pl_emit_row(col, amb_idx, cit->second, var_eff, std::max(0.0, gap),
+        pl_emit_row(col, amb_idx, (*cit), var_eff, std::max(0.0, gap),
                     parts->satellite, parts->signal);
     }
     }
@@ -413,7 +411,6 @@ void networkHarvestHandoverLedger(NetworkRun& run, const NetworkEpoch& ep) {
     std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
-    auto& local_carry = ctx.carry.local_carry;
     // ---- End of the bindings ----
     // --- Two-edge continuous handover: ledger harvest --------------------------
     //
@@ -475,9 +472,8 @@ void networkHarvestHandoverLedger(NetworkRun& run, const NetworkEpoch& ep) {
             // read from the previous epoch's carry (this harvest precedes the leveling
             // harvest).
             {
-                const auto lcit = local_carry.find(
-                    std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
-                if (lcit != local_carry.end()) hv_e.var_first = lcit->second.var_first;
+                const auto lcit = net::getArc(ctx.entities.arcs, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
+                if (lcit != nullptr) hv_e.var_first = lcit->var_first;
             }
             ctx.carry.handover.value_abs[{static_cast<int>(i),
                                           StateKeys::makeAmbiguityKey(pa.sat, pa.signal)}] = hv_e;
@@ -496,7 +492,6 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& local_carry = ctx.carry.local_carry;
     auto& n_cpl_harvest_fail = ctx.counters.n_cpl_harvest_fail;
     auto& n_cpl_stash_empty = ctx.counters.n_cpl_stash_empty;
     auto& n_cpl_stash = ctx.counters.n_cpl_stash;
@@ -571,10 +566,10 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
         // byte-identical on every solve artifact.
         if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
             && !coupling.empty()) {
-            const auto old = local_carry.find(std::make_tuple(
-                static_cast<int>(i), pa.sat, pa.signal));
-            if (old != local_carry.end() && !old->second.coupling.empty()) {
-                networkResumeCouplingCensusRow(run, old->second, coupling);
+            const auto old = net::getArc(ctx.entities.arcs, std::make_tuple(
+                static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
+            if (old != nullptr && !old->coupling.empty()) {
+                networkResumeCouplingCensusRow(run, (*old), coupling);
             }
         }
         {
@@ -583,10 +578,10 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // ceiling; an erase-and-rebirth starts it over, and a re-level keeps it,
             // so a refloated arc reads as unconverged until it re-earns the level).
             const auto lkey = std::make_tuple(static_cast<int>(i), pa.sat, pa.signal);
-            const auto oldc = local_carry.find(lkey);
+            const auto oldc = net::getArc(ctx.entities.arcs, lkey, &net::ArcState::amb);
             const double var_first =
-                (oldc != local_carry.end() && oldc->second.var_first > 0.0)
-                    ? oldc->second.var_first : var;
+                (oldc != nullptr && oldc->var_first > 0.0)
+                    ? oldc->var_first : var;
             // The arc's birth, birth_ep (the clock of the candidacy bar, and of the
             // retired F3 block admission age gate) and its seconds twin birth_s (the hard
             // window floor of the sim-only slip oracle: a truth slip stamped at or
@@ -622,7 +617,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // matures.  This is not birth_s: a re-level keeps birth_s (by design,
             // the slip oracle's floor), and it is the re-level, not the birth,
             // that resets what the level is worth.
-            const bool yng_created = (oldc == local_carry.end());
+            const bool yng_created = (oldc == nullptr);
             const bool yng_freed =
                 ctx.carry.relevel.free_ambs.count(
                     {static_cast<int>(i), pa.amb_key}) > 0;
@@ -648,15 +643,15 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                 ambFloatBirthFloor(amb_birth_var_floor, pa.elev_deg,
                                    amb_elev_power);
             nlc.var_birth =
-                (oldc != local_carry.end() && oldc->second.var_birth > 0.0)
-                    ? oldc->second.var_birth
+                (oldc != nullptr && oldc->var_birth > 0.0)
+                    ? oldc->var_birth
                     : std::max(var_first, amb_floor_los);
-            if (oldc == local_carry.end() && amb_floor_los > var_first)
+            if (oldc == nullptr && amb_floor_los > var_first)
                 ++ctx.counters.n_amb_birth_floored;
             // The drop stamp (RF-1 §7.2) is written by the drop
             // (NetworkAmbFloat.cpp) and carried forward unchanged by the harvest.
             nlc.dropped_ep =
-                (oldc != local_carry.end()) ? oldc->second.dropped_ep : 0;
+                (oldc != nullptr) ? oldc->dropped_ep : 0;
             // Walk metric (RF-3a, A2).  This is the one site that sees the
             // pre-fold carried value and the post-fold stash together, so it is
             // where the amount the first fold after a drop absorbed can be
@@ -665,9 +660,9 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // report its walk for the on run's number to be comparable (standing
             // invariant #4).
             nlc.drop_walk_ph =
-                (oldc != local_carry.end()) ? oldc->second.drop_walk_ph : 0;
-            if (nlc.drop_walk_ph > 0 && oldc != local_carry.end()) {
-                const double dv = std::abs(value_abs - oldc->second.value_abs);
+                (oldc != nullptr) ? oldc->drop_walk_ph : 0;
+            if (nlc.drop_walk_ph > 0 && oldc != nullptr) {
+                const double dv = std::abs(value_abs - oldc->value_abs);
                 if (std::isfinite(dv)) {
                     if (nlc.drop_walk_ph == 1)
                         ctx.counters.amb_walk_fold1_m.push_back(dv);
@@ -677,10 +672,10 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                 nlc.drop_walk_ph = (nlc.drop_walk_ph == 1) ? 2 : 0;
             }
             localCarryStampBirth(
-                nlc, (oldc != local_carry.end() ? &oldc->second : nullptr),
+                nlc, (oldc != nullptr ? oldc : nullptr),
                 static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
             nlc.relevel_s = localCarryStampRelevel(
-                yng_created ? 0.0 : oldc->second.relevel_s,
+                yng_created ? 0.0 : oldc->relevel_s,
                 yng_created, yng_freed, pl_now_s);
             // The arc's trajectory row (network.trace_amb_state, RF-1 §7.4),
             // written from the one site that sees the pre-stash entry and the
@@ -696,7 +691,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // the gap cliff, a pending reseed) are the ones the trace exists to
             // show.
             long long nlc_n_folds =
-                (oldc != local_carry.end()) ? oldc->second.n_folds : 0;
+                (oldc != nullptr) ? oldc->n_folds : 0;
             if (amb_state_on) {
                 const auto ff = R.amb_state_fold.find({pa.sat, pa.signal});
                 const bool did_fold = (ff != R.amb_state_fold.end());
@@ -736,8 +731,8 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                 // own order of tests.
                 const bool reseed_now =
                     stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
-                const double gap_now = (oldc != local_carry.end())
-                    ? (pl_now_s - oldc->second.last_seen_s) : 0.0;
+                const double gap_now = (oldc != nullptr)
+                    ? (pl_now_s - oldc->last_seen_s) : 0.0;
                 if (yng_created)          row.event = "birth";
                 else if (reseed_now)      row.event = "drop:reseed";
                 else if (yng_freed)       row.event = "drop:relevel_free";
@@ -748,7 +743,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                     ctx.carry.amb_state_rows.push_back(std::move(row));
             }
             nlc.n_folds = nlc_n_folds;
-            local_carry[lkey] = std::move(nlc);
+            net::putArc(ctx.entities, lkey, &net::ArcState::amb) = std::move(nlc);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pa.col, SharedHistoryMap::Amb,
                                           static_cast<int>(i), pa.sat, pa.signal);   // card SCL2 X2; no-op off
         }
@@ -759,7 +754,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // inject can pair it with any sibling stashed at this harvest, and
             // with nothing else.
             hblk->C.row(static_cast<Eigen::Index>(a)) = cross.transpose();
-            auto& ent = local_carry[std::make_tuple(static_cast<int>(i), pa.sat, pa.signal)];
+            auto& ent = net::putArc(ctx.entities, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
             ent.blk = hblk;
             ent.blk_idx = static_cast<int>(a);
         }
@@ -781,7 +776,6 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
     NetworkCarryVce& carry_vce_est = run.engines.carry_vce;
     NetworkPriorResidual& prires_est = run.engines.prires;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& local_carry = ctx.carry.local_carry;
     auto& eq34_reref = ctx.carry.eq34_reref;
     const bool   carry_vce = ctx.knobs.carry_vce;
     const double pl_max_gap_s = ctx.knobs.pl_max_gap_s;
@@ -817,8 +811,7 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
     // re-referenced arc did fold.
     const bool prires_want = prires_pl && prires_est.enabled();
     if (carry_vce || prires_want) {
-        const auto oc = local_carry.find(
-            std::make_tuple(static_cast<int>(i), pa.sat, pa.signal));
+        const auto oc = net::getArc(ctx.entities.arcs, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
         const bool reseed_pending =
             stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
         const bool reref = eq34_reref.count({pa.sat, pa.signal}) > 0;
@@ -832,12 +825,12 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
         const bool relevel_bridged =
             ctx.carry.relevel.bridged.count(
                 {static_cast<int>(i), pa.sat, pa.signal}) > 0;
-        if (oc != local_carry.end()) {
-            const double gapv = pl_now_s - oc->second.last_seen_s;
+        if (oc != nullptr) {
+            const double gapv = pl_now_s - oc->last_seen_s;
             if (gapv >= 0.0 && gapv <= pl_max_gap_s) {
                 const double fold_var_hand =
                     [&] {
-                        double v = oc->second.var + pl_q_amb * std::max(0.0, gapv);
+                        double v = oc->var + pl_q_amb * std::max(0.0, gapv);
                         // Under F3 (phase_leveling_local_block) a column carried
                         // in a whitened block folded with the block's joint Σ,
                         // whose diagonal for this column is this hand value
@@ -877,7 +870,7 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
                 // purpose: it would move every coupled family's ê and therefore
                 // its σ̂₀, which is solve-adjacent measurement work with its own
                 // A/B.
-                const double innov = oc->second.value_abs - value_abs;
+                const double innov = oc->value_abs - value_abs;
                 if (carry_vce && !reseed_pending && !reref
                     && !relevel_freed && !relevel_bridged)
                     carry_vce_est.addRow("pl", pa.sat, innov,
@@ -919,7 +912,6 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunContext& ctx = run.ctx;
     std::vector<NetStation>& stations = run.setup.stations;
     double pl_now_s = ep.clock.pl_now_s;
-    auto& local_carry = ctx.carry.local_carry;
     // Per-arc carry-state trace (network.trace_amb_state, RF-1 §7.4).  The stride gates
     // trajectory rows only; an event (birth / drop / erase) is written on every epoch,
     // so the trace is a complete inventory of events.  Off, the whole block below is
@@ -933,25 +925,25 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep) {
     // The fleet size is captured before the loop, so "fleet-scale" is a ratio.
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same double
     // as pl_max_gap_s; card PRM phase 3b).
-    const long long fleet_before = static_cast<long long>(local_carry.size());
+    const long long fleet_before = static_cast<long long>(net::present(ctx.entities.arcs, &net::ArcState::amb));
     const long long n_pruned = carryGapPrune(
-        local_carry, pl_now_s,
+        ctx.entities.arcs, &net::ArcState::amb, pl_now_s,
         ctx.params.spec(NetworkParamKind::Ambiguity).gap_horizon_s,
-        [&](const auto& it) {
+        [&](const ArcId& id, const LocalCarry& lc) {
             // Capture before the erase (RF-1 §7.4, D3).  This is the one
             // retirement path that design §3.4 keeps as an erase ("this is a
             // different arc"), so its inventory is the control against which
             // the three that become bounded drops are read.
             if (amb_state_on) {
-                const int sidx = std::get<0>(it->first);
+                const int sidx = id.station.index;
                 ambStateNoteErase(
                     ctx,
                     static_cast<long long>(std::floor(pl_now_s / 604800.0)),
                     std::fmod(pl_now_s, 604800.0),
                     (sidx >= 0 && sidx < static_cast<int>(stations.size()))
                         ? stations[sidx].name : std::string{},
-                    std::get<1>(it->first), std::get<2>(it->first),
-                    it->second, "gap_prune");
+                    net::satKey(id.sat), net::signalKey(id.signal),
+                    lc, "gap_prune");
             }
             // The decoupling edge of the carry itself (card SID phase 3, R3a).
             // The key is buffered for the roster's audit pass, which owns the
@@ -961,13 +953,13 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep) {
             // The audit pass drains the vector every epoch.  A record only:
             // nothing in the solve reads it.
             if (ctx.roster.active)
-                ctx.carry.sid_carry_prune_deaths.push_back(it->first);
+                ctx.carry.sid_carry_prune_deaths.push_back(net::arcTuple(id));
             // Card PRM phase 3a: an arc the float vehicle's drop already dropped
             // this epoch (networkAmbFloatApplyDrops stamps dropped_ep with this
             // epoch's n_loop_epochs before PASS B; this harvest runs later in the
             // same epoch, and the counter does not move in between).
-            if (it->second.dropped_ep > 0
-                && it->second.dropped_ep
+            if (lc.dropped_ep > 0
+                && lc.dropped_ep
                        == static_cast<long long>(ctx.counters.n_loop_epochs))
                 ++ctx.counters.prm_pruned_after_drop;
         });

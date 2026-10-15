@@ -155,17 +155,17 @@ TEST(RelevelBridgeV3, ReplaceTwoBandsMutatesValueAndVarOnly) {
     pd.dif_m = difFor(dn1, dn2);  pd.sigma_if_m = 0.002;
     pd.has_gf = true;
     pd.dgf_m = dgfFor(dn1, dn2);  pd.sigma_gf_m = 0.002;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     // Free re-levels sitting AT the bridged levels (perfect corroboration).
-    carry[{2, "G05", "L1C"}] = LocalCarry{10.0 + kLam1 * dn1, 0.5, 100.0};
-    carry[{2, "G05", "L2W"}] = LocalCarry{-4.0 + kLam2 * dn2, 0.5, 100.0};
+    net::putArcIn(carry, {2, "G05", "L1C"}, &net::ArcState::amb) = LocalCarry{10.0 + kLam1 * dn1, 0.5, 100.0};
+    net::putArcIn(carry, {2, "G05", "L2W"}, &net::ArcState::amb) = LocalCarry{-4.0 + kLam2 * dn2, 0.5, 100.0};
     BridgeV3Solve bs;
     const auto out = networkSlipBridgeV3Replace(pd, 2, "G05", carry, 0.0,
                                                 200.0, 0.35, 3.0, &bs);
     ASSERT_EQ(out, BridgeReplaceOutcome::Applied);
     EXPECT_TRUE(bs.used_gf);
-    const auto& c1 = carry[std::make_tuple(2, std::string("G05"), std::string("L1C"))];
-    const auto& c2 = carry[std::make_tuple(2, std::string("G05"), std::string("L2W"))];
+    const auto& c1 = net::putArcIn(carry, std::make_tuple(2, std::string("G05"), std::string("L1C")), &net::ArcState::amb);
+    const auto& c2 = net::putArcIn(carry, std::make_tuple(2, std::string("G05"), std::string("L2W")), &net::ArcState::amb);
     EXPECT_NEAR(c1.value_abs, 10.0 + kLam1 * dn1, 1e-6);
     EXPECT_NEAR(c2.value_abs, -4.0 + kLam2 * dn2, 1e-6);
     EXPECT_GT(c1.var, 0.01);   // pre_var + bridge var
@@ -181,15 +181,15 @@ TEST(RelevelBridgeV3, ReplaceNoPartialApplyOnBandCorrobFailure) {
     pd.dif_m = difFor(dn1, dn2);  pd.sigma_if_m = 1e-9;
     pd.has_gf = true;
     pd.dgf_m = dgfFor(dn1, dn2);  pd.sigma_gf_m = 1e-9;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
-    carry[{2, "G05", "L1C"}] = LocalCarry{10.0 + kLam1 * dn1, 0.5, 100.0};
-    carry[{2, "G05", "L2W"}] = LocalCarry{-4.0 + kLam2 * dn2 + 10.0, 0.5, 100.0};
+    net::ArcTable carry;
+    net::putArcIn(carry, {2, "G05", "L1C"}, &net::ArcState::amb) = LocalCarry{10.0 + kLam1 * dn1, 0.5, 100.0};
+    net::putArcIn(carry, {2, "G05", "L2W"}, &net::ArcState::amb) = LocalCarry{-4.0 + kLam2 * dn2 + 10.0, 0.5, 100.0};
     const auto out = networkSlipBridgeV3Replace(pd, 2, "G05", carry, 0.0,
                                                 200.0, 0.35, 3.0);
     EXPECT_EQ(out, BridgeReplaceOutcome::CorrobReject);
     // No band moved, the corroborated band 1 included.
-    const auto& c1 = carry[std::make_tuple(2, std::string("G05"), std::string("L1C"))];
-    const auto& c2 = carry[std::make_tuple(2, std::string("G05"), std::string("L2W"))];
+    const auto& c1 = net::putArcIn(carry, std::make_tuple(2, std::string("G05"), std::string("L1C")), &net::ArcState::amb);
+    const auto& c2 = net::putArcIn(carry, std::make_tuple(2, std::string("G05"), std::string("L2W")), &net::ArcState::amb);
     EXPECT_NEAR(c1.value_abs, 10.0 + kLam1 * dn1, 1e-12);
     EXPECT_NEAR(c2.value_abs, -4.0 + kLam2 * dn2 + 10.0, 1e-12);
     EXPECT_DOUBLE_EQ(c1.var, 0.5);

@@ -36,10 +36,12 @@ import sys
 
 # The TSV step(s) of each entity that have landed (the satellite is split: N4e1 the clock
 # half, N4e2 the datum and QC half).  Step N4e2 also moved the TSV rows it re-placed by their
-# key into the station, constellation, line-of-sight and satellite-signal entities, so a row
-# is the entity's when its step is listed here and its entity column is one of TSV_ENTITY's.
-STEP_OF = {'station': ('N4a', 'N4e2'), 'constellation': ('N4b', 'N4e2'), 'los': ('N4c', 'N4e2'),
-           'sat_signal': ('N4d', 'N4e2'), 'satellite': ('N4e1', 'N4e2'), 'arc': ('N4f',)}
+# key into the station, constellation, line-of-sight and satellite-signal entities (and N4f1
+# its four string-keyed arc rows into the station and the line of sight), so a row is the
+# entity's when its step is listed here and its entity column is one of TSV_ENTITY's.
+STEP_OF = {'station': ('N4a', 'N4e2', 'N4f1'), 'constellation': ('N4b', 'N4e2'),
+           'los': ('N4c', 'N4e2', 'N4f1'), 'sat_signal': ('N4d', 'N4e2'),
+           'satellite': ('N4e1', 'N4e2'), 'arc': ('N4f1',)}
 TSV_ENTITY = {'station': ('Station', 'Station.signal'),
               'constellation': ('Constellation', 'Constellation.channel'), 'los': ('Los',),
               'sat_signal': ('SatSignal',), 'satellite': ('Satellite',), 'arc': ('Arc',)}
@@ -243,12 +245,13 @@ def v4(tree, entity):
 
 
 # The row-inserting or resetting calls: the generic ones (N4.0) and the keyed forms of N4b
-# (the letter maps), N4c (the line-of-sight forms, eraseIf), N4d (the satellite-signal forms)
-# and N4e1 (the satellite forms).
+# (the letter maps), N4c (the line-of-sight forms, eraseIf), N4d (the satellite-signal forms),
+# N4e1 (the satellite forms) and N4f1 (the arc forms).
 WRITE_RE = re.compile(r'\bnet::(put|mark|drop|dropAll|unmark|putLos|dropLos|assignLos|'
                       r'assignLosFlags|eraseIf|assignLetterMap|mergeLetterMap|putSig|dropSig|'
                       r'emplaceSig|assignSig|putSat|dropSat|markSat|unmarkSat|assignSat|'
-                      r'assignSatFlags)\s*\(')
+                      r'assignSatFlags|putArc|putArcAmb|putArcIn|dropArc|markArcAmb|assignArc|'
+                      r'assignArcAmb|assignArcAmbFlags|assignRelevelPend|putAmbFlagEp)\s*\(')
 
 
 def functions_of(text):

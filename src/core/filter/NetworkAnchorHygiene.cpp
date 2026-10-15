@@ -55,7 +55,6 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     const int    bridge_max  = ctx.knobs.pin_bridge_max_ep;
     if (!on) return;   // off: no map, no bridge, no counter (structurally inert)
 
-    auto& age_map  = ctx.carry.anchor_arc_age;
     net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge, pb_level_prev, anchor_incumbent (N4d)
     using SG = net::SatSignalState;
     auto& ctr      = ctx.counters;
@@ -117,10 +116,10 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 new_age[{si, amb}] = 0;   // refloated ambiguity: fresh by definition
                 continue;
             }
-            const auto prev = age_map.find({si, amb});
-            const int counted = prev == age_map.end()
+            const int* prev = net::getArcAmb(ctx.entities.arcs, si, amb, &net::ArcState::anchor_arc_age);
+            const int counted = prev == nullptr
                 ? seed_age
-                : std::min(prev->second + 1, kArcAgeCap);
+                : std::min(*prev + 1, kArcAgeCap);
             new_age[{si, amb}] = counted;
             if (!sid_age_read) continue;
             const auto a = StateKeys::parseAmbiguityKey(amb);
@@ -143,12 +142,12 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         }
     }
     ctr.hyg.arcs_tracked += static_cast<long long>(new_age.size());
-    age_map.swap(new_age);
-    hyg.age = &age_map;
+    net::assignArcAmb(ctx.entities, &net::ArcState::anchor_arc_age, new_age);   // rebuilt wholesale
+    hyg.age = &ctx.entities.arcs;
     if (resume_seed)
         log->info("Network (eq34 hygiene): warm resume — seeded {} arc age(s) at {} "
                   "epoch(s) (arcs behind a snapshot are mature by definition; the age "
-                  "map is not serialized).", age_map.size(), seed_age);
+                  "map is not serialized).", new_age.size(), seed_age);
 
     // --- (2) Per-key verdicts + bridge lifecycle --------------------------
     // Everything below is decided per (sat,signal) key of the candidate union, using

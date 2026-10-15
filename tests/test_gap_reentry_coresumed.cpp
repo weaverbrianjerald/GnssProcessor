@@ -67,7 +67,7 @@ struct Harness {
     SlipQcCounters          counters;
     RelevelEpochState       relevel;
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>  local_carry;
+    net::ArcTable  local_carry;
     ArcReentryEpoch         sid;
     ArcReentryOutcomeMap    outcome;
     int                     i_lo{ 0 };               ///< gauge-pinned stations are those below it.
@@ -113,7 +113,7 @@ struct Harness {
         LocalCarry lc{};
         lc.var         = 1.0e-5;
         lc.last_seen_s = pl_now_s - 60.0;   // inside the max-gap window: protectable
-        local_carry[std::make_tuple(station, std::string(sat), std::string(sig))] = lc;
+        net::putArcIn(local_carry, std::make_tuple(station, std::string(sat), std::string(sig)), &net::ArcState::amb) = lc;
     }
 
     /// One per-signal resumption of (@p station, @p sat, @p signal), judged against
@@ -488,7 +488,7 @@ TEST(GapReentryCoresumedTest, SharedSignalAtGaugePinnedStationIsSkipped) {
 // free: counted no_carry, with no reentry_relevel row.
 TEST(GapReentryCoresumedTest, SharedSignalWithNoCarryIsCountedNoCarry) {
     Harness h(/*share=*/true);
-    h.local_carry.erase(std::make_tuple(0, std::string(kSat), std::string("L1C")));
+    net::dropArc(h.local_carry, std::make_tuple(0, std::string(kSat), std::string("L1C")), &net::ArcState::amb);
     h.fieldCase();
     h.runPerSignal();
 

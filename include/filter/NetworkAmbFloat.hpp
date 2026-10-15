@@ -183,7 +183,7 @@ namespace GnssProcessor {
      * Runs after PASS A's slip scans (which fill @c ctx.carry.relevel.free_ambs) and
      * before the PASS-B assembly, so when the parallel inject reads an entry the drop
      * has already happened and the inject folds it at birth strength instead of
-     * skipping it.  Serial because it mutates @c ctx.carry.local_carry, which the
+     * skipping it.  Serial because it mutates @c ctx.entities.arcs, which the
      * produce phase then reads.
      *
      * Two causes, both of which skip an inject on the leveling vehicle:
@@ -192,7 +192,7 @@ namespace GnssProcessor {
      *    phase-datum candidacy screen, the anchor-slip handover staging and the
      *    harvest's statistics guards all read it (§4.1: "keep the latched-set
      *    plumbing").  With @c network.phase_datum_held_basis armed, every latched arc
-     *    is also stamped in @c ctx.carry.amb_flag_ep with this epoch, whether or not it
+     *    is also stamped in @c the station table's amb_flag_ep with this epoch, whether or not it
      *    has a carry (RF-2 items 3 and 4).
      *  - @c stale_gap: every carried arc whose sighting gap already exceeds
      *    @c phase_leveling_max_gap_s.  The post-harvest prune still erases arcs that are

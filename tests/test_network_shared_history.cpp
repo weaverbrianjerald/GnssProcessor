@@ -347,9 +347,9 @@ TEST(NetworkSharedHistoryTest, RegistrationNeedsTheGenerationAndAReferenceAndFol
     LocalCarry stale{1.0, 1e-4, kStash};   // re-stashed without history terms: ignored
     stale.shx_coef = {0.0, 0.5, 0.0};
     stale.shx_stash_s = kStash - 30.0;
-    ctx.carry.local_carry[std::make_tuple(0, std::string("G02"), std::string("L1C"))] = a;
+    net::putArc(ctx.entities, std::make_tuple(0, std::string("G02"), std::string("L1C")), &net::ArcState::amb) = a;
     net::put(ctx.entities.stations, StationId{1}, &net::StationState::zwd) = z;
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G02"), std::string("L1C"))] = stale;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G02"), std::string("L1C")), &net::ArcState::amb) = stale;
 
     NetworkEstimator est;
     est.registerClock("G01");
@@ -391,7 +391,7 @@ TEST(NetworkSharedHistoryTest, RegistrationNeedsTheGenerationAndAReferenceAndFol
     off.ctx->carry.cxu_stash_valid = true;
     off.ctx->carry.cxu_stash_s = kStash;
     off.ctx->carry.shx = ctx.carry.shx;
-    off.ctx->carry.local_carry = ctx.carry.local_carry;
+    net::assignArc(off.ctx->entities, &net::ArcState::amb, net::arcMap(ctx.entities.arcs, &net::ArcState::amb));
     NetworkEstimator e3;
     e3.registerClock("G01");
     networkSharedHistoryRegister(*off.ctx, e3);
@@ -431,7 +431,7 @@ TEST(NetworkSharedHistoryTest, HarvestEndKeepsTheSharedTermAcrossStations) {
             h.rc[{static_cast<std::size_t>(sta), col}] = rc;
             LocalCarry lc{1.0 + i, 2e-4 + 1e-5 * i, kStash};
             var0.push_back(lc.var);
-            ctx.carry.local_carry[std::make_tuple(sta, sat, std::string("L1C"))] = lc;
+            net::putArc(ctx.entities, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb) = lc;
             networkSharedHistoryNoteEntry(H, static_cast<std::size_t>(sta), col,
                                           SharedHistoryMap::Amb, sta, sat, "L1C");
         }
@@ -460,7 +460,7 @@ TEST(NetworkSharedHistoryTest, HarvestEndKeepsTheSharedTermAcrossStations) {
         for (int i = 0; i < 4; ++i) {
             const auto& [sta, sat, col] = rows[static_cast<std::size_t>(i)];
             (void)col;
-            const LocalCarry& lc = ctx.carry.local_carry.at(std::make_tuple(sta, sat, std::string("L1C")));
+            const LocalCarry& lc = (*net::getArc(ctx.entities.arcs, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb));
             ASSERT_TRUE(sharedHistoryCoefValid(lc));
             ASSERT_EQ(lc.shx_coef.size(), static_cast<std::size_t>(ncl));
             for (int j = 0; j < ncl; ++j) coef(i, j) = lc.shx_coef[static_cast<std::size_t>(j)];
@@ -1073,7 +1073,7 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
                 const std::string sat = (i % 2) ? "G03" : "G02";
                 const Eigen::Index col = 10 * (sta + 1) + (i % 2);
                 hh.rc[{static_cast<std::size_t>(sta), col}] = rcs[static_cast<std::size_t>(i)];
-                ctx.carry.local_carry[std::make_tuple(sta, sat, std::string("L1C"))] = LocalCarry{1.0, 1e-4, kStash};
+                net::putArc(ctx.entities, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb) = LocalCarry{1.0, 1e-4, kStash};
                 networkSharedHistoryNoteEntry(H, static_cast<std::size_t>(sta), col, SharedHistoryMap::Amb, sta,
                                               sat, "L1C");
             }
@@ -1089,9 +1089,9 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
         };
         const auto A  = runEnd("hold_off_a", false);
         const auto Bc = runEnd("hold_off_b", true);
-        ASSERT_EQ(A->ctx->carry.local_carry.size(), 4u);
-        for (const auto& [key, lc] : A->ctx->carry.local_carry) {
-            const LocalCarry& lb = Bc->ctx->carry.local_carry.at(key);
+        ASSERT_EQ(net::present(A->ctx->entities.arcs, &net::ArcState::amb), 4u);
+        for (const auto& [key, lc] : net::arcMap(A->ctx->entities.arcs, &net::ArcState::amb)) {
+            const LocalCarry& lb = (*net::getArc(Bc->ctx->entities.arcs, key, &net::ArcState::amb));
             EXPECT_EQ(lc.var, lb.var);
             EXPECT_EQ(lc.shx_coef, lb.shx_coef);
             EXPECT_EQ(lc.shx_stash_s, lb.shx_stash_s);
@@ -1214,8 +1214,8 @@ TEST(NetworkSharedHistoryTest, KeepsTheClockGaugeWithAPinnedPivotColumn) {
         EXPECT_EQ(cond_var, 2e-4) << "X2 defers the conditional variance";
         EXPECT_EQ(row.segment(4, 3).cwiseAbs().maxCoeff(), 0.0) << "the Y terms are gone";
         rows_after.push_back(row);
-        ctx.carry.local_carry[std::make_tuple(sta, std::string(i % 3 == 0 ? "G02" : "G03"),
-                                              std::string("L") + std::to_string(i))] = LocalCarry{1.0, 2e-4, kStash};
+        net::putArc(ctx.entities, std::make_tuple(sta, std::string(i % 3 == 0 ? "G02" : "G03"),
+                                              std::string("L") + std::to_string(i)), &net::ArcState::amb) = LocalCarry{1.0, 2e-4, kStash};
         networkSharedHistoryNoteEntry(Hh, static_cast<std::size_t>(sta), col, SharedHistoryMap::Amb, sta,
                                       i % 3 == 0 ? "G02" : "G03", std::string("L") + std::to_string(i));
     }

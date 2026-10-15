@@ -58,6 +58,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <vector>
 
@@ -66,6 +67,7 @@
 #include "filter/NetworkGrossLos.hpp"       // GrossLosState
 #include "filter/NetworkPbHoldClone.hpp"    // PbHoldClone
 #include "filter/NetworkSbasis.hpp"         // NetworkSbasis::PinPairHold
+#include "filter/NetworkMeasurementAdmission.hpp"   // MeasurementAdmissionArc
 #include "filter/NetworkSignalIntegrity.hpp"   // SignalIntegrityArc
 #include "slip/NetworkRawObservables.hpp"   // IonoCsState
 #include "filter/NetworkRunTypes.hpp"   // LocalCarry, SdEwlFix
@@ -683,6 +685,22 @@ struct StationState {
     /// Was @c NetworkCarryState::cg_event_last (keyed by station NAME, O3; step N4e2,
     /// re-placed from the satellite rows).  ColdStart.
     std::optional<long long> cg_event_last;
+    /// Ambiguity key ("sat_signal") -> the loop epoch of that arc's last screen flag: a slip
+    /// response, a T4 / T3 refloat, or a gross-LOS declaration (RF-2 items 3 and 4), read by
+    /// the held basis's quiet-window gate.  Written only when the held basis is armed.  The
+    /// old key (station index, ambiguity key) keeps its string below the station (O4).  Was
+    /// @c NetworkCarryState::amb_flag_ep (step N4f1, re-placed from the arc rows).  ColdStart.
+    std::map<std::string, long long> amb_flag_ep;
+    /// Channel key ("<sat>|<band>") -> the measurement admission record of the channel
+    /// (product-referenced admission), aged out after kAdmArcForgetEp unseen epochs.  Not
+    /// serialized (the card is not fingerprinted).  Was @c NetworkCarryState::adm_arc
+    /// (step N4f1, re-placed from the arc rows; O4).  ColdStart.
+    std::map<std::string, MeasurementAdmissionArc> adm_arc;
+    /// "event|sat|band" -> the processed-epoch index of its last emitted ADMISSION event
+    /// (the rate limit of the INC-3 census and the guard event).  Was
+    /// @c NetworkCarryState::adm_event_last ("event|station|sat|band", the station by NAME,
+    /// O3; step N4f1, re-placed from the arc rows; O4).  ColdStart.
+    std::map<std::string, long long> adm_event_last;
     /// The members keyed below the station.
     std::map<std::string, StationSignalState> signals;
 };
@@ -784,11 +802,49 @@ struct LosState {
     bool prefit_code_flag{false};
     /// The event holdoff clocks keyed below the line of sight.
     std::map<std::string, LosEventState> events;
+    /// The bridge v2 pend store, keyed by the signal pair "sig1_sig2" (O4): persistent
+    /// across epochs (the MW integer arrives one or two epochs after the T1 flag), swept for
+    /// expiry and replacement at the top of the MW drain.  Not snapshotted.  Was
+    /// @c NetworkCarryState::relevel_pend ((station index, sat, "sig1_sig2"); step N4f1,
+    /// re-placed from the arc rows).  ColdStart.
+    std::map<std::string, RelevelPend> relevel_pend;
 };
 
-/// One arc's carried state (steps N4f1 and N4f2 fill it).
+/// One arc's carried state (step N4f1: the carries; N4f2 adds the ledger's record), keyed by
+/// @c ArcId in (station, satellite, signal) order: the order of the (station index,
+/// satellite, signal) and (station index, "sat_signal") keys it replaces, whose signal is a
+/// phase code (O1, O2).  A field is present exactly when the old map held the key; a set
+/// membership is a flag.  The members keyed below the arc by a string no typed key
+/// reproduces keep that key on the owner of their typed prefix (O4):
+/// @ref StationState::amb_flag_ep, @ref StationState::adm_arc,
+/// @ref StationState::adm_event_last and @ref LosState::relevel_pend.
 struct ArcState {
     Lifecycle seen;  ///< Decision D4; filled from the arc ledger in step N4f2.
+    /// The phase-leveling ambiguity carry (increment 1): persistent across epochs.  The
+    /// table is ordered, so the inject order (which feeds rank-1 LDLT updates) is
+    /// byte-identical serial and parallel.  Inert unless network.phase_leveling.  Was
+    /// @c NetworkCarryState::local_carry.  Record L.
+    std::optional<LocalCarry> amb;
+    /// The gross screen's held ambiguity (network.gross_los_bound): written once at the
+    /// declaration from the pre-declaration entry with its border coupling and joint block
+    /// cleared, re-applied over @ref amb after every harvest while the declaration stands,
+    /// reset at the release or the expiry.  Empty unless knobs.gl_bound.  Was
+    /// @c NetworkCarryState::gl_hold_amb.  ColdStart.
+    std::optional<LocalCarry> gl_hold_amb;
+    /// Last epoch's eq34 pin target (card 3): the same-station pinmove baseline of the
+    /// shift walk, keyed per station because an interior satellite carries several pins.
+    /// Replaced wholesale each election.  Was @c NetworkCarryState::eq34_prev_target.
+    /// Record EQT.
+    std::optional<double> eq34_prev_target;
+    /// A tree edge retained across the current gap because its leveling carry is still
+    /// alive (network.phase_datum_eq34_extend_only); rebuilt at each election.  Was
+    /// @c NetworkCarryState::eq34_retained_edges.  Record EQR.
+    bool eq34_retained_edge{false};
+    /// Consecutive epochs the arc has been present with an anchorable phase-bias state
+    /// (the eq34 reattach hygiene): rebuilt wholesale each election, so an absent arc drops
+    /// out; zero on a slip-funnel hit or a pending reseed (standing invariant #1).  Was
+    /// @c NetworkCarryState::anchor_arc_age.  ColdStart.
+    std::optional<int> anchor_arc_age;
 };
 
 /// An entity table: an ordered map from the identity to the row.
@@ -809,6 +865,12 @@ using SatTable = Table<SatId, SatelliteState>;
 
 /// The satellite-signal table, in (satellite, signal) order.
 using SatSignalTable = Table<SatSignalId, SatSignalState>;
+
+/// The arc table, in (station, satellite, signal) order.
+using ArcTable = Table<ArcId, ArcState>;
+
+/// The old key of an arc's leveling carry: (station index, satellite, phase signal).
+using ArcTuple = std::tuple<int, std::string, std::string>;
 
 // ===========================================================================
 // Station names and the identity converters
@@ -832,6 +894,7 @@ enum class Converter : std::uint8_t {
     ConstellationLetter,  ///< A constellation letter (char or one-letter string) to its System (O5).
     Satellite,    ///< A satellite string to its SatId ("" is the no-satellite SatId{}, O2).
     SatSignal,    ///< A "<sat>_<signal>" / "<sat>|<signal>" key to its SatSignalId (O2).
+    Arc,          ///< A (station index, satellite, signal) key to its ArcId (O2).
     Count
 };
 
@@ -859,7 +922,7 @@ struct NetworkEntities {
     SatSignalTable                              sat_signals;
     StationTable                                stations;
     LosTable                                    los;
-    Table<ArcId, ArcState>                      arcs;
+    ArcTable                                    arcs;
     StationNames                                names;   ///< Run constant (setup).
     mutable EntityReach                         reach;   ///< Trace class.
 };
@@ -1402,6 +1465,194 @@ void assignSig(NetworkEntities& e, std::optional<V> SatSignalState::*f,
     for (const auto& [k, v] : m) putSig(e, k, f) = v;
 }
 
+// ---- Arcs addressed by the old (station index, satellite, signal) keys (step N4f1) ----
+
+/// The arc of an old key, without counting (the reader's converter, safe in the parallel
+/// produce): the satellite and signal convert as for @ref satSignalKey ("" keeps its row as
+/// @c SatId{} / @c SignalId{}; any other string must round-trip, O2).
+std::optional<ArcId> arcKey(const ArcTuple& k);
+
+/// The arc of an old (station index, "sat_signal") key, without counting.
+std::optional<ArcId> arcKey(int station, const std::string& amb);
+
+/// The arc of an old key, counting a failure under Converter::Arc (the writer's
+/// converter; serial code).
+std::optional<ArcId> arcOf(const NetworkEntities& e, const ArcTuple& k);
+
+/// The arc of an old (station index, "sat_signal") key, counting a failure under
+/// Converter::Arc (serial code).
+std::optional<ArcId> arcOfAmb(const NetworkEntities& e, int station, const std::string& amb);
+
+/// The old key of an arc.
+ArcTuple arcTuple(const ArcId& id);
+
+/// The old (station index, "sat_signal") key of an arc.
+std::pair<int, std::string> arcPair(const ArcId& id);
+
+/// The value of field @p f of the arc of old key @p k, or null (no count).
+template <class T, class V>
+FieldPtr<T, V> getArc(T& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
+    const std::optional<ArcId> id = arcKey(k);
+    return id ? get(t, *id, f) : nullptr;
+}
+
+/// The value of field @p f of the arc of old key (@p station, @p amb), or null (no count).
+template <class T, class V>
+FieldPtr<T, V> getArcAmb(T& t, int station, const std::string& amb, std::optional<V> ArcState::*f) {
+    const std::optional<ArcId> id = arcKey(station, amb);
+    return id ? get(t, *id, f) : nullptr;
+}
+
+/// True when flag @p f of the arc of old key (@p station, @p amb) is set (no count).
+bool hasArcAmb(const ArcTable& t, int station, const std::string& amb, bool ArcState::*f);
+
+/**
+ * @brief The value of field @p f of the arc of old key @p k, created when absent: the old
+ *        map's @c operator[].  Serial code only.  A key that does not round-trip is counted
+ *        and gets a scratch value the table never holds.
+ */
+template <class V>
+V& putArc(NetworkEntities& e, const ArcTuple& k, std::optional<V> ArcState::*f);
+
+/// @ref putArc for an old (station index, "sat_signal") key.  Serial code only.
+template <class V>
+V& putArcAmb(NetworkEntities& e, int station, const std::string& amb, std::optional<V> ArcState::*f);
+
+/// Sets flag @p f of the arc of old key (@p station, @p amb); true when it was not set.
+/// Serial code only (counted on a failed conversion).
+bool markArcAmb(NetworkEntities& e, int station, const std::string& amb, bool ArcState::*f);
+
+/// Resets field @p f of the arc of old key @p k; 1 when it was present: the old map's erase.
+template <class V>
+std::size_t dropArc(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
+    const std::optional<ArcId> id = arcKey(k);
+    return id ? drop(t, *id, f) : 0;
+}
+
+/**
+ * @brief The first arc at or after the old key (@p station, @p sat, "") (O8): the old
+ *        @c lower_bound(std::make_tuple(station, sat, std::string{})).  The rows of the
+ *        satellite at the station follow it in signal order; a range scan stops at the first
+ *        row of another (station, satellite).  A satellite that does not round-trip has no
+ *        rows: the end.
+ */
+template <class T>
+auto arcsFrom(T& t, int station, const std::string& sat) -> decltype(t.begin()) {
+    const std::optional<SatId> s = satIdKey(sat);
+    if (!s) return t.end();
+    return t.lower_bound(ArcId{StationId{station}, *s, SignalId{}});
+}
+
+/// The first arc of station @p station (O8): the old
+/// @c lower_bound(std::make_tuple(station, std::string{}, std::string{})); a scan stops at the
+/// first row of another station.
+template <class T>
+auto arcsOfStation(T& t, int station) -> decltype(t.begin()) {
+    return t.lower_bound(ArcId{StationId{station}, SatId{}, SignalId{}});
+}
+
+/// True when @p id is an arc of (@p station, @p sat): the stop test of an @ref arcsFrom scan
+/// (the old @c std::get<0>(key) == station && @c std::get<1>(key) == sat).
+inline bool arcOfLos(const ArcId& id, int station, const std::string& sat) {
+    return id.station.index == station && satKey(id.sat) == sat;
+}
+
+/// Field @p f as the old tuple-keyed map (its pure readers, the snapshot and the tests), in
+/// id order, which is the old key order (O1).
+template <class V>
+std::map<ArcTuple, V> arcMap(const ArcTable& t, std::optional<V> ArcState::*f) {
+    std::map<ArcTuple, V> out;
+    forEach(t, f, [&](const ArcId& id, const V& v) { out.emplace_hint(out.end(), arcTuple(id), v); });
+    return out;
+}
+
+/// @ref putArc on a bare table (a pure function's fixture: no converter tally); a key that
+/// does not round-trip gets a scratch value the table never holds.
+template <class V>
+V& putArcIn(ArcTable& t, const ArcTuple& k, std::optional<V> ArcState::*f) {
+    if (const std::optional<ArcId> id = arcKey(k)) return put(t, *id, f);
+    static thread_local std::optional<V> scratch;
+    scratch.emplace();
+    return *scratch;
+}
+
+/// An arc table holding field @p f from the old tuple-keyed map @p m (a pure function's
+/// fixture; a key that does not round-trip is left out, uncounted).
+template <class V>
+ArcTable arcTableOf(const std::map<ArcTuple, V>& m, std::optional<V> ArcState::*f) {
+    ArcTable t;
+    for (const auto& [k, v] : m)
+        if (const std::optional<ArcId> id = arcKey(k)) t[*id].*f = v;
+    return t;
+}
+
+/// An arc table holding field @p f from the old (station index, "sat_signal")-keyed map @p m
+/// (a fixture, as @ref arcTableOf).
+template <class V>
+ArcTable arcAmbTableOf(const std::map<std::pair<int, std::string>, V>& m, std::optional<V> ArcState::*f) {
+    ArcTable t;
+    for (const auto& [k, v] : m)
+        if (const std::optional<ArcId> id = arcKey(k.first, k.second)) t[*id].*f = v;
+    return t;
+}
+
+/// Replaces field @p f with the cells of the old tuple-keyed map @p m: the old map's
+/// assignment.  Serial code only.
+template <class V>
+void assignArc(NetworkEntities& e, std::optional<V> ArcState::*f, const std::map<ArcTuple, V>& m) {
+    dropAll(e.arcs, f);
+    for (const auto& [k, v] : m) putArc(e, k, f) = v;
+}
+
+/// Field @p f as the old (station index, "sat_signal")-keyed map (the eq34 election's view).
+template <class V>
+std::map<std::pair<int, std::string>, V> arcAmbMap(const ArcTable& t, std::optional<V> ArcState::*f) {
+    std::map<std::pair<int, std::string>, V> out;
+    forEach(t, f, [&](const ArcId& id, const V& v) { out.emplace(arcPair(id), v); });
+    return out;
+}
+
+/// Replaces field @p f with the cells of the old (station index, "sat_signal")-keyed map
+/// @p m: the old map's assignment.  Serial code only.
+template <class V>
+void assignArcAmb(NetworkEntities& e, std::optional<V> ArcState::*f,
+                  const std::map<std::pair<int, std::string>, V>& m) {
+    dropAll(e.arcs, f);
+    for (const auto& [k, v] : m) putArcAmb(e, k.first, k.second, f) = v;
+}
+
+/// Flag @p f as the old (station index, "sat_signal") set.
+std::set<std::pair<int, std::string>> arcAmbSet(const ArcTable& t, bool ArcState::*f);
+
+/// Replaces flag @p f with the arcs of the old set @p s.  Serial code only.
+void assignArcAmbFlags(NetworkEntities& e, bool ArcState::*f,
+                       const std::set<std::pair<int, std::string>>& s);
+
+/// The bridge v2 pends (@ref LosState::relevel_pend) as the old (station index, sat,
+/// "sig1_sig2")-keyed map its drains take, in the old key order.
+std::map<ArcTuple, RelevelPend> relevelPendMap(const LosTable& t);
+
+/// Replaces the bridge v2 pends with the cells of @p m.  Serial code only.
+void assignRelevelPend(NetworkEntities& e, const std::map<ArcTuple, RelevelPend>& m);
+
+/// The flag epoch of arc (@p station, ambiguity key @p amb), or null (no count).
+inline const long long* getAmbFlagEp(const StationTable& t, int station, const std::string& amb) {
+    const auto it = t.find(StationId{station});
+    if (it == t.end()) return nullptr;
+    const auto jt = it->second.amb_flag_ep.find(amb);
+    return jt == it->second.amb_flag_ep.end() ? nullptr : &jt->second;
+}
+
+/// The flag epoch cell of arc (@p station, @p amb), created when absent: the old map's
+/// @c operator[].  Serial code only.
+inline long long& putAmbFlagEp(NetworkEntities& e, int station, const std::string& amb) {
+    return e.stations[StationId{station}].amb_flag_ep[amb];
+}
+
+/// The arc flag epochs (@ref StationState::amb_flag_ep) as the old (station index, ambiguity
+/// key)-keyed map the held basis reads, in the old key order.
+std::map<std::pair<int, std::string>, long long> ambFlagEpMap(const StationTable& t);
+
 /**
  * @brief Calls @p fn(id, row) for every station row in station-name order (O3): the order
  *        of a map keyed by the name, or by "<name>|..." when no name is a proper prefix of
@@ -1444,6 +1695,22 @@ V& putSat(NetworkEntities& e, const std::string& sat, std::optional<V> Satellite
 template <class V>
 V& putSig(NetworkEntities& e, const std::string& key, std::optional<V> SatSignalState::*f) {
     if (const std::optional<SatSignalId> id = satSignalOf(e, key)) return put(e.sat_signals, *id, f);
+    static thread_local std::optional<V> scratch;
+    scratch.emplace();
+    return *scratch;
+}
+
+template <class V>
+V& putArc(NetworkEntities& e, const ArcTuple& k, std::optional<V> ArcState::*f) {
+    if (const std::optional<ArcId> id = arcOf(e, k)) return put(e.arcs, *id, f);
+    static thread_local std::optional<V> scratch;
+    scratch.emplace();
+    return *scratch;
+}
+
+template <class V>
+V& putArcAmb(NetworkEntities& e, int station, const std::string& amb, std::optional<V> ArcState::*f) {
+    if (const std::optional<ArcId> id = arcOfAmb(e, station, amb)) return put(e.arcs, *id, f);
     static thread_local std::optional<V> scratch;
     scratch.emplace();
     return *scratch;

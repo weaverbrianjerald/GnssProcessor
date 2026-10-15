@@ -25,7 +25,7 @@
  * is an explicit reference into the caller's NetworkRunContext.
  *
  * Ordering contract.  This function mutates persistent and epoch-local carries.  It
- * erases @c ctx.carry.local_carry entries and marks StateManager ambiguities
+ * erases @c ctx.entities.arcs entries and marks StateManager ambiguities
  * pending-reseed for every refloated (station,sat,σ); inserts consensus / whole-sat
  * culprits into @c clock_refloat_sats and @c retro_flag_sats (consumed downstream by
  * the SB_CLOCKUPD two-state clock update and retro-flag feed); folds σ̂0 into

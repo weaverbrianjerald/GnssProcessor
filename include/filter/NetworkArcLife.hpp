@@ -15,7 +15,7 @@
  * |------------------|----------------------------------------|--------------------------------------------|-------|
  * | `adm_generation` | the arc ledger's admitted side         | the roster audit pass, after SB_NETAR      | a birth (first admission, or after a death) |
  * | `adm_run_start`  | the arc ledger's admitted side         | the same pass                              | a re-entry after a gap (a bridged gap is a new life) |
- * | `has_carry`      | @c LocalCarry (ctx.carry.local_carry)  | the leveling harvest; the erases           | an erase (T4 / T3, gap prune) |
+ * | `has_carry`      | @c LocalCarry (ctx.entities.arcs)  | the leveling harvest; the erases           | an erase (T4 / T3, gap prune) |
  * | `birth_ep`       | @c LocalCarry                          | the harvest's first stash                  | an erase and rebirth |
  * | `dropped_ep`     | @c LocalCarry                          | the float vehicle's drop (SB_PREASM; RAIM) | a drop |
  * | `relevel_s`      | @c LocalCarry                          | the first stash, a drop, the harvest re-stash of a latched arc | a re-level |

@@ -387,12 +387,15 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
                             false, nullptr, &cs, &lc, nullptr});
     };
     if (on(S::AmbiguityValue))
-        for (auto& [key, lc] : carry.local_carry)
-            hand(CarriedRef{S::AmbiguityValue, SharedParamKind::PhaseBias, std::get<1>(key),
-                            std::get<2>(key), std::get<0>(key), &lc.value_abs, nullptr, false,
-                            nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+            hand(CarriedRef{S::AmbiguityValue, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), id.station.index, &lc.value_abs, nullptr,
+                            false, nullptr, nullptr, &lc, nullptr});
+        });
     if (on(S::AmbiguityCoupling))
-        for (auto& [key, lc] : carry.local_carry) terms(S::AmbiguityCoupling, std::get<0>(key), lc);
+        net::forEach(entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+            terms(S::AmbiguityCoupling, id.station.index, lc);
+        });
     if (on(S::ZwdCoupling))
         net::forEach(entities.stations, &ES::zwd, [&](const StationId& id, LocalCarry& lc) {
             terms(S::ZwdCoupling, id.index, lc);
@@ -405,13 +408,15 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
             terms(S::IonoBlockCoupling, id.station.index, lc);
         });
     if (on(S::HoldAmbiguityValue))
-        for (auto& [key, lc] : carry.gl_hold_amb)
-            hand(CarriedRef{S::HoldAmbiguityValue, SharedParamKind::PhaseBias, std::get<1>(key),
-                            std::get<2>(key), std::get<0>(key), &lc.value_abs, nullptr, false,
-                            nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, LocalCarry& lc) {
+            hand(CarriedRef{S::HoldAmbiguityValue, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), id.station.index, &lc.value_abs, nullptr,
+                            false, nullptr, nullptr, &lc, nullptr});
+        });
     if (on(S::HoldAmbiguityCoupling))
-        for (auto& [key, lc] : carry.gl_hold_amb)
-            terms(S::HoldAmbiguityCoupling, std::get<0>(key), lc);
+        net::forEach(entities.arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, LocalCarry& lc) {
+            terms(S::HoldAmbiguityCoupling, id.station.index, lc);
+        });
     if (on(S::HoldIonoCoupling))
         net::forEach(entities.los, &EL::gl_hold_iono, [&](const LosId& id, LocalCarry& lc) {
             terms(S::HoldIonoCoupling, id.station.index, lc);

@@ -1268,7 +1268,7 @@ namespace GnssProcessor {
         // alive: {receiver index, "sat_signal"}.  Rebuilt at each election's sticky-map
         // update; read at the next election's recordEdge to count a gap re-pin.  Empty
         // unless network.phase_datum_eq34_extend_only.
-        std::set<std::pair<int, std::string>> eq34_retained_edges;
+        // eq34_retained_edges: moved to net::ArcState::eq34_retained_edge (card NOM step N4f1, app/NetworkEntities.hpp).
         // Last epoch's pin target per (station index, "sat_signal") for card 3: the exact
         // same-station pinmove baseline for the shift walk.  It must be keyed per station:
         // an interior satellite carries several pins (its parent edge and one per
@@ -1276,7 +1276,7 @@ namespace GnssProcessor {
         // amb-only key collides, and the resulting wrong pinmoves feed back through the
         // carry shifts into the next epoch's rounded targets, which then diverge.
         // Replaced wholesale each election.
-        std::map<std::pair<int, std::string>, double> eq34_prev_target;
+        // eq34_prev_target: moved to net::ArcState::eq34_prev_target (card NOM step N4f1, app/NetworkEntities.hpp).
         // Per-epoch re-reference set (sat, signal) of card 3: cleared and rebuilt at each
         // eq34 election, and read (1) by the local-carry erase right after the election and
         // (2) by the D2/C1 shared-carry consume, which must marginalize the re-referenced
@@ -1312,7 +1312,7 @@ namespace GnssProcessor {
         // absent arc drops out, so absence resets the age, the conservative direction), and
         // erased on a slip-funnel hit or a pending-reseed flag for the arc, so a refloated
         // ambiguity never presents itself as a mature host (standing invariant #1).
-        std::map<std::pair<int, std::string>, int> anchor_arc_age;
+        // anchor_arc_age: moved to net::ArcState::anchor_arc_age (card NOM step N4f1, app/NetworkEntities.hpp).
         // Warm-resume seeding latch (spec §2 INC-1, "warm-resume rule").  Consumed by the
         // first hygiene pass of a resumed run, which seeds every present arc at
         // eq34_anchor_min_arc_ep instead of 1; otherwise a resumed leg would block every
@@ -1380,7 +1380,7 @@ namespace GnssProcessor {
         // unknown, which is the case @c adm_resume_pending labels: the arc's state was
         // restored (possibly carrying the corrupt seed) while this observer's memory was
         // not.
-        std::map<std::pair<int, std::string>, MeasurementAdmissionArc> adm_arc;
+        // adm_arc: moved to net::StationState::adm_arc (card NOM step N4f1, app/NetworkEntities.hpp).
         // This run resumed from a snapshot, so each station's first screened epoch labels a
         // first-sighting failure `adm_reject_resume` (a restored corrupt arc) rather than
         // `adm_reject_birth`.  Written unconditionally by a successful warm resume; inert
@@ -1395,11 +1395,7 @@ namespace GnssProcessor {
         // distinction (the refloat is unconditional), but the event name does.
         bool adm_resume_pending = false;
         // adm_resume_seen: moved to net::StationState::adm_resume_seen (card NOM step N4a, app/NetworkEntities.hpp).
-        /// "event|station|sat|band" -> the processed-epoch index of its last emitted
-        /// event.  Rate-limits only the two ADMISSION streams that can repeat (the INC-3
-        /// census and a chronically bad station's guard event); the INC-1 / INC-2 events
-        /// are transitions and never consult it.
-        std::map<std::string, long long> adm_event_last;
+        // adm_event_last: moved to net::StationState::adm_event_last (card NOM step N4f1, app/NetworkEntities.hpp).
         // Per-epoch L1 scalars (INC-3).  @c adm_ep_tow is the stamp the epoch-status writer
         // compares against, so an epoch the screen did not run on leaves the columns blank
         // instead of repeating stale numbers (the redun_ep_tow pattern).
@@ -1547,7 +1543,7 @@ namespace GnssProcessor {
         // epochs, keyed by (station index, sat, signal).  Ordered, so the inject order
         // (which feeds rank-1 LDLᵀ updates) is byte-identical serial and parallel.  Inert
         // unless network.phase_leveling.
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry> local_carry;
+        // local_carry: moved to net::ArcState::amb (card NOM step N4f1, app/NetworkEntities.hpp).
         /// Continuous-GPS-seconds stamp of the previous harvest, i.e. the value
         /// @c LocalCarry::last_seen_s carries for an entry stashed one processed epoch
         /// ago.  Written at the end of every harvest; -1 before the first.  Readers
@@ -1572,14 +1568,7 @@ namespace GnssProcessor {
         /// cannot leak rows into the next one.  Empty on every unarmed run.
         std::vector<AmbStateRow> amb_state_rows;
         // phase_basis: moved to net::SatSignalState::phase_basis (card NOM step N4d, app/NetworkEntities.hpp).
-        /// (station idx, ambiguity key) -> the loop epoch of that arc's last screen flag: a
-        /// slip response (the latched free set), a T4 / T3 refloat, or a gross-LOS
-        /// declaration (RF-2 items 3 and 4).  The election's quiet-window gate reads it to
-        /// refuse the basis to a recently flagged candidate, and the sticky branch reads it
-        /// to depose a basis holder that has just been flagged, so the handover happens
-        /// before the response acts on that column (item 4).  Written only when the held
-        /// basis is armed.
-        std::map<std::pair<int, std::string>, long long> amb_flag_ep;
+        // amb_flag_ep: moved to net::StationState::amb_flag_ep (card NOM step N4f1, app/NetworkEntities.hpp).
         /// Sim-only oracle slip response (network.cycle_slip.oracle_relevel,
         /// include/slip/NetworkSlipOracle.hpp): the run-scope truth table, the per-arc
         /// application ledger and the run-end counters.  Null on every run where the knob
@@ -1674,13 +1663,7 @@ namespace GnssProcessor {
         // gl_event_last: moved to net::LosState::gl_event_last (card NOM step N4c, app/NetworkEntities.hpp).
         /// Screened-epoch sequence number, the holdoff's clock (card GL).
         long long gl_seq{ 0 };
-        /// The held carried ambiguity levels of the declared lines of sight (RF-3b B2,
-        /// @c network.gross_los_bound), keyed (station index, satellite, signal) like
-        /// @ref local_carry.  Written once, at the declaration, from the pre-declaration
-        /// entry with its border coupling and joint block cleared; re-applied over
-        /// @ref local_carry after every harvest for as long as the declaration stands;
-        /// erased at the release or the expiry.  Empty unless @c knobs.gl_bound.
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry> gl_hold_amb;
+        // gl_hold_amb: moved to net::ArcState::gl_hold_amb (card NOM step N4f1, app/NetworkEntities.hpp).
         // gl_hold_iono: moved to net::LosState::gl_hold_iono (card NOM step N4c, app/NetworkEntities.hpp).
         // gl_hold_iono_blk: moved to net::LosState::gl_hold_iono_blk (card NOM step N4c, app/NetworkEntities.hpp).
         // gl_sta_state: moved to net::StationState::gross_los (card NOM step N4a, app/NetworkEntities.hpp).
@@ -1797,12 +1780,7 @@ namespace GnssProcessor {
         /// the units folded at the last step, for the fold's edges.  Empty and untouched unless
         /// the fold runs with source lattice.  Not snapshotted.
         FixedCycleState              fixed_cycles;
-        /// Bridge v2 pend store, keyed (station idx, sat, "sig1_sig2"); persistent across
-        /// epochs (the MW integer arrives 1–2 epochs after the T1 flag), swept for expiry
-        /// and replacement at the top of the MW drain.  Not snapshotted: a resume drops
-        /// outstanding pends, and those slips keep their v1 free re-level (the conservative
-        /// direction).
-        std::map<std::tuple<int, std::string, std::string>, RelevelPend> relevel_pend;
+        // relevel_pend: moved to net::LosState::relevel_pend (card NOM step N4f1, app/NetworkEntities.hpp).
         /// What the gap re-entry response did to each arc at this epoch (card SID phase 3,
         /// R4), recorded by the response and read by the roster's audit pass, where the
         /// admitted-side census lives.  Cleared at the build seam, so it never describes a

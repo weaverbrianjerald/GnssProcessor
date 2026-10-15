@@ -1100,7 +1100,6 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     // keeps its B9 row.  The loader already refuses the arm without carry_zwd +
     // phase_leveling_local_block; this is the live half of the same gate.
     const bool   zwd_blk_on    = ctx.knobs.zwd_blk_on;
-    auto& local_carry = ctx.carry.local_carry;
     const net::StationTable& sta_rows = ctx.entities.stations;   // zwd: read-only in the parallel build
     // ---- End of the bindings ----
 
@@ -1142,12 +1141,10 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                 }
             }
             long long n_sta_carry = 0;   // read-only walk of this station's entries
-            for (auto it = local_carry.lower_bound(std::make_tuple(
-                     static_cast<int>(i), std::string{}, std::string{}));
-                 it != local_carry.end()
-                     && std::get<0>(it->first) == static_cast<int>(i);
+            for (auto it = net::arcsOfStation(ctx.entities.arcs, static_cast<int>(i));
+                 it != ctx.entities.arcs.end() && it->first.station.index == static_cast<int>(i);
                  ++it)
-                ++n_sta_carry;
+                if (it->second.amb) ++n_sta_carry;   // O8: the station's carry entries
             R.pl_blk_marg_cols += std::max<long long>(
                 0, n_sta_carry - static_cast<long long>(pl_pend.size()));
             // B9-in-block (network.carry_zwd_in_block): the station's carried

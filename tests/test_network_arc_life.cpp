@@ -148,11 +148,11 @@ TEST(NetworkArcLife, TheRunContextIsReadByStationSatelliteAndPhaseCode) {
     LocalCarry lc{};
     lc.birth_ep  = 4;
     lc.relevel_s = 4 * kDt;
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G05"), std::string("L2W"))] = lc;
-    ctx.carry.amb_flag_ep[{1, StateKeys::makeAmbiguityKey("G05", "L2W")}] = 3;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G05"), std::string("L2W")), &net::ArcState::amb) = lc;
+    net::putAmbFlagEp(ctx.entities, 1, StateKeys::makeAmbiguityKey("G05", "L2W")) = 3;
     // Another band and another station are other arcs.
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G05"), std::string("L1C"))] = LocalCarry{};
-    ctx.carry.amb_flag_ep[{0, StateKeys::makeAmbiguityKey("G05", "L2W")}] = 9;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
+    net::putAmbFlagEp(ctx.entities, 0, StateKeys::makeAmbiguityKey("G05", "L2W")) = 9;
 
     const ArcLifeStamp s = arcLifeStamp(ctx, arc);
     EXPECT_EQ(s.adm_generation, 1);
