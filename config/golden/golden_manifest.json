@@ -86,7 +86,6 @@
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
     "network.gross_los_cold_bound_m": 12.0,
-    "network.serialize_sbasis_contract": true,
 
     "network.closed_loop.pb_hold_presence_flip": true,
 
@@ -115,7 +114,25 @@
     "network.code_datum_family_difference": true,
     "network.code_family_birth_prior_sigma_m": 0.10
    },
-   "unset": [],
+   "unset": [
+    "network.mw_wl",
+    "network.lane_carry",
+    "network.emit_pb_filter",
+    "network.emit_pb_filter_emit_sigma",
+    "network.emit_pb_filter_gate_v2",
+    "network.emit_pb_filter_max_gap_s",
+    "network.emit_pb_filter_window_epochs",
+    "network.iono_constraint_deweight_adaptive",
+    "network.iono_constraint_deweight_floor",
+    "network.iono_constraint_deweight_min_epochs",
+    "network.iono_constraint_deweight_rate_limit",
+    "network.iono_constraint_deweight_sigma_hi",
+    "network.iono_constraint_deweight_sigma_lo",
+    "network.iono_constraint_deweight_window_epochs",
+    "network.parallel_reduce",
+    "network.phase_bias_exclude_unmatched_antenna",
+    "network.carry_invariant_honesty"
+   ],
    "exceptions": {
     "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
     "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture."
@@ -161,7 +178,6 @@
     "network.gross_los_min_rows_rule": "available",
     "network.gross_los_emit_exclude": true,
     "network.gross_los_cold_bound_m": 12.0,
-    "network.serialize_sbasis_contract": true,
 
     "network.closed_loop.pb_hold_presence_flip": true,
 
@@ -190,7 +206,25 @@
     "network.code_datum_family_difference": true,
     "network.code_family_birth_prior_sigma_m": 0.10
    },
-   "unset": [],
+   "unset": [
+    "network.mw_wl",
+    "network.lane_carry",
+    "network.emit_pb_filter",
+    "network.emit_pb_filter_emit_sigma",
+    "network.emit_pb_filter_gate_v2",
+    "network.emit_pb_filter_max_gap_s",
+    "network.emit_pb_filter_window_epochs",
+    "network.iono_constraint_deweight_adaptive",
+    "network.iono_constraint_deweight_floor",
+    "network.iono_constraint_deweight_min_epochs",
+    "network.iono_constraint_deweight_rate_limit",
+    "network.iono_constraint_deweight_sigma_hi",
+    "network.iono_constraint_deweight_sigma_lo",
+    "network.iono_constraint_deweight_window_epochs",
+    "network.parallel_reduce",
+    "network.phase_bias_exclude_unmatched_antenna",
+    "network.carry_invariant_honesty"
+   ],
    "exceptions": {
     "network.trace_dd_fractional_ref": "CONTINUITY, not doubt: the A/B PASSES the structural half and 'oldest' measurably improves the as-traced grade at a returned-reference hour (SPEC_amb_iono §6.13.3, E h5 0.334 -> 0.195 cyc), but the goldens ARE the comparison baseline and changing which satellite their dd-frac trace references would break continuity with the entire existing record of dd-frac grades.  The golden lineages are graded ref-free (simnet_dd_reref.py / --ref-free), which is strictly better than any reference policy, so they gain nothing and lose comparability.  Arm 'oldest' on a standalone/archival trace, not here.",
     "network.serialize_disc_counters": "scope cut of the re-founding decision - no seams, no snapshots, no warm resume (scripts/make_refound_config.py DROP: 'snapshot serialization'); its whole regime is products consumed across producer restarts, and arming it changes the P/B/C record bytes.  Add back with the seam work on a re-validated posture."
