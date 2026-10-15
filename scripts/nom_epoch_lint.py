@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V0, V4, V10, V11).
+"""Permanent lint of the network producer's epoch function (card NOM3 step EP1, checks V0, V4, V10, V11)
+and of the entity-table writers (check V12).
 
     python scripts/nom_epoch_lint.py [--tree DIR] [--partial] [--presolve-writer {outputs,epoch}]
 
@@ -1537,6 +1538,101 @@ class Lint:
                                 + (f"; {len(skipped)} banner writers not converted yet" if skipped else ""))
 
 
+
+# ---------------------------------------------------------------------------------------------
+# V12: the entity-table writers
+# ---------------------------------------------------------------------------------------------
+ENTITIES_CPP = "src/core/app/NetworkEntities.cpp"
+TABLE_OF_TYPE = {"ConstellationTable": "constellations", "SatelliteTable": "sats",
+                 "SatSignalTable": "sat_signals", "StationTable": "stations", "LosTable": "los",
+                 "ArcTable": "arcs", "NetworkEntities": "all"}
+TABLE_BIND = re.compile(r"(?m)^[ \t]*(?!const\b)(?:net::)?(\w+)[ \t]*&[ \t]*\w+[ \t]*=[ \t]*"
+                        r"(?:n?run\.)?ctx\.entities(?:\.(\w+))?[ \t]*;")
+
+
+def enclosing_function(text, pos):
+    """The name of the function whose body holds @p pos (namespace braces are transparent)."""
+    stack = []   # (open position, is_function, name)
+    i = 0
+    while i < pos:
+        c = text[i]
+        if c == "{":
+            head = text[max(0, i - 4000):i]
+            m = re.search(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>]+\s*)?$", head)
+            name = None
+            if m and not re.search(r"\b(if|for|while|switch|catch)\s*\([^;{}]*\)\s*$", head):
+                j = m.start()   # the closing parenthesis of the parameter list
+                d, k = 0, j
+                while k >= 0:
+                    if head[k] == ")":
+                        d += 1
+                    elif head[k] == "(":
+                        d -= 1
+                        if d == 0:
+                            break
+                    k -= 1
+                nm = re.search(r"([A-Za-z_]\w*)\s*$", head[:k])
+                if nm and nm.group(1) not in ("if", "for", "while", "switch", "catch", "return"):
+                    name = nm.group(1)
+            stack.append((i, name))
+        elif c == "}" and stack:
+            stack.pop()
+        i += 1
+    for _, name in stack:
+        if name is not None:
+            return name
+    return None
+
+
+def entity_writer_bindings(tree):
+    """{(function, home): set of tables} over src/core: every non-const entity-table binding."""
+    got = collections.defaultdict(set)
+    for path in tree.files("src/core"):
+        if not path.endswith(".cpp"):
+            continue
+        raw = tree.read(path)
+        if raw is None or "ctx.entities" not in raw:
+            continue
+        text = strip_comments(raw)
+        for m in TABLE_BIND.finditer(text):
+            typ, member = m.group(1), m.group(2)
+            table = member if member else TABLE_OF_TYPE.get(typ, "all" if typ == "auto" else "?")
+            fn = enclosing_function(text, m.start())
+            got[(fn, path[len("src/core/"):])].add(table)
+    return got
+
+
+def entity_writer_rows(tree):
+    """{(seam, home): set of tables} from kEntityWriters in NetworkEntities.cpp."""
+    text = tree.read(ENTITIES_CPP) or ""
+    k = text.find("kEntityWriters = {")
+    if k < 0:
+        return None
+    body = text[k:text.index("};", k)]
+    return {(s, h): set(t.split()) for s, h, t in re.findall(r'\{"(\w+)",\s*"([^"]+)",\s*"([^"]*)"\}', body)}
+
+
+def check_v12(tree):
+    """(problems, info): every non-const entity-table binding has its kEntityWriters row, and
+    every row is supported by such a binding."""
+    rows = entity_writer_rows(tree)
+    if rows is None:
+        return [f"{ENTITIES_CPP}: kEntityWriters is not defined"], ""
+    got = entity_writer_bindings(tree)
+    problems = []
+    for key, tables in sorted(got.items(), key=lambda kv: (kv[0][1], kv[0][0] or "")):
+        want = rows.get(key)
+        if want is None:
+            problems.append(f"src/core/{key[1]}: {key[0]} binds {' '.join(sorted(tables))} for writing "
+                            "and has no kEntityWriters row")
+        elif want != tables:
+            problems.append(f"src/core/{key[1]}: {key[0]} binds {' '.join(sorted(tables))} for writing; "
+                            f"its kEntityWriters row says {' '.join(sorted(want))}")
+    for key in sorted(set(rows) - set(got)):
+        problems.append(f"kEntityWriters row {key[0]} ({key[1]}): no non-const binding supports it")
+    return problems, f"{len(got)} functions bind entity tables for writing, {len(rows)} kEntityWriters rows"
+
+
 def run(tree, out=print, partial=False, presolve_writer="outputs"):
     """The three checks on @p tree; 0 pass, 1 a check fails, 2 no epoch function or type.
     @p partial: the tree is part way through the conversion (steps EP1a-1 and EP1b before
@@ -1571,8 +1667,11 @@ def run(tree, out=print, partial=False, presolve_writer="outputs"):
             lint.problems["V11"].append(
                 f"{callee} takes NetworkEpoch& (the card's pre-solve form); in this form a writer "
                 "names its groups as output parameters (--presolve-writer epoch lints the card's form)")
+    v12_problems, v12_info = check_v12(tree)
+    lint.problems["V12"].extend(v12_problems)
+    lint.info["V12"].append(v12_info)
     bad = 0
-    for chk in ("V0", "V4", "V10", "V11"):
+    for chk in ("V0", "V4", "V10", "V11", "V12"):
         probs = lint.problems[chk]
         bad += len(probs)
         st = "n/a" if chk == "V11" and card else ("pass" if not probs else "FAIL")

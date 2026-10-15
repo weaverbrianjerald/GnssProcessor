@@ -1181,4 +1181,46 @@ int networkEntitiesRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+// The functions that bind an entity table for writing, one row each (the lint's check V12
+// keeps this table equal to the bindings in src/core).
+const std::vector<EntityWriterRow> kEntityWriters = {
+    {"networkPassASlipScan_", "app/ApplicationNetworkAssembly.cpp", "arcs"},
+    {"networkInjectPinBridgePrior", "app/NetworkBorderPrior.cpp", "sat_signals"},
+    {"networkStashCarry", "app/NetworkBorderStash.cpp", "constellations"},
+    {"cbpFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"eqdFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"eqeFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"eqpFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"ggFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"kFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"rxcbFromSnapshot", "app/NetworkEntities.cpp", "stations"},
+    {"sdFromSnapshot", "app/NetworkEntities.cpp", "all"},
+    {"zwdFromSnapshot", "app/NetworkEntities.cpp", "stations"},
+    {"networkApplyRxCbLinRestore", "app/NetworkWarmResume.cpp", "stations"},
+    {"networkRestoreCanonicalSignals", "app/NetworkWarmResume.cpp", "stations"},
+    {"networkTryWarmResume", "app/NetworkWarmResume.cpp", "stations"},
+    {"networkAnchorHygiene", "filter/NetworkAnchorHygiene.cpp", "sat_signals"},
+    {"networkElectChainDatum", "filter/NetworkChainDatum.cpp", "all stations"},
+    {"networkHarvestRxPhaseBias", "filter/NetworkChainDatum.cpp", "stations"},
+    {"networkCouplingReinitHistory", "filter/NetworkCoupling.cpp", "all"},
+    {"networkDdFrac", "filter/NetworkDdFrac.cpp", "constellations"},
+    {"networkBuildCarryDdPriors", "filter/NetworkDdPriorBuild.cpp", "constellations"},
+    {"networkGrossLosAct", "filter/NetworkGrossLos.cpp", "arcs los"},
+    {"networkGrossLosScreen", "filter/NetworkGrossLos.cpp", "los"},
+    {"networkMeasurementAdmission", "filter/NetworkMeasurementAdmission.cpp", "stations"},
+    {"networkPbHold", "filter/NetworkPbHold.cpp", "sat_signals"},
+    {"networkPbHoldCloneHarvest", "filter/NetworkPbHoldClone.cpp", "sat_signals"},
+    {"networkPbHoldCloneUpdate", "filter/NetworkPbHoldClone.cpp", "sat_signals"},
+    {"networkPostFitRaim", "filter/NetworkRaim.cpp", "stations"},
+    {"networkHarvestRxClock", "filter/NetworkRxClockCarry.cpp", "stations"},
+    {"networkHarvestRxCbBlock", "filter/NetworkRxCodeBiasCarry.cpp", "stations"},
+    {"networkHarvestRxCbCarry", "filter/NetworkRxCodeBiasCarry.cpp", "stations"},
+    {"networkSdEwlAr", "filter/NetworkSdEwlAr.cpp", "constellations los stations"},
+    {"networkShDevCarryAge", "filter/NetworkShDevVtec.cpp", "los"},
+    {"networkSignalIntegrity", "filter/NetworkSignalIntegrity.cpp", "los"},
+    {"networkHarvestSlantIonoBlock", "filter/NetworkSlantIonoCarry.cpp", "los"},
+    {"networkSolPrep", "filter/NetworkSolPrep.cpp", "constellations"},
+    {"networkHarvestZwd", "filter/NetworkZwdCarry.cpp", "stations"},
+};
+
 }  // namespace GnssProcessor::net

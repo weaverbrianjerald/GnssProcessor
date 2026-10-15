@@ -1,4 +1,4 @@
-"""Verifier of the epoch's events (N5a).
+"""Verifier of the epoch's events (N5a) and the entity-table writers (N5b).
 
     python scripts/nom_n5_verify.py [--base REV]
 
@@ -18,8 +18,11 @@ Each check runs its negative control first; a control that passes is itself a fa
       clears are gone and that nothing re-creates them.
   E3  The 22 retained members.  Each is still a NetworkCarryState member, with its net::kRunFields
       row "carry.<member>" and the declared persistence (EngineEpoch, Pending, ColdStart, Latch).
-  E4  The seam contract.  scripts/nom_epoch_lint.py passes (V0, V4, V10, V11), and no
+  E4  The seam contract.  scripts/nom_epoch_lint.py passes (V0, V4, V10, V11, V12), and no
       converted seam spells `ep.events` / `nep.events` below its binding block.
+  E4b The entity-table writers: the lint's check V12 finds every non-const entity-table
+      binding under src/core in net::kEntityWriters and every row backed by a binding; its
+      control adds an unlisted binding.
   E5  scripts/nom_n4_verify.py --whole passes (G1 for the whole struct).
 """
 import argparse
@@ -297,7 +300,24 @@ def main():
     sp = 'src/core/filter/NetworkInstallCarry.cpp'
     c4 = body_spellings(mutated(tree, sp, lambda s: s.replace('    // ---- End of the bindings ----\n',
                                                               '    // ---- End of the bindings ----\n    (void)ep.events;\n', 1)))
-    report('E4 seam contract (lint V0 V4 V10 V11, bindings)', e4(tree), c4)
+    report('E4 seam contract (lint V0 V4 V10 V11 V12, bindings)', e4(tree), c4)
+    import nom_epoch_lint as lint
+
+    class LintTree:   # the lint's tree interface over a mutated copy
+        def __init__(self, t):
+            self.t = t
+
+        def files(self, *prefixes):
+            return [q for q in self.t.walk(*prefixes)]
+
+        def read(self, q):
+            return self.t.get(q)
+
+    c12, _ = lint.check_v12(LintTree(mutated(tree, sp, lambda s: s.replace(
+        '    // ---- End of the bindings ----\n',
+        '    net::LosTable& los_extra = ctx.entities.los;\n    // ---- End of the bindings ----\n', 1))))
+    f12, i12 = lint.check_v12(LintTree(tree))
+    report('E4b entity-table writers (V12, the kEntityWriters table)', f12, c12, i12)
     r = subprocess.run([sys.executable, os.path.join(HERE, 'nom_n4_verify.py'), '--whole'],
                        capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT)
     whole = r.returncode == 0 and 'control G1: FAILS as it must' in r.stdout
