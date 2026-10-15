@@ -114,6 +114,8 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
+    src/core/app/ApplicationNetworkEpoch.cpp
+    src/core/app/NetworkRun.cpp
     src/core/app/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
@@ -563,6 +565,8 @@ add_executable(gnss_tests
     tests/test_network_contributions.cpp
     tests/test_network_knobs_lane_emit.cpp
     tests/test_network_knobs_epoch_driver.cpp
+    tests/test_network_epoch_contract.cpp
+    tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp
     tests/test_raim_pool_data_rows_only.cpp
     tests/test_network_rhs_attrib.cpp

@@ -2596,10 +2596,10 @@ prmRespond(ctx.counters.prm_resp, ResponseSite::AmbT2ReplayFree, prm_we_free_lan
     result.changed_consts = std::move(changed_consts);
     result.datum_changed = datum_changed;
     result.clk_model_warm = clk_model_warm;
-    result.clock_refloat_sats = std::move(clock_refloat_sats);
-    result.retro_flag_sats = std::move(retro_flag_sats);
+    result.handoff.clock_refloat_sats = std::move(clock_refloat_sats);
+    result.handoff.retro_flag_sats = std::move(retro_flag_sats);
     result.retro_feed = retro_feed;
-    result.n_arc_refloat_epoch = n_arc_refloat_epoch;
+    result.handoff.n_arc_refloat_epoch = n_arc_refloat_epoch;
     result.n_adapt = n_adapt;
     result.sigma0_adapt = sigma0_adapt;
     result.perconst_active = perconst_active;

@@ -4,9 +4,10 @@
  * @brief @internal The driver-owned groups of run objects that the network seams share,
  *        and @ref NetworkRunEndInputs, the run-end bundle of them (card NOM step TD1a).
  *
- * Application::runNetwork holds one of each group for the whole run and hands a seam the
- * group it reads instead of one parameter per member:
- *   - @ref NetworkRunEngines: a const view of the run's estimation engines (the run end);
+ * The run (app/NetworkRun.hpp, card NOM3 step EP1) owns one of each group for the whole
+ * run, and a seam reads the group it needs instead of one parameter per member:
+ *   - @ref NetworkRunEngines: the run's estimation engines, owned since card NOM3 step EP1
+ *     (built in place inside NetworkRun from a @ref NetworkEngineSpec);
  *   - @ref NetworkEmitEngines: the two emit-layer engines (networkEmitStore, the run end);
  *   - @ref NetworkRunTiming: the epoch-loop wall clock and the D0/D0b section-timer totals
  *     (the driver writes them, the run end reports them);
@@ -22,12 +23,19 @@
 #include "filter/NetworkWlRunTypes.hpp"        // SubBlockTimer / SB_COUNT
 #include "products/NetworkClockEmitRebase.hpp" // NetworkClockEmitRebase (card CLK-R)
 #include "products/NetworkEmitRebase.hpp"      // NetworkEmitRebase (card 4 phase D)
+#include "filter/NetworkCarryVce.hpp"             // NetworkCarryVce
+#include "filter/NetworkEstimator.hpp"            // NetworkEstimator
+#include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver (+ ::Config)
+#include "filter/NetworkPriorResidual.hpp"        // NetworkPriorResidual
+#include "slip/NetworkRawObservables.hpp"         // SlipQcChannel
 
 #include <chrono>
 #include <cstddef>
 #include <deque>
 #include <map>
 #include <vector>
+#include <string>
+#include <type_traits>
 
 namespace GnssProcessor {
 
@@ -37,16 +45,49 @@ class NetworkCarryVce;
 class NetworkPriorResidual;
 struct SlipQcChannel;
 
-/// A const view of the run's estimation engines for the run-end reports.  The driver
-/// builds each engine at its own point of the setup and binds this view once the epoch
-/// loop has ended; nothing writes through it.
-struct NetworkRunEngines {
-    const NetworkEstimator&            est;           ///< The joint estimator: section timers, the rank-gate tolerance, the run's solve counters.
-    const NetworkInvariantCarryDriver& carry_driver;  ///< The DD cycle-basis invariant carry (card 4): per-op timers and the carry census.
-    const NetworkCarryVce&             carry_vce;     ///< The LS-VCE carry-row variance-component monitor (M2).
-    const NetworkPriorResidual&        prires;        ///< The prior-residual census, read by networkPriorResidualRunEnd.
-    const SlipQcChannel&               slip_qc;       ///< The slip-QC hardening channel and its run-end counters.
+/// The constructor arguments of the run's engines and groups (card NOM3 step EP1), computed
+/// once by networkEngineSpec (app/NetworkRun.hpp) from the configuration and the knobs.  A
+/// field is either the setup local it replaced, with that local's name and type, or one
+/// engine constructor argument the setup computed inline.
+struct NetworkEngineSpec {
+    std::vector<std::string>            vce_families;            ///< The VCE monitor's families: empty unless NetworkKnobs::carry_vce.
+    double                              vce_window_epochs{0};    ///< The VCE monitor's window, in epochs.
+    double                              vce_seed_floor{0};       ///< The VCE seed floor (the phase-leveling variance floor).
+    double                              vce_seed_rate{0};        ///< The VCE seed rate (the phase-leveling ambiguity q).
+    std::vector<std::string>            prires_families;         ///< The prior-residual census's families: empty unless NetworkKnobs::prires_on.
+    double                              prires_window_epochs{0}; ///< The census window, in epochs.
+    double                              prires_min_rows{0};      ///< The census's minimum row count.
+    double                              prires_report_sigma{0};  ///< The census's report threshold.
+    bool                                prires_corrob{false};    ///< The census corroborates against the raw slip evidence.
+    bool                                prires_s0g{false};       ///< The constraint-aware global variance component.
+    NetworkInvariantCarryDriver::Config carry_cfg;               ///< The DD-carry driver's configuration.
+    NetworkClockEmitRebase::Config      clk_rebase_cfg;          ///< The clock emission re-base's configuration.
 };
+
+/// The run's estimation engines, owned (card NOM3 step EP1; card NOM2 step TD1a made this name
+/// a const view, so every run-end report's `engines.X` reads unchanged).  Built in place inside
+/// NetworkRun from a NetworkEngineSpec; setup then configures the members through references
+/// (slip-QC parameters, corroborators, release tracking, estimator settings, warm resume).
+struct NetworkRunEngines {
+    explicit NetworkRunEngines(const NetworkEngineSpec& s)
+        : slip_qc(),
+          carry_vce(s.vce_families, s.vce_window_epochs, /*split_by_const=*/true,
+                    /*seed_floor=*/s.vce_seed_floor, /*seed_rate=*/s.vce_seed_rate),
+          prires(s.prires_families, s.prires_window_epochs, s.prires_min_rows,
+                 s.prires_report_sigma, s.prires_corrob, s.prires_s0g),
+          carry_driver(s.carry_cfg),
+          est() {}
+    NetworkRunEngines(const NetworkRunEngines&) = delete;
+    NetworkRunEngines& operator=(const NetworkRunEngines&) = delete;
+
+    /// The slip-QC channel.  Declared first, so it is destroyed last: two corroborators capture its address.
+    SlipQcChannel               slip_qc;
+    NetworkCarryVce             carry_vce;    ///< The LS-VCE carry-row monitor (M2); was carry_vce_est.
+    NetworkPriorResidual        prires;       ///< The prior-residual census; was prires_est.
+    NetworkInvariantCarryDriver carry_driver; ///< The DD cycle-basis invariant carry (card 4).
+    NetworkEstimator            est;          ///< The joint estimator: one instance, reset and reused every epoch (its station-block pool).
+};
+static_assert(!std::is_copy_constructible_v<NetworkRunEngines> && !std::is_move_constructible_v<NetworkRunEngines>);
 
 /// The two emit-layer engines.  The driver builds them before the epoch loop,
 /// networkEmitStore runs them on every emitted epoch, the warm-resume restore and the
@@ -61,8 +102,13 @@ struct NetworkEmitEngines {
 /// assembly wall, which networkPassB_ sums; every value is wall clock and never reaches a
 /// product.
 struct NetworkRunTiming {
-    std::chrono::steady_clock::time_point loop_begin{};  ///< Wall clock captured just before the estimator is built and the warm resume runs; the D0 "epoch-loop wall" counts from here.
+    std::chrono::steady_clock::time_point loop_begin{};  ///< Wall clock captured just before the estimator is configured and the warm resume runs; the D0 "epoch-loop wall" counts from here.
     std::vector<SubBlockTimer> sub_blocks = std::vector<SubBlockTimer>(SB_COUNT); ///< Run totals per D0b sub-block, indexed by SubBlock; summed only under network.trace_section_timers.
+    std::vector<SubBlockTimer> sec_sub_ep0 = std::vector<SubBlockTimer>(SB_COUNT);  ///< D0b: the epoch-top copy of sub_blocks the readout differences against (card NOM3 step EP1).
+    std::vector<std::chrono::steady_clock::time_point> sub_wall0 =
+        std::vector<std::chrono::steady_clock::time_point>(SB_COUNT);              ///< networkSubBegin's wall stamp per sub-block.
+    std::vector<NetworkNormalEquations::SectionTimers> sub_tmr0 =
+        std::vector<NetworkNormalEquations::SectionTimers>(SB_COUNT);              ///< networkSubBegin's section-timer stamp per sub-block.
     double      asm_wall_ms{0.0};    ///< Run-total driver-side assembly wall, produce plus serial scatter (D0).
     std::size_t profiled_epochs{0};  ///< Epochs that reached the post-solve per-epoch D0 readout.
 };

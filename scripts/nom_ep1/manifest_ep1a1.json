@@ -1,0 +1,1216 @@
+{
+ "tool": "scripts/nom_ep1_cut.py",
+ "base": "180aa282edddd6fea896c0d614584b83e0010773",
+ "base_sha": "180aa282edddd6fea896c0d614584b83e0010773",
+ "stage": "ep1a1",
+ "shared_only": false,
+ "rows": [],
+ "presolve_writer": "outputs",
+ "converted": [],
+ "files": {
+  "CMakeLists.txt": {
+   "kind": "edited",
+   "lines": 765,
+   "frozen_lines": 761,
+   "edits": 2,
+   "sha256_lf": "5f3540e9e942bc36"
+  },
+  "include/app/Application.hpp": {
+   "kind": "edited",
+   "lines": 1012,
+   "frozen_lines": 982,
+   "edits": 2,
+   "sha256_lf": "3a0f7797586abff6"
+  },
+  "include/app/NetworkEpoch.hpp": {
+   "kind": "new",
+   "lines": 167,
+   "frozen_lines": null,
+   "edits": 0,
+   "sha256_lf": "bde7bd38544bf63c"
+  },
+  "include/app/NetworkRun.hpp": {
+   "kind": "new",
+   "lines": 95,
+   "frozen_lines": null,
+   "edits": 0,
+   "sha256_lf": "fcb328f641e790cf"
+  },
+  "include/filter/NetworkRunGroups.hpp": {
+   "kind": "edited",
+   "lines": 141,
+   "frozen_lines": 95,
+   "edits": 7,
+   "sha256_lf": "bf87d5577b87d437"
+  },
+  "include/filter/NetworkSolveGlue.hpp": {
+   "kind": "edited",
+   "lines": 152,
+   "frozen_lines": 145,
+   "edits": 4,
+   "sha256_lf": "08a50c2190571ebc"
+  },
+  "src/core/app/ApplicationNetwork.cpp": {
+   "kind": "edited",
+   "lines": 909,
+   "frozen_lines": 2530,
+   "edits": 48,
+   "sha256_lf": "42e9eaac81119ea5"
+  },
+  "src/core/app/ApplicationNetworkEpoch.cpp": {
+   "kind": "new",
+   "lines": 1736,
+   "frozen_lines": null,
+   "edits": 0,
+   "sha256_lf": "31aeac85057e64a2"
+  },
+  "src/core/app/NetworkRun.cpp": {
+   "kind": "new",
+   "lines": 151,
+   "frozen_lines": null,
+   "edits": 0,
+   "sha256_lf": "7f9a4ddba464dd17"
+  },
+  "src/core/filter/NetworkSolveGlue.cpp": {
+   "kind": "edited",
+   "lines": 2614,
+   "frozen_lines": 2614,
+   "edits": 3,
+   "sha256_lf": "6deaff43ce7acff2"
+  },
+  "tests/test_network_epoch_contract.cpp": {
+   "kind": "new",
+   "lines": 60,
+   "frozen_lines": null,
+   "edits": 0,
+   "sha256_lf": "266fe715620c8752"
+  }
+ },
+ "epoch_function": {
+  "frozen_lambda": [
+   976,
+   2494
+  ],
+  "transforms": [
+   {
+    "tag": "T-E",
+    "frozen_line": 1034,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1036,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1214,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1223,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1224,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1912,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1935,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2077,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2078,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2090,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2091,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2115,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2116,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2129,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2130,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2133,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2134,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2167,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2178,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2184,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2185,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2188,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2189,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2192,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2193,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2196,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2197,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2200,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2201,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2205,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2206,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2236,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2237,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2242,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2255,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2297,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2304,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2396,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2397,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2433,
+    "note": ""
+   },
+   {
+    "tag": "T-B9 EMITTED",
+    "frozen_line": 2262,
+    "note": ""
+   },
+   {
+    "tag": "T-B9 EMITTED",
+    "frozen_line": 2291,
+    "note": ""
+   },
+   {
+    "tag": "T-B9 EMITTED",
+    "frozen_line": 2296,
+    "note": ""
+   },
+   {
+    "tag": "T-B9 EMITTED store",
+    "frozen_line": 2184,
+    "note": ""
+   },
+   {
+    "tag": "T-B2 WS",
+    "frozen_line": 981,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1168,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1196,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1199,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1200,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1205,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1229,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1837,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1838,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1839,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1840,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1920,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1925,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1921,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1120,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1941,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2092,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2093,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2094,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2095,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2096,
+    "note": ""
+   },
+   {
+    "tag": "FIELD_MOVE",
+    "frozen_line": 2103,
+    "note": ""
+   },
+   {
+    "tag": "FIELD_MOVE",
+    "frozen_line": 2104,
+    "note": ""
+   },
+   {
+    "tag": "FIELD_MOVE",
+    "frozen_line": 2106,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alias",
+    "frozen_line": 2092,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2131,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2132,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alias",
+    "frozen_line": 2131,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2154,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2155,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2156,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2158,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2159,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2160,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alignment",
+    "frozen_line": 2161,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT alias",
+    "frozen_line": 2158,
+    "note": ""
+   },
+   {
+    "tag": "T-B8 ACCESSOR",
+    "frozen_line": 2157,
+    "note": ""
+   },
+   {
+    "tag": "T-B6 CLOCK",
+    "frozen_line": 1157,
+    "note": ""
+   },
+   {
+    "tag": "T-B1 CTOR",
+    "frozen_line": 1020,
+    "note": ""
+   }
+  ],
+  "calls": [],
+  "brackets": 40,
+  "value_equal_sites": [
+   2262,
+   2291,
+   2296
+  ],
+  "epoch_members": [
+   {
+    "local": "ws",
+    "path": "ep.ws",
+    "transform": "WS",
+    "frozen_line": 981,
+    "alias": true
+   },
+   {
+    "local": "dt",
+    "path": "ep.clock.dt",
+    "transform": "CLOCK",
+    "frozen_line": 1147,
+    "alias": false
+   },
+   {
+    "local": "pl_now_s",
+    "path": "ep.clock.pl_now_s",
+    "transform": "CLOCK",
+    "frozen_line": 1156,
+    "alias": false
+   },
+   {
+    "local": "carry_warm",
+    "path": "ep.clock.carry_warm",
+    "transform": "CLOCK",
+    "frozen_line": 1157,
+    "alias": false
+   },
+   {
+    "local": "carry_slipped_ambs",
+    "path": "ep.funnel.carry_slipped_ambs",
+    "transform": "ALIAS",
+    "frozen_line": 1168,
+    "alias": true
+   },
+   {
+    "local": "carry_slipped_raw",
+    "path": "ep.funnel.carry_slipped_raw",
+    "transform": "ALIAS",
+    "frozen_line": 1196,
+    "alias": true
+   },
+   {
+    "local": "modeled",
+    "path": "ep.pass_a.modeled",
+    "transform": "SIZED",
+    "frozen_line": 1199,
+    "alias": true
+   },
+   {
+    "local": "present",
+    "path": "ep.pass_a.present",
+    "transform": "SIZED",
+    "frozen_line": 1200,
+    "alias": true
+   },
+   {
+    "local": "shared_phase_keys",
+    "path": "ep.pass_a.shared_phase_keys",
+    "transform": "ALIAS",
+    "frozen_line": 1205,
+    "alias": true
+   },
+   {
+    "local": "n_dropped_sats",
+    "path": "ep.pass_a.n_dropped_sats",
+    "transform": "SCALAR",
+    "frozen_line": 1229,
+    "alias": true
+   },
+   {
+    "local": "registered_clock_sats",
+    "path": "ep.columns.registered_clock_sats",
+    "transform": "ALIAS",
+    "frozen_line": 1837,
+    "alias": true
+   },
+   {
+    "local": "registered_code_keys",
+    "path": "ep.columns.registered_code_keys",
+    "transform": "ALIAS",
+    "frozen_line": 1838,
+    "alias": true
+   },
+   {
+    "local": "col_desc",
+    "path": "ep.columns.col_desc",
+    "transform": "ALIAS",
+    "frozen_line": 1839,
+    "alias": true
+   },
+   {
+    "local": "n_clock",
+    "path": "ep.columns.n_clock",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": true
+   },
+   {
+    "local": "n_pb",
+    "path": "ep.columns.n_pb",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": true
+   },
+   {
+    "local": "n_cb",
+    "path": "ep.columns.n_cb",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": true
+   },
+   {
+    "local": "n_present",
+    "path": "ep.columns.n_present",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": true
+   },
+   {
+    "local": "asm_res",
+    "path": "ep.assembly.asm_res",
+    "transform": "SIZED",
+    "frozen_line": 1920,
+    "alias": true
+   },
+   {
+    "local": "est_index_of",
+    "path": "ep.assembly.est_index_of",
+    "transform": "SIZED",
+    "frozen_line": 1925,
+    "alias": true
+   },
+   {
+    "local": "total_pins",
+    "path": "ep.assembly.total_pins",
+    "transform": "SCALAR",
+    "frozen_line": 1921,
+    "alias": true
+   },
+   {
+    "local": "sec_asm_ms_epoch",
+    "path": "ep.assembly.sec_asm_ms_epoch",
+    "transform": "SCALAR",
+    "frozen_line": 1120,
+    "alias": true
+   },
+   {
+    "local": "carry_arc_amb_key",
+    "path": "ep.dd_build.carry_arc_amb_key",
+    "transform": "ALIAS",
+    "frozen_line": 1941,
+    "alias": true
+   },
+   {
+    "local": "sg_",
+    "path": "ep.solve",
+    "transform": "RESULT",
+    "frozen_line": 2092,
+    "alias": true,
+    "member_aliases_kept": [
+     "x_s",
+     "plan",
+     "changed_consts",
+     "datum_changed",
+     "clk_model_warm",
+     "clock_refloat_sats",
+     "retro_flag_sats",
+     "retro_feed",
+     "n_arc_refloat_epoch",
+     "n_adapt",
+     "sigma0_adapt",
+     "perconst_active",
+     "perconst_publish",
+     "perconst_dec_withhold",
+     "perconst_stats",
+     "we_t2_opp",
+     "we_t2_flag"
+    ]
+   },
+   {
+    "local": "ar_fixes",
+    "path": "ep.ar_fixes",
+    "transform": "RESULT",
+    "frozen_line": 2131,
+    "alias": true,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "fce",
+    "path": "ep.fixed_cycles",
+    "transform": "RESULT",
+    "frozen_line": 2154,
+    "alias": false,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "sp_",
+    "path": "ep.prep",
+    "transform": "RESULT",
+    "frozen_line": 2158,
+    "alias": true,
+    "member_aliases_kept": [
+     "sol",
+     "epoch_withheld_consts",
+     "global_bump",
+     "serialized_consts",
+     "retro_emit_sats"
+    ]
+   },
+   {
+    "local": "x_emit",
+    "path": "ep.x_emit()",
+    "transform": "ACCESSOR",
+    "frozen_line": 2157,
+    "alias": true
+   }
+  ],
+  "preamble": [
+   "const std::shared_ptr<spdlog::logger>& log = run.log;",
+   "const NetworkConfig& nc = run.nc;",
+   "NetworkSetupResult& setup = run.setup;",
+   "const bool brdc_rts = setup.brdc_rts;",
+   "auto& brdc_nav_staged = setup.brdc_nav_staged;",
+   "auto& brdc_nav_cursor = setup.brdc_nav_cursor;",
+   "auto& stations = setup.stations;",
+   "const int n_threads = setup.n_threads;",
+   "const int seam_threads = setup.seam_threads;",
+   "const bool carry_par = setup.carry_par;",
+   "NetworkProductEmitter& emitter = *setup.emitter;",
+   "ClosedLoopTally& cl_tally = run.closed_loop;",
+   "NetworkRunContext& ctx = run.ctx;",
+   "NetworkRunTraces& traces = run.traces;",
+   "SlipQcChannel& slip_qc = run.engines.slip_qc;",
+   "auto& last_pivot = ctx.carry.last_pivot;",
+   "auto& anchor_incumbent = ctx.carry.anchor_incumbent;",
+   "auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;",
+   "auto& start_anchor_s = ctx.carry.start_anchor_s;",
+   "auto& local_carry = ctx.carry.local_carry;",
+   "auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;",
+   "auto& grade_metric_s = ctx.carry.grade_metric_s;",
+   "const bool   pl_on         = ctx.knobs.pl_on;",
+   "const int    pl_warmup     = ctx.knobs.pl_warmup;",
+   "const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;",
+   "NetworkCarryVce& carry_vce_est = run.engines.carry_vce;",
+   "NetworkPriorResidual& prires_est = run.engines.prires;",
+   "const bool   ura_on        = ctx.knobs.ura_on;",
+   "const bool   raim_on       = ctx.knobs.raim_on;",
+   "const double start_offset_s = ctx.knobs.start_offset_s;",
+   "auto& prev_tow = ctx.counters.prev_tow;",
+   "auto& prev_week = ctx.counters.prev_week;",
+   "auto& n_emitted = ctx.counters.n_emitted;",
+   "auto& n_gated_epochs = ctx.counters.n_gated_epochs;",
+   "auto& n_gated_key_epochs = ctx.counters.n_gated_key_epochs;",
+   "auto& max_dur_anchor_s = ctx.counters.max_dur_anchor_s;",
+   "auto& max_dur_anchored = ctx.counters.max_dur_anchored;",
+   "const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;",
+   "const bool carry_invariant         = ctx.knobs.carry_invariant;",
+   "const bool carry_innov_gate = ctx.knobs.carry_innov_gate;",
+   "NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;",
+   "NetworkEmitEngines& emit_engines = run.emit;",
+   "auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;",
+   "auto& carry_group_id = ctx.carry.carry_group_id;",
+   "auto& carry_prev_tow = ctx.carry.carry_prev_tow;",
+   "auto& carry_innov_pending = ctx.carry.carry_innov_pending;",
+   "const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;",
+   "NetworkRunTiming& timing = run.timing;",
+   "auto& n_loop_epochs = ctx.counters.n_loop_epochs;",
+   "auto& decim_counter = ctx.counters.decim_counter;",
+   "NetworkEstimator& est = run.engines.est;",
+   "std::vector<SubBlockTimer>& sec_sub_ep0 = timing.sec_sub_ep0;"
+  ],
+  "function_lines": [
+   148,
+   1736
+  ],
+  "preamble_count": 52
+ },
+ "seams": [],
+ "setup": {
+  "run_network": {
+   "frozen": [
+    192,
+    2528
+   ],
+   "edits": [
+    {
+     "class": "TYPE_MOVE",
+     "tag": "T-A the lambda and LoopSignal",
+     "frozen_line": 975
+    },
+    {
+     "class": "relocation",
+     "tag": "call rewrite",
+     "frozen_line": 2513
+    },
+    {
+     "class": "relocation",
+     "tag": "call rewrite",
+     "frozen_line": 2519
+    },
+    {
+     "class": "BRACKET",
+     "tag": "remove subBegin",
+     "frozen_line": 810
+    },
+    {
+     "class": "BRACKET",
+     "tag": "remove subEnd",
+     "frozen_line": 815
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sec_sub_ep0",
+     "frozen_line": 807
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sub_wall0",
+     "frozen_line": 808
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sub_tmr0",
+     "frozen_line": 809
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end: the engines view",
+     "frozen_line": 2525
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "new lines",
+     "tag": "the run's construction",
+     "frozen_line": 279
+    },
+    {
+     "class": "include",
+     "tag": "include",
+     "frozen_line": 76
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE est",
+     "frozen_line": 722
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE carry_driver",
+     "frozen_line": 655
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE slip_qc",
+     "frozen_line": 286
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE emit_engines",
+     "frozen_line": 675
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE timing",
+     "frozen_line": 711
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE cl_tally (unread)",
+     "frozen_line": 251
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT pl_q_amb, pl_var_floor",
+     "frozen_line": 399
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT pl_q_amb, pl_var_floor",
+     "frozen_line": 402
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 412
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 413
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 416
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT prires_est",
+     "frozen_line": 441
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT reference",
+     "frozen_line": 441
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 625
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT reference",
+     "frozen_line": 625
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 626
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 631
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 632
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 635
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 639
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 640
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 641
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 642
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 648
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 653
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 669
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 670
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 671
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 672
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 673
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 674
+    }
+   ]
+  },
+  "groups": {
+   "engines_struct_frozen": [
+    43,
+    49
+   ]
+  },
+  "solve_handoff": {
+   "fields": [
+    "clock_refloat_sats",
+    "retro_flag_sats",
+    "n_arc_refloat_epoch"
+   ],
+   "epilogue_writes": 3
+  },
+  "application_hpp": {
+   "after_line": 516
+  },
+  "cmake": {
+   "sources": [
+    "src/core/app/ApplicationNetworkEpoch.cpp",
+    "src/core/app/NetworkRun.cpp"
+   ],
+   "tests": [
+    "tests/test_network_epoch_contract.cpp",
+    "tests/test_network_engine_spec.cpp"
+   ]
+  }
+ },
+ "spec_cut": [
+  [
+   399,
+   399,
+   "pl_q_amb, pl_var_floor"
+  ],
+  [
+   402,
+   402,
+   "pl_q_amb, pl_var_floor"
+  ],
+  [
+   412,
+   412,
+   "carry_vce_est"
+  ],
+  [
+   413,
+   415,
+   "carry_vce_est"
+  ],
+  [
+   416,
+   419,
+   "carry_vce_est"
+  ],
+  [
+   441,
+   452,
+   "prires_est"
+  ],
+  [
+   625,
+   625,
+   "carry_cfg"
+  ],
+  [
+   626,
+   626,
+   "carry_cfg"
+  ],
+  [
+   631,
+   631,
+   "carry_cfg"
+  ],
+  [
+   632,
+   632,
+   "carry_cfg"
+  ],
+  [
+   635,
+   635,
+   "carry_cfg"
+  ],
+  [
+   639,
+   639,
+   "carry_cfg"
+  ],
+  [
+   640,
+   640,
+   "carry_cfg"
+  ],
+  [
+   641,
+   641,
+   "carry_cfg"
+  ],
+  [
+   642,
+   642,
+   "carry_cfg"
+  ],
+  [
+   648,
+   648,
+   "carry_cfg"
+  ],
+  [
+   653,
+   654,
+   "carry_cfg"
+  ],
+  [
+   669,
+   669,
+   "clk_rebase_cfg"
+  ],
+  [
+   670,
+   670,
+   "clk_rebase_cfg"
+  ],
+  [
+   671,
+   671,
+   "clk_rebase_cfg"
+  ],
+  [
+   672,
+   672,
+   "clk_rebase_cfg"
+  ],
+  [
+   673,
+   673,
+   "clk_rebase_cfg"
+  ],
+  [
+   674,
+   674,
+   "clk_rebase_cfg"
+  ]
+ ],
+ "problems": [],
+ "retired_at_base": [
+  "row (W1) networkRxCbDemeanPrepass: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkFastClockTick: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkFastClockHarvest: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkBuildEnsembleGauges: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W3) networkClockLevelRebase: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W4) networkIonoDwRelease: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "declared EPOCH_MEMBER carry_arc_amb_key2: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE fc_ppp_utils: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE lane_run: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT mw_wl_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT ewl_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT pb_filter_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT idw, iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared CALLABLE isUncarriedThirdBand: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared CALLBACK_DIRECT buildEnsembleGauges: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "epoch member ep.dd_build.carry_arc_amb_key2: retired by the REMOVE-key deletion; `carry_arc_amb_key2` is not declared at this base",
+  "run member run.engines.iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
+  "run member run.engines.fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
+  "run member run.lanes: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
+  "specification field mw_wl_cfg: retired by the REMOVE-key deletion; `mw_wl_cfg` is not declared at this base",
+  "specification field ewl_cfg: retired by the REMOVE-key deletion; `ewl_cfg` is not declared at this base",
+  "specification field pb_filter_cfg: retired by the REMOVE-key deletion; `pb_filter_cfg` is not declared at this base",
+  "specification field idw: retired by the REMOVE-key deletion; `idw` is not declared at this base",
+  "engine fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
+  "engine iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
+  "constructor argument emit_engines #2: retired by the REMOVE-key deletion; `pb_filter_cfg` is not declared at this base",
+  "engine lane_run: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
+  "removed parameter networkBuildCarryDdPriors(isUncarriedThirdBand): retired by the REMOVE-key deletion; `isUncarriedThirdBand` is not declared at this base",
+  "removed parameter networkSolveGlue(buildEnsembleGauges): retired by the REMOVE-key deletion; `buildEnsembleGauges` is not declared at this base",
+  "fc_n_emitted_before is spelled n_emitted_before at this base; the entries naming it are re-spelled"
+ ]
+}

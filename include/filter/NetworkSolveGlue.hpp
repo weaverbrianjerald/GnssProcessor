@@ -60,6 +60,15 @@ class GnssConfig;
 struct NetworkRunContext;
 struct NetworkRunTraces;
 
+/// What the post-fit tiers hand the epoch stash: seeded by the solve (the within-epoch tier's
+/// refloats), extended by networkPostFitRaim and networkClockQc, read by networkStashStatus.
+/// With prep.sol, the only epoch members a seam writes after the solve (card NOM3 step EP1).
+struct NetworkPostFitHandoff {
+    std::set<std::string> clock_refloat_sats;      ///< Satellites the stash refloats: the T2 and RAIM culprits, then the clock NIS and monitor culprits.
+    std::set<std::string> retro_flag_sats;         ///< The retro-bump feed (networkRetroUraBookkeeping, inside networkClockQc).
+    int                   n_arc_refloat_epoch{0};  ///< Isolated-arc refloats this epoch (the epoch-status row).
+};
+
 /**
  * @brief The 17 loop-body locals SB_SOLVEGLUE produces that downstream epoch seams
  *        consume, plus the epoch disposition.  On a SkipEpoch return the value fields
@@ -71,10 +80,8 @@ struct NetworkSolveGlueResult {
     std::set<char>                                   changed_consts;
     bool                                             datum_changed{false};
     bool                                             clk_model_warm{false};
-    std::set<std::string>                            clock_refloat_sats;
-    std::set<std::string>                            retro_flag_sats;
+    NetworkPostFitHandoff                            handoff;   ///< The post-fit hand-off (clock_refloat_sats, retro_flag_sats, n_arc_refloat_epoch), which RAIM and clock QC extend (card NOM3 step EP1).
     bool                                             retro_feed{false};
-    int                                              n_arc_refloat_epoch{0};
     int                                              n_adapt{0};
     double                                           sigma0_adapt{0.0};
     bool                                             perconst_active{false};
