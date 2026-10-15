@@ -38,6 +38,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkArLattice.hpp"
 #include "filter/NetworkArcLife.hpp"
@@ -225,17 +226,18 @@ TEST(NetworkFixedCycleRelease, TheEvidenceIsTypedFromTheReplayAndTheGrossLosDeci
     we.sats     = {"G05", "not_a_sat"};
     we.arcs     = {{1, {"G07"}}};
     we.stations = {2};
-    auto declare = [](NetworkRunContext& c) {
-        c.carry.gl_act_declare      = {{0, "G09"}};
-        c.carry.gl_act_station      = {{3, true}, {1, false}};
-        c.carry.gl_act_cold_refloat = {{1, "G11"}};
+    auto declare = [](EpochEvents& c) {
+        c.gross.gl_act_declare      = {{0, "G09"}};
+        c.gross.gl_act_station      = {{3, true}, {1, false}};
+        c.gross.gl_act_cold_refloat = {{1, "G11"}};
     };
     // Without the split screen the lists are the last epoch's: not read.
     Loaded unsplit("evidence_unsplit", "    \"gross_los_screen\": true,\n");
     NetworkRunContext ctx_u(unsplit.cfg, unsplit.cfg.getNetworkConfig());
     ASSERT_FALSE(ctx_u.knobs.gl_emit_exclude);
-    declare(ctx_u);
-    ArLatticeEvidence ev = networkArLatticeEvidence(ctx_u, we);
+    EpochEvents events_u;
+    declare(events_u);
+    ArLatticeEvidence ev = networkArLatticeEvidence(ctx_u, we, events_u);
     EXPECT_EQ(ev.replay.sats, (std::set<SatId>{gps(5)}));
     EXPECT_EQ(ev.replay.los, (std::set<LosId>{LosId{sta(1), gps(7)}}));
     EXPECT_EQ(ev.replay.stations, (std::set<StationId>{sta(2)}));
@@ -245,8 +247,9 @@ TEST(NetworkFixedCycleRelease, TheEvidenceIsTypedFromTheReplayAndTheGrossLosDeci
                        "    \"gross_los_screen\": true, \"gross_los_emit_exclude\": true,\n");
     NetworkRunContext ctx(split.cfg, split.cfg.getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.gl_emit_exclude);
-    declare(ctx);
-    ev = networkArLatticeEvidence(ctx, we);
+    EpochEvents events;
+    declare(events);
+    ev = networkArLatticeEvidence(ctx, we, events);
     EXPECT_EQ(ev.gross.los, (std::set<LosId>{LosId{sta(0), gps(9)}, LosId{sta(1), gps(11)}}));
     EXPECT_EQ(ev.gross.stations, (std::set<StationId>{sta(3)}));   // a station release names nothing
     EXPECT_TRUE(ev.replay.covers(arcOf(4, 5, L2())));                // a satellite at every station, every band

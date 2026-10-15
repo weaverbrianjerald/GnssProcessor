@@ -20,6 +20,7 @@ namespace GnssProcessor {
 
 struct NetworkRun;
 struct NetworkEpoch;
+struct EpochEvents;             // app/NetworkEpoch.hpp
 struct EpochPassA;
 
 /**
@@ -36,8 +37,9 @@ struct EpochPassA;
  *               re-referenced set, the held basis), ctx.counters, the traces.
  * @param ep     The epoch, read: se, funnel.carry_slipped_ambs.
  * @param pass_a PASS A's layout: reads modeled and present, writes shared_phase_keys.
+ * @param events The epoch's events; written: phase_datum.
  */
-void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a);
+void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a, EpochEvents& events);
 
 /**
  * @brief The eq34 receiver phase-bias allocation (card 3, rule D3c).

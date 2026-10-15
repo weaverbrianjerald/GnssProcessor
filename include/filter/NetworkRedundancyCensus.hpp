@@ -123,6 +123,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRunContext;   // app/NetworkRunContext.hpp; included in the .cpp only
 struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp; included in the .cpp only
 
@@ -173,8 +175,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *     after any within-epoch re-solve); an empty vector disarms both riders.  (sg_ was
  *     the driver's solve result until card NOM3 step EP1; the binding above reads it as
  *     ep.solve.x_s.)
+ * @param events The epoch's events; writes census (the epoch-status scalars and the hits).
  */
-void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& ep);
+void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 // ---------------------------------------------------------------------------
 //  Testable pieces (unit-test seam; no run state, no I/O)

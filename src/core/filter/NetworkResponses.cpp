@@ -4,6 +4,7 @@
  *        NetworkResponses.hpp).
  */
 #include "filter/NetworkResponses.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"   // NetworkKnobs, NetworkServiceCounters, the carry
 #include "config/GnssConfig.hpp"
@@ -418,8 +419,8 @@ long long responseSiteCount(const NetworkServiceCounters& C, ResponseSite s) {
     return 0;
 }
 
-void networkResponseLatchTally(NetworkRunContext& ctx) {
-    const RelevelEpochState& lat = ctx.carry.relevel;
+void networkResponseLatchTally(NetworkRunContext& ctx, const EpochEvents& events) {
+    const RelevelEpochState& lat = events.slip.relevel;
     if (lat.free_ambs.empty()) return;
     auto& C = ctx.counters;
     ++C.prm_latch_epochs;

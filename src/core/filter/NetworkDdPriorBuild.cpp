@@ -55,6 +55,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
     const std::set<std::pair<int, std::string>>& carry_slipped_ambs = ep.funnel.carry_slipped_ambs;
     const std::set<std::pair<int, std::string>>& carry_slipped_raw = ep.funnel.carry_slipped_raw;
     const WithinEpochCulprits& we_culprits = ep.ws.we_culprits;
+    const std::set<std::pair<int, std::string>>& carry_innov_flat_now = ep.events.slip.carry_innov_flat_now;
     // ---- End of the bindings ----
     // --- Alias preamble: copies of the run-TU aliases the relocated
     //     buildCarryDdPriors body reads (the knobs and the ctx.carry aliases). ----
@@ -154,7 +155,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                     // The funnel entry itself is unchanged either way: the Iono-2 v3k erase
                     // classifier, anchor hygiene, the PB emit filter and card G all read the
                     // same union as before.
-                    if (!(retap_only && ctx.carry.carry_innov_flat_now.count(sk)
+                    if (!(retap_only && carry_innov_flat_now.count(sk)
                           && !carry_slipped_raw.count(sk)))
                         return true;
                     funnel_spared = true;

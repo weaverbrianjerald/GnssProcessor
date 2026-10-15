@@ -558,6 +558,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     const Eigen::VectorXd& x_s = nep.solve.x_s;
     const EpochWorkspace& ws = nep.ws;
     const NetworkEstimator::Datum& datum = nep.solve.plan.shared_datum;
+    const std::set<std::pair<std::string, std::string>>& eq34_reref_ev = nep.events.phase_datum.eq34_reref;
     // ---- End of the bindings ----
     (void)log;
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
@@ -610,7 +611,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     // for this epoch's stash, on the new frame.  (The emitter's marks are read at the hold.)
     {
         const auto& pa_reref   = ctx.carry.phase_anchor_reref;
-        const auto& eq34_reref = ctx.carry.eq34_reref;
+        const auto& eq34_reref = eq34_reref_ev;
         net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
             const std::string key = net::holdKey(id);
             if (!c.alive) return;

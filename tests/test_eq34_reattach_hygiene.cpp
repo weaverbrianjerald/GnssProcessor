@@ -30,6 +30,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkAnchorHygiene.hpp"
 #include "filter/NetworkChainDatum.hpp"
@@ -269,8 +270,9 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_EQ(pinnedHost(c, "G29_L1C"), "MATR")
         << "the election took the FRESH host despite a converged one being available "
            "— this is the DOY-129 19:25:30 mechanism";
@@ -311,8 +313,9 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     }
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_TRUE(pinnedHost(c, "G29_L1C").empty()) << "a held-out key must not be pinned";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 0u);
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G01", kSig)), 1u);
@@ -369,8 +372,9 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     EXPECT_EQ(ctx.carry.anchor_blocked.count("G29_L1C"), 0u);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), cr.stations,
-                           cr.present, cr.cnd, hyg, kNoSlips, shared);
+                           cr.present, cr.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_FALSE(pinnedHost(cr, "G29_L1C").empty()) << "the key must come back";
 }
 
@@ -475,13 +479,14 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     // No host is elected for a bridged key: its datum is the shared row, and it enters
     // the walk as a spanning-forest root.  (Receivers reached through it still pin their
     // own z^s_r on that satellite; that edge determines δ_r and is subject to the same
     // eligibility test.)
-    EXPECT_EQ(ctx.carry.this_epoch_anchor.count("G29_L1C"), 0u)
+    EXPECT_EQ(ev.phase_datum.this_epoch_anchor.count("G29_L1C"), 0u)
         << "a bridged key must not be re-hosted";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 1u);
 
@@ -628,8 +633,9 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     EXPECT_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_FALSE(pinnedHost(c, "G29_L1C").empty());
     for (const auto& st : c.stations)
         EXPECT_TRUE(st.pinned_amb_sigma_scale.empty())
@@ -744,15 +750,16 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         std::set<std::string> shared;
+        EpochEvents ev;
         AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
         networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                               c.present, c.cnd, hyg, kNoSlips, shared);
+                               c.present, c.cnd, hyg, kNoSlips, shared, ev);
         tree1 = treeEdges(c);
         // Second epoch, same census, one incumbent tree edge now slipped.
         shared.clear();
         hyg = runHygiene(ctx, *cfg, c, 1030.0, slip);
         networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                               c.present, c.cnd, hyg, slip, shared);
+                               c.present, c.cnd, hyg, slip, shared, ev = EpochEvents{});
         tree2 = treeEdges(c);
         deseeded   = ctx.counters.eq34_slip_deseeded;
         readmitted = ctx.counters.eq34_slip_readmitted;
@@ -817,9 +824,10 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionReadmitsAnUnavoidableSlippedTreeEdge)
 
     const std::set<std::pair<int, std::string>> slip{ { 0, "G09_L1C" } };
     std::set<std::string> shared;
+    EpochEvents ev;
     AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0, slip);
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, slip, shared);
+                           c.present, c.cnd, hyg, slip, shared, ev);
 
     EXPECT_EQ(treeEdges(c).count({ 0, "G09_L1C" }), 1u)
         << "the only route to G09 must still be elected — dropping it would cost the "

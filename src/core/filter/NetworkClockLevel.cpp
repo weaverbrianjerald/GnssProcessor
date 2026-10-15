@@ -220,7 +220,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
                           const Eigen::VectorXd& x_s,
                           const std::vector<StationAssembly>& asm_res,
                           const std::vector<int>& est_index_of,
-                          std::vector<ClockLevelPair>& pairs) {
+                          std::vector<ClockLevelPair>& pairs, const EpochEvents& events) {
     const Eigen::Index ns = est.numShared();
     if (x_s.size() != ns) return false;
 
@@ -277,8 +277,8 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
         for (const CbCol& cb : cbs) {
             // A column outside the satellite's realized pin pair (a free same-band extra,
             // or any satellite without a pin this epoch) does not enter.
-            const auto pr = ctx.carry.this_epoch_if_pin_real.find(cb.sat);
-            if (pr == ctx.carry.this_epoch_if_pin_real.end()
+            const auto pr = events.code_datum.this_epoch_if_pin_real.find(cb.sat);
+            if (pr == events.code_datum.this_epoch_if_pin_real.end()
                 || (cb.sig != pr->second.first && cb.sig != pr->second.second))
                 continue;
             for (Eigen::Index r = 0; r < n_rows; ++r) {
@@ -599,6 +599,7 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     bool datum_changed = ep.solve.datum_changed;
+    const EpochEvents& events_ro = ep.events;
     // ---- End of the bindings ----
     if (!ctx.knobs.clm_on) return;
     ++ctx.counters.clm_epochs;
@@ -613,7 +614,7 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     }
     // (1)-(2) The level read, on the realized pin pair only.
     std::vector<ClockLevelPair> pairs;
-    if (!clockLevelBuildPairs(ctx, est, x_s, asm_res, est_index_of, pairs))
+    if (!clockLevelBuildPairs(ctx, est, x_s, asm_res, est_index_of, pairs, events_ro))
         return;
     const ClockLevelTwoWay tw = clockLevelTwoWay(pairs, kClvMinPairs, kClvClipK, kClvClipFloorM);
     clockLevelInnovation(ctx, traces, t, est, x_s, pairs, tw);

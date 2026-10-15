@@ -28,6 +28,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
 struct ClockAnchorFold;     // filter/NetworkClockAnchor.hpp
 class  NetworkEstimator;
@@ -72,10 +74,11 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
  * @param cta_now_s     continuous GPS seconds of the epoch (the anchor's clock), or 0 off
  * @param readmit_now_s continuous GPS seconds of the epoch (the READMIT clock), or 0 off
  * @return the decision, with the carried value and variance it was made on.
+ * @param events The epoch's events, read: the chain election's re-referenced (sat, signal) set.
  */
 CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEstimator& est,
                                   const CarryPrior& cp, double dt, double cta_now_s,
-                                  double readmit_now_s);
+                                  double readmit_now_s, const EpochEvents& events);
 
 /**
  * @brief The variance the fold folds for decision @p d on the carried variance @p var.

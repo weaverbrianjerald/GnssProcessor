@@ -41,6 +41,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkClockAnchor.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -346,7 +347,7 @@ GuardRun guardedEpoch(NetworkRunContext& ctx, const GnssConfig& cfg,
     std::vector<std::string> reg(t.sats.begin(), t.sats.end());
     GnssTime tm; tm.week = 2300; tm.tow = now_s;
     networkClockAnchorGuard(ctx, cfg, nullLogger(), traces, tm, est,
-                            plan, out.x, out.ws, reg, {}, false, {});
+                            plan, out.x, out.ws, reg, {}, false, {}, EpochEvents{});
     return out;
 }
 

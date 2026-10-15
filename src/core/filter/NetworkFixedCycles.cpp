@@ -739,6 +739,7 @@ FixedCycleEmission networkFixedCycles(NetworkRun& run, const NetworkEpoch& nep) 
     const ArEpochFixes& fixes = nep.ar_fixes;
     const WithinEpochCulprits& we = nep.solve.we_landed;
     const std::vector<NetStation>& stations = run.setup.stations;
+    const EpochEvents& events = nep.events;
     // ---- End of the bindings ----
     const auto& ar = config_.getNetworkConfig().ambiguity_resolution;
     const bool fold   = ar.fixed_cycle_fold != FixedCycleFold::Off;
@@ -764,7 +765,7 @@ FixedCycleEmission networkFixedCycles(NetworkRun& run, const NetworkEpoch& nep) 
 
     // 1. The ledger opens: the seam gap, the evidence releases, the contradictions.
     ArLatticeEpoch le;
-    if (ledger) timed([&] { le = arLatticeBegin(S, fixes, networkArLatticeEvidence(ctx, we), ep); });
+    if (ledger) timed([&] { le = arLatticeBegin(S, fixes, networkArLatticeEvidence(ctx, we, events), ep); });
 
     // 2-3. The units: this epoch's determined pairs, or the ledger's after a planted integer and
     //      the re-validation (its failures released).

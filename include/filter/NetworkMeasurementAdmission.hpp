@@ -360,6 +360,7 @@ struct NetworkMeasurementAdmissionTallies {
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 struct EpochPassA;              // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
@@ -393,9 +394,10 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p carry_slipped_raw = funnel.carry_slipped_raw: [in/out] the raw-detector provenance subset (Iono-2 v3k). A withheld band is a raw observable event (the channel leaves the model set), so it is recorded here too; otherwise the deviation carry would D5-keep a level across the hole this seam made.
  *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the Card-4 funnel is live (gates the funnel insertion).
  *   - @p carry_warm = ep.clock.carry_warm: the phase-leveling carry is warm (gates pending-reseed).
+ * @param events The epoch's events; written: admission.
  */
 void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
-                                 NetworkSlipFunnel& funnel);
+                                 NetworkSlipFunnel& funnel, EpochEvents& events);
 
 /**
  * @brief The RINEX-3 band digit of an observable key ("C1C" -> '1'), or 0 when the

@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkClockClone.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -192,6 +193,7 @@ struct SeamBed {
     std::unique_ptr<NetworkRunContext> ctx;
     std::shared_ptr<spdlog::logger> log;
     std::vector<std::string> registered{"G02", "G05", "G32", "E02", "E03"};
+    EpochEvents events;   ///< The current epoch's events.
     SeamBed(const std::string& tag, const std::string& extra) : L(tag, extra) {
         EXPECT_TRUE(L.ok);
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
@@ -219,7 +221,7 @@ struct SeamBed {
         plan.clock_pivot["G"] = "G02";
         plan.clock_pivot["E"] = "E02";
         networkHandoverStransform(*ctx, L.cfg, log, *traces, GnssTime{2313, 276150.0}, plan,
-                                  /*datum_changed=*/true, std::set<char>{'G'}, registered);
+                                  /*datum_changed=*/true, std::set<char>{'G'}, registered, events);
     }
 };
 
@@ -434,8 +436,8 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, fixtureP()));
         EXPECT_EQ(B.ctx->carry.prev_carry_cov.row.size(), static_cast<std::size_t>(kK));
         EXPECT_TRUE(carryEqual(B.ctx->carry.prev_carry, expect.prev_carry));
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
-        EXPECT_EQ(B.ctx->carry.sts_consts.count('G'), 1u);
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
+        EXPECT_EQ(B.events.handover.sts_consts.count('G'), 1u);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 0);
     }
     {
@@ -446,8 +448,8 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         B.handover();
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, expect.prev_carry_cov.P));
         EXPECT_TRUE(carryEqual(B.ctx->carry.prev_carry, expect.prev_carry));
-        ASSERT_EQ(B.ctx->carry.sts_dense.count('G'), 1u);
-        const auto& rec = B.ctx->carry.sts_dense.at('G');
+        ASSERT_EQ(B.events.handover.sts_dense.count('G'), 1u);
+        const auto& rec = B.events.handover.sts_dense.at('G');
         EXPECT_EQ(rec.q, "G02");
         EXPECT_EQ(rec.p, "G01");
         EXPECT_TRUE(rec.p_added);
@@ -457,7 +459,7 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(rec.row_sats, (std::set<std::string>{"G01", "G02", "G05", "G32"}));
         // The parked G07 has no decision this epoch, so it is not in the clean set.
         EXPECT_EQ(rec.clean, (std::set<std::string>{"G02", "G05", "G32"}));
-        EXPECT_EQ(B.ctx->carry.sts_consts.count('G'), 1u);
+        EXPECT_EQ(B.events.handover.sts_consts.count('G'), 1u);
         EXPECT_EQ(B.ctx->counters.sts_edges, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_fallback, 0);
@@ -466,12 +468,13 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(B.ctx->counters.sts_dense_parked, 1);
         EXPECT_EQ(B.ctx->counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)], 1);
         EXPECT_GT(B.ctx->counters.sts_dense_var_saved, 0.0) << "positively correlated clocks";
-        // The next epoch clears the record before anything reads it.
-        B.ctx->carry.sts_dense['E'];
+        // The next epoch's events start empty.
+        B.events.handover.sts_dense['E'];
+        B.events = EpochEvents{};
         NetworkSbasis::Plan plan;
         networkHandoverStransform(*B.ctx, B.L.cfg, B.log, *B.traces, GnssTime{2313, 276180.0},
-                                  plan, /*datum_changed=*/false, {}, B.registered);
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
+                                  plan, /*datum_changed=*/false, {}, B.registered, B.events);
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
     }
     {   // the incoming pivot without a block row: the diagonal kernel, counted
         SeamBed B("seam_fallback", kArmed + "    \"handover_stransform_dense\": true,\n");
@@ -481,7 +484,7 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(B.ctx->counters.sts_dense_fallback, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 0);
         EXPECT_EQ(B.ctx->counters.sts_edges, 1);
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, P0));
         EXPECT_EQ(entry(B.ctx->carry, "G02")->value, 0.0);
     }
@@ -569,7 +572,7 @@ TEST(HandoverStransformDense, CloneFoldIsTheJointLawAcrossTheDenseHandover) {
     B.ctx->carry.cxu_epoch.ok = true;
     B.ctx->carry.cxu_epoch.P  = P0;
     B.handover();
-    ASSERT_EQ(B.ctx->carry.sts_dense.count('G'), 1u);
+    ASSERT_EQ(B.events.handover.sts_dense.count('G'), 1u);
 
     // The layout: the epoch's columns (G01 has left), then the GPS clocks' clones.
     NetworkEstimator est;
@@ -632,7 +635,8 @@ TEST(HandoverStransformDense, CloneFoldIsTheJointLawAcrossTheDenseHandover) {
 
     EpochWorkspace ws;
     ASSERT_TRUE(networkClockCloneDenseFold(*B.ctx, ws, est, dkeys, drow, dvar_eff, dinflate,
-                                           dreexp, cov_eff, /*within_epoch_armed=*/true, nullptr));
+                                           dreexp, cov_eff, /*within_epoch_armed=*/true, nullptr,
+                                           B.events));
     const ClockCloneCounters& C = B.ctx->counters.ccl;
     EXPECT_EQ(C.fold_dense_epochs, 1);
     EXPECT_EQ(C.fold_dense_standin, 3);

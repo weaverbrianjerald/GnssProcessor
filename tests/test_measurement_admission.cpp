@@ -247,7 +247,7 @@ struct Rig {
         e.pass_a.modeled = modeled;
         e.funnel.carry_slipped_ambs = slipped;
         e.funnel.carry_slipped_raw = slipped_raw;
-        networkMeasurementAdmission(fx->run(), e, e.pass_a, e.funnel);
+        networkMeasurementAdmission(fx->run(), e, e.pass_a, e.funnel, e.events);
         modeled = e.pass_a.modeled;
         slipped = e.funnel.carry_slipped_ambs;
         slipped_raw = e.funnel.carry_slipped_raw;
@@ -585,7 +585,7 @@ TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
     EXPECT_EQ(0, a.over_bound);
     EXPECT_TRUE(admArcs(ctx) == 0) << "no record map may be allocated";
     EXPECT_EQ(admEvents(ctx), 0u);
-    EXPECT_DOUBLE_EQ(-1.0, ctx.carry.adm_ep_tow) << "and no epoch-status column stamped";
+    EXPECT_DOUBLE_EQ(-1.0, r.fx->ep().events.admission.adm_ep_tow) << "and no epoch-status column stamped";
     EXPECT_TRUE(r.slipped.empty());
     // Every observable of the corrupt channel is still there: disarmed means the
     // screen makes no decision, not that it admits.
@@ -625,10 +625,10 @@ TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
     EXPECT_TRUE(r.has("G07", kC1)) << "measure-only may not remove an observable";
     EXPECT_TRUE(admArcs(ctx) == 0)
         << "and may not build admission records there is no response to use";
-    EXPECT_DOUBLE_EQ(1000.0, ctx.carry.adm_ep_tow)
+    EXPECT_DOUBLE_EQ(1000.0, r.fx->ep().events.admission.adm_ep_tow)
         << "the per-epoch census columns are stamped even measure-only";
-    EXPECT_GT(ctx.carry.ep_adm_net_worst_z, 1.9e5);
-    EXPECT_LT(ctx.carry.ep_adm_sta_worst_z, ctx.carry.ep_adm_net_worst_z)
+    EXPECT_GT(r.fx->ep().events.admission.ep_adm_net_worst_z, 1.9e5);
+    EXPECT_LT(r.fx->ep().events.admission.ep_adm_sta_worst_z, r.fx->ep().events.admission.ep_adm_net_worst_z)
         << "the two columns are a POPULATION and an EXTREME, not the same number: "
            "a single maximum cannot make the separation claim falsifiable";
 }

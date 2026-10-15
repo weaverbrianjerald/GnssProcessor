@@ -39,9 +39,10 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
   V4  Driver writes after the solve.  In Application::networkProcessEpoch_, after the
       statement `ep.solve = networkSolveGlue(...)`, the only writes into `ep` are the four
       driver stores `ep.ar_fixes =`, `ep.fixed_cycles =`, `ep.prep =`, `ep.emitted =` (each
-      once; `ep.emitted` after the networkEmitStore call) and the three output arguments
+      once; `ep.emitted` after the networkEmitStore call) and the output arguments
       (`ep.solve.handoff` to networkPostFitRaim and networkClockQc, `ep.prep.sol` to
-      networkEmitStore).  A write is an assignment, an increment, a member call outside the
+      networkEmitStore, `ep.events` to the post-solve writers of the epoch's events listed
+      in POST_SOLVE_OUTPUTS).  A write is an assignment, an increment, a member call outside the
       read-only method list, or an argument passed to a non-const reference or pointer
       parameter; a name bound by reference to an epoch member is followed to the member, so a
       write through an alias counts.  `ep.clock` is assigned exactly once, before any read of
@@ -114,7 +115,11 @@ PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
 # The driver's stores after the solve, and the output arguments a post-solve seam may take.
 DRIVER_STORES = ("ep.ar_fixes", "ep.fixed_cycles", "ep.prep", "ep.emitted")
 POST_SOLVE_OUTPUTS = {"ep.solve.handoff": ("networkPostFitRaim", "networkClockQc"),
-                      "ep.prep.sol": ("networkEmitStore",)}
+                      "ep.prep.sol": ("networkEmitStore",),
+                      # the epoch's events: each writer its own group (app/NetworkEpoch.hpp)
+                      "ep.events": ("networkInstallCarry", "networkGrossLosScreen", "networkSolPrep",
+                                    "networkShHealth", "networkLeveling", "networkClockQc",
+                                    "networkObserveEpoch", "networkStashStatus")}
 # Member functions that read their object (a call of any other member is a write).
 READ_METHODS = frozenset("""
 size empty count find contains at begin end cbegin cend rbegin rend front back data get value

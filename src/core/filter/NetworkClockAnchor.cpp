@@ -428,7 +428,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                              const std::vector<std::string>& registered_clock_sats,
                              const std::set<std::string>& clock_refloat_sats,
                              bool datum_changed,
-                             const std::set<char>& changed_consts) {
+                             const std::set<char>& changed_consts, const EpochEvents& events) {
     if (!ctx.knobs.cta_on) return;
     (void)config_;   // the seam signature is uniform across the run loop
     auto& anchor = ctx.carry.clk_anchor;
@@ -458,9 +458,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             // retire and the anchor stays engaged.  The statistic below still tests it.
             if (ctx.knobs.cta_datum_keep) {
                 const char cons = letterOfSat(sat);   // the dense kernel's key
-                const auto rec = ctx.carry.sts_dense.find(cons);
-                const bool keep = rec != ctx.carry.sts_dense.end()
-                               && ctx.carry.sts_consts.count(cons) > 0
+                const auto rec = events.handover.sts_dense.find(cons);
+                const bool keep = rec != events.handover.sts_dense.end()
+                               && events.handover.sts_consts.count(cons) > 0
                                && rec->second.selfcheck_ok
                                && rec->second.row_sats.count(sat) > 0
                                && it->second.folded && it->second.folded_anchored;
@@ -1136,6 +1136,7 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
     const std::set<char>& changed_consts = datum.changed_consts;
     const bool& datum_changed = datum.datum_changed;
     const std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;
+    const EpochEvents& events = ep.events;
     // ---- End of the bindings ----
     // --- Guarded temporal clock anchor (card Q3, docs/SPEC_clock_temporal_anchor.md) ---
     // Must run here: after the primary solve and before the within-epoch adaptation
@@ -1150,7 +1151,7 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
     // on this path.  No-op, with no state allocation, when off.
     networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
                             registered_clock_sats, clock_refloat_sats, datum_changed,
-                            changed_consts);
+                            changed_consts, events);
 }
 // ---- End of the solve stages ----
 

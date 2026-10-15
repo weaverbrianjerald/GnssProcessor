@@ -251,6 +251,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
     const std::vector<NetStation>& stations = run.setup.stations;
+    const std::vector<CongruenceHit>& cg_hits = ep.events.census.cg_hits;
     // ---- End of the bindings ----
     if (!ctx.knobs.cg_on) return;   // the driver's gate (card NOM3 step EP2)
     (void)config_;
@@ -270,7 +271,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     // per-station, per-direction quantity.  Neither survives aggregation, so the
     // trace carries each station-epoch, and the ladders are a run-end readout.
     if (traces.congruence_trace.is_open()) {
-        for (const CongruenceHit& h : ctx.carry.cg_hits) {
+        for (const CongruenceHit& h : cg_hits) {
             auto& o = traces.congruence_trace;
             o << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
               << stationName(stations, h.station) << ','
@@ -304,7 +305,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- identities of reported stations, rate-limited ---------------------
     const long long now_ep = acc.epochs();
     const long long holdoff = ctx.knobs.cg_event_holdoff;
-    for (const CongruenceHit& h : ctx.carry.cg_hits) {
+    for (const CongruenceHit& h : cg_hits) {
         if (!h.reported) continue;
         const std::string sname = stationName(stations, h.station);
         // The station's holdoff clock (by NAME, O3; card NOM step N4e2).
@@ -332,7 +333,6 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
                         h.raw_formal ? 1 : 0));
         ++t.events;
     }
-    ctx.carry.cg_hits.clear();
 
     t.wall_ms += std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - t0).count();

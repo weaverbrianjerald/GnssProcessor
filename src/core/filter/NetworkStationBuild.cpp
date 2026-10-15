@@ -353,6 +353,7 @@ void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,
     const SyncedEpoch& se = ep.se;
     const EpochClock& epoch_clock = ep.clock;
     const EpochPassA& pass_a = ep.pass_a;
+    const EpochEvents& events = ep.events;
     const std::vector<bool>& present = pass_a.present;
     std::vector<StationAssembly>& asm_res = assembly.asm_res;  // written
     // The alias lines of networkPassB_ this function reads, verbatim (card NOM3 step PB1b).
@@ -367,7 +368,7 @@ void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,
         StationAssembly& R = asm_res[i];
         try {
             NetStation& st = stations[i];
-            StationBuild build{ctx, config_, est, setup, se, epoch_clock, pass_a, gim, i, st, R};
+            StationBuild build{ctx, config_, est, setup, se, epoch_clock, pass_a, events, gim, i, st, R};
             if (!networkStationBuild(build)) continue;   // empty innovations or an H/state mismatch
             R.ok = true;
         } catch (const std::exception& ex) {

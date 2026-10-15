@@ -12,6 +12,7 @@
  */
 
 #include "filter/NetworkPriorResidual.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
@@ -79,8 +80,9 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                               const std::shared_ptr<spdlog::logger>& log,
                               NetworkRunTraces& traces, const SyncedEpoch& se,
                               const std::vector<NetStation>& stations,
-                              NetworkPriorResidual& prires) {
+                              NetworkPriorResidual& prires, EpochEvents& events) {
     if (!prires.enabled()) return;
+    EpochEvents::Status& status_ev = events.status;
     const auto t_begin = std::chrono::steady_clock::now();
     const NetworkConfig& nc = config_.getNetworkConfig();
     auto& q = ctx.counters;
@@ -92,12 +94,12 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     q.prires_epochs = prires.epochs();
 
     // --- the epoch-status scalars (read before the L1 row is written) --------
-    ctx.carry.prires_ep_tow      = se.time.tow;
-    ctx.carry.ep_prires_rows     = prires.epochRows();
-    ctx.carry.ep_prires_resp     = prires.epochRowsResp();
-    ctx.carry.ep_prires_frame    = prires.epochRowsFrame();
-    ctx.carry.ep_prires_reported = prires.epochReported();
-    ctx.carry.ep_prires_max_t    = prires.epochMaxAbsT();
+    status_ev.prires_ep_tow      = se.time.tow;
+    status_ev.ep_prires_rows     = prires.epochRows();
+    status_ev.ep_prires_resp     = prires.epochRowsResp();
+    status_ev.ep_prires_frame    = prires.epochRowsFrame();
+    status_ev.ep_prires_reported = prires.epochReported();
+    status_ev.ep_prires_max_t    = prires.epochMaxAbsT();
     q.prires_rows     += prires.epochRows();
     q.prires_reported += prires.epochReported();
     q.prires_hits_dropped += prires.hitsDropped();
@@ -111,11 +113,11 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     // and deweight use the robust median σ̂₀ formed in NetworkSolveGlue.
     if (prires.globalOn()) {
         const NetworkPriorResidual::GlobalResult g = prires.epochGlobal();
-        ctx.carry.ep_s0g_formed      = g.formed;
-        ctx.carry.ep_s0g_sigma0      = g.sigma0_global;
-        ctx.carry.ep_s0g_tension_def = g.tension_defined;
-        ctx.carry.ep_s0g_tension     = g.prior_tension;
-        ctx.carry.ep_s0g_flags       = g.flags;
+        status_ev.ep_s0g_formed      = g.formed;
+        status_ev.ep_s0g_sigma0      = g.sigma0_global;
+        status_ev.ep_s0g_tension_def = g.tension_defined;
+        status_ev.ep_s0g_tension     = g.prior_tension;
+        status_ev.ep_s0g_flags       = g.flags;
         ++q.s0g_epochs;
         if (g.formed) ++q.s0g_formed;
         q.s0g_data_rows  += g.s.n_data;

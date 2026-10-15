@@ -44,6 +44,7 @@ struct NetworkRunTraces;
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /**
  * @brief Install the accepted DD posterior for this epoch.
@@ -79,7 +80,8 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p seam_threads = run.setup.seam_threads.
  *
  * @see NetworkInstallCarry.hpp file banner for the ordering contract.
+ * @param events The epoch's events; written: install.
  */
-void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep);
+void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 } // namespace GnssProcessor

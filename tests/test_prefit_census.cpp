@@ -49,6 +49,7 @@
 #include <spdlog/spdlog.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkPrefitCensus.hpp"
@@ -479,9 +480,10 @@ TEST(PrefitCensusObservability, DefaultsAreOffAndTheFuseIsStructurallyInert) {
 
     // The trip latch is equally inert: an unarmed recorder never records an era,
     // so a later armed run cannot inherit a stale one.
-    EXPECT_FALSE(networkRhsTripEdge(ctx, "sh_gate", true));
+    std::string trip;
+    EXPECT_FALSE(networkRhsTripEdge(ctx, trip, "sh_gate", true));
     EXPECT_EQ(ctx.counters.pc.rec_consults, 0);
-    EXPECT_TRUE(ctx.carry.rhs_trip_pending.empty());
+    EXPECT_TRUE(trip.empty());
 }
 
 // ===========================================================================
@@ -574,10 +576,12 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
         return std::vector<StationAssembly>{ makeStation(rows) };
     };
 
+    EpochEvents events;
     auto walk = [&](std::vector<StationAssembly> asm_res, double tow, int ep) {
         ctx.counters.n_loop_epochs = static_cast<std::size_t>(ep);
+        events = EpochEvents{};   // a fresh epoch
         networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(tow), stations,
-                            est, asm_res, est_index_of);
+                            est, asm_res, est_index_of, events);
     };
 
     walk(parkedEpoch(), 1000.0, 0);   // seeds the presence map
@@ -595,9 +599,9 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     // the code class carries the whole signal, the phase class is empty, and the
     // run maximum names the cell.
     const int cd = static_cast<int>(NetRowClass::ObsCode);
-    EXPECT_GT(ctx.carry.ep_pc_max_s[cd], 1.0e5);
-    EXPECT_EQ(ctx.carry.ep_pc_n_gt_1000[cd], 1);
-    EXPECT_DOUBLE_EQ(ctx.carry.ep_pc_max_s[static_cast<int>(NetRowClass::ObsPhase)], 0.0);
+    EXPECT_GT(events.census.ep_pc_max_s[cd], 1.0e5);
+    EXPECT_EQ(events.census.ep_pc_n_gt_1000[cd], 1);
+    EXPECT_DOUBLE_EQ(events.census.ep_pc_max_s[static_cast<int>(NetRowClass::ObsPhase)], 0.0);
     EXPECT_NE(ctx.counters.pc.max_s_id.find("BSHM00ISR"), std::string::npos);
     EXPECT_NE(ctx.counters.pc.max_s_id.find("G07"), std::string::npos);
 
@@ -619,8 +623,8 @@ TEST(PrefitCensusObservability, CensusNamesTheCellAndBirthNeedsAPriorAbsence) {
     // …and on the birth epoch the same columns read zero, because every row of the
     // only cell present was deferred.  The columns describe established cells, so
     // "max_s = 0" here means "no established cell exceeded", not "nothing happened".
-    EXPECT_DOUBLE_EQ(ctx.carry.ep_pc_max_s[cd], 0.0);
-    EXPECT_EQ(ctx.carry.ep_pc_n_gt_1000[cd], 0);
+    EXPECT_DOUBLE_EQ(events.census.ep_pc_max_s[cd], 0.0);
+    EXPECT_EQ(events.census.ep_pc_n_gt_1000[cd], 0);
 
     traces.events_trace.flush();
     EXPECT_EQ(countEvents(csv, "prefit_exceedance"), 2);
@@ -668,8 +672,9 @@ TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt)
     rows.push_back({ kPb, -3317.0, 8000.0 });                    // phase: columns only
     std::vector<StationAssembly> a{ makeStation(rows) };
     ctx.counters.n_loop_epochs = 0;
+    EpochEvents events;
     networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(1000.0), stations,
-                        est, a, est_index_of);
+                        est, a, est_index_of, events);
     traces.events_trace.flush();
 
     EXPECT_EQ(ctx.counters.pc.exceedances, 2) << "both cells exceed the threshold";
@@ -680,8 +685,8 @@ TEST(PrefitCensusObservability, EventDomainExcludesPhaseButColumnsStillReportIt)
 
     // …and the phase column still carries the number, so nothing is hidden.
     const int ph = static_cast<int>(NetRowClass::ObsPhase);
-    EXPECT_GT(ctx.carry.ep_pc_max_s[ph], 1.0e6);
-    EXPECT_EQ(ctx.carry.ep_pc_n_gt_1000[ph], 1);
+    EXPECT_GT(events.census.ep_pc_max_s[ph], 1.0e6);
+    EXPECT_EQ(events.census.ep_pc_n_gt_1000[ph], 1);
 }
 
 // ===========================================================================
@@ -716,10 +721,12 @@ TEST(PrefitCensusObservability, TopologyLedgerSeedsSilentlyThenEventsTieRowDelta
         for (int k = 0; k < n_tie; ++k) rows.push_back({ kSh, 0.1, 1.0 });
         return std::vector<StationAssembly>{ makeStation(rows) };
     };
+    EpochEvents events;
     auto walk = [&](std::vector<StationAssembly> a, double tow, int ep) {
         ctx.counters.n_loop_epochs = static_cast<std::size_t>(ep);
+        events = EpochEvents{};   // a fresh epoch
         networkPrefitCensus(ctx, *cfg, nullLogger(), traces, epochAt(tow), stations,
-                            est, a, est_index_of);
+                            est, a, est_index_of, events);
     };
 
     walk(epochWithTies(2), 1000.0, 0);
@@ -763,19 +770,20 @@ TEST(PrefitCensusObservability, TripLatchFiresOncePerEraAndReArmsWhenItClears) {
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.rec_on);
 
-    EXPECT_TRUE(networkRhsTripEdge(ctx, "sh_gate", true));      // rising edge
-    EXPECT_EQ(ctx.carry.rhs_trip_pending, "sh_gate");
-    ctx.carry.rhs_trip_pending.clear();                         // the driver consumes it
+    std::string trip;                                           // the epoch's trip reason
+    EXPECT_TRUE(networkRhsTripEdge(ctx, trip, "sh_gate", true));      // rising edge
+    EXPECT_EQ(trip, "sh_gate");
+    trip.clear();                                               // the next epoch's events
 
     for (int k = 0; k < 190; ++k)                               // a 95-minute era
-        EXPECT_FALSE(networkRhsTripEdge(ctx, "sh_gate", true)) << "epoch " << k;
-    EXPECT_TRUE(ctx.carry.rhs_trip_pending.empty());
+        EXPECT_FALSE(networkRhsTripEdge(ctx, trip, "sh_gate", true)) << "epoch " << k;
+    EXPECT_TRUE(trip.empty());
 
-    EXPECT_FALSE(networkRhsTripEdge(ctx, "sh_gate", false));    // the era clears
-    EXPECT_TRUE(networkRhsTripEdge(ctx, "sh_gate", true));      // and re-arms
+    EXPECT_FALSE(networkRhsTripEdge(ctx, trip, "sh_gate", false));    // the era clears
+    EXPECT_TRUE(networkRhsTripEdge(ctx, trip, "sh_gate", true));      // and re-arms
 
     // Eras are independent: a live "sh_gate" era must not mask a sigma0 trip.
-    EXPECT_TRUE(networkRhsTripEdge(ctx, "sigma0", true));
+    EXPECT_TRUE(networkRhsTripEdge(ctx, trip, "sigma0", true));
 
     EXPECT_EQ(ctx.counters.pc.rec_trips, 3);
     EXPECT_EQ(ctx.counters.pc.rec_consults, 194);

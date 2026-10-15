@@ -6,6 +6,7 @@
  */
 
 #include "filter/NetworkSbasis.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "common/GnssIdentity.hpp"     // systemOfSat, constellationKey, SignalId, obsTypeOf
 #include "filter/StateKeySchema.hpp"   // StateKeys::parseSatBiasKey
@@ -2041,7 +2042,7 @@ void networkCodeDatumFamilyKeptEpoch(
     const std::function<void(const char*, const char*, const std::string&,
                              const std::string&, std::optional<double>,
                              std::optional<double>, const char*,
-                             const std::string&)>& emitEvent) {
+                             const std::string&)>& emitEvent, const EpochEvents& events) {
     using Outcome = NetworkSbasis::PinPairOutcome;
     // The pin pair holds of this kept epoch (network.code_datum_pair_continuity): each
     // held satellite-epoch is counted, and a hold is declared at both edges against the
@@ -2060,7 +2061,7 @@ void networkCodeDatumFamilyKeptEpoch(
     // cannot tell a hold that begins here from one the writer's last kept epoch carried:
     // such a hold is declared "hold_resumed" and counted apart from the holds begun.
     const bool after_resume = std::exchange(ctx.carry.resume.if_pin_holds, false);
-    const auto& holds = ctx.carry.this_epoch_if_pin_holds;
+    const auto& holds = events.code_datum.this_epoch_if_pin_holds;
     for (const auto& [sat, hold] : holds) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
         ++c.held;
@@ -2084,16 +2085,16 @@ void networkCodeDatumFamilyKeptEpoch(
         // moved by a pair change, named with its outcome: continued when the hold was
         // released or a held signal left with previous values on the new pair), or no pin
         // (the satellite has no ionosphere-free pin this kept epoch).
-        const auto now = ctx.carry.this_epoch_cb_ifpin.find(sat);
+        const auto now = events.code_datum.this_epoch_cb_ifpin.find(sat);
         std::string ending;
-        if (now == ctx.carry.this_epoch_cb_ifpin.end()) {
+        if (now == events.code_datum.this_epoch_cb_ifpin.end()) {
             ending = "; not pinned now";
         } else if (now->second == hold.held) {
             ending = "; pinned " + pairText(now->second) + " (the selection named it again)";
         } else {
-            const auto change = ctx.carry.this_epoch_if_pin_changes.find(sat);
+            const auto change = events.code_datum.this_epoch_if_pin_changes.find(sat);
             const char* how = "a pair change";
-            if (change != ctx.carry.this_epoch_if_pin_changes.end()) {
+            if (change != events.code_datum.this_epoch_if_pin_changes.end()) {
                 switch (change->second.outcome) {
                     case Outcome::Continued:     how = "continued"; break;
                     case Outcome::Reseeded:      how = "re-seeded"; break;
@@ -2107,7 +2108,7 @@ void networkCodeDatumFamilyKeptEpoch(
     }
     net::assignSat(ctx.entities, &net::SatelliteState::last_if_pin_hold, holds);
     // The pin pair changes of this kept epoch (network.code_datum_pair_continuity).
-    for (const auto& [sat, change] : ctx.carry.this_epoch_if_pin_changes) {
+    for (const auto& [sat, change] : events.code_datum.this_epoch_if_pin_changes) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
         switch (change.outcome) {
             case Outcome::Continued:
@@ -2127,7 +2128,7 @@ void networkCodeDatumFamilyKeptEpoch(
     // The secondary-family level realizations (network.code_datum_family_difference).  A
     // channel's row identity is the family row with its partner, or the sum-to-zero row
     // (empty partner); a change of identity against the last kept epoch is declared.
-    const auto& rows = ctx.carry.this_epoch_cb_family_rows;
+    const auto& rows = events.code_datum.this_epoch_cb_family_rows;
     if (!rows.empty()) ++ctx.counters.n_cb_family_epochs;
     const auto rowText = [](const std::string& partner) {
         return partner.empty() ? std::string("sum_to_zero") : "family_difference/" + partner;
@@ -2162,7 +2163,7 @@ void networkCodeDatumFamilyKeptEpoch(
              : side == NetworkSbasis::FamilyBirthSide::Secondary   ? x
                                                                     : x + "+" + p;
     };
-    for (const NetworkSbasis::FamilyBirthPrior& b : ctx.carry.this_epoch_cb_family_births) {
+    for (const NetworkSbasis::FamilyBirthPrior& b : events.code_datum.this_epoch_cb_family_births) {
         ctx.counters.cb_family_birth_by_band[{b.channel.sys, b.channel.digit}].add(b);
         const char* born_text = b.born == NetworkSbasis::FamilyBirthSide::Secondary
                                     ? "the secondary column born"
@@ -2182,7 +2183,7 @@ void networkCodeDatumFamilyKeptEpoch(
                               b.sigma_m));
     }
     for (const NetworkSbasis::FamilyBirthSkipRecord& s :
-         ctx.carry.this_epoch_cb_family_birth_skips) {
+         events.code_datum.this_epoch_cb_family_birth_skips) {
         ctx.counters.cb_family_birth_by_band[{s.channel.sys, s.channel.digit}].add(s);
         if (s.why != NetworkSbasis::FamilyBirthSkip::NoReference) continue;
         emitEvent("CB_DATUM", "family_birth_prior", s.sat, "", std::nullopt, std::nullopt,

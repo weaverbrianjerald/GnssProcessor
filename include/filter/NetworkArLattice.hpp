@@ -98,6 +98,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 class GnssConfig;
 struct NetStation;           // filter/NetworkRunTypes.hpp
 struct NetworkRunContext;    // app/NetworkRunContext.hpp
@@ -260,8 +262,9 @@ struct ArLatticeEvidence {
  * @param ctx The run context.
  * @param we  The landed replay's culprit sets (@c NetworkSolveGlueResult::we_landed).
  * @return The evidence, typed (a satellite name that does not parse is left out).
+ * @param events The epoch's events, read: the gross-LOS decisions.
  */
-ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const WithinEpochCulprits& we);
+ArLatticeEvidence networkArLatticeEvidence(const NetworkRunContext& ctx, const WithinEpochCulprits& we, const EpochEvents& events);
 
 /**
  * @brief The lattice arcs the evidence releases (step 2 of the file banner), ascending ArcId.

@@ -24,6 +24,7 @@
  */
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, constellationKey
@@ -97,6 +98,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        const std::vector<std::string>& registered_clock_sats,
                        const std::set<std::string>& shared_phase_keys,
                        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                       const EpochEvents& events,
                        const std::shared_ptr<spdlog::logger>& log) {
     // Card PRM phase 2: the stash re-expresses the carry in the solve's datum, so a transform
     // the handover preview applied before PASS B is no longer a pending record (empty with
@@ -107,7 +109,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;
-    auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
+    const auto& this_epoch_cb_ifpin = events.code_datum.this_epoch_cb_ifpin;
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
     const bool   clk_model_on = ctx.knobs.clk_model_on;
@@ -259,7 +261,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // measurably (≤ 4 mm at the DOY-129 event).  The near-static code bias is the
         // state that ratchets, so it is the state the guard resets.  The set is empty
         // unless network.cb_excursion_reinit is on ⇒ byte-identical when off.
-        const bool cb_excursion = ctx.carry.cb_excursion_sats.count(kv.first) > 0;
+        const bool cb_excursion = events.qc.cb_excursion_sats.count(kv.first) > 0;
         stash(SharedParamKind::CodeBias, kv.first, kv.second, col,
               flagged || cb_excursion);
         if (cb_time_linked) {
@@ -453,7 +455,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             // (3) Seed-vs-solve check: mark-if-moved telemetry for every seeded kind (the
             //     clock's authoritative mark is the Q3 guard's own trip, counted separately).
-            for (const auto& sd : ctx.carry.readmit_seed_check) {
+            for (const auto& sd : events.solve.readmit_seed_check) {
                 Eigen::Index col = -1;
                 try {
                     col = (sd.kind == SharedParamKind::Clock)
@@ -475,7 +477,6 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                                                                                : "code_bias",
                                              e, std::sqrt(S)));
             }
-            ctx.carry.readmit_seed_check.clear();
             ctx.carry.readmit_prev_stash_s = now_s;
         }
     }

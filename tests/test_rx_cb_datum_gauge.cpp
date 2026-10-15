@@ -128,7 +128,7 @@ std::size_t runCensus(const GnssConfig& cfg,
 
     // carry_warm = false, and no carry knob is armed, so every walk ahead of the
     // census short-circuits before touching the estimator or any station's StateManager.
-    networkHarvestLocalCarries(fx.run(), e);
+    networkHarvestLocalCarries(fx.run(), e, e.events);
     return fx.ctx().counters.n_rxcb_gauges;
 }
 

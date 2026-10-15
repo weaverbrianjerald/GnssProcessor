@@ -45,6 +45,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
     const SyncedEpoch& se = ep.se;
     const std::set<std::pair<int, std::string>>& carry_slipped_ambs = ep.funnel.carry_slipped_ambs;
     const double pl_now_s = ep.clock.pl_now_s;
+    const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
     // The event-row forwarder the driver held (card NOM3 step EP2): adds the epoch time.
     auto emitEvent = [&](const char* tier, const char* event,
@@ -74,7 +75,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 // response could not be graded on the lineage it was built for.
                 const bool slip_marked =
                     carry_slipped_ambs.count({i, amb_key}) != 0
-                    || ctx.carry.relevel.free_ambs.count({i, amb_key}) != 0;
+                    || relevel_ev.free_ambs.count({i, amb_key}) != 0;
                 // (a) Legacy phase-leveling carry: a value inside the
                 //     max-gap window is exactly what the PASS-B injector
                 //     would fold across the break.

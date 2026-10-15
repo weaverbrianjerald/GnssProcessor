@@ -1976,7 +1976,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep) {
     ++ctx.counters.pc.rec_dumps;
 }
 
-bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active) {
+bool networkRhsTripEdge(NetworkRunContext& ctx, std::string& trip, const char* kind, bool active) {
     if (!ctx.knobs.rec_on) return false;
     ++ctx.counters.pc.rec_consults;
     auto& eras = ctx.carry.rhs_trip_eras;
@@ -1986,7 +1986,7 @@ bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active) {
         eras.insert(key);
         ++ctx.counters.pc.rec_trips;
         // First writer wins: the first era to trip in an epoch names the dump.
-        if (ctx.carry.rhs_trip_pending.empty()) ctx.carry.rhs_trip_pending = key;
+        if (trip.empty()) trip = key;
         return true;
     }
     if (!active && was) eras.erase(key);
@@ -2006,6 +2006,7 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
     const std::vector<NetStation>& stations = run.setup.stations;
     const NetworkEstimator& est = run.engines.est;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    const std::string& rhs_trip_pending = ep.events.qc.rhs_trip_pending;
     // ---- End of the bindings ----
     if (!ctx.knobs.rec_on) return;
     const auto& nc = config_.getNetworkConfig();
@@ -2013,9 +2014,8 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
     const std::filesystem::path dir = traces.log_dir_ / "rhs_attrib";
 
     // --- 1. consume a pending trip -------------------------------------------
-    if (!ctx.carry.rhs_trip_pending.empty()) {
-        const std::string why = ctx.carry.rhs_trip_pending;
-        ctx.carry.rhs_trip_pending.clear();
+    if (!rhs_trip_pending.empty()) {
+        const std::string why = rhs_trip_pending;
         NetworkAttribFrame now;
         networkAttribCaptureFrame(now, se, stations, est, plan_datum, asm_res,
                                   est_index_of, /*own_assemblies=*/false, x_s,

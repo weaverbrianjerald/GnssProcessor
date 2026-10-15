@@ -183,6 +183,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     const std::shared_ptr<spdlog::logger>& log = run.log;
     NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
+    const EpochEvents::Census& census_ev = ep.events.census;
     // ---- End of the bindings ----
     if (!ctx.knobs.mdb_on) return;   // the driver's gate (card NOM3 step EP2)
     // Alias preamble (seam contract): the body reads the driver's names.
@@ -313,10 +314,10 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     // the infinity count is a subset and is not compared for equality.  What must
     // agree exactly is this seam's independent recount of the census's two
     // numbers over the same rows.
-    if (acc.fed_census && ctx.carry.redun_ep_tow == se.time.tow) {
+    if (acc.fed_census && census_ev.redun_ep_tow == se.time.tow) {
         ++q.join_checks;
-        const long long cen_rows  = ctx.carry.ep_redun_rows;
-        const long long cen_unchk = ctx.carry.ep_uncheckable_rows;
+        const long long cen_rows  = census_ev.ep_redun_rows;
+        const long long cen_unchk = census_ev.ep_uncheckable_rows;
         if (acc.census_rows != cen_rows || acc.census_unchk != cen_unchk) {
             ++q.join_mismatch;
             const std::string msg = fmt::format(

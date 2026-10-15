@@ -488,7 +488,7 @@ struct ArCycleFamilyEpoch {
 ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fam, const std::string& cons,
                             const ArPools& pools, const ArBasisMemory& mem, long long now_ep,
                             std::map<ArcId, ArcLifeTrack>& tracks, ArCycleBasisCounters& c,
-                            std::map<ArcId, ArArcReading>* readings) {
+                            std::map<ArcId, ArArcReading>* readings, const RelevelEpochState& relevel) {
     ArCycleInput in;
     in.family = arcgraph::ArcFamily{fam.sys, fam.bands};
     std::set<std::size_t>      station_set;
@@ -530,7 +530,7 @@ ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fa
                 const ArcId arc{StationId{static_cast<int>(i)}, sat_id, fam.bands[k]};
                 const ArcLifeKeys keys{std::make_tuple(static_cast<int>(i), sat, fam.signals[k]),
                                        {static_cast<int>(i), StateKeys::makeAmbiguityKey(sat, fam.signals[k])}};
-                const bool freed = ctx.carry.relevel.free_ambs.count(keys.amb) > 0;
+                const bool freed = relevel.free_ambs.count(keys.amb) > 0;
                 const auto last = mem.arcs.find(arc);
                 const ArcLifeStep step =
                     arcLifeStep(last == mem.arcs.end() ? nullptr : &last->second, mem.last_search_ep,
@@ -538,9 +538,9 @@ ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fa
                 arCycleTallyLife(c, step);
                 tracks.emplace_hint(tracks.end(), arc, step.track);
                 if (readings) {
-                    const auto fc = ctx.carry.relevel.free_cause.find(keys.amb);
+                    const auto fc = relevel.free_cause.find(keys.amb);
                     readings->emplace(arc, ArArcReading{step.edge, step.change,
-                                                        fc == ctx.carry.relevel.free_cause.end()
+                                                        fc == relevel.free_cause.end()
                                                             ? std::uint8_t{0} : fc->second});
                 }
                 arcgraph::ArcRow& row =
@@ -632,7 +632,7 @@ ArCycleEpochFigures arCycleEpochFiguresOf(const ArCycleBasisCounters& c) {
 int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, long long now_ep,
                      const std::vector<NetStation>& stations, const ArRequestOf& reqOf,
                      std::vector<DDrow>& dds, std::vector<ArCycleFamilyEpoch>& epoch,
-                     std::string& clause, std::map<ArcId, ArArcReading>* readings) {
+                     std::string& clause, std::map<ArcId, ArArcReading>* readings, const RelevelEpochState& relevel) {
     using Clock = std::chrono::steady_clock;
     using Ms    = std::chrono::duration<double, std::milli>;
     ArCycleBasisCounters& c = ctx.counters.netar_cycle;
@@ -666,7 +666,7 @@ int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, 
             }
             const ArBasisMemory& mem = *memp;
             const auto t0 = Clock::now();
-            const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings);
+            const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings, relevel);
             const auto t1 = Clock::now();
             stamp_ms += t1 - t0;
             if (in.stations.size() < 2) continue;
@@ -770,6 +770,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     const std::filesystem::path& log_dir_ = run.log_dir;
+    const RelevelEpochState& relevel = ep.events.slip.relevel;
     // ---- End of the bindings ----
     // --- Alias preamble: byte-copies of the former Application::runNetwork aliases,
     //     so the relocated SB_NETAR body below reads the original names. ----------
@@ -796,7 +797,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     if (suspect_window > 0)
         arSuspectFoldEpoch(ctx.carry.ar_suspect, suspect_now_ep,
                            TimeUtils::continuousGpsSeconds(se.time), suspect_window,
-                           ctx.carry.relevel, ctx.entities.arcs,
+                           relevel, ctx.entities.arcs,
                            &ctx.counters.netar_suspect);
 
     // --- Producer-side network AR (Phase 2: DD fixability attempt, log only) ---
@@ -876,7 +877,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
             netar.cycle_basis
                 ? arCycleBasisRows(ctx, netar.cycle_basis_sticky, ar_pool, suspect_now_ep, stations,
                                    reqOf, dds, cycle_epoch, cycle_text,
-                                   handover ? &lattice_fixes.arcs : nullptr)
+                                   handover ? &lattice_fixes.arcs : nullptr, relevel)
                 : arSignalBasisRows(netar.tree_basis, ar_pool, se, stations, reqOf, dds, log);
         lattice_fixes.searched = handover;
         if (!dds.empty() && reqs.size() >= 2) {

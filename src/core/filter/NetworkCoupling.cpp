@@ -952,6 +952,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
     double pl_now_s = ep.clock.pl_now_s;
+    const std::set<std::pair<std::string, std::string>>& eq34_reref = ep.events.phase_datum.eq34_reref;
     // ---- End of the bindings ----
     // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection, κ shrink + M²κq inflation (Card 1d); requires carry_cpl_cond (enforced at load)
@@ -1011,7 +1012,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         // the granularity at which a phase-bias datum is realized.
         for (const auto& [sat, sig] : ctx.carry.phase_anchor_reref)
             net::putSig(entities, sat, sig, &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
-        for (const auto& [sat, sig] : ctx.carry.eq34_reref)
+        for (const auto& [sat, sig] : eq34_reref)
             net::putSig(entities, sat, sig, &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
         // The datum-slip re-realization marks whole satellites (the slip is on the
         // pin-holder's arc, not on one signal), so it uses the satellite-wide

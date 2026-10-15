@@ -99,9 +99,10 @@ enum class Persist : std::uint8_t {
     Pending,          ///< A hand-off consumed within a few epochs of being set.
     RunConst,         ///< Set once at setup and read for the run.
     WriterTelemetry,  ///< The snapshot writer's own counters.
-    Epoch,            ///< Rebuilt every epoch: a per-epoch value (step N5a moves it to EpochEvents).
-    Latch,            ///< Set at one epoch and consumed at the next (step N5a).
+    Epoch,            ///< A per-epoch value: a member of EpochEvents (app/NetworkEpoch.hpp), built with the epoch.
+    Latch,            ///< Set at one epoch and consumed at the next.
     ResumeHandoff,    ///< Set by the warm resume, consumed at the first leg epoch (step N4g).
+    EngineEpoch,      ///< Rebuilt every epoch by its owner but kept in the run: the run end or a held pointer reads it.
 };
 
 /// The name of a persistence class, as the reach table prints it.

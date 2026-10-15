@@ -34,6 +34,7 @@ const char* persistName(Persist p) {
     case Persist::Epoch:           return "Epoch";
     case Persist::Latch:           return "Latch";
     case Persist::ResumeHandoff:   return "ResumeHandoff";
+    case Persist::EngineEpoch:     return "EngineEpoch";
     }
     return "?";
 }

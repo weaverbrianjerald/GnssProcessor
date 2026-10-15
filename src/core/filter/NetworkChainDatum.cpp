@@ -122,13 +122,13 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const PhaseDatumCandidates& cnd,
                             const AnchorHygiene& hyg,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                            std::set<std::string>& shared_phase_keys) {
+                            std::set<std::string>& shared_phase_keys, EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
 // The incumbent anchors as the old "sat_signal"-keyed map (card NOM step N4d): read-only
 // until the wholesale replacement at the end of the election, which writes the table.
 const std::map<std::string, std::string> anchor_incumbent =
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
-auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
+auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
@@ -145,7 +145,7 @@ std::set<std::pair<int, std::string>> eq34_retained_edges =
     net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
 const std::map<std::pair<int, std::string>, double> eq34_prev_target =
     net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_prev_target);
-auto& eq34_reref = ctx.carry.eq34_reref;
+auto& eq34_reref = events.phase_datum.eq34_reref;
 net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
@@ -199,12 +199,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
         st.pinned_amb_seed_lambda.clear();   // seed-round fold-deferred (empty ⇒ inert)
     }
-    this_epoch_anchor.clear();
+    // this_epoch_anchor is an epoch event: empty at the epoch's start.
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
-    // declared gauge dimension + shared-side bridge pins, replaced wholesale
-    // exactly like the tree maps.  Read after PASS B's serial consume.
-    ctx.carry.eq34_epoch_declared.clear();
-    ctx.carry.eq34_epoch_bridged.clear();
+    // declared gauge dimension + shared-side bridge pins, filled below (epoch events).
+    // Read after PASS B's serial consume.
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     // This epoch's receiver-side parent edges + per-sat component roots;
@@ -258,10 +256,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // step the shift walk below does not transform (unknown, or nonzero
     // with the carry shift off).  The emitted b_s re-references, so the
     // phase-leveling local carries for it are stale and its D2/C1 shared
-    // PB prior belongs to the retired frame.  Collected into the member
-    // set (cleared here), erased below before PASS B consumes the local
-    // carry, and marginalized at the shared-carry consume.
-    eq34_reref.clear();
+    // PB prior belongs to the retired frame.  Collected into the epoch's
+    // event set (empty at the epoch's start), erased below before PASS B
+    // consumes the local carry, and marginalized at the shared-carry consume.
     for (auto& [g, sats] : grp_sats) {
         // Plain locals rather than the structured bindings g/sats, so the
         // recordEdge lambda below can capture them (C++17 does not allow
@@ -525,7 +522,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
                             + comp_sats.size());   // n_c + m_c
-            ctx.carry.eq34_epoch_declared[dr_key] +=
+            events.phase_datum.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sats.size());
 
             // Sticky spanning tree (arcgraph::growChainForest, a two-queue BFS
@@ -781,7 +778,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     ++eq34_n_pins;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
-                    ++ctx.carry.eq34_epoch_bridged[dr_key];
+                    ++events.phase_datum.eq34_epoch_bridged[dr_key];
                 }
             }
             const arcgraph::SpanningForest forest = arcgraph::growChainForest(
@@ -1239,6 +1236,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     NetworkSetupResult& setup = run.setup;
     const std::vector<StationAssembly>& asm_res = assembly.asm_res;
     const std::vector<int>& est_index_of = assembly.est_index_of;
+    const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
     // ---- End of the bindings ----
     // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
     auto& stations = setup.stations;
@@ -1277,10 +1275,10 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
             }
         }
     }
-    for (const auto& [grp, decl] : ctx.carry.eq34_epoch_declared) {
-        const auto bit = ctx.carry.eq34_epoch_bridged.find(grp);
+    for (const auto& [grp, decl] : phase_datum_ev.eq34_epoch_declared) {
+        const auto bit = phase_datum_ev.eq34_epoch_bridged.find(grp);
         const long long bridged =
-            bit == ctx.carry.eq34_epoch_bridged.end() ? 0 : bit->second;
+            bit == phase_datum_ev.eq34_epoch_bridged.end() ? 0 : bit->second;
         pa.declared[grp] += decl;
         pa.bridged[grp]  += bridged;
         pa.folded[grp]   += folded_ep[grp];

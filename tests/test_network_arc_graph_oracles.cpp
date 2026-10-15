@@ -34,6 +34,7 @@
 // edge when a vertex popped twice before it (pass 2 re-pushes the whole visited set).
 
 #include "filter/NetworkArcGraph.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "filter/NetworkZStore.hpp"      // ZComponent, the live phase-B oracle
 #include "filter/NetworkArSuspect.hpp"   // ArSuspectCornerState, arSuspectCombine (the frozen DDrow)
 #include "filter/NetworkDatumGraph.hpp"  // netDatumGraphComponents and its types (the census, AGT-3)
@@ -2153,9 +2154,10 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const PhaseDatumCandidates& cnd,
                             const AnchorHygiene& hyg,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                            std::set<std::string>& shared_phase_keys) {
+                            std::set<std::string>& shared_phase_keys,
+                            EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
+auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
 FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
 auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
 auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
@@ -2170,7 +2172,7 @@ auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
 auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
 auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
-auto& eq34_reref = ctx.carry.eq34_reref;
+auto& eq34_reref = events.phase_datum.eq34_reref;
 auto& local_carry = station_maps.local_carry;   // card NOM step N4f1 shim
 auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
@@ -2229,8 +2231,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
     // declared gauge dimension + shared-side bridge pins, replaced wholesale
     // exactly like the tree maps.  Read after PASS B's serial consume.
-    ctx.carry.eq34_epoch_declared.clear();
-    ctx.carry.eq34_epoch_bridged.clear();
+    events.phase_datum.eq34_epoch_declared.clear();
+    events.phase_datum.eq34_epoch_bridged.clear();
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     // This epoch's receiver-side parent edges + per-sat component roots;
@@ -2478,7 +2480,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
                             + comp_sat[root].size());   // n_c + m_c
-            ctx.carry.eq34_epoch_declared[dr_key] +=
+            events.phase_datum.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sat[root].size());
 
             // Sticky spanning tree (two-queue BFS from r1).  The
@@ -2732,7 +2734,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     ++eq34_n_pins;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
-                    ++ctx.carry.eq34_epoch_bridged[dr_key];
+                    ++events.phase_datum.eq34_epoch_bridged[dr_key];
                 }
             }
             // A new tree edge is grown only onto an arc whose ambiguity has converged
@@ -3315,6 +3317,7 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
 
 /// Every output of the election, from both runs, compared.  Returns the first difference (empty: none).
 std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContext& l,
+                              const EpochEvents& ef, const EpochEvents& el,
                               const std::vector<NetStation>& sf, const std::vector<NetStation>& sl,
                               const std::set<std::string>& shf, const std::set<std::string>& shl) {
     for (std::size_t i = 0; i < sf.size(); ++i) {
@@ -3329,7 +3332,7 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (net::sigMap(f.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_')
         != net::sigMap(l.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_'))
         return "anchor_incumbent";
-    if (a.this_epoch_anchor != b.this_epoch_anchor) return "this_epoch_anchor";
+    if (ef.phase_datum.this_epoch_anchor != el.phase_datum.this_epoch_anchor) return "this_epoch_anchor";
     if (net::channelMap(f.entities.constellations, &net::ChannelState::datum_rx)
         != net::channelMap(l.entities.constellations, &net::ChannelState::datum_rx))
         return "eq34_datum_rx (best_datum_rx)";
@@ -3356,15 +3359,15 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
         return out;
     };
     if (prevEl(f) != prevEl(l)) return "eq34_prev_el";
-    if (a.eq34_reref != b.eq34_reref) return "eq34_reref";
+    if (ef.phase_datum.eq34_reref != el.phase_datum.eq34_reref) return "eq34_reref";
     if (net::arcAmbMap(f.entities.arcs, &net::ArcState::eq34_prev_target)
         != net::arcAmbMap(l.entities.arcs, &net::ArcState::eq34_prev_target))
         return "eq34_prev_target";
     if (net::arcAmbSet(f.entities.arcs, &net::ArcState::eq34_retained_edge)
         != net::arcAmbSet(l.entities.arcs, &net::ArcState::eq34_retained_edge))
         return "eq34_retained_edges";
-    if (a.eq34_epoch_declared != b.eq34_epoch_declared) return "eq34_epoch_declared";
-    if (a.eq34_epoch_bridged != b.eq34_epoch_bridged) return "eq34_epoch_bridged";
+    if (ef.phase_datum.eq34_epoch_declared != el.phase_datum.eq34_epoch_declared) return "eq34_epoch_declared";
+    if (ef.phase_datum.eq34_epoch_bridged != el.phase_datum.eq34_epoch_bridged) return "eq34_epoch_bridged";
     if (f.counters.eq34_reref_total != l.counters.eq34_reref_total) return "eq34_reref_total";
     if (f.counters.eq34_erase_total != l.counters.eq34_erase_total) return "eq34_erase_total";
     if (f.counters.eq34_shift_total != l.counters.eq34_shift_total) return "eq34_shift_total";
@@ -3484,9 +3487,10 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
             std::set<std::string> sh_f, sh_l;
             const long long demoted_f = ctx_f.counters.eq34_slip_demoted;
             const long long demoted_l = ctx_l.counters.eq34_slip_demoted;
-            frozen_eq34::networkElectChainDatum(ctx_f, *cfg, quiet, st_f, e.present, e.cnd, e.hyg, e.slipped, sh_f);
-            networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l);
-            ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, st_f, st_l, sh_f, sh_l), "")
+            EpochEvents ev_f, ev_l;   // fresh every epoch, as the epoch builds them
+            frozen_eq34::networkElectChainDatum(ctx_f, *cfg, quiet, st_f, e.present, e.cnd, e.hyg, e.slipped, sh_f, ev_f);
+            networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l, ev_l);
+            ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, ev_f, ev_l, st_f, st_l, sh_f, sh_l), "")
                 << "lineage " << lineage << " epoch " << ep;
             // The declared move (card AGT section 5): one count per slipped graph arc and epoch.
             const long long want_demoted = (kn.longevity && kn.slip_aware) ? slippedGraphArcs(e) : 0;
@@ -3494,7 +3498,7 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
             n_frozen_demoted += ctx_f.counters.eq34_slip_demoted - demoted_f;
             n_live_demoted += ctx_l.counters.eq34_slip_demoted - demoted_l;
             for (const NetStation& st : st_l) n_pins += static_cast<long long>(st.pinned_amb_targets.size());
-            for (const auto& [group, nb] : ctx_l.carry.eq34_epoch_bridged) n_bridged += nb;
+            for (const auto& [group, nb] : ev_l.phase_datum.eq34_epoch_bridged) n_bridged += nb;
             tallyChainComponents(e, n_multi, n_size_ties);
             ++n_epochs;
         }

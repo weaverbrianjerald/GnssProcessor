@@ -39,6 +39,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /**
  * @brief Harvest this epoch's phase-leveling carry from the post-fit solution, stash the
@@ -81,7 +82,8 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p registered_clock_sats = ep.columns.registered_clock_sats.
  *   - @p registered_code_keys = ep.columns.registered_code_keys.
  *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
+ * @param events The epoch's events; written: harvest.
  */
-void networkLeveling(NetworkRun& run, const NetworkEpoch& ep);
+void networkLeveling(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 } // namespace GnssProcessor

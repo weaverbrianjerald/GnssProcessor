@@ -66,9 +66,9 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
     {"networkStationBlock", "per-station local-block audit (card ZP)",
      "filter/NetworkStationBlock.cpp", Slot::FrameDiag, &networkStationBlock},
     {"networkPrefitCensus", "prefit census, seed-birth tripwire, topology ledger",
-     "filter/NetworkPrefitCensus.cpp", Slot::FrameDiag, &networkPrefitCensus},
+     "filter/NetworkPrefitCensus.cpp", Slot::FrameDiag, nullptr, &networkPrefitCensus},
     {"networkRedundancyCensus", "redundancy / testability census",
-     "filter/NetworkRedundancyCensus.cpp", Slot::FrameDiag, &networkRedundancyCensus},
+     "filter/NetworkRedundancyCensus.cpp", Slot::FrameDiag, nullptr, &networkRedundancyCensus},
     {"networkBlockBaardaEmit", "block-Baarda drain",
      "filter/NetworkBlockBaarda.cpp", Slot::FrameDiag, &networkBlockBaardaEmit},
     {"networkCongruenceEmit", "station-congruence drain",
@@ -88,9 +88,12 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
      "app/NetworkEntities.cpp", Slot::StashTail, &net::networkEntitiesReachSample},
 }};
 
-void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot) {
+void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot, EpochEvents& events) {
     for (const NetworkEpochObserverRow& row : kNetworkEpochObservers)
-        if (row.slot == slot) row.observe(run, ep);
+        if (row.slot == slot) {
+            if (row.record) row.record(run, ep, events);
+            else            row.observe(run, ep);
+        }
 }
 
 } // namespace GnssProcessor

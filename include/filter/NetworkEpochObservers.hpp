@@ -11,9 +11,17 @@
  * It reads the run and the epoch and writes only its own instrument state (counters,
  * trace rows, events, run-manifest records, its own carried accumulators): nothing the
  * solve or the wire reads.  The one later reader allowed is the epoch-status row: the
- * FrameDiag observers networkPostfitSigma0 and networkPrefitCensus fill the epoch-status
- * values (e.g. ctx.carry.ep_pc_rows) that networkStashStatus writes out (see the FrameDiag
- * note below).  It gates itself on the knob that
+ * FrameDiag observer networkPostfitSigma0 fills its post-fit sigma0 in the run state, and
+ * the two recorder rows (below) fill the census group of the epoch's events, which
+ * networkStashStatus writes out (see the FrameDiag note below).
+ *
+ * A recorder is an observer that also writes the census group of the epoch's events
+ * (EpochEvents::Census, app/NetworkEpoch.hpp), and has the recorder form
+ *
+ *     void networkXxx(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
+ *
+ * Its row sets `record` and leaves `observe` null: networkPrefitCensus and
+ * networkRedundancyCensus.  Every observer gates itself on the knob that
  * arms it, on its first line after its bindings, so an unarmed observer returns at once.
  *
  * The spine (Application::networkProcessEpoch_, app/ApplicationNetworkEpoch.cpp) calls
@@ -115,7 +123,8 @@ struct NetworkEpochObserverRow {
     const char*          what;     ///< What it measures, in a few words.
     const char*          home;     ///< The file the seam lives in (under src/core/).
     NetworkObserverSlot  slot;     ///< The spine point it runs at.
-    NetworkEpochObserver observe;  ///< The seam.
+    NetworkEpochObserver observe;  ///< The seam (null for a recorder row).
+    NetworkEpochRecorder record{nullptr};  ///< The recorder seam, or null.
 };
 
 /// The number of rows of @ref kNetworkEpochObservers.
@@ -129,7 +138,9 @@ extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNe
  * @param run   The run (the observers write their own instrument state in it).
  * @param ep    The epoch, read only.
  * @param slot  The spine point the caller stands at.
+ * @param events The epoch's events; written by the recorder rows (the census group).
+ * @param events The epoch's events; written: census, through the recorder rows.
  */
-void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot);
+void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot, EpochEvents& events);
 
 } // namespace GnssProcessor

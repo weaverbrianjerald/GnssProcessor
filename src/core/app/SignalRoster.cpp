@@ -991,9 +991,6 @@ namespace GnssProcessor {
         // arcReasonBeginEpoch keeps its bits for one more epoch, the earliest epoch
         // at which a gap they can explain can open.
         arcReasonBeginEpoch(ctx.reasons, epoch_idx);
-        // The response's per-arc record is epoch-scoped (phase 3, R4).  It is cleared
-        // at the first seam of the epoch so it never describes a previous epoch.
-        ctx.carry.sid_reentry_outcome.clear();
 
         const auto& nc = config_.getNetworkConfig();
         // The all-channel widening subsumes both cards (card SID phase 6b), so the two
@@ -1317,6 +1314,8 @@ namespace GnssProcessor {
         const std::set<std::pair<int, std::string>>& freed = nep.funnel.carry_slipped_ambs;
         const NetworkSolutionEpoch& sol = nep.prep.sol;
         bool emitted = nep.emitted;
+        const EpochEvents::Slip& slip_ev = nep.events.slip;
+        const std::vector<ArcLedger::Key>& sid_carry_prune_deaths = nep.events.harvest.sid_carry_prune_deaths;
         // ---- End of the bindings ----
         auto& rs = ctx.roster;
         if (!rs.active) return;
@@ -1330,12 +1329,12 @@ namespace GnssProcessor {
 
         // The answered test, placed above the admitted pass because that pass's
         // census uses it.  The gap re-entry response fires in PASS A, upstream of
-        // this pass, and its latch is `ctx.carry.relevel.free_ambs` with the cause
+        // this pass, and its latch is `slip_ev.relevel.free_ambs` with the cause
         // bit `kCauseGap` (an entry with no recorded cause also counts).  The
         // driver's slipped set is a wider channel (RAIM and D5 both write to it), so
         // the narrow latch is what shows whether a re-entry was
         // answered by the tier built for it.
-        const auto& rel = ctx.carry.relevel;
+        const auto& rel = slip_ev.relevel;
         const auto answered = [&](int sta, const std::string& sat,
                                   const std::string& sig) {
             const auto k = std::make_pair(sta, StateKeys::makeAmbiguityKey(sat, sig));
@@ -1350,7 +1349,7 @@ namespace GnssProcessor {
         // nor the epoch time, so it buffers its keys in the context and they are
         // evented here.  This is the decoupling edge of standing invariant 7 for
         // the carry itself.
-        for (const ArcLedger::Key& key : ctx.carry.sid_carry_prune_deaths) {
+        for (const ArcLedger::Key& key : sid_carry_prune_deaths) {
             ++ctr.carry_prune_deaths;
             const int sta = std::get<0>(key);
             const std::string& sat = std::get<1>(key);
@@ -1381,7 +1380,6 @@ namespace GnssProcessor {
                                              a ? arcStateName(a->adm_state) : "absent"));
             }
         }
-        ctx.carry.sid_carry_prune_deaths.clear();
 
         // --- Phase 2: the admitted lifecycle, before every class that reads it ---
         // The feed is the station's modelled phase rows.  `modeled[i]` exists only
@@ -1401,7 +1399,7 @@ namespace GnssProcessor {
             // requires.  A freed arc opens a gap only where the free is followed by
             // the row disappearing; otherwise the bit lands on no gap.
             if (ctx.reasons.armed)
-                for (const auto& [sta, amb] : ctx.carry.relevel.free_ambs) {
+                for (const auto& [sta, amb] : slip_ev.relevel.free_ambs) {
                     const auto parts = StateKeys::parseAmbiguityKey(amb);
                     if (!parts) continue;
                     const ArcLedger::Key k{ sta, parts->satellite, parts->signal };
@@ -1467,9 +1465,9 @@ namespace GnssProcessor {
                     if (!carried) {
                         ++ctr.ans_no_carry_entry;
                     } else {
-                        const auto oit = ctx.carry.sid_reentry_outcome.find(key);
+                        const auto oit = slip_ev.sid_reentry_outcome.find(key);
                         const ArcReentryOutcome o =
-                            (oit == ctx.carry.sid_reentry_outcome.end())
+                            (oit == slip_ev.sid_reentry_outcome.end())
                                 ? ArcReentryOutcome::None : oit->second;
                         switch (o) {
                         case ArcReentryOutcome::Freed:            ++ctr.ans_freed;      break;

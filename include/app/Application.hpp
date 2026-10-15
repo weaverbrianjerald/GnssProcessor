@@ -57,6 +57,7 @@ struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardenin
 enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declaration (decomposition INC-7)
 struct NetworkRun;           // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 struct EpochPassA;           // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct NetworkSlipFunnel;    // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochColumns;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
@@ -675,9 +676,10 @@ private:
      *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
      *   - @p carry_slipped_ambs = funnel.carry_slipped_raw.
      *   - @p qc = run.engines.slip_qc.
+     * @param events The epoch's events; written: slip (relevel, sid_reentry_outcome).
      */
     void networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
-                               NetworkSlipFunnel& funnel);
+                               NetworkSlipFunnel& funnel, EpochEvents& events);
 
     /**
      * @brief Raw slip-observable trace rows and the cross-station observability

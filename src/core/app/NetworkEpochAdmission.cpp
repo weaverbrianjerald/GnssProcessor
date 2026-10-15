@@ -77,10 +77,6 @@ EpochAdmission networkAdmitEpoch(NetworkRun& run, const NetworkEpoch& ep) {
                   || (ctx.knobs.rhs_attrib_tow >= 0.0
                       && se.time.tow >= ctx.knobs.rhs_attrib_tow - 0.25
                       && ctx.carry.rhs_attrib_done < ctx.knobs.rhs_attrib_n_ep));
-    // The per-epoch trip handoff is a one-epoch value.  It is cleared here, at the
-    // top of the epoch, so a trip raised by a site that runs before the
-    // SB_FRAMEDIAG consumer cannot leak into the next epoch's dump.
-    ctx.carry.rhs_trip_pending.clear();
 
     // Datum graph census: the spectral hand-off is also a one-epoch value.  An
     // epoch that skips, withholds or throws before the rank gate would otherwise

@@ -24,6 +24,8 @@
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochPassA;              // app/NetworkEpoch.hpp
@@ -121,6 +123,7 @@ struct StationBuild {
     const SyncedEpoch&                          se;      ///< The epoch's observations and time.
     const EpochClock&                           clock;   ///< dt, pl_now_s, carry_warm.
     const EpochPassA&                           pass_a;  ///< modeled, present, shared_phase_keys.
+    const EpochEvents&                          events;  ///< The epoch's events (the relevel free-epoch latch).
     const std::unique_ptr<GlobalIonosphereMap>& gim;     ///< Application::gim_ for the GIM rows (null unless loaded).
     // ---- this station, writable ----
     const int        i;   ///< Roster index (the frozen loop variable's type: the carry keys are tuple<int, ...>).

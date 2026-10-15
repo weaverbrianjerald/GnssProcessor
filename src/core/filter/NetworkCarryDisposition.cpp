@@ -45,7 +45,7 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp) {
 
 CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEstimator& est,
                                   const CarryPrior& cp, double dt, double cta_now_s,
-                                  double readmit_now_s) {
+                                  double readmit_now_s, const EpochEvents& events) {
     CarryFoldDecision d;
     d.var_decided_m2  = cp.var;
     d.value_decided_m = cp.value;
@@ -55,7 +55,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
         return d;
     }
     if (cp.kind == SharedParamKind::PhaseBias
-        && (ctx.carry.eq34_reref.count({cp.sat, cp.signal})
+        && (events.phase_datum.eq34_reref.count({cp.sat, cp.signal})
             || ctx.carry.phase_anchor_reref.count({cp.sat, cp.signal}))) {
         d.disposition = CarryDisposition::Reref;
         return d;
@@ -159,13 +159,14 @@ void networkCarryDecide(NetworkRun& run, const NetworkEpoch& ep) {
     const NetworkEstimator& est = run.engines.est;
     const GnssTime& t = ep.se.time;
     double dt = ep.clock.dt;
+    const EpochEvents& events = ep.events;
     // ---- End of the bindings ----
     if (ctx.carry.prev_carry.empty()) return;
     const double now_s = TimeUtils::continuousGpsSeconds(t);
     const double cta_now_s     = ctx.knobs.cta_on ? now_s : 0.0;
     const double readmit_now_s = (ctx.knobs.readmit_seed_horizon_s > 0.0) ? now_s : 0.0;
     for (CarryPrior& cp : ctx.carry.prev_carry)
-        cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, readmit_now_s);
+        cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, readmit_now_s, events);
     networkCarryPivotFrame(ctx);
     ++ctx.counters.prm_decide_epochs;
 }

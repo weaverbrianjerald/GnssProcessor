@@ -214,10 +214,19 @@ writes them, const to every reader).
 The order of stages 7 and 8 matters: the product is written before the post-fit checks
 run, so a check's response reaches the product one epoch later.
 
-*In progress:* the state these stages share lives in one large structure,
-`NetworkRunContext` (`include\app\NetworkRunContext.hpp`), grouped by the design card that
-added each piece rather than by station, satellite or signal. Card NOM step N4 regroups it
-by entity, so that everything about one satellite or one arc sits in one record.
+The state the stages share has three homes. What belongs to one constellation, satellite,
+satellite signal, station, line of sight or arc is a row of an entity table
+(`net::NetworkEntities`, `include\app\NetworkEntities.hpp`), keyed by its typed identity, so
+everything about one satellite sits in one record; each field's declaration row states how it
+survives a restart. What one stage hands later stages of the same epoch is an epoch event
+(`EpochEvents`, `include\app\NetworkEpoch.hpp`, read as `ep.events`): it is built empty with
+the epoch, one group per writing stage, so nothing is cleared by hand and nothing from a
+skipped epoch reaches the next one. What stays run-wide (the carried priors, latches set at
+one epoch and read at the next, hand-offs a later stage drains, run counters) is
+`NetworkCarryState` and `NetworkServiceCounters` in `NetworkRunContext`
+(`include\app\NetworkRunContext.hpp`), each member with its row in `net::kRunFields`. A stage
+names what it writes: an events group arrives as an output parameter, and an entity table it
+binds for writing has its row in `net::kEntityWriters`.
 
 ## The run end
 
@@ -238,8 +247,8 @@ exit code. To find what a mechanism reports at run end, open its file and search
 ## Where new code goes
 
 `CLAUDE.md` (section "Network producer: where new code goes") maps each kind of change to
-its file: a new per-epoch step to a `Network*` stage file, new run state to
-`NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
+its file: a new per-epoch step to a `Network*` stage file, a new per-epoch event to the
+writing stage's group of `EpochEvents`, new run state to `NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
 new run-end readout to a report in the subsystem's own file plus one row of
 `kNetworkRunEndReports` (the table's header lists the order rules). The loop itself stays a
 list of calls.

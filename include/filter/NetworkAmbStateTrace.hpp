@@ -60,6 +60,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
     class GnssConfig;
     struct NetworkRunContext;
     struct NetworkRunTraces;
@@ -229,9 +231,10 @@ struct StationHarvestBlock;                 // app/NetworkLocalCarryHarvest.hpp
  * @param sb Station @p i's harvest layout (its block columns, segment rows, back-substituted locals
  *           and F3 block).
  * @param i The station index.
+ * @param events The epoch's events; writes harvest (the buffered rows).
  */
 void networkAmbIfTraceStation(NetworkRun& run, const NetworkEpoch& ep,
-                              const StationHarvestBlock& sb, std::size_t i);
+                              const StationHarvestBlock& sb, std::size_t i, EpochEvents& events);
 
 // ---- End of the harvest half, declarations ----
 

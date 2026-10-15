@@ -38,6 +38,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
 struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /**
  * @brief Re-stash the D2/C1/SH carried quantities, fold this epoch into the carry
@@ -99,7 +100,8 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p n_cb = ep.columns.n_cb.
  *   - @p n_dropped_sats = ep.pass_a.n_dropped_sats.
  *   - @p n_adapt = ep.solve.n_adapt.
+ * @param events The epoch's events; written: status.
  */
-void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep);
+void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 } // namespace GnssProcessor

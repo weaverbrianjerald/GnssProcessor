@@ -46,6 +46,7 @@ struct Pinned {
     const char*          name;
     Slot                 slot;
     NetworkEpochObserver observe;
+    NetworkEpochRecorder record{nullptr};   ///< Set, with observe null, on a recorder row.
 };
 
 /// The table as card NOM3 step EP3 pre-registered it (scripts/nom3_designs/EP3_design.md).
@@ -62,8 +63,8 @@ const Pinned kPinned[] = {
     {"networkPostfitSigma0",                Slot::FrameDiag,     &networkPostfitSigma0},
     {"networkShSpectrum",                   Slot::FrameDiag,     &networkShSpectrum},
     {"networkStationBlock",                 Slot::FrameDiag,     &networkStationBlock},
-    {"networkPrefitCensus",                 Slot::FrameDiag,     &networkPrefitCensus},
-    {"networkRedundancyCensus",             Slot::FrameDiag,     &networkRedundancyCensus},
+    {"networkPrefitCensus",                 Slot::FrameDiag,     nullptr, &networkPrefitCensus},
+    {"networkRedundancyCensus",             Slot::FrameDiag,     nullptr, &networkRedundancyCensus},
     {"networkBlockBaardaEmit",              Slot::FrameDiag,     &networkBlockBaardaEmit},
     {"networkCongruenceEmit",               Slot::FrameDiag,     &networkCongruenceEmit},
     {"networkMdbFlush",                     Slot::FrameDiag,     &networkMdbFlush},
@@ -84,14 +85,18 @@ std::size_t rowOf(const char* name) {
 TEST(NetworkEpochObservers, EveryRowIsFilledAndAppearsOnce) {
     std::set<std::string> names;
     std::set<NetworkEpochObserver> seams;
+    std::set<NetworkEpochRecorder> recorders;
     for (const NetworkEpochObserverRow& row : kNetworkEpochObservers) {
         ASSERT_NE(row.name, nullptr);
         ASSERT_NE(row.what, nullptr) << row.name;
         ASSERT_NE(row.home, nullptr) << row.name;
-        ASSERT_NE(row.observe, nullptr) << row.name;
+        ASSERT_NE(row.observe == nullptr, row.record == nullptr) << row.name << ": exactly one form";
         EXPECT_FALSE(std::string(row.what).empty()) << row.name;
         EXPECT_TRUE(names.insert(row.name).second) << "row named twice: " << row.name;
-        EXPECT_TRUE(seams.insert(row.observe).second) << "seam listed twice: " << row.name;
+        if (row.observe)
+            EXPECT_TRUE(seams.insert(row.observe).second) << "seam listed twice: " << row.name;
+        else
+            EXPECT_TRUE(recorders.insert(row.record).second) << "seam listed twice: " << row.name;
         const std::string home(row.home);
         EXPECT_EQ(home.rfind(".cpp"), home.size() - 4) << row.name << ": " << home;
     }
@@ -111,6 +116,7 @@ TEST(NetworkEpochObservers, RowsSlotsAndOrderArePinned) {
         EXPECT_STREQ(row.name, kPinned[i].name) << "row " << i;
         EXPECT_EQ(row.slot, kPinned[i].slot) << row.name;
         EXPECT_EQ(row.observe, kPinned[i].observe) << row.name << " points at another seam";
+        EXPECT_EQ(row.record, kPinned[i].record) << row.name << " points at another seam";
     }
 }
 
