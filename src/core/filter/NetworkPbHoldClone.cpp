@@ -89,8 +89,11 @@ void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHol
 PbHoldCloneDeath engagementDeath(const NetworkRunContext& ctx, const PbHoldClone& c) {
     const ClockAnchorState& an = ctx.carry.clk_anchor;
     if (an.tripped.count(c.sat)) return PbHoldCloneDeath::Withdrawn;
-    const auto pv = ctx.carry.cxu_pivot.find(c.sat.empty() ? '\0' : letterOfSat(c.sat));
-    const bool pinned = pv != ctx.carry.cxu_pivot.end() && pv->second.first == c.sat;
+    const std::pair<std::string, double>* pv =
+        c.sat.empty() ? nullptr
+                      : net::get(ctx.entities.constellations, systemOfSat(c.sat),
+                                 &net::ConstellationState::cxu_pivot);
+    const bool pinned = pv != nullptr && pv->first == c.sat;
     const auto it = an.sat.find(c.sat);
     if (!pinned && (it == an.sat.end() || !it->second.folded_anchored))
         return PbHoldCloneDeath::Disengaged;
@@ -742,7 +745,10 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             if (it != folded.end()) in.prior_s(s) = it->second;
         }
     }
-    for (const auto& [cc, pv] : ctx.carry.cxu_pivot) in.pivot_sat[cc] = pv.first;
+    net::forEach(ctx.entities.constellations, &net::ConstellationState::cxu_pivot,
+                 [&](System sys, const std::pair<std::string, double>& pv) {
+                     in.pivot_sat[rinexLetter(sys)] = pv.first;
+                 });
     in.col_of = [&est](const PbHoldCloneTerm& t) -> Eigen::Index {
         try {
             switch (t.kind) {
@@ -1115,10 +1121,10 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         }
     }
     std::map<std::string, double> pinned;   // the constellations' pinned clocks now
-    for (const auto& [cc, pv] : ctx.carry.cxu_pivot) {
-        (void)cc;
-        pinned[sharedCarryKey(SharedParamKind::Clock, pv.first, "")] = pv.second;
-    }
+    net::forEach(ctx.entities.constellations, &net::ConstellationState::cxu_pivot,
+                 [&](System, const std::pair<std::string, double>& pv) {
+                     pinned[sharedCarryKey(SharedParamKind::Clock, pv.first, "")] = pv.second;
+                 });
     const Eigen::MatrixXd& Sig = est.sharedCovariance();
     const Eigen::Index nx = x_s.size();
     const auto fallback = [&](Eigen::Index col) -> std::pair<double, double> {

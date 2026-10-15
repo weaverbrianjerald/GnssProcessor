@@ -126,8 +126,7 @@ void networkElectChainDatum(NetworkRunContext& ctx,
 auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a)
+net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
 auto& eq34_prev_el = ctx.carry.eq34_prev_el;
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
@@ -489,10 +488,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         if (stations[i].name == best_name) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
-                auto it = eq34_datum_rx.find(dr_key);
-                if (it != eq34_datum_rx.end())
+                const std::string* drx = net::get(entities.constellations, grp_sys,
+                                                  &net::ConstellationState::channels, grp_sig,
+                                                  &net::ChannelState::datum_rx);
+                if (drx != nullptr)
                     for (size_t i : rx_list)
-                        if (stations[i].name == it->second) { r1 = i; break; }
+                        if (stations[i].name == *drx) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
                 int best = -1;
@@ -847,7 +848,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 }
             }
         }
-        if (!best_datum_rx.empty()) eq34_datum_rx[dr_key] = best_datum_rx;
+        if (!best_datum_rx.empty())
+            net::put(entities.constellations, grp_sys, &net::ConstellationState::channels,
+                     grp_sig, &net::ChannelState::datum_rx) = best_datum_rx;
     }
     // Rank cross-check (D3): recorded pins == Σ (n_c + m_c).  A mismatch
     // means a component was mis-pinned before the W5 gate ever runs.

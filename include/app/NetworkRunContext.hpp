@@ -1049,11 +1049,7 @@ namespace GnssProcessor {
         // the card 1d route for that one epoch (counted).  Empty and unread when off.
         double cxu_stash_s{0.0};                            ///< continuous-GPS s of the stash prev_carry_cov belongs to
         bool   cxu_stash_valid{false};                      ///< the stash was taken this run with the dense block present
-        std::map<char, std::pair<std::string, double>> cxu_pivot;  ///< constellation -> (pinned clock sat, pinned value) at the stash
-        /// Card PFQ: constellation -> the clock pivot the stashed posterior was pinned on
-        /// (the frame the carried clocks are in).  Recorded at every stash and restored from
-        /// the snapshot's pivots; empty and unread when network.clock_pivot_frame_q is off.
-        std::map<char, std::string> pfq_pivot;
+        // cxu_pivot, pfq_pivot: moved to net::ConstellationState (card NOM step N4b, app/NetworkEntities.hpp).
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
         SharedHistoryState shx;                             ///< card SCL2 X2: the held compression and this epoch's history columns (filter/NetworkSharedHistory); not snapshotted, empty off
@@ -1087,22 +1083,10 @@ namespace GnssProcessor {
         std::map<std::string, double>    readmit_seeded_s;      ///< sat → continuous-GPS s of its last clock seed (the guard's "moved" attribution window)
         struct ReadmitSeed { SharedParamKind kind; std::string sat, signal; double value, var_eff; };
         std::vector<ReadmitSeed> readmit_seed_check;            ///< this epoch's seeds, checked against the solve at the stash (mark-if-moved telemetry for every seeded kind)
-        // DD-trace reference age (§6.12.5): (cons, signal) -> sat -> consecutive traced
-        // epochs the satellite has been present at >= 2 stations.  An absence erases the
-        // entry, so the count is a continuous run, not a lifetime total.  Advanced and read
-        // only inside the stride-gated dd-frac emit, so both maps stay empty on a run that
-        // does not trace.  Not snapshotted: the trace is a diagnostic, and a warm resume
-        // restarts its ages from zero; the first traced epoch after a seam then re-elects
-        // by the tie-break, which the run-end switch count shows.
-        std::map<std::pair<std::string, std::string>, std::map<std::string, long long>> ddfrac_ref_age;
-        std::map<std::pair<std::string, std::string>, std::string> ddfrac_ref_prev;  ///< last reference elected per (cons, signal): the switch detector
-        std::map<std::string, std::string> prev_pivot;      // constellation -> pivot sat (handover detect)
+        // ddfrac_ref_age, ddfrac_ref_prev: moved to net::ChannelState (card NOM step N4b, app/NetworkEntities.hpp).
+        // prev_pivot: moved to net::ConstellationState::prev_pivot (card NOM step N4b, app/NetworkEntities.hpp).
         std::set<std::string> c1_zoh_active;                 // sats currently emitting c1=0 (ZOH); edge trigger for the R6 event (L2/T5)
-        // Persistent last-ever pivot per constellation (A1).  Merge-updated, never
-        // overwritten wholesale, so a constellation that vanishes for an epoch and returns
-        // with a different pivot still raises datum_changed.  Read only when
-        // network.pivot_vanish_return_signal is on (otherwise inert).
-        std::map<std::string, std::string> last_pivot;
+        // last_pivot: moved to net::ConstellationState::last_pivot (card NOM step N4b, app/NetworkEntities.hpp).
         // Deterministic IF-pin selection discontinuity.  The pin is re-derived from every
         // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a
         // pure function of the registered signal set, so a change between emitted products
@@ -1281,7 +1265,7 @@ namespace GnssProcessor {
         //    "sat_signal".  A root change (r1 handover, component migration) shifts the
         //    whole component frame by a common fractional part plus per-sat integers, so it
         //    re-references every satellite even where all tree edges survived.
-        std::map<std::string, std::string> eq34_datum_rx;
+        // eq34_datum_rx: moved to net::ChannelState::datum_rx (card NOM step N4b, app/NetworkEntities.hpp).
         // eq34_rx_parent: moved to net::StationSignalState::eq34_rx_parent (card NOM step N4a, app/NetworkEntities.hpp).
         std::map<std::string, std::string> eq34_sat_root;
         // Last epoch's per-(station idx, sat) arc elevation, for the rising-vs-setting test
@@ -1572,15 +1556,7 @@ namespace GnssProcessor {
         // between consecutive checks impossible); a defensive path for a snapshot gap or a
         // two-roll corner case.
         std::set<std::string> eph_cutover_disc_pending;
-        // The code-bias datum's previous-epoch solved values, keyed
-        // "<constellation>|<signal>" -> satellite -> value.  The veteran-referenced
-        // sum-to-zero RHS and the IF-pin RHS read it at gauge construction; it is cleared
-        // and rebuilt from the solved shared vector at the D2 harvest (kept epochs only, so
-        // a departed satellite is dropped and its return re-seeds that satellite alone).
-        // Snapshotted only under network.state_snapshot_datum_capture and restored only
-        // under network.resume_datum_restore (RS-3); otherwise a warm resume re-seeds,
-        // with a signal.
-        std::map<std::string, std::map<std::string, double>> code_bias_prev_;
+        // code_bias_prev_: moved to net::ChannelState::code_bias_prev (card NOM step N4b, app/NetworkEntities.hpp).
         // The IF-pin reference pair (sat -> {sig1, sig2}) that produced the values in
         // code_bias_prev_, with the same kept-epoch lifecycle (rebuilt at the D2 harvest
         // from the scratch below).  A pair change between kept epochs re-references the
@@ -1790,11 +1766,7 @@ namespace GnssProcessor {
         /// emission: the baseline the coupled-mark step above is differenced against (card
         /// PBH).  Maintained only while the hold is armed.
         std::map<std::string, double> pb_hold_prev_clock_m;
-        /// Card LAH: constellation letter -> M, the accumulated common clock step (m): the
-        /// sum over emitted epochs of the median, over the constellation's satellites with
-        /// an emitted clock at both that epoch and the previous emitted epoch, of the
-        /// emitted clock step.  Empty and untouched unless network.emit_pb_hold_phase_clock.
-        std::map<char, double> pb_hold_frz_M;
+        // pb_hold_frz_M: moved to net::ConstellationState::pb_hold_frz_M (card NOM step N4b, app/NetworkEntities.hpp).
         /// Card LAH: satellite -> emitted clock (m) at the previous emitted epoch, holding
         /// only that epoch's satellites (a satellite absent there contributes no step).
         std::map<std::string, double> pb_hold_frz_prev_clk;
@@ -2010,13 +1982,7 @@ namespace GnssProcessor {
         /// knobs.ar_suspect_epochs > 0.  Not snapshotted (a resumed leg starts with every
         /// corner clean).
         ArSuspectLedger              ar_suspect;
-        /// The producer AR search's cycle-basis memory (card AGT, step AGT-5,
-        /// filter/NetworkArCycleBasis.hpp): per family (keyed by its bands), the last search's
-        /// links, basis, arc life tracks and DD identities, which the next search keeps its
-        /// links from and maps its basis against.  Written and read at SB_NETAR only.  Empty
-        /// and untouched unless network.ambiguity_resolution.cycle_basis.  Not snapshotted and
-        /// not fingerprinted (the search is log-only): a resumed leg rebuilds, counted.
-        std::map<ArFamilyKey, ArBasisMemory> ar_basis;
+        // ar_basis: moved to net::ConstellationState::ar_basis (card NOM step N4b, app/NetworkEntities.hpp).
         /// The ledger of fixed cycles (card AGT step AGT-6, card FCF step FCF-3,
         /// filter/NetworkArLattice.hpp): the lattice of fixed cycles, the streaks of fixes
         /// waiting to enter it and its last step, stepped once per search epoch by the
@@ -2073,7 +2039,7 @@ namespace GnssProcessor {
         // --- Invariant-carry graph identities (decomposition INC-4: plain-data tier-1
         // entities) ---
         std::map<std::string, int>                    carry_sat_vertex;  // stable satellite -> vertex id (disjoint high range)
-        std::map<std::pair<char, std::string>, int>   carry_group_id;    // (constellation,signal) -> stable group key
+        // carry_group_id: moved to net::ChannelState::group_id (card NOM step N4b, app/NetworkEntities.hpp).
         bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
         double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
         long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
@@ -2303,7 +2269,7 @@ namespace GnssProcessor {
         // zero-q hold in disguise (increment 2c) and would pull 2c's slip-response rules
         // forward; see the invariant #1 discussion in NetworkSdEwlAr.hpp.
         // sd_ewl_fix: moved to net::StationState::sd_ewl_fix (card NOM step N4a, app/NetworkEntities.hpp).
-        std::map<char, std::string> sd_ewl_r0;   ///< constellation -> sticky component reference station name (A2's r0).
+        // sd_ewl_r0: moved to net::ConstellationState::sd_ewl_r0 (card NOM step N4b, app/NetworkEntities.hpp).
         /// (station index, constellation, satellite) -> (integer, the detector's lagged
         /// arc sample count).  The count separates a real flip from a legitimately changed
         /// integer on a restarted arc: a slip, gap or re-acquisition resets the MW

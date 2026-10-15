@@ -169,7 +169,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     NetworkRunContext& ctx = run.ctx;
     NetworkRunTraces& traces = run.traces;
     SlipQcChannel& slip_qc = run.engines.slip_qc;
-    auto& last_pivot = ctx.carry.last_pivot;
+    const std::map<std::string, std::string> last_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::last_pivot);
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& grade_metric_s = ctx.carry.grade_metric_s;
     const bool   pl_on         = ctx.knobs.pl_on;

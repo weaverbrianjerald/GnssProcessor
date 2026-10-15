@@ -62,6 +62,7 @@
 #include <vector>
 
 #include "common/GnssIdentity.hpp"
+#include "filter/NetworkArCycleBasis.hpp"   // ArFamilyKey, ArBasisMemory
 #include "filter/NetworkRunTypes.hpp"   // LocalCarry, SdEwlFix
 #include "model/PppModel.hpp"           // PppModel::CanonicalSignal
 
@@ -152,8 +153,80 @@ struct ByLetter {
     bool operator()(System a, System b) const { return traitsOf(a).letter < traitsOf(b).letter; }
 };
 
-/// One constellation's carried state (step N4b fills it).
-struct ConstellationState {};
+/// One signal family of a constellation, in @ref ConstellationState::channels: each member
+/// has its own key space (the signal string its old key carried after the constellation,
+/// O4), and a cell is present in a member exactly when the old map held (constellation, key).
+struct ChannelState {
+    /// Stable group key of the (constellation, signal) carry group (decomposition INC-4:
+    /// plain-data tier-1 entities), numbered in first-sighting order from 1.  Was
+    /// @c NetworkCarryState::carry_group_id.  Record GG.
+    std::optional<int> group_id;
+    /// The code-bias datum's previous-epoch solved values, satellite -> value.  The
+    /// veteran-referenced sum-to-zero RHS and the IF-pin RHS read it at gauge construction;
+    /// it is cleared and rebuilt from the solved shared vector at the D2 harvest (kept
+    /// epochs only, so a departed satellite is dropped and its return re-seeds that satellite
+    /// alone).  Snapshotted only under network.state_snapshot_datum_capture and restored only
+    /// under network.resume_datum_restore (RS-3); otherwise a warm resume re-seeds, with a
+    /// signal.  Key: the signal of "<constellation>|<signal>".  Was
+    /// @c NetworkCarryState::code_bias_prev_.  Record CBP.
+    std::optional<std::map<std::string, double>> code_bias_prev;
+    /// The eq34 component datum receiver of the signal family last epoch (the old key was
+    /// "<constellation>|<signal>").  Was @c NetworkCarryState::eq34_datum_rx.  Record EQD.
+    std::optional<std::string> datum_rx;
+    /// DD-trace reference age (section 6.12.5): satellite -> consecutive traced epochs the
+    /// satellite has been present at >= 2 stations.  An absence erases the entry, so the
+    /// count is a continuous run, not a lifetime total.  Advanced and read only inside the
+    /// stride-gated dd-frac emit, so it stays empty on a run that does not trace.  Not
+    /// snapshotted: the trace is a diagnostic, and a warm resume restarts its ages from zero;
+    /// the first traced epoch after a seam then re-elects by the tie-break, which the run-end
+    /// switch count shows.  Was @c NetworkCarryState::ddfrac_ref_age.  ColdStart.
+    std::optional<std::map<std::string, long long>> ddfrac_ref_age;
+    /// Last reference elected for the (constellation, signal): the switch detector.  Was
+    /// @c NetworkCarryState::ddfrac_ref_prev.  ColdStart.
+    std::optional<std::string> ddfrac_ref_prev;
+};
+
+/// One constellation's carried state (step N4b).  The constellation's own fields are keyed
+/// by @c System in letter order (O5); a member keyed below the constellation keeps the string
+/// its old key carried after the constellation, in @ref ConstellationState::channels (O4).
+struct ConstellationState {
+    /// The clock pivot satellite of the constellation last epoch (handover detect).  Was
+    /// @c NetworkCarryState::prev_pivot.  Record V.
+    std::optional<std::string> prev_pivot;
+    /// Persistent last-ever pivot (A1).  Merge-updated, never overwritten wholesale, so a
+    /// constellation that vanishes for an epoch and returns with a different pivot still
+    /// raises datum_changed.  Read only when network.pivot_vanish_return_signal is on
+    /// (otherwise inert).  Was @c NetworkCarryState::last_pivot.  Record V.
+    std::optional<std::string> last_pivot;
+    /// Card CTU (network.carry_coupling_exact_update): the pinned clock satellite and its
+    /// pinned value at the stash.  Not snapshotted; seeded from the V rows by the warm
+    /// resume.  Was @c NetworkCarryState::cxu_pivot.  ResumeSeeded.
+    std::optional<std::pair<std::string, double>> cxu_pivot;
+    /// Card PFQ: the clock pivot the stashed posterior was pinned on (the frame the carried
+    /// clocks are in).  Recorded at every stash and restored from the snapshot's pivots;
+    /// unread when network.clock_pivot_frame_q is off.  Was @c NetworkCarryState::pfq_pivot.
+    /// ResumeSeeded.
+    std::optional<std::string> pfq_pivot;
+    /// Card LAH: M, the accumulated common clock step (m): the sum over emitted epochs of the
+    /// median, over the constellation's satellites with an emitted clock at both that epoch
+    /// and the previous emitted epoch, of the emitted clock step.  Absent unless
+    /// network.emit_pb_hold_phase_clock.  Was @c NetworkCarryState::pb_hold_frz_M.  ColdStart.
+    std::optional<double> pb_hold_frz_M;
+    /// The sticky component reference station name of the SD EWL search (A2's r0).  Was
+    /// @c NetworkCarryState::sd_ewl_r0.  ColdStart.
+    std::optional<std::string> sd_ewl_r0;
+    /// The producer AR search's cycle-basis memory (card AGT, step AGT-5,
+    /// filter/NetworkArCycleBasis.hpp): per family of the constellation, keyed by its bands
+    /// (O4: a family spans several channels), the last search's links, basis, arc life
+    /// tracks and DD identities, which the next search keeps its links from and maps its
+    /// basis against.  Written and read at SB_NETAR only.  Empty and untouched unless
+    /// network.ambiguity_resolution.cycle_basis.  Not snapshotted and not fingerprinted (the
+    /// search is log-only): a resumed leg rebuilds, counted.  Was
+    /// @c NetworkCarryState::ar_basis.  ColdStart.
+    std::map<ArFamilyKey, ArBasisMemory> ar_basis;
+    /// The members keyed below the constellation.
+    std::map<std::string, ChannelState> channels;
+};
 
 /// One satellite's carried state (steps N4e1 and N4e2 fill it).
 struct SatelliteState {
@@ -326,6 +399,9 @@ struct ArcState {
 template <class Id, class Row, class Cmp = std::less<Id>>
 using Table = std::map<Id, Row, Cmp>;
 
+/// The constellation table, in letter order (O5).
+using ConstellationTable = Table<System, ConstellationState, ByLetter>;
+
 /// The station table.
 using StationTable = Table<StationId, StationState>;
 
@@ -348,6 +424,7 @@ struct StationNames {
 /// The identity converters the reach table counts round-trip failures for (O2).
 enum class Converter : std::uint8_t {
     StationName,  ///< A station name to its StationId (name keys, O3).
+    ConstellationLetter,  ///< A constellation letter (char or one-letter string) to its System (O5).
     Count
 };
 
@@ -370,7 +447,7 @@ struct EntityReach {
  *        reach table's state.
  */
 struct NetworkEntities {
-    Table<System, ConstellationState, ByLetter> constellations;
+    ConstellationTable                          constellations;
     Table<SatId, SatelliteState>                sats;
     Table<SatSignalId, SatSignalState>          sat_signals;
     StationTable                                stations;
@@ -387,6 +464,75 @@ struct NetworkEntities {
  * @return The station, or @c std::nullopt (counted under Converter::StationName).
  */
 std::optional<StationId> stationOfName(const NetworkEntities& e, const std::string& name);
+
+/**
+ * @brief The constellation of a RINEX letter, counting a failure when the letter does not
+ *        round-trip (O2: @c rinexLetter(systemFromLetter(c)) == c).
+ * @param e      The entities (the converter tally).
+ * @param letter A constellation letter ('G', 'E', ...).
+ * @return The constellation, or @c std::nullopt (counted under Converter::ConstellationLetter).
+ */
+std::optional<System> constellationOfLetter(const NetworkEntities& e, char letter);
+
+/**
+ * @brief The constellation of a one-letter key ("G"), counting a failure when the key is not
+ *        one round-tripping letter.
+ * @param e   The entities (the converter tally).
+ * @param key A one-letter constellation key, as @c constellationKey writes it.
+ * @return The constellation, or @c std::nullopt (counted under Converter::ConstellationLetter).
+ */
+std::optional<System> constellationOfKey(const NetworkEntities& e, const std::string& key);
+
+/**
+ * @brief Splits a "<constellation>|<signal>" key into its constellation and signal,
+ *        counting a failure when the key has no one-letter constellation before a bar.
+ * @param e   The entities (the converter tally).
+ * @param key The channel key.
+ * @return (constellation, signal), or @c std::nullopt (counted).
+ */
+std::optional<std::pair<System, std::string>> channelOfKey(const NetworkEntities& e,
+                                                           const std::string& key);
+
+/**
+ * @brief A constellation-keyed string field as the one-letter-keyed map its readers take
+ *        (the pivot maps: @c computeClockPivotPlan, the trace formatter), in letter order.
+ * @param t The constellation table.
+ * @param f The field.
+ * @return One-letter key -> value, for every row where the field is present.
+ */
+std::map<std::string, std::string> letterMap(const ConstellationTable& t,
+                                             std::optional<std::string> ConstellationState::*f);
+
+/**
+ * @brief A channel field as the "<letter>|<signal>"-keyed map its readers take (the
+ *        code-bias datum builder, @c NetworkSbasis), in (letter, signal) order.
+ * @param t The constellation table.
+ * @param f The channel field.
+ * @return "<letter>|<signal>" -> value, for every cell where the field is present.
+ */
+template <class V>
+std::map<std::string, V> channelMap(const ConstellationTable& t, std::optional<V> ChannelState::*f);
+
+/**
+ * @brief Replaces a constellation-keyed string field with a one-letter-keyed map: the old
+ *        map's assignment (@c prev_pivot = plan.clock_pivot).  Serial code only.
+ * @param e The entities (the table, and the converter tally for a key that is not a letter).
+ * @param f The field.
+ * @param m One-letter key -> value.
+ */
+void assignLetterMap(NetworkEntities& e, std::optional<std::string> ConstellationState::*f,
+                     const std::map<std::string, std::string>& m);
+
+/**
+ * @brief Merges a one-letter-keyed map into a constellation-keyed string field without
+ *        resetting the constellations it does not hold (the last-ever pivot, A1).  Serial
+ *        code only.
+ * @param e The entities.
+ * @param f The field.
+ * @param m One-letter key -> value.
+ */
+void mergeLetterMap(NetworkEntities& e, std::optional<std::string> ConstellationState::*f,
+                    const std::map<std::string, std::string>& m);
 
 // ===========================================================================
 // Field access: free functions over a table
@@ -535,6 +681,16 @@ std::size_t present(const T& t, M R::*sub, std::optional<V> SR::*f) {
     return n;
 }
 
+/// The first present cell of nested field @p f in (identity, sub-key) order, or null: the
+/// old pair-keyed map's @c begin().
+template <class T, class R, class M, class SR, class V>
+FieldPtr<T, V> first(T& t, M R::*sub, std::optional<V> SR::*f) {
+    for (auto& kv : t)
+        for (auto& sk : kv.second.*sub)
+            if (sk.second.*f) return &*(sk.second.*f);
+    return nullptr;
+}
+
 /**
  * @brief Calls @p fn(id, k, value) for every cell where nested field @p f is present, in
  *        (identity, sub-key) order: the old pair-keyed map's range loop.
@@ -557,6 +713,16 @@ void byStationName(T& t, const StationNames& names, Fn fn) {
         const auto it = t.find(StationId{idx});
         if (it != t.end()) fn(it->first, it->second);
     }
+}
+
+template <class V>
+std::map<std::string, V> channelMap(const ConstellationTable& t, std::optional<V> ChannelState::*f) {
+    std::map<std::string, V> out;
+    forEach(t, &ConstellationState::channels, f,
+            [&](System sys, const std::string& sig, const V& v) {
+                out.emplace(constellationKey(sys) + "|" + sig, v);
+            });
+    return out;
 }
 
 // ===========================================================================
@@ -585,7 +751,8 @@ extern const std::vector<const char*> kRestoreOrder;
 const FieldDecl* recordRow(const char* tag);
 
 /**
- * @brief The snapshot writer's call for one record: the row's @c to_snapshot.
+ * @brief The snapshot writer's call for one record: the @c to_snapshot of every Record row
+ *        declaring the tag, in table order (V spans the two pivot rows).
  * @param tag  The tag (a Record row must declare it; a missing row throws).
  * @param ctx  The run context.
  * @param snap The snapshot being filled.
@@ -593,7 +760,8 @@ const FieldDecl* recordRow(const char* tag);
 void recordToSnapshot(const char* tag, const NetworkRunContext& ctx, NetworkStateSnapshot& snap);
 
 /**
- * @brief The snapshot reader's call for one record: the row's @c from_snapshot.
+ * @brief The snapshot reader's call for one record: the @c from_snapshot of every Record
+ *        row declaring the tag, in table order.
  * @param tag  The tag (a Record row must declare it; a missing row throws).
  * @param snap The snapshot read.
  * @param ctx  The run context.

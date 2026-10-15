@@ -64,8 +64,6 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& last_snapshot_write_s = ctx.carry.last_snapshot_write_s;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& prev_pivot = ctx.carry.prev_pivot;
-    auto& last_pivot = ctx.carry.last_pivot;
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
@@ -162,8 +160,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 sc.sat = "L1";
             snap.shared_carry.push_back(std::move(sc));
         }
-        snap.prev_pivot    = prev_pivot;
-        snap.last_pivot    = last_pivot;
+        net::recordToSnapshot("V", ctx, snap);   // the constellation pivots (N4b)
         snap.c1_zoh_active = c1_zoh_active;
         snap.prev_clk      = prev_clk;
         for (const auto& [sat, o] : clock_osc) {
@@ -355,7 +352,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // datum it belongs to (phase_datum_eq34 / code_datum_time_linked), so arming the
         // capture on such a run costs nothing and writes no rows.
         if (nc.state_snapshot_datum_capture) {
-            snap.eq34_datum_rx  = ctx.carry.eq34_datum_rx;
+            net::recordToSnapshot("EQD", ctx, snap);   // the constellation channels (N4b)
             net::recordToSnapshot("EQP", ctx, snap);   // the station signals (N4a)
             snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
             for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
@@ -369,9 +366,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // while code_bias_prev_ is the quantity the veteran-referenced sum-to-zero RHS
             // differences against.  A nan there would survive the parse (strtod accepts
             // it) and corrupt the restored datum, so it is dropped at the source.
-            for (const auto& [fam, per_sat] : ctx.carry.code_bias_prev_)
-                for (const auto& [sat, v] : per_sat)
-                    if (std::isfinite(v)) snap.code_bias_prev[fam][sat] = v;
+            net::recordToSnapshot("CBP", ctx, snap);   // the constellation channels (N4b)
             snap.code_bias_sat_seen = ctx.carry.code_bias_sat_seen_;
             // The IF-pin pair that produced those values, the third container of the same
             // kept-epoch lifecycle.  Without it the restore is inert on the IF-pin half:
@@ -527,10 +522,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // warm resume reproduces the phase-ambiguity branch instead of re-converging one.
         if (nc.state_snapshot_carry) {
             snap.carry_sat_vertex = ctx.carry.carry_sat_vertex;
-            snap.carry_group_id.clear();
-            snap.carry_group_id.reserve(ctx.carry.carry_group_id.size());
-            for (const auto& [key, gid] : ctx.carry.carry_group_id)
-                snap.carry_group_id.emplace_back(key.first, key.second, gid);
+            net::recordToSnapshot("GG", ctx, snap);   // the constellation channels (N4b, O6)
             std::ostringstream ccs;
             // Write-side shape knob (RTB-7(e)).  The blob is about 99 % of the snapshot at
             // scale (at 305 stations, 13.1M dense Pᶻ numbers against 7.9k means), so the

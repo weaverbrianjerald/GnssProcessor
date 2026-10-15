@@ -76,8 +76,6 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& snap_path = ctx.carry.snap_path;
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
-    auto& prev_pivot = ctx.carry.prev_pivot;
-    auto& last_pivot = ctx.carry.last_pivot;
     auto& c1_zoh_active = ctx.carry.c1_zoh_active;
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
@@ -280,8 +278,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "the full-covariance carry re-seeds at the first emitted "
                                       "epoch.", prev_carry.size());
                     }
-                    prev_pivot    = snap.prev_pivot;
-                    last_pivot    = snap.last_pivot;
+                    net::recordFromSnapshot("V", snap, ctx);   // the constellation pivots (N4b)
                     c1_zoh_active = snap.c1_zoh_active;
                     prev_clk      = snap.prev_clk;
                     clock_osc.clear();
@@ -471,7 +468,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             !snap.code_bias_prev.empty() || !snap.code_bias_sat_seen.empty()
                             || !snap.code_bias_ifpin_pair.empty();
                         if (have_eq34) {
-                            ctx.carry.eq34_datum_rx  = snap.eq34_datum_rx;
+                            net::recordFromSnapshot("EQD", snap, ctx);   // the constellation channels (N4b)
                             net::recordFromSnapshot("EQP", snap, ctx);   // the station signals (N4a)
                             ctx.carry.eq34_sat_root  = snap.eq34_sat_root;
                             ctx.carry.eq34_prev_target.clear();
@@ -506,7 +503,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "does, and every phase-bias family re-references.");
                         }
                         if (have_cb) {
-                            ctx.carry.code_bias_prev_      = snap.code_bias_prev;
+                            net::recordFromSnapshot("CBP", snap, ctx);   // the constellation channels (N4b)
                             ctx.carry.code_bias_sat_seen_  = snap.code_bias_sat_seen;
                             // Restore also the IF-pin pair those values were solved under.
                             // Restoring the values without the pair is worse than restoring
@@ -1034,18 +1031,22 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 ctx.carry.cxu_stash_s =
                                     static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
                                 ctx.carry.cxu_stash_valid = ctx.carry.prev_carry_cov.P.rows() > 0;
-                                ctx.carry.cxu_pivot.clear();
+                                net::dropAll(ctx.entities.constellations,
+                                             &net::ConstellationState::cxu_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty())
-                                        ctx.carry.cxu_pivot[letterOfSat(sat)] =
-                                            {sat, 0.0};
+                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                                 &net::ConstellationState::cxu_pivot) = {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
                             }
                             // Card PFQ: the restored block's frame is the snapshot's pivots.
                             if (ctx.knobs.pfq_on) {
-                                ctx.carry.pfq_pivot.clear();
+                                net::dropAll(ctx.entities.constellations,
+                                             &net::ConstellationState::pfq_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
-                                    if (!sat.empty()) ctx.carry.pfq_pivot[letterOfSat(sat)] = sat;
+                                    if (!sat.empty())
+                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                                 &net::ConstellationState::pfq_pivot) = sat;
                             }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
                             ctx.counters.n_resume_cpl_cov_dropped = n_drop_cov;
@@ -1211,10 +1212,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // RTB-7(a).
                     if (nc.state_snapshot_carry && !snap.carry_state.empty()) {
                         ctx.carry.carry_sat_vertex = snap.carry_sat_vertex;
-                        ctx.carry.carry_group_id.clear();
-                        for (const auto& gg : snap.carry_group_id)
-                            ctx.carry.carry_group_id[{std::get<0>(gg), std::get<1>(gg)}] =
-                                std::get<2>(gg);
+                        net::recordFromSnapshot("GG", snap, ctx);   // the constellation channels (N4b)
                         std::istringstream cs(snap.carry_state);
                         std::string cerr;
                         bool carry_ok = carry_driver.restoreCarry(cs, &cerr);
@@ -1224,7 +1222,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // instead of re-keying chords onto the wrong satellites (RE-4).
                             std::set<int> satv, gids;
                             for (const auto& sv : ctx.carry.carry_sat_vertex) satv.insert(sv.second);
-                            for (const auto& gi : ctx.carry.carry_group_id)   gids.insert(gi.second);
+                            net::forEach(ctx.entities.constellations,
+                                         &net::ConstellationState::channels,
+                                         &net::ChannelState::group_id,
+                                         [&](System, const std::string&, int gid) { gids.insert(gid); });
                             carry_ok = carry_driver.validateCarryBinding(
                                 static_cast<int>(nc.stations.size()), satv, gids, &cerr);
                         }
@@ -1234,7 +1235,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "reproduced; shared/emitter state stay warm).", cerr);
                             carry_driver.reset();
                             ctx.carry.carry_sat_vertex.clear();
-                            ctx.carry.carry_group_id.clear();
+                            net::dropAll(ctx.entities.constellations,
+                                         &net::ConstellationState::channels,
+                                         &net::ChannelState::group_id);
                             hb1(WarmResumeRefusal::Other,
                                 "the invariant-carry blob could not be restored/bound: " + cerr);
                         } else {
@@ -1300,7 +1303,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               horizon_s, generation_id, prev_carry.size(), local_carry.size(),
                               net::present(sta_rows,
                                            &net::StationState::zwd), clock_osc.size(), prev_clk.size(),
-                              prev_pivot.size(), last_pivot.size(), ura_retro_sats.size(),
+                              net::present(ctx.entities.constellations,
+                                           &net::ConstellationState::prev_pivot),
+                              net::present(ctx.entities.constellations,
+                                           &net::ConstellationState::last_pivot),
+                              ura_retro_sats.size(),
                               ura_refloat_horizon.size(), n_emitted);
                 }
             }

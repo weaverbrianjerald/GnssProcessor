@@ -72,7 +72,7 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
     const auto next = [&v]() { v += 1.0; return v; };
     const std::string sig = (kind == SharedParamKind::Clock) ? "" : "L1C";
     c.prev_carry = {prior(kind, "G01", sig, next())};
-    c.cxu_pivot['G'] = {"G01", next()};
+    net::put(c_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G01", next()};
     c.clock_osc["G01"].x0 = next();
     c.clock_osc["G01"].init = true;
     c.prev_clk["G01"] = {next(), 100.0};
@@ -81,7 +81,7 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
     c.pb_level_prev["G01_L1C"] = next();
     c.pin_bridge["G01_L1C"].value = next();
     c.pb_hold["G01|L1C"].held_m = next();
-    c.code_bias_prev_["G|C1C"]["G01"] = next();
+    net::put(c_ent.constellations, System::GPS, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)["G01"] = next();
     const auto t = [&]() { return std::vector<CoupledShared>{
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
     c.local_carry[{0, "G01", "L1C"}] = local(next(), t());
@@ -392,7 +392,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
                     prior(SharedParamKind::Clock, "G05", "", 0.9, 5e-4),
                     prior(SharedParamKind::Clock, "E11", "", 0.1, 1e-4)};
     w.prev_carry[2].t_park_s = 500.0;
-    w.cxu_pivot['G'] = {"G04", 0.0};
+    net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G04", 0.0};
     w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))] = local(3.0, {
         term(SharedParamKind::Clock, "G01", "", 0.5, 1.2, 2e-4),
         term(SharedParamKind::Clock, "G04", "", -0.5, 0.0, 0.0),     // the pinned pivot
@@ -409,7 +409,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(w.prev_carry[2].value, 0.9 - c0);
     EXPECT_EQ(w.prev_carry[2].var, 5e-4 + vq);
     EXPECT_EQ(w.prev_carry[3].value, 0.1);
-    EXPECT_EQ(w.cxu_pivot['G'].second, -c0);
+    EXPECT_EQ(net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, -c0);
     const auto& cpl =
         w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))].coupling;
     EXPECT_EQ(cpl[0].s_prev, 1.2 - c0);

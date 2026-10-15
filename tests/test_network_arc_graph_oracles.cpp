@@ -2069,9 +2069,11 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 /// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
 /// from NetworkCarryState into the station table (app/NetworkEntities.hpp).  The frozen body
 /// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
-/// at exit, and around the one walker call that reads the tables.
+/// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
+/// eq34 datum receivers into the constellation table's channels; the shim carries their map too.
 struct FrozenStationMaps {
     NetworkRunContext& ctx;
+    std::map<std::string, std::string> eq34_datum_rx;                  ///< "<c>|<sigma>" -> receiver (N4b)
     std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
     std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
     explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
@@ -2082,6 +2084,7 @@ struct FrozenStationMaps {
         eq34_rx_parent.clear();
         rpb_carry.clear();
         const net::NetworkEntities& e = ctx.entities;
+        eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
         net::byStationName(e.stations, e.names, [&](const StationId& id, const net::StationState& row) {
             for (const auto& [family, cell] : row.signals)
                 if (cell.eq34_rx_parent)
@@ -2094,6 +2097,12 @@ struct FrozenStationMaps {
     }
     void store() {
         net::NetworkEntities& e = ctx.entities;
+        net::dropAll(e.constellations, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
+        for (const auto& [key, rx] : eq34_datum_rx) {
+            const auto ch = net::channelOfKey(e, key);
+            net::put(e.constellations, ch->first, &net::ConstellationState::channels, ch->second,
+                     &net::ChannelState::datum_rx) = rx;
+        }
         net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::eq34_rx_parent);
         net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::rpb);
         for (const auto& [rxkey, sat] : eq34_rx_parent) {
@@ -2124,8 +2133,8 @@ void networkElectChainDatum(NetworkRunContext& ctx,
 auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
 FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
+auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
 auto& eq34_prev_el = ctx.carry.eq34_prev_el;
@@ -3266,7 +3275,10 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
     }
     if (chance(rng, 0.05)) {
         const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
-        both([&](NetworkCarryState& c) { c.eq34_datum_rx["G|L1C"] = sta; });
+        bothEnt([&](net::NetworkEntities& c) {
+            net::put(c.constellations, System::GPS, &net::ConstellationState::channels, "L1C",
+                     &net::ChannelState::datum_rx) = sta;
+        });
     }
     const bool first = chance(rng, 0.1);
     both([&](NetworkCarryState& c) { c.resume_datum_first_ep = first; });
@@ -3287,7 +3299,9 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     const NetworkCarryState& b = l.carry;
     if (a.anchor_incumbent != b.anchor_incumbent) return "anchor_incumbent";
     if (a.this_epoch_anchor != b.this_epoch_anchor) return "this_epoch_anchor";
-    if (a.eq34_datum_rx != b.eq34_datum_rx) return "eq34_datum_rx (best_datum_rx)";
+    if (net::channelMap(f.entities.constellations, &net::ChannelState::datum_rx)
+        != net::channelMap(l.entities.constellations, &net::ChannelState::datum_rx))
+        return "eq34_datum_rx (best_datum_rx)";
     const auto cells = [](const NetworkRunContext& c, auto field) {
         std::vector<std::tuple<int, std::string, double, std::string>> out;
         net::forEach(c.entities.stations, &net::StationState::signals, field,

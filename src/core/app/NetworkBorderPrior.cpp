@@ -902,12 +902,13 @@ void networkCouplingExactPrepare(NetworkRun& run, const NetworkEpoch& nep) {
     // no entry, and the rows count the deficit as an orphan.
     bool any_clk = false;
     for (int p = 0; p < np; ++p) any_clk = any_clk || ep.clk_p[static_cast<std::size_t>(p)];
-    for (const auto& [cc, pv] : ctx.carry.cxu_pivot) {
-        try {
-            const Eigen::Index col = est.clockColumn(pv.first);
-            if (col >= 0) ep.pivot[cc] = {col, pv.second};
-        } catch (...) {}
-    }
+    net::forEach(ctx.entities.constellations, &net::ConstellationState::cxu_pivot,
+                 [&](System sys, const std::pair<std::string, double>& pv) {
+                     try {
+                         const Eigen::Index col = est.clockColumn(pv.first);
+                         if (col >= 0) ep.pivot[rinexLetter(sys)] = {col, pv.second};
+                     } catch (...) {}
+                 });
     if (any_clk && ep.pivot.empty()) ++ctx.counters.cxu_pivot_missing;
     if (!couplingExactFactor(ep)) {
         ++ctx.counters.cxu_epochs_unfactored;

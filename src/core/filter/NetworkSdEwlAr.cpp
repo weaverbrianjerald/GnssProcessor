@@ -276,7 +276,7 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     auto& stations = setup.stations;
     auto& C = ctx.counters;
     auto& prev = ctx.carry.sd_ewl_prev;
-    auto& r0_sticky = ctx.carry.sd_ewl_r0;
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;   // sd_ewl_r0 (N4b)
     ++C.sdewl_epochs;
     (void)now_s;   // arc continuity is judged by the detector's own sample count
 
@@ -454,15 +454,16 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
         // event, because it shifts every propagated integer in the component.
         std::string r0 = graph.begin()->first;
         {
-            const auto it = r0_sticky.find(cons);
-            if (it != r0_sticky.end() && graph.count(it->second)) {
-                r0 = it->second;
+            const std::string* sticky =
+                net::get(cons_rows, systemFromLetter(cons), &net::ConstellationState::sd_ewl_r0);
+            if (sticky != nullptr && graph.count(*sticky)) {
+                r0 = *sticky;
             } else {
                 std::size_t best_n = 0;
                 for (const auto& [nm, ss] : graph)
                     if (ss.size() > best_n) { r0 = nm; best_n = ss.size(); }
-                if (it != r0_sticky.end()) ++C.sdewl_sd_ref_reelected;
-                r0_sticky[cons] = r0;
+                if (sticky != nullptr) ++C.sdewl_sd_ref_reelected;
+                net::put(cons_rows, systemFromLetter(cons), &net::ConstellationState::sd_ewl_r0) = r0;
             }
         }
         ++C.sdewl_components;
@@ -539,8 +540,11 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                se.time.tow, C.sdewl_dd_pairs_seen, C.sdewl_dd_fix_attempts,
                C.sdewl_dd_fixed, C.sdewl_dd_reject_frac, C.sdewl_dd_reject_ffr,
                C.sdewl_dd_flip, C.sdewl_dd_restart, C.sdewl_components,
-               [&] { std::string s; for (const auto& [c, nm] : r0_sticky)
-                                        s += fmt::format("{}={} ", c, nm);
+               [&] { std::string s;
+                     net::forEach(cons_rows, &net::ConstellationState::sd_ewl_r0,
+                                  [&](System sys, const std::string& nm) {
+                                      s += fmt::format("{}={} ", rinexLetter(sys), nm);
+                                  });
                      return s; }());
 }
 

@@ -189,8 +189,14 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
         // trace and read as a network-wide episode, which the `oldest` policy avoids.  The map is
         // maintained under both policies (network.trace_dd_fractional_ref = lowest | oldest), so the
         // `lowest` default reports its own switch rate; it touches no solve input.
+        // The channel cell of a pool key (constellation key, signal) (card NOM step N4b).
+        net::ConstellationTable& cons_rows = ctx.entities.constellations;
+        const auto chanSys = [&](const std::string& ck) {
+            return net::constellationOfKey(ctx.entities, ck).value_or(System::Unknown);
+        };
         for (auto& [cs, satmap] : pool) {
-            auto& age = ctx.carry.ddfrac_ref_age[cs];
+            auto& age = net::put(cons_rows, chanSys(cs.first), &net::ConstellationState::channels,
+                                 cs.second, &net::ChannelState::ddfrac_ref_age);
             for (auto it = age.begin(); it != age.end();) {
                 const auto hit = satmap.find(it->first);
                 if (hit == satmap.end() || hit->second.size() < 2) it = age.erase(it);
@@ -212,7 +218,9 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
             // epochs where age changed the election.
             const std::string ref_lowest = ref;
             if (nc.trace_dd_fractional_ref == NetworkDdFracRef::Oldest) {
-                const auto& age = ctx.carry.ddfrac_ref_age[cs];
+                const auto& age = net::put(cons_rows, chanSys(cs.first),
+                                           &net::ConstellationState::channels, cs.second,
+                                           &net::ChannelState::ddfrac_ref_age);
                 long long best = -1;
                 for (const auto& [sat, stamap] : satmap) {
                     if (stamap.size() < 2) continue;
@@ -224,7 +232,8 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
             ++ctx.counters.n_ddfrac_ref_epochs;
             if (ref != ref_lowest) ++ctx.counters.n_ddfrac_ref_age_win;
             {
-                auto& prev = ctx.carry.ddfrac_ref_prev[cs];
+                auto& prev = net::put(cons_rows, chanSys(cs.first), &net::ConstellationState::channels,
+                                      cs.second, &net::ChannelState::ddfrac_ref_prev);
                 if (!prev.empty() && prev != ref) ++ctx.counters.n_ddfrac_ref_switch;
                 prev = ref;
             }

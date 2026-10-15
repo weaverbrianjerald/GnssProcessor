@@ -324,18 +324,23 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
         for (const std::string& s : registered_clock_sats)
             if (sat_health.unhealthyAt(s, t_s)) hlt_ineligible.insert(s);
     }
+    // The constellation pivots as the election reads them (one-letter key -> satellite).
+    const std::map<std::string, std::string> prev_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::prev_pivot);
+    const std::map<std::string, std::string> last_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::last_pivot);
     NetworkSbasis::Plan plan;
     try {
         NetworkSbasis sb;
         plan = sb.buildSharedDatum(est, registered_clock_sats, decl,
-                                   ctx.knobs.sticky_pivot ? &ctx.carry.last_pivot : nullptr,
+                                   ctx.knobs.sticky_pivot ? &last_pivot : nullptr,
                                    ctx.knobs.sat_health != 0 ? &hlt_ineligible : nullptr);
     } catch (const std::exception&) {
         return;   // the solve glue's election fails the same way and skips the epoch
     }
     std::set<char> changed;
     const bool datum_changed = pivotHandoverSignalled(
-        plan.clock_pivot, ctx.carry.prev_pivot, ctx.carry.last_pivot,
+        plan.clock_pivot, prev_pivot, last_pivot,
         ctx.knobs.pivot_vr_signal, changed);
     // A transform an earlier preview applied and no stash has re-expressed since (the stash
     // clears the record): the epoch that applied it was skipped.  Kept when this epoch elects
@@ -485,12 +490,13 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             // The outgoing pivot is the frame the stashed block is in: the stash's pinned clock
             // (card CTU's record), else the last pivot the wire declared.
             std::string p_out;
-            const auto cx = ctx.carry.cxu_pivot.find(c);
-            if (cx != ctx.carry.cxu_pivot.end()) {
-                p_out = cx->second.first;
-            } else {
-                const auto lp = ctx.carry.last_pivot.find(key);
-                if (lp != ctx.carry.last_pivot.end()) p_out = lp->second;
+            if (const std::optional<System> csys = net::constellationOfLetter(ctx.entities, c)) {
+                const net::ConstellationTable& cons_rows = ctx.entities.constellations;
+                if (const auto* cx = net::get(cons_rows, *csys, &net::ConstellationState::cxu_pivot))
+                    p_out = cx->first;
+                else if (const std::string* lp =
+                             net::get(cons_rows, *csys, &net::ConstellationState::last_pivot))
+                    p_out = *lp;
             }
             // The constellation's carried clocks that nothing moved between their fold decision
             // (before PASS B, the carry the rows were built on) and this transform.

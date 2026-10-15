@@ -29,6 +29,8 @@ namespace {
 using S = CarrySite;
 using ES = net::StationState;         // the station carries (card NOM step N4a)
 using ESS = net::StationSignalState;
+using EC = net::ConstellationState;   // the constellation carries (card NOM step N4b)
+using ECh = net::ChannelState;
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -320,11 +322,11 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
             hand(CarriedRef{S::PrevCarry, cp.kind, cp.sat, cp.signal, -1, &cp.value, &cp.var,
                             cp.t_park_s > 0.0, &cp, nullptr, nullptr, nullptr});
     if (on(S::CxuPivot))
-        for (auto& [cc, pv] : carry.cxu_pivot) {
-            (void)cc;
-            hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
-                            &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::cxu_pivot,
+                     [&](System, std::pair<std::string, double>& pv) {
+                         hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
+                                         &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
     if (on(S::ClockOsc))
         for (auto& [sat, o] : carry.clock_osc)
             hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, sat, kNone, -1, &o.x0,
@@ -368,14 +370,12 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
         }
     }
     if (on(S::CodeBiasPrev))
-        for (auto& [fam, per_sat] : carry.code_bias_prev_) {
-            const std::size_t bar = fam.find('|');
-            if (bar == std::string::npos) continue;
-            const std::string sig = fam.substr(bar + 1);
-            for (auto& [sat, v] : per_sat)
-                hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
-                                nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::channels, &ECh::code_bias_prev,
+                     [&](System, const std::string& sig, std::map<std::string, double>& per_sat) {
+                         for (auto& [sat, v] : per_sat)
+                             hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
+                                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
     // A local carry map: its value in a border frame (when the site exists) and its
     // regression terms.
     const auto terms = [&](S site, int station, LocalCarry& lc) {

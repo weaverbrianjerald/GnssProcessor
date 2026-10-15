@@ -60,7 +60,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
     //     buildCarryDdPriors body reads (the knobs and the ctx.carry aliases). ----
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     auto& carry_glonass_warned = ctx.carry.carry_glonass_warned;
-    auto& carry_group_id = ctx.carry.carry_group_id;
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
     const bool carry_invariant = ctx.knobs.carry_invariant;
     auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
     // Keep a funnel entry made only by D5 out of the carry-membership exclusion (see
@@ -107,7 +107,6 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
             const auto parts = StateKeys::parseAmbiguityKey(key);
             if (!parts || parts->satellite.empty()) continue;
             const System sys = systemOfSat(parts->satellite);
-            const char cons = rinexLetter(sys);
             if (sys == System::GLONASS) {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
                 if (!carry_glonass_warned) {
                     log->warn("Network[Card4]: GLONASS ambiguities are EXCLUDED from the "
@@ -174,8 +173,11 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
             int& sv = carry_sat_vertex[parts->satellite];
             if (sv == 0) sv = kSatBase + static_cast<int>(carry_sat_vertex.size());
 
-            int& gk = carry_group_id[{cons, parts->signal}];
-            if (gk == 0) gk = static_cast<int>(carry_group_id.size());
+            int& gk = net::put(cons_rows, sys, &net::ConstellationState::channels, parts->signal,
+                               &net::ChannelState::group_id);
+            if (gk == 0)
+                gk = static_cast<int>(net::present(cons_rows, &net::ConstellationState::channels,
+                                                   &net::ChannelState::group_id));
             NetworkInvariantCarryDriver::ArcInput a;
             a.rx_vertex   = static_cast<int>(i);
             a.sat_vertex  = sv;

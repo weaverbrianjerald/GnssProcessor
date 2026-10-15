@@ -183,7 +183,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2061	datum_reref_amb_sats	std::set<std::string>	set	std::string	Satellite	cross-epoch	ColdStart	N4e	2	2	0	0	0	verify	ApplicationNAssembly:1 NSlipQc.hpp:1
 2069	relevel	RelevelEpochState	aggregate		run.state	per-epoch	Epoch	N5a	17	14	2	0	0	auto	test_gap_reentry_relevel:11 test_gap_reentry_coresumed:9 test_network_gf_arc_jump:9 NLevelingCarry:6
 2079	ar_suspect	ArSuspectLedger	aggregate		run.state	cross-epoch	ColdStart	N4g	6	6	0	0	0	auto	NProducerAr:3 ApplicationNAssembly:2 NArSuspect:2 NRaim:2
-2086	ar_basis	std::map<ArFamilyKey, ArBasisMemory>	map	ArFamilyKey	Constellation.channel	cross-epoch	ColdStart	N4b	3	3	0	0	0	override	NProducerAr:3 NArCycleBasis.hpp:2 NProducerAr.hpp:1
+2086	ar_basis	std::map<ArFamilyKey, ArBasisMemory>	map	ArFamilyKey	Constellation	cross-epoch	ColdStart	N4b	3	3	0	0	0	override	NProducerAr:3 NArCycleBasis.hpp:2 NProducerAr.hpp:1
 2094	ar_lattice	ArLatticeState	aggregate		run.state	cross-epoch	ColdStart	N4g	4	4	0	0	0	auto	NArLattice:2 NFixedCycles:2 NArLattice.hpp:2 NFixedCycles.hpp:1
 2098	fixed_cycles	FixedCycleState	aggregate		run.state	cross-epoch	ColdStart	N4g	7	2	1	0	0	auto	NFixedCycles.hpp:7 NFixedCycles:6 GnssConfigLoadN:3 GnssConfigTypes.hpp:2
 2104	relevel_pend	std::map<std::tuple<int, std::string, std::string>, RelevelPend>	map	std::tuple<int, std::string, std::string>	Arc	cross-epoch	ColdStart	N4f	1	1	0	0	0	override	ApplicationNAssembly:7

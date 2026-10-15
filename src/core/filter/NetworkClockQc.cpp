@@ -486,9 +486,10 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 if (nc.cb_excursion_reinit_all_sats) {
                     for (const auto& kv : now) mark.insert(kv.first);
                 } else {
-                    for (const auto& kv : ctx.carry.prev_pivot)
-                        if (!kv.second.empty() && now.count(kv.second))
-                            mark.insert(kv.second);
+                    net::forEach(ctx.entities.constellations, &net::ConstellationState::prev_pivot,
+                                 [&](System, const std::string& sat) {
+                                     if (!sat.empty() && now.count(sat)) mark.insert(sat);
+                                 });
                 }
                 // Count how often a per-satellite rule would also have caught a
                 // non-pivot satellite (D1 evidence counter).  It provides the data for choosing

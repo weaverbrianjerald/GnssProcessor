@@ -50,6 +50,14 @@ namespace fs = std::filesystem;
 namespace GnssProcessor {
 namespace {
 
+/// The value behind an entity-table lookup, throwing like std::map::at when it is absent
+/// (card NOM step N4b moved the map the test read into the constellation table).
+template <class V>
+const V& netAt(const V* p) {
+    if (p == nullptr) throw std::out_of_range("netAt: absent");
+    return *p;
+}
+
 std::shared_ptr<spdlog::logger> lahLogger() {
     static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
     return std::make_shared<spdlog::logger>("lah_test", sink);
@@ -215,7 +223,7 @@ TEST(PbHoldPhaseClockTest, ALevelMoveLeavesThePhaseVisibleClockHeld) {
         if (mode) {
             EXPECT_EQ(k.n_pbh_frz_moved, 5) << "five held G32 emissions moved; G12 and G05 did not";
             EXPECT_EQ(k.n_pbh_frz_epochs, 5);
-            EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.0, 1e-15);
+            EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.0, 1e-15);
             // What the hold hides is now the phase-visible wander only: here, nothing.
             for (double d : h.ctx->carry.pb_hold_dev_abs_m) EXPECT_NEAR(d, 0.0, 1e-12);
             EXPECT_EQ(h.ctx->carry.pb_hold_frz_step_abs_m.size(), 15u);   // 5 epochs x 3 keys
@@ -241,7 +249,7 @@ TEST(PbHoldPhaseClockTest, ACommonClockMoveStaysOnTheClock) {
         EXPECT_NEAR(pbOf(sol, "G12"), 0.10, 1e-12);
         EXPECT_NEAR(pbOf(sol, "G05"), -0.20, 1e-12);
     }
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.20, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.20, 1e-12);
 }
 
 // --- 3. Gaps and missing clocks --------------------------------------------------------
@@ -265,7 +273,7 @@ TEST(PbHoldPhaseClockTest, ASatelliteBackInsideMaxGapPicksUpItsWholeMove) {
     // M = 0.01 + 0.01 + 0.01 = 0.03 (G32 is absent from the previous emission, so its
     // own 7 cm is not a step in the median), so c~ moved by 0.07 - 0.03 = 0.04 m and the
     // held phase bias with it.
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.03, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.03, 1e-12);
     EXPECT_NEAR(pbOf(e3, "G32"), 0.30 + 0.04, 1e-12);
 }
 
@@ -359,8 +367,8 @@ TEST(PbHoldPhaseClockTest, AConstellationsCommonMoveStaysOnItsClocks) {
         EXPECT_NEAR(pbOf(sol, "E24"), -0.60, 1e-12) << "epoch " << k;
         EXPECT_NEAR(pbOf(sol, "G32"), 0.30, 1e-12) << "epoch " << k;
     }
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('E'), 0.5, 1e-12);
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.0, 1e-15);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::Galileo, &net::ConstellationState::pb_hold_frz_M)), 0.5, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.0, 1e-15);
 }
 
 TEST(PbHoldPhaseClockTest, AnEmittedEpochWithoutSatellitesBreaksTheStep) {
@@ -375,13 +383,13 @@ TEST(PbHoldPhaseClockTest, AnEmittedEpochWithoutSatellitesBreaksTheStep) {
     h.step(e1, store);
     auto e2 = lahEpoch(259260.0, { { "G32", 1.20, 0.30 }, { "G12", -0.30, 0.10 }, { "G05", 0.45, -0.20 } });
     h.step(e2, store);
-    EXPECT_TRUE(h.ctx->carry.pb_hold_frz_M.empty() || h.ctx->carry.pb_hold_frz_M.at('G') == 0.0);
+    EXPECT_TRUE((net::present(h.ctx->entities.constellations, &net::ConstellationState::pb_hold_frz_M) == 0) || netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)) == 0.0);
     EXPECT_NEAR(pbOf(e2, "G32"), 0.50, 1e-12);
     EXPECT_NEAR(pbOf(e2, "G12"), 0.30, 1e-12);
     // And the step after it is again against its own previous emission.
     auto e3 = lahEpoch(259290.0, { { "G32", 1.40, 0.30 }, { "G12", -0.10, 0.10 }, { "G05", 0.65, -0.20 } });
     h.step(e3, store);
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.20, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.20, 1e-12);
     EXPECT_NEAR(pbOf(e3, "G32"), 0.50, 1e-12);
 }
 

@@ -38,6 +38,7 @@ const char* persistName(Persist p) {
 const char* converterName(Converter c) {
     switch (c) {
     case Converter::StationName: return "station name";
+    case Converter::ConstellationLetter: return "constellation letter";
     case Converter::Count:       break;
     }
     return "?";
@@ -68,7 +69,168 @@ std::optional<StationId> stationOfName(const NetworkEntities& e, const std::stri
 // The field tables
 // ===========================================================================
 
-const std::vector<FieldDecl> kConstellationFields = {};
+std::optional<System> constellationOfLetter(const NetworkEntities& e, char letter) {
+    const System sys = systemFromLetter(letter);
+    if (rinexLetter(sys) != letter) {
+        ++e.reach.failures[static_cast<std::size_t>(Converter::ConstellationLetter)];
+        return std::nullopt;
+    }
+    return sys;
+}
+
+std::optional<System> constellationOfKey(const NetworkEntities& e, const std::string& key) {
+    if (key.size() != 1) {
+        ++e.reach.failures[static_cast<std::size_t>(Converter::ConstellationLetter)];
+        return std::nullopt;
+    }
+    return constellationOfLetter(e, key[0]);
+}
+
+std::optional<std::pair<System, std::string>> channelOfKey(const NetworkEntities& e,
+                                                           const std::string& key) {
+    if (key.size() < 2 || key[1] != '|') {
+        ++e.reach.failures[static_cast<std::size_t>(Converter::ConstellationLetter)];
+        return std::nullopt;
+    }
+    const std::optional<System> sys = constellationOfLetter(e, key[0]);
+    if (!sys) return std::nullopt;
+    return std::make_pair(*sys, key.substr(2));
+}
+
+std::map<std::string, std::string> letterMap(const ConstellationTable& t,
+                                             std::optional<std::string> ConstellationState::*f) {
+    std::map<std::string, std::string> out;
+    forEach(t, f, [&](System sys, const std::string& v) { out[constellationKey(sys)] = v; });
+    return out;
+}
+
+void mergeLetterMap(NetworkEntities& e, std::optional<std::string> ConstellationState::*f,
+                    const std::map<std::string, std::string>& m) {
+    for (const auto& [key, v] : m)
+        if (const std::optional<System> sys = constellationOfKey(e, key))
+            put(e.constellations, *sys, f) = v;
+}
+
+void assignLetterMap(NetworkEntities& e, std::optional<std::string> ConstellationState::*f,
+                     const std::map<std::string, std::string>& m) {
+    dropAll(e.constellations, f);
+    mergeLetterMap(e, f, m);
+}
+
+// ---- The constellation fields (step N4b) ----
+
+namespace {
+
+using C  = ConstellationState;
+using Ch = ChannelState;
+
+template <auto F>
+std::size_t constellationRows(const NetworkEntities& e) { return present(e.constellations, F); }
+
+template <auto F>
+std::size_t channelRows(const NetworkEntities& e) {
+    return present(e.constellations, &C::channels, F);
+}
+
+std::size_t arBasisRows(const NetworkEntities& e) {
+    std::size_t n = 0;
+    for (const auto& kv : e.constellations) n += kv.second.ar_basis.size();
+    return n;
+}
+
+// Record V: the two pivot maps, one-letter key -> pivot satellite.  One tag, two rows: the
+// writer and the reader call both (recordToSnapshot / recordFromSnapshot).
+void prevPivotToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.prev_pivot = letterMap(ctx.entities.constellations, &C::prev_pivot);
+}
+void lastPivotToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.last_pivot = letterMap(ctx.entities.constellations, &C::last_pivot);
+}
+void prevPivotFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignLetterMap(ctx.entities, &C::prev_pivot, snap.prev_pivot);
+}
+void lastPivotFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    assignLetterMap(ctx.entities, &C::last_pivot, snap.last_pivot);
+}
+
+// Record GG: (letter, signal, group id), filled in (letter, signal) order (O6).
+void ggToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    snap.carry_group_id.clear();
+    snap.carry_group_id.reserve(present(ctx.entities.constellations, &C::channels, &Ch::group_id));
+    forEach(ctx.entities.constellations, &C::channels, &Ch::group_id,
+            [&](System sys, const std::string& sig, int gid) {
+                snap.carry_group_id.emplace_back(rinexLetter(sys), sig, gid);
+            });
+}
+void ggFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.constellations, &C::channels, &Ch::group_id);
+    for (const auto& gg : snap.carry_group_id)
+        if (const std::optional<System> sys = constellationOfLetter(e, std::get<0>(gg)))
+            put(e.constellations, *sys, &C::channels, std::get<1>(gg), &Ch::group_id) =
+                std::get<2>(gg);
+}
+
+// Record CBP: "<letter>|<signal>" -> satellite -> value; the writer drops non-finite values
+// (a nan would survive the parse and corrupt the restored datum).
+void cbpToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.constellations, &C::channels, &Ch::code_bias_prev,
+            [&](System sys, const std::string& sig, const std::map<std::string, double>& per_sat) {
+                for (const auto& [sat, v] : per_sat)
+                    if (std::isfinite(v)) snap.code_bias_prev[constellationKey(sys) + "|" + sig][sat] = v;
+            });
+}
+void cbpFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.constellations, &C::channels, &Ch::code_bias_prev);
+    for (const auto& [fam, per_sat] : snap.code_bias_prev)
+        if (const auto ch = channelOfKey(e, fam))
+            put(e.constellations, ch->first, &C::channels, ch->second, &Ch::code_bias_prev) = per_sat;
+}
+
+// Record EQD: "<letter>|<signal>" -> the component datum receiver.
+void eqdToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
+    forEach(ctx.entities.constellations, &C::channels, &Ch::datum_rx,
+            [&](System sys, const std::string& sig, const std::string& rx) {
+                snap.eq34_datum_rx[constellationKey(sys) + "|" + sig] = rx;
+            });
+}
+void eqdFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
+    NetworkEntities& e = ctx.entities;
+    dropAll(e.constellations, &C::channels, &Ch::datum_rx);
+    for (const auto& [key, rx] : snap.eq34_datum_rx)
+        if (const auto ch = channelOfKey(e, key))
+            put(e.constellations, ch->first, &C::channels, ch->second, &Ch::datum_rx) = rx;
+}
+
+}  // namespace
+
+const std::vector<FieldDecl> kConstellationFields = {
+    {"prev_pivot", "prev_pivot", Persist::Record, "V", "",
+     &prevPivotToSnapshot, &prevPivotFromSnapshot, &constellationRows<&C::prev_pivot>},
+    {"last_pivot", "last_pivot", Persist::Record, "V", "",
+     &lastPivotToSnapshot, &lastPivotFromSnapshot, &constellationRows<&C::last_pivot>},
+    {"cxu_pivot", "cxu_pivot", Persist::ResumeSeeded, "", "",
+     nullptr, nullptr, &constellationRows<&C::cxu_pivot>},
+    {"pfq_pivot", "pfq_pivot", Persist::ResumeSeeded, "", "",
+     nullptr, nullptr, &constellationRows<&C::pfq_pivot>},
+    {"pb_hold_frz_M", "pb_hold_frz_M", Persist::ColdStart, "", "",
+     nullptr, nullptr, &constellationRows<&C::pb_hold_frz_M>},
+    {"sd_ewl_r0", "sd_ewl_r0", Persist::ColdStart, "", "",
+     nullptr, nullptr, &constellationRows<&C::sd_ewl_r0>},
+    {"ar_basis", "ar_basis", Persist::ColdStart, "", "",
+     nullptr, nullptr, &arBasisRows},
+    {"group_id", "carry_group_id", Persist::Record, "GG", "",
+     &ggToSnapshot, &ggFromSnapshot, &channelRows<&Ch::group_id>},
+    {"code_bias_prev", "code_bias_prev_", Persist::Record, "CBP", "",
+     &cbpToSnapshot, &cbpFromSnapshot, &channelRows<&Ch::code_bias_prev>},
+    {"datum_rx", "eq34_datum_rx", Persist::Record, "EQD", "",
+     &eqdToSnapshot, &eqdFromSnapshot, &channelRows<&Ch::datum_rx>},
+    {"ddfrac_ref_age", "ddfrac_ref_age", Persist::ColdStart, "", "",
+     nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_age>},
+    {"ddfrac_ref_prev", "ddfrac_ref_prev", Persist::ColdStart, "", "",
+     nullptr, nullptr, &channelRows<&Ch::ddfrac_ref_prev>},
+};
 const std::vector<FieldDecl> kSatelliteFields = {};
 const std::vector<FieldDecl> kSatSignalFields = {};
 namespace {
@@ -207,7 +369,7 @@ const std::array<EntityFields, 6> kEntityFieldTables = {{
     {"arc",           &kArcFields},
 }};
 
-const std::vector<const char*> kRestoreOrder = {"Z", "EQP", "RC"};
+const std::vector<const char*> kRestoreOrder = {"V", "Z", "EQD", "EQP", "CBP", "RC", "GG"};
 
 // ===========================================================================
 // Record lookup
@@ -221,20 +383,29 @@ const FieldDecl* recordRow(const char* tag) {
 }
 
 namespace {
-const FieldDecl& recordRowOrThrow(const char* tag) {
-    const FieldDecl* f = recordRow(tag);
-    if (f == nullptr || f->to_snapshot == nullptr || f->from_snapshot == nullptr)
+// Every Record row declaring the tag, in table order (one tag may span rows: V holds both
+// pivot maps); throws when none does or a row lacks a fill function.
+std::vector<const FieldDecl*> recordRowsOrThrow(const char* tag) {
+    std::vector<const FieldDecl*> rows;
+    bool complete = true;
+    for (const EntityFields& t : kEntityFieldTables)
+        for (const FieldDecl& f : *t.fields)
+            if (f.persist == Persist::Record && std::string(f.record) == tag) {
+                complete = complete && f.to_snapshot != nullptr && f.from_snapshot != nullptr;
+                rows.push_back(&f);
+            }
+    if (rows.empty() || !complete)
         throw std::logic_error(std::string("NetworkEntities: no Record row declares tag ") + tag);
-    return *f;
+    return rows;
 }
 }  // namespace
 
 void recordToSnapshot(const char* tag, const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
-    recordRowOrThrow(tag).to_snapshot(ctx, snap);
+    for (const FieldDecl* f : recordRowsOrThrow(tag)) f->to_snapshot(ctx, snap);
 }
 
 void recordFromSnapshot(const char* tag, const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    recordRowOrThrow(tag).from_snapshot(snap, ctx);
+    for (const FieldDecl* f : recordRowsOrThrow(tag)) f->from_snapshot(snap, ctx);
 }
 
 // ===========================================================================
