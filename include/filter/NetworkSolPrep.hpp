@@ -133,29 +133,18 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep);
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the clock-runaway quarantine (RT0-5).
+ * @brief Run-end report: solution prep: the clock-runaway quarantine (RT0-5), the per-constellation
+ *        sigma0 carve-out (RTA-10).
  *
- * Epochs that dropped at least one constellation for clock runaway (RT0-5).
- *
- * Gate: prints under `clk_runaway_on && n_runaway_epochs > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkClockRunawayRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the per-constellation sigma0 carve-out (RTA-10).
- *
- * The per-constellation sigma0 carve-out (RTA-10): partial and diffuse epochs.
- *
- * Gate: prints under `perconst_on && (n_perconst_partial_epochs > 0 ||
- * n_perconst_diffuse_published > 0)`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkSolPrep.cpp, print in this order, each gated on its own knob:
+ *   - networkClockRunawayRunEnd: the clock-runaway quarantine (RT0-5).
+ *   - networkPerConstellationRunEnd: the per-constellation sigma0 carve-out (RTA-10).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkPerConstellationRunEnd(const NetworkRunEndView& v);
+int networkSolPrepRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

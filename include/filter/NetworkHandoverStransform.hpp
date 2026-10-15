@@ -350,30 +350,17 @@ void networkHandoverStransform(NetworkRunContext& ctx,
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: broadcast satellite health (HLT).
+ * @brief Run-end report: satellite health (HLT) and clock-pivot handovers with their S-transform.
  *
- * Broadcast satellite health on the network path (card HLT): flagged satellites, the
- * pivot election's skips and fallbacks, and the observations the setup door removed.
- *
- * Gate: returns 0 at once unless `ctx.knobs.sat_health != 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSatHealthRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: clock-pivot handovers and their S-transform.
- *
- * The clock-pivot handovers and their S-transform (PRM 2, SCL B2).
- *
- * Gate: returns 0 at once unless `!ctx.counters.pivot_handovers.empty() ||
- * ctx.knobs.handover_stransform`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkHandoverStransform.cpp, print in this order, each gated on its own knob:
+ *   - networkSatHealthRunEnd: broadcast satellite health (HLT).
+ *   - networkPivotHandoverRunEnd: clock-pivot handovers and their S-transform.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkPivotHandoverRunEnd(const NetworkRunEndView& v);
+int networkHandoverStransformRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

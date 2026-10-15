@@ -974,16 +974,16 @@ namespace GnssProcessor {
     struct NetworkRunEndView;
 
     /**
-     * @brief Run-end report: parameters as armed (NOM N1).
+     * @brief Run-end report: the receiver extra-band code delay (card L5B) and parameters as armed
+     *        (NOM N1).
      *
-     * The table's row for "parameters as armed" (card NOM N1) and its manifest record; the
-     * report is the overload above.
-     *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
+     * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+     * beside it in NetworkParamInventory.cpp, print in this order, each gated on its own knob:
+     *   - networkRxExtraBandDelayRunEnd: the receiver extra-band code delay (card L5B).
+     *   - networkParamInventoryTableRunEnd: parameters as armed (NOM N1).
      *
      * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
+     * @return 0, or the last non-zero verdict of its sections.
      */
     int networkParamInventoryRunEnd(const NetworkRunEndView& v);
 
@@ -1036,21 +1036,5 @@ namespace GnssProcessor {
         const std::vector<std::pair<std::string, const RxIfbStationState*>>& stations,
         const std::map<std::pair<int, std::string>, double>& carried,
         bool carry_on, bool in_block);
-
-    /**
-     * @brief Run-end report: the receiver extra-band code delay (card L5B).
-     *
-     * The ON-path telemetry (invariants #4 and #7) of
-     * @c network.estimate_rx_extra_band_code_delay: @ref rxExtraBandDelayReport over the
-     * inventory's run tally, every station's @ref RxIfbStationState and the receiver
-     * code-bias carry at run end.
-     *
-     * Gate: @c network.estimate_rx_extra_band_code_delay armed; prints nothing otherwise,
-     * so an unarmed run's log is unchanged.
-     *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
-     */
-    int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v);
 
 } // namespace GnssProcessor

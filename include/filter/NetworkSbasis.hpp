@@ -1751,24 +1751,17 @@ struct NetworkRunEndView;
 class GnssConfig;
 
 /**
- * @brief Run-end report: the S-basis datum arms.
+ * @brief Run-end report: the S-basis datum arms and card GFC's code-datum arms.
  *
- * The S-basis datum arms: no ionosphere constraint, the satellite geometry-free datum
- * and its time link, the inter-signal correction state, the extra-band free columns and
- * the receiver code-bias datum, each under its own knob.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.getNetworkConfig().w6_iono_constraint == NetworkW6IonoConstraint::None`;
- * `config_.getNetworkConfig().sat_gf_datum != NetworkSatGfDatum::NoneMode`;
- * `config_.getNetworkConfig().sat_gf_datum_time_linked`;
- * `config_.getNetworkConfig().sat_isc_state`;
- * `config_.getNetworkConfig().sat_gf_extra_band_free`;
- * `config_.networkRxCodeBiasDatum()`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkSbasis.cpp, print in this order, each gated on its own knob:
+ *   - networkSbasisDatumRunEnd: the S-basis datum arms.
+ *   - networkCodeDatumFamilyRunEnd: card GFC's code-datum arms.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkSbasisDatumRunEnd(const NetworkRunEndView& v);
+int networkSbasisRunEnd(const NetworkRunEndView& v);
 
 /**
  * @brief Card GFC's run-end readout of its code-datum arms.
@@ -1806,21 +1799,6 @@ int networkSbasisDatumRunEnd(const NetworkRunEndView& v);
  */
 void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                                   const std::shared_ptr<spdlog::logger>& log);
-
-/**
- * @brief Run-end report: card GFC's code-datum arms.
- *
- * The table's row for card GFC; the report is the overload above.
- *
- * Gate: none of its own: the overload above prints nothing unless
- * `config_.networkCodeDatumPairContinuity()`,
- * `config_.networkCodeDatumFamilyDifference()` or
- * `config_.networkCodeFamilyBirthPriorSigmaM() > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkCodeDatumFamilyRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

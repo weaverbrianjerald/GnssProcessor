@@ -595,36 +595,17 @@ void networkGrossLosPublishScales(NetworkRunContext& ctx,
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the gross line-of-sight screen.
+ * @brief Run-end report: the gross line-of-sight screen and its cold-start bound.
  *
- * The gross line-of-sight screen (card GL): denominators, declarations and releases, the
- * guards, the response, the RF-3b per-rule lines, the GL-2 satellite stand-downs and the
- * identity tables. The folded-row count is summed from the stations into a local copy of
- * the tallies (it was summed into the run context).
- *
- * Gate: each section under its own condition, as in the teardown: always; `g.epochs > 0
- * && g.rows_screened == 0`; `g.los_screened > 0 && g.los_over == 0`;
- * `ctx.knobs.amb_float_kf`; always (a block); `g.declared > 0 && g.rows_deweighted ==
- * 0`; `g.los_screened > 0`; `ctx.knobs.gl2_on`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkGrossLos.cpp, print in this order, each gated on its own knob:
+ *   - networkGrossLosScreenRunEnd: the gross line-of-sight screen.
+ *   - networkGrossLosColdBoundRunEnd: the gross line-of-sight screen's cold-start bound.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
 int networkGrossLosRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the gross line-of-sight screen's cold-start bound.
- *
- * The table's row for the cold-start bound of the gross line-of-sight screen (card ICF
- * response 1); the report is the overload above, which a unit test calls directly.
- *
- * Gate: none of its own: the row calls the report above on every run, as the teardown
- * did, and that report applies its own.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkGrossLosColdBoundRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

@@ -269,6 +269,10 @@ Q3_PATTERNS = [
 ]
 
 
+# The producer's first run-end line (the run-timing report, filter/NetworkRunEnd.cpp).
+RUN_END_START = "Network[timing]: epoch-loop wall"
+
+
 def run_end_lines(run_dir, max_per=4):
     """Diagnostic. The producer's own run-end log lines for the armed families."""
     p = os.path.join(run_dir, "stdout.txt")
@@ -277,8 +281,14 @@ def run_end_lines(run_dir, max_per=4):
         return out
     with open(p, encoding="utf-8", errors="replace") as fh:
         lines = fh.readlines()
+    # The run end prints by subsystem (card NOM2 step TD2), so inside the run-end block the
+    # hits are read in message order, not print order; the per-epoch hits before it keep
+    # their order.  A log without the block start keeps print order throughout.
+    start = max((k for k, ln in enumerate(lines) if RUN_END_START in ln), default=len(lines))
     for name, pat in Q3_PATTERNS:
-        hits = [ln.strip() for ln in lines if pat.search(ln)]
+        hits = [ln.strip() for ln in lines[:start] if pat.search(ln)]
+        hits += sorted((ln.strip() for ln in lines[start:] if pat.search(ln)),
+                       key=lambda ln: ln.split("] ", 3)[-1])
         out[name] = dict(n=len(hits), tail=[h[-400:] for h in hits[-max_per:]])
     return out
 
