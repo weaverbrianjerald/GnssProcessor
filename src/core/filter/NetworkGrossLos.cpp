@@ -1309,7 +1309,7 @@ int networkGrossLosRunEnd(const NetworkRunEndView& v) {
         if (g.declared > 0 && g.rows_deweighted == 0)
             log->warn("Network (gross-LOS screen): {} declaration(s) but ZERO code rows were "
                       "ever folded at the deweighted σ.  The actuator lives in "
-                      "networkSplitStation_ and keys on em.signal_types / em.satellite_ids; a "
+                      "networkSplitStation and keys on em.signal_types / em.satellite_ids; a "
                       "zero here means the declared lines of sight never returned, or the "
                       "publish half did not reach the assembly.",
                       g.declared);

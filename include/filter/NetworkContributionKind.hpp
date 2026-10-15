@@ -110,6 +110,16 @@ namespace GnssProcessor {
     inline constexpr std::size_t kContributionKinds =
         static_cast<std::size_t>(ContributionKind::Unset);
 
+    /// A set of contribution kinds, one bit per kind (card NOM3 step PB1b: the kinds a station
+    /// step can create, filter/NetworkStationBuild.hpp).
+    using ContributionKindSet = std::uint64_t;
+    static_assert(kContributionKinds <= 64, "ContributionKindSet holds one bit per kind");
+
+    /// The bit of kind @p k in a ContributionKindSet.
+    constexpr ContributionKindSet kindBit(ContributionKind k) {
+        return ContributionKindSet{1} << static_cast<unsigned>(k);
+    }
+
     /**
      * @brief One shared fold of the primary build: the kind its site named and its
      *        dimension (the count in the kind's unit: keys, rows, walks, gauges or blocks

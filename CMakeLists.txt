@@ -243,6 +243,16 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkShDevVtec.cpp
     src/core/filter/NetworkSolveStations.cpp
     src/core/filter/NetworkStationBuild.cpp
+    src/core/filter/NetworkIonoConstraintRows.cpp
+    src/core/filter/NetworkLevelingCarry.cpp
+    src/core/filter/NetworkPhaseColourCarry.cpp
+    src/core/filter/NetworkRxClockCarry.cpp
+    src/core/filter/NetworkRxCodeBiasCarry.cpp
+    src/core/filter/NetworkSlantIonoCarry.cpp
+    src/core/filter/NetworkStationAnchors.cpp
+    src/core/filter/NetworkStationCarry.cpp
+    src/core/filter/NetworkStationSplit.cpp
+    src/core/filter/NetworkZwdCarry.cpp
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
@@ -583,6 +593,7 @@ add_executable(gnss_tests
     tests/test_network_knobs_epoch_driver.cpp
     tests/test_network_knobs_station_assembly.cpp
     tests/test_network_epoch_contract.cpp
+    tests/test_network_station_build.cpp
     tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp
     tests/test_raim_pool_data_rows_only.cpp
