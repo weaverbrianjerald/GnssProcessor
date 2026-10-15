@@ -221,6 +221,12 @@ using SigSolveStationsTrack = void (*)(NetworkRun&, const NetworkEpoch&, const E
 static_assert(std::is_same_v<decltype(static_cast<SigSolveStationsTrack>(&networkSolveStationsTrack)), SigSolveStationsTrack>);
 using SigEq34PinAudit = void (*)(NetworkRun&, const NetworkEpoch&, const EpochAssembly&, bool);   // PB1a stage S13
 static_assert(std::is_same_v<decltype(static_cast<SigEq34PinAudit>(&networkEq34PinAudit)), SigEq34PinAudit>);
+// Card NOM3 step PB1b: PASS B's parallel produce, an epoch writer called by networkPassB_
+// (output assembly; kept gim, Application::gim_).
+using SigAssemblyProduce = void (*)(NetworkRun&, const NetworkEpoch&,
+                                    const std::unique_ptr<GlobalIonosphereMap>&,
+                                    EpochAssembly&);   // PB1b stage S06, writes assembly
+static_assert(std::is_same_v<decltype(static_cast<SigAssemblyProduce>(&networkAssemblyProduce)), SigAssemblyProduce>);
 using SigRedundancyCensus = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct
 static_assert(std::is_same_v<decltype(static_cast<SigRedundancyCensus>(&networkRedundancyCensus)), SigRedundancyCensus>);
 using SigBlockBaardaEmit = void (*)(NetworkRun&, const NetworkEpoch&);   // W4 direct

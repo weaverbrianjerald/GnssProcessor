@@ -554,7 +554,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
                   "sigma scale and ZERO phase rows were folded at it — the map is "
                   "WRITTEN and never READ.  That is live counters over dead wiring "
                   "(invariant #4), not a quiet run: check that the demotion hook "
-                  "in networkSplitStation_ is compiled in and that the satellite "
+                  "in networkSplitStation is compiled in and that the satellite "
                   "keys match em.satellite_ids.",
                   s.demoted_los_epochs);
     if (ctx.knobs.sig_refloat_regain && s.refloat_regain > 0
