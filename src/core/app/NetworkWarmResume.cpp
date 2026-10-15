@@ -586,7 +586,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // the raise it arms for the first leg epoch.
                     if (ctx.knobs.clm_on && !snap.level_info.empty()) {
                         net::recordFromSnapshot("LB", snap, ctx);   // the satellites (N4e1)
-                        ctx.carry.clm_restore_raise_pending = ctx.knobs.clm_restore_raise;
+                        ctx.carry.resume.clm_raise = ctx.knobs.clm_restore_raise;
                         log->info("Network (card CTU G5): {} satellite(s) of contrast-frame level "
                                   "information restored from the snapshot's LB rows{}.",
                                   snap.level_info.size(),
@@ -854,7 +854,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.counters.n_resume_cpl_zrows   = n_zrows;
                             ctx.counters.n_resume_cpl_terms   = n_terms;
                             ctx.counters.n_resume_cpl_orphan  = n_miss;
-                            ctx.carry.resume_cpl_census_pending = (n_rows + n_zrows) > 0;
+                            ctx.carry.resume.cpl_census = (n_rows + n_zrows) > 0;
 
                             // ---- The decoupling edge that the snapshot cannot otherwise
                             // reach (standing invariant #7).  ctx.carry.tu_reinit_hist is
@@ -1037,7 +1037,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // rejected).  Trace-class: everything the latch gates is a counter or a
                     // measure-only census vector, so products stay byte-identical.
                     if (fullcov_on && !prev_carry.empty()) {
-                        ctx.carry.resume_cpl_census_pending = true;
+                        ctx.carry.resume.cpl_census = true;
                         ctx.counters.n_resume_dense_carry_keys =
                             static_cast<long long>(prev_carry.size());
                     }
@@ -1096,19 +1096,19 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // warm resume, armed or not, so an A/B's control leg is read by the same
                     // instrument as its treatment.  It only feeds counters and nothing
                     // downstream branches on it, so the off path stays byte-identical (like
-                    // anchor_age_resume_seed and adm_resume_pending).
+                    // anchor_age_resume_seed and resume.adm).
                     ctx.carry.resume_datum_first_ep = true;
                     // Card GFC: the pin pair hold baseline is not snapshotted, so the first
                     // kept epoch's holds are declared as found at a resume, not as begun.
                     // Telemetry only (empty hold maps unless code_datum_pair_continuity).
-                    ctx.carry.if_pin_holds_resume_pending = true;
+                    ctx.carry.resume.if_pin_holds = true;
                     // One-shot latch of the declaration half (RS-4, §21.9), set beside the
                     // RS-3 telemetry latch and for the same reason: every warm resume arms
                     // it, so an A/B's control leg is read by the same instrument.
                     // NetworkEmitStore consumes it at the first emit, the only point at
                     // which the emitter's restored per-key baselines still hold the previous
                     // run's emitted values.  Read only under the knob.
-                    ctx.carry.resume_pb_seam_pending = true;
+                    ctx.carry.resume.pb_seam = true;
                     // eq34 reattach hygiene (spec §2, INC-1 warm-resume rule): the arc-age
                     // map is not serialized, so without this latch every arc would look one
                     // epoch old on the first resumed epoch, and the eligibility gate would
@@ -1137,7 +1137,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // this case by construction, which is why the spec names it.  Written
                     // unconditionally (inert unless ctx.knobs.adm_screen), so the off path
                     // stays byte-identical, as for anchor_age_resume_seed.
-                    ctx.carry.adm_resume_pending = true;
+                    ctx.carry.resume.adm = true;
                     // Preserve the snapshot's generation id (RTA-3 seam).  The first-emit
                     // minting site mints only when generation_id == 0, so a restored
                     // non-zero id suppresses the mint, and consumers keep the same product
@@ -1446,7 +1446,7 @@ void networkResumeFirstEpochRetire(NetworkRun& run) {
     // exactly the first
     // post-resume epoch.  Unconditional: a run that did not resume leaves it false, and
     // clearing a false bool is a no-op on every off path.
-    if (ctx.carry.resume_cpl_census_pending)
+    if (ctx.carry.resume.cpl_census)
         // Second instrument of P9a (RS-7, §21.14).  The warm resume runs before any
         // epoch, so every Q3 decouple counted by now belongs to the first post-resume
         // epoch, with no baseline subtraction and no per-epoch plumbing.  When the
@@ -1457,7 +1457,7 @@ void networkResumeFirstEpochRetire(NetworkRun& run) {
             ctx.counters.cta_trip_nis + ctx.counters.cta_trip_abs
           + ctx.counters.cta_trip_gap + ctx.counters.cta_trip_datum
           + ctx.counters.cta_trip_ext;
-    ctx.carry.resume_cpl_census_pending = false;
+    ctx.carry.resume.cpl_census = false;
 }
 
 // ---- End of the harvest half ----

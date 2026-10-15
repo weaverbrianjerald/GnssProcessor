@@ -2046,8 +2046,8 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
     // --- 2. retain this epoch for the next one -------------------------------
     if (!nc.rhs_attrib_on_trip_prev) return;
     if (static_cast<int>(stations.size()) > std::max(0, nc.rhs_attrib_prev_max_stations)) {
-        if (!ctx.carry.rhs_prev_oversize_logged) {
-            ctx.carry.rhs_prev_oversize_logged = true;
+        if (!ctx.counters.rhs_prev_oversize_logged) {
+            ctx.counters.rhs_prev_oversize_logged = true;
             log->warn("Network (rhs-attrib INC-5): {} stations exceeds "
                       "network.rhs_attrib_prev_max_stations = {} — PREVIOUS-epoch "
                       "retention is DISABLED for this run (a trip still dumps the "

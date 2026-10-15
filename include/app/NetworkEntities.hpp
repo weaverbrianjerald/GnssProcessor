@@ -99,6 +99,9 @@ enum class Persist : std::uint8_t {
     Pending,          ///< A hand-off consumed within a few epochs of being set.
     RunConst,         ///< Set once at setup and read for the run.
     WriterTelemetry,  ///< The snapshot writer's own counters.
+    Epoch,            ///< Rebuilt every epoch: a per-epoch value (step N5a moves it to EpochEvents).
+    Latch,            ///< Set at one epoch and consumed at the next (step N5a).
+    ResumeHandoff,    ///< Set by the warm resume, consumed at the first leg epoch (step N4g).
 };
 
 /// The name of a persistence class, as the reach table prints it.
@@ -125,10 +128,13 @@ struct Lifecycle {
 struct NetworkEntities;
 
 /**
- * @brief One declared field of an entity: one row of the entity's field table.
+ * @brief One declared field of an entity: one row of the entity's field table, or of the
+ *        run remainder's table @ref kRunFields.
  *
- * A Record field names its snapshot tag and has both fill functions; every other field
- * has them null.  The fill functions take the run context because a record's copy reads
+ * A Record field of an entity names its snapshot tag and has both fill functions; every
+ * other field has them null.  A @ref kRunFields row has every function null: a run record
+ * keeps its copy block in the snapshot writer and reader, and the reach table samples the
+ * entity tables only.  The fill functions take the run context because a record's copy reads
  * the knobs the old copy block read (the shared-history marginal variance of the Z rows,
  * the restored-entry convention of @c makeRestoredLocalCarry).
  */
@@ -657,7 +663,7 @@ struct StationState {
     /// @c NetworkCarryState::redun_unobs_active.  ColdStart.
     std::optional<std::set<std::string>> redun_unobs_active;
     /// Station indices whose first post-resume screened epoch has already happened:
-    /// the per-station half of @c adm_resume_pending.  Bounded by the station roster;
+    /// the per-station half of @c NetworkCarryState::resume.adm.  Bounded by the station roster;
     /// empty and unread on a cold start.
     /// Was @c NetworkCarryState::adm_resume_seen.  ColdStart.
     bool adm_resume_seen{false};
@@ -745,10 +751,12 @@ struct LosState {
     /// @c NetworkCarryState::si_arc.  ColdStart.
     std::optional<SignalIntegrityArc> si_arc;
     /// Per-LOS slant-iono carry of the retired diagonal vehicle (QUEUE 8b,
-    /// network.carry_iono).  Nothing writes it since that vehicle was deleted, so it stays
-    /// empty; the gross line-of-sight response and the carry-site table still read it
-    /// (decision D9: its deletion waits for the reach table of every gate arm).  Was
-    /// @c NetworkCarryState::iono_carry.  ColdStart.
+    /// network.carry_iono, no loader key).  Empty on every run: its only writer is the
+    /// gross-LOS re-apply from @ref gl_hold_iono, whose only source is this carry.  Decision
+    /// D9 (step N4g): kept declared, because deleting it retires the carry sites
+    /// iono_coupling and hold_iono_coupling, rows of the run-end site table and of the
+    /// manifest's param_sites record (an output move, outside the step's byte-identity bar).
+    /// Was @c NetworkCarryState::iono_carry.  ColdStart.
     std::optional<LocalCarry> iono;
     /// I-in-block per-LOS slant-iono carry (network.carry_iono_in_block): the absolute slant
     /// delay in metres at L1 (x_lin + x_r), with the F3 bookkeeping (blk / blk_idx /
@@ -771,6 +779,7 @@ struct LosState {
     /// by NAME, O3; step N4e2, re-placed from the satellite rows).  ColdStart.
     std::optional<long long> bb_event_last;
     /// The held per-LOS iono carry (RF-3b B2), same lifecycle as the held ambiguity levels.
+    /// Empty on every run, as @ref iono (its only source); kept declared with it (D9).
     /// Was @c NetworkCarryState::gl_hold_iono.  ColdStart.
     std::optional<LocalCarry> gl_hold_iono;
     /// The held in-block per-LOS iono carry, the twin of @ref iono_blk (RF-3b B2).  Was
@@ -1758,6 +1767,17 @@ extern const std::vector<FieldDecl> kSatSignalFields;      ///< Step N4d.
 extern const std::vector<FieldDecl> kStationFields;        ///< Step N4a.
 extern const std::vector<FieldDecl> kLosFields;            ///< Step N4c.
 extern const std::vector<FieldDecl> kArcFields;            ///< Steps N4f1, N4f2.
+
+/**
+ * @brief The run remainder's declarations (step N4g, src/core/app/NetworkRunFields.cpp): one
+ *        row per member of @c NetworkCarryState left in the run state (per member of its
+ *        @c ResumeHandoff group), and one per member step N4g moved to
+ *        @c NetworkServiceCounters (decision D6).  @c name is the path from the run context
+ *        ("carry.prev_carry", "carry.resume.adm", "counters.carry_born_total").  With the
+ *        entity tables, every former @c NetworkCarryState member has exactly one row (G1,
+ *        scripts/nom_n4_verify.py --whole).  Not sampled by the reach table.
+ */
+extern const std::vector<FieldDecl> kRunFields;
 
 /// Every entity's field table, in the order the reach table prints them.
 extern const std::array<EntityFields, 6> kEntityFieldTables;

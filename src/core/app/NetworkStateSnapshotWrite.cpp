@@ -278,11 +278,11 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
             // (cards 1d/1g).
             net::recordToSnapshot("QR", ctx, snap);   // the satellites (N4e2)
-            ctx.carry.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
-            ctx.carry.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
-            ctx.carry.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
-            ctx.carry.snap_cpl_terms_last   = n_terms;
-            ctx.carry.snap_cpl_rows_dropped += n_drop;
+            ctx.counters.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
+            ctx.counters.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
+            ctx.counters.snap_cpl_zrows_last   = static_cast<long long>(snap.coupling_zrows.size());
+            ctx.counters.snap_cpl_terms_last   = n_terms;
+            ctx.counters.snap_cpl_rows_dropped += n_drop;
             // The C1 dense D2 covariance side-car, the other half of the seam (§18.12
             // (2a)).  Keys in row order (QK), lower triangle per row (QP); the whole block
             // is omitted (never truncated) when any entry is non-finite or a row has no
@@ -343,7 +343,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // `pair_same` reads false for every satellite, the split re-seeds to 0 and
             // every satellite disc-bumps.
             net::recordToSnapshot("CBI", ctx, snap);   // the satellites (N4e2)
-            ctx.carry.snap_datum_rows_last =
+            ctx.counters.snap_datum_rows_last =
                 static_cast<long long>(snap.eq34_datum_rx.size()
                                        + snap.eq34_rx_parent.size()
                                        + snap.eq34_sat_root.size()
@@ -353,7 +353,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                                        + snap.code_bias_sat_seen.size()
                                        + snap.code_bias_ifpin_pair.size());
             for (const auto& [fam, per_sat] : snap.code_bias_prev)
-                ctx.carry.snap_datum_rows_last += static_cast<long long>(per_sat.size());
+                ctx.counters.snap_datum_rows_last += static_cast<long long>(per_sat.size());
         }   // state_snapshot_datum_capture
         // Emit-layer capture (RS-5; network.state_snapshot_emit_capture,
         // SPEC_event_harness §21.10): the write half of the emit-side cross-epoch state.
@@ -372,7 +372,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // change no estimate, only the level in which the emitted biases are expressed.
         if (nc.state_snapshot_emit_capture) {
             if (emit_rebase) snap.emit_rebase_last = emit_rebase->exportState();
-            ctx.carry.snap_emit_rows_last =
+            ctx.counters.snap_emit_rows_last =
                 static_cast<long long>(snap.emit_rebase_last.size());
         }   // state_snapshot_emit_capture
         // Station-layer capture (RS-6; network.state_snapshot_station_capture,
@@ -396,7 +396,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         if (nc.state_snapshot_station_capture) {
             net::recordToSnapshot("RC", ctx, snap);   // the station signals (N4a)
             net::recordToSnapshot("SD", ctx, snap);   // the lines of sight (N4c, O3)
-            ctx.carry.snap_station_rows_last =
+            ctx.counters.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }
         // Card CTU G5: the monitor's contrast-frame level information (LB rows).
@@ -431,7 +431,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             long long n = 0;
             for (const auto& [idx, rows] : snap.canonical_signals)
                 n += static_cast<long long>(rows.size());
-            ctx.carry.snap_canon_rows_last = n;
+            ctx.counters.snap_canon_rows_last = n;
         }   // state_snapshot_signal_capture
         // Code-bias linearization-point capture (RS-9;
         // network.state_snapshot_rxcb_lin_capture, SPEC_event_harness §21.18): the
@@ -475,7 +475,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 if (!std::isfinite(xs(cb_idx))) continue;
                 snap.rx_cb_lin[{key.first, key.second}] = xs(cb_idx);
             }
-            ctx.carry.snap_rxcb_lin_rows_last =
+            ctx.counters.snap_rxcb_lin_rows_last =
                 static_cast<long long>(snap.rx_cb_lin.size());
         }   // state_snapshot_rxcb_lin_capture
         // Branch-faithful snapshot (RTB-7(c)): serialize the invariant DD carry (z-store
@@ -491,9 +491,9 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             // read side is unaffected.
             carry_driver.serializeCarry(ccs, nc.state_snapshot_carry_diagonal);
             snap.carry_state = ccs.str();
-            ctx.carry.snap_carry_bytes_last =
+            ctx.counters.snap_carry_bytes_last =
                 static_cast<long long>(snap.carry_state.size());
-            ctx.carry.snap_carry_diagonal = nc.state_snapshot_carry_diagonal;
+            ctx.counters.snap_carry_diagonal = nc.state_snapshot_carry_diagonal;
         }
         {
             std::ostringstream es;
@@ -506,7 +506,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                       "previous good snapshot (if any) is left intact.",
                       snap_path.string(), werr);
         else
-            ++ctx.carry.snap_writes;   // run-end blob-size readout (RTB-7(e), invariant #4)
+            ++ctx.counters.snap_writes;   // run-end blob-size readout (RTB-7(e), invariant #4)
         // Keep a per-epoch copy so the branch can be graded over time
         // (scripts/diff_carry_blobs.py; RTB-7(d), BR-1).  Write-side only: the same atomic
         // temp file and rename, and the estimation cannot see it (this runs after the

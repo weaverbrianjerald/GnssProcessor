@@ -296,9 +296,9 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
         if (config_.getNetworkConfig().state_snapshot_carry)
             log->info("Network (RTB-7e snapshot write): {} snapshot(s) written; last carry "
                       "blob {} bytes ({:.2f} MB), shape {}.",
-                      ctx.carry.snap_writes, ctx.carry.snap_carry_bytes_last,
-                      static_cast<double>(ctx.carry.snap_carry_bytes_last) / (1024.0 * 1024.0),
-                      ctx.carry.snap_carry_diagonal
+                      ctx.counters.snap_writes, ctx.counters.snap_carry_bytes_last,
+                      static_cast<double>(ctx.counters.snap_carry_bytes_last) / (1024.0 * 1024.0),
+                      ctx.counters.snap_carry_diagonal
                           ? "DIAGONAL-ONLY (v3 — Sum K_c numbers)"
                           : "dense (v2 — Sum K_c^2 numbers)");
         // Linearization-frame carry (SPEC_event_harness §21.4, RS-2), the write half.  The
@@ -332,7 +332,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   "rerefs {}, reattaches {}, CB re-seed discs {}.{}",
                   config_.getNetworkConfig().state_snapshot_datum_capture ? "ARMED" : "off",
                   config_.networkResumeDatumRestore() ? "ARMED" : "off",
-                  ctx.carry.snap_datum_rows_last,
+                  ctx.counters.snap_datum_rows_last,
                   C.n_resume_datum_eq34_rx, C.n_resume_datum_eq34_edges,
                   C.n_resume_datum_sat_roots, C.n_resume_datum_prev_targets,
                   C.n_resume_datum_prev_el, C.n_resume_datum_retained,
@@ -361,7 +361,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   "{} emit-layer row(s); restored re-base keys {}.{}",
                   config_.getNetworkConfig().state_snapshot_emit_capture ? "ARMED" : "off",
                   config_.networkResumeEmitRestore() ? "ARMED" : "off",
-                  ctx.carry.snap_emit_rows_last,
+                  ctx.counters.snap_emit_rows_last,
                   C.n_resume_emit_rebase_keys,
                   (config_.networkResumeEmitRestore()
                    && C.n_resume_emit_rebase_keys == 0)
@@ -388,7 +388,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   config_.getNetworkConfig().state_snapshot_station_capture ? "ARMED" : "off",
                   config_.networkResumeStationRestore() ? "ARMED" : "off",
                   config_.networkResumeStationRestoreRxCb() ? "on" : "off",
-                  ctx.carry.snap_station_rows_last,
+                  ctx.counters.snap_station_rows_last,
                   C.n_resume_station_rxcb, C.n_resume_station_shdev,
                   (config_.networkResumeStationRestore()
                    && C.n_resume_station_rxcb == 0 && C.n_resume_station_shdev == 0)
@@ -422,7 +422,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   "DIFFERENTLY here.{}",
                   config_.getNetworkConfig().state_snapshot_signal_capture ? "ARMED" : "off",
                   config_.networkResumeSignalCanonRestore() ? "ARMED" : "off",
-                  ctx.carry.snap_canon_rows_last,
+                  ctx.counters.snap_canon_rows_last,
                   C.n_resume_canon_entries, C.n_resume_canon_entries == 1 ? "y" : "ies",
                   C.n_resume_canon_stations, audited, disagree,
                   (config_.networkResumeSignalCanonRestore()
@@ -458,7 +458,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   "station(s), seeded {}, carried-but-unseeded {}.{}",
                   config_.getNetworkConfig().state_snapshot_rxcb_lin_capture ? "ARMED" : "off",
                   config_.networkResumeRxCbLinRestore() ? "ARMED" : "off",
-                  ctx.carry.snap_rxcb_lin_rows_last,
+                  ctx.counters.snap_rxcb_lin_rows_last,
                   C.n_resume_rxcb_lin_entries, C.n_resume_rxcb_lin_stations,
                   applied, uncovered,
                   (config_.networkResumeRxCbLinRestore() && C.n_resume_rxcb_lin_entries == 0)
@@ -519,12 +519,12 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                   "+ {} Z row(s), {} regressor term(s) over {} shared column(s) "
                   "(~{:.2f} MB of QL/QZ payload); {} row(s) omitted whole for a "
                   "non-finite field over the run.{}",
-                  ctx.carry.snap_cpl_rows_last, ctx.carry.snap_cpl_zrows_last,
-                  ctx.carry.snap_cpl_terms_last, ctx.carry.snap_cpl_dict_last,
-                  static_cast<double>(ctx.carry.snap_cpl_terms_last) * 25.0
+                  ctx.counters.snap_cpl_rows_last, ctx.counters.snap_cpl_zrows_last,
+                  ctx.counters.snap_cpl_terms_last, ctx.counters.snap_cpl_dict_last,
+                  static_cast<double>(ctx.counters.snap_cpl_terms_last) * 25.0
                       / (1024.0 * 1024.0),
-                  ctx.carry.snap_cpl_rows_dropped,
-                  ctx.carry.snap_cpl_rows_last == 0
+                  ctx.counters.snap_cpl_rows_dropped,
+                  ctx.counters.snap_cpl_rows_last == 0
                       ? "  ⚠ 0 rows under an ARMED capture — carry_conditional_coupling "
                         "off, or every carry harvested EMPTY: the file is v1/v2 and no "
                         "resume can use it."

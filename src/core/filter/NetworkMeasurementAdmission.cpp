@@ -183,7 +183,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
     // corrupt arc.  The response does not depend on this latch (see the refloat rule
     // below), so it only sets the label, but that label names the event class this
     // card exists to report.
-    const bool resume_run = ctx.carry.adm_resume_pending;
+    const bool resume_run = ctx.carry.resume.adm;
     if (resume_run && ctr.epochs == 1) ++ctr.resume_passes;
 
     auto emit = [&](const char* event, const std::string& sat,

@@ -31,6 +31,9 @@ const char* persistName(Persist p) {
     case Persist::Pending:         return "Pending";
     case Persist::RunConst:        return "RunConst";
     case Persist::WriterTelemetry: return "WriterTelemetry";
+    case Persist::Epoch:           return "Epoch";
+    case Persist::Latch:           return "Latch";
+    case Persist::ResumeHandoff:   return "ResumeHandoff";
     }
     return "?";
 }

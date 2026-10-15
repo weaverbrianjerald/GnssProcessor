@@ -547,7 +547,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   not: `vet_left` / `last_ep` live in the same unserialized record map as
         //   `admitted`, so a resumed leg opens no vet windows and every channel reads as a
         //   first sighting, which is the restore case and is already handled.
-        //   (`adm_resume_pending` makes the first restored epoch a screened restore rather
+        //   (`resume.adm` makes the first restored epoch a screened restore rather
         //   than a birth, the one case the seed-birth tripwire cannot see.)
         //
         //   state_snapshot_datum_capture (RS-3) is a representation question like the

@@ -252,7 +252,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
 
     const auto t0 = std::chrono::steady_clock::now();
     ++counters.redun_passes;
-    const long long ep = carry.redun_epochs++;   // stride phase; 0 on the first pass
+    const long long ep = counters.redun_epochs++;   // stride phase; 0 on the first pass
 
     // ---- the epoch's scalars stay blank unless this pass fills them -------
     carry.redun_ep_tow           = -1.0;
@@ -265,8 +265,8 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
     if (n_shared <= 0) return;
     const Eigen::MatrixXd& cov_raw = est.sharedCovariance();
     if (cov_raw.rows() != n_shared || cov_raw.cols() != n_shared) {
-        if (!carry.redun_cov_warned) {
-            carry.redun_cov_warned = true;
+        if (!counters.redun_cov_warned) {
+            counters.redun_cov_warned = true;
             log->warn("Network (redundancy census): ARMED but the shared covariance is "
                       "{}x{} against {} shared columns at TOW {:.1f} — no solve to read. "
                       "Every sweep this run will be skipped (invariant #4).",
@@ -596,8 +596,8 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
         }
         if (slack < -1e-6 * std::max(1.0, n_free)) {
             ++counters.redun_closure_neg;
-            if (!carry.redun_closure_warned) {
-                carry.redun_closure_warned = true;
+            if (!counters.redun_closure_warned) {
+                counters.redun_closure_warned = true;
                 log->warn("Network (redundancy census): CLOSURE VIOLATED at TOW {:.1f} — "
                           "trace(H) = {:.4f} over {} swept row(s) exceeds the {:.0f} free "
                           "parameter(s) they span (slack {:.3e}).  The redundancy numbers "

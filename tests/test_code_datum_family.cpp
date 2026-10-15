@@ -1450,11 +1450,11 @@ TEST(CodeDatumFamilyTest, KeptEpochCountsHoldsAndDeclaresTheirEdges) {
     // consumed, and a hold that begins at the next kept epoch is a begin again.
     events.clear();
     const int begun_before = c.hold_begun;
-    ctx.carry.if_pin_holds_resume_pending = true;
+    ctx.carry.resume.if_pin_holds = true;
     ctx.carry.this_epoch_if_pin_holds = {{"E11", h11}};
     ctx.carry.this_epoch_cb_ifpin = {{"E11", h11.held}};
     networkCodeDatumFamilyKeptEpoch(ctx, sink);
-    EXPECT_FALSE(ctx.carry.if_pin_holds_resume_pending);
+    EXPECT_FALSE(ctx.carry.resume.if_pin_holds);
     ctx.carry.this_epoch_if_pin_holds = {{"E11", h11}, {"E16", h11}};
     ctx.carry.this_epoch_cb_ifpin = {{"E11", h11.held}, {"E16", h11.held}};
     networkCodeDatumFamilyKeptEpoch(ctx, sink);

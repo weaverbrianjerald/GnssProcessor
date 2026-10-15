@@ -501,7 +501,7 @@ TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloa
     Rig r(lm, *cfg);
     NetworkRunContext& ctx = r.fx->ctx();
 
-    ctx.carry.adm_resume_pending = true;   // what a successful warm resume latches
+    ctx.carry.resume.adm = true;   // what a successful warm resume latches
     r.step(ctx, *cfg, bshmEpoch());
 
     const auto& a = ctx.counters.adm;
@@ -511,7 +511,7 @@ TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloa
     EXPECT_FALSE(r.has("G07", kC1));
     EXPECT_TRUE(r.funnelHas("G07", kL1))
         << "unlike a birth, a restore HAS carried state — invariant #1 requires the re-tap";
-    EXPECT_TRUE(ctx.carry.adm_resume_pending)
+    EXPECT_TRUE(ctx.carry.resume.adm)
         << "the RUN flag persists — it is the per-station set below that is consumed";
     EXPECT_EQ(1u, net::present(ctx.entities.stations, &net::StationState::adm_resume_seen))
         << "exactly the one screened station has had its restore epoch";
@@ -695,7 +695,7 @@ TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
     Rig r(lm, *cfg);
     NetworkRunContext& ctx = r.fx->ctx();
 
-    ctx.carry.adm_resume_pending = true;
+    ctx.carry.resume.adm = true;
 
     // Epoch 0: station 1 is absent (present[1] stays false), so only station 0 is
     // screened.  A global one-shot would be consumed here.

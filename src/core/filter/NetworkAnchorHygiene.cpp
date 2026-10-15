@@ -532,9 +532,9 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
                   "surviving carry) — marginalized for one epoch over the run "
                   "({} anchor handover(s) elected); {} phase-leveling local "
                   "carry(ies) erased.",
-                  ctx.carry.pa_reref_total, h.reattaches,
-                  ctx.carry.pa_reref_erase_total);
-        if (h.reattaches > 0 && ctx.carry.pa_reref_total == 0)
+                  ctx.counters.pa_reref_total, h.reattaches,
+                  ctx.counters.pa_reref_erase_total);
+        if (h.reattaches > 0 && ctx.counters.pa_reref_total == 0)
             log->warn("Network (PHASE_ANCHOR carry reref): DEAD WIRING — {} "
                       "handover(s) were elected but the re-reference set never "
                       "populated, so every carried PB prior still folded in its "

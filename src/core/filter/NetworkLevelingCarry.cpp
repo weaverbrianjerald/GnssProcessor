@@ -564,7 +564,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
         // shared-neutral, and rel ≪ 1 shows that it was.  M == 0 (the diagonal
         // restore) is the maximal deviation.  Nothing is written back:
         // byte-identical on every solve artifact.
-        if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
+        if (ctx.carry.resume.cpl_census && carry_cpl_cond
             && !coupling.empty()) {
             const auto old = net::getArc(ctx.entities.arcs, std::make_tuple(
                 static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);

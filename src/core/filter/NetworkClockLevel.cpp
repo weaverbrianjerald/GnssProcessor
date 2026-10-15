@@ -453,11 +453,11 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
         }
     }
     // Window end: the per-satellite means, T, and the split-half NEES.
-    if (++C.clm_win_ep >= std::max(1, ctx.knobs.clm_innov_window_ep)) {
+    if (++K.clm_win_ep >= std::max(1, ctx.knobs.clm_innov_window_ep)) {
         double sxab = 0.0, sP = 0.0, sdd = 0.0, sRk = 0.0, sT = 0.0, snu2 = 0.0;
         int nsat = 0, nab = 0, nT = 0;
         long long ngt = 0;
-        const int kmin = std::max(1, C.clm_win_ep / 2);
+        const int kmin = std::max(1, K.clm_win_ep / 2);
         net::forEach(ctx.entities.sats, &net::SatelliteState::clm_win,   // satellite order (O1)
                      [&](const SatId& id, const ClockLevelInnovWin& w) {
             const std::string s = net::satKey(id);
@@ -494,7 +494,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             K.clm_win_Tn += nT;
         }
         net::dropAll(ctx.entities.sats, &net::SatelliteState::clm_win);
-        C.clm_win_ep = 0;
+        K.clm_win_ep = 0;
     }
     // The prior of the next epoch: this epoch's clocks and stashed clock block (the raise,
     // when armed, runs after this call and moves only the level direction's variance,
@@ -530,8 +530,8 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
     NetworkRunContext& ctx = run.ctx;
     const std::shared_ptr<spdlog::logger>& log = run.log;
     // ---- End of the bindings ----
-    if (!ctx.carry.clm_restore_raise_pending) return;
-    ctx.carry.clm_restore_raise_pending = false;
+    if (!ctx.carry.resume.clm_raise) return;
+    ctx.carry.resume.clm_raise = false;
     SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     const Eigen::Index np = pcc.P.rows();
     if (np == 0 || pcc.P.cols() != np) {

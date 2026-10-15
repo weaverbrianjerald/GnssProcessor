@@ -218,7 +218,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
                             ctx.counters.n_cpl_readmit_diverted,
                             n_cpl_row_dump,
                             &ctx.counters.cpl_orphan_fam_total);
-    if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond) {
+    if (ctx.carry.resume.cpl_census && carry_cpl_cond) {
         ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
         ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
     }

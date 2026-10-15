@@ -807,7 +807,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep) {
             if (!fresh.empty())
                 emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanCodeBias);
             retro_emit_sats.insert(mark.begin(), mark.end());
-            ctx.carry.cb_exc_bumps += static_cast<long long>(mark.size());
+            ctx.counters.cb_exc_bumps += static_cast<long long>(mark.size());
             if (events_trace.is_open())
                 for (const auto& s : mark)
                     emitEvent("CB_EXC", "cb_excursion_disc_landed", s, "", std::nullopt,

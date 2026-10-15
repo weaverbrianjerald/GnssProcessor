@@ -1271,15 +1271,15 @@ static int networkInvariantCarryRunEnd(const NetworkRunEndView& v) {
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const bool carry_invariant = v.ctx.knobs.carry_invariant;
-    const auto& carry_epochs = v.ctx.carry.carry_epochs;
-    const auto& carry_born_total = v.ctx.carry.carry_born_total;
-    const auto& carry_marg_total = v.ctx.carry.carry_marg_total;
-    const auto& carry_merges_total = v.ctx.carry.carry_merges_total;
-    const auto& carry_splits_total = v.ctx.carry.carry_splits_total;
-    const auto& carry_swaps_total = v.ctx.carry.carry_swaps_total;
-    const auto& carry_zdim_last = v.ctx.carry.carry_zdim_last;
-    const auto& carry_slipkills_total = v.ctx.carry.carry_slipkills_total;
-    const auto& carry_dropped_total = v.ctx.carry.carry_dropped_total;
+    const auto& carry_epochs = v.ctx.counters.carry_epochs;
+    const auto& carry_born_total = v.ctx.counters.carry_born_total;
+    const auto& carry_marg_total = v.ctx.counters.carry_marg_total;
+    const auto& carry_merges_total = v.ctx.counters.carry_merges_total;
+    const auto& carry_splits_total = v.ctx.counters.carry_splits_total;
+    const auto& carry_swaps_total = v.ctx.counters.carry_swaps_total;
+    const auto& carry_zdim_last = v.ctx.counters.carry_zdim_last;
+    const auto& carry_slipkills_total = v.ctx.counters.carry_slipkills_total;
+    const auto& carry_dropped_total = v.ctx.counters.carry_dropped_total;
 
     if (carry_invariant)
         log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
@@ -1315,9 +1315,9 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const NetworkInvariantCarryDriver& carry_driver = v.run.engines.carry_driver;
     const bool carry_innov_gate = v.ctx.knobs.carry_innov_gate;
-    const auto& carry_slipkills_total = v.ctx.carry.carry_slipkills_total;
-    const auto& carry_innov_flags_total = v.ctx.carry.carry_innov_flags_total;
-    const auto& carry_innov_retaps_total = v.ctx.carry.carry_innov_retaps_total;
+    const auto& carry_slipkills_total = v.ctx.counters.carry_slipkills_total;
+    const auto& carry_innov_flags_total = v.ctx.counters.carry_innov_flags_total;
+    const auto& carry_innov_retaps_total = v.ctx.counters.carry_innov_retaps_total;
 
     if (carry_innov_gate)
         // The warm-up clause is printed whenever the knob is armed, including at 0
@@ -1377,7 +1377,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                       "line's birth count) or the chord_carried mask is not being populated.");
     }
     if (carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly()) {
-        const long long sup = ctx.carry.carry_innov_kill_suppressed;
+        const long long sup = ctx.counters.carry_innov_kill_suppressed;
         log->info("Network (Card 4/M1 D5 v4 re-tap-only): {} carry-arc membership kill(s) "
                   "SUPPRESSED over the run — a D5 flag whose arc the raw observables MEASURED "
                   "as continuous no longer excludes that arc from A_old, so the in-epoch "
@@ -1475,7 +1475,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
 static int networkD5MapMissRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const bool carry_innov_gate = v.ctx.knobs.carry_innov_gate;
-    const auto& carry_innov_map_miss = v.ctx.carry.carry_innov_map_miss;
+    const auto& carry_innov_map_miss = v.ctx.counters.carry_innov_map_miss;
 
     if (carry_innov_gate && carry_innov_map_miss > 0)
         log->warn("Network (Card 4/M1 D5): {} innovation flag(s) over the run did not resolve in the "

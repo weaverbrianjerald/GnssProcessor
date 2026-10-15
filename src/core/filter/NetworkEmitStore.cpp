@@ -322,9 +322,9 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     // only (nothing sets the latch on a cold start), and outputs only: `sol` is not
     // touched, so every estimate and every between-satellite difference is unchanged.
     std::set<char>        pb_ser_consts;    // alive until the writer call below
-    if (ctx.knobs.resume_pb_seam_mark && ctx.carry.resume_pb_seam_pending
+    if (ctx.knobs.resume_pb_seam_mark && ctx.carry.resume.pb_seam
         && n_emitted > 0 && !sol.sats.empty()) {
-        ctx.carry.resume_pb_seam_pending = false;
+        ctx.carry.resume.pb_seam = false;
         const auto census = emitter.pbSeamCensus(sol);
         std::set<char> pb_marked;
         for (const auto& [cst, t] : census) {

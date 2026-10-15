@@ -133,12 +133,12 @@ net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station 
 const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
 
-auto& eq34_reref_total = ctx.carry.eq34_reref_total;
-auto& eq34_erase_total = ctx.carry.eq34_erase_total;
-auto& eq34_shift_total = ctx.carry.eq34_shift_total;
-auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
-auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
-auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
+auto& eq34_reref_total = ctx.counters.eq34_reref_total;
+auto& eq34_erase_total = ctx.counters.eq34_erase_total;
+auto& eq34_shift_total = ctx.counters.eq34_shift_total;
+auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
+auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
+auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
 // The arcs' retained edges and pin targets (card NOM step N4f1): copied in, written back at
 // the end of the election.
 std::set<std::pair<int, std::string>> eq34_retained_edges =
@@ -1070,12 +1070,12 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
-    const auto& eq34_reref_total = v.ctx.carry.eq34_reref_total;
-    const auto& eq34_erase_total = v.ctx.carry.eq34_erase_total;
-    const auto& eq34_shift_total = v.ctx.carry.eq34_shift_total;
-    const auto& eq34_cpl_sprev_total = v.ctx.carry.eq34_cpl_sprev_total;
-    const auto& eq34_gap_repin_total = v.ctx.carry.eq34_gap_repin_total;
-    const auto& eq34_mismatch_epochs = v.ctx.carry.eq34_mismatch_epochs;
+    const auto& eq34_reref_total = v.ctx.counters.eq34_reref_total;
+    const auto& eq34_erase_total = v.ctx.counters.eq34_erase_total;
+    const auto& eq34_shift_total = v.ctx.counters.eq34_shift_total;
+    const auto& eq34_cpl_sprev_total = v.ctx.counters.eq34_cpl_sprev_total;
+    const auto& eq34_gap_repin_total = v.ctx.counters.eq34_gap_repin_total;
+    const auto& eq34_mismatch_epochs = v.ctx.counters.eq34_mismatch_epochs;
 
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
