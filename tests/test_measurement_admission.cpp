@@ -52,6 +52,7 @@
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
+#include "support/NetworkTestRun.hpp"   // the run and epoch the seam's epoch form takes
 
 #include <spdlog/spdlog.h>
 
@@ -193,14 +194,18 @@ PppObservation healthy(const std::string& sat, double spread,
 
 /// One station with a real StateManager plus the per-epoch scaffolding the seam
 /// takes.  Two stations so the second can stay absent (present[] gating).
+/// The run (its context, stations and slip-QC epoch index) is the fixture's; the funnel and the
+/// modelled rows are carried across steps here and handed to each epoch.
 struct Rig {
-    std::vector<NetStation> stations;
+    std::unique_ptr<NetworkTestRun> fx;
+    std::vector<NetStation>& stations;
     std::vector<bool> present{true, false};
     std::vector<std::vector<PppObservation>> modeled{2};
     std::set<std::pair<int, std::string>> slipped, slipped_raw;
     long long ep = 0;
 
-    Rig(LogManager& log, const GnssConfig& cfg) {
+    Rig(LogManager& log, const GnssConfig& cfg)
+        : fx(std::make_unique<NetworkTestRun>(cfg)), stations(fx->setup().stations) {
         stations.resize(2);
         stations[0].name = "AAAA";
         stations[0].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
@@ -216,14 +221,20 @@ struct Rig {
     /// would make every flag look fresh and leave the staleness gate untested.
     void step(NetworkRunContext& ctx, const GnssConfig& cfg,
               const std::vector<PppObservation>& obs) {
-        NetworkRunTraces traces(fs::temp_directory_path());  // no stream opened => no I/O
+        (void)cfg;   // the fixture's; carry_invariant comes from it (ctx is the fixture's context)
         ++ctx.counters.n_loop_epochs;
         modeled[0] = obs;
-        networkMeasurementAdmission(ctx, cfg, spdlog::default_logger(), traces,
-                                    epochAt(1000.0 + 30.0 * static_cast<double>(ep)),
-                                    ep, stations, present, modeled,
-                                    slipped, slipped_raw,
-                                    /*carry_invariant=*/true, /*carry_warm=*/true);
+        NetworkEpoch& e = fx->newEpoch(epochAt(1000.0 + 30.0 * static_cast<double>(ep)));
+        fx->run().engines.slip_qc.epoch_idx = ep;
+        e.clock.carry_warm = true;
+        e.pass_a.present = present;
+        e.pass_a.modeled = modeled;
+        e.funnel.carry_slipped_ambs = slipped;
+        e.funnel.carry_slipped_raw = slipped_raw;
+        networkMeasurementAdmission(fx->run(), e, e.pass_a, e.funnel);
+        modeled = e.pass_a.modeled;
+        slipped = e.funnel.carry_slipped_ambs;
+        slipped_raw = e.funnel.carry_slipped_raw;
         ++ep;
     }
 
@@ -282,8 +293,8 @@ std::vector<PppObservation> bshmEpochWithout(const std::string& sat,
 TEST(MeasurementAdmission, CorruptChannelRejectedAtBirthWhileHealthySiblingsAdmit) {
     LogManager lm;
     auto cfg = loadCfg(lm, "birth", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     r.step(ctx, *cfg, bshmEpoch());
 
@@ -332,8 +343,8 @@ TEST(MeasurementAdmission, CorruptChannelRejectedAtBirthWhileHealthySiblingsAdmi
 TEST(MeasurementAdmission, StationCommonClockStepProducesZeroRejections) {
     LogManager lm;
     auto cfg = loadCfg(lm, "clockstep", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     constexpr double kOneMs = 2.99792458e5;   // one millisecond of light time
     std::vector<PppObservation> v;
@@ -368,8 +379,8 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
     LogManager lm;
     auto cfg = loadCfg(lm, "thin", armed(/*screen=*/true, /*bound=*/1000.0,
                                          /*min_sats=*/4));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Three satellites, one of them corrupt by 198 km.  With n < 4 nothing happens.
     std::vector<PppObservation> v{healthy("G01", -5.0), healthy("G03", 4.0),
@@ -397,8 +408,8 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
 TEST(MeasurementAdmission, MidArcOnsetWithholdsTheBandAndRefloatsTheArc) {
     LogManager lm;
     auto cfg = loadCfg(lm, "onset", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Three clean epochs establish the arc.
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
@@ -430,8 +441,8 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
     LogManager lm;
     auto cfg = loadCfg(lm, "heal", armed(/*screen=*/true, /*bound=*/1000.0,
                                          /*min_sats=*/4, /*heal_ep=*/3));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     r.step(ctx, *cfg, bshmEpoch());                       // rejected at birth
     ASSERT_EQ(1, ctx.counters.adm.reject_birth);
@@ -471,8 +482,8 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
 TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloats) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     ctx.carry.adm_resume_pending = true;   // what a successful warm resume latches
     r.step(ctx, *cfg, bshmEpoch());
@@ -509,8 +520,8 @@ TEST(MeasurementAdmission, StationGuardHoldsEverythingAndRejectsNothingIndividua
     auto cfg = loadCfg(lm, "staguard", armed(/*screen=*/true, /*bound=*/1000.0,
                                              /*min_sats=*/4, /*heal_ep=*/5,
                                              /*max_frac=*/0.5));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Six satellites; four of them displaced in different directions, so the median
     // is a mixture rather than a common step.  4 of 6 channels fail, > 0.5.
@@ -546,9 +557,9 @@ TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
     auto cfg = loadCfg(lm, "off", "");     // no adm_* keys at all
     ASSERT_FALSE(cfg->getNetworkConfig().adm_screen);
     ASSERT_FALSE(cfg->getNetworkConfig().adm_trace);
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ASSERT_FALSE(ctx.knobs.adm_on);
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
+    ASSERT_FALSE(ctx.knobs.adm_on);
 
     r.step(ctx, *cfg, bshmEpoch());
 
@@ -577,10 +588,10 @@ TEST(MeasurementAdmission, DisarmedRunTouchesNothing) {
 TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
     LogManager lm;
     auto cfg = loadCfg(lm, "census", armed(/*screen=*/false));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+    Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
     ASSERT_TRUE(ctx.knobs.adm_on);
     ASSERT_FALSE(ctx.knobs.adm_screen);
-    Rig r(lm, *cfg);
 
     // A second, healthy station so the two census columns are distinguishable: one
     // is a population statistic over stations, the other the network extreme.
@@ -621,8 +632,8 @@ TEST(MeasurementAdmission, MeasureOnlyCensusCountsWithoutActing) {
 TEST(MeasurementAdmission, OneMultiBandSatelliteCannotCaptureTheStationCentre) {
     LogManager lm;
     auto cfg = loadCfg(lm, "capture", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Three healthy single-band GPS satellites (the BSHM shape) + one corrupt
     // four-band Galileo satellite.  Observables: 3 + 4 = 7; satellites: 4.
@@ -665,8 +676,8 @@ TEST(MeasurementAdmission, OneMultiBandSatelliteCannotCaptureTheStationCentre) {
 TEST(MeasurementAdmission, ResumeRestoreLabelIsPerStationNotAGlobalOneShot) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume2", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     ctx.carry.adm_resume_pending = true;
 
@@ -758,8 +769,8 @@ TEST(MeasurementAdmission, StatisticAndBandIdentityAreWellDefined) {
 TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_birth", revetArmed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Three clean epochs establish G07 as an admitted, healthy arc.
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
@@ -801,8 +812,8 @@ TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
 TEST(MeasurementAdmission, DisarmedVetStillInheritsTheStaleVerdictAsAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_off", armed());   // INC-4 absent entirely
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     for (int k = 0; k < 2; ++k) r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -827,8 +838,8 @@ TEST(MeasurementAdmission, DisarmedVetStillInheritsTheStaleVerdictAsAnOnset) {
 TEST(MeasurementAdmission, ContinuouslyPresentChannelGoingBadIsStillAnOnset) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_cont", revetArmed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/kCorruptG07));
@@ -846,8 +857,8 @@ TEST(MeasurementAdmission, ContinuouslyPresentChannelGoingBadIsStillAnOnset) {
 TEST(MeasurementAdmission, GapBelowTheThresholdIsNotAReEntry) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_gap", revetArmed(/*gap_ep=*/3));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     for (int k = 0; k < 2; ++k) r.step(ctx, *cfg, bshmEpochWithout("G07"));   // gap 2 < 3
@@ -872,8 +883,8 @@ TEST(MeasurementAdmission, GapBelowTheThresholdIsNotAReEntry) {
 TEST(MeasurementAdmission, CensusFlagRefusesInsideTheVetWindowWhereTheBoundWouldAdmit) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_census", revetArmed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -916,8 +927,8 @@ TEST(MeasurementAdmission, CensusFlagRefusesInsideTheVetWindowWhereTheBoundWould
 TEST(MeasurementAdmission, StaleCensusFlagIsIgnoredAndCounted) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_stale", revetArmed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -948,8 +959,8 @@ TEST(MeasurementAdmission, StaleCensusFlagIsIgnoredAndCounted) {
 TEST(MeasurementAdmission, VetWindowExpiresAndStopsConsultingTheCensus) {
     LogManager lm;
     auto cfg = loadCfg(lm, "revet_expire", revetArmed(/*gap_ep=*/1, /*vet_ep=*/2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -1000,8 +1011,8 @@ TEST(MeasurementAdmission, StrictHoldWithholdsACleanReEntryThenHealsIt) {
     auto cfg = loadCfg(lm, "revet_hold",
                        revetArmed(/*gap_ep=*/1, /*vet_ep=*/8, /*use_census=*/true,
                                   /*hold=*/true, /*heal_ep=*/2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -1038,8 +1049,8 @@ TEST(MeasurementAdmission, HealOpensAVetWindowOfItsOwn) {
     auto cfg = loadCfg(lm, "revet_heal",
                        revetArmed(/*gap_ep=*/1, /*vet_ep=*/8, /*use_census=*/true,
                                   /*hold=*/false, /*heal_ep=*/2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Rejected at birth, then two clean epochs heal it.
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/kCorruptG07));
@@ -1076,8 +1087,8 @@ TEST(MeasurementAdmission, TighterVetBoundRefusesALargeOnArrivalReEntry) {
                        revetArmed(/*gap_ep=*/1, /*vet_ep=*/8, /*use_census=*/true,
                                   /*hold=*/false, /*heal_ep=*/5,
                                   /*bound_scale=*/0.2));   // 200 m
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -1130,8 +1141,8 @@ TEST(MeasurementAdmission, TighterVetBoundStaysLiveAcrossTheWindowThenLifts) {
                        revetArmed(/*gap_ep=*/1, /*vet_ep=*/3, /*use_census=*/false,
                                   /*hold=*/false, /*heal_ep=*/5,
                                   /*bound_scale=*/0.2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -1183,8 +1194,8 @@ TEST(MeasurementAdmission, VetBoundRefusalHealsAgainstTheVetBoundNotTheOuterBoun
                        revetArmed(/*gap_ep=*/1, /*vet_ep=*/2, /*use_census=*/false,
                                   /*hold=*/false, /*heal_ep=*/2,
                                   /*bound_scale=*/0.2));   // 200 m
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
@@ -1230,11 +1241,11 @@ TEST(MeasurementAdmission, VetIsRefusedWithoutTheScreen) {
     EXPECT_FALSE(cfg->getNetworkConfig().adm_revet)
         << "the loader must refuse a vet with nothing to vet FOR";
 
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
+    Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
     EXPECT_FALSE(ctx.knobs.adm_revet)
         << "and the predicate must re-impose it rather than trust load order";
 
-    Rig r(lm, *cfg);
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, bshmEpoch(/*g07=*/8.0));
     r.step(ctx, *cfg, bshmEpochWithout("G07"));
     r.step(ctx, *cfg, bshmEpoch(/*g07=*/kCorruptG07));

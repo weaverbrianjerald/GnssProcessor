@@ -21,6 +21,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch the clone seams' epoch forms take
 #include "app/NetworkRunContext.hpp"
 #include "common/SignalBand.hpp"
 #include "config/GnssConfig.hpp"
@@ -406,6 +407,13 @@ std::unique_ptr<NetworkRunContext> smdContext(GnssConfig& cfg, const char* tag) 
     return std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
 }
 
+/// The run the clone seams' epoch forms take (tests/support/NetworkTestRun.hpp), over the
+/// configuration smdContext loads.
+std::unique_ptr<NetworkTestRun> smdRun(GnssConfig& cfg, const char* tag) {
+    (void)smdContext(cfg, tag);   // loads cfg
+    return std::make_unique<NetworkTestRun>(cfg, smdLogger());
+}
+
 /// A live block clone on the pair (sig1, L2W), advanced at epoch @p ep.
 PbHoldClone liveBlock(const std::string& sat, const std::string& sig1, long long ep) {
     PbHoldClone c;
@@ -424,7 +432,8 @@ PbHoldClone liveBlock(const std::string& sat, const std::string& sig1, long long
 
 TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
     GnssConfig cfg;
-    auto ctx = smdContext(cfg, "follow");
+    auto fx = smdRun(cfg, "follow");
+    NetworkRunContext* ctx = &fx->ctx();
     ASSERT_TRUE(ctx->knobs.emit_pb_hold_smoothed);
     ctx->counters.n_loop_epochs = 7;
     auto& carry = ctx->carry;
@@ -440,9 +449,9 @@ TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
     carry.phase_basis["G12_L1C"].elected_ep = 7;             // a continuous handover of G12's L1C
     carry.phase_basis["G05_L1C"].elected_ep = 7;             // outside G05's pair: no step of D
     carry.phase_basis["G07_L1W"].elected_ep = 6;             // an earlier tenure
-    NetworkEstimator est;
-    EpochWorkspace ws;
-    networkPbHoldCloneUpdate(*ctx, smdLogger(), est, Eigen::VectorXd::Zero(1), ws);
+    NetworkEpoch& e = fx->newEpoch(GnssTime{});   // an empty workspace and datum, the run's estimator
+    e.solve.x_s = Eigen::VectorXd::Zero(1);
+    networkPbHoldCloneUpdate(fx->run(), e);
     const auto& b = carry.smh_block;
     EXPECT_EQ(b.at("G32|L1W").death, PbHoldCloneDeath::Followed);
     EXPECT_EQ(b.at("G32|L1W").follow, PbHoldFollow::Reref);
@@ -463,7 +472,8 @@ TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
 
 TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     GnssConfig cfg;
-    auto ctx = smdContext(cfg, "birth");
+    auto fx = smdRun(cfg, "birth");
+    NetworkRunContext* ctx = &fx->ctx();
     auto& carry = ctx->carry;
     for (const char* s : {"G32", "G12"}) {
         NetworkCarryState::PbHoldKey k;
@@ -496,8 +506,9 @@ TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     ctx->counters.n_loop_epochs = 2;
     carry.cxu_stash_valid = true;
     carry.cxu_stash_s     = 200.0;
-    NetworkEstimator est;
-    networkPbHoldCloneHarvest(*ctx, est, Eigen::VectorXd::Zero(1), 200.0);
+    NetworkEpoch& e = fx->newEpoch(GnssTime{ 0, 200.0 });   // continuous GPS seconds 200
+    e.solve.x_s = Eigen::VectorXd::Zero(1);
+    networkPbHoldCloneHarvest(fx->run(), e);
     ASSERT_EQ(carry.smh_block.count("G32|L1W"), 1u);
     const PbHoldClone& c = carry.smh_block.at("G32|L1W");
     EXPECT_TRUE(c.alive);

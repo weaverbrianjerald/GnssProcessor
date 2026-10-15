@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkPhaseVisibleMonitor's epoch form takes
 #include "app/NetworkRunContext.hpp"
 #include "common/SignalBand.hpp"
 #include "config/GnssConfig.hpp"
@@ -254,26 +255,27 @@ TEST(PhaseVisibleMonitorTest, SeamCountsRowsSettlesAfterFifteenAndClosesWindows)
     for (const bool on : { false, true }) {
         GnssConfig cfg;
         ASSERT_TRUE(pvLoads(on, true, 5, on ? "seam_on" : "seam_off", &cfg));
-        NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-        ASSERT_EQ(ctx.knobs.pv_on, on);
-        EXPECT_EQ(ctx.knobs.pv_window_ep, 5);
         const fs::path dir = fs::temp_directory_path() / "pv_traces";
         fs::create_directories(dir);
-        NetworkRunTraces traces(dir);
-        NetworkEstimator est;
+        NetworkTestRun fx(cfg, nullptr, dir);   // the run networkPhaseVisibleMonitor's epoch form takes
+        NetworkRunContext& ctx = fx.ctx();
+        ASSERT_EQ(ctx.knobs.pv_on, on);
+        EXPECT_EQ(ctx.knobs.pv_window_ep, 5);
+        NetworkEstimator& est = fx.est();
         const PvNet n = pvSolve(est);
-        EpochWorkspace ws;
-        ws.cap_dense_keys = n.keys;
-        ws.cap_dense_cov = n.cov;
-        SyncedEpoch se;
-        se.time = GnssTime{ 2313, 259200.0 };
+        GnssTime t{ 2313, 259200.0 };
         for (int ep = 0; ep < 20; ++ep) {
-            se.time.tow = 259200.0 + 30.0 * ep;
-            networkPhaseVisibleMonitor(ctx, traces, se, est, n.x, ws);
+            t.tow = 259200.0 + 30.0 * ep;
+            NetworkEpoch& e = fx.newEpoch(t);
+            e.solve.x_s = n.x;
+            e.ws.cap_dense_keys = n.keys;   // the dense fold's capture
+            e.ws.cap_dense_cov = n.cov;
+            networkPhaseVisibleMonitor(fx.run(), e);
         }
         // An epoch without a capture is counted and forms nothing.
-        EpochWorkspace empty;
-        networkPhaseVisibleMonitor(ctx, traces, se, est, n.x, empty);
+        NetworkEpoch& e = fx.newEpoch(t);
+        e.solve.x_s = n.x;
+        networkPhaseVisibleMonitor(fx.run(), e);
         const auto& k = ctx.counters;
         if (!on) {
             EXPECT_EQ(k.pv_epochs, 0);

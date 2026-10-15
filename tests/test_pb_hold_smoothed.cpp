@@ -18,6 +18,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch the clone seams' epoch forms take
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
@@ -595,6 +596,13 @@ std::unique_ptr<NetworkRunContext> smhContext(GnssConfig& cfg, const char* tag) 
     return std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
 }
 
+/// The run the clone seams' epoch forms take (tests/support/NetworkTestRun.hpp), over the
+/// configuration smhContext loads.
+std::unique_ptr<NetworkTestRun> smhRun(GnssConfig& cfg, const char* tag) {
+    (void)smhContext(cfg, tag);   // loads cfg
+    return std::make_unique<NetworkTestRun>(cfg, smhLogger());
+}
+
 PbHoldClone liveClone(const std::string& sat, double v, long long ep) {
     PbHoldClone c;
     c.sat        = sat;
@@ -737,7 +745,8 @@ TEST(PbHoldSmoothedTest, AZeroPassedMotionWritesThePhaseClockTransfer) {
 
 TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
     GnssConfig cfg;
-    auto ctx = smhContext(cfg, "disengage");
+    auto fx = smhRun(cfg, "disengage");
+    NetworkRunContext* ctx = &fx->ctx();
     ASSERT_TRUE(ctx->knobs.cta_on) << "the loader requires the anchor";
     ctx->counters.n_loop_epochs = 7;
     for (const char* s : {"G32", "G12", "G05", "G07"})
@@ -748,9 +757,9 @@ TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
     an.sat["G12"].anchored = false; an.sat["G12"].folded_anchored = false;   // LOOSE fold
     an.sat["G05"].anchored = true;  an.sat["G05"].folded_anchored = true;    // engaged
     ctx->carry.cxu_pivot['G'] = {"G07", 0.0};                  // G07 pinned: no anchor fold
-    NetworkEstimator est;
-    EpochWorkspace ws;
-    networkPbHoldCloneUpdate(*ctx, smhLogger(), est, Eigen::VectorXd::Zero(1), ws);
+    NetworkEpoch& e = fx->newEpoch(GnssTime{});   // an empty workspace and datum, the run's estimator
+    e.solve.x_s = Eigen::VectorXd::Zero(1);
+    networkPbHoldCloneUpdate(fx->run(), e);
     const auto& cl = ctx->carry.smh_clone;
     EXPECT_EQ(cl.at("G32|L1W").death, PbHoldCloneDeath::Withdrawn);
     EXPECT_EQ(cl.at("G12|L1W").death, PbHoldCloneDeath::Disengaged);
@@ -767,7 +776,8 @@ TEST(PbHoldSmoothedTest, ADisengagedParentKillsTheCloneAndQueuesTheBirthAgain) {
 
 TEST(PbHoldSmoothedTest, ABirthWaitsForTheAnchorAndForAStashedClock) {
     GnssConfig cfg;
-    auto ctx = smhContext(cfg, "defer");
+    auto fx = smhRun(cfg, "defer");
+    NetworkRunContext* ctx = &fx->ctx();
     auto& carry = ctx->carry;
     for (const char* s : {"G32", "G12", "G05"}) {
         NetworkCarryState::PbHoldKey k;
@@ -789,12 +799,13 @@ TEST(PbHoldSmoothedTest, ABirthWaitsForTheAnchorAndForAStashedClock) {
     carry.prev_carry_cov.P = Eigen::MatrixXd::Constant(1, 1, 0.01);
     carry.clk_anchor.sat["G32"].anchored = false;               // LOOSE
     carry.clk_anchor.sat["G12"].anchored = true;
-    NetworkEstimator est;
     const auto harvest = [&](long long ep) {
         ctx->counters.n_loop_epochs = static_cast<decltype(ctx->counters.n_loop_epochs)>(ep);
         carry.cxu_stash_valid = true;
         carry.cxu_stash_s     = 100.0 * static_cast<double>(ep);
-        networkPbHoldCloneHarvest(*ctx, est, Eigen::VectorXd::Zero(1), carry.cxu_stash_s);
+        NetworkEpoch& e = fx->newEpoch(GnssTime{ 0, carry.cxu_stash_s });   // continuous GPS seconds = the stash's
+        e.solve.x_s = Eigen::VectorXd::Zero(1);
+        networkPbHoldCloneHarvest(fx->run(), e);
     };
     harvest(1);
     EXPECT_EQ(ctx->counters.smh_pending_dropped, 1) << "G05's generation ended";

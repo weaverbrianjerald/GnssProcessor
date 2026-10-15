@@ -11,6 +11,7 @@
  */
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkCarryDecide's epoch form takes
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarryDisposition.hpp"
@@ -311,8 +312,9 @@ TEST(CarryDisposition, AnchorDecideAndCommitFollowTheRule) {
 TEST(CarryDisposition, ThePassOverwritesEveryEntryAndNothingElse) {
     Loaded L("pass");
     ASSERT_TRUE(L.ok);
-    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
-    NetworkEstimator est;
+    NetworkTestRun fx(L.cfg);   // the epoch form reads the run's context and estimator
+    NetworkRunContext& ctx = fx.ctx();
+    NetworkEstimator& est = fx.est();
     layout(est);
     GnssTime t;
     t.week = 2313;
@@ -326,7 +328,9 @@ TEST(CarryDisposition, ThePassOverwritesEveryEntryAndNothingElse) {
     parked.fold.disposition = CarryDisposition::Anchored;    // stale record from a past epoch
     ctx.carry.prev_carry = {ck, parked};
     const ClockAnchorSat before = ctx.carry.clk_anchor.sat["G01"];
-    networkCarryDecide(ctx, est, t, 30.0);
+    NetworkEpoch& e = fx.newEpoch(t);
+    e.clock.dt = 30.0;
+    networkCarryDecide(fx.run(), e);
     EXPECT_EQ(ctx.carry.prev_carry[0].fold.disposition, CarryDisposition::Anchored);
     EXPECT_EQ(ctx.carry.prev_carry[1].fold.disposition, CarryDisposition::Parked);
     EXPECT_EQ(ctx.carry.clk_anchor.sat["G01"].t_last, before.t_last);

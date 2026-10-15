@@ -38,6 +38,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch the seam's epoch form takes
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -437,11 +438,11 @@ TEST(HandoverStransformConfig, BeforeRowsNeedsTheTransformAndRefusesBrdcRts) {
 struct PreviewBed {
     Loaded L;
     fs::path trace_dir;
-    std::unique_ptr<NetworkRunTraces> traces;
-    std::unique_ptr<NetworkRunContext> ctx;
-    std::unique_ptr<NetworkEstimator> est;
+    std::unique_ptr<NetworkTestRun> fx;   ///< The run the seam's epoch form takes (its setup's sat_health is empty).
+    NetworkRunTraces* traces = nullptr;   ///< fx->traces(), opened in trace_dir
+    NetworkRunContext* ctx = nullptr;     ///< fx->ctx()
+    NetworkEstimator* est = nullptr;      ///< fx->est(), renewed by layout()
     std::vector<std::string> registered;
-    const NetworkSbasis::SatHealth health{};
     // The anchor sigma the preview's declaration reads (ctx.knobs.clk_anchor_sigma) is set
     // to the 3.0 m this bed passed as an argument before card NOM3 step EP0.
     explicit PreviewBed(const std::string& tag, bool armed = true)
@@ -453,10 +454,11 @@ struct PreviewBed {
         const auto log = std::make_shared<spdlog::logger>("sts_rows_test", sink);
         trace_dir = fs::temp_directory_path() / ("sts_rows_traces_" + tag);
         fs::create_directories(trace_dir);
-        traces = std::make_unique<NetworkRunTraces>(trace_dir);
+        fx = std::make_unique<NetworkTestRun>(L.cfg, log, trace_dir);
+        traces = &fx->traces();
         traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, log);
-        ctx = std::make_unique<NetworkRunContext>(L.cfg, L.cfg.getNetworkConfig());
+        ctx = &fx->ctx();
         ctx->carry.prev_pivot["G"] = "G01";
         ctx->carry.last_pivot["G"] = "G01";
         ctx->carry.prev_carry = {clk("G02", -2.0, 0.25), clk("G05", -0.75, 0.5),
@@ -470,18 +472,19 @@ struct PreviewBed {
         layout({"G02", "G05", "G32"});
     }
     ~PreviewBed() {
-        traces.reset();
+        traces->closeAll();
         std::error_code ec;
         fs::remove_all(trace_dir, ec);
     }
     void layout(const std::vector<std::string>& sats) {
-        est = std::make_unique<NetworkEstimator>();
+        est = &fx->renewEstimator();
         registered = sats;
         for (const auto& s : sats) est->registerClock(s);
     }
     void preview() {
-        networkHandoverStransformBeforeRows(*ctx, L.cfg, nullptr, *traces, health, *est,
-                                            GnssTime{2313, 276150.0}, registered);
+        NetworkEpoch& e = fx->newEpoch(GnssTime{2313, 276150.0});
+        e.columns.registered_clock_sats = registered;
+        networkHandoverStransformBeforeRows(fx->run(), e);
     }
     const CoupledShared& term(int i) {
         return ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))]

@@ -37,6 +37,7 @@
 #include "filter/NetworkSolPrep.hpp"
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkSolPrep's epoch form takes
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -98,23 +99,28 @@ struct Harness {
     GnssConfig   cfg;
     fs::path     cfg_path;
     fs::path     trace_dir;
-    std::unique_ptr<NetworkRunContext> ctx;
-    std::unique_ptr<NetworkRunTraces>  traces;
-    NetworkSetupResult setup;
-    NetworkEstimator   est;
+    std::unique_ptr<NetworkTestRun> fx;   ///< The run networkSolPrep's epoch form takes.
+    NetworkRunContext*  ctx;              ///< fx->ctx()
+    NetworkRunTraces*   traces;           ///< fx->traces(), opened in trace_dir
+    NetworkSetupResult& setup;            ///< fx->setup()
+    NetworkEstimator&   est;              ///< fx->est()
     Eigen::VectorXd    x_s;
     NetworkSbasis::Plan plan;
     SyncedEpoch        se;
 
     NetworkSolutionEpoch warm_sol;   ///< The unmarked epoch emitted before the marked one.
 
-    explicit Harness(const std::string& tag) {
+    std::unique_ptr<NetworkTestRun> makeRun(const std::string& tag) {
         cfg_path = writeTempConfig(tag);
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, logman));
-        ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
         trace_dir = fs::temp_directory_path() / ("solprep_disc_traces_" + tag);
         fs::create_directories(trace_dir);
-        traces = std::make_unique<NetworkRunTraces>(trace_dir);
+        return std::make_unique<NetworkTestRun>(cfg, nullLogger(), trace_dir);
+    }
+
+    explicit Harness(const std::string& tag)
+        : fx(makeRun(tag)), ctx(&fx->ctx()), traces(&fx->traces()), setup(fx->setup()),
+          est(fx->est()) {
         traces->openAll(cfg, cfg.getNetworkConfig(), cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, nullLogger());
         setup.emitter.emplace(0.05, /*emit_clock_disc=*/true);
@@ -132,21 +138,23 @@ struct Harness {
     ~Harness() {
         std::error_code ec;
         fs::remove(cfg_path, ec);
-        traces.reset();
+        traces->closeAll();
         fs::remove_all(trace_dir, ec);
     }
 
     NetworkSolPrepResult run() {
-        return networkSolPrep(*ctx, cfg, nullLogger(), *traces, setup, se, est, x_s,
-                              plan, /*pl_now_s=*/1000.0, /*datum_changed=*/false,
-                              /*changed_consts=*/{}, /*sigma0_adapt=*/0.0,
-                              /*perconst_active=*/false, /*perconst_publish=*/{},
-                              /*perconst_dec_withhold=*/{}, /*perconst_stats=*/{});
+        // The solve's hand-off as the solve glue leaves it on a plain epoch: the datum
+        // unchanged, no sigma0 adaptation, no per-constellation publication (the defaults).
+        NetworkEpoch& e = fx->newEpoch(se.time);
+        e.solve.x_s = x_s;
+        e.solve.plan = plan;
+        e.clock.pl_now_s = 1000.0;
+        return networkSolPrep(fx->run(), e);
     }
 
     /// Destroy the traces unit (flush + close) and return the events CSV body.
     std::string eventsCsv() {
-        traces.reset();
+        traces->closeAll();
         std::ifstream f(trace_dir / "network_events.csv");
         std::stringstream ss;
         ss << f.rdbuf();

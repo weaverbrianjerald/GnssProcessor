@@ -324,6 +324,11 @@ if(MSVC)
     # limit (C1128).
     set_source_files_properties(tests/test_network_detached_fold.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_pb_hold_block.cpp and tests/test_pb_hold_smoothed.cpp (card NOM3 step EP2): the
+    # run fixture (tests/support/NetworkTestRun.hpp) brings the run's engines into the
+    # translation unit and crosses the Debug section limit (C1128).
+    set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
 if(WIN32)

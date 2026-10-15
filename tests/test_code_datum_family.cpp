@@ -89,6 +89,7 @@
 #include "filter/NetworkSolPrep.hpp"
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkSolPrep's epoch form takes
 #include "math/TimeUtils.hpp"                   // continuousGpsSeconds (the READMIT clock)
 #include "products/NetworkProductEmitter.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -355,20 +356,25 @@ struct EmitHarness {
     LogManager   logman;
     GnssConfig   cfg;
     fs::path     trace_dir;
-    std::unique_ptr<NetworkRunContext> ctx;
-    std::unique_ptr<NetworkRunTraces>  traces;
-    NetworkSetupResult  setup;
-    NetworkEstimator    est;
+    std::unique_ptr<NetworkTestRun> fx;   ///< The run networkSolPrep's epoch form takes.
+    NetworkRunContext*  ctx;              ///< fx->ctx()
+    NetworkRunTraces*   traces;           ///< fx->traces(), opened in trace_dir
+    NetworkSetupResult& setup;            ///< fx->setup()
+    NetworkEstimator&   est;              ///< fx->est()
     Eigen::VectorXd     x_s;
     NetworkSbasis::Plan plan;
     SyncedEpoch         se;
 
-    explicit EmitHarness(const std::string& tag) {
+    std::unique_ptr<NetworkTestRun> makeRun(const std::string& tag) {
         EXPECT_TRUE(loadWith("", cfg, logman, "emit_" + tag));
-        ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
         trace_dir = fs::temp_directory_path() / ("gfc_emit_traces_" + tag);
         fs::create_directories(trace_dir);
-        traces = std::make_unique<NetworkRunTraces>(trace_dir);
+        return std::make_unique<NetworkTestRun>(cfg, nullLogger(), trace_dir);
+    }
+
+    explicit EmitHarness(const std::string& tag)
+        : fx(makeRun(tag)), ctx(&fx->ctx()), traces(&fx->traces()), setup(fx->setup()),
+          est(fx->est()) {
         traces->openAll(cfg, cfg.getNetworkConfig(), cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, nullLogger());
         setup.emitter.emplace(0.05, /*emit_clock_disc=*/true);
@@ -382,21 +388,23 @@ struct EmitHarness {
 
     ~EmitHarness() {
         std::error_code ec;
-        traces.reset();
+        traces->closeAll();
         fs::remove_all(trace_dir, ec);
     }
 
     NetworkSolPrepResult run() {
-        return networkSolPrep(*ctx, cfg, nullLogger(), *traces, setup, se, est, x_s,
-                              plan, /*pl_now_s=*/1000.0, /*datum_changed=*/false,
-                              /*changed_consts=*/{}, /*sigma0_adapt=*/0.0,
-                              /*perconst_active=*/false, /*perconst_publish=*/{},
-                              /*perconst_dec_withhold=*/{}, /*perconst_stats=*/{});
+        // The solve's hand-off as the solve glue leaves it on a plain epoch: the datum
+        // unchanged, no sigma0 adaptation, no per-constellation publication (the defaults).
+        NetworkEpoch& e = fx->newEpoch(se.time);
+        e.solve.x_s = x_s;
+        e.solve.plan = plan;
+        e.clock.pl_now_s = 1000.0;
+        return networkSolPrep(fx->run(), e);
     }
 
     /// Destroy the traces unit (flush + close) and return the events CSV body.
     std::string eventsCsv() {
-        traces.reset();
+        traces->closeAll();
         std::ifstream f(trace_dir / "network_events.csv");
         std::stringstream ss;
         ss << f.rdbuf();
@@ -2340,7 +2348,13 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
                          "    \"code_family_birth_prior_sigma_m\": 0.1,\n"
                          "    \"readmit_seed_horizon_s\": 3900.0,\n",
                          cfg, logman, "readmit_once"));
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    NetworkTestRun fx(cfg);   // networkCarryDecide's epoch form reads the run's estimator
+    NetworkRunContext& ctx = fx.ctx();
+    const auto decide = [&](const GnssTime& t, double dt) {
+        NetworkEpoch& e = fx.newEpoch(t);
+        e.clock.dt = dt;
+        networkCarryDecide(fx.run(), e);
+    };
     ASSERT_TRUE(ctx.knobs.cb_time_linked);
     ASSERT_TRUE(ctx.knobs.readmit_seed_cb);
     ASSERT_GT(ctx.knobs.readmit_seed_horizon_s, 0.0);
@@ -2384,25 +2398,25 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
 
     // t1: every column registered; kept.
     const double t1 = 259200.0;
-    NetworkEstimator e1;
+    NetworkEstimator& e1 = fx.renewEstimator();
     const auto keys_all = registerRoster(e1, kTwoFamily);
     keep(e1, keys_all, t1);
     ASSERT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 1u);
 
     // t2: E03's C1C column leaves the layout; kept, so READMIT parks its carry and the
     // previous-value map drops it.
-    NetworkEstimator e2;
+    NetworkEstimator& e2 = fx.renewEstimator();
     const auto keys_gone = registerRoster(e2, gone_roster);
-    networkCarryDecide(ctx, e2, at(t1 + 30.0), 30.0);
+    decide(at(t1 + 30.0), 30.0);
     keep(e2, keys_gone, t1 + 30.0);
     EXPECT_EQ(ctx.counters.n_readmit_parked, 1);
     EXPECT_EQ(ctx.carry.code_bias_prev_.at("E|C1C").count("E03"), 0u);
 
     // t3 = t2 + 20 min: back, seeded from the park.  No birth; a second row without the carry.
-    NetworkEstimator e3;
+    NetworkEstimator& e3 = fx.renewEstimator();
     registerRoster(e3, kTwoFamily);
     const double t3 = t1 + 30.0 + 1200.0;
-    networkCarryDecide(ctx, e3, at(t3), 1200.0);
+    decide(at(t3), 1200.0);
     EXPECT_EQ(networkCodeBiasCarryMap(ctx).at({"E03", "C1C"}), Fold::Seeded);
     const auto r3 = build(e3, keys_all, true);
     EXPECT_EQ(rowsOn(r3, "E03"), 0);
@@ -2412,18 +2426,18 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
     EXPECT_EQ(rowsOn(build(e3, keys_all, false), "E03"), 1);   // the map alone: a double fold
 
     // The same return past the horizon (t1 + 5000 s since the park): parked, a birth.
-    networkCarryDecide(ctx, e3, at(t1 + 5000.0), 3770.0);
+    decide(at(t1 + 5000.0), 3770.0);
     EXPECT_EQ(networkCodeBiasCarryMap(ctx).count({"E03", "C1C"}), 0u);
     const auto r3b = build(e3, keys_all, true);
     EXPECT_EQ(rowsOn(r3b, "E03"), 1);
     EXPECT_TRUE(r3b.family_birth_skips.empty());
 
     // Keep the seeded epoch: the column is a veteran of the map again, and nothing folds.
-    networkCarryDecide(ctx, e3, at(t3), 1200.0);
+    decide(at(t3), 1200.0);
     keep(e3, keys_all, t3);
-    NetworkEstimator e4;
+    NetworkEstimator& e4 = fx.renewEstimator();
     registerRoster(e4, kTwoFamily);
-    networkCarryDecide(ctx, e4, at(t3 + 30.0), 30.0);
+    decide(at(t3 + 30.0), 30.0);
     const auto r4 = build(e4, keys_all, true);
     EXPECT_EQ(r4.family_birth_H.rows(), 0);
     EXPECT_TRUE(r4.family_birth_skips.empty());
@@ -2431,9 +2445,9 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
     // A clock-monitor reinit of E01 at the next stash: its carry is loosened, and its
     // columns are born again (one row, flagged loosened), though the map has their values.
     keep(e4, keys_all, t3 + 30.0, {"E01"});
-    NetworkEstimator e5;
+    NetworkEstimator& e5 = fx.renewEstimator();
     registerRoster(e5, kTwoFamily);
-    networkCarryDecide(ctx, e5, at(t3 + 60.0), 30.0);
+    decide(at(t3 + 60.0), 30.0);
     const auto r5 = build(e5, keys_all, true);
     ASSERT_EQ(r5.family_birth_priors.size(), 1u);
     EXPECT_EQ(r5.family_birth_priors[0].sat, "E01");
