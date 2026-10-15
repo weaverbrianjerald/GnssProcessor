@@ -63,7 +63,9 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
                   "carried at run end (RW q={} m²/s; harvested outside the phase-leveling "
                   "gate — SPEC_rx_cb_carry){}.",
                   ctx.counters.rx_cb_injected_total, ctx.counters.rx_cb_innov_skips_total,
-                  ctx.counters.rx_cb_harvested_total, ctx.carry.rx_cb_carry.size(),
+                  ctx.counters.rx_cb_harvested_total,
+                  net::present(ctx.entities.stations, &net::StationState::signals,
+                               &net::StationSignalState::rx_cb),
                   config_.networkRxCbCarryQ(), nothing_tail);
         // RXCB-IN-BLOCK (card CTU section 14): the in-block route's own counts.  Zero
         // block columns on an armed run means the knob never acted (invariant #4).

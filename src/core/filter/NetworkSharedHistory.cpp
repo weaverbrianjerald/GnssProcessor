@@ -31,22 +31,18 @@ LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Han
             const auto it = c.local_carry.find(std::make_tuple(hd.sta, hd.sat, hd.sig));
             return it != c.local_carry.end() ? &it->second : nullptr;
         }
-        case SharedHistoryMap::Zwd: {
-            const auto it = c.zwd_carry.find(hd.sta);
-            return it != c.zwd_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::Zwd:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::zwd);
         case SharedHistoryMap::Iono: {
             const auto it = c.iono_blk_carry.find(std::make_pair(hd.sta, hd.sat));
             return it != c.iono_blk_carry.end() ? &it->second : nullptr;
         }
-        case SharedHistoryMap::RxClk: {
-            const auto it = c.rx_clk_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.rx_clk_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::RxCb: {
-            const auto it = c.rx_cb_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.rx_cb_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::RxClk:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
+                            hd.sat, &net::StationSignalState::rx_clk);
+        case SharedHistoryMap::RxCb:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
+                            hd.sat, &net::StationSignalState::rx_cb);
         case SharedHistoryMap::Pc: {
             const auto it = c.pc_carry.find(std::make_pair(hd.sta, hd.sat));
             return it != c.pc_carry.end() ? &it->second : nullptr;
@@ -60,10 +56,15 @@ template <typename Fn>
 void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
     const auto& c = ctx.carry;
     for (const auto& kv : c.local_carry) fn(kv.second);
-    for (const auto& kv : c.zwd_carry) fn(kv.second);
+    net::forEach(ctx.entities.stations, &net::StationState::zwd,
+                 [&](const StationId&, const LocalCarry& lc) { fn(lc); });
     for (const auto& kv : c.iono_blk_carry) fn(kv.second);
-    for (const auto& kv : c.rx_clk_carry) fn(kv.second);
-    for (const auto& kv : c.rx_cb_carry) fn(kv.second);
+    net::forEach(ctx.entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::rx_clk,
+                 [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::rx_cb,
+                 [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
     for (const auto& kv : c.pc_carry) fn(kv.second);
 }
 

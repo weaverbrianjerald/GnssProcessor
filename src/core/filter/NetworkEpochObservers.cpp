@@ -11,6 +11,7 @@
 
 #include "filter/NetworkEpochObservers.hpp"
 
+#include "app/NetworkEntities.hpp"
 #include "filter/NetworkAmbStateTrace.hpp"
 #include "filter/NetworkBlockBaarda.hpp"
 #include "filter/NetworkChannelAll.hpp"
@@ -83,6 +84,8 @@ const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEp
     // ---- StashTail: after every carry-state row source ----
     {"networkAmbStateTrace", "carry-state trace drain (RF-1 7.4)",
      "filter/NetworkAmbStateTrace.cpp", Slot::StashTail, &networkAmbStateTrace},
+    {"networkEntitiesReachSample", "the entity tables' reach sampler (card NOM step N4)",
+     "app/NetworkEntities.cpp", Slot::StashTail, &net::networkEntitiesReachSample},
 }};
 
 void networkObserveEpoch(NetworkRun& run, const NetworkEpoch& ep, NetworkObserverSlot slot) {

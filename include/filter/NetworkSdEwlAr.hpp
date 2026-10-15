@@ -127,6 +127,7 @@
 #include <vector>
 #include <cstdint>
 #include "filter/NetworkRunTypes.hpp"
+#include "app/NetworkEntities.hpp"   // net::StationTable (card NOM step N4a)
 #include "filter/NetworkContributions.hpp"
 #include "math/TimeUtils.hpp"
 #include <Eigen/Dense>
@@ -422,9 +423,9 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * groups keep both halves exact and make "a fixed row has zero local coefficients"
  * true of the whitened block as well as of H.
  *
- * @param fix  The published integers for this epoch, keyed by (station index,
- *             constellation) and then satellite; this station's entries are read at
- *             @p station_index.  @c nullptr, @c network.sd_ewl.fix_enable off, or no
+ * @param fix  The station table holding the published integers for this epoch
+ *             (@c StationState::sd_ewl_fix: constellation, then satellite); this
+ *             station's row is read at @p station_index.  @c nullptr, @c network.sd_ewl.fix_enable off, or no
  *             usable entry for an arc => that row takes the increment-1 float path.
  * @param station_index  This station's index into @p fix.
  *
@@ -437,7 +438,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
                             Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                             Eigen::VectorXd& y, std::vector<RowTag>& tags,
                             std::vector<std::string>& trace_rows,
-                            const std::map<std::pair<std::size_t, char>, std::map<std::string, SdEwlFix>>* fix,
+                            const net::StationTable* fix,
                             std::size_t station_index);
 
 // ---- End of the PASS B station steps, declarations (card NOM3 step PB1b) ----

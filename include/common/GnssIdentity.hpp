@@ -692,6 +692,48 @@ namespace GnssProcessor {
         return x.b < y.b;
     }
 
+    /**
+     * @brief A signal of one satellite: (satellite, signal), such as G05 "1C" (card NOM
+     *        step N4.0).
+     *
+     * Replaces the composite keys of the per-satellite-signal state: the strings
+     * "G05|L1C" and "G05_L1C" and the (satellite, code) pairs.  Ordered by (satellite,
+     * signal), which is the string order of each of those keys when every key of one
+     * container uses observation codes of one type (within a satellite the constellation
+     * is fixed, so the signal order is the order of the digit and the attribute).  A
+     * container that mixes code and phase codes keys by @ref ObservableId instead.
+     */
+    struct SatSignalId {
+        SatId    sat{};     ///< The satellite.
+        SignalId signal{};  ///< The tracking signal (of the satellite's constellation).
+    };
+    /**
+     * @brief Equality of two satellite signals.
+     * @param a First satellite signal.
+     * @param b Second satellite signal.
+     * @return True when the satellite and the signal are equal.
+     */
+    inline bool operator==(const SatSignalId& a, const SatSignalId& b) {
+        return a.sat == b.sat && a.signal == b.signal;
+    }
+    /**
+     * @brief Inequality of two satellite signals.
+     * @param a First satellite signal.
+     * @param b Second satellite signal.
+     * @return @c !(a == b).
+     */
+    inline bool operator!=(const SatSignalId& a, const SatSignalId& b) { return !(a == b); }
+    /**
+     * @brief Order of two satellite signals: (satellite, signal).
+     * @param a First satellite signal.
+     * @param b Second satellite signal.
+     * @return True when @p a orders before @p b.
+     */
+    inline bool operator<(const SatSignalId& a, const SatSignalId& b) {
+        if (a.sat != b.sat) return a.sat < b.sat;
+        return a.signal < b.signal;
+    }
+
     // =======================================================================
     // Station, line of sight, arc
     // =======================================================================

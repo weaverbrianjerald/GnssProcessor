@@ -348,7 +348,7 @@ TEST(NetworkSharedHistoryTest, RegistrationNeedsTheGenerationAndAReferenceAndFol
     stale.shx_coef = {0.0, 0.5, 0.0};
     stale.shx_stash_s = kStash - 30.0;
     ctx.carry.local_carry[std::make_tuple(0, std::string("G02"), std::string("L1C"))] = a;
-    ctx.carry.zwd_carry[1] = z;
+    net::put(ctx.entities.stations, StationId{1}, &net::StationState::zwd) = z;
     ctx.carry.local_carry[std::make_tuple(1, std::string("G02"), std::string("L1C"))] = stale;
 
     NetworkEstimator est;

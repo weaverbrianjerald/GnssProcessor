@@ -168,6 +168,40 @@ TEST(GnssIdentityTest, LosAndArcOrderMatchTheTupleKeysTheyReplace) {
     }
 }
 
+TEST(GnssIdentityTest, SatSignalIdOrderMatchesTheCompositeKeysItReplaces) {
+    // SatSignalId (card NOM step N4.0) replaces the "sat|code" and "sat_code" strings and
+    // the (sat, code) pairs; every key of one container carries codes of one type.
+    std::vector<SatSignalId> ids;
+    std::vector<std::pair<std::string, std::string>> pairs;
+    std::vector<std::string> bars, unders;
+    for (System s : {System::GPS, System::Galileo, System::BeiDou, System::GLONASS})
+        for (int prn : {1, 5, 10, 33})
+            for (const SignalId& sig : classifiedSignals(s)) {
+                const SatId sat{s, prn};
+                const std::string code = sig.obsCode(ObsType::Phase);
+                ids.push_back(SatSignalId{sat, sig});
+                pairs.emplace_back(sat.str(), code);
+                bars.push_back(sat.str() + "|" + code);
+                unders.push_back(sat.str() + "_" + code);
+            }
+    shuffle(ids);
+    std::sort(ids.begin(), ids.end());
+    std::sort(pairs.begin(), pairs.end());
+    std::sort(bars.begin(), bars.end());
+    std::sort(unders.begin(), unders.end());
+    ASSERT_EQ(ids.size(), pairs.size());
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        const std::string sat = ids[i].sat.str();
+        const std::string code = ids[i].signal.obsCode(ObsType::Phase);
+        EXPECT_EQ(sat, pairs[i].first);
+        EXPECT_EQ(code, pairs[i].second);
+        EXPECT_EQ(sat + "|" + code, bars[i]);
+        EXPECT_EQ(sat + "_" + code, unders[i]);
+    }
+    EXPECT_EQ(SatSignalId{ids.front()}, ids.front());
+    EXPECT_NE(ids.front(), ids.back());
+}
+
 // ---------------------------------------------------------------------------
 // Parse and render
 // ---------------------------------------------------------------------------

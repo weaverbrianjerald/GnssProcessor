@@ -525,7 +525,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * @c network.gross_los_bound, holds) @c ctx.carry.local_carry entries and marks
  * StateManager ambiguities pending-reseed for every declared LOS, and erases (or
  * holds) @c ctx.carry.iono_carry / @c iono_blk_carry for it.  The decision
- * rewrites @c ctx.carry.gl_state (and @c gl_sta_state, @c gl2_sat_down), which
+ * rewrites @c ctx.carry.gl_state (and the stations' @c gross_los, @c gl2_sat_down), which
  * the next epoch's assembly reads through @c NetStation::gl_code_sigma_scale.
  * The response must therefore run after the carry harvest and before the epoch
  * stash tail; the caller places the @c Full or @c Act call immediately after
@@ -580,11 +580,11 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep,
  * operations.
  *
  * Idempotent and cheap: it rebuilds every map from @c ctx.carry.gl_state (the
- * declared lines of sight) and @c ctx.carry.gl_sta_state (the declared stations,
+ * declared lines of sight) and @c ctx.entities.stations (@c gross_los) (the declared stations,
  * one entry per satellite last screened there), so the work is O(number of
  * currently declared lines of sight).
  *
- * @param ctx      Run context (reads @c carry.gl_state, @c carry.gl_sta_state and @c knobs).
+ * @param ctx      Run context (reads @c carry.gl_state, @c entities.stations (@c gross_los) and @c knobs).
  * @param stations [in/out] each station's @c gl_code_sigma_scale.
  */
 void networkGrossLosPublishScales(NetworkRunContext& ctx,

@@ -2066,7 +2066,50 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 // components and spanning forest now come from the module, against the whole frozen function.
 // =====================================================================================
 
-// The frozen election compiles against the real run context: nothing in it is stood in.
+/// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
+/// from NetworkCarryState into the station table (app/NetworkEntities.hpp).  The frozen body
+/// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
+/// at exit, and around the one walker call that reads the tables.
+struct FrozenStationMaps {
+    NetworkRunContext& ctx;
+    std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
+    std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
+    explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
+    ~FrozenStationMaps() { store(); }
+    FrozenStationMaps(const FrozenStationMaps&) = delete;
+    FrozenStationMaps& operator=(const FrozenStationMaps&) = delete;
+    void load() {
+        eq34_rx_parent.clear();
+        rpb_carry.clear();
+        const net::NetworkEntities& e = ctx.entities;
+        net::byStationName(e.stations, e.names, [&](const StationId& id, const net::StationState& row) {
+            for (const auto& [family, cell] : row.signals)
+                if (cell.eq34_rx_parent)
+                    eq34_rx_parent[e.names.names[id.index] + "|" + family] = *cell.eq34_rx_parent;
+        });
+        net::forEach(e.stations, &net::StationState::signals, &net::StationSignalState::rpb,
+                     [&](const StationId& id, const std::string& key, const LocalCarry& lc) {
+                         rpb_carry[{id.index, key}] = lc;
+                     });
+    }
+    void store() {
+        net::NetworkEntities& e = ctx.entities;
+        net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::eq34_rx_parent);
+        net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::rpb);
+        for (const auto& [rxkey, sat] : eq34_rx_parent) {
+            const auto p1 = rxkey.rfind('|', rxkey.rfind('|') - 1);
+            net::put(e.stations, *net::stationOfName(e, rxkey.substr(0, p1)),
+                     &net::StationState::signals,
+                     rxkey.substr(p1 + 1), &net::StationSignalState::eq34_rx_parent) = sat;
+        }
+        for (const auto& [key, lc] : rpb_carry)
+            net::put(e.stations, StationId{key.first}, &net::StationState::signals, key.second,
+                     &net::StationSignalState::rpb) = lc;
+    }
+};
+
+// The frozen election compiles against the real run context: nothing in it is stood in but the
+// station maps of FrozenStationMaps (card NOM step N4a).
 namespace frozen_eq34 {
 // ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
 void networkElectChainDatum(NetworkRunContext& ctx,
@@ -2082,7 +2125,8 @@ auto& prev_carry = ctx.carry.prev_carry;
 auto& anchor_incumbent = ctx.carry.anchor_incumbent;
 auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
 auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-auto& eq34_rx_parent = ctx.carry.eq34_rx_parent;
+FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
+auto& eq34_rx_parent = station_maps.eq34_rx_parent;
 auto& eq34_sat_root = ctx.carry.eq34_sat_root;
 auto& eq34_prev_el = ctx.carry.eq34_prev_el;
 auto& eq34_reref_total = ctx.carry.eq34_reref_total;
@@ -2095,8 +2139,7 @@ auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
 auto& eq34_prev_target = ctx.carry.eq34_prev_target;
 auto& eq34_reref = ctx.carry.eq34_reref;
 auto& local_carry = ctx.carry.local_carry;
-auto& rpb_carry = ctx.carry.rpb_carry;
-auto& zwd_carry = ctx.carry.zwd_carry;
+auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
@@ -2920,8 +2963,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+        station_maps.store();   // card NOM step N4a shim, not in the frozen source
+        eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
+        station_maps.load();    // card NOM step N4a shim
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
@@ -3167,6 +3212,10 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
         f(a.carry);
         f(b.carry);
     };
+    const auto bothEnt = [&](const std::function<void(net::NetworkEntities&)>& f) {
+        f(a.entities);
+        f(b.entities);
+    };
     for (std::size_t i = 0; i < w.names.size(); ++i) {
         for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
             const auto parts = StateKeys::parseAmbiguityKey(amb);
@@ -3200,12 +3249,18 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                 LocalCarry lc{};
                 lc.value_abs = std::uniform_real_distribution<double>(-0.5, 0.5)(rng);
                 lc.var       = 1e-4;
-                both([&](NetworkCarryState& c) { c.rpb_carry[{static_cast<int>(i), rpb_key}] = lc; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                             rpb_key, &net::StationSignalState::rpb) = lc;
+                });
             }
             if (chance(rng, 0.04) && !w.pool.empty()) {
                 const std::string sat = w.pool[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.pool.size()) - 1))];
                 const std::string rxkey = w.names[i] + "|" + constellationKey(sys) + "|" + sig;
-                both([&](NetworkCarryState& c) { c.eq34_rx_parent[rxkey] = sat; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                             constellationKey(sys) + "|" + sig, &net::StationSignalState::eq34_rx_parent) = sat;
+                });
             }
         }
     }
@@ -3233,7 +3288,19 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (a.anchor_incumbent != b.anchor_incumbent) return "anchor_incumbent";
     if (a.this_epoch_anchor != b.this_epoch_anchor) return "this_epoch_anchor";
     if (a.eq34_datum_rx != b.eq34_datum_rx) return "eq34_datum_rx (best_datum_rx)";
-    if (a.eq34_rx_parent != b.eq34_rx_parent) return "eq34_rx_parent";
+    const auto cells = [](const NetworkRunContext& c, auto field) {
+        std::vector<std::tuple<int, std::string, double, std::string>> out;
+        net::forEach(c.entities.stations, &net::StationState::signals, field,
+                     [&](const StationId& id, const std::string& k, const auto& v) {
+                         if constexpr (std::is_same_v<std::decay_t<decltype(v)>, std::string>)
+                             out.emplace_back(id.index, k, 0.0, v);
+                         else
+                             out.emplace_back(id.index, k, v.value_abs, std::string());
+                     });
+        return out;
+    };
+    if (cells(f, &net::StationSignalState::eq34_rx_parent)
+        != cells(l, &net::StationSignalState::eq34_rx_parent)) return "eq34_rx_parent";
     if (a.eq34_sat_root != b.eq34_sat_root) return "eq34_sat_root";
     if (a.eq34_prev_el != b.eq34_prev_el) return "eq34_prev_el";
     if (a.eq34_reref != b.eq34_reref) return "eq34_reref";
@@ -3250,9 +3317,8 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (a.local_carry.size() != b.local_carry.size()) return "local_carry size";
     for (auto ia = a.local_carry.begin(), ib = b.local_carry.begin(); ia != a.local_carry.end(); ++ia, ++ib)
         if (ia->first != ib->first || ia->second.value_abs != ib->second.value_abs) return "local_carry entry";
-    if (a.rpb_carry.size() != b.rpb_carry.size()) return "rpb_carry size";
-    for (auto ia = a.rpb_carry.begin(), ib = b.rpb_carry.begin(); ia != a.rpb_carry.end(); ++ia, ++ib)
-        if (ia->first != ib->first || ia->second.value_abs != ib->second.value_abs) return "rpb_carry entry";
+    if (cells(f, &net::StationSignalState::rpb) != cells(l, &net::StationSignalState::rpb))
+        return "rpb_carry entry";
     const auto& ca = f.counters;
     const auto& cb = l.counters;
     if (ca.eq34_slip_deseeded != cb.eq34_slip_deseeded) return "eq34_slip_deseeded";
@@ -3332,6 +3398,8 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         ASSERT_TRUE(cfg) << "lineage " << lineage;
         NetworkRunContext ctx_f(*cfg, cfg->getNetworkConfig());
         NetworkRunContext ctx_l(*cfg, cfg->getNetworkConfig());
+        ctx_f.entities.names.assign(w.names);   // the name keys of the station table (N4a)
+        ctx_l.entities.names.assign(w.names);
         ASSERT_EQ(ctx_l.knobs.eq34_longevity, kn.longevity);
         ASSERT_EQ(ctx_l.knobs.eq34_slip_aware, kn.slip_aware);
         ASSERT_EQ(ctx_l.knobs.eq34_extend_only, kn.extend_only);

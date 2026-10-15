@@ -1099,7 +1099,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     // phase_leveling_local_block; this is the live half of the same gate.
     const bool   zwd_blk_on    = ctx.knobs.zwd_blk_on;
     auto& local_carry = ctx.carry.local_carry;
-    auto& zwd_carry = ctx.carry.zwd_carry;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // zwd: read-only in the parallel build
     // ---- End of the bindings ----
 
     if (!(legacy_local_inject && do_amb_carry)) return;
@@ -1184,16 +1184,17 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                                 static_cast<Eigen::Index>(zhit->second);
                             R.pl_zwd_present = true;   // record for the post-solve stash
                             R.pl_zwd = PlZwd{zcol, x_lin(ztidx)};
-                            const auto zit = zwd_carry.find(static_cast<int>(i));
-                            if (zit != zwd_carry.end()) {
-                                const double zgap = pl_now_s - zit->second.last_seen_s;
+                            const auto* zit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                                       &net::StationState::zwd);
+                            if (zit != nullptr) {
+                                const double zgap = pl_now_s - zit->last_seen_s;
                                 if (zgap <= pl_max_gap_s) {
                                     const double zvar_eff =
-                                        zit->second.var
+                                        zit->var
                                         + zwd_q_eff * std::max(0.0, zgap);
                                     if (zvar_eff > 0.0) {
                                         bc.push_back(LocalBlockCol{
-                                            zcol, x_lin(ztidx), &zit->second,
+                                            zcol, x_lin(ztidx), &*zit,
                                             zvar_eff, std::max(0.0, zgap),
                                             /*vce_fac=*/1.0, /*is_zwd=*/true});
                                         zwd_pushed = true;

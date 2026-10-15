@@ -82,7 +82,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
     auto& local_carry = ctx.carry.local_carry;
-    auto& zwd_carry = ctx.carry.zwd_carry;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
     auto& ura_retro_sats = ctx.carry.ura_retro_sats;
@@ -304,15 +304,13 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         local_carry[key] = makeRestoredLocalCarry(
                             l.value_abs, l.var, l.last_seen_s, l.var_first);
                     }
-                    zwd_carry.clear();
-                    for (const auto& [idx, l] : snap.zwd_carry)
-                        // Same restored-entry convention as the L rows above.  The ZWD
-                        // carry has no age reader and its harvest replaces the whole entry
-                        // (so the sentinel does not survive the first stash), but a
-                        // restored Z row is a restored entry and is marked as one, so an
-                        // age gate added here later inherits §15.4.
-                        zwd_carry[idx] = makeRestoredLocalCarry(l.value_abs, l.var,
-                                                                l.last_seen_s);
+                    // The Z rows (the station table's zwd, card NOM step N4a).  Same
+                    // restored-entry convention as the L rows above.  The ZWD carry has no
+                    // age reader and its harvest replaces the whole entry (so the sentinel
+                    // does not survive the first stash), but a restored Z row is a restored
+                    // entry and is marked as one, so an age gate added here later inherits
+                    // §15.4.
+                    net::recordFromSnapshot("Z", snap, ctx);
                     // Seam-scoped ZWD re-seed (SPEC_synthetic_minimum_network §17 finding
                     // 3): arm the post-resume inject window.  This is the re-coupling edge
                     // (invariant #7): the restored h-vintage ZWD posteriors reconnect to
@@ -322,7 +320,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // The window uses the ordinary B9 fold, so per-entry staleness
                     // (pl_max_gap_s) and the carry_warm gate still apply per epoch.
                     if (ctx.knobs.zwd_seam_on) {
-                        if (!zwd_carry.empty()) {
+                        if (net::present(sta_rows, &net::StationState::zwd) != 0) {
                             ctx.carry.zwd_seam_ep_left = ctx.knobs.zwd_seam_epochs;
                             // The window's effective q is its own (network.zwd_seam_reseed_q)
                             // when armed, else network.zwd_carry_q (RS-10b, §21.21).  The log
@@ -333,7 +331,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "restored Z row(s) will fold as B9-style priors for the next "
                                       "{} emitted epoch(s) (RW q {:.3e} m²/s over the true gap, "
                                       "{}), then retire.",
-                                      zwd_carry.size(), ctx.knobs.zwd_seam_epochs,
+                                      net::present(sta_rows,
+                                                   &net::StationState::zwd), ctx.knobs.zwd_seam_epochs,
                                       ctx.knobs.zwdQEff(/*seam_live=*/true),
                                       ctx.knobs.zwd_seam_q > 0.0
                                           ? "network.zwd_seam_reseed_q — the seam's own"
@@ -473,7 +472,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             || !snap.code_bias_ifpin_pair.empty();
                         if (have_eq34) {
                             ctx.carry.eq34_datum_rx  = snap.eq34_datum_rx;
-                            ctx.carry.eq34_rx_parent = snap.eq34_rx_parent;
+                            net::recordFromSnapshot("EQP", snap, ctx);   // the station signals (N4a)
                             ctx.carry.eq34_sat_root  = snap.eq34_sat_root;
                             ctx.carry.eq34_prev_target.clear();
                             for (const auto& [key, tgt] : snap.eq34_prev_target)
@@ -650,13 +649,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // only value_abs / var / last_seen_s, so the sentinel has no
                             // effect on any current reader; it keeps the convention for a
                             // later age gate.
-                            ctx.carry.rx_cb_carry.clear();
-                            for (const auto& [key, l] : snap.rx_cb_carry)
-                                ctx.carry.rx_cb_carry[{key.first, key.second}] =
-                                    makeRestoredLocalCarry(l.value_abs, l.var,
-                                                           l.last_seen_s);
+                            net::recordFromSnapshot("RC", snap, ctx);   // the station signals (N4a)
                             ctx.counters.n_resume_station_rxcb =
-                                static_cast<long long>(ctx.carry.rx_cb_carry.size());
+                                static_cast<long long>(net::present(
+                                    ctx.entities.stations, &net::StationState::signals,
+                                    &net::StationSignalState::rx_cb));
                         } else {
                             log->warn("Network (RS-6 station restore): ARMED but {} — the "
                                       "rx-CB half is INERT; every receiver code-bias prior "
@@ -721,10 +718,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // then changes, the eq34 L2X component loses its datum receiver, and
                     // the L2X phase-bias families step at the seam (§21.16).
                     if (ctx.knobs.resume_signal_canon_restore) {
-                        ctx.carry.resume_canon_rows.clear();
+                        net::dropAll(ctx.entities.stations, &net::StationState::resume_canon_rows);
                         long long staged = 0;
                         for (const auto& [idx, rows] : snap.canonical_signals) {
-                            auto& dst = ctx.carry.resume_canon_rows[idx];
+                            auto& dst = net::put(ctx.entities.stations, StationId{idx},
+                                                 &net::StationState::resume_canon_rows);
                             for (const auto& c : rows) {
                                 dst.push_back(PppModel::CanonicalSignal{
                                     c.constellation, c.band, c.obs_type, c.signal});
@@ -746,7 +744,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "snapshot; applied to the station models before the "
                                       "first epoch.",
                                       staged, staged == 1 ? "y" : "ies",
-                                      ctx.carry.resume_canon_rows.size());
+                                      net::present(ctx.entities.stations,
+                                                   &net::StationState::resume_canon_rows));
                     }
                     // Code-bias linearization-point restore (RS-9;
                     // network.resume_rxcb_lin_restore, SPEC_event_harness §21.18): the
@@ -769,11 +768,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // armed knob here always sits under a restored carry.
                     if (ctx.knobs.resume_rxcb_lin_restore) {
                         if (!snap.rx_cb_lin.empty()) {
-                            ctx.carry.rxcb_lin_restore.clear();
+                            net::dropAll(ctx.entities.stations, &net::StationState::rxcb_lin_restore);
                             for (const auto& [key, xl] : snap.rx_cb_lin)
-                                ctx.carry.rxcb_lin_restore[key.first][key.second] = xl;
+                                net::put(ctx.entities.stations, StationId{key.first},
+                                         &net::StationState::rxcb_lin_restore)[key.second] = xl;
                             ctx.counters.n_resume_rxcb_lin_stations =
-                                static_cast<long long>(ctx.carry.rxcb_lin_restore.size());
+                                static_cast<long long>(
+                                    net::present(ctx.entities.stations,
+                                                 &net::StationState::rxcb_lin_restore));
                             ctx.counters.n_resume_rxcb_lin_entries =
                                 static_cast<long long>(snap.rx_cb_lin.size());
                             log->info("Network (RS-9 rx-CB frame restore): ARMED at the "
@@ -880,9 +882,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 n_terms += static_cast<long long>(ents.size());
                             }
                             for (const auto& [idx, ents] : snap.coupling_zrows) {
-                                const auto it = zwd_carry.find(idx);
-                                if (it == zwd_carry.end()) { ++n_miss; continue; }
-                                rebuild(ents, it->second);
+                                LocalCarry* zc = net::get(sta_rows, StationId{idx},
+                                                          &net::StationState::zwd);
+                                if (zc == nullptr) { ++n_miss; continue; }
+                                rebuild(ents, *zc);
                                 ++n_zrows;
                                 n_terms += static_cast<long long>(ents.size());
                             }
@@ -923,8 +926,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             double t_seed = 0.0;
                             for (const auto& [k2, lc] : local_carry)
                                 t_seed = std::max(t_seed, lc.last_seen_s);
-                            for (const auto& [i2, lc] : zwd_carry)
-                                t_seed = std::max(t_seed, lc.last_seen_s);
+                            net::forEach(sta_rows, &net::StationState::zwd,
+                                         [&](const StationId&, const LocalCarry& lc) {
+                                             t_seed = std::max(t_seed, lc.last_seen_s);
+                                         });
                             t_seed = std::nextafter(t_seed,
                                          std::numeric_limits<double>::infinity());
                             long long n_seed = 0, n_loose = 0;
@@ -1293,7 +1298,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               "n_emitted {} (carry stays warm).",
                               snap_path.string(), snap.wall_utc, first_live_s - snap_s,
                               horizon_s, generation_id, prev_carry.size(), local_carry.size(),
-                              zwd_carry.size(), clock_osc.size(), prev_clk.size(),
+                              net::present(sta_rows,
+                                           &net::StationState::zwd), clock_osc.size(), prev_clk.size(),
                               prev_pivot.size(), last_pivot.size(), ura_retro_sats.size(),
                               ura_refloat_horizon.size(), n_emitted);
                 }
@@ -1317,28 +1323,31 @@ void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& co
     // has already warned once about the snapshot without CN rows; invariant #4 is served
     // there, where the file is in hand, instead of warning twice.
     if (!ctx.knobs.resume_signal_canon_restore) return;
-    auto& staged = ctx.carry.resume_canon_rows;
-    if (staged.empty()) return;
+    net::StationTable& staged = ctx.entities.stations;   // the staged CN rows (resume_canon_rows)
+    if (net::present(staged, &net::StationState::resume_canon_rows) == 0) return;
 
     long long n_sta = 0, n_ent = 0, n_orphan = 0;
-    for (const auto& [idx, rows] : staged) {
+    net::forEach(staged, &net::StationState::resume_canon_rows,
+                 [&](const StationId& sid, const std::vector<PppModel::CanonicalSignal>& rows) {
+        const int idx = sid.index;
         if (idx < 0 || idx >= static_cast<int>(stations.size())
             || !stations[static_cast<std::size_t>(idx)].model) {
             // Unreachable when the fingerprint passes (the roster is one of its terms),
             // so this is a tripwire rather than a handled case, and the drop is counted
             // and logged below rather than skipped without a trace.
             ++n_orphan;
-            continue;
+            return;
         }
         const std::size_t applied =
             stations[static_cast<std::size_t>(idx)].model->restoreCanonicalSignals(rows);
-        if (applied == 0) continue;
+        if (applied == 0) return;
         ++n_sta;
         n_ent += static_cast<long long>(applied);
-    }
+    });
     ctx.counters.n_resume_canon_stations = n_sta;
     ctx.counters.n_resume_canon_entries  = n_ent;
-    staged.clear();   // one-shot: the latch is written, the buffer owns nothing further
+    net::dropAll(staged,
+                 &net::StationState::resume_canon_rows);   // one-shot: the latch is written, the buffer owns nothing further
 
     if (n_orphan > 0)
         log->warn("Network (RS-8 canonical restore): {} snapshot station index(es) name "
@@ -1371,7 +1380,8 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
     // Nothing stashed ⇒ nothing to do: the knob is off, no warm resume happened, or
     // the snapshot carried no RL rows (warned at the resume).  No allocation and no
     // branch taken inside any station, so the run is byte-identical.
-    if (ctx.carry.rxcb_lin_restore.empty()) return;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the staged RL rows (rxcb_lin_restore)
+    if (net::present(sta_rows, &net::StationState::rxcb_lin_restore) == 0) return;
     (void)config_;   // the knob is already resolved into ctx.knobs / the stash
     // One out-slot pair per station, sized once here and never resized: each
     // StateInitializer keeps a raw pointer to its own element and increments it from
@@ -1382,16 +1392,18 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
     // no carry, whose x_lin no gate reads, is not counted as a miss.
     ctx.carry.rxcb_lin_sta_counts.assign(stations.size(), {0LL, 0LL});
     long long installed_sta = 0, installed_entries = 0, orphan = 0;
-    for (const auto& [sidx, keymap] : ctx.carry.rxcb_lin_restore) {
-        if (sidx < 0 || sidx >= static_cast<int>(stations.size())) { ++orphan; continue; }
+    net::forEach(sta_rows, &net::StationState::rxcb_lin_restore,
+                 [&](const StationId& sid, const std::map<std::string, double>& keymap) {
+        const int sidx = sid.index;
+        if (sidx < 0 || sidx >= static_cast<int>(stations.size())) { ++orphan; return; }
         auto& st = stations[static_cast<std::size_t>(sidx)];
-        if (!st.mm) { ++orphan; continue; }
+        if (!st.mm) { ++orphan; return; }
         auto& slot = ctx.carry.rxcb_lin_sta_counts[static_cast<std::size_t>(sidx)];
         st.mm->getStateInitializer().setCodeBiasSeedOverride(keymap, &slot.first,
                                                              &slot.second);
         ++installed_sta;
         installed_entries += static_cast<long long>(keymap.size());
-    }
+    });
     // The roster is inside the warm-resume fingerprint, so an index that does not
     // resolve should be unreachable; if one occurs, the restore for that station is
     // lost, and the warning makes it visible (invariant #4).
@@ -1407,7 +1419,7 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
               installed_sta, installed_entries);
     // Consumed: the map has been handed to the initializers, and re-installing it
     // later would be inert (the latch has closed).  Clearing it here enforces that.
-    ctx.carry.rxcb_lin_restore.clear();
+    net::dropAll(sta_rows, &net::StationState::rxcb_lin_restore);
 }
 
 // ---- Harvest half (card NOM3 step HV1; generated by scripts/nom_hv1_cut.py) ----

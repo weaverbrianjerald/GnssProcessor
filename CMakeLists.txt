@@ -123,6 +123,7 @@ add_library(gnss_core STATIC
     src/core/app/NetworkKnobs.cpp
     src/core/app/NetworkSnapshotFingerprint.cpp
     src/core/app/NetworkWarmResume.cpp
+    src/core/app/NetworkEntities.cpp
     src/core/app/NetworkStateSnapshotWrite.cpp
     src/core/app/NetworkBorderPrior.cpp
     src/core/app/NetworkBorderStash.cpp
@@ -625,6 +626,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_entities_records.cpp
     tests/test_network_epoch_observers.cpp
     tests/test_network_solve_skip.cpp
     tests/test_network_we_choice.cpp

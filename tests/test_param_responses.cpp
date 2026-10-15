@@ -307,14 +307,14 @@ TEST(ParamResponses, RebaseCompleteAddsNoDeclaredKindToday) {
 // The traversal tallies the prev_carry moves per border kind, and the run-scope tally adds
 // them per mechanism (the Stransform rows of the run-end table).
 TEST(ParamResponses, TraversalTalliesBorderMovesPerKind) {
-    NetworkCarryState c;
+    NetworkCarryState c; net::NetworkEntities c_ent;
     c.prev_carry = {prior(SharedParamKind::Clock, "G01", ""),
                     prior(SharedParamKind::Clock, "G02", ""),
                     prior(SharedParamKind::PhaseBias, "G01", "L1C"),
                     prior(SharedParamKind::CodeBias, "G01", "C1C")};
     CarrySiteCounts cc;
     const long long n = forEachCarriedReference(
-        c, carrySiteBit(CarrySite::PrevCarry),
+        c, c_ent, carrySiteBit(CarrySite::PrevCarry),
         [](const CarriedRef& ref) { return ref.kind != SharedParamKind::CodeBias; }, &cc);
     EXPECT_EQ(n, 3);
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::Clock)], 2);

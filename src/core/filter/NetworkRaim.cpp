@@ -433,6 +433,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     // after σ̂₀ because the trim bar is k·σ̂₀.  The seam runs only on accepted
     // epochs, so the EWMA is frozen across withholds.
     if (staf_on) {
+        net::StationTable& sta_rows = ctx.entities.stations;   // the station factor (card NOM step N4a)
         const double now_tow = se.time.tow;
         double dt = (ctx.carry.staf_prev_tow >= 0.0)
                         ? std::max(0.0, now_tow - ctx.carry.staf_prev_tow) : 0.0;
@@ -448,14 +449,15 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             for (const auto& q : staf_rows[i]) if (q.r_std > trim_above) ++n_trim;
             double ewma = f;
             if (f >= 0.0) {
-                auto it = ctx.carry.staf_ewma.find(static_cast<int>(i));
-                if (it == ctx.carry.staf_ewma.end()) {
-                    ctx.carry.staf_ewma[static_cast<int>(i)] = f;   // seed
+                const StationId sid{static_cast<int>(i)};
+                double* it = net::get(sta_rows, sid, &net::StationState::staf_ewma);
+                if (it == nullptr) {
+                    net::put(sta_rows, sid, &net::StationState::staf_ewma) = f;   // seed
                 } else {
-                    it->second += alpha * (f - it->second);
-                    ewma = it->second;
+                    *it += alpha * (f - *it);
+                    ewma = *it;
                 }
-                ++ctx.carry.staf_updates[static_cast<int>(i)];
+                ++net::put(sta_rows, sid, &net::StationState::staf_updates);
             }
             outs.push_back({static_cast<int>(i), f, ewma,
                             staf_rows[i].size(), n_trim});
@@ -464,35 +466,37 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
             ++ctx.counters.n_staf_epochs;
             // The depart statistic: EWMA ratio to the network median of EWMAs.
             std::vector<double> ew;
-            ew.reserve(ctx.carry.staf_ewma.size());
-            for (const auto& kv : ctx.carry.staf_ewma) ew.push_back(kv.second);
+            ew.reserve(net::present(sta_rows, &net::StationState::staf_ewma));
+            net::forEach(sta_rows, &net::StationState::staf_ewma,
+                         [&](const StationId&, double e) { ew.push_back(e); });
             const double med = std::max(1e-12, medianCopy(ew));
             for (const auto& o : outs) {
-                const double ratio = ctx.carry.staf_ewma.count(o.sta)
-                                         ? ctx.carry.staf_ewma.at(o.sta) / med : 0.0;
+                const StationId osid{o.sta};
+                const double* o_ewma = net::get(sta_rows, osid, &net::StationState::staf_ewma);
+                const double ratio = o_ewma ? *o_ewma / med : 0.0;
                 if (ratio > ctx.counters.staf_max_ratio)
                     ctx.counters.staf_max_ratio = ratio;
-                const bool departed = ctx.carry.staf_departed.count(o.sta) > 0;
+                const bool departed = net::has(sta_rows, osid, &net::StationState::staf_departed);
                 // Declaration warm-up: no edge is declared before the EWMA has 10
                 // updates (about 5 min at 30 s), so a new station does not trigger
                 // off its seed value.
-                const bool warm = ctx.carry.staf_updates[o.sta] >= 10;
+                const bool warm = net::put(sta_rows, osid, &net::StationState::staf_updates) >= 10;
                 if (warm && !departed && ratio > ctx.knobs.staf_ratio) {
-                    ctx.carry.staf_departed.insert(o.sta);
+                    net::mark(sta_rows, osid, &net::StationState::staf_departed);
                     ++ctx.counters.n_staf_departs;
                     if (events_trace.is_open())
                         emitEvent("T3_stafactor", "depart", "", stations[o.sta].name,
                                   ratio, ctx.knobs.staf_ratio, "declare",
                                   fmt::format("ewma={:.3f};net_med={:.3f}",
-                                              ctx.carry.staf_ewma.at(o.sta), med));
+                                              *o_ewma, med));
                 } else if (departed && ratio < 0.8 * ctx.knobs.staf_ratio) {
-                    ctx.carry.staf_departed.erase(o.sta);
+                    net::unmark(sta_rows, osid, &net::StationState::staf_departed);
                     ++ctx.counters.n_staf_returns;
                     if (events_trace.is_open())
                         emitEvent("T3_stafactor", "return", "", stations[o.sta].name,
                                   ratio, 0.8 * ctx.knobs.staf_ratio, "declare",
                                   fmt::format("ewma={:.3f};net_med={:.3f}",
-                                              ctx.carry.staf_ewma.at(o.sta), med));
+                                              *o_ewma, med));
                 }
                 if (staf_out.is_open())
                     staf_out << se.time.week << ','
@@ -502,7 +506,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                              << fmt::format("{:.4f}", o.ewma) << ','
                              << fmt::format("{:.4f}", ratio) << ','
                              << o.n << ',' << o.n_trim << ','
-                             << (ctx.carry.staf_departed.count(o.sta) ? 1 : 0)
+                             << (net::has(sta_rows, osid, &net::StationState::staf_departed) ? 1 : 0)
                              << '\n';
             }
         }
@@ -1366,7 +1370,8 @@ static int networkRaimWithholdRunEnd(const NetworkRunEndView& v) {
                   "{} depart(s) / {} return(s) at ratio {:.1f} (run-max ratio {:.2f}); "
                   "EWMA τ {:.0f} s, trim at k·σ̂₀.  DECLARED only — no denominator, no "
                   "gate, no response consumed this statistic.",
-                  ctx.counters.n_staf_epochs, ctx.carry.staf_ewma.size(),
+                  ctx.counters.n_staf_epochs,
+                  net::present(ctx.entities.stations, &net::StationState::staf_ewma),
                   ctx.counters.n_staf_departs, ctx.counters.n_staf_returns,
                   config_.networkRaimStationFactorRatio(),
                   ctx.counters.staf_max_ratio,

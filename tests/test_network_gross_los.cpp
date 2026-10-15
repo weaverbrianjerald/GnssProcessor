@@ -695,7 +695,7 @@ TEST(NetworkGrossLosRf3b, StationTierRespondsOnceForTheWholeStation) {
         LocalCarry{ 1.0, 1e-6, 0.0 };
     ctx.carry.local_carry[std::make_tuple(0, std::string("G22"), std::string("L1C"))] =
         LocalCarry{ 2.0, 1e-6, 0.0 };
-    auto& sst = ctx.carry.gl_sta_state[0];
+    auto& sst = net::put(ctx.entities.stations, StationId{0}, &net::StationState::gross_los);
     sst.gross = true;
     sst.sats = { "G13", "G22" };
     ctx.carry.gl_act_station.push_back({ 0, true });

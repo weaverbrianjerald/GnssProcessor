@@ -666,30 +666,42 @@ TEST(CarryRxClockInBlockTest, PredictionBandGrowsWithTheGapSoAGapIsNotReadAsAJum
 // prune addresses the whole family per station.
 TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     NetworkCarryState carry;
-    auto put = [&](int sta, const std::string& kind, double v) {
-        carry.rx_clk_carry[{sta, kind}] = LocalCarry{v, 1e-4, 100.0};
+    net::NetworkEntities ent;   // the station carries (card NOM step N4a)
+    auto stash = [&](int sta, const std::string& kind, double v) {
+        net::put(ent.stations, StationId{sta}, &net::StationState::signals, kind,
+                 &net::StationSignalState::rx_clk) = LocalCarry{v, 1e-4, 100.0};
     };
-    put(0, "",         29988.0);
-    put(0, "Galileo",      8.0);
-    put(1, "",         29991.0);
-    ASSERT_EQ(carry.rx_clk_carry.size(), 3u);
+    stash(0, "",         29988.0);
+    stash(0, "Galileo",      8.0);
+    stash(1, "",         29991.0);
+    ASSERT_EQ(net::present(ent.stations, &net::StationState::signals,
+                           &net::StationSignalState::rx_clk), 3u);
 
     // The jump site's expression, verbatim in shape.
-    const std::size_t erased = carry.rx_clk_carry.erase({0, std::string()});
+    const std::size_t erased = net::drop(ent.stations, StationId{0}, &net::StationState::signals,
+                                         std::string(), &net::StationSignalState::rx_clk);
     EXPECT_EQ(erased, 1u);
-    EXPECT_EQ(carry.rx_clk_carry.count({0, std::string()}), 0u);
-    EXPECT_EQ(carry.rx_clk_carry.count({0, std::string("Galileo")}), 1u);  // ISB survives
-    EXPECT_EQ(carry.rx_clk_carry.count({1, std::string()}), 1u);           // other station
-    EXPECT_EQ(carry.rx_clk_carry.erase({0, std::string()}), 0u);           // idempotent
+    EXPECT_EQ(static_cast<std::size_t>(net::get(ent.stations, StationId{0}, &net::StationState::signals,
+                                                std::string(), &net::StationSignalState::rx_clk) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::get(ent.stations, StationId{0}, &net::StationState::signals,
+                                                std::string("Galileo"), &net::StationSignalState::rx_clk) != nullptr), 1u);  // ISB survives
+    EXPECT_EQ(static_cast<std::size_t>(net::get(ent.stations, StationId{1}, &net::StationState::signals,
+                                                std::string(), &net::StationSignalState::rx_clk) != nullptr), 1u);           // other station
+    EXPECT_EQ(net::drop(ent.stations, StationId{0}, &net::StationState::signals, std::string(),
+                        &net::StationSignalState::rx_clk), 0u);           // idempotent
 
     // The drift map is keyed identically but populated only for the primary clock.
     const std::pair<int, std::string> k1{1, std::string()};
-    carry.rx_clk_rate[k1].rate = kSimDriftMps;
-    EXPECT_EQ(carry.rx_clk_rate.count({1, std::string("Galileo")}), 0u);
-    EXPECT_DOUBLE_EQ(carry.rx_clk_rate[k1].rate, kSimDriftMps);
+    net::put(ent.stations, StationId{k1.first}, &net::StationState::signals, k1.second,
+             &net::StationSignalState::rx_clk_rate).rate = kSimDriftMps;
+    EXPECT_EQ(static_cast<std::size_t>(net::get(ent.stations, StationId{1}, &net::StationState::signals,
+                                                std::string("Galileo"), &net::StationSignalState::rx_clk_rate) != nullptr), 0u);
+    EXPECT_DOUBLE_EQ(net::put(ent.stations, StationId{k1.first}, &net::StationState::signals, k1.second,
+                              &net::StationSignalState::rx_clk_rate).rate, kSimDriftMps);
     // A fresh entry means "no rate yet": rate 0 with a negative variance sentinel, so
     // the injector substitutes carry_rx_clock_rate_var0 rather than a stiff zero.
-    const auto fresh = carry.rx_clk_rate[{0, std::string()}];
+    const auto fresh = net::put(ent.stations, StationId{0}, &net::StationState::signals, std::string(),
+                                &net::StationSignalState::rx_clk_rate);
     EXPECT_DOUBLE_EQ(fresh.rate, 0.0);
     EXPECT_LT(fresh.rate_var, 0.0);
     EXPECT_EQ(fresh.n_incr, 0);
@@ -697,7 +709,7 @@ TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
 
     // The neighbouring carries are separate maps; no vehicle shares state.
     EXPECT_TRUE(carry.iono_blk_carry.empty());
-    EXPECT_TRUE(carry.zwd_carry.empty());
+    EXPECT_EQ(net::present(ent.stations, &net::StationState::zwd), 0u);
 }
 
 // =============================================================================

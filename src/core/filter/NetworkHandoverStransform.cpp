@@ -32,7 +32,7 @@
 namespace GnssProcessor {
 
 ClockStransformResult applyClockStransform(
-    NetworkCarryState& carry,
+    NetworkCarryState& carry, net::NetworkEntities& entities,
     const std::vector<std::pair<std::string, double>>& v_c,
     const std::string& q, CarryMechanism mech, CarrySiteCounts* counts) {
     ClockStransformResult out;
@@ -49,7 +49,7 @@ ClockStransformResult applyClockStransform(
     // x_q_pre / var_q: the incoming pivot's carried level in the outgoing frame (the first
     // carried clock entry of q).  Absent: nothing to re-reference from.
     const CarryPrior* qrow = nullptr;
-    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+    forEachCarriedReference(carry, entities, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
         if (!qrow && r.kind == SharedParamKind::Clock && r.sat == q) qrow = r.prior;
         return false;
     });
@@ -76,7 +76,7 @@ ClockStransformResult applyClockStransform(
     CarrySiteCounts& c = counts ? *counts : local;
     const long long before = c.moved[static_cast<int>(CarrySite::PrevCarry)];
     forEachCarriedReference(
-        carry, carryMechanismSites(mech),
+        carry, entities, carryMechanismSites(mech),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock) return false;
             double vi = 0.0;
@@ -93,7 +93,7 @@ ClockStransformResult applyClockStransform(
 
     // Exactness self-check (§8.4 INC-3).
     bool q_seen = false;
-    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+    forEachCarriedReference(carry, entities, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
         if (!q_seen && r.kind == SharedParamKind::Clock && r.sat == q) {
             out.x_q_post = *r.value;
             q_seen = true;
@@ -105,7 +105,7 @@ ClockStransformResult applyClockStransform(
     return out;
 }
 
-ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, net::NetworkEntities& entities, char c,
                                                      const std::string& q,
                                                      const std::string& p_out) {
     ClockStransformDenseResult out;
@@ -189,7 +189,7 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     long long n_rows = 0, n_parked = 0;
     double var_saved = 0.0;
     forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::Handover),
+        carry, entities, carryMechanismSites(CarryMechanism::Handover),
         [&](const CarriedRef& ref) -> bool {
             if (ref.kind != SharedParamKind::Clock || ref.site != CarrySite::PrevCarry) return false;
             if (ref.sat.empty() || systemOfSat(ref.sat) != sys) return false;
@@ -277,10 +277,11 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     return out;
 }
 
-long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
+long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& entities,
+                              char constellation, double c0,
                               double var_q, CarrySiteCounts* counts) {
     return forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::HandoverBeforeRows),
+        carry, entities, carryMechanismSites(CarryMechanism::HandoverBeforeRows),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat.empty()) return false;
             if (systemOfSat(r.sat) != systemFromLetter(constellation)) return false;
@@ -347,7 +348,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
             continue;
         }
         CarrySiteCounts undo_cc;
-        const long long n = undoClockStransform(ctx.carry, it->first, it->second.c0,
+        const long long n = undoClockStransform(ctx.carry, ctx.entities, it->first, it->second.c0,
                                                 it->second.var_q, &undo_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, undo_cc);
@@ -383,7 +384,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
         // the stash's pivot value.
         CarrySiteCounts prm_cc;
         const ClockStransformResult r = applyClockStransform(
-            ctx.carry, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
+            ctx.carry, ctx.entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, prm_cc);
         pre.applied      = r.applied;
@@ -500,7 +501,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     && cp.fold.disposition != CarryDisposition::Undecided
                     && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
                     clean.insert(cp.sat);
-            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, c, q, p_out);
+            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, ctx.entities, c, q, p_out);
             if (d.applied) {
                 ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
                 carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, d.counts);
@@ -559,7 +560,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             // Every carried clock of the constellation through the one traversal (card PRM
             // phase 2).
             CarrySiteCounts prm_cc;
-            r = applyClockStransform(ctx.carry, v_c, q, CarryMechanism::Handover, &prm_cc);
+            r = applyClockStransform(ctx.carry, ctx.entities, v_c, q, CarryMechanism::Handover, &prm_cc);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
         }

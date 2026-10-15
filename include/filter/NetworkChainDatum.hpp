@@ -88,6 +88,7 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp o
  * The phase hold's held value (an emitted value) and an open pin bridge (a root of the chain
  * with a zero shift) are not moved.
  * @param carry     the run's carried state.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param shift_sat (satellite, signal) -> @f$\Delta b_s@f$.
  * @param shift_rxg (station, constellation, signal) -> @f$\Delta\delta_r@f$.
  * @param shift_rpb (station, receiver phase-bias key) -> @f$\Delta\delta_r@f$.
@@ -98,7 +99,7 @@ struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp o
  * @param counts    optional out: per-site tallies (accumulated).
  * @param complete  also move the owed sites (false = the walk of card PRM phase 2).
  */
-void eq34ShiftCarry(NetworkCarryState& carry,
+void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,

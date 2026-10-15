@@ -126,7 +126,8 @@ StationStep networkRxIfbRecoupleEdge(StationBuild& build) {
         if (!id || !RxIfbRule::governs(id->cls)) continue;
         const auto lit = st.l5b.last_est_epoch.find(cb_key);
         if (lit != st.l5b.last_est_epoch.end() && lit->second < ep - 1
-            && ctx.carry.rx_cb_carry.count({static_cast<int>(i), cb_key}))
+            && (net::get(ctx.entities.stations, StationId{static_cast<int>(i)},
+                         &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb) != nullptr))
             ++st.l5b.recouple;
         st.l5b.last_est_epoch[cb_key] = ep;
     }
@@ -157,7 +158,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
     // loader guarantees the carry, the coupling rows and a local block; pl_blk_on is the
     // live half of that gate.
     const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
-    auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase reads only
+    const net::StationTable& sta_rows = ctx.entities.stations;   // rx-CB carry: produce phase reads only
     // ---- End of the bindings ----
 
     if (!(legacy_local_inject && do_amb_carry)) return;
@@ -190,31 +191,32 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
             if (!std::isfinite(x_lin(cb_idx))) continue;
             const auto cbhit = h2local.find(cb_idx);
             if (cbhit == h2local.end()) continue;
-            const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-            if (cbit == rx_cb_carry.end()) continue;   // cold: the harvest seeds it
+            const auto* cbit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                        &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb);
+            if (cbit == nullptr) continue;   // cold: the harvest seeds it
             // An entry with no harvest-block row was not harvested on this
             // route (a warm resume restored it from a diagonal-carry
             // snapshot): without its regression it would state the border
             // absolutely, the double count this route removes.  It is left out
             // and re-harvested this epoch (counted).
-            if (!cbit->second.blk) { ++R.pl_rxcb_restored_skip; continue; }
+            if (!cbit->blk) { ++R.pl_rxcb_restored_skip; continue; }
             double cb_var_eff = 0.0;
             const RxCbInjectAction act = rxCbInjectGate(
-                pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
-                cbit->second.var, rx_cb_q, cbit->second.value_abs - x_lin(cb_idx),
+                pl_now_s - cbit->last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
+                cbit->var, rx_cb_q, cbit->value_abs - x_lin(cb_idx),
                 /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                 /*innov_test=*/false);
             if (act != RxCbInjectAction::Fold) {
                 // Card PRM phase 3a: the horizon's skip only, not the gate's
                 // variance guard (which returns the same action).
-                if (carryPastHorizon(pl_now_s, cbit->second.last_seen_s, kRxCbMaxGapS))
+                if (carryPastHorizon(pl_now_s, cbit->last_seen_s, kRxCbMaxGapS))
                     ++R.prm_rxcb_gap_skip;
                 continue;
             }
             rxcb_bc.push_back(LocalBlockCol{
                 static_cast<Eigen::Index>(cbhit->second), x_lin(cb_idx),
-                &cbit->second, cb_var_eff,
-                std::max(0.0, pl_now_s - cbit->second.last_seen_s),
+                &*cbit, cb_var_eff,
+                std::max(0.0, pl_now_s - cbit->last_seen_s),
                 /*vce_fac=*/1.0, /*is_zwd=*/false, /*is_iono=*/false,
                 /*is_rx_clk=*/false, /*is_rx_isb=*/false,
                 /*is_rx_cb=*/true});
@@ -253,7 +255,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
     // loader guarantees the carry, the coupling rows and a local block; pl_blk_on is the
     // live half of that gate.
     const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
-    auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase reads only
+    const net::StationTable& sta_rows = ctx.entities.stations;   // rx-CB carry: produce phase reads only
     // ---- End of the bindings ----
 
     // --- rx-CB carry (docs/SPEC_rx_cb_carry.md): receiver code-bias
@@ -332,8 +334,9 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         // RXCB-IN-BLOCK: the carry folded (or deliberately did not) in the
         // block above; there is no diagonal row on this route.
         if (rxcb_blk_on) continue;
-        const auto cbit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-        if (cbit == rx_cb_carry.end()) continue;   // cold: the harvest seeds it
+        const auto* cbit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                    &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb);
+        if (cbit == nullptr) continue;   // cold: the harvest seeds it
         // Card L5B: a receiver IFB column's folds and withholds on this route,
         // counted at its own station (nothing is counted unless the knob is
         // effective).
@@ -343,10 +346,10 @@ void networkRxCbPriors(StationCarryFrame& carry) {
             cb_is_ifb = id && RxIfbRule::governs(id->cls);
         }
         double cb_var_eff = 0.0;
-        const double cb_innov = cbit->second.value_abs - x_lin(cb_idx);
+        const double cb_innov = cbit->value_abs - x_lin(cb_idx);
         const RxCbInjectAction act = rxCbInjectGate(
-            pl_now_s - cbit->second.last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
-            cbit->second.var, rx_cb_q, cb_innov,
+            pl_now_s - cbit->last_seen_s, /*max_gap_s=*/kRxCbMaxGapS,
+            cbit->var, rx_cb_q, cb_innov,
             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
         if (act == RxCbInjectAction::SkipInnov) {
             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
@@ -357,7 +360,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         if (act != RxCbInjectAction::Fold) {
             // Card PRM phase 3a: the horizon's skip only, not the gate's
             // variance guard (which returns the same action).
-            if (carryPastHorizon(pl_now_s, cbit->second.last_seen_s, kRxCbMaxGapS))
+            if (carryPastHorizon(pl_now_s, cbit->last_seen_s, kRxCbMaxGapS))
                 ++R.prm_rxcb_gap_skip;
             continue;
         }
@@ -402,7 +405,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
     //     down skips its stash under this knob (it still sums the produce counters
     //     and runs the gap prune).
     if (!rxcb_blk_on) return;
-    auto& rx_cb_carry = ctx.carry.rx_cb_carry;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
@@ -439,7 +442,8 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
             if (ctx.param_inventory.rx_ifb.estimated_by_knob
                 && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
                                        ctx.carry.this_epoch_cb_reseed_channels)
-                && rx_cb_carry.erase(key) > 0) {
+                && net::drop(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
+                             &net::StationSignalState::rx_cb) > 0) {
                 ++stations[i].l5b.reseed_erase;
                 continue;
             }
@@ -451,15 +455,17 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
             // this epoch folded the stale prior, so its posterior is suspect too,
             // and the next harvest re-seeds from a free solve.
             {
-                const auto sit = rx_cb_carry.find(key);
-                if (sit != rx_cb_carry.end()) {
-                    const double sgap = pl_now_s - sit->second.last_seen_s;
+                const auto* sit = net::get(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                           key.second, &net::StationSignalState::rx_cb);
+                if (sit != nullptr) {
+                    const double sgap = pl_now_s - sit->last_seen_s;
                     if (sgap >= 0.0 && sgap <= kRxCbMaxGapS) {
-                        const double sv = var + sit->second.var
+                        const double sv = var + sit->var
                                           + ctx.knobs.rx_cb_q * sgap + 0.25;
-                        if (std::abs(value_abs - sit->second.value_abs)
+                        if (std::abs(value_abs - sit->value_abs)
                             > 10.0 * std::sqrt(sv)) {
-                            rx_cb_carry.erase(sit);
+                            net::drop(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                      key.second, &net::StationSignalState::rx_cb);
                             ++ctx.counters.n_rxcb_blk_step_reset;
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbStepErase);   // card PRM phase 3a
                             continue;
@@ -468,8 +474,9 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
                 }
             }
             LocalCarry ent{value_abs, var, pl_now_s, std::move(hc.second)};
-            const auto oit = rx_cb_carry.find(key);
-            const LocalCarry* cprev = (oit != rx_cb_carry.end()) ? &oit->second : nullptr;
+            const auto* oit = net::get(sta_rows, StationId{key.first}, &net::StationState::signals,
+                                       key.second, &net::StationSignalState::rx_cb);
+            const LocalCarry* cprev = (oit != nullptr) ? &*oit : nullptr;
             ent.var_first = cprev ? cprev->var_first : var;
             localCarryStampBirth(
                 ent, cprev, static_cast<long long>(ctx.counters.n_loop_epochs), pl_now_s);
@@ -487,7 +494,8 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
                 }
             }
             if (!in_blk) ++ctx.counters.n_rxcb_blk_no_block;
-            rx_cb_carry[key] = std::move(ent);
+            net::put(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
+                     &net::StationSignalState::rx_cb) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, ccol, SharedHistoryMap::RxCb,
                                           static_cast<int>(i), cb_key);   // card SCL2 X2; no-op off
             ++ctx.counters.n_rxcb_blk_harvested;
@@ -547,7 +555,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
     // erase) and counts its decisions in R, which are summed here serially, so the whole
     // cycle is race-free by construction.
     if (!ctx.knobs.rx_cb_on) return;
-    auto& rx_cb_carry = ctx.carry.rx_cb_carry;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     // The horizon is kRxCbMaxGapS (filter/NetworkRunTypes.hpp; spec §3: housekeeping
     // horizon), the one definition the inject, this harvest and the registry read.
     for (size_t i = 0; i < stations.size(); ++i) {
@@ -603,7 +611,8 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
             if (ctx.param_inventory.rx_ifb.estimated_by_knob
                 && rxIfbFamilyReseeded(stations[i].l5b, cb_key,
                                        ctx.carry.this_epoch_cb_reseed_channels)
-                && rx_cb_carry.erase({static_cast<int>(i), cb_key}) > 0) {
+                && net::drop(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                             cb_key, &net::StationSignalState::rx_cb) > 0) {
                 ++stations[i].l5b.reseed_erase;
                 continue;
             }
@@ -616,13 +625,14 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
             // firmware bias jump: withhold the fold, let the harvest re-seed), so it
             // is the RESPONDED positive control for this family.
             if (prires_rxcb && prires_est.enabled()) {
-                const auto pit = rx_cb_carry.find({static_cast<int>(i), cb_key});
-                if (pit != rx_cb_carry.end()) {
-                    const double cgap = pl_now_s - pit->second.last_seen_s;
-                    const double cinnov = pit->second.value_abs - cx_lin;
+                const auto* pit = net::get(sta_rows, StationId{static_cast<int>(i)},
+                                           &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb);
+                if (pit != nullptr) {
+                    const double cgap = pl_now_s - pit->last_seen_s;
+                    const double cinnov = pit->value_abs - cx_lin;
                     double cvar_eff = 0.0;
                     const RxCbInjectAction cact = rxCbInjectGate(
-                        cgap, kRxCbMaxGapS, pit->second.var, ctx.knobs.rx_cb_q,
+                        cgap, kRxCbMaxGapS, pit->var, ctx.knobs.rx_cb_q,
                         cinnov, /*k_sigma=*/10.0, /*guard_var=*/0.25, cvar_eff);
                     // SkipGap leaves cvar_eff at 0 (the gate returns before setting
                     // it), so there is no fold variance to standardize against: fall
@@ -633,10 +643,10 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
                     in.family   = "rxcb";
                     in.signal   = cb_key;
                     in.station  = static_cast<int>(i);
-                    in.e        = pit->second.value_abs - value_abs;
+                    in.e        = pit->value_abs - value_abs;
                     in.fold_var = have_var
                         ? cvar_eff
-                        : pit->second.var
+                        : pit->var
                             + ctx.knobs.rx_cb_q * std::max(0.0, cgap);
                     in.post_var = var;
                     in.gap_s    = std::max(0.0, cgap);
@@ -650,15 +660,16 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
                     prires_est.addRow(in);
                 }
             }
-            rx_cb_carry[{static_cast<int>(i), cb_key}] =
+            net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals, cb_key,
+                     &net::StationSignalState::rx_cb) =
                 LocalCarry{value_abs, var, pl_now_s};
             ++ctx.counters.rx_cb_harvested_total;
         }
     }
     // The horizon is the registry's (kRxCbMaxGapS, the same constant; card PRM phase 3b).
-    carryGapPrune(rx_cb_carry, pl_now_s,
+    carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rx_cb, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxCodeBias).gap_horizon_s,
-                  [&](const auto&) {
+                  [&](const auto&, const auto&, const auto&) {
                       prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
                   });
 }

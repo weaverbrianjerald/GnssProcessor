@@ -338,7 +338,7 @@ TEST(NetworkCouplingTest, AppendScalarScattersRowsIntoStationBlock) {
 // Selectivity: only the PhaseBias entry whose (sat, signal) is in shift_sat
 // moves, by exactly +s, and only s_prev moves (coeff / p_prev untouched).
 TEST(NetworkCouplingTest, Eq34RebaseShiftsOnlyMatchingPhaseBiasSprev) {
-    NetworkCarryState carry;
+    NetworkCarryState carry; net::NetworkEntities carry_ent;
     LocalCarry lc{0.0, 1e-4, 100.0};
     lc.coupling = {
         CoupledShared{SharedParamKind::PhaseBias, "G05", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
@@ -348,14 +348,14 @@ TEST(NetworkCouplingTest, Eq34RebaseShiftsOnlyMatchingPhaseBiasSprev) {
         CoupledShared{SharedParamKind::CodeBias,  "G05", "L1C", 0, 0, 'C', 0, 0.10, -2.0, 0.03}, // code bias, same key
         CoupledShared{SharedParamKind::VtecSh,    "",    "",    2, 1, 'S', 0, 0.05, 4.0, 0.04},  // SH coefficient
     };
-    carry.zwd_carry[0] = lc;
+    net::put(carry_ent.stations, StationId{0}, &net::StationState::zwd) = lc;
     const std::map<std::pair<std::string, std::string>, double> shift{{{"G05", "L1C"}, 0.75}};
 
     long long n_values = 0, n_terms = 0;
-    eq34ShiftCarry(carry, shift, {}, {}, n_values, n_terms);
+    eq34ShiftCarry(carry, carry_ent, shift, {}, {}, n_values, n_terms);
     EXPECT_EQ(n_terms, 1);
     EXPECT_EQ(n_values, 0);
-    const auto& cpl = carry.zwd_carry[0].coupling;
+    const auto& cpl = net::put(carry_ent.stations, StationId{0}, &net::StationState::zwd).coupling;
     EXPECT_DOUBLE_EQ(cpl[0].s_prev, 2.25);   // 1.5 + 0.75, same sign as cp.value += s
     EXPECT_DOUBLE_EQ(cpl[0].coeff, 0.25);
     EXPECT_DOUBLE_EQ(cpl[0].p_prev, 0.01);
@@ -379,26 +379,26 @@ TEST(NetworkCouplingTest, Eq34RebaseSkipsZeroAndNonFiniteShifts) {
     EXPECT_EQ(phaseBiasShiftOf(shift, "G09", "L1C"), -0.5);
     EXPECT_EQ(phaseBiasShiftOf(shift, "G09", "L2W"), 0.0);
 
-    NetworkCarryState carry;
+    NetworkCarryState carry; net::NetworkEntities carry_ent;
     LocalCarry lc{0.0, 1e-4, 100.0};
     lc.coupling = {
         CoupledShared{SharedParamKind::PhaseBias, "G05", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
         CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
         CoupledShared{SharedParamKind::PhaseBias, "G09", "L1C", 0, 0, 'C', 0, 0.25, 1.5, 0.01},
     };
-    carry.zwd_carry[0] = lc;
+    net::put(carry_ent.stations, StationId{0}, &net::StationState::zwd) = lc;
     long long n_values = 0, n_terms = 0;
-    eq34ShiftCarry(carry, shift, {}, {}, n_values, n_terms);
+    eq34ShiftCarry(carry, carry_ent, shift, {}, {}, n_values, n_terms);
     EXPECT_EQ(n_terms, 1);
-    const auto& cpl = carry.zwd_carry[0].coupling;
+    const auto& cpl = net::put(carry_ent.stations, StationId{0}, &net::StationState::zwd).coupling;
     EXPECT_DOUBLE_EQ(cpl[0].s_prev, 1.5);
     EXPECT_DOUBLE_EQ(cpl[1].s_prev, 1.5);
     EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);
 
-    NetworkCarryState empty_carry;
-    eq34ShiftCarry(empty_carry, shift, {}, {}, n_values, n_terms);
+    NetworkCarryState empty_carry; net::NetworkEntities empty_carry_ent;
+    eq34ShiftCarry(empty_carry, empty_carry_ent, shift, {}, {}, n_values, n_terms);
     EXPECT_EQ(n_values + n_terms, 0);
-    eq34ShiftCarry(carry, {}, {}, {}, n_values, n_terms);
+    eq34ShiftCarry(carry, carry_ent, {}, {}, {}, n_values, n_terms);
     EXPECT_EQ(n_values + n_terms, 0);
     EXPECT_DOUBLE_EQ(cpl[2].s_prev, 1.0);    // the empty shift touched nothing
 }

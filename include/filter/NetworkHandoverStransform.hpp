@@ -153,6 +153,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
  * (@c p_prev > 0; a pinned term keeps its pinned route); and the stash's pinned pivot value.
  *
  * @param carry  The run's carried state, mutated in place.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param v_c    The structural direction's nonzero (satellite, coefficient) entries.
  * @param q      The incoming pivot satellite.
  * @param mech   @c Handover or @c HandoverBeforeRows.
@@ -161,7 +162,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
  *         carried clock entries re-expressed.
  */
 ClockStransformResult applyClockStransform(
-    NetworkCarryState& carry,
+    NetworkCarryState& carry, net::NetworkEntities& entities,
     const std::vector<std::pair<std::string, double>>& v_c,
     const std::string& q, CarryMechanism mech = CarryMechanism::Handover,
     CarrySiteCounts* counts = nullptr);
@@ -226,12 +227,13 @@ struct ClockStransformDenseResult {
  * @p q, no block row for @p q, or @p q equal to @p p_out.
  *
  * @param carry The run's carried state: @c prev_carry and @c prev_carry_cov, mutated in place.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param c     The constellation's leading character.
  * @param q     The incoming pivot.
  * @param p_out The outgoing pivot (the frame the block is in); empty: nothing is appended.
  * @return What was done.
  */
-ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, net::NetworkEntities& entities, char c,
                                                      const std::string& q,
                                                      const std::string& p_out);
 
@@ -243,13 +245,15 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
  *        coefficient is 1 for every clock of the constellation, so the membership is the
  *        constellation's, as the forward transform's before the rows.
  * @param carry         The run's carried state.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param constellation The constellation's leading character.
  * @param c0            The coefficient the transform applied (m).
  * @param var_q         The variance it added (m^2).
  * @param counts        Optional out: per-site tallies (accumulated).
  * @return the number of references moved back.
  */
-long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
+long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& entities,
+                              char constellation, double c0,
                               double var_q, CarrySiteCounts* counts = nullptr);
 
 struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)

@@ -70,7 +70,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     auto& prev_clk = ctx.carry.prev_clk;
     auto& clock_osc = ctx.carry.clock_osc;
     auto& local_carry = ctx.carry.local_carry;
-    auto& zwd_carry = ctx.carry.zwd_carry;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
     auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
     auto& ura_retro_sats = ctx.carry.ura_retro_sats;
     auto& retro_active = ctx.carry.retro_active;
@@ -187,11 +187,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             if (l_var_first) L.var_first = lc.var_first;
             snap.local_carry[key] = L;
         }
-        for (const auto& [idx, lc] : zwd_carry)
-            snap.zwd_carry[idx] =
-                NetworkStateSnapshot::Local{lc.value_abs,
-                                            shx_marg ? sharedHistoryMarginalVar(lc) : lc.var,
-                                            lc.last_seen_s};
+        net::recordToSnapshot("Z", ctx, snap);   // the station table's zwd (card NOM step N4a)
         snap.ura_refloat_horizon = ura_refloat_horizon;
         snap.ura_retro_sats      = ura_retro_sats;
         snap.retro_active        = retro_active;
@@ -301,12 +297,13 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 n_terms += static_cast<long long>(ents.size());
                 snap.coupling_rows[key] = ents;
             }
-            for (const auto& [idx, lc] : zwd_carry) {
-                if (lc.coupling.empty()) continue;
-                if (!pack(lc.coupling)) { ++n_drop; continue; }
-                n_terms += static_cast<long long>(ents.size());
-                snap.coupling_zrows[idx] = ents;
-            }
+            net::forEach(sta_rows, &net::StationState::zwd,
+                         [&](const StationId& id, const LocalCarry& lc) {
+                             if (lc.coupling.empty()) return;
+                             if (!pack(lc.coupling)) { ++n_drop; return; }
+                             n_terms += static_cast<long long>(ents.size());
+                             snap.coupling_zrows[id.index] = ents;
+                         });
             // The refloat set has no D-row carrier (a hard-refloated satellite is
             // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
             // (cards 1d/1g).
@@ -359,7 +356,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // capture on such a run costs nothing and writes no rows.
         if (nc.state_snapshot_datum_capture) {
             snap.eq34_datum_rx  = ctx.carry.eq34_datum_rx;
-            snap.eq34_rx_parent = ctx.carry.eq34_rx_parent;
+            net::recordToSnapshot("EQP", ctx, snap);   // the station signals (N4a)
             snap.eq34_sat_root  = ctx.carry.eq34_sat_root;
             for (const auto& [key, tgt] : ctx.carry.eq34_prev_target)
                 snap.eq34_prev_target[{key.first, key.second}] = tgt;
@@ -432,11 +429,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // entry dropped here is only cold on the resume (the behaviour without the
         // capture, for that one key), whereas a corrupt entry cannot be recovered.
         if (nc.state_snapshot_station_capture) {
-            for (const auto& [key, lc] : ctx.carry.rx_cb_carry)
-                if (std::isfinite(lc.value_abs) && std::isfinite(lc.var) && lc.var > 0.0
-                    && std::isfinite(lc.last_seen_s))
-                    snap.rx_cb_carry[{key.first, key.second}] =
-                        NetworkStateSnapshot::Local{lc.value_abs, lc.var, lc.last_seen_s};
+            net::recordToSnapshot("RC", ctx, snap);   // the station signals (N4a)
             for (const auto& [key, dc] : ctx.carry.sh_dev_carry)
                 if (std::isfinite(dc.dev) && std::isfinite(dc.var) && dc.var >= 0.0
                     && std::isfinite(dc.var_ss) && dc.var_ss >= 0.0

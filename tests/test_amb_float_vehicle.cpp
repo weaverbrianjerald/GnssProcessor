@@ -918,7 +918,7 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
     using GnssProcessor::CoupledShared;
     using GnssProcessor::SharedParamKind;
     const double delta = -3.5;
-    GnssProcessor::NetworkCarryState carry;
+    GnssProcessor::NetworkCarryState carry; GnssProcessor::net::NetworkEntities carry_ent;
     GnssProcessor::LocalCarry lc{0.0, 1e-4, 100.0};
     lc.coupling = {
         CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 1.0, 20.0, 0.1},
@@ -928,7 +928,7 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
     const std::tuple<int, std::string, std::string> other{4, "G09", "L1C"};   // another family
     carry.local_carry[other] = lc;
     long long n_shift = 0, n_pb = 0, n_cpl = 0;
-    GnssProcessor::declaredHandoverShiftCarry(carry, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
+    GnssProcessor::declaredHandoverShiftCarry(carry, carry_ent, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
     EXPECT_EQ(n_cpl, 1);
     EXPECT_EQ(n_shift, 0);
     const auto& coupling = carry.local_carry[other].coupling;

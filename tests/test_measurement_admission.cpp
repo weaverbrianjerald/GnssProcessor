@@ -497,7 +497,7 @@ TEST(MeasurementAdmission, ResumeRestoredCorruptArcIsRejectedAsARestoreAndRefloa
         << "unlike a birth, a restore HAS carried state — invariant #1 requires the re-tap";
     EXPECT_TRUE(ctx.carry.adm_resume_pending)
         << "the RUN flag persists — it is the per-station set below that is consumed";
-    EXPECT_EQ(1u, ctx.carry.adm_resume_seen.size())
+    EXPECT_EQ(1u, net::present(ctx.entities.stations, &net::StationState::adm_resume_seen))
         << "exactly the one screened station has had its restore epoch";
 
     // A second corrupt channel appearing later is an ordinary birth again.
