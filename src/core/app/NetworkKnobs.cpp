@@ -164,6 +164,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.ura_retro = config_.networkUraRetroBump();
     k.mark_refsat_reset_disc = config_.networkMarkRefsatResetDisc();
     k.ura_refloat_inflate = config_.networkUraRefloatInflate();
+    k.retro_feed = k.ura_retro || k.ura_refloat_inflate > 1.0;   // the retro-bump / URA-inflate feed (B1, P0-2)
     k.raim_on = config_.networkRaim();
     k.raim_k = config_.networkRaimKSigma();
     k.raim_s0_floor = config_.networkRaimSigma0Floor();

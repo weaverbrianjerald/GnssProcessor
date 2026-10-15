@@ -514,4 +514,17 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+// ---- Solve stage 7 helper (card NOM3 step SG) ----
+
+/**
+ * @brief The datum graph census's spectral hand-off from S-basis completion: the realized
+ *        near-null count before completion, with each direction's identities (constrained and
+ *        skipped).  Measure-only; armed-only (network.trace_datum_graph).
+ * @param ctx  The run context: carry (dg_spec) is written.
+ * @param sbc  The completion's result (read).
+ * @param plan The epoch's datum plan (read: declared_dimension).
+ */
+void networkDatumGraphSpectralHandoff(NetworkRunContext& ctx, const NetworkSbasis::GaugeCompletion& sbc,
+                                      const NetworkSbasis::Plan& plan);
+
 } // namespace GnssProcessor

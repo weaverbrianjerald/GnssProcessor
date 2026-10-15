@@ -367,4 +367,35 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+// ---- Solve stages 10 and 12 helpers (card NOM3 step SG) ----
+
+struct NetworkRun;
+struct NetworkEpoch;
+struct NetworkPostFitHandoff;   // filter/NetworkSolveGlue.hpp
+struct SolveDatum;              // filter/NetworkSolveGlue.hpp
+
+/**
+ * @brief The cold-start a-priori satellite-clock Tikhonov anchor (the last post-gate fold of
+ *        stage 10): each clock column pulled toward the a-priori product clock when the resolved
+ *        sigma binds (< 100 m) and the datum is not broadcast-anchored.
+ * @param run The run: the estimator is folded.
+ * @param ep  The epoch, read: columns (registered_clock_sats).
+ * @param ws  [in/out] The replay capture (cap_priors, cap_prior_kinds).
+ */
+void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws);
+
+/**
+ * @brief Stage 12 of the network solve: the Q3 guard between the primary solve and the
+ *        within-epoch tier, one call to @ref networkClockAnchorGuard.
+ * @param run     The run: the estimator may re-solve; ctx carry and the traces are written.
+ * @param ep      The epoch, read: se, columns (registered_clock_sats).
+ * @param datum   The clock datum (read: plan, datum_changed, changed_consts).
+ * @param handoff The post-fit hand-off (read: clock_refloat_sats, empty at this call).
+ * @param x_s     [in/out] The shared solution, replaced by a guard re-solve.
+ * @param ws      [in/out] The replay capture.
+ */
+void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
+                                  const NetworkPostFitHandoff& handoff, Eigen::VectorXd& x_s,
+                                  EpochWorkspace& ws);
+
 }  // namespace GnssProcessor

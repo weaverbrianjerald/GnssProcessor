@@ -1751,19 +1751,6 @@ struct NetworkRunEndView;
 class GnssConfig;
 
 /**
- * @brief Run-end report: S-basis completion (SBC).
- *
- * S-basis completion: the near-null directions it constrained, its releases and
- * refusals, and a warning when it never fired while the observed near-null count moved.
- *
- * Gate: returns 0 at once unless `ctx.knobs.sbasis_complete_on`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSbasisCompletionRunEnd(const NetworkRunEndView& v);
-
-/**
  * @brief Run-end report: the S-basis datum arms.
  *
  * The S-basis datum arms: no ionosphere constraint, the satellite geometry-free datum

@@ -8,7 +8,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // pivotHandoverSignalled
-#include "filter/NetworkSolveGlue.hpp"       // networkClockDatumDeclaration
+#include "filter/NetworkClockDatum.hpp"       // networkClockDatumDeclaration
 #include "math/TimeUtils.hpp"
 
 #include <algorithm>

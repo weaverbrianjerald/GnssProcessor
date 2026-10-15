@@ -242,6 +242,7 @@
   },
   {
    "func": "networkRankGateRunEnd",
+   "moved_to": "src/core/filter/NetworkRankGate.cpp",
    "file": "src/core/filter/NetworkEstimator.cpp",
    "indent": 0,
    "pieces": [
@@ -282,6 +283,7 @@
   },
   {
    "func": "networkSbasisCompletionRunEnd",
+   "moved_to": "src/core/filter/NetworkSbasisCompletion.cpp",
    "file": "src/core/filter/NetworkSbasis.cpp",
    "indent": 0,
    "pieces": [
@@ -346,6 +348,7 @@
   },
   {
    "func": "networkWithinEpochRaimRunEnd",
+   "moved_to": "src/core/filter/NetworkRaimWithinEpoch.cpp",
    "file": "src/core/filter/NetworkRaim.cpp",
    "indent": 0,
    "pieces": [

@@ -250,6 +250,11 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
     src/core/filter/NetworkSolveGlue.cpp
+    src/core/filter/NetworkCodeBiasDatum.cpp
+    src/core/filter/NetworkClockDatum.cpp
+    src/core/filter/NetworkRankGate.cpp
+    src/core/filter/NetworkSbasisCompletion.cpp
+    src/core/filter/NetworkRaimWithinEpoch.cpp
     src/core/filter/NetworkWithinEpochCulprits.cpp
     src/core/filter/NetworkLevelAuthority.cpp
     src/core/filter/NetworkRelevel.cpp
@@ -590,6 +595,7 @@ add_executable(gnss_tests
     tests/test_rt_state_snapshot.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_solve_skip.cpp
     tests/test_network_within_epoch_culprits.cpp
     tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp
