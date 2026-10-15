@@ -166,6 +166,10 @@ LINE_DROPS = [re.compile(p) for p in (
 # code difference (card NOM3, 2026-10-15).
 if os.environ.get('NOM_GATE_DROP_POSTURE') == '1':
     LINE_DROPS.append(re.compile(r'\[gnss_config\] \[\w+\] .*(POSTURE|\^ CHAIN:)'))
+# Opt-in (NOM_GATE_DROP_RE=<regex>): a step's declared new log lines (trace class), dropped from both
+# sides so every other line is still compared.
+if os.environ.get('NOM_GATE_DROP_RE'):
+    LINE_DROPS.append(re.compile(os.environ['NOM_GATE_DROP_RE']))
 _NUM = r'-?\d+(?:\.\d+)?'
 # Value masks that apply only on the lines of one family: (family, [(value, replacement)]).
 FAMILY_MASKS = [
