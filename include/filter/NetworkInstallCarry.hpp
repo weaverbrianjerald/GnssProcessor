@@ -7,7 +7,7 @@
  * Runs on the final accepted x_s and datum, after acceptance and outside the
  * within-epoch RAIM block, so a withheld or contaminated epoch never enters the carry.
  * No-op and byte-identical when carry_invariant is off (the caller keeps the enclosing
- * `if (carry_invariant)` gate and the subBegin/subEnd(SB_INSTALL) brackets).  It runs
+ * `if (carry_invariant)` gate and the networkSubBegin/End(SB_INSTALL) brackets).  It runs
  * carry_driver.installPosterior (the DD posterior mean and covariance read back into the
  * carry), the PD-safe fold telemetry, and the D5 innovation-flag drain into the next
  * epoch's slip funnel.

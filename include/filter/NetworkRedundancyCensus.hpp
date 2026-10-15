@@ -170,7 +170,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *     the post-fit residual @f$y - A_s x_s - A_r x_r@f$. The census forms it once per swept
  *     station and passes it to both, and the riders inherit the census's stride and escalation
  *     schedule instead of adding their own. Pass @c sg_.x_s (the final accepted solution,
- *     after any within-epoch re-solve); an empty vector disarms both riders.
+ *     after any within-epoch re-solve); an empty vector disarms both riders.  (sg_ was
+ *     the driver's solve result until card NOM3 step EP1; the binding above reads it as
+ *     ep.solve.x_s.)
  */
 void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& ep);
 

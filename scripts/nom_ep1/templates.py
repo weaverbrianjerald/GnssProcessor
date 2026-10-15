@@ -132,10 +132,13 @@ NETWORK_EPOCH_HPP = """#pragma once
  * epoch's end.  Construction is the per-epoch reset; nothing here survives to the next
  * epoch.  A value that must survive is run state (NetworkRunContext), never a member here.
  *
- * Members in the order the stages fill them.  "Written by" is the authoritative list: a
- * writer receives its group as a non-const parameter on its spine line, so
- * `grep -n "ep\\.pass_a)" src/core/app/ApplicationNetworkEpoch.cpp` lists every writer of
- * the layout and `grep -rn "= ep\\.pass_a\\.present;" src` every reader of `present`.
+ * Members in the order the stages fill them.  "Written by" is the authoritative list, and
+ * scripts/nom_epoch_lint.py (check V11) proves it against the spine on every run: a writer
+ * receives its group as a non-const parameter on its spine line.  By hand,
+ * `grep -nE "ep\\.pass_a[,)]" src/core/app/ApplicationNetworkEpoch.cpp` lists the spine
+ * lines that hand the layout to a writer, and `grep -rnE "n?ep\\.pass_a\\.present" src`
+ * every read of `present` through the epoch (a binding, an adapter's forwarding argument, the
+ * spine's own store); a writer binds it through its `pass_a` output instead.
  *
  *   member        group type           available from            written by
  *   se            const SyncedEpoch&   construction              the admission (before construction)
@@ -399,7 +402,8 @@ APP_PROCESS_EPOCH = """
      * clock QC, the measure-only instruments, the stash, the D0 readout and the snapshot.
      * Four stages end the epoch early (networkPassAHead_, networkAssemblyRegisterColumns_,
      * networkPassB_, networkSolveGlue), the admission three ways.
-     * Implemented in ApplicationNetworkEpoch.cpp (@@GEN@@).
+     * Implemented in ApplicationNetworkEpoch.cpp: written by scripts/nom_ep1_cut.py at card
+     * NOM3 step EP1, maintained by hand since, guarded by scripts/nom_epoch_lint.py.
      *
      * @param run    The run, built once by runNetwork after the traces.
      * @param se_raw The synced epoch as the source delivered it.
@@ -454,11 +458,17 @@ EPOCH_CPP_BANNER = """/**
  * after the admission; the run's objects are reached through a NetworkRun
  * (app/NetworkRun.hpp); the D0b brackets are networkSubBegin / networkSubEnd; a converted
  * seam takes (run, ep[, kept...][, outputs...]) and binds its former parameters in its own
- * preamble.  The text below the preamble is not edited by hand: a change is a change of the
- * frozen source or of the canonical table (scripts/nom_ep1/rows_*.py), regenerated with
- * `python scripts/nom_ep1_cut.py --shared-only`.
+ * preamble.
  *
- * Do not add code here; CLAUDE.md's decision tree names the seam each concern belongs in.
+ * Maintenance.  This file was written by the EP1 generator and is maintained by hand from the
+ * moment step EP1 landed on main: nothing regenerates it later (the generator and its
+ * verifier stay in scripts/ as the record of the move).  Two checks guard every later
+ * change: `python scripts/nom_epoch_lint.py` (the epoch function's reading, the post-solve
+ * write discipline, each group read only after its first writer, the writer banner of
+ * app/NetworkEpoch.hpp), run before any commit that touches this file, a seam signature or
+ * CMakeLists.txt; and tests/test_network_epoch_contract.cpp, whose casts pin every spine
+ * seam's epoch form at compile time.  Do not add code here; CLAUDE.md's decision tree names
+ * the seam each concern belongs in.
  */
 """
 
@@ -473,13 +483,19 @@ CONTRACT_HEAD = """/**
  * Compile-time checks, so a failure is a build failure:
  *   - NetworkRun, NetworkRunEngines and NetworkEpoch are neither copyable nor movable, and a
  *     NetworkEpoch cannot be built on a temporary epoch (specification 2.7);
- *   - every converted seam has exactly the parameter list its row states,
- *     (NetworkRun&, const NetworkEpoch&[, kept...][, outputs...]): a seam that starts writing
- *     the epoch must change its row, which regenerates this list (specification 5.9);
- *   - every measure-only row has the observer form NetworkEpochObserver.
+ *   - every spine seam has exactly its epoch form's parameter list,
+ *     (NetworkRun&, const NetworkEpoch&[, kept...][, outputs...]), or (NetworkRun&) for the
+ *     one run-only seam (specification 5.9);
+ *   - every measure-only seam has the observer form NetworkEpochObserver.
  * The explicit overload an adapter keeps is not selected by the casts below (they name the
  * epoch form's type).  The five private member seams are read through
  * NetworkEpochContractProbe, a friend of Application.
+ *
+ * Maintenance.  Written by the EP1 generator from its canonical table; maintained by hand
+ * from the moment step EP1 landed.  A seam that starts writing the epoch, or a new spine
+ * seam, changes its line below in the same commit as its signature (the cast then fails to
+ * compile until both agree), and the commit runs `python scripts/nom_epoch_lint.py`, which
+ * checks the spine against the writer banner of app/NetworkEpoch.hpp.
  */
 """.replace("@@GEN@@", GEN)
 
@@ -523,6 +539,13 @@ RETIRED_TEXT = (
     # The ensemble gauges (the solve's buildEnsembleGauges callback): a stage of the epoch.
     ("L:buildEnsembleGauges", "APP_PROCESS_EPOCH",
      "PASS B, the gauges and the DD build, the solve,", "PASS B, the DD build, the solve,"),
+    # The T1d SH-convergence latch (runNetwork's alias sh_converged_latch of
+    # ctx.carry.sh_converged_latch; network.phase_leveling_warmup_on_convergence): the carry's
+    # warm-up then counts emitted epochs only (the EP1 review round).  A key of this table that
+    # no model.py entry names is decided by its declaration at the base (model.bind_base).
+    ("D:sh_converged_latch", "NETWORK_EPOCH_HPP",
+     "///< The phase-leveling carry is past its warm-up (the SH convergence latch, or the emitted-epoch count).",
+     "///< The phase-leveling carry is past its warm-up (the emitted-epoch count reached network.phase_leveling_warmup_epochs)."),
 )
 
 

@@ -15,23 +15,25 @@
  *     σ̂0-withhold escape hatch) set `result.action = EpochAction::SkipEpoch` and
  *     return.  The per-skip bookkeeping (n_skipped, emitEpochStatus, product status,
  *     prev_week / prev_tow) stays in the body.  On SkipEpoch the caller returns
- *     `LoopSignal::Next` before subEnd(SB_SOLVEGLUE), which keeps the original
- *     `continue`'s bypass of subEnd.
+ *     `LoopSignal::Next` before networkSubEnd(SB_SOLVEGLUE), which keeps the original
+ *     `continue`'s bypass of the bracket.
  *  2. **Result struct (INC-11pre).** The 17 loop-body locals that the block produces
  *     and the downstream seams (RAIM, ClockQc, SolPrep, EmitStore) consume cross the
  *     seam boundary in @ref NetworkSolveGlueResult (moved in at the end of the body);
- *     the caller re-aliases each with `auto& x = sg_.x;`, so downstream code is
- *     unchanged.
+ *     the caller re-aliased each with `auto& x = sg_.x;` until card NOM3 step EP1;
+ *     the epoch now stores the result as ep.solve and each seam binds the member it
+ *     reads (`ep.solve.x`) in its preamble, so downstream code is unchanged.
  *
  * The within-epoch re-solve rebuilds the DD-prior blocks by calling their builder
  * directly over the run and the epoch (networkBuildCarryDdPriors, card NOM3 step EP1);
  * the solve's own parameters name what that replay writes.  The seam owns no state;
  * every carry object is a reference into ctx.
  *
- * The within-epoch re-solve hands its culprit sets to buildCarryDdPriors through the
- * epoch workspace (@ref EpochWorkspace::we_culprits, card WCF): the T2 block adapts the
- * sets in that member, the driver's rebuild lambda reads the member of the same
- * workspace, and the block clears it when it ends.
+ * The within-epoch re-solve hands its culprit sets to networkBuildCarryDdPriors through
+ * the epoch workspace (@ref EpochWorkspace::we_culprits, card WCF): the T2 block adapts
+ * the sets in that member, the replay's direct rebuild call reads the member of the same
+ * workspace (the driver's rebuild lambda did until card NOM3 step EP1), and the block
+ * clears it when it ends.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator (+ PerConstSigma0)

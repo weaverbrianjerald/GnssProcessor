@@ -98,7 +98,7 @@ struct NetworkEmitEngines {
 };
 
 /// The run's wall-clock record for the run-end timing report.  The driver writes every
-/// member (the loop start, the D0b brackets' subEnd, the per-epoch readout), except the
+/// member (the loop start, the D0b brackets' networkSubEnd, the per-epoch readout), except the
 /// assembly wall, which networkPassB_ sums; every value is wall clock and never reaches a
 /// product.
 struct NetworkRunTiming {

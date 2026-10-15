@@ -6,7 +6,7 @@
  * Relocated verbatim (dedent only, no substitution) out of Application::runNetwork
  * (decomposition INC-11b).  Returns void and is self-contained (it produces no
  * locals that cross into the driver); every carry and trace object is an explicit
- * reference into the caller's state.  The caller keeps the subBegin/subEnd(SB_DDFRAC)
+ * reference into the caller's state.  The caller keeps the networkSubBegin/End(SB_DDFRAC)
  * brackets.
  */
 
@@ -48,7 +48,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *        per-epoch phase-anchor map when that trace is open.  Trace-only: it mutates no
  *        estimation state (only the trace's own reference-age bookkeeping and
  *        counters), and it does nothing unless one of the two traces is open.
- *        The caller keeps the subBegin/subEnd(SB_DDFRAC) brackets.
+ *        The caller keeps the networkSubBegin/End(SB_DDFRAC) brackets.
  *
  * The trace's wavelengths come from the identity layer (@c SignalId::wavelengthM,
  * card NOM step N0b); GLONASS is excluded, so no FDMA slot is needed.

@@ -6,10 +6,11 @@
  * Card NOM3 step EP1 builds the run's engines inside NetworkRun from a NetworkEngineSpec,
  * a pure function of the configuration and the knobs whose body is the setup statements
  * that built the engines, cut from runNetwork.  The statements in frozenSetup() are
- * runNetwork's, copied from ApplicationNetwork.cpp as it stood before the step (180aa28,
- * the base after the REMOVE-key deletion, which took the lane layer, the PB emit filter and
- * the iono-deweight gate, and with them their specification fields), with their comments
- * shortened.  Each field of the specification is compared with the frozen expression on the
+ * runNetwork's, copied from ApplicationNetwork.cpp as it stood before the step (main
+ * 926dafa, the REMOVE-key deletion as it landed, whose driver text is that of the deletion's
+ * branch head 180aa28, where this test was first written; the deletion took the lane layer,
+ * the PB emit filter and the iono-deweight gate, and with them their specification
+ * fields), with their comments shortened.  Each field of the specification is compared with the frozen expression on the
  * loader defaults, on both goldens and on the retired invariant-carry golden
  * (golden_field_gps_dual), and every field of each engine configuration is compared, so a
  * field the cut set or dropped by mistake fails here.
@@ -96,7 +97,7 @@ struct FrozenSetup {
     NetworkClockEmitRebase::Config      clk_rebase_cfg;
 };
 
-/// runNetwork's setup statements as they stood at 180aa28 (ApplicationNetwork.cpp 399-419,
+/// runNetwork's setup statements as they stood at 926dafa (ApplicationNetwork.cpp 399-419,
 /// 441-452, 617-654 and 669-674), one assignment per local or argument.
 FrozenSetup frozenSetup(const GnssConfig& config_, const NetworkConfig& nc,
                         const NetworkRunContext& ctx) {
@@ -148,7 +149,7 @@ FrozenSetup frozenSetup(const GnssConfig& config_, const NetworkConfig& nc,
     return f;
 }
 
-/// Every field of the DD-carry driver's configuration (twelve at 180aa28).
+/// Every field of the DD-carry driver's configuration (twelve at 926dafa).
 void expectCarryCfgEq(const NetworkInvariantCarryDriver::Config& a,
                       const NetworkInvariantCarryDriver::Config& b, const std::string& tag) {
     EXPECT_EQ(a.qz, b.qz) << tag;
@@ -165,7 +166,7 @@ void expectCarryCfgEq(const NetworkInvariantCarryDriver::Config& a,
     EXPECT_EQ(a.innov_diagnostic_only, b.innov_diagnostic_only) << tag;
 }
 
-/// Every field of the clock emission re-base's configuration (seven at 180aa28).
+/// Every field of the clock emission re-base's configuration (seven at 926dafa).
 void expectClkRebaseCfgEq(const NetworkClockEmitRebase::Config& a,
                           const NetworkClockEmitRebase::Config& b, const std::string& tag) {
     EXPECT_EQ(a.frame_hold, b.frame_hold) << tag;

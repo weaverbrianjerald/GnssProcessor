@@ -1,7 +1,7 @@
 {
  "tool": "scripts/nom_ep1_cut.py",
- "base": "180aa282edddd6fea896c0d614584b83e0010773",
- "base_sha": "180aa282edddd6fea896c0d614584b83e0010773",
+ "base": "926dafa",
+ "base_sha": "926dafa03c6b8db72246089ccbe2b71f5513cf18",
  "stage": "ep1a1",
  "shared_only": false,
  "rows": [],
@@ -13,77 +13,208 @@
    "lines": 765,
    "frozen_lines": 761,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "5f3540e9e942bc36"
   },
   "include/app/Application.hpp": {
    "kind": "edited",
-   "lines": 1012,
+   "lines": 1024,
    "frozen_lines": 982,
    "edits": 2,
-   "sha256_lf": "3a0f7797586abff6"
+   "doc_hunks": 2,
+   "sha256_lf": "6b5dda180d65428d"
   },
   "include/app/NetworkEpoch.hpp": {
    "kind": "new",
-   "lines": 167,
+   "lines": 170,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "bde7bd38544bf63c"
+   "doc_hunks": 0,
+   "sha256_lf": "e71e4024b30f6cd7"
   },
   "include/app/NetworkRun.hpp": {
    "kind": "new",
    "lines": 95,
    "frozen_lines": null,
    "edits": 0,
+   "doc_hunks": 0,
    "sha256_lf": "fcb328f641e790cf"
+  },
+  "include/app/NetworkRunContext.hpp": {
+   "kind": "edited",
+   "lines": 4549,
+   "frozen_lines": 4544,
+   "edits": 0,
+   "doc_hunks": 6,
+   "sha256_lf": "616e1e25e463f6fd"
+  },
+  "include/filter/NetworkClockQc.hpp": {
+   "kind": "edited",
+   "lines": 130,
+   "frozen_lines": 130,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "d9ffbf30e4148e7e"
+  },
+  "include/filter/NetworkDdFrac.hpp": {
+   "kind": "edited",
+   "lines": 85,
+   "frozen_lines": 85,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "25c2a49c3ed12342"
+  },
+  "include/filter/NetworkEmitStore.hpp": {
+   "kind": "edited",
+   "lines": 148,
+   "frozen_lines": 148,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "52829c0f2797e626"
+  },
+  "include/filter/NetworkInstallCarry.hpp": {
+   "kind": "edited",
+   "lines": 66,
+   "frozen_lines": 66,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "c8bfa01dcf28a435"
+  },
+  "include/filter/NetworkIonoDiag.hpp": {
+   "kind": "edited",
+   "lines": 64,
+   "frozen_lines": 64,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "213812f6768be768"
+  },
+  "include/filter/NetworkLeveling.hpp": {
+   "kind": "edited",
+   "lines": 67,
+   "frozen_lines": 67,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "9ba270b50bd22c2b"
+  },
+  "include/filter/NetworkPriorResidual.hpp": {
+   "kind": "edited",
+   "lines": 1331,
+   "frozen_lines": 1330,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "297baf056d5f1ba3"
+  },
+  "include/filter/NetworkProducerAr.hpp": {
+   "kind": "edited",
+   "lines": 354,
+   "frozen_lines": 354,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "fe41c8940871f074"
+  },
+  "include/filter/NetworkRaim.hpp": {
+   "kind": "edited",
+   "lines": 284,
+   "frozen_lines": 284,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "457dd4a209600b57"
   },
   "include/filter/NetworkRunGroups.hpp": {
    "kind": "edited",
    "lines": 141,
    "frozen_lines": 95,
    "edits": 7,
-   "sha256_lf": "bf87d5577b87d437"
+   "doc_hunks": 1,
+   "sha256_lf": "9452b1630cfd9243"
+  },
+  "include/filter/NetworkShDevVtec.hpp": {
+   "kind": "edited",
+   "lines": 81,
+   "frozen_lines": 81,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "50d197235783f8b6"
+  },
+  "include/filter/NetworkShHealth.hpp": {
+   "kind": "edited",
+   "lines": 64,
+   "frozen_lines": 64,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "00c807e1fcfaa6a4"
+  },
+  "include/filter/NetworkSolPrep.hpp": {
+   "kind": "edited",
+   "lines": 170,
+   "frozen_lines": 170,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "5ab89ce6ad1364b0"
   },
   "include/filter/NetworkSolveGlue.hpp": {
    "kind": "edited",
-   "lines": 152,
+   "lines": 153,
    "frozen_lines": 145,
    "edits": 4,
-   "sha256_lf": "08a50c2190571ebc"
+   "doc_hunks": 2,
+   "sha256_lf": "5b8ac3117b5baefc"
+  },
+  "include/filter/NetworkStashStatus.hpp": {
+   "kind": "edited",
+   "lines": 80,
+   "frozen_lines": 80,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "fc1fa9eebfceb498"
+  },
+  "include/filter/NetworkWlRunTypes.hpp": {
+   "kind": "edited",
+   "lines": 87,
+   "frozen_lines": 86,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "949baa1c76deb43c"
   },
   "src/core/app/ApplicationNetwork.cpp": {
    "kind": "edited",
-   "lines": 909,
+   "lines": 845,
    "frozen_lines": 2530,
-   "edits": 48,
-   "sha256_lf": "42e9eaac81119ea5"
+   "edits": 81,
+   "doc_hunks": 6,
+   "sha256_lf": "46256bb4eb7f00ba"
   },
   "src/core/app/ApplicationNetworkEpoch.cpp": {
    "kind": "new",
-   "lines": 1736,
+   "lines": 1742,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "31aeac85057e64a2"
+   "doc_hunks": 2,
+   "sha256_lf": "5a198785b1df0305"
   },
   "src/core/app/NetworkRun.cpp": {
    "kind": "new",
-   "lines": 151,
+   "lines": 152,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "7f9a4ddba464dd17"
+   "doc_hunks": 1,
+   "sha256_lf": "65a3da65a275d1d0"
   },
   "src/core/filter/NetworkSolveGlue.cpp": {
    "kind": "edited",
    "lines": 2614,
    "frozen_lines": 2614,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "6deaff43ce7acff2"
   },
   "tests/test_network_epoch_contract.cpp": {
    "kind": "new",
-   "lines": 60,
+   "lines": 66,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "266fe715620c8752"
+   "doc_hunks": 0,
+   "sha256_lf": "8462a2b79fbdff3e"
   }
  },
  "epoch_function": {
@@ -789,8 +920,8 @@
    "std::vector<SubBlockTimer>& sec_sub_ep0 = timing.sec_sub_ep0;"
   ],
   "function_lines": [
-   148,
-   1736
+   154,
+   1742
   ],
   "preamble_count": 52
  },
@@ -1031,8 +1162,211 @@
      "class": "SPEC_CUT",
      "tag": "SPEC_CUT clk_rebase_cfg",
      "frozen_line": 674
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_rts",
+     "frozen_line": 234
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_staged",
+     "frozen_line": 235
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_cursor",
+     "frozen_line": 236
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_carry",
+     "frozen_line": 390
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS last_pivot",
+     "frozen_line": 391
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS anchor_incumbent",
+     "frozen_line": 392
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS this_epoch_anchor",
+     "frozen_line": 393
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS start_anchor_s",
+     "frozen_line": 394
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS local_carry",
+     "frozen_line": 395
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_sigma0_ewma",
+     "frozen_line": 396
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS grade_metric_s",
+     "frozen_line": 397
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_on",
+     "frozen_line": 398
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_warmup",
+     "frozen_line": 400
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_max_gap_s",
+     "frozen_line": 401
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_on",
+     "frozen_line": 573
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS raim_on",
+     "frozen_line": 574
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_tow",
+     "frozen_line": 590
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_week",
+     "frozen_line": 591
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_emitted",
+     "frozen_line": 592
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_epochs",
+     "frozen_line": 593
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_key_epochs",
+     "frozen_line": 594
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchor_s",
+     "frozen_line": 595
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchored",
+     "frozen_line": 596
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_eq34",
+     "frozen_line": 614
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_invariant",
+     "frozen_line": 617
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_gate",
+     "frozen_line": 630
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_sat_vertex",
+     "frozen_line": 677
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_group_id",
+     "frozen_line": 678
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_prev_tow",
+     "frozen_line": 679
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_pending",
+     "frozen_line": 680
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_prioritized",
+     "frozen_line": 681
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_loop_epochs",
+     "frozen_line": 713
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS decim_counter",
+     "frozen_line": 714
     }
-   ]
+   ],
+   "unread_aliases": {
+    "removed": [
+     "brdc_rts",
+     "brdc_nav_staged",
+     "brdc_nav_cursor",
+     "prev_carry",
+     "last_pivot",
+     "anchor_incumbent",
+     "this_epoch_anchor",
+     "start_anchor_s",
+     "local_carry",
+     "ura_sigma0_ewma",
+     "grade_metric_s",
+     "pl_on",
+     "pl_warmup",
+     "pl_max_gap_s",
+     "ura_on",
+     "raim_on",
+     "prev_tow",
+     "prev_week",
+     "n_emitted",
+     "n_gated_epochs",
+     "n_gated_key_epochs",
+     "max_dur_anchor_s",
+     "max_dur_anchored",
+     "phase_datum_eq34",
+     "carry_invariant",
+     "carry_innov_gate",
+     "carry_sat_vertex",
+     "carry_group_id",
+     "carry_prev_tow",
+     "carry_innov_pending",
+     "phase_datum_prioritized",
+     "n_loop_epochs",
+     "decim_counter"
+    ],
+    "kept": []
+   }
   },
   "groups": {
    "engines_struct_frozen": [
@@ -1180,6 +1514,352 @@
   ]
  ],
  "problems": [],
+ "doc_hunks": {
+  "src/core/app/ApplicationNetwork.cpp": 6,
+  "src/core/app/ApplicationNetworkEpoch.cpp": 2,
+  "src/core/app/NetworkRun.cpp": 1,
+  "include/app/Application.hpp": 2,
+  "include/app/NetworkRunContext.hpp": 6,
+  "include/filter/NetworkSolveGlue.hpp": 2,
+  "include/filter/NetworkPriorResidual.hpp": 1,
+  "include/filter/NetworkWlRunTypes.hpp": 1,
+  "include/filter/NetworkRunGroups.hpp": 1,
+  "include/filter/NetworkClockQc.hpp": 1,
+  "include/filter/NetworkDdFrac.hpp": 1,
+  "include/filter/NetworkEmitStore.hpp": 1,
+  "include/filter/NetworkInstallCarry.hpp": 1,
+  "include/filter/NetworkIonoDiag.hpp": 1,
+  "include/filter/NetworkLeveling.hpp": 1,
+  "include/filter/NetworkProducerAr.hpp": 1,
+  "include/filter/NetworkRaim.hpp": 1,
+  "include/filter/NetworkShDevVtec.hpp": 1,
+  "include/filter/NetworkShHealth.hpp": 1,
+  "include/filter/NetworkSolPrep.hpp": 1,
+  "include/filter/NetworkStashStatus.hpp": 1
+ },
+ "doc_hunks_after_deletion_only": [],
+ "stale_spellings": [
+  [
+   "subBegin / subEnd closures",
+   "include/app/Application.hpp",
+   886
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   89
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   92
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/app/NetworkRunContext.hpp",
+   2163
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2465
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2529
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2554
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   3909
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/filter/NetworkPriorResidual.hpp",
+   312
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkRedundancyCensus.hpp",
+   159
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkSolveGlue.hpp",
+   23
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   27
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   32
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   123
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   151
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/filter/NetworkWlRunTypes.hpp",
+   45
+  ],
+  [
+   "the carry-driver lambda",
+   "include/filter/NetworkWlRunTypes.hpp",
+   53
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkWlRunTypes.hpp",
+   54
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetwork.cpp",
+   137
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   390
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   406
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   6
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   88
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   147
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   398
+  ],
+  [
+   "the carry-driver lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1177
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1181
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1193
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1314
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1320
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1331
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1332
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1338
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1339
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1340
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1341
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1342
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1343
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1344
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1345
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1346
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1347
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1348
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1349
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1350
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1351
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1352
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1353
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1354
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1355
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1356
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1357
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1399
+  ],
+  [
+   "subBegin / subEnd closures",
+   "src/core/app/NetworkRun.cpp",
+   110
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkDdPriorBuild.cpp",
+   52
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkEmitStore.cpp",
+   157
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   335
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   354
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   1221
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/filter/NetworkProducerAr.cpp",
+   9
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkSolveGlue.cpp",
+   117
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkSolveGlue.cpp",
+   1543
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkSolveGlue.cpp",
+   1992
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "tests/test_network_arc_graph_oracles.cpp",
+   298
+  ]
+ ],
  "retired_at_base": [
   "row (W1) networkRxCbDemeanPrepass: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
   "row (W2) networkFastClockTick: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
@@ -1197,6 +1877,9 @@
   "declared SPEC_CUT idw, iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "declared CALLABLE isUncarriedThirdBand: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "declared CALLBACK_DIRECT buildEnsembleGauges: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_datum_ensemble: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_hold_on: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS sh_converged_latch: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "epoch member ep.dd_build.carry_arc_amb_key2: retired by the REMOVE-key deletion; `carry_arc_amb_key2` is not declared at this base",
   "run member run.engines.iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
   "run member run.engines.fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
@@ -1211,6 +1894,7 @@
   "engine lane_run: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
   "removed parameter networkBuildCarryDdPriors(isUncarriedThirdBand): retired by the REMOVE-key deletion; `isUncarriedThirdBand` is not declared at this base",
   "removed parameter networkSolveGlue(buildEnsembleGauges): retired by the REMOVE-key deletion; `buildEnsembleGauges` is not declared at this base",
+  "designed text sh_converged_latch: retired by the REMOVE-key deletion; `sh_converged_latch` is not declared at this base",
   "fc_n_emitted_before is spelled n_emitted_before at this base; the entries naming it are re-spelled"
  ]
 }

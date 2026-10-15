@@ -1,7 +1,7 @@
 {
  "tool": "scripts/nom_ep1_cut.py",
- "base": "180aa282edddd6fea896c0d614584b83e0010773",
- "base_sha": "180aa282edddd6fea896c0d614584b83e0010773",
+ "base": "926dafa",
+ "base_sha": "926dafa03c6b8db72246089ccbe2b71f5513cf18",
  "stage": "ep1b",
  "shared_only": false,
  "rows": [
@@ -75,41 +75,47 @@
    "lines": 765,
    "frozen_lines": 761,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "5f3540e9e942bc36"
   },
   "include/app/Application.hpp": {
    "kind": "edited",
-   "lines": 1111,
+   "lines": 1125,
    "frozen_lines": 982,
    "edits": 12,
-   "sha256_lf": "9bb4fef7be9f4014"
+   "doc_hunks": 4,
+   "sha256_lf": "0128c9c9db16a813"
   },
   "include/app/NetworkEpoch.hpp": {
    "kind": "new",
-   "lines": 167,
+   "lines": 170,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "bde7bd38544bf63c"
+   "doc_hunks": 0,
+   "sha256_lf": "e71e4024b30f6cd7"
   },
   "include/app/NetworkRun.hpp": {
    "kind": "new",
    "lines": 95,
    "frozen_lines": null,
    "edits": 0,
+   "doc_hunks": 0,
    "sha256_lf": "fcb328f641e790cf"
   },
   "include/app/NetworkRunContext.hpp": {
    "kind": "edited",
-   "lines": 4574,
+   "lines": 4582,
    "frozen_lines": 4544,
    "edits": 5,
-   "sha256_lf": "61fef184a06db62a"
+   "doc_hunks": 8,
+   "sha256_lf": "5935c9d73a8c187d"
   },
   "include/app/SignalRoster.hpp": {
    "kind": "edited",
    "lines": 1188,
    "frozen_lines": 1174,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "47b44981075c67e8"
   },
   "include/filter/NetworkAmbStateTrace.hpp": {
@@ -117,6 +123,7 @@
    "lines": 200,
    "frozen_lines": 190,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "bf41b049d51585da"
   },
   "include/filter/NetworkBlockBaarda.hpp": {
@@ -124,6 +131,7 @@
    "lines": 735,
    "frozen_lines": 718,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "030aee1ff2f40204"
   },
   "include/filter/NetworkCarryDisposition.hpp": {
@@ -131,6 +139,7 @@
    "lines": 195,
    "frozen_lines": 173,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "d8925dd3fc79074c"
   },
   "include/filter/NetworkChannelAll.hpp": {
@@ -138,6 +147,7 @@
    "lines": 202,
    "frozen_lines": 192,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "795496679b8e0e58"
   },
   "include/filter/NetworkClockLevel.hpp": {
@@ -145,6 +155,7 @@
    "lines": 210,
    "frozen_lines": 186,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "3d38da5abd172132"
   },
   "include/filter/NetworkClockQc.hpp": {
@@ -152,13 +163,15 @@
    "lines": 139,
    "frozen_lines": 130,
    "edits": 3,
-   "sha256_lf": "c738c4d079e263ed"
+   "doc_hunks": 1,
+   "sha256_lf": "05c4a27eee611aba"
   },
   "include/filter/NetworkCongruence.hpp": {
    "kind": "edited",
    "lines": 951,
    "frozen_lines": 934,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "a8fe5df54c8f5704"
   },
   "include/filter/NetworkContributions.hpp": {
@@ -166,6 +179,7 @@
    "lines": 589,
    "frozen_lines": 580,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "870da7352f71fb6a"
   },
   "include/filter/NetworkDatumGraph.hpp": {
@@ -173,6 +187,7 @@
    "lines": 517,
    "frozen_lines": 511,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "f8aac50c6c913bf6"
   },
   "include/filter/NetworkDdFrac.hpp": {
@@ -180,27 +195,31 @@
    "lines": 101,
    "frozen_lines": 85,
    "edits": 3,
-   "sha256_lf": "547c41b23a281f51"
+   "doc_hunks": 1,
+   "sha256_lf": "19beb9d48cd9dfb4"
   },
   "include/filter/NetworkDdPriorBuild.hpp": {
    "kind": "edited",
-   "lines": 90,
+   "lines": 91,
    "frozen_lines": 68,
    "edits": 3,
-   "sha256_lf": "75f8b92f80657b69"
+   "doc_hunks": 1,
+   "sha256_lf": "637da93aad104ca6"
   },
   "include/filter/NetworkEmitStore.hpp": {
    "kind": "edited",
    "lines": 171,
    "frozen_lines": 148,
    "edits": 3,
-   "sha256_lf": "34d40434e53a1717"
+   "doc_hunks": 1,
+   "sha256_lf": "453728a96c815328"
   },
   "include/filter/NetworkFixedCycles.hpp": {
    "kind": "edited",
    "lines": 533,
    "frozen_lines": 520,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "50451311f67e4407"
   },
   "include/filter/NetworkFrameDiag.hpp": {
@@ -208,6 +227,7 @@
    "lines": 292,
    "frozen_lines": 278,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "eb1b419e777aabae"
   },
   "include/filter/NetworkGrossLos.hpp": {
@@ -215,6 +235,7 @@
    "lines": 631,
    "frozen_lines": 622,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "7fccce3dba4690e8"
   },
   "include/filter/NetworkHandoverStransform.hpp": {
@@ -222,6 +243,7 @@
    "lines": 401,
    "frozen_lines": 374,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "77b0cf1334a07639"
   },
   "include/filter/NetworkInstallCarry.hpp": {
@@ -229,20 +251,23 @@
    "lines": 85,
    "frozen_lines": 66,
    "edits": 3,
-   "sha256_lf": "3c2079f98b6bba7a"
+   "doc_hunks": 1,
+   "sha256_lf": "67d73b51738424ee"
   },
   "include/filter/NetworkIonoDiag.hpp": {
    "kind": "edited",
    "lines": 81,
    "frozen_lines": 64,
    "edits": 3,
-   "sha256_lf": "183805f47be76ed7"
+   "doc_hunks": 1,
+   "sha256_lf": "58aaf0d846b48da1"
   },
   "include/filter/NetworkLedgerEmit.hpp": {
    "kind": "edited",
    "lines": 303,
    "frozen_lines": 283,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "b4f5da46f82972c8"
   },
   "include/filter/NetworkLevelAuthority.hpp": {
@@ -250,6 +275,7 @@
    "lines": 88,
    "frozen_lines": 71,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "b039aeba2fc79645"
   },
   "include/filter/NetworkLeveling.hpp": {
@@ -257,13 +283,15 @@
    "lines": 87,
    "frozen_lines": 67,
    "edits": 3,
-   "sha256_lf": "65e81c1b7dc5c8e4"
+   "doc_hunks": 1,
+   "sha256_lf": "022f3c3c07a5235a"
   },
   "include/filter/NetworkMdb.hpp": {
    "kind": "edited",
    "lines": 483,
    "frozen_lines": 473,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "046a93891debe83f"
   },
   "include/filter/NetworkMeasurementAdmission.hpp": {
@@ -271,6 +299,7 @@
    "lines": 490,
    "frozen_lines": 451,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "fe64b181469534ac"
   },
   "include/filter/NetworkMultiGnss.hpp": {
@@ -278,6 +307,7 @@
    "lines": 204,
    "frozen_lines": 194,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "e6be022f7a1e8cf6"
   },
   "include/filter/NetworkOraclePin.hpp": {
@@ -285,6 +315,7 @@
    "lines": 360,
    "frozen_lines": 345,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "2eda2bb81fcf9bf9"
   },
   "include/filter/NetworkParamInventory.hpp": {
@@ -292,6 +323,7 @@
    "lines": 1056,
    "frozen_lines": 1038,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "cfdf59a547d779e5"
   },
   "include/filter/NetworkPbHoldClone.hpp": {
@@ -299,6 +331,7 @@
    "lines": 599,
    "frozen_lines": 556,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "0f8fc9ccee66e35f"
   },
   "include/filter/NetworkPhaseVisibleDiag.hpp": {
@@ -306,6 +339,7 @@
    "lines": 113,
    "frozen_lines": 89,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "17057b8f86ee4d93"
   },
   "include/filter/NetworkPrefitCensus.hpp": {
@@ -313,34 +347,47 @@
    "lines": 362,
    "frozen_lines": 334,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "adc6525b11ceea08"
+  },
+  "include/filter/NetworkPriorResidual.hpp": {
+   "kind": "edited",
+   "lines": 1331,
+   "frozen_lines": 1330,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "297baf056d5f1ba3"
   },
   "include/filter/NetworkProducerAr.hpp": {
    "kind": "edited",
    "lines": 356,
    "frozen_lines": 354,
    "edits": 3,
-   "sha256_lf": "f05b785e4f37b4b8"
+   "doc_hunks": 1,
+   "sha256_lf": "ee7c0b2a5722e727"
   },
   "include/filter/NetworkRaim.hpp": {
    "kind": "edited",
    "lines": 281,
    "frozen_lines": 284,
    "edits": 3,
-   "sha256_lf": "eabc482302dbaa6f"
+   "doc_hunks": 1,
+   "sha256_lf": "76f4b2edf018e5cd"
   },
   "include/filter/NetworkRedundancyCensus.hpp": {
    "kind": "edited",
-   "lines": 302,
+   "lines": 304,
    "frozen_lines": 297,
    "edits": 3,
-   "sha256_lf": "aa4bfa67dd1d9fec"
+   "doc_hunks": 1,
+   "sha256_lf": "9e8e0cca28f45e66"
   },
   "include/filter/NetworkRhsAttrib.hpp": {
    "kind": "edited",
    "lines": 877,
    "frozen_lines": 841,
    "edits": 4,
+   "doc_hunks": 0,
    "sha256_lf": "a9e60057b1ec2332"
   },
   "include/filter/NetworkRunGroups.hpp": {
@@ -348,13 +395,15 @@
    "lines": 141,
    "frozen_lines": 95,
    "edits": 7,
-   "sha256_lf": "bf87d5577b87d437"
+   "doc_hunks": 1,
+   "sha256_lf": "9452b1630cfd9243"
   },
   "include/filter/NetworkSdEwlAr.hpp": {
    "kind": "edited",
    "lines": 305,
    "frozen_lines": 299,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "9a38351ece5caa1a"
   },
   "include/filter/NetworkSecondPhaseScope.hpp": {
@@ -362,6 +411,7 @@
    "lines": 180,
    "frozen_lines": 168,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "b40e9da5eb5e2c20"
   },
   "include/filter/NetworkShDevVtec.hpp": {
@@ -369,20 +419,23 @@
    "lines": 97,
    "frozen_lines": 81,
    "edits": 3,
-   "sha256_lf": "33f2d64480da84eb"
+   "doc_hunks": 1,
+   "sha256_lf": "7cd80467e8966041"
   },
   "include/filter/NetworkShHealth.hpp": {
    "kind": "edited",
    "lines": 82,
    "frozen_lines": 64,
    "edits": 3,
-   "sha256_lf": "06b5e1bc4caec0ee"
+   "doc_hunks": 1,
+   "sha256_lf": "280754cec2bd0a09"
   },
   "include/filter/NetworkSignalIntegrity.hpp": {
    "kind": "edited",
    "lines": 397,
    "frozen_lines": 358,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "8da84c2634c5ed56"
   },
   "include/filter/NetworkSolPrep.hpp": {
@@ -390,69 +443,87 @@
    "lines": 212,
    "frozen_lines": 170,
    "edits": 2,
-   "sha256_lf": "efff6f1bb0b3a067"
+   "doc_hunks": 1,
+   "sha256_lf": "3b45b64b98e96381"
   },
   "include/filter/NetworkSolveGlue.hpp": {
    "kind": "edited",
-   "lines": 187,
+   "lines": 189,
    "frozen_lines": 145,
    "edits": 8,
-   "sha256_lf": "900af1da7f17daba"
+   "doc_hunks": 3,
+   "sha256_lf": "e1235b038af33da1"
   },
   "include/filter/NetworkStashStatus.hpp": {
    "kind": "edited",
    "lines": 105,
    "frozen_lines": 80,
    "edits": 3,
-   "sha256_lf": "1fad5cef0609e30c"
+   "doc_hunks": 1,
+   "sha256_lf": "4aefee1295d8c34d"
   },
   "include/filter/NetworkStationBlock.hpp": {
    "kind": "edited",
    "lines": 258,
    "frozen_lines": 249,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "9eebf80c0d666f86"
+  },
+  "include/filter/NetworkWlRunTypes.hpp": {
+   "kind": "edited",
+   "lines": 88,
+   "frozen_lines": 86,
+   "edits": 0,
+   "doc_hunks": 2,
+   "sha256_lf": "fb79b08283f48035"
   },
   "src/core/app/ApplicationNetwork.cpp": {
    "kind": "edited",
-   "lines": 909,
+   "lines": 847,
    "frozen_lines": 2530,
-   "edits": 48,
-   "sha256_lf": "42e9eaac81119ea5"
+   "edits": 81,
+   "doc_hunks": 7,
+   "sha256_lf": "22ce2dc27224ee95"
   },
   "src/core/app/ApplicationNetworkAssembly.cpp": {
    "kind": "edited",
    "lines": 5486,
    "frozen_lines": 5442,
    "edits": 11,
+   "doc_hunks": 0,
    "sha256_lf": "f7e0bd88bc8178f4"
   },
   "src/core/app/ApplicationNetworkEpoch.cpp": {
    "kind": "new",
-   "lines": 1602,
+   "lines": 1611,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "f2e1ad4070dab2a9"
+   "doc_hunks": 5,
+   "sha256_lf": "b3d0a21dd4f63770"
   },
   "src/core/app/NetworkBorderPrior.cpp": {
    "kind": "edited",
    "lines": 1007,
    "frozen_lines": 994,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "816d7291f6ca6afe"
   },
   "src/core/app/NetworkRun.cpp": {
    "kind": "new",
-   "lines": 151,
+   "lines": 152,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "7f9a4ddba464dd17"
+   "doc_hunks": 1,
+   "sha256_lf": "65a3da65a275d1d0"
   },
   "src/core/app/NetworkStateSnapshotWrite.cpp": {
    "kind": "edited",
    "lines": 604,
    "frozen_lines": 593,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "90933c6a168cb7ad"
   },
   "src/core/app/SignalRoster.cpp": {
@@ -460,6 +531,7 @@
    "lines": 2404,
    "frozen_lines": 2387,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "c9a80629e0ab10f7"
   },
   "src/core/filter/NetworkAmbStateTrace.cpp": {
@@ -467,6 +539,7 @@
    "lines": 178,
    "frozen_lines": 169,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "5bdca55153f568c2"
   },
   "src/core/filter/NetworkBlockBaarda.cpp": {
@@ -474,6 +547,7 @@
    "lines": 509,
    "frozen_lines": 499,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "b1f46be7f522ded1"
   },
   "src/core/filter/NetworkCarryDisposition.cpp": {
@@ -481,6 +555,7 @@
    "lines": 311,
    "frozen_lines": 297,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "00e22caf2ab3e07c"
   },
   "src/core/filter/NetworkChannelAll.cpp": {
@@ -488,6 +563,7 @@
    "lines": 257,
    "frozen_lines": 247,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "d4067d18a01a12d5"
   },
   "src/core/filter/NetworkClockLevel.cpp": {
@@ -495,6 +571,7 @@
    "lines": 772,
    "frozen_lines": 756,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "65b50b50db7b64be"
   },
   "src/core/filter/NetworkClockQc.cpp": {
@@ -502,6 +579,7 @@
    "lines": 572,
    "frozen_lines": 563,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "550e72ee2074f6a3"
   },
   "src/core/filter/NetworkCongruence.cpp": {
@@ -509,6 +587,7 @@
    "lines": 497,
    "frozen_lines": 487,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "8567027cd309350e"
   },
   "src/core/filter/NetworkContributions.cpp": {
@@ -516,6 +595,7 @@
    "lines": 891,
    "frozen_lines": 878,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "3393610ed3653742"
   },
   "src/core/filter/NetworkDatumGraph.cpp": {
@@ -523,6 +603,7 @@
    "lines": 708,
    "frozen_lines": 694,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "8e9a5fbebaa4eeee"
   },
   "src/core/filter/NetworkDdFrac.cpp": {
@@ -530,6 +611,7 @@
    "lines": 386,
    "frozen_lines": 378,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "c50fd531cacf6b02"
   },
   "src/core/filter/NetworkDdPriorBuild.cpp": {
@@ -537,6 +619,7 @@
    "lines": 207,
    "frozen_lines": 198,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "afb4cd7ba6da3ae8"
   },
   "src/core/filter/NetworkEmitStore.cpp": {
@@ -544,6 +627,7 @@
    "lines": 1044,
    "frozen_lines": 1039,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "67f14e7d9ae2e7b6"
   },
   "src/core/filter/NetworkFixedCycles.cpp": {
@@ -551,6 +635,7 @@
    "lines": 913,
    "frozen_lines": 899,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "a2ad2afe8379a23b"
   },
   "src/core/filter/NetworkFrameDiag.cpp": {
@@ -558,6 +643,7 @@
    "lines": 561,
    "frozen_lines": 543,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "3c727a3a2d5882ee"
   },
   "src/core/filter/NetworkGrossLos.cpp": {
@@ -565,6 +651,7 @@
    "lines": 1407,
    "frozen_lines": 1400,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "ab3df6a0a816dc91"
   },
   "src/core/filter/NetworkHandoverStransform.cpp": {
@@ -572,6 +659,7 @@
    "lines": 736,
    "frozen_lines": 721,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "7a2c944298869db9"
   },
   "src/core/filter/NetworkInstallCarry.cpp": {
@@ -579,6 +667,7 @@
    "lines": 430,
    "frozen_lines": 422,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "2a877158fcb55856"
   },
   "src/core/filter/NetworkIonoDiag.cpp": {
@@ -586,6 +675,7 @@
    "lines": 287,
    "frozen_lines": 279,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "707081348cffacb7"
   },
   "src/core/filter/NetworkLedgerEmit.cpp": {
@@ -593,6 +683,7 @@
    "lines": 468,
    "frozen_lines": 455,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "c253bcc05bc8ad59"
   },
   "src/core/filter/NetworkLevelAuthority.cpp": {
@@ -600,6 +691,7 @@
    "lines": 174,
    "frozen_lines": 163,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "2dc52ea6526c5c9b"
   },
   "src/core/filter/NetworkLeveling.cpp": {
@@ -607,6 +699,7 @@
    "lines": 119,
    "frozen_lines": 110,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "3b96754f413f0dcf"
   },
   "src/core/filter/NetworkMdb.cpp": {
@@ -614,6 +707,7 @@
    "lines": 484,
    "frozen_lines": 473,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "7ca87d0abb27aee6"
   },
   "src/core/filter/NetworkMeasurementAdmission.cpp": {
@@ -621,6 +715,7 @@
    "lines": 1069,
    "frozen_lines": 1050,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "0b771411dc860d5a"
   },
   "src/core/filter/NetworkMultiGnss.cpp": {
@@ -628,6 +723,7 @@
    "lines": 261,
    "frozen_lines": 251,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "35e482091fe1645e"
   },
   "src/core/filter/NetworkOraclePin.cpp": {
@@ -635,6 +731,7 @@
    "lines": 740,
    "frozen_lines": 731,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "bc60f442895b3caa"
   },
   "src/core/filter/NetworkParamInventory.cpp": {
@@ -642,6 +739,7 @@
    "lines": 1218,
    "frozen_lines": 1202,
    "edits": 5,
+   "doc_hunks": 0,
    "sha256_lf": "6049c0bce0165687"
   },
   "src/core/filter/NetworkPbHoldClone.cpp": {
@@ -649,6 +747,7 @@
    "lines": 1412,
    "frozen_lines": 1392,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "f0e46d87c9233a04"
   },
   "src/core/filter/NetworkPhaseVisibleDiag.cpp": {
@@ -656,6 +755,7 @@
    "lines": 170,
    "frozen_lines": 157,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "60893f5b56ca6ce7"
   },
   "src/core/filter/NetworkPrefitCensus.cpp": {
@@ -663,6 +763,7 @@
    "lines": 843,
    "frozen_lines": 828,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "151e89d26b69da8e"
   },
   "src/core/filter/NetworkProducerAr.cpp": {
@@ -670,6 +771,7 @@
    "lines": 1388,
    "frozen_lines": 1379,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "5378a24a8ab0697a"
   },
   "src/core/filter/NetworkRaim.cpp": {
@@ -677,6 +779,7 @@
    "lines": 1410,
    "frozen_lines": 1401,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "b07a296f7ab8abcc"
   },
   "src/core/filter/NetworkRedundancyCensus.cpp": {
@@ -684,6 +787,7 @@
    "lines": 754,
    "frozen_lines": 741,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "a924fa2272743997"
   },
   "src/core/filter/NetworkRhsAttrib.cpp": {
@@ -691,6 +795,7 @@
    "lines": 2078,
    "frozen_lines": 2055,
    "edits": 4,
+   "doc_hunks": 0,
    "sha256_lf": "44f959e7295b3da5"
   },
   "src/core/filter/NetworkSdEwlAr.cpp": {
@@ -698,6 +803,7 @@
    "lines": 678,
    "frozen_lines": 671,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "78a6a85c06ddc060"
   },
   "src/core/filter/NetworkSecondPhaseScope.cpp": {
@@ -705,6 +811,7 @@
    "lines": 230,
    "frozen_lines": 221,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "0a4ec9a7656e0486"
   },
   "src/core/filter/NetworkShDevVtec.cpp": {
@@ -712,6 +819,7 @@
    "lines": 268,
    "frozen_lines": 261,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "39206085e97134a1"
   },
   "src/core/filter/NetworkShHealth.cpp": {
@@ -719,6 +827,7 @@
    "lines": 356,
    "frozen_lines": 348,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "4d41df267621b776"
   },
   "src/core/filter/NetworkSignalIntegrity.cpp": {
@@ -726,6 +835,7 @@
    "lines": 611,
    "frozen_lines": 594,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "8c9854d9d635a9b9"
   },
   "src/core/filter/NetworkSolPrep.cpp": {
@@ -733,6 +843,7 @@
    "lines": 1383,
    "frozen_lines": 1365,
    "edits": 2,
+   "doc_hunks": 0,
    "sha256_lf": "099f2c12e5fade95"
   },
   "src/core/filter/NetworkSolveGlue.cpp": {
@@ -740,6 +851,7 @@
    "lines": 2623,
    "frozen_lines": 2614,
    "edits": 7,
+   "doc_hunks": 0,
    "sha256_lf": "90348257e08d18fc"
   },
   "src/core/filter/NetworkStashStatus.cpp": {
@@ -747,6 +859,7 @@
    "lines": 695,
    "frozen_lines": 686,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "9168ca2d9fb2a32b"
   },
   "src/core/filter/NetworkStationBlock.cpp": {
@@ -754,14 +867,16 @@
    "lines": 421,
    "frozen_lines": 410,
    "edits": 3,
+   "doc_hunks": 0,
    "sha256_lf": "5fb1f27a60b5338d"
   },
   "tests/test_network_epoch_contract.cpp": {
    "kind": "new",
-   "lines": 241,
+   "lines": 247,
    "frozen_lines": null,
    "edits": 0,
-   "sha256_lf": "17d1c09f2ec3483c"
+   "doc_hunks": 0,
+   "sha256_lf": "14c525c97ec4bec2"
   }
  },
  "epoch_function": {
@@ -1508,7 +1623,7 @@
     "args_before": 7,
     "args_after": 3,
     "call": "networkPassAHead_(run, ep, ep.pass_a)",
-    "new_line": 434
+    "new_line": 440
    },
    {
     "seam": "networkPassASlipScan_",
@@ -1516,7 +1631,7 @@
     "args_before": 12,
     "args_after": 4,
     "call": "networkPassASlipScan_(run, ep, ep.pass_a, ep.funnel)",
-    "new_line": 439
+    "new_line": 445
    },
    {
     "seam": "networkAssemblyPrefilter_",
@@ -1524,7 +1639,7 @@
     "args_before": 8,
     "args_after": 3,
     "call": "networkAssemblyPrefilter_(run, ep, ep.pass_a)",
-    "new_line": 450
+    "new_line": 456
    },
    {
     "seam": "networkAssemblyRegisterColumns_",
@@ -1532,7 +1647,7 @@
     "args_before": 14,
     "args_after": 3,
     "call": "networkAssemblyRegisterColumns_(run, ep, ep.columns)",
-    "new_line": 1050
+    "new_line": 1056
    },
    {
     "seam": "networkPassB_",
@@ -1540,7 +1655,7 @@
     "args_before": 22,
     "args_after": 4,
     "call": "networkPassB_(run, ep, ep.pass_a, ep.assembly)",
-    "new_line": 1130
+    "new_line": 1136
    },
    {
     "seam": "networkBuildSignalRoster",
@@ -1548,7 +1663,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkBuildSignalRoster(run, ep)",
-    "new_line": 256
+    "new_line": 262
    },
    {
     "seam": "networkSignalRosterAudit",
@@ -1556,7 +1671,7 @@
     "args_before": 12,
     "args_after": 2,
     "call": "networkSignalRosterAudit(run, ep)",
-    "new_line": 1392
+    "new_line": 1401
    },
    {
     "seam": "networkCouplingExactPrepare",
@@ -1564,7 +1679,7 @@
     "args_before": 5,
     "args_after": 2,
     "call": "networkCouplingExactPrepare(run, ep)",
-    "new_line": 1116
+    "new_line": 1122
    },
    {
     "seam": "networkWriteStateSnapshot",
@@ -1572,7 +1687,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkWriteStateSnapshot(run, ep)",
-    "new_line": 1598
+    "new_line": 1607
    },
    {
     "seam": "networkSignalIntegrity",
@@ -1580,7 +1695,7 @@
     "args_before": 13,
     "args_after": 4,
     "call": "networkSignalIntegrity(run, ep, ep.pass_a, ep.funnel)",
-    "new_line": 469
+    "new_line": 475
    },
    {
     "seam": "networkMeasurementAdmission",
@@ -1588,7 +1703,7 @@
     "args_before": 13,
     "args_after": 4,
     "call": "networkMeasurementAdmission(run, ep, ep.pass_a, ep.funnel)",
-    "new_line": 493
+    "new_line": 499
    },
    {
     "seam": "networkLevelAuthorityCensus",
@@ -1596,7 +1711,7 @@
     "args_before": 8,
     "args_after": 2,
     "call": "networkLevelAuthorityCensus(run, ep)",
-    "new_line": 1047
+    "new_line": 1053
    },
    {
     "seam": "networkSdEwlAr",
@@ -1604,7 +1719,7 @@
     "args_before": 9,
     "args_after": 2,
     "call": "networkSdEwlAr(run, ep)",
-    "new_line": 1065
+    "new_line": 1071
    },
    {
     "seam": "networkOraclePinEpoch",
@@ -1612,7 +1727,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkOraclePinEpoch(run, ep)",
-    "new_line": 1079
+    "new_line": 1085
    },
    {
     "seam": "networkHandoverStransformBeforeRows",
@@ -1620,7 +1735,7 @@
     "args_before": 8,
     "args_after": 2,
     "call": "networkHandoverStransformBeforeRows(run, ep)",
-    "new_line": 1114
+    "new_line": 1120
    },
    {
     "seam": "networkCarryDecide",
@@ -1628,7 +1743,7 @@
     "args_before": 4,
     "args_after": 2,
     "call": "networkCarryDecide(run, ep)",
-    "new_line": 1115
+    "new_line": 1121
    },
    {
     "seam": "networkSolveGlue",
@@ -1636,7 +1751,7 @@
     "args_before": 24,
     "args_after": 6,
     "call": "networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.funnel)",
-    "new_line": 1279
+    "new_line": 1288
    },
    {
     "seam": "networkInstallCarry",
@@ -1644,7 +1759,7 @@
     "args_before": 15,
     "args_after": 2,
     "call": "networkInstallCarry(run, ep)",
-    "new_line": 1291
+    "new_line": 1300
    },
    {
     "seam": "networkProducerAr",
@@ -1652,7 +1767,7 @@
     "args_before": 12,
     "args_after": 2,
     "call": "networkProducerAr(run, ep)",
-    "new_line": 1295
+    "new_line": 1304
    },
    {
     "seam": "networkGrossLosScreen",
@@ -1660,7 +1775,7 @@
     "args_before": 12,
     "args_after": 3,
     "call": "networkGrossLosScreen(run, ep, GrossLosPhase::Decide)",
-    "new_line": 1306
+    "new_line": 1315
    },
    {
     "seam": "networkGrossLosScreen",
@@ -1668,7 +1783,7 @@
     "args_before": 12,
     "args_after": 3,
     "call": "networkGrossLosScreen(run, ep, ctx.knobs.gl_emit_exclude ? GrossLosPhase::Act : GrossLosPhase::Full)",
-    "new_line": 1370
+    "new_line": 1379
    },
    {
     "seam": "networkFixedCycles",
@@ -1676,7 +1791,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkFixedCycles(run, ep)",
-    "new_line": 1315
+    "new_line": 1324
    },
    {
     "seam": "networkSolPrep",
@@ -1684,7 +1799,7 @@
     "args_before": 17,
     "args_after": 2,
     "call": "networkSolPrep(run, ep)",
-    "new_line": 1316
+    "new_line": 1325
    },
    {
     "seam": "networkPbHoldCloneUpdate",
@@ -1692,7 +1807,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkPbHoldCloneUpdate(run, ep)",
-    "new_line": 1327
+    "new_line": 1336
    },
    {
     "seam": "networkPbHoldCloneHarvest",
@@ -1700,7 +1815,7 @@
     "args_before": 4,
     "args_after": 2,
     "call": "networkPbHoldCloneHarvest(run, ep)",
-    "new_line": 1520
+    "new_line": 1529
    },
    {
     "seam": "networkEmitStore",
@@ -1708,7 +1823,7 @@
     "args_before": 25,
     "args_after": 3,
     "call": "networkEmitStore(run, ep, ep.prep.sol)",
-    "new_line": 1329
+    "new_line": 1338
    },
    {
     "seam": "networkPostFitRaim",
@@ -1716,7 +1831,7 @@
     "args_before": 17,
     "args_after": 3,
     "call": "networkPostFitRaim(run, ep, ep.solve.handoff)",
-    "new_line": 1354
+    "new_line": 1363
    },
    {
     "seam": "networkClockQc",
@@ -1724,7 +1839,7 @@
     "args_before": 17,
     "args_after": 3,
     "call": "networkClockQc(run, ep, ep.solve.handoff)",
-    "new_line": 1374
+    "new_line": 1383
    },
    {
     "seam": "networkStashStatus",
@@ -1732,7 +1847,7 @@
     "args_before": 28,
     "args_after": 2,
     "call": "networkStashStatus(run, ep)",
-    "new_line": 1517
+    "new_line": 1526
    },
    {
     "seam": "networkClockLevelRestoreRaise",
@@ -1740,7 +1855,7 @@
     "args_before": 2,
     "args_after": 1,
     "call": "networkClockLevelRestoreRaise(run)",
-    "new_line": 1107
+    "new_line": 1113
    },
    {
     "seam": "networkClockLevelMonitor",
@@ -1748,7 +1863,7 @@
     "args_before": 8,
     "args_after": 2,
     "call": "networkClockLevelMonitor(run, ep)",
-    "new_line": 1525
+    "new_line": 1534
    },
    {
     "seam": "networkRhsAttribution",
@@ -1756,7 +1871,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkRhsAttribution(run, ep)",
-    "new_line": 1508
+    "new_line": 1517
    },
    {
     "seam": "networkRhsAttribTrip",
@@ -1764,7 +1879,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkRhsAttribTrip(run, ep)",
-    "new_line": 1514
+    "new_line": 1523
    },
    {
     "seam": "networkIonoDiag",
@@ -1772,7 +1887,7 @@
     "args_before": 14,
     "args_after": 2,
     "call": "networkIonoDiag(run, ep)",
-    "new_line": 1333
+    "new_line": 1342
    },
    {
     "seam": "networkDdFrac",
@@ -1780,7 +1895,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkDdFrac(run, ep)",
-    "new_line": 1336
+    "new_line": 1345
    },
    {
     "seam": "networkShDevVtec",
@@ -1788,7 +1903,7 @@
     "args_before": 12,
     "args_after": 2,
     "call": "networkShDevVtec(run, ep)",
-    "new_line": 1339
+    "new_line": 1348
    },
    {
     "seam": "networkShHealth",
@@ -1796,7 +1911,7 @@
     "args_before": 15,
     "args_after": 2,
     "call": "networkShHealth(run, ep)",
-    "new_line": 1342
+    "new_line": 1351
    },
    {
     "seam": "networkLeveling",
@@ -1804,7 +1919,7 @@
     "args_before": 18,
     "args_after": 2,
     "call": "networkLeveling(run, ep)",
-    "new_line": 1345
+    "new_line": 1354
    },
    {
     "seam": "networkPhaseVisibleMonitor",
@@ -1812,7 +1927,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkPhaseVisibleMonitor(run, ep)",
-    "new_line": 1378
+    "new_line": 1387
    },
    {
     "seam": "networkLedgerEmitFold",
@@ -1820,7 +1935,7 @@
     "args_before": 3,
     "args_after": 2,
     "call": "networkLedgerEmitFold(run, ep)",
-    "new_line": 1398
+    "new_line": 1407
    },
    {
     "seam": "networkSecondPhaseEpochTail",
@@ -1828,7 +1943,7 @@
     "args_before": 3,
     "args_after": 2,
     "call": "networkSecondPhaseEpochTail(run, ep)",
-    "new_line": 1406
+    "new_line": 1415
    },
    {
     "seam": "networkChannelAllEpoch",
@@ -1836,7 +1951,7 @@
     "args_before": 5,
     "args_after": 2,
     "call": "networkChannelAllEpoch(run, ep)",
-    "new_line": 1411
+    "new_line": 1420
    },
    {
     "seam": "networkMultiGnssEpoch",
@@ -1844,7 +1959,7 @@
     "args_before": 5,
     "args_after": 2,
     "call": "networkMultiGnssEpoch(run, ep)",
-    "new_line": 1416
+    "new_line": 1425
    },
    {
     "seam": "networkParamInventoryNoteSatellites",
@@ -1852,7 +1967,7 @@
     "args_before": 2,
     "args_after": 2,
     "call": "networkParamInventoryNoteSatellites(run, ep)",
-    "new_line": 332
+    "new_line": 338
    },
    {
     "seam": "networkParamInventoryEpochTail",
@@ -1860,7 +1975,7 @@
     "args_before": 5,
     "args_after": 2,
     "call": "networkParamInventoryEpochTail(run, ep)",
-    "new_line": 1420
+    "new_line": 1429
    },
    {
     "seam": "networkContributionsEpochTail",
@@ -1868,7 +1983,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkContributionsEpochTail(run, ep)",
-    "new_line": 1424
+    "new_line": 1433
    },
    {
     "seam": "networkPostfitSigma0",
@@ -1876,7 +1991,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkPostfitSigma0(run, ep)",
-    "new_line": 1444
+    "new_line": 1453
    },
    {
     "seam": "networkShSpectrum",
@@ -1884,7 +1999,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkShSpectrum(run, ep)",
-    "new_line": 1446
+    "new_line": 1455
    },
    {
     "seam": "networkStationBlock",
@@ -1892,7 +2007,7 @@
     "args_before": 10,
     "args_after": 2,
     "call": "networkStationBlock(run, ep)",
-    "new_line": 1453
+    "new_line": 1462
    },
    {
     "seam": "networkPrefitCensus",
@@ -1900,7 +2015,7 @@
     "args_before": 9,
     "args_after": 2,
     "call": "networkPrefitCensus(run, ep)",
-    "new_line": 1461
+    "new_line": 1470
    },
    {
     "seam": "networkRedundancyCensus",
@@ -1908,7 +2023,7 @@
     "args_before": 11,
     "args_after": 2,
     "call": "networkRedundancyCensus(run, ep)",
-    "new_line": 1469
+    "new_line": 1478
    },
    {
     "seam": "networkBlockBaardaEmit",
@@ -1916,7 +2031,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkBlockBaardaEmit(run, ep)",
-    "new_line": 1477
+    "new_line": 1486
    },
    {
     "seam": "networkCongruenceEmit",
@@ -1924,7 +2039,7 @@
     "args_before": 6,
     "args_after": 2,
     "call": "networkCongruenceEmit(run, ep)",
-    "new_line": 1486
+    "new_line": 1495
    },
    {
     "seam": "networkMdbFlush",
@@ -1932,7 +2047,7 @@
     "args_before": 5,
     "args_after": 2,
     "call": "networkMdbFlush(run, ep)",
-    "new_line": 1496
+    "new_line": 1505
    },
    {
     "seam": "networkDatumGraphCensus",
@@ -1940,7 +2055,7 @@
     "args_before": 13,
     "args_after": 2,
     "call": "networkDatumGraphCensus(run, ep)",
-    "new_line": 1506
+    "new_line": 1515
    },
    {
     "seam": "networkAmbStateTrace",
@@ -1948,14 +2063,14 @@
     "args_before": 3,
     "args_after": 2,
     "call": "networkAmbStateTrace(run, ep)",
-    "new_line": 1531
+    "new_line": 1540
    },
    {
     "seam": "networkBuildCarryDdPriors",
     "frozen_line": 2089,
     "via": "buildCarryDdPriors",
     "call": "networkBuildCarryDdPriors(run, ep, ep.dd_build, ep.funnel)",
-    "new_line": 1276
+    "new_line": 1285
    }
   ],
   "brackets": 40,
@@ -2208,8 +2323,8 @@
    "std::vector<SubBlockTimer>& sec_sub_ep0 = timing.sec_sub_ep0;"
   ],
   "function_lines": [
-   148,
-   1602
+   154,
+   1611
   ],
   "preamble_count": 46
  },
@@ -2225,7 +2340,7 @@
     "const NetworkEpoch& ep",
     "EpochPassA& pass_a"
    ],
-   "new_line": 832
+   "new_line": 844
   },
   {
    "seam": "networkPassASlipScan_",
@@ -2239,7 +2354,7 @@
     "EpochPassA& pass_a",
     "NetworkSlipFunnel& funnel"
    ],
-   "new_line": 880
+   "new_line": 892
   },
   {
    "seam": "networkAssemblyPrefilter_",
@@ -2252,7 +2367,7 @@
     "const NetworkEpoch& ep",
     "EpochPassA& pass_a"
    ],
-   "new_line": 912
+   "new_line": 924
   },
   {
    "seam": "networkAssemblyRegisterColumns_",
@@ -2265,7 +2380,7 @@
     "const NetworkEpoch& ep",
     "EpochColumns& columns"
    ],
-   "new_line": 955
+   "new_line": 968
   },
   {
    "seam": "networkPassB_",
@@ -2279,7 +2394,7 @@
     "EpochPassA& pass_a",
     "EpochAssembly& assembly"
    ],
-   "new_line": 1023
+   "new_line": 1037
   },
   {
    "seam": "networkBuildSignalRoster",
@@ -2315,7 +2430,7 @@
     "NetworkRun& run",
     "const NetworkEpoch& ep"
    ],
-   "new_line": 4521
+   "new_line": 4529
   },
   {
    "seam": "networkWriteStateSnapshot",
@@ -2327,7 +2442,7 @@
     "NetworkRun& run",
     "const NetworkEpoch& ep"
    ],
-   "new_line": 4421
+   "new_line": 4429
   },
   {
    "seam": "networkSignalIntegrity",
@@ -2429,7 +2544,7 @@
     "EpochDdBuild& dd_build",
     "NetworkSlipFunnel& funnel"
    ],
-   "new_line": 87
+   "new_line": 88
   },
   {
    "seam": "networkSolveGlue",
@@ -2445,7 +2560,7 @@
     "EpochDdBuild& dd_build",
     "NetworkSlipFunnel& funnel"
    ],
-   "new_line": 183
+   "new_line": 185
   },
   {
    "seam": "networkInstallCarry",
@@ -2844,7 +2959,7 @@
     "NetworkRun& run",
     "const NetworkEpoch& ep"
    ],
-   "new_line": 175
+   "new_line": 177
   },
   {
    "seam": "networkBlockBaardaEmit",
@@ -4385,8 +4500,211 @@
      "class": "SPEC_CUT",
      "tag": "SPEC_CUT clk_rebase_cfg",
      "frozen_line": 674
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_rts",
+     "frozen_line": 234
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_staged",
+     "frozen_line": 235
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_cursor",
+     "frozen_line": 236
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_carry",
+     "frozen_line": 390
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS last_pivot",
+     "frozen_line": 391
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS anchor_incumbent",
+     "frozen_line": 392
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS this_epoch_anchor",
+     "frozen_line": 393
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS start_anchor_s",
+     "frozen_line": 394
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS local_carry",
+     "frozen_line": 395
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_sigma0_ewma",
+     "frozen_line": 396
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS grade_metric_s",
+     "frozen_line": 397
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_on",
+     "frozen_line": 398
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_warmup",
+     "frozen_line": 400
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_max_gap_s",
+     "frozen_line": 401
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_on",
+     "frozen_line": 573
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS raim_on",
+     "frozen_line": 574
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_tow",
+     "frozen_line": 590
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_week",
+     "frozen_line": 591
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_emitted",
+     "frozen_line": 592
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_epochs",
+     "frozen_line": 593
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_key_epochs",
+     "frozen_line": 594
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchor_s",
+     "frozen_line": 595
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchored",
+     "frozen_line": 596
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_eq34",
+     "frozen_line": 614
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_invariant",
+     "frozen_line": 617
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_gate",
+     "frozen_line": 630
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_sat_vertex",
+     "frozen_line": 677
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_group_id",
+     "frozen_line": 678
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_prev_tow",
+     "frozen_line": 679
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_pending",
+     "frozen_line": 680
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_prioritized",
+     "frozen_line": 681
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_loop_epochs",
+     "frozen_line": 713
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS decim_counter",
+     "frozen_line": 714
     }
-   ]
+   ],
+   "unread_aliases": {
+    "removed": [
+     "brdc_rts",
+     "brdc_nav_staged",
+     "brdc_nav_cursor",
+     "prev_carry",
+     "last_pivot",
+     "anchor_incumbent",
+     "this_epoch_anchor",
+     "start_anchor_s",
+     "local_carry",
+     "ura_sigma0_ewma",
+     "grade_metric_s",
+     "pl_on",
+     "pl_warmup",
+     "pl_max_gap_s",
+     "ura_on",
+     "raim_on",
+     "prev_tow",
+     "prev_week",
+     "n_emitted",
+     "n_gated_epochs",
+     "n_gated_key_epochs",
+     "max_dur_anchor_s",
+     "max_dur_anchored",
+     "phase_datum_eq34",
+     "carry_invariant",
+     "carry_innov_gate",
+     "carry_sat_vertex",
+     "carry_group_id",
+     "carry_prev_tow",
+     "carry_innov_pending",
+     "phase_datum_prioritized",
+     "n_loop_epochs",
+     "decim_counter"
+    ],
+    "kept": []
+   }
   },
   "groups": {
    "engines_struct_frozen": [
@@ -4534,6 +4852,189 @@
   ]
  ],
  "problems": [],
+ "doc_hunks": {
+  "src/core/app/ApplicationNetwork.cpp": 7,
+  "src/core/app/ApplicationNetworkEpoch.cpp": 5,
+  "src/core/app/NetworkRun.cpp": 1,
+  "include/app/Application.hpp": 4,
+  "include/app/NetworkRunContext.hpp": 8,
+  "include/filter/NetworkSolveGlue.hpp": 3,
+  "include/filter/NetworkDdPriorBuild.hpp": 1,
+  "include/filter/NetworkRedundancyCensus.hpp": 1,
+  "include/filter/NetworkPriorResidual.hpp": 1,
+  "include/filter/NetworkWlRunTypes.hpp": 2,
+  "include/filter/NetworkRunGroups.hpp": 1,
+  "include/filter/NetworkClockQc.hpp": 1,
+  "include/filter/NetworkDdFrac.hpp": 1,
+  "include/filter/NetworkEmitStore.hpp": 1,
+  "include/filter/NetworkInstallCarry.hpp": 1,
+  "include/filter/NetworkIonoDiag.hpp": 1,
+  "include/filter/NetworkLeveling.hpp": 1,
+  "include/filter/NetworkProducerAr.hpp": 1,
+  "include/filter/NetworkRaim.hpp": 1,
+  "include/filter/NetworkShDevVtec.hpp": 1,
+  "include/filter/NetworkShHealth.hpp": 1,
+  "include/filter/NetworkSolPrep.hpp": 1,
+  "include/filter/NetworkStashStatus.hpp": 1
+ },
+ "doc_hunks_after_deletion_only": [],
+ "stale_spellings": [
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   89
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   92
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/app/NetworkRunContext.hpp",
+   2163
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2465
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2529
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2556
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   3912
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/filter/NetworkPriorResidual.hpp",
+   312
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkRedundancyCensus.hpp",
+   172
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkRedundancyCensus.hpp",
+   173
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkSolveGlue.hpp",
+   23
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   181
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/filter/NetworkWlRunTypes.hpp",
+   45
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetwork.cpp",
+   137
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   390
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   406
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   6
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   88
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   147
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   391
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1139
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1152
+  ],
+  [
+   "subBegin / subEnd closures",
+   "src/core/app/NetworkRun.cpp",
+   110
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkDdPriorBuild.cpp",
+   61
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkEmitStore.cpp",
+   162
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   343
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   362
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   1221
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/filter/NetworkProducerAr.cpp",
+   9
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkSolveGlue.cpp",
+   1552
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "tests/test_network_arc_graph_oracles.cpp",
+   298
+  ]
+ ],
  "retired_at_base": [
   "row (W1) networkRxCbDemeanPrepass: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
   "row (W2) networkFastClockTick: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
@@ -4551,6 +5052,9 @@
   "declared SPEC_CUT idw, iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "declared CALLABLE isUncarriedThirdBand: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "declared CALLBACK_DIRECT buildEnsembleGauges: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_datum_ensemble: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_hold_on: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS sh_converged_latch: retired by the REMOVE-key deletion; its frozen object is gone at this base",
   "epoch member ep.dd_build.carry_arc_amb_key2: retired by the REMOVE-key deletion; `carry_arc_amb_key2` is not declared at this base",
   "run member run.engines.iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
   "run member run.engines.fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
@@ -4565,6 +5069,7 @@
   "engine lane_run: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
   "removed parameter networkBuildCarryDdPriors(isUncarriedThirdBand): retired by the REMOVE-key deletion; `isUncarriedThirdBand` is not declared at this base",
   "removed parameter networkSolveGlue(buildEnsembleGauges): retired by the REMOVE-key deletion; `buildEnsembleGauges` is not declared at this base",
+  "designed text sh_converged_latch: retired by the REMOVE-key deletion; `sh_converged_latch` is not declared at this base",
   "fc_n_emitted_before is spelled n_emitted_before at this base; the entries naming it are re-spelled"
  ]
 }

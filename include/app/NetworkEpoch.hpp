@@ -9,10 +9,13 @@
  * epoch's end.  Construction is the per-epoch reset; nothing here survives to the next
  * epoch.  A value that must survive is run state (NetworkRunContext), never a member here.
  *
- * Members in the order the stages fill them.  "Written by" is the authoritative list: a
- * writer receives its group as a non-const parameter on its spine line, so
- * `grep -n "ep\.pass_a)" src/core/app/ApplicationNetworkEpoch.cpp` lists every writer of
- * the layout and `grep -rn "= ep\.pass_a\.present;" src` every reader of `present`.
+ * Members in the order the stages fill them.  "Written by" is the authoritative list, and
+ * scripts/nom_epoch_lint.py (check V11) proves it against the spine on every run: a writer
+ * receives its group as a non-const parameter on its spine line.  By hand,
+ * `grep -nE "ep\.pass_a[,)]" src/core/app/ApplicationNetworkEpoch.cpp` lists the spine
+ * lines that hand the layout to a writer, and `grep -rnE "n?ep\.pass_a\.present" src`
+ * every read of `present` through the epoch (a binding, an adapter's forwarding argument, the
+ * spine's own store); a writer binds it through its `pass_a` output instead.
  *
  *   member        group type           available from            written by
  *   se            const SyncedEpoch&   construction              the admission (before construction)
@@ -81,7 +84,7 @@ struct NetworkRun;
 struct EpochClock {
     double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step, card NOM3 section 2 finding 4.)
     double pl_now_s{0.0};     ///< This epoch in continuous GPS seconds.
-    bool   carry_warm{false}; ///< The phase-leveling carry is past its warm-up (the SH convergence latch, or the emitted-epoch count).
+    bool   carry_warm{false}; ///< The phase-leveling carry is past its warm-up (the emitted-epoch count reached network.phase_leveling_warmup_epochs).
 };
 
 /// The slip funnel (card C3c): every (station roster index, ambiguity key) this epoch treats

@@ -74,7 +74,10 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       opening marker) and hold declarations only.  (c) Every unconverted row's declaration
       and definition, and every adapter's explicit form, equal frozen (the solve's three
       epilogue lines excepted from step EP1a-1 on).  (d) runNetwork equals frozen apart from
-      the spec 4.1 edits, and what those edits took out is where the spec puts it: the
+      the spec 4.1 edits and the UNREAD_ALIAS lines (each gone line one declarator, a
+      reference or a const builtin copy of a member path, and no token left in runNetwork
+      names it), every declaration left in its outermost scope is read, and what those
+      edits took out is where the spec puts it: the
       epoch function's one declaration in Application, with the lambda's head as in (a);
       the predicate and the two brackets as functions with the closures' parameters, return
       type, specifiers after the list (no noexcept) and body, each declaration with its
@@ -226,7 +229,8 @@ to its initializer), so `snap.n_emitted` is another object.  A failed proof fail
 overlay: one or two of its files replaced in memory, no disk copy) and runs every check on
 it: the sixteen of spec 5.7 (N1 to N16), seventeen added at the review round (R1 to R17),
 seventeen at the first hardening round (R18 to R34), eleven at the second (R35 to R45) and
-seven at the third (R46 to R52), each R a mutation an earlier version of this verifier
+seven at the third (R46 to R52) and one at the EP1 review round (R53, the dead alias the
+review found), each R a mutation an earlier version of this verifier
 accepted or (R40 to R45, R49, R50) the same mutation by another route.  A control fires when
 its named check fails (N8 V1a or V3c, N10 V1a or V3e, N16 V4 or V6, N13 V2 or V8; N4 only when
 V3a and V10 both fail, R35 to R37 only when V2 and V8 both fail, R38 only when V1a and V1d
@@ -261,7 +265,7 @@ import time
 import traceback
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from nom_cpp import (APPLICATION_HPP, DRIVER_PATH, KEYWORDS, LAMBDA_NAME, SEAM_CALL,  # noqa: E402
+from nom_cpp import (APPLICATION_HPP, BUILTIN_TYPES, DRIVER_PATH, KEYWORDS, LAMBDA_NAME, SEAM_CALL,  # noqa: E402
                      CallNode, Cond, Copy, Driver, Expr, FileIndex, GitTree, Lit, Opaque, Ref, Resolver,
                      Scopes, Tokens, _lambda_at, calls_in, match_angle, parse_declaration,
                      parse_params, statements)
@@ -397,6 +401,7 @@ class Substitutions:
         self.callbacks = [d.name for d in declared.declared("CALLBACK_DIRECT")]
         self.bracket = [d.name for d in declared.declared("BRACKET")]
         self.type_move = [d.name for d in declared.declared("TYPE_MOVE")]
+        self.unread_alias = [d.name for d in declared.declared("UNREAD_ALIAS")]
         self.spec_cut = declared.declared("SPEC_CUT")
         self.paths = {v[0]: k for k, v in self.epoch.items()}
         timing_owner = next((n for n, p in self.owner.items() if p == "run.timing"), None)
@@ -2155,10 +2160,18 @@ class Verifier:
         removed_names = set(SUBST.callable) | set(SUBST.bracket) | set(SUBST.type_move) | \
             set(SUBST.field_timing) | {LAMBDA_NAME, "engines"}
         traces_k = next((k for k, (s, e) in enumerate(F) if fT.join(s, e) == join_text("NetworkRunTraces traces(log_dir_);")), None)
+        cand_root = {x.name for x in cand.rn.scopes.root.decls if x.kind != "param"}
+        n_unread = 0
         j = 0
         for i, (s, e) in enumerate(F):
             ds = parse_declaration(fT, s, e) or []
             names = [d.name for d in ds]
+            if names and all(n in SUBST.unread_alias for n in names) and not cand_root & set(names):
+                # UNREAD_ALIAS: the line is gone; what it was and that nothing names it now.
+                self.v1d_unread_alias(fT, s, ds)
+                self.fclaim(DRIVER_PATH, fT.line(s), fT.line(e - 1))
+                n_unread += 1
+                continue
             if i in cut:
                 # removed, `const T& name = engine_spec.<name>;`, or (an owned engine) its run
                 # reference `T& name = run.<path>;`
@@ -2233,8 +2246,62 @@ class Verifier:
                         R.fail("V1d", f"`{want}` does not follow `NetworkRunTraces traces(log_dir_);`")
         for q in range(j, len(N)):
             R.fail("V1d", f"{DRIVER_PATH}:{nT.line(N[q][0])}: an undeclared statement in runNetwork")
-        R.note("V1d", f"{len(F)} frozen runNetwork statements against {len(N)}")
+        R.note("V1d", f"{len(F)} frozen runNetwork statements against {len(N)}; {n_unread} UNREAD_ALIAS "
+                      "lines gone")
+        self.v1d_unread_names()
         self.v1d_moved()
+
+    def v1d_unread_alias(self, fT, s, ds):
+        """UNREAD_ALIAS (declared.py): the frozen line runNetwork lost declares one name, a
+        reference or a const copy of a builtin, initialized from a member path (no call, no
+        operator: the line had no effect but the binding); and no token of the candidate's
+        runNetwork names it outside a nested declaration of its own, so no reader lost its
+        object (V1d's statement match proves the rest of runNetwork unchanged)."""
+        R = self.R
+        where = f"{DRIVER_PATH}:{fT.line(s)}"
+        if len(ds) != 1:
+            R.fail("V1d", f"{where}: an UNREAD_ALIAS line declares {len(ds)} names")
+            return
+        d = ds[0]
+        toks = [(fT.k(q), fT.t(q)) for q in range(*d.init)] if d.init else []
+        path = (d.init_kind == "=" and len(toks) >= 3 and len(toks) % 2 == 1
+                and all(k == "id" and t not in KEYWORDS for k, t in toks[0::2])
+                and all(t == "." for _, t in toks[1::2]))
+        if not path:
+            R.fail("V1d", f"{where}: UNREAD_ALIAS {d.name}'s initializer `{fT.join(*d.init) if d.init else ''}` "
+                          "is not a member path (its line may have had an effect)")
+        words = set(fT.join(*d.type_span).replace("&", " ").split()) - {"const"}
+        if not d.is_ref and not (d.is_const and not d.is_ptr and words and words <= BUILTIN_TYPES):
+            R.fail("V1d", f"{where}: UNREAD_ALIAS {d.name} is `{fT.join(*d.type_span)}`, neither a reference "
+                          "nor a const builtin copy")
+        rn, nT, sc = self.cand.rn, self.cand.rn.T, self.cand.rn.scopes
+        for q in range(rn.rn.body[0] + 1, rn.rn.body[1]):
+            if nT.k(q) != "id" or nT.t(q) != d.name or nT.t(q - 1) in (".", "->", "::") \
+                    or nT.t(q + 1) == "::":
+                continue
+            x = sc.lookup(d.name, q)
+            if x is None or x.scope is sc.root:
+                R.fail("V1d", f"{DRIVER_PATH}:{nT.line(q)}: runNetwork still names {d.name}, whose line "
+                              "UNREAD_ALIAS removed")
+
+    def v1d_unread_names(self):
+        """No declaration of the candidate runNetwork's outermost scope is left unread (the
+        dead-alias defect INC-12 and EP0 removed, which the move of the lambda would bring
+        back; the review round of 2026-10-14)."""
+        rn, nT, sc = self.cand.rn, self.cand.rn.T, self.cand.rn.scopes
+        used = collections.Counter()
+        for q in range(rn.rn.body[0] + 1, rn.rn.body[1]):
+            if nT.k(q) != "id" or nT.t(q - 1) in (".", "->", "::"):
+                continue
+            x = sc.lookup(nT.t(q), q)
+            if x is not None and x.scope is sc.root and x.tok != q:
+                used[id(x)] += 1
+        dead = [x for x in sc.root.decls if x.kind != "param" and not used[id(x)]]
+        for x in dead:
+            self.R.fail("V1d", f"{DRIVER_PATH}:{x.line}: runNetwork declares {x.name}, which nothing in it "
+                               "reads (an alias whose readers moved out is UNREAD_ALIAS)")
+        self.R.note("V1d", f"every one of runNetwork's {len(sc.root.decls)} outermost declarations is read"
+                    if not dead else f"{len(dead)} unread outermost declarations")
 
     def v1d_moved(self):
         """Where the spec 4.1 edits put what they took out of runNetwork, each against frozen,
@@ -6074,6 +6141,32 @@ def ctl_r52(v):
     return {DRIVER_PATH: T.source[:a] + T.source[b:]}, f"`{T.t(j).strip()[:60]}` removed from {DRIVER_PATH}"
 
 
+def ctl_r53(v):
+    """The review round's defect: an UNREAD_ALIAS line left in runNetwork at its frozen place,
+    where nothing reads it once the lambda has moved (so V1d's statement match accepts it and
+    only the unread-declaration rule can fail it)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    fz, c = v.fz, v.cand
+    fT, nT = fz.rn.T, c.rn.T
+    F, N = fz.rn.statements(), c.rn.statements()
+    have = {x.name for x in c.rn.scopes.root.decls}
+    texts = [nT.join(s, e) for s, e in N]
+    for i, (s, e) in enumerate(F):
+        ds = parse_declaration(fT, s, e) or []
+        if len(ds) != 1 or ds[0].name not in SUBST.unread_alias or ds[0].name in have:
+            continue
+        for s2, e2 in F[i + 1:]:
+            nxt = fT.join(s2, e2)
+            if nxt in texts:
+                q = N[texts.index(nxt)][0]
+                ls = nT.source.rfind("\n", 0, nT[q].pos) + 1
+                line = fT.source[fT.source.rfind("\n", 0, fT[s].pos) + 1:fT[e - 1].end] + "\n"
+                return {DRIVER_PATH: _replace(nT.source, ls, ls, line)}, \
+                    f"`{line.strip()}` kept in runNetwork before `{nxt[:40]}`"
+    return None, "no UNREAD_ALIAS line is gone from runNetwork"
+
+
 def _conv(*names):
     return lambda v: all(n in v.converted for n in names)
 
@@ -6180,6 +6273,8 @@ CONTROLS = (
     Control("R50", "V1e", "a compile definition of a called seam's name", ctl_r50),
     Control("R51", "V1e", "a CMake line inside a C++ block comment", ctl_r51),
     Control("R52", "V1e", "a frozen #include removed", ctl_r52),
+    # The EP1 review round (the dead aliases the move of the lambda left in runNetwork).
+    Control("R53", "V1d", "an alias only the lambda read left in runNetwork", ctl_r53, _epoch_only),
 )
 ALSO = {"N8": ("V3c",), "N10": ("V3e",), "N16": ("V6",), "N4": ("V10",), "N13": ("V8",),
         "R35": ("V8",), "R36": ("V8",), "R37": ("V8",), "R38": ("V1d",),

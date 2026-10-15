@@ -1,7 +1,8 @@
 """Declared substitutions and declared non-conversions of card NOM3 step EP1 (spec 5.6, 3.6).
 
 A conversion may change what a name in a moved body denotes only through one of the eleven
-closed classes below; anything else is a failure of the relocation verifier.  Each entry names
+closed classes below, and runNetwork may lose a line only through those or the twelfth,
+UNREAD_ALIAS; anything else is a failure of the relocation verifier.  Each entry names
 the frozen object, says why the substitution preserves behaviour, and carries locators instead
 of line numbers: the survey (scripts/nom_ep1_cut.py --survey; any tool can call locate()) finds
 the frozen file:line at whichever base it is given, and reports an entry whose object is gone
@@ -26,6 +27,14 @@ sh_health_gate code out before EP1a-1).
   CALLBACK_DIRECT  the solve's two replay callbacks are direct builder calls.
   BRACKET          the subBegin / subEnd closures are networkSubBegin / networkSubEnd.
   TYPE_MOVE        LoopSignal is Application::LoopSignal.
+  UNREAD_ALIAS     a runNetwork alias of a run-state path (`auto& x = ctx.carry.x;`,
+                   `const bool x = ctx.knobs.x;`) whose every reader moved out with the
+                   lambda: its line goes (33 at main 926dafa, three more marked
+                   retired_by=REMOVE_KEY at the EP0 base; the review round of 2026-10-14,
+                   the dead-alias defect INC-12 and EP0 removed before).  An
+                   entry is a candidate: the generator removes it where runNetwork no longer
+                   reads it after the cut and refuses where an unread alias is not listed;
+                   the verifier derives the same from the frozen and the new source.
 
 Not substitutions, and therefore failures: a change of declarator kind (reference to copy,
 copy to reference, adding non-const), a change of root, a change of a kept argument's text, a
@@ -531,6 +540,11 @@ CLASSES = {
     "BRACKET": "the two timing closures are functions, bodies character-exact; each call site "
                "gains `run`",
     "TYPE_MOVE": "LoopSignal is Application::LoopSignal",
+    "UNREAD_ALIAS": "a runNetwork alias whose every reader moved out with the lambda (or with a "
+                    "removed closure or cut statement) loses its line; proof: a single "
+                    "declarator, a reference or a const builtin copy of a member path (no call, "
+                    "so the line had no effect but the binding), and no token of the remaining "
+                    "runNetwork names it",
 }
 
 
@@ -563,6 +577,30 @@ def _epoch(name, transform, path, retired_by=""):
     }
     return Declared("EPOCH_MEMBER", name, f"{path}: {reasons[transform]}", (LambdaDecl(name),),
                     retired_by)
+
+
+# The UNREAD_ALIAS candidates, in runNetwork's declaration order: the setup result's broadcast
+# copies, the carry and knob aliases of the epoch loop's head, the counters, the phase-datum and
+# invariant-carry switches, the carry's chord maps and the loop counters.  Each is a reference
+# to a run-state path or a const copy of a knob or of a setup field; none is read in runNetwork
+# once the per-epoch lambda has moved (the dead-name scan of the review round, 33 names at main
+# 926dafa).
+UNREAD_ALIASES = (
+    "brdc_rts", "brdc_nav_staged", "brdc_nav_cursor",
+    "prev_carry", "last_pivot", "anchor_incumbent", "this_epoch_anchor", "start_anchor_s",
+    "local_carry", "ura_sigma0_ewma", "grade_metric_s", "pl_on", "pl_warmup", "pl_max_gap_s",
+    "ura_on", "raim_on",
+    "prev_tow", "prev_week", "n_emitted", "n_gated_epochs", "n_gated_key_epochs",
+    "max_dur_anchor_s", "max_dur_anchored",
+    "phase_datum_eq34", "carry_invariant", "carry_innov_gate",
+    "carry_sat_vertex", "carry_group_id", "carry_prev_tow", "carry_innov_pending",
+    "phase_datum_prioritized",
+    "n_loop_epochs", "decim_counter",
+)
+# The same at the EP0 base, for three aliases the REMOVE-key deletion took with their objects
+# (the phase-datum ensemble, the phase hold and the T1d SH-convergence latch): they apply only
+# where the base still declares them.
+UNREAD_ALIASES_RETIRED = ("phase_datum_ensemble", "phase_hold_on", "sh_converged_latch")
 
 
 DECLARED = (
@@ -693,6 +731,15 @@ DECLARED = (
     # TYPE_MOVE
     Declared("TYPE_MOVE", "LoopSignal", "the lambda's local enum becomes Application::LoopSignal",
              (DriverDecl("LoopSignal"),)),
+
+    # UNREAD_ALIAS (the review round of 2026-10-14): runNetwork's aliases whose readers were all
+    # in the per-epoch lambda.  The epoch function binds each name it still reads in its own
+    # preamble (V3b), so the runNetwork line is dead once the lambda moves; INC-12 and EP0
+    # removed the same defect before.  In runNetwork's declaration order.
+    *(Declared("UNREAD_ALIAS", n, "runNetwork's alias; every reader moved out with the lambda "
+               "(the epoch function binds the name in its preamble), so its line goes",
+               (DriverDecl(n),), REMOVE_KEY if n in UNREAD_ALIASES_RETIRED else "")
+      for n in UNREAD_ALIASES + UNREAD_ALIASES_RETIRED),
 )
 
 

@@ -107,7 +107,8 @@ NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConf
 // stations shows its driver glue as net and its O(nₛ²) recon as cov-consumers).  The
 // brackets are disjoint and tile the loop body between the assembly wall and the
 // emitted-epoch readout; the residual (other − Σ net) is logged as "unattributed".
-// With the toggle off, the subBegin/subEnd lambdas return early (no clock reads, no
+// With the toggle off, networkSubBegin / networkSubEnd (runNetwork's subBegin / subEnd
+// closures until card NOM3 step EP1) return early (no clock reads, no
 // est.sectionTimers() calls), so the output is byte-identical to an untimed run.
 // The sub-blocks (enum SubBlock) and their printed names (kSubBlockNames) are declared
 // beside SubBlockTimer in filter/NetworkWlRunTypes.hpp; their run totals are

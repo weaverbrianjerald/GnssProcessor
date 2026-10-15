@@ -232,9 +232,6 @@ int Application::runNetwork() {
     MultiRinexSync& sync = *setup.sync;
     const auto& synced = sync.getSyncedEpochs();
     const bool closed_loop_on = setup.closed_loop_on;
-    const bool brdc_rts = setup.brdc_rts;
-    auto& brdc_nav_staged = setup.brdc_nav_staged;
-    auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     auto& sh_model = setup.sh_model;
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& stations = setup.stations;
@@ -389,21 +386,11 @@ int Application::runNetwork() {
 
 
     // === Epoch loop =========================================================
-    auto& prev_carry = ctx.carry.prev_carry;
-    auto& last_pivot = ctx.carry.last_pivot;
-    auto& anchor_incumbent = ctx.carry.anchor_incumbent;
-    auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-    auto& start_anchor_s = ctx.carry.start_anchor_s;
-    auto& local_carry = ctx.carry.local_carry;
-    auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
-    auto& grade_metric_s = ctx.carry.grade_metric_s;
-    const bool   pl_on         = ctx.knobs.pl_on;
-    const int    pl_warmup     = ctx.knobs.pl_warmup;
-    const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
-    // The monitor's hourly trace flush is scheduled by ctx.carry.first_vce_s and
-    // ctx.carry.last_vce_hour, which networkShHealth writes.
-    // Apply step (M2 v2): arms the LASER 5-95 variance-factor iteration over the
-    // monitor above.  Unlike the monitor's estimator this is not a run-TU local:
+    // The carry LS-VCE monitor is an engine the run owns (run.engines.carry_vce; a
+    // run-TU local until card NOM3 step EP1).  Its hourly trace flush is scheduled by
+    // ctx.carry.first_vce_s and ctx.carry.last_vce_hour, which networkShHealth writes.
+    // Apply step (M2 v2): arms the LASER 5-95 variance-factor iteration over that
+    // monitor.  Unlike the monitor's estimator this is not engine state:
     // α² is cross-epoch state read at three fold sites in three translation units
     // (the PASS-B ambiguity injector, the D2 shared injector, and the two harvest
     // mirrors), so it lives in ctx.carry per the decomposition rule and every seam
@@ -414,9 +401,9 @@ int Application::runNetwork() {
             NetworkCarryVce::parseComponents(config_.networkCarryVceApplyFamilies()),
             config_.networkCarryVceApplySlew(), config_.networkCarryVceApplyMax(),
             config_.networkCarryVceApplyMinRows());
-    // Prior-residual census.  A run-TU local for the same reason carry_vce_est is
-    // one (see the "engine objects stay run-TU locals" note in
-    // app/NetworkRunContext.hpp), threaded into the same four seams: SB_T1A
+    // Prior-residual census.  An engine the run owns, like the carry-VCE monitor
+    // (run.engines.prires and run.engines.carry_vce, app/NetworkRun.hpp; both were
+    // run-TU locals until card NOM3 step EP1), read by the same four seams: SB_T1A
     // advances it, SB_LEVELING feeds pl/zwd/rxcb, SB_STASH_STATUS feeds pb/cb and
     // drains it, and the teardown reads it.  It shares the M2 monitor's per-row
     // arithmetic and does not affect the solve: with the census armed the
@@ -494,8 +481,10 @@ int Application::runNetwork() {
             });
     }
     // The block-Baarda accumulator lives in ctx.carry (its feed site is inside
-    // the redundancy-census seam, which takes ctx but no run-TU reference), so it
-    // is seated here from config rather than constructed by the context.  An
+    // the redundancy-census seam, which took ctx but no run-TU reference until card
+    // NOM3 step EP1; the seam takes the run now, and moving the accumulator to the
+    // run's engines is a later step), so it is seated here from config rather than
+    // constructed by the context.  An
     // unarmed run keeps the default-constructed empty-family instance, whose
     // enabled() is false, and allocates nothing.
     if (ctx.knobs.bb_on) {
@@ -542,8 +531,6 @@ int Application::runNetwork() {
         ctx.carry.cg = NetworkCongruence(/*armed=*/true, kCongruenceWindowEpochs,
                                          kCongruenceWarmupSamples,
                                          ctx.knobs.cg_report_sigma);
-    const bool   ura_on        = ctx.knobs.ura_on;                  // emit the per-sat URA quality channel (B1)
-    const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
     const double start_offset_s = ctx.knobs.start_offset_s;  // testing fast-forward (0 = off)
 
     // Run-provenance manifest, startup record (L15).  The body lives in
@@ -559,47 +546,16 @@ int Application::runNetwork() {
     for (const auto& line : ctx.params.responseTable())
         log->info("Network (param responses): {}", line);
     traces.appendRunManifestRecord(nc, ctx.params.modelJson());
-    auto& prev_tow = ctx.counters.prev_tow;
-    auto& prev_week = ctx.counters.prev_week;
-    auto& n_emitted = ctx.counters.n_emitted;
-    auto& n_gated_epochs = ctx.counters.n_gated_epochs;
-    auto& n_gated_key_epochs = ctx.counters.n_gated_key_epochs;
-    auto& max_dur_anchor_s = ctx.counters.max_dur_anchor_s;
-    auto& max_dur_anchored = ctx.counters.max_dur_anchored;
 
-    // The gauge-pin predicate ("is (sat, signal) at station i a gauge-pinned
-    // ambiguity this epoch?") is networkIsGaugePinned_ in
-    // ApplicationNetworkAssembly.cpp, the single test that replaces the scattered
-    // is_pivot gauge tests.
-    //   Legacy (network.phase_datum_prioritized off): membership means the station
-    //     is the pivot, which pins the whole shared_phase_keys set, so the
-    //     predicate returns is_pivot and every rewritten site stays byte-identical.
-    //   Prioritized: membership means the "sat_signal" key is in station i's
-    //     elected pinned_amb_targets, the anchor for that gauge freedom, whose pin
-    //     is folded into the station's own local block.  The key form matches the
-    //     pin fold and the ambiguity-state key.
-    // The Eq-34 / de Jonge single-receiver-chain datum drives all the prioritized
-    // machinery (no pivot-first, every station carries its arcs, per-(sat,signal)
-    // shared set), diverging only at the election (a spanning-tree chain election) and
-    // the pin fold (per-tree-edge ambiguity pins with a target, plus a datum-receiver
-    // RPB pin).
-    const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
-    // DD cycle-basis invariant carry gate, declared early so the superseded eq34
-    // hygiene knobs below can gate on it.  Requires phase_datum_eq34.
-    const bool carry_invariant         = ctx.knobs.carry_invariant;
     // The DD cycle-basis invariant carry driver and its persistent state (the
     // carried z-store lives across epochs).  It supersedes the S-dependent
     // PhaseBias / local / RPB carries, the eq34 pin-round/shift hygiene for phase
-    // keys (bypassed below), and the carry S-transform hygiene: the datum is
+    // keys (bypassed in the epoch function), and the carry S-transform hygiene: the datum is
     // re-realized freely and the RPB re-estimates fresh, with δ cancelling in the
     // gauge-free DD.  GLONASS (FDMA) is excluded.  Off: no z-store, every fold
     // gated, output byte-identical.
     // Built by networkEngineSpec (app/NetworkRun.hpp, card NOM3 step EP1).
     const NetworkInvariantCarryDriver::Config& carry_cfg = engine_spec.carry_cfg;
-    // Estimation-side fine-slip innovation gate: the invariant-carry-native
-    // replacement for the RAIM fine-slip layer that the invariant bypass empties.
-    // Resolved in NetworkKnobs::snapshot; off, the output is byte-identical.
-    const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
     // The emit-layer engines (filter/NetworkRunGroups.hpp), run by networkEmitStore on every
     // emitted epoch:
@@ -615,22 +571,6 @@ int Application::runNetwork() {
     //    rebaseEpoch is never called (byte-identical).  It affects outputs only: the solve
     //    is byte-identical even when armed.
     NetworkEmitEngines& emit_engines = run.emit;
-    auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;
-    auto& carry_group_id = ctx.carry.carry_group_id;
-    auto& carry_prev_tow = ctx.carry.carry_prev_tow;
-    auto& carry_innov_pending = ctx.carry.carry_innov_pending;
-    const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    // The assembly helpers are Application member functions in
-    // ApplicationNetworkAssembly.cpp: networkIsGaugePinned_, networkSplitStation_,
-    // networkAppendGimIonoRows_ and networkAppendShIonoRows_ (formerly the lambdas
-    // isGaugePinned, splitStation, appendGimIonoRows and appendShIonoRows).  Their former
-    // [&] captures are explicit parameters or member reads.  The SH-deviation carry's
-    // switches (sh_dev_tau, sh_dev_on, sh_dev_demean, sh_dev_d5_keep) are ctx.knobs fields,
-    // read by networkPassB_ and networkShDevVtec.
-
-    // appendShIonoRows is Application::networkAppendShIonoRows_ in
-    // ApplicationNetworkAssembly.cpp; sh_model, shc and the sh_dev state
-    // are passed explicitly at the PASS-B call site.
 
     // Eigen runs single-threaded for the duration of the (parallelized) epoch loop.
     // _OPENMP is defined project-wide, so Eigen threads its own dense kernels; nesting
@@ -651,8 +591,6 @@ int Application::runNetwork() {
     // count and the D0b sub-block totals below; the run end reports all of them.
     NetworkRunTiming& timing = run.timing;
     timing.loop_begin = std::chrono::steady_clock::now();
-    auto& n_loop_epochs = ctx.counters.n_loop_epochs;
-    auto& decim_counter = ctx.counters.decim_counter;
 
     // The joint estimator is constructed once, outside the epoch loop, and reset() and
     // reused each epoch.  A fresh NetworkEstimator per epoch reallocates one dense Schur

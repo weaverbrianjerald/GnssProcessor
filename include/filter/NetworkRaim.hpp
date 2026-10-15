@@ -35,7 +35,7 @@
  *     the just-restashed @c local_carry; erasing an entry is the refloat);
  *   - before SB_CLOCKUPD (the only consumer of @p clock_refloat_sats /
  *     @p retro_flag_sats filled here) and the epoch stash/status tail.
- * The caller keeps the @c subBegin/subEnd(SB_RAIM) brackets and the arming guard
+ * The caller keeps the @c networkSubBegin/End(SB_RAIM) brackets and the arming guard
  * `if (raim_on && (carry_warm || ctx.knobs.raim_ci_on))`; this function is the
  * guarded body.
  */

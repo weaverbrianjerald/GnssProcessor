@@ -7,9 +7,11 @@
  *        (NetworkServiceCounters), bundled as NetworkRunContext.
  *
  * The members keep the names and types of the run-loop locals they replaced
- * (decomposition INC-4; see docs/network_decomposition_plan.md).  The run loop in
- * ApplicationNetwork.cpp binds `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;`
- * aliases under those names, so the use sites read as before.
+ * (decomposition INC-4; see docs/network_decomposition_plan.md).  The epoch function
+ * (ApplicationNetworkEpoch.cpp) and the preamble of each seam in its epoch form bind
+ * `auto& X = ctx.carry.X;` / `const T X = ctx.knobs.X;` aliases under those names (the
+ * run loop in ApplicationNetwork.cpp did until card NOM3 step EP1), so the use sites read
+ * as before.
  *
  * Three-place rule: a NetworkCarryState field marked snapshot-member must be
  * added to the fingerprint, the restore and the snapshot write, in
@@ -17,12 +19,13 @@
  * NetworkStateSnapshotWrite.cpp.  A new cross-epoch field goes into
  * NetworkCarryState under that rule unless it is explicitly exempted; the
  * per-field "not snapshotted" notes below are the exemption record.
- * Kept out of this header on purpose (they stay locals of the run TU): the
- * engine objects (NetworkEstimator, NetworkInvariantCarryDriver, NetworkCarryVce,
- * NetworkEmitRebase), the D0/D0b section-timer
- * instrumentation, and the closed-loop consumer metrics.  The driver holds them in
- * the groups of filter/NetworkRunGroups.hpp (engines, emit engines, run
- * timing, closed-loop tally), which the seams receive by reference.
+ * Kept out of this header on purpose: the engine objects (NetworkEstimator,
+ * NetworkInvariantCarryDriver, NetworkCarryVce, NetworkPriorResidual,
+ * NetworkEmitRebase), the D0/D0b section-timer instrumentation, and the closed-loop
+ * consumer metrics.  The run owns them (app/NetworkRun.hpp, card NOM3 step EP1; they
+ * were locals of the run TU before) in the groups of filter/NetworkRunGroups.hpp
+ * (engines, emit engines, run timing, closed-loop tally); a per-epoch seam in its epoch
+ * form receives the run, NetworkRun&.
  */
 
 #include "filter/NetworkRunTypes.hpp"
@@ -95,7 +98,7 @@ namespace GnssProcessor {
     class NetworkProductEmitter;
     class NetworkInvariantCarryDriver;
     class NetworkCarryVce;
-    class NetworkPriorResidual;   ///< filter/NetworkPriorResidual.hpp; a run-TU local, like NetworkCarryVce.
+    class NetworkPriorResidual;   ///< filter/NetworkPriorResidual.hpp; an engine the run owns (run.engines.prires), like NetworkCarryVce.
     class SphericalHarmonicIonosphere;
     struct GnssTime;
 
@@ -934,7 +937,7 @@ namespace GnssProcessor {
         // builds the SH model exactly when network.estimate_iono_sh is set (the sh_dev_* rows
         // read that flag where the driver tested the model).  The
         // snapshot fingerprint reads none of them.
-        bool   sec_timers_on{};    ///< network.trace_section_timers: the D0 / D0b per-epoch section timers.  Read by the driver (the estimator and carry-driver timers, the subBegin / subEnd brackets, the per-epoch readout) and by networkPassB_ (the D0 assembly wall).
+        bool   sec_timers_on{};    ///< network.trace_section_timers: the D0 / D0b per-epoch section timers.  Read by the driver (the estimator and carry-driver timers, the networkSubBegin / networkSubEnd brackets, the per-epoch readout) and by networkPassB_ (the D0 assembly wall).
         /// The a-priori satellite-clock anchor sigma (m), resolved once by
         /// GnssConfig::resolveNetworkAprioriClockAnchorSigmaM from
         /// network.apriori_clock_anchor_sigma_m (an explicit value > 0 wins; brdc_rts auto
@@ -2458,8 +2461,9 @@ namespace GnssProcessor {
 
         // --- Carry LS-VCE monitor, the hourly trace flush (M2) ---
         // Snapshot: exempt; observer state.  The pair only schedules the hourly flush of
-        // network_carry_vce.csv by content hour, and the monitor it flushes (the run-TU local
-        // NetworkCarryVce) is not snapshotted either, so a warm-resumed leg re-anchors its
+        // network_carry_vce.csv by content hour, and the monitor it flushes (NetworkCarryVce,
+        // run.engines.carry_vce; a run-TU local until card NOM3 step EP1) is not snapshotted
+        // either, so a warm-resumed leg re-anchors its
         // content hour at its first monitored epoch.  They were driver locals until card NOM3
         // step EP0, with the same initial values and the same resume behaviour.  Written and
         // read only by networkShHealth, under ctx.knobs.carry_vce.
@@ -2524,7 +2528,9 @@ namespace GnssProcessor {
         //
         // The accumulator lives here rather than as a run-TU local (the prior-residual
         // census's shape) because its feed site is inside the redundancy-census seam,
-        // which takes ctx but not a run-TU reference.  Default-constructed with no
+        // which took ctx but not a run-TU reference until card NOM3 step EP1 (the seam
+        // takes the run now, so the reason no longer holds; moving the accumulator into
+        // the run's engines is a later step).  Default-constructed with no
         // families, so enabled() is false and every entry point is a single bool test; an
         // unarmed run allocates nothing beyond the empty vectors.
         NetworkBlockBaarda bb{{}, 0.0};        ///< the run accumulator; re-seated from config once at run start.
@@ -2548,8 +2554,9 @@ namespace GnssProcessor {
         // one continuous lineage; otherwise the two medians cover different windows.
         //
         // Lives here rather than as a run-TU local for the block census's reason: its feed
-        // site is inside the redundancy-census seam, which takes ctx but not a run-TU
-        // reference.  Default-constructed unarmed, so enabled() is false and every entry
+        // site is inside the redundancy-census seam, which took ctx but not a run-TU
+        // reference until card NOM3 step EP1 (a later step moves it with the block
+        // census).  Default-constructed unarmed, so enabled() is false and every entry
         // point is a single bool test.
         NetworkCongruence cg{false};           ///< the run accumulator; re-seated from config once at run start.
         std::vector<CongruenceHit> cg_hits;    ///< this epoch's per-station records, drained by the emission seam.
@@ -3902,7 +3909,8 @@ namespace GnssProcessor {
         int    spectrum_diag_budget = 6;    // estimability spectrum dump: the first N gate evaluations (a budget rather than one shot, because a rows epoch needs a later firing than epoch 1).  Seeded from network.trace_estimability_budget by the NetworkRunContext ctor (default 6 = this constant; RF-NS); under network.trace_estimability_deficit_only a clean epoch does not spend it.
 
         // Timing: the processed-epoch count and the T2e decimation counter (relocated from
-        // the loop-timing cluster; t_loop_begin stays a run-TU local).
+        // the loop-timing cluster; t_loop_begin stayed a run-TU local, and is
+        // run.timing.loop_begin since card NOM3 step EP1).
         std::size_t n_loop_epochs = 0;
         std::size_t decim_counter = 0;   // counts post-offset raw epochs for epoch_decimation_n (T2e)
 

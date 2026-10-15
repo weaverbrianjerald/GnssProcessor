@@ -382,6 +382,16 @@ using NetworkEpochObserver = void (*)(NetworkRun& run, const NetworkEpoch& ep);
 } // namespace GnssProcessor
 ```
 
+**Amended at the EP1 review round (2026-10-14).** Two sentences of the banner above did not hold
+on the generated tree, and the generated header differs from them (the text above stays as
+pre-registered). The grep recipes missed four of the six writer spine lines (the pattern matched
+`pass_a` only as the last argument) and three readers of `present` (the fallback name `nep`, the
+two adapters' forwarding arguments); the header now names `scripts/nom_epoch_lint.py` (V11) as
+the authority and gives `grep -nE "ep\.pass_a[,)]"` and `grep -rnE "n?ep\.pass_a\.present" src`.
+`EpochClock::carry_warm`'s documentation named the T1d SH-convergence latch, which the REMOVE-key
+deletion removed; at a base without it the header reads "the emitted-epoch count reached
+network.phase_leveling_warmup_epochs" (`templates.RETIRED_TEXT`).
+
 Decisions inside the type, each weighed:
 
 - **Groups by writing stage**, with today's local names as member names (the precedent of `PhaseDatumCandidates`), so a body's name greps to its member. `funnel` is the card's "slips" group under EP2's name; `dd_build` is the card's "carry" group; `ar_fixes`, `fixed_cycles` and `emitted` are stages card FCF added after the card was written.
@@ -717,6 +727,16 @@ Setup keeps its order. The edits, all declared:
 | 2932-2936 the `engines` view and the teardown call | `return networkTeardown(ctx, config_, log, traces, setup, NetworkRunEndInputs{ run.engines, run.emit, run.lanes, run.timing, run.closed_loop });` | binding |
 
 The spec cut moves no log line (the one in range, 762-765, stays), no trace call, no setup read: every statement reads `config_`, `nc` or `ctx.knobs` (V12 proves it). The cut statements' text is unchanged because `networkEngineSpec` takes `(config_, nc, ctx)` under those names and repeats, character for character, the alias declarations they read. Statements that are constructor arguments inline in a frozen constructor call (`static_cast<double>(config_.networkCarryVceWindowEpochs())`, the prires arguments) become field initializers with the same expression text (`spec.vce_window_epochs = static_cast<double>(config_.networkCarryVceWindowEpochs());`), and the engine constructor passes the field at the same position.
+
+**Amended at the EP1 review round (2026-10-14).** The table above did not list the aliases whose
+only readers were inside the lambda; moving the lambda out leaves them unread (33 at main
+`926dafa`: `brdc_rts`, `brdc_nav_staged`, `brdc_nav_cursor`, the carry and knob aliases of the
+loop head, the counters, the phase-datum and invariant-carry switches, the carry's chord maps
+and the loop counters), the dead-alias defect INC-12 and EP0 removed before. They go, as the
+twelfth declared class UNREAD_ALIAS (5.6), with the comment blocks that only introduced them
+(`scripts/nom_ep1/docs.py`); what those blocks said that is still true moves to the declaration
+it describes. A generation that would leave any declaration of `runNetwork`'s outermost scope
+unread is refused by name, and V1d fails one (control R53).
 
 ### 4.2 `Application::networkProcessEpoch_` (`src/core/app/ApplicationNetworkEpoch.cpp`, new, about 1 400 lines)
 
@@ -1070,6 +1090,12 @@ Finding 1's defect reads, in this model: name `carry_we_drop_sats`, frozen root 
 
 Not substitutions, and therefore failures: a change of declarator kind (reference to copy, copy to reference, adding non-const), a change of root, a change of a kept argument's text, a member realized at a different position, an unlisted body edit.
 
+**Amended at the EP1 review round (2026-10-14): the twelfth class.**
+
+| class | what is accepted, and the proof obligation | entries |
+|---|---|---|
+| UNREAD_ALIAS | a `runNetwork` alias whose every reader moved out with the lambda (or with a removed closure or cut statement) loses its line; proof: one declarator, a reference or a const builtin copy of a member path (no call, so the line had no effect but the binding), and no token of the remaining `runNetwork` names it; and no declaration of `runNetwork`'s outermost scope is left unread | 33 at main `926dafa` |
+
 ### 5.7 Negative controls (pre-registered; each must fail its named check before a pass is believed)
 
 | id | mutation of the candidate tree | expected failure |
@@ -1172,6 +1198,8 @@ Each worker: flip its rows, run the generator (it rewrites its files and, as scr
 **Docs (with the last merge).** The NOM3 card's EP1 result section with the verifier's summary line and the arm table; `docs/INDEX.md`; CLAUDE.md: the seam contract (below), the routing tree, the driver's line counts and the network tour.
 
 > Seam contract (draft for CLAUDE.md). A per-epoch network seam is a free function (or one of the five `Application` members) `R networkX(NetworkRun& run, const NetworkEpoch& ep[, kept...][, outputs...])`. It owns no state. It opens with one binding per name it uses, reads through `ep` (const), writes through its output parameters (marked `// written`), and below the bindings never spells `ep.`. An output is the epoch group the seam is listed as a writer of in `app/NetworkEpoch.hpp`, or the single member it writes of another stage's group; after the solve the only outputs are `ep.solve.handoff` and `ep.prep.sol`. A seam reads only groups available at its spine line. A measure-only seam has the observer form `void(NetworkRun&, const NetworkEpoch&)`. Run `python scripts/nom_epoch_lint.py` before committing a change to a seam signature or to `ApplicationNetworkEpoch.cpp`; a new epoch writer is a row of `tests/test_network_epoch_contract.cpp`.
+
+> Seam contract, amended at the EP1 review round (2026-10-14; the draft above stays as the pre-registered text). A per-epoch network seam is a free function (or one of the five `Application` members) in one of three forms: the epoch form `R networkX(NetworkRun& run, const NetworkEpoch& ep[, kept...][, outputs...])`; the run-only form `void networkX(NetworkRun& run)` for a seam that reads no epoch member (`networkClockLevelRestoreRaise`); or, for a seam with another caller (a unit test, the solve's internal trip call), the adapter form: its explicit signature kept, plus an epoch form whose body is one forwarding call that takes the explicit parameters from `run` and `ep` in its argument list. A seam owns no state. A definition in the epoch form opens with one binding per name it uses, reads through `ep` (const), writes through its output parameters (marked `// written`), and below the bindings never spells `ep.`; a seam whose body itself declares or uses `run` or `ep` names those parameters `nrun` / `nep` in its definition (the declaration keeps `run` / `ep`). An output is the epoch group the seam is listed as a writer of in `app/NetworkEpoch.hpp`, or the single member it writes of another stage's group; after the solve the only outputs are `ep.solve.handoff` and `ep.prep.sol`. A seam reads only groups available at its spine line. A measure-only seam has the observer form `void(NetworkRun&, const NetworkEpoch&)`. `ApplicationNetworkEpoch.cpp` and `tests/test_network_epoch_contract.cpp` were written by the EP1 generator and are maintained by hand once EP1 lands (nothing regenerates them): a new spine seam, or one that starts writing the epoch, changes its line of the contract test in the same commit as its signature, and `python scripts/nom_epoch_lint.py` runs before any commit that changes a seam signature, `ApplicationNetworkEpoch.cpp` or `CMakeLists.txt`.
 
 **Merge risks and their handling.**
 1. The two shared generated files: never hand-merged; a conflict is resolved by `--shared-only`.

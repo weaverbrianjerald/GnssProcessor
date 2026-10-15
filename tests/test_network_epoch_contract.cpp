@@ -6,13 +6,19 @@
  * Compile-time checks, so a failure is a build failure:
  *   - NetworkRun, NetworkRunEngines and NetworkEpoch are neither copyable nor movable, and a
  *     NetworkEpoch cannot be built on a temporary epoch (specification 2.7);
- *   - every converted seam has exactly the parameter list its row states,
- *     (NetworkRun&, const NetworkEpoch&[, kept...][, outputs...]): a seam that starts writing
- *     the epoch must change its row, which regenerates this list (specification 5.9);
- *   - every measure-only row has the observer form NetworkEpochObserver.
+ *   - every spine seam has exactly its epoch form's parameter list,
+ *     (NetworkRun&, const NetworkEpoch&[, kept...][, outputs...]), or (NetworkRun&) for the
+ *     one run-only seam (specification 5.9);
+ *   - every measure-only seam has the observer form NetworkEpochObserver.
  * The explicit overload an adapter keeps is not selected by the casts below (they name the
  * epoch form's type).  The five private member seams are read through
  * NetworkEpochContractProbe, a friend of Application.
+ *
+ * Maintenance.  Written by the EP1 generator from its canonical table; maintained by hand
+ * from the moment step EP1 landed.  A seam that starts writing the epoch, or a new spine
+ * seam, changes its line below in the same commit as its signature (the cast then fails to
+ * compile until both agree), and the commit runs `python scripts/nom_epoch_lint.py`, which
+ * checks the spine against the writer banner of app/NetworkEpoch.hpp.
  */
 
 #include "app/Application.hpp"

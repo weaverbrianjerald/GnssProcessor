@@ -6,7 +6,7 @@
  * Relocated without change (dedent only, no substitution) out of Application::runNetwork
  * at decomposition INC-11b.  Returns void and produces no locals the caller reads; every
  * carry and trace object is an explicit reference into the caller's state.  The caller
- * keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ * keeps the networkSubBegin/End(SB_STASH_STATUS) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -46,7 +46,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *        for the next epoch's prior, feeds and drains the prior-residual census, steps the
  *        carry VCE apply factor, and writes the per-epoch trace row, the epoch-status
  *        disposition row and the periodic progress log line (present / clock / PB / CB /
- *        dropped-sat counts).  The caller keeps the subBegin/subEnd(SB_STASH_STATUS) brackets.
+ *        dropped-sat counts).  The caller keeps the networkSubBegin/End(SB_STASH_STATUS) brackets.
  *        The VCE monitor's family switches (vce_wants_pb, vce_wants_cb) are read from
  *        @c ctx.knobs (card NOM3 step EP0).
  *

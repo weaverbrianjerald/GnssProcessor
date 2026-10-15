@@ -29,7 +29,7 @@
  * re-bases and the hold), the emitter / product_writer (store push + on-disk write),
  * persistent carries (n_emitted / first_emit_content_s / last_emit_content_s / the
  * contract pivot refresh) and the run-level closed-loop accumulators.  The caller keeps
- * the @c subBegin/subEnd(SB_EMITSTORE) brackets.
+ * the @c networkSubBegin/End(SB_EMITSTORE) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"        // NetworkSetupResult

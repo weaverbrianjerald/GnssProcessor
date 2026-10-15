@@ -44,7 +44,7 @@
  *
  * Relocated out of Application::runNetwork's SB_NETAR block at decomposition INC-9b
  * (see docs/network_decomposition_plan.md, the SOLVE-REGION decomposition).  Owns no
- * state.  The caller keeps the @c subBegin/subEnd(SB_NETAR) brackets.
+ * state.  The caller keeps the @c networkSubBegin/End(SB_NETAR) brackets.
  */
 
 #include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)

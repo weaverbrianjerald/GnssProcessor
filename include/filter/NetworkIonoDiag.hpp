@@ -6,7 +6,7 @@
  * Moved unchanged (dedent only, no substitution) out of Application::runNetwork at
  * decomposition INC-11b.  Returns void and is self-contained (it produces no locals
  * that later blocks read); every carry / trace object is an explicit reference into
- * the caller's state.  The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.
+ * the caller's state.  The caller keeps the networkSubBegin/End(SB_IONODIAG) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"
@@ -44,7 +44,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *        ZWD, receiver clock and biases) from the shared solution and writes the
  *        per-station trace rows.  Diagnostic only: it mutates no estimation state, and
  *        with the viz traces unarmed it writes nothing and the run is byte-identical.
- *        The caller keeps the subBegin/subEnd(SB_IONODIAG) brackets.  The anchor-info
+ *        The caller keeps the networkSubBegin/End(SB_IONODIAG) brackets.  The anchor-info
  *        trace reads the resolved clock anchor sigma from @c ctx.knobs.clk_anchor_sigma
  *        (card NOM3 step EP0).
  *

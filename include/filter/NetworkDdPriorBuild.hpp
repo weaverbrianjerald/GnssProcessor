@@ -5,9 +5,10 @@
  *        invariant DD-carry prior blocks (card 4).  Relocated verbatim from
  *        Application::runNetwork (decomposition INC-9b).
  *
- * The run TU keeps the lambda as a thin `[&]` wrapper that forwards to this free
- * function, so the initial DD build and the within-epoch RAIM re-solve
- * (`resolve_dropping`) keep byte-identical capture semantics.  The function owns no
+ * Until card NOM3 step EP1 the run TU kept the lambda as a thin `[&]` wrapper that
+ * forwarded to this free function, so the initial DD build and the within-epoch RAIM
+ * re-solve (`resolve_dropping`) kept byte-identical capture semantics; the epoch
+ * function and the solve's replay now call it directly over the run and the epoch.  The function owns no
  * state; the carry switches are read from NetworkKnobs (card NOM step TD1a).  One input
  * carries state across epochs or passes and needs care: carry_slipped_ambs, the
  * driver's per-epoch slip funnel, passed by reference.  Every other argument keeps the

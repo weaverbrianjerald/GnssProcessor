@@ -41,7 +41,8 @@ struct SubBlockTimer {
 };
 
 /// The D0b sub-blocks of the epoch loop (network.trace_section_timers): the disjoint
-/// brackets the driver opens and closes with subBegin / subEnd, which tile the loop body
+/// brackets the epoch function opens and closes with networkSubBegin / networkSubEnd
+/// (runNetwork's subBegin / subEnd closures until card NOM3 step EP1), which tile the loop body
 /// between the assembly wall and the emitted-epoch readout.  The value indexes
 /// NetworkRunTiming::sub_blocks and @ref kSubBlockNames.  Moved here from runNetwork with
 /// its names (card NOM step TD1a) so the driver's per-epoch line and the run-end ranking
@@ -49,8 +50,9 @@ struct SubBlockTimer {
 enum SubBlock {
     SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
     SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
-    SB_GAUGEBUILD,   //          the carry-driver lambda set-up ahead of the DD build
-    SB_DDBUILD,      //          buildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
+    SB_GAUGEBUILD,   //          the block ahead of the DD build (until card NOM3 step EP1,
+                     //          also the carry-driver closure's set-up)
+    SB_DDBUILD,      //          networkBuildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
                      //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
     SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve
                      //          (net removes the internal solve/reduce)

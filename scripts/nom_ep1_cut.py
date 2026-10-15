@@ -995,6 +995,7 @@ def locate_new_lines(outputs, epoch_cpp, epoch_rec, seam_rec):
 def generate(args):
     """--stage / --shared-only: the generated tree, written under --root (see the banner)."""
     from nom_ep1 import gen as gen_mod, gen_epoch, gen_seams, gen_setup, textops
+    from nom_ep1 import docs as docs_mod
     root = pathlib.Path(args.root).resolve()
     stage = "ep1b" if args.shared_only else args.stage
     names = row_names(args.rows)
@@ -1040,6 +1041,17 @@ def generate(args):
         outputs.update(g.new)
         outputs[gen_mod.EPOCH_CPP] = epoch_text
         outputs[gen_mod.CONTRACT_TEST] = contract
+        # The comment rewrites (nom_ep1/docs.py), last, on the finished text; the epoch
+        # function's lines are then re-read from that text.
+        try:
+            doc_skipped = []
+            doc_rec = docs_mod.apply(outputs, fz.tree.read, set(g.plans), g.problems,
+                                     deletion_landed=bool(model.ABSENT), skipped=doc_skipped)
+        except ValueError as ex:
+            raise gen_mod.GenError(str(ex))
+        head = "Application::LoopSignal Application::networkProcessEpoch_("
+        etext = outputs[gen_mod.EPOCH_CPP]
+        epoch_rec["function_lines"] = [etext[:etext.index(head)].count("\n") + 1, etext.count("\n")]
     except (gen_mod.GenError, textops.EditError) as ex:
         print(f"generator: REFUSED: {ex}")
         fz.tree.close()
@@ -1054,6 +1066,11 @@ def generate(args):
         fz.tree.close()
         return 1
     locate_new_lines(outputs, gen_mod.EPOCH_CPP, epoch_rec, seam_rec)
+    # The stale-spelling census (nom_ep1/docs.py STALE) over the whole generated tree, before
+    # --shared-only narrows what is written: the docs pass's worklist, never a failure.
+    texts = {p: fz.tree.read(p) for p in fz.tree.files("src/", "include/", "tests/")}
+    texts.update(outputs)
+    stale = docs_mod.census(texts)
     if args.shared_only:
         outputs = {k: v for k, v in outputs.items() if k in (gen_mod.EPOCH_CPP, gen_mod.CONTRACT_TEST)}
     driver_bytes = textops.read_target(root, DRIVER_PATH)
@@ -1070,13 +1087,22 @@ def generate(args):
         files[path] = {"kind": "new" if frozen is None else "edited",
                        "lines": text.count("\n"),
                        "frozen_lines": None if frozen is None else frozen.count("\n"),
-                       "edits": len(g.edits.get(path, ())), "sha256_lf": gen_mod._sha(text)}
+                       "edits": len(g.edits.get(path, ())), "doc_hunks": doc_rec.get(path, 0),
+                       "sha256_lf": gen_mod._sha(text)}
         print(f"  {status:9s} {path} ({files[path]['kind']}, {files[path]['lines']} lines"
               + (f", frozen {files[path]['frozen_lines']}" if frozen is not None else "") + ")")
     ef = epoch_rec["function_lines"]
     print(f"  epoch function: lines {ef[0]}-{ef[1]} of {gen_mod.EPOCH_CPP} "
           f"({ef[1] - ef[0] + 1} lines; preamble {epoch_rec['preamble_count']} names; frozen lambda "
           f"{epoch_rec['frozen_lambda'][0]}-{epoch_rec['frozen_lambda'][1]})")
+    print(f"  doc hunks (nom_ep1/docs.py): {sum(doc_rec.values())} applied in {len(doc_rec)} files"
+          + (f"; {len(doc_skipped)} written for the base after the REMOVE-key deletion, not applied "
+             "at this one" if doc_skipped else ""))
+    by_label = collections.Counter(x[0] for x in stale)
+    print(f"  stale-spelling census (the docs pass's worklist, nom_ep1/docs.py STALE): {len(stale)} lines"
+          + "".join(f"; {n} {label}" for label, n in by_label.items()))
+    for label, path, ln, text in stale:
+        print(f"    {path}:{ln}: {text[:110]}")
     for x in g.problems:
         print(f"  problem: {x}")
     manifest = {
@@ -1087,6 +1113,9 @@ def generate(args):
         "epoch_function": epoch_rec, "seams": seam_rec, "setup": setup_rec,
         "spec_cut": [[fz.drv.T.line(s), fz.drv.T.line(e - 1), n] for s, e, n in getattr(g, "cut", [])],
         "problems": g.problems,
+        "doc_hunks": doc_rec,
+        "doc_hunks_after_deletion_only": doc_skipped,
+        "stale_spellings": [[label, path, ln] for label, path, ln, _ in stale],
     }
     if fz.fit.lines():
         # The entries the REMOVE-key deletion retired at this base (absent at the EP0 base,

@@ -594,9 +594,13 @@ def bind_base(fz, fit):
         SPEC_FIELD_BY_NAME, ENGINE_CTORS, ENGINE_BY_LOCAL, REMOVED_PARAMS, REMOVED_BY_PARAM, \
         SOLVE_BUILDERS, VALUE_EQUAL_EXPR, VALUE_EQUAL_LOCAL, VALUE_EQUAL_EXPRS, ABSENT
     from nom_ep1 import declares
+    from nom_ep1 import templates
     absent = set()
+    decided = set()
 
     def applies(table, name, key, retired_by):
+        if retired_by:
+            decided.add(key)
         if not retired_by or declares(fz, key):
             return True
         absent.add(key)
@@ -636,4 +640,11 @@ def bind_base(fz, fit):
     REMOVED_BY_PARAM = {(r.seam, r.param): r for r in REMOVED_PARAMS}
     SOLVE_BUILDERS = _solve_builders(REMOVED_PARAMS)
     VALUE_EQUAL_EXPRS = {VALUE_EQUAL_EXPR.replace(" ", ""): "ep.emitted"}
+    # A retirement edit of the designed text whose object no table entry names (the T1d
+    # SH-convergence latch, which only the carry_warm documentation mentions) is decided by
+    # its own key's declaration at the base.
+    for key in sorted({k for k, *_ in templates.RETIRED_TEXT} - decided):
+        if not declares(fz, key):
+            absent.add(key)
+            fit.retired.append(("designed text", key[2:], f"`{key[2:]}` is not declared at this base"))
     ABSENT = frozenset(absent)

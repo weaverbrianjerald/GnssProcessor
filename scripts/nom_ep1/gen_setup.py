@@ -5,8 +5,9 @@ setup(g) adds to g.edits and g.new:
     group's declaration a reference to its member (OWNER_MOVE) where the remaining text reads
     it; the engines' constructor arguments cut into networkEngineSpec (SPEC_CUT), the locals
     still read bound to the specification's fields; the third-band closure, the bracket
-    closures and their timer vectors, the lambda and its enum gone; the epoch source calls
-    networkProcessEpoch_; the run end binds the run's groups;
+    closures and their timer vectors, the lambda and its enum gone; the aliases only the lambda
+    read gone (UNREAD_ALIAS, the review round), no unread declaration left; the epoch source
+    calls networkProcessEpoch_; the run end binds the run's groups;
   - src/core/app/NetworkRun.cpp (new): networkEngineSpec and networkSubBegin / networkSubEnd,
     each body the frozen text under a preamble that repeats the declarations it reads;
   - include/filter/NetworkRunGroups.hpp: NetworkEngineSpec, NetworkRunEngines as the owner,
@@ -26,7 +27,7 @@ from nom_ep1.gen import (GenError, WIDTH, BRACKETS, CALLABLE_LOCAL, TIMER_FIELDS
                          DDB_HPP, DDB_CPP, CONTRACT_TEST, ENGINE_SPEC_TEST, CMAKE, PREDICATE,
                          comment_block)
 from nom_ep1.gen_seams import namespace_close
-from nom_ep1.textops import Edit, Lines, leading_comment, collapse_ws, dedent, doc_before
+from nom_ep1.textops import Edit, Lines, leading_comment, collapse_ws, dedent, doc_before, removed_mask
 
 RUN_BUILD = ("    // The run (app/NetworkRun.hpp, card NOM3 step EP1): the references every epoch reads\n"
              "    // and the engines and groups the run owns, each built here in place from the engines'\n"
@@ -335,8 +336,47 @@ def run_network(g):
     for name in [CALLABLE_LOCAL, *BRACKETS, *TIMER_FIELDS, "engines"]:
         if reads.get("D:" + name):
             raise GenError(f"runNetwork still reads {name} after EP1 removes it")
+    rec["unread_aliases"] = unread_aliases(g, E, rn_lo, rn_hi, add)
     g.new[RUN_CPP] = run_cpp(g)
     return rec
+
+
+def unread_aliases(g, E, rn_lo, rn_hi, add):
+    """UNREAD_ALIAS (declared.py): each listed runNetwork alias that nothing reads once the
+    other edits are made loses its line (its trailing comment with it; a comment block above
+    it is the docs table's, docs.py).  Then no declaration of runNetwork's outermost scope may
+    stay unread: one that does is refused by name, so the list is closed at every base (the
+    dead-alias defect INC-12 and EP0 removed, which EP1's move of the lambda would otherwise
+    bring back).  Returns the names removed and the candidates kept (still read)."""
+    T = g.T
+    reads = g.reads(E, rn_lo, rn_hi)
+    removed = removed_mask(T, E)
+    out = {"removed": [], "kept": []}
+    for d in declared.declared("UNREAD_ALIAS"):
+        rd = g.root_decl(d.name)
+        if removed[rd.tok]:
+            raise GenError(f"UNREAD_ALIAS {d.name}: another edit already removes its line")
+        if reads.get("D:" + d.name):
+            out["kept"].append(d.name)
+            continue
+        s, e = rd.stmt
+        ds = parse_declaration(T, s, e) or []
+        if len(ds) != 1 or ds[0].init is None:
+            raise GenError(f"UNREAD_ALIAS {d.name} ({DRIVER_PATH}:{rd.line}) is not a single declarator "
+                           "with an initializer")
+        a, b = g.stmt_line_span(s, e, with_comment=False)
+        add(Edit(a, b, "", f"UNREAD_ALIAS {d.name}"), T.line(s), "UNREAD_ALIAS")
+        out["removed"].append(d.name)
+    reads = g.reads(E, rn_lo, rn_hi)
+    removed = removed_mask(T, E)
+    dead = [rd for rd in g.drv.scopes.root.decls
+            if rd.kind != "param" and not removed[rd.tok] and not reads.get("D:" + rd.name)]
+    if dead:
+        raise GenError("runNetwork would keep declarations nothing reads after the cut: "
+                       + ", ".join(f"{rd.name} ({DRIVER_PATH}:{rd.line})" for rd in dead)
+                       + "; declare each UNREAD_ALIAS in declared.py (a side-effect-free alias), or "
+                       "find the reader the generator missed")
+    return out
 
 
 def _is_engine_ctor(g, s, e):

@@ -39,7 +39,7 @@
  * @p retro_flag_sats.  Call it on the post-fit @p x_s after the post-fit RAIM
  * (@ref networkPostFitRaim, whose consensus/attribution culprits arrive in
  * @p clock_refloat_sats) and before the epoch stash/status tail.  The caller keeps
- * the @c subBegin/subEnd(SB_CLOCKUPD) brackets.
+ * the @c networkSubBegin/End(SB_CLOCKUPD) brackets.
  */
 
 #include "filter/NetworkEstimator.hpp"   // NetworkEstimator

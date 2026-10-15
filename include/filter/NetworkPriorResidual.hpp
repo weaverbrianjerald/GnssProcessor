@@ -308,8 +308,9 @@ inline PriorResidualCorrob priorResidualOrVerdict(const PriorResidualEvidence& e
  * @brief Per-row prior-residual census over the carried stiff priors (v1).
  *
  * One instance per producer run, with the same lifetime and ownership as
- * @ref NetworkCarryVce: a run-TU local, passed by reference into the feed seams
- * (see the note on engine objects in the @c app/NetworkRunContext.hpp banner).
+ * @ref NetworkCarryVce: an engine the run owns (run.engines.prires, app/NetworkRun.hpp;
+ * a run-TU local passed by reference until card NOM3 step EP1; see the note on engine
+ * objects in the @c app/NetworkRunContext.hpp banner).
  */
 class NetworkPriorResidual {
 public:

@@ -13,9 +13,11 @@ edits), templates.py (the designed text of the types) and textops.py (edits, lin
 Doxygen blocks, the target tree).  Each run writes manifest_<rows>.json here (under --root).
 
 DEFAULT_BASE is the frozen source <B> every tool reads with `git show` when --base is not
-given.  It names nom/ep0 at the time of writing (main 366385b plus step EP0); it is re-pointed
-to the commit that merges EP0 into main before step EP1a-1 starts, and every tool re-derives
-every line number from whichever base it is given.
+given: main 926dafa, the REMOVE-key deletion as it landed (card RKD).  EP1 was first generated
+on that deletion's branch head 180aa28, which main does not contain (the branch was rebased
+before it landed); the two trees differ outside scripts/ and docs/ only in
+src/core/config/GnssConfigNetworkPosture.cpp and the goldens, which EP1 does not touch.  Every
+tool re-derives every line number from whichever base it is given.
 
 The base also decides which table entries apply (bind_base below).  The REMOVE-key deletion
 retires configuration keys and the code behind them, and some of that code is named by the
@@ -41,7 +43,7 @@ _SCRIPTS = pathlib.Path(__file__).resolve().parents[1]
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))   # nom_cpp, rt_seam_verify live beside this package
 
-DEFAULT_BASE = "0e14eb9"
+DEFAULT_BASE = "926dafa"
 
 ROW_MODULES = ("rows_app", "rows_solve", "rows_emit", "rows_diag")
 

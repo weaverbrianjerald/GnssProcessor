@@ -41,7 +41,7 @@
  * carries (the disc-pending sets, prev_pivot/last_pivot, emitted_anchor,
  * last_if_pin_sel, ura_retro_sats, the RTB-7 ramp state) and the emit-side objects
  * (@c emitter datum/disc bumps; opens @c product_writer at first emit).  The caller
- * keeps the @c subBegin/subEnd(SB_SOLPREP) brackets.
+ * keeps the @c networkSubBegin/End(SB_SOLPREP) brackets.
  */
 
 #include "app/NetworkSetupResult.hpp"        // NetworkSetupResult

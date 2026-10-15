@@ -18,8 +18,10 @@ only. Run them with `PYTHONIOENCODING=utf-8` on a cp1252 console (PowerShell:
 
 Every tool reads the frozen source `<B>` from git (`git show`, `git cat-file --batch`) at
 `--base <rev>`, never from a working tree. `DEFAULT_BASE` in `__init__.py` names it when
-`--base` is not given. At the time of writing it is `c483a11` (`nom/ep0`: main `366385b` plus
-step EP0); before step EP1a-1 starts it is re-pointed to the commit that merges EP0 into main.
+`--base` is not given: main `926dafa`, the REMOVE-key deletion as it landed (card RKD). EP1 was
+first generated on that deletion's branch head `180aa28`, which main does not contain (the branch
+was rebased before it landed); the EP1 commits were rebased onto `926dafa` at the review round
+(section "The review round" below). The tooling was built on `c483a11` and `0e14eb9` (EP0).
 No row, table or check carries a line number: the survey re-derives every line from whichever
 base it is given. The base also decides which table entries apply: an entry naming an object
 the REMOVE-key deletion takes is marked `retired_by=REMOVE_KEY` and applies only at a base
@@ -34,7 +36,7 @@ generation, never a crash.
 | `scripts/nom_cpp.py` | The C++ reading layer: lexer, statement splitter, declaration and parameter parsers, per-file function index, scope walker, call extraction, the resolver that follows reference declarations to their initializers, `GitTree` (the frozen revision) and `Driver` (the shape of `runNetwork` and its lambda). `--selftest` reproduces the EP1 inventory's counts on the frozen driver. |
 | `scripts/nom_ep1/__init__.py` | `DEFAULT_BASE`, the row-file list and the row loader; `REMOVE_KEY`, `RENAMED` and `bind_base()`, which binds every table to the entries that apply at a base. |
 | `scripts/nom_ep1/model.py` | The row type `Seam`, the realization tables (lambda local to epoch member, driver name to run member, the engine constructors and the spec fields) and the fold grammar. Generator input only: the verifier does not import it beyond the row type. |
-| `scripts/nom_ep1/declared.py` | The closed list of declared substitutions of spec 5.6 (eleven classes), each with its reason and a locator that finds its frozen object at any base; the write proofs of COPY_SOURCE and VALUE_EQUAL (`Writers`), which the survey and the verifier evaluate; the declared member order of `NetworkEpoch` (`EPOCH_LAYOUT`, check V3c); and the declared non-conversions (the input stage, the calls inside the EP2 blocks, the method calls). |
+| `scripts/nom_ep1/declared.py` | The closed list of declared substitutions of spec 5.6 (eleven classes, and the twelfth, `UNREAD_ALIAS`, of the review round), each with its reason and a locator that finds its frozen object at any base; the write proofs of COPY_SOURCE and VALUE_EQUAL (`Writers`), which the survey and the verifier evaluate; the declared member order of `NetworkEpoch` (`EPOCH_LAYOUT`, check V3c); and the declared non-conversions (the input stage, the calls inside the EP2 blocks, the method calls). |
 | `scripts/nom_ep1/rows_app.py` | Canonical-table rows of worker W1 (10 seams). |
 | `scripts/nom_ep1/rows_solve.py` | Rows of worker W2 (13 seams). |
 | `scripts/nom_ep1/rows_emit.py` | Rows of worker W3 (15 seams). |
@@ -45,9 +47,10 @@ generation, never a crash.
 | `scripts/nom_ep1/gen_setup.py` | `runNetwork` (spec 4.1), `NetworkRun.cpp` (`networkEngineSpec`, the bracket functions), `NetworkRunGroups.hpp`, the post-fit hand-off, the third-band predicate, `Application.hpp`, `CMakeLists.txt`. |
 | `scripts/nom_ep1/templates.py` | The designed text of the new types (spec 2), checked against the model's tables. |
 | `scripts/nom_ep1/textops.py` | Non-overlapping edits, line ends, comments, Doxygen blocks, the target tree. |
+| `scripts/nom_ep1/docs.py` | The comment rewrites of the review round (`DOC_HUNKS`: comment-only hunks the generator applies to its finished text, each checked to change no token) and the stale-spelling census (`STALE`), the docs pass's worklist. |
 | `scripts/nom_ep1/manifest_<rows>.json` | Written by each generator run under `--root`: the base, the rows, every written file with its digest, the frozen ranges each transform resolved, each converted call and preamble. The verifier reads it for pairing only. |
 | `scripts/nom_ep1_cut.py` | The generator: `--survey`, `--stage ep1a1`, `--stage ep1b`, `--shared-only`, `--presolve-writer`, `--check`. |
-| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 68 negative controls (the sixteen of spec 5.7, seventeen added at the review round, seventeen at hardening round 1, eleven at hardening round 2 and seven at hardening round 3). It reads the rows and `declared.py` and nothing the generator computes. |
+| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 69 negative controls (the sixteen of spec 5.7, seventeen added at the review round, seventeen at hardening round 1, eleven at hardening round 2, seven at hardening round 3 and one at the EP1 review round). It reads the rows and `declared.py` and nothing the generator computes. |
 | `scripts/nom_epoch_lint.py` | The permanent lint: checks V0 (the reading), V4, V10 and V11 on any tree, with no git revision. It also holds the readers both tools share: the tree, the preprocessor lines, a translation unit's include closure and the declarations in it, and the CMake commands. |
 
 ## Step EP1a-1, the base
@@ -134,7 +137,8 @@ Integration, in the order W2, W1, W3, W4. After each merge:
 
 After the last merge: `python scripts/nom_ep1_verify.py --tree . --base <B> --rows all
 --controls` (67 controls fire and none is MISSING; R5 is pending by design, its forwarder having
-gone with the DD build's conversion), `python scripts/nom_epoch_lint.py` without `--partial`,
+gone with the DD build's conversion; at a base after the REMOVE-key deletion R4 to R6 are pending
+and 66 fire), `python scripts/nom_epoch_lint.py` without `--partial`,
 the full G-EP and the cost pair.
 
 The card's pre-solve form (author decision 1, `NetworkEpoch& ep` for the writers before the
@@ -154,7 +158,7 @@ are ignored throughout.
 | V1a | Every top-level statement of the frozen lambda is carried, character-exact and shifted four columns, by the epoch function, or is the old side of a declared transform of spec 5.3 whose new side is checked by rule (the epoch's construction, the dropped workspace, an alias, a sized or a result store at the local's frozen position, the clock store, `ep.emitted`, the brackets, the converted calls, the two replay closures). Each carried statement and store is paired with its frozen text token by token: an `ep.<path>` that stands for a local must pair with a frozen token that is that lambda local (the DD-carry predict's own `dt` is not `ep.clock.dt`), `ep.emitted` with the frozen comparison. The epoch function's definition has the frozen lambda's head: `NetworkRun& run`, then the lambda's parameter list, its trailing return type (`Application::LoopSignal`), and after the list the lambda's specifiers but `mutable` (none, so no `noexcept`: an exception that escapes an epoch reaches `Application::run`'s handler, which logs it and returns 1, instead of calling `std::terminate`). The VALUE_EQUAL proof. |
 | V1b | Each converted seam's body below its bindings equals the frozen body, the solve's two replay lines and three hand-off lines excepted; the bindings open the body (no code before the opening marker) and hold declarations only. |
 | V1c | Every unconverted seam and every adapter's explicit form is byte-identical to frozen. |
-| V1d | `runNetwork` equals frozen apart from the spec 4.1 edits, and what those edits took out is where the specification puts it: the epoch function's one declaration in `Application`, with the lambda's head as in V1a; the predicate and the two brackets as functions with the closures' parameters, return type, specifiers after the list (none) and body, each declaration with its definition's head, under a preamble that binds exactly the closures' captures (by reference where the capture was, each to the captured object); the timer scratch; the hand-off fields with their frozen declarations; `NetworkRunEngines` with the engines in frozen construction order and frozen types, one constructor with an empty body and nothing after its parameter list; `LoopSignal`. |
+| V1d | `runNetwork` equals frozen apart from the spec 4.1 edits and the `UNREAD_ALIAS` lines (each gone line one declarator, a reference or a const builtin copy of a member path, and no token left in `runNetwork` names it), every declaration left in its outermost scope is read, and what those edits took out is where the specification puts it: the epoch function's one declaration in `Application`, with the lambda's head as in V1a; the predicate and the two brackets as functions with the closures' parameters, return type, specifiers after the list (none) and body, each declaration with its definition's head, under a preamble that binds exactly the closures' captures (by reference where the capture was, each to the captured object); the timer scratch; the hand-off fields with their frozen declarations; `NetworkRunEngines` with the engines in frozen construction order and frozen types, one constructor with an empty body and nothing after its parameter list; `LoopSignal`. |
 | V1e | Every changed line of the build's inputs is accounted for. The inputs are every file the base has under `src/`, `include/` and `tests/`, every C, C++ or CMake file the candidate has there whatever its extension (so an untracked `.inl` or `.cpp` left there fails as a new file), `CMakeLists.txt`, and, when the tree carries them, `third_party/` and the root CMake configuration files. A C++ file is read without its comments, any other file as written (a `/*` in CMake hides nothing). A new file of the step is diffed against nothing; any other new file fails. A changed line is an include or forward-declaration line, or every token of it lies in a token range another check verified, so code appended on a verified line (after a definition's `}`, beside a namespace brace) is not accounted with it. No changed line is a preprocessor directive but `#include`, a new header's `#pragma once` or a conditional group of `#include` lines: a `#define` of a seam's name or an `#if 0` around the read copy changes what the compiler builds without changing a token any check reads. No frozen `#include` is removed. An `#include` that enters the tree names its header literally, without `..`, and reaches a header (`.hpp` or `.h` under `include/` or `third_party/`) the base has or one of the step's two new headers, a C++ standard library header, or a library header the base includes by that spelling; never a source, a test, an inline file or a file outside the include directories. `CMakeLists.txt` changes by the step's build-list lines alone: each new source named once, as a bare line of its target's list (`gnss_core`, `gnss_tests`), and nowhere else, so no per-source compile option or definition, no forced include and no test source in `gnss_core` enters. The new source files hold only what the specification puts there: `NetworkRun.cpp` the three definitions, `ApplicationNetworkEpoch.cpp` the one epoch function, the contract test its probe, static_asserts and one TEST case (the hand-written engine specification test's text is the suite's; its one listing in `gnss_tests`, and that nothing includes it, are checked here). Of `NetworkRunTiming` and `NetworkSolveGlueResult` only the moved and new members are claimed, so any other edit there (a default, a stray field) fails. No stray edit enters the tree. |
 | V2 | Each converted seam has one epoch-form declaration and one definition with the parameter list its row states; kept parameters keep their frozen declaration; after the solve only the hand-off and the prepared solution are outputs. The head around the list is the frozen form's (an adapter's, that of the explicit form it forwards to): the return type and every specifier before the name, every specifier after the list, and no default argument but a kept parameter's frozen one. So no epoch form returns a reference to its local or to the explicit form's temporary (the spine's store would copy a destroyed object), and none is `noexcept`. |
 | V3a | At every frozen call site paired with its new site (and at the solve's two replay calls), every frozen parameter binds the same storage object, derived independently from the frozen and the new source and equal modulo the declared substitutions; the binding line is `<the frozen declarator> = <expression>;`, so a reference stays a reference, a copy stays a copy and no type changes; `// written` marks exactly the epoch writes; the DD build's third-band binding is the one declared forwarder to `networkIsUncarriedThirdBand` over the knobs; adapters' other callers keep their text. |
@@ -187,7 +191,8 @@ its mutation keeps the trip's adapter and gives the solve's internal call the ep
 binds `ep.solve.plan` there exactly as the spec's direct conversion would; N11 cuts the
 `debug_r_scale` warning while the base has it, else a synthetic warning). R1 to R17 were added
 at the review round, R18 to R34 at hardening round 1, R35 to R39 at hardening round 2 and R46
-to R48, R51 and R52 at hardening round 3, one per mutation an earlier verifier accepted; R40 to
+to R48, R51 and R52 at hardening round 3 and R53 at the EP1 review round, one per mutation an
+earlier verifier accepted; R40 to
 R45 (hardening round 2) put the edit of R35 to R39 on the other function heads the step
 writes, and R49 and R50 (hardening round 3) carry the overload of R46 and the build-flag
 channel of R48 by another route. R35 to R37 must fail both V2 and V8 (the mutation edits the
@@ -249,6 +254,7 @@ and the overload it carries):
 | R50 | `target_compile_definitions(gnss_core PRIVATE networkIonoDiag=networkDdFrac)` appended to `CMakeLists.txt` | V1e, lint |
 | R51 | `add_compile_options(/fp:fast)` in `CMakeLists.txt` between a comment line ending in `/*` and a line `# */` (two CMake comments, one C++ block comment) | V1e |
 | R52 | the last quoted `#include` of `ApplicationNetwork.cpp` removed | V1e |
+| R53 | an `UNREAD_ALIAS` line kept in `runNetwork` at its frozen place (the review round's defect: nothing reads it once the lambda has moved) | V1d |
 
 A control whose target the stage cannot have yet is pending; one whose target the stage must
 have but the tree lacks is MISSING and fails the run, so no control falls silent at a later
@@ -313,7 +319,11 @@ base-aware:
   `pb_filter_cfg`, `idw, iono_deweight`, CALLABLE `isUncarriedThirdBand` and CALLBACK_DIRECT
   `buildEnsembleGauges`; in `model.py` the same objects' realization entries (the epoch
   member, the three run members and engines, the four specification fields, the two removed
-  parameters) and the PB filter's argument of the emit engines (`RetiredArg`).
+  parameters) and the PB filter's argument of the emit engines (`RetiredArg`); since the
+  review round also UNREAD_ALIAS `phase_datum_ensemble`, `phase_hold_on` and
+  `sh_converged_latch`, and in `templates.RETIRED_TEXT` the key `D:sh_converged_latch` (the
+  T1d latch, which only the designed text names: such a key is decided by its own
+  declaration at the base, `model.bind_base`).
 - `nom_ep1.bind_base(fz)` decides each marked entry from its object at the base. Every tool
   calls it once, in its `Frozen`, before reading a table. Object present: the entry applies as
   written. Object gone: the entry does not apply and is listed (the survey's section "Retired
@@ -329,8 +339,11 @@ base-aware:
   that need them (`gen_setup.GROUPS_INCLUDES`).
 
 At the EP0 base `0e14eb9` every object is present: the survey prints what it printed before,
-plus an empty retired section, and the generated tree is byte-identical to the dry run's
-(`nom/ep1-dry` `42729f0`). After the deletion the controls R4 to R6 (the third-band
+plus an empty retired section, and the generated tree was byte-identical to the dry run's
+(`nom/ep1-dry` `42729f0`) until the review round, which removes the dead aliases there too (35
+of them; `carry_innov_gate` is still read at that base and stays) and lists six `docs.py` hunks
+written for the text after the deletion as not applied (`after_deletion`); the generator and
+the verifier (`--rows all`) pass there. After the deletion the controls R4 to R6 (the third-band
 forwarder) are pending and N11 uses its synthetic warning. On a later base:
 
 1. `python scripts/nom_cpp.py --selftest --base <B> --expect KEY=N,...` with the new driver's
@@ -344,6 +357,40 @@ forwarder) are pending and N11 uses its synthetic warning. On a later base:
    control MISSING), the lint, and `--check` on both trees.
 4. The specification's texts that name these objects (sections 2.2, 4.1) stay as written; the
    tables are their executable form at each base.
+
+## The review round (2026-10-14)
+
+An outside review of the generated EP1 tree made seven findings; each is fixed in the tooling,
+none by hand in the generated text.
+
+1. **The base.** EP1 was built and verified on `180aa28`, the deletion's branch head, which main
+   does not contain. The EP1 commits were rebased onto main `926dafa` (`git rebase --onto
+   926dafa 180aa28 nom/ep1`; the two file sets are disjoint), `DEFAULT_BASE` names `926dafa`, and
+   the tree is regenerated and verified there. Outside `scripts/` and `docs/` the two bases differ
+   only in `src/core/config/GnssConfigNetworkPosture.cpp` and the goldens (the deleted keys
+   unset), which EP1 does not touch.
+2. **The dead aliases.** Moving the lambda out left 33 aliases in `runNetwork` that nothing
+   reads (the defect INC-12 and EP0 removed). `declared.UNREAD_ALIAS` lists them;
+   `gen_setup.unread_aliases` removes each one that nothing reads after the other edits and
+   refuses a generation that would leave any outermost declaration of `runNetwork` unread; V1d
+   accepts a gone line only as one declarator, a reference or a const builtin copy of a member
+   path, with no token left naming it, and fails any unread declaration (control R53). Their
+   orphaned comments are `docs.py` hunks.
+3. **The banner's grep recipes** in `NetworkEpoch.hpp` now hold (`ep\.pass_a[,)]`, `n?ep\.pass_a\.present`)
+   and name the lint's V11 as the authority.
+4. **`EpochClock::carry_warm`'s documentation** named the T1d SH-convergence latch, which the
+   deletion removed: a `templates.RETIRED_TEXT` entry keyed on `D:sh_converged_latch` (a key no
+   table names is decided by its own declaration at the base, `model.bind_base`).
+5. **Stale comments** (two findings) about the removed closures, the solve's callbacks, `sg_`, the
+   driver's epoch locals and the engines as run-TU locals: `docs.py` `DOC_HUNKS`, applied by the
+   generator to its finished text (each must change no token, each conditioned on the seam
+   whose conversion makes it true), and the `STALE` census the generator prints and records in
+   its manifest (`stale_spellings`) for the docs pass of the last merge.
+6. **The maintenance banners.** `ApplicationNetworkEpoch.cpp`, the contract test and the epoch
+   function's declaration say the generated text is maintained by hand once EP1 lands, guarded
+   by `nom_epoch_lint.py` and the contract test; the CLAUDE.md seam-contract draft in the
+   specification (section 7) is amended with the run-only form, the adapter form and the
+   fallback names.
 
 ## Run times
 
