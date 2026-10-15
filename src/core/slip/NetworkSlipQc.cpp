@@ -1436,7 +1436,8 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         const StateManager& sm, int i, const std::string& sat,
         const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
-        double pl_now_s, double pl_max_gap_s, bool* via_carry) {
+        double pl_now_s, double pl_max_gap_s, bool* via_carry,
+        const ArcLedger* arc_ledger, RosterN3bCensus* n3b) {
     std::vector<std::pair<std::string, std::string>> targets;
     for (const auto& [ak, si] : sm.getAmbiguities()) {
         (void)si;
@@ -1455,6 +1456,41 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
             if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
             const std::string& sig = std::get<2>(it->first);
             targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
+        }
+        // The arc identity from the arc ledger (card NOM step N3b): of the carry entries
+        // inside the horizon (the arcs with a value), in signal order, the ledger keeps
+        // its admitted records that are not dead.  Where the ledger holds no admission
+        // for a carried arc, the arc's admission predates the ledger (a warm resume
+        // restores the carry, not the ledger) and the carry answers, counted as the
+        // site's fallback, as the latch answers for the roster reads.  The walk above is
+        // the rule this replaces; every restart compares the two (census site
+        // windup_restart_arcs, 0 on every census arm), and the targets are the ledger's.
+        if (arc_ledger != nullptr) {
+            std::vector<std::pair<std::string, std::string>> named;
+            bool fallback = false;
+            for (auto it = local_carry->lower_bound(std::make_tuple(i, sat, std::string{}));
+                 it != local_carry->end() && std::get<0>(it->first) == i
+                     && std::get<1>(it->first) == sat;
+                 ++it) {
+                const double age_s = pl_now_s - it->second.last_seen_s;
+                if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
+                const ArcRecord* a = arc_ledger->find(it->first);
+                if (a == nullptr || a->ep_first_admitted < 0) fallback = true;
+                else if (a->adm_state == ArcState::Dead)       continue;
+                const std::string& sig = std::get<2>(it->first);
+                named.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
+            }
+            if (n3b != nullptr && fallback)
+                ++n3b->fallback[static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs)];
+            if (n3b != nullptr) {
+                std::string walk, ledger;
+                for (const auto& t : targets) walk += (walk.empty() ? "" : ",") + t.second;
+                for (const auto& t : named) ledger += (ledger.empty() ? "" : ",") + t.second;
+                signalRosterN3bCount(*n3b, RosterN3bSite::WindupRestartArcs, named == targets,
+                                     fmt::format("sta {} {} walk {} ledger {}", i, sat,
+                                                 walk, ledger));
+            }
+            targets = std::move(named);
         }
         carry = !targets.empty();
     }
@@ -1477,7 +1513,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    NetworkSlipOracle* oracle,
                                    const std::map<std::tuple<int, std::string, std::string>,
                                                   LocalCarry>* local_carry,
-                                   double pl_now_s, double pl_max_gap_s) {
+                                   double pl_now_s, double pl_max_gap_s,
+                                   const ArcLedger* arc_ledger, RosterN3bCensus* n3b) {
     if (!config_.networkCycleSlipWindupRestartRefloat()) return;
     const double now_s = static_cast<double>(se.time.week) * 604800.0 + se.time.tow;
     const double carry_gap_s = config_.networkPhaseLevelingMaxGapS();
@@ -1530,7 +1567,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             bool via_carry = false;
             const std::vector<std::pair<std::string, std::string>> targets =
                 networkWindupRestartTargets(sm, i, sat, local_carry, pl_now_s,
-                                            pl_max_gap_s, &via_carry);
+                                            pl_max_gap_s, &via_carry, arc_ledger, n3b);
             // Sim-only oracle: a restart steps every signal of the satellite, so
             // each signal is offered to the oracle independently (truth localizes
             // what the band-common model step cannot).  A signal with no truth

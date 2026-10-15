@@ -48,6 +48,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct SyncedEpoch;
+struct RosterN3bCensus;   // app/SignalRoster.hpp (card NOM step N3b)
 
 /// Elevation mapping for the IF-phase slip stochastic model: the multiplicative
 /// factor by which between-epoch double-differenced carrier-phase noise grows
@@ -541,12 +542,21 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  * @param via_carry     Set to true when the targets came from the carry (may be null).
+ * @param arc_ledger    The run's arc ledger, or null.  Given, the carry targets are named
+ *                      by the ledger (card NOM step N3b): the carry entries of the
+ *                      (station, satellite) inside the horizon, in signal order, whose
+ *                      ledger record is admitted and not dead.  A carried arc the ledger
+ *                      holds no admission for (one admitted before a warm resume, which
+ *                      restores the carry and not the ledger) is named by the carry, as
+ *                      the census's fallback.  The carry walk is still formed and compared.
+ * @param n3b           The N3b census (site @c windup_restart_arcs), or null.
  * @return The targets, live columns first-and-only when any exist.
  */
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         const StateManager& sm, int i, const std::string& sat,
         const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
-        double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr);
+        double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr,
+        const ArcLedger* arc_ledger = nullptr, RosterN3bCensus* n3b = nullptr);
 
 /**
  * @brief Drain the wind-up accumulator-restart ledgers and refloat the stepped
@@ -608,7 +618,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    NetworkSlipOracle* oracle = nullptr,
                                    const std::map<std::tuple<int, std::string, std::string>,
                                                   LocalCarry>* local_carry = nullptr,
-                                   double pl_now_s = 0.0, double pl_max_gap_s = 0.0);
+                                   double pl_now_s = 0.0, double pl_max_gap_s = 0.0,
+                                   const ArcLedger* arc_ledger = nullptr,
+                                   RosterN3bCensus* n3b = nullptr);
 
 /**
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking

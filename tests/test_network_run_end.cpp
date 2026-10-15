@@ -85,9 +85,10 @@ TEST(NetworkRunEndTable, TheContractRoundTripPrecedesTheClosedLoopSummary) {
 TEST(NetworkRunEndTable, TheTailReportsAreTheLastRowsInOrder) {
     const NetworkRunEndReport tail[] = {
         networkInjectRunEnd, networkCanonicalPairRunEnd, networkSignalRosterRunEnd,
+        networkSignalRosterSitesRunEnd,   // card NOM step N3b: beside the roster's report
         networkChannelAllRunEnd, networkMultiGnssRunEnd, networkLedgerEmitRunEnd};
     const std::size_t n = kNetworkRunEndReports.size();
-    for (std::size_t k = 0; k < 6; ++k) EXPECT_EQ(rowOf(tail[k]), n - 6 + k);
+    for (std::size_t k = 0; k < 7; ++k) EXPECT_EQ(rowOf(tail[k]), n - 7 + k);
 }
 
 TEST(NetworkRunEndTable, TheCulpritWithholdFollowsTheWithinEpochRaimReport) {
