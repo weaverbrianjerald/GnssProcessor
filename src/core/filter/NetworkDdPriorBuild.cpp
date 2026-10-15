@@ -59,7 +59,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
     // --- Alias preamble: copies of the run-TU aliases the relocated
     //     buildCarryDdPriors body reads (the knobs and the ctx.carry aliases). ----
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
-    auto& carry_glonass_warned = ctx.carry.carry_glonass_warned;
+    auto& carry_glonass_warned = ctx.counters.carry_glonass_warned;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
     const bool carry_invariant = ctx.knobs.carry_invariant;
     // Keep a funnel entry made only by D5 out of the carry-membership exclusion (see
@@ -166,7 +166,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                 // The suppressed kill is counted only where the arc survives: on a T2
                 // re-solve a culprit kills a spared arc anyway (card WCF), and that arc is
                 // counted in we_culprit_withhold.ambs, not here.
-                if (funnel_spared) ++ctx.carry.carry_innov_kill_suppressed;
+                if (funnel_spared) ++ctx.counters.carry_innov_kill_suppressed;
                 return false;
             };
             int& sv = net::putSat(ctx.entities, parts->satellite, &net::SatelliteState::carry_vertex);

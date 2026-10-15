@@ -1253,7 +1253,7 @@ static int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
     if (!ctx.knobs.pd_held_basis) return 0;
     const auto& C = ctx.counters;
     const bool clean = C.n_pb_basis_value_drift == 0
-                       && ctx.carry.pa_reref_erase_total == 0;
+                       && ctx.counters.pa_reref_erase_total == 0;
     log->log(clean ? spdlog::level::info : spdlog::level::err,
              "Network (RF-2 held S-basis): {} family-epoch(s) re-pinned at their "
              "FROZEN basis value; {} new basis value(s) elected, {} of them COLD (the "
@@ -1269,7 +1269,7 @@ static int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
              C.n_pb_basis_refuse_young, ctx.knobs.pa_min_age_ep,
              C.n_pb_basis_refuse_flagged, ctx.knobs.pa_flag_quiet_ep,
              C.n_pb_basis_rank_changed,
-             ctx.carry.pa_reref_erase_total, C.n_pb_basis_value_drift);
+             ctx.counters.pa_reref_erase_total, C.n_pb_basis_value_drift);
     // Why the datum moved (RF-2b); the line above says only how often.  The three
     // deposition causes partition the incumbent losses; `refuse_unusable` and
     // `elev_fallback` are the composed rank's own evidence: a large fallback count

@@ -176,16 +176,16 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
                     if (dc.t_s <= 0.0) {          // cold entry: seed at steady state
                         dc.dev = 0.0;
                         dc.var = dc.var_ss;
-                        ++ctx.carry.shdev_cold_total;
+                        ++ctx.counters.shdev_cold_total;
                     } else {
-                        ++ctx.carry.shdev_warm_total;
+                        ++ctx.counters.shdev_warm_total;
                     }
                     // Convert (û, V̂, effective floor) into the carry's
                     // vertical-TECU frame; then the exact closed form.
                     const double u_v  = u_hat / m0t;
                     const double v_v  = v_hat / (m0t * m0t);
                     const double f2_v = floor_m2 / (m0t * m0t);
-                    if (v_v >= dc.var + f2_v) ++ctx.carry.shdev_nodata_total;
+                    if (v_v >= dc.var + f2_v) ++ctx.counters.shdev_nodata_total;
                     const auto upd =
                         shDevExactUpdate(dc.dev, dc.var, u_v, v_v, f2_v);
                     dc.dev = upd.first;
@@ -239,8 +239,8 @@ int networkShDevCarryRunEnd(const NetworkRunEndView& v) {
               "{} cold seed(s), {} slip reset(s) (C3c funnel), {} no-information "
               "harvest skip(s), {} deviation(s) carried at run end (τ={} s, "
               "σ_ss={} TECU vertical, exact posterior harvest).",
-              ctx.carry.shdev_warm_total, ctx.carry.shdev_cold_total,
-              ctx.carry.shdev_slip_resets_total, ctx.carry.shdev_nodata_total,
+              ctx.counters.shdev_warm_total, ctx.counters.shdev_cold_total,
+              ctx.counters.shdev_slip_resets_total, ctx.counters.shdev_nodata_total,
               net::present(v.ctx.entities.los, &net::LosState::sh_dev), shc.rep_error_tau_s,
               shc.representation_sigma_tecu);
     // v3k clause only when armed, so the v2/v3 lines stay byte-identical with it off.
@@ -248,19 +248,19 @@ int networkShDevCarryRunEnd(const NetworkRunEndView& v) {
         log->info("Network (Iono-2/v3k D5-keep): {} D5-only re-tap(s) KEPT the level "
                   "(variance re-tapped to σ_ss), {} raw-confirmed erase(s) — the erase "
                   "policy split (SPEC_iono2_mechB_v3 addendum).",
-                  ctx.carry.shdev_d5_keeps_total, ctx.carry.shdev_slip_resets_total);
+                  ctx.counters.shdev_d5_keeps_total, ctx.counters.shdev_slip_resets_total);
     // v3 clause only when armed, so the v2 line stays byte-identical with it off.
     if (shc.rep_error_demean)
         log->info("Network (Iono-2/v3 de-mean): global common-mode removed on {} epoch(s) "
                   "(mean |g| = {:.3f} TECU), per-station means removed {} station-epoch(s) "
                   "(anti-ratchet; the a00-twin / receiver-lump quasi-null directions stay "
                   "with the field and receiver states — SPEC_iono2_mechB_v3).",
-                  ctx.carry.shdev_demean_epochs_total,
-                  ctx.carry.shdev_demean_epochs_total > 0
-                      ? ctx.carry.shdev_demean_abs_g_sum
-                            / static_cast<double>(ctx.carry.shdev_demean_epochs_total)
+                  ctx.counters.shdev_demean_epochs_total,
+                  ctx.counters.shdev_demean_epochs_total > 0
+                      ? ctx.counters.shdev_demean_abs_g_sum
+                            / static_cast<double>(ctx.counters.shdev_demean_epochs_total)
                       : 0.0,
-                  ctx.carry.shdev_demean_sta_total);
+                  ctx.counters.shdev_demean_sta_total);
     return 0;
 }
 
@@ -338,11 +338,11 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
             // removes any common mode of the kept levels, so the keep cannot
             // re-open the ratchet.
             if (!sh_dev_d5_keep || raw_los.count(nameKey(id))) {
-                ++ctx.carry.shdev_slip_resets_total;
+                ++ctx.counters.shdev_slip_resets_total;
                 return true;
             }
             shDevD5Retap(dc);
-            ++ctx.carry.shdev_d5_keeps_total;
+            ++ctx.counters.shdev_d5_keeps_total;
             // falls through to staleness + GM aging (retap is idempotent
             // under the aging step: λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²).
         }
@@ -374,9 +374,9 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
         net::forEach(los_rows, &net::LosState::sh_dev,
                      [&](const LosId& id, ShDevCarry& dc) { dc = view.at(nameKey(id)); });
         if (ds.applied) {
-            ++ctx.carry.shdev_demean_epochs_total;
-            ctx.carry.shdev_demean_sta_total += ds.n_sta;
-            ctx.carry.shdev_demean_abs_g_sum += std::abs(ds.g_tecu);
+            ++ctx.counters.shdev_demean_epochs_total;
+            ctx.counters.shdev_demean_sta_total += ds.n_sta;
+            ctx.counters.shdev_demean_abs_g_sum += std::abs(ds.g_tecu);
         }
     }
 }

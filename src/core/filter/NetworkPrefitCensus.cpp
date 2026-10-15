@@ -681,8 +681,8 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     ctx.carry.prefit_code_flag_ep = seq;
 
     // --- invariant #4: an inert walk reports that it is inert -----------------
-    if (rows_epoch == 0 && !ctx.carry.prefit_empty_logged) {
-        ctx.carry.prefit_empty_logged = true;
+    if (rows_epoch == 0 && !ctx.counters.prefit_empty_logged) {
+        ctx.counters.prefit_empty_logged = true;
         log->warn("Network (prefit census): ARMED but the first walked epoch (TOW "
                   "{:.1f}) classified ZERO data rows — every station was skipped (no "
                   "solve membership or a shared-dimension mismatch).  Every census "
@@ -885,7 +885,7 @@ void networkCensusSigma0(NetworkRun& run, const NetworkEpoch& ep,
     if (ctx.knobs.h_sigma0_census) {
         ctx.carry.ep_h_sigma0_census = networkPrefitSigma0(
             ctx, stations, est, asm_res, est_index_of, ctx.knobs.h_sigma0_class_mask);
-        if (ctx.carry.ep_h_sigma0_census > 0.0) ++ctx.carry.h_sig0_census_nonzero;
+        if (ctx.carry.ep_h_sigma0_census > 0.0) ++ctx.counters.h_sig0_census_nonzero;
     }
 }
 // ---- End of the solve stages ----

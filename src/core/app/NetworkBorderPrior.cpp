@@ -674,7 +674,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // asymmetry lasts one epoch; the census measures its size instead of assuming
         // it.  It is read here, before the gauge-free / plain addSharedPrior branch
         // below, so the count covers the same population on both fold routes.
-        if (ctx.carry.resume_cpl_census_pending)
+        if (ctx.carry.resume.cpl_census)
             ctx.counters.n_resume_cpl_diag_border =
                 static_cast<long long>(leftovers.size());
         // Leftovers are the keys the dense fold could not take (no matrix row after a

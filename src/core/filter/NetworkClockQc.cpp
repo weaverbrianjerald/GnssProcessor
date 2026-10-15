@@ -469,12 +469,12 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             std::nth_element(s.begin(), s.begin() + static_cast<std::ptrdiff_t>(s.size() / 2),
                              s.end());
             const double med = s[s.size() / 2];
-            if (med > ctx.carry.cb_exc_max_median) {
-                ctx.carry.cb_exc_max_median     = med;
-                ctx.carry.cb_exc_max_median_tow = se.time.tow;
+            if (med > ctx.counters.cb_exc_max_median) {
+                ctx.counters.cb_exc_max_median     = med;
+                ctx.counters.cb_exc_max_median_tow = se.time.tow;
             }
             if (med > nc.cb_excursion_median_m) {
-                ++ctx.carry.cb_exc_trips;
+                ++ctx.counters.cb_exc_trips;
                 const double mx = *std::max_element(deltas.begin(), deltas.end());
                 // Which satellites' CB carry is reinitialized (D1).  Pivots only by
                 // default, since the pivot is the one satellite whose clock↔code split
@@ -493,9 +493,9 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 // between pivot-only and all-satellite reinitialization.
                 std::size_t n_nonpivot_jumpers = 0;
                 for (const std::string& s2 : jumpers)
-                    if (!mark.count(s2)) { ++n_nonpivot_jumpers; ++ctx.carry.cb_exc_nonpivot_would; }
+                    if (!mark.count(s2)) { ++n_nonpivot_jumpers; ++ctx.counters.cb_exc_nonpivot_would; }
 
-                ctx.carry.cb_exc_reinits += static_cast<long long>(mark.size());
+                ctx.counters.cb_exc_reinits += static_cast<long long>(mark.size());
                 // A value step has to coincide with a signalled discontinuity (Card-2
                 // rule).  The reinit lands in the next epoch's fold, so the bump is
                 // queued for the next emit (consumed in NetworkSolPrep).
@@ -542,21 +542,21 @@ int networkCbExcursionRunEnd(const NetworkRunEndView& v) {
               "|Δδtˢ| observed {:.2f} m at TOW {:.1f} (threshold {:.2f} m).  D1 "
               "evidence: {} (satellite,epoch) NON-pivot case(s) a per-satellite "
               "rule would have reinitialized — scope is {}.",
-              ctx.carry.cb_exc_trips, ctx.carry.cb_exc_reinits,
-              ctx.carry.cb_exc_bumps, ctx.carry.cb_exc_max_median,
-              ctx.carry.cb_exc_max_median_tow,
+              ctx.counters.cb_exc_trips, ctx.counters.cb_exc_reinits,
+              ctx.counters.cb_exc_bumps, ctx.counters.cb_exc_max_median,
+              ctx.counters.cb_exc_max_median_tow,
               config_.getNetworkConfig().cb_excursion_median_m,
-              ctx.carry.cb_exc_nonpivot_would,
+              ctx.counters.cb_exc_nonpivot_would,
               config_.getNetworkConfig().cb_excursion_reinit_all_sats
                   ? "ALL satellites (D1b)" : "clock-PIVOT only (D1)");
-    if (ctx.carry.cb_exc_trips == 0)
+    if (ctx.counters.cb_exc_trips == 0)
         log->warn("Network (Phase 2.1): the CB-excursion guard is ARMED but never "
                   "tripped over this run — it is INERT here.  Either the window "
                   "carries no common-mode excursion, or the threshold ({:.2f} m) is "
                   "above anything that occurred (largest observed median {:.2f} m).  "
                   "Do NOT read this run as evidence the guard works.",
                   config_.getNetworkConfig().cb_excursion_median_m,
-                  ctx.carry.cb_exc_max_median);
+                  ctx.counters.cb_exc_max_median);
     if (net::present(ctx.entities.sats, net::Disc::CbExcursion) > 0)
         log->warn("Network (Phase 2.1): {} queued code-bias discontinuity bump(s) "
                   "never landed (their satellites were absent from every subsequent "

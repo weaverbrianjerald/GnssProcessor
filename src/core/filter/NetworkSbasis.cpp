@@ -2059,7 +2059,7 @@ void networkCodeDatumFamilyKeptEpoch(
     // The hold baseline is not snapshotted, so the first kept epoch after a warm resume
     // cannot tell a hold that begins here from one the writer's last kept epoch carried:
     // such a hold is declared "hold_resumed" and counted apart from the holds begun.
-    const bool after_resume = std::exchange(ctx.carry.if_pin_holds_resume_pending, false);
+    const bool after_resume = std::exchange(ctx.carry.resume.if_pin_holds, false);
     const auto& holds = ctx.carry.this_epoch_if_pin_holds;
     for (const auto& [sat, hold] : holds) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];

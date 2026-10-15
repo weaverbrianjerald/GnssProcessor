@@ -1709,7 +1709,7 @@ NetworkSbasis::CodeBiasCarryMap networkCodeBiasCarryMap(const NetworkRunContext&
  * held pair) and one when it ends (action "hold_end", the same detail plus the pair now
  * pinned and what moved the pin there), against @c net::SatelliteState::last_if_pin_hold, which it
  * advances.  The hold baseline is not snapshotted, so at the first kept epoch after a
- * warm resume (@c ctx.carry.if_pin_holds_resume_pending, which it consumes) a hold found
+ * warm resume (@c ctx.carry.resume.if_pin_holds, which it consumes) a hold found
  * is declared "hold_resumed" and counted apart from the holds begun, and a hold the
  * writer's last kept epoch carried and the resumed epoch released is not declared as
  * ended (its pin's move is: a "continued" event or a re-seed).  It also emits one

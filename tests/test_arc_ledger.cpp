@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include "app/NetworkEntities.hpp"
 #include "filter/ArcLedger.hpp"
 
 #include <set>
@@ -60,7 +61,8 @@ runEpoch(ArcLedger& led, long long ep, const std::vector<ArcLedger::Key>& seen,
 // ---------------------------------------------------------------------------
 
 TEST(ArcLedgerTest, BirthTrackingGapReentryIsTheFullSequence) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const std::set<int> present{ 0 };
@@ -104,7 +106,8 @@ TEST(ArcLedgerTest, BirthTrackingGapReentryIsTheFullSequence) {
 }
 
 TEST(ArcLedgerTest, HorizonIsATimeAndKillsTheArcOnce) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const std::set<int> present{ 0 };
@@ -132,7 +135,8 @@ TEST(ArcLedgerTest, HorizonIsATimeAndKillsTheArcOnce) {
 }
 
 TEST(ArcLedgerTest, ReturnAfterDeathIsABirthThatRemembersItsGeneration) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const std::set<int> present{ 0 };
@@ -152,7 +156,8 @@ TEST(ArcLedgerTest, ReturnAfterDeathIsABirthThatRemembersItsGeneration) {
 }
 
 TEST(ArcLedgerTest, ForgetWindowErasesTheRecordAndTheReturnIsAFirstSighting) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, /*forget_ep=*/5);
     const auto a = K(0, "G01", "L1W");
     const std::set<int> present{ 0 };
@@ -173,7 +178,8 @@ TEST(ArcLedgerTest, ForgetWindowErasesTheRecordAndTheReturnIsAFirstSighting) {
 }
 
 TEST(ArcLedgerTest, AnAbsentStationFreezesItsArcsInsteadOfGappingThem) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const auto b = K(1, "G01", "L1W");
@@ -196,7 +202,8 @@ TEST(ArcLedgerTest, AnAbsentStationFreezesItsArcsInsteadOfGappingThem) {
 }
 
 TEST(ArcLedgerTest, LiveAndRetainedCountsSeparateTheTwoPopulations) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);
     const std::set<int> present{ 0 };
     runEpoch(led, 0, { K(0, "G01", "L1W"), K(0, "G01", "L2W"), K(0, "G02", "L1W") },
@@ -217,7 +224,8 @@ TEST(ArcLedgerTest, LiveAndRetainedCountsSeparateTheTwoPopulations) {
 // ---------------------------------------------------------------------------
 
 TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
 
     // Epoch 0: every arc is born there and the volume carries no information, so
@@ -275,7 +283,8 @@ TEST(ArcLedgerTest, ARawPresentButUnadmittedEpochIsTrackingAndAdmittedGap) {
     // can be reported by the receiver and carried by nothing.  A reader that keys on
     // the carry (phase 3) needs the admitted state, which is Gap here while the raw
     // state stays Tracking.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const std::set<int> present{ 0 };
@@ -300,7 +309,8 @@ TEST(ArcLedgerTest, ARawPresentButUnadmittedEpochIsTrackingAndAdmittedGap) {
 }
 
 TEST(ArcLedgerTest, TheAdmittedGapHasItsOwnLengthAndReentryEdge) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const auto b = K(0, "G02", "L1W");
@@ -327,7 +337,8 @@ TEST(ArcLedgerTest, TheAdmittedGapHasItsOwnLengthAndReentryEdge) {
 TEST(ArcLedgerTest, ARawStepCarriesBothGapLengths) {
     // The `arc_reentry` event has to state the admitted gap as well as the raw one:
     // the two are different numbers and neither is derivable from the other.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const auto b = K(0, "G02", "L1W");
@@ -356,7 +367,8 @@ TEST(ArcLedgerTest, ARawStepCarriesBothGapLengths) {
 }
 
 TEST(ArcLedgerTest, TheAdmittedSideDiesOnItsOwnHorizonAndAnAbsentStationFreezesIt) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/60.0, kArcLedgerForgetEp);
     const auto a = K(0, "G01", "L1W");
     const auto b = K(0, "G02", "L1W");
@@ -389,7 +401,8 @@ TEST(ArcLedgerTest, TheAdmittedSideDiesOnItsOwnHorizonAndAnAbsentStationFreezesI
 }
 
 TEST(ArcLedgerTest, AdmittedLiveCountIsItsOwnPopulation) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     const std::set<int> present{ 0 };
     const auto a = K(0, "G01", "L1W");
@@ -442,7 +455,8 @@ TEST(ArcLedgerTest, ReasonBitsFoldIntoTheAdmittedGapThatOpened) {
     // The S1 contract: a screen that removes a modelled row records its bit,
     // and the gap the removal opens carries it.  Two arcs, two different screens,
     // so a per-arc mask cannot be a per-epoch one in disguise.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -466,7 +480,8 @@ TEST(ArcLedgerTest, ReasonBitsFoldIntoTheAdmittedGapThatOpened) {
 TEST(ArcLedgerTest, ReasonMaskSurvivesTheGapAndIsReadableAtTheReentry) {
     // The no-verdict split reads the mask at the return, so the mask survives
     // the whole gap unchanged and resets only at a genuine re-birth.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -491,7 +506,8 @@ TEST(ArcLedgerTest, AnUnexplainedAdmittedGapIsUnknown) {
     // The number phase 3 needs: an admitted gap that no writer explains.  It is
     // named rather than left empty, so a zero in the unknown row means "every gap
     // was attributed" and not "the fold never ran".
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -509,7 +525,8 @@ TEST(ArcLedgerTest, ADeweightIsNotAGapOpener) {
     // screen caps a code row's weight and the row still folds, so a de-weight is
     // never read as the screen that removed the arc.  An arc whose only record is
     // a de-weight and which then gaps reads unknown.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -553,7 +570,8 @@ TEST(ArcLedgerTest, TheLateBitSurvivesExactlyOneEpoch) {
 TEST(ArcLedgerTest, AnUnarmedReasonBufferLeavesTheMachineAsPhase3WroteIt) {
     // Invariant #6 in both knob states, at the unit level: the fold is handed the
     // buffer on every run, and an unarmed buffer changes nothing.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;   // armed stays false
     const auto a = K(0, "G01", "L1W");
@@ -572,7 +590,8 @@ TEST(ArcLedgerTest, ReasonExpansionReachesOnlyAdmittedAliveArcs) {
     // The expansion rule for a screen whose identity is coarser than an arc: the
     // elevation mask names a satellite, so the writer has to reach that station's
     // arcs of it that the admitted lifecycle still calls alive, and nothing else.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;
@@ -608,7 +627,8 @@ TEST(ArcLedgerTest, ReasonExpansionNeverRunsPastItsStation) {
     // a satellite at a station that is not carrying it.  Without the station
     // check, a neighbouring station's gap would be attributed to the mask and
     // `unknown` would be undercounted.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(900.0, kArcLedgerForgetEp);
     ArcReasonEpoch buf;
     buf.armed = true;

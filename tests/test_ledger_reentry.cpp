@@ -35,6 +35,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
+#include "app/NetworkEntities.hpp"
 #include "filter/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
@@ -95,8 +96,9 @@ struct Harness {
     SlipQcCounters          counters;
     RelevelEpochState       relevel;
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
-    net::ArcTable  local_carry;
-    ArcLedger               ledger;
+    net::NetworkEntities    ents;   ///< One arc table: the carry and the ledger's records (N4f2).
+    net::ArcTable&          local_carry{ents.arcs};
+    ArcLedger               ledger{ents};
     ArcReentryEpoch         sid;
     ArcReentryOutcomeMap    outcome;
     double                  pl_now_s{271200.0};
@@ -199,7 +201,8 @@ struct Harness {
 // then missed at least one epoch, and is admitted again now.  It excludes an arc
 // that never left and an arc whose first admission is this epoch.
 TEST(LedgerReentryTest, PopulationIsTheAdmittedGapToReenteredSet) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const ArcLedger::Key gap_arc   = K(0, kSat, kSig1);
     const ArcLedger::Key through   = K(0, kSat, kSig2);
@@ -229,7 +232,8 @@ TEST(LedgerReentryTest, PopulationIsTheAdmittedGapToReenteredSet) {
 // has nothing to protect.  Such a return is counted, not dropped silently
 // (standing invariant 4).
 TEST(LedgerReentryTest, ReturnPastTheCarryHorizonIsCountedAndLeftOut) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const ArcLedger::Key arc    = K(0, kSat, kSig1);
     const ArcLedger::Key keeper = K(0, "G01", kSig1);
@@ -251,7 +255,8 @@ TEST(LedgerReentryTest, ReturnPastTheCarryHorizonIsCountedAndLeftOut) {
 // in the population (R5 (d)).  The population is built from the modelled arcs, so
 // the restriction is upstream of the response and the drain never sees the arc.
 TEST(LedgerReentryTest, NonModelledSignalIsNotInThePopulation) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const ArcLedger::Key modelled     = K(0, kSat, kSig1);
     const ArcLedger::Key not_modelled = K(0, kSat, "L1W");
@@ -411,7 +416,8 @@ TEST(LedgerReentryTest, DispositionsPartitionThePopulation) {
 // on the admitted side as it does on the raw side, so the carry's own gap prune
 // has an edge to be reported against.
 TEST(LedgerReentryTest, HorizonPruneEmitsArcDeathOnTheAdmittedSide) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/300.0, kArcLedgerForgetEp);   // 10 epochs at 30 s
     const ArcLedger::Key arc    = K(0, kSat, kSig1);
     const ArcLedger::Key keeper = K(0, "G01", kSig1);
@@ -439,7 +445,8 @@ TEST(LedgerReentryTest, HorizonPruneEmitsArcDeathOnTheAdmittedSide) {
 // re-entry carries it (R3(b)).  The prune itself is unchanged; the mark only
 // records that the return lands on a fresh column.
 TEST(LedgerReentryTest, StatePruneMarkTravelsOnTheNextReentry) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const ArcLedger::Key arc    = K(0, kSat, kSig1);
     const ArcLedger::Key keeper = K(0, "G01", kSig1);
@@ -476,7 +483,8 @@ TEST(LedgerReentryTest, StatePruneMarkTravelsOnTheNextReentry) {
 // An unknown key is not marked: the ledger has no arc for a key it has never seen,
 // and creating a record for it would add a spurious member to the population.
 TEST(LedgerReentryTest, StatePruneMarkOnAnUnknownArcIsRefused) {
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     led.beginEpoch(0, 0.0);
     EXPECT_FALSE(led.markStatePruned(K(3, "G31", "L5Q")));

@@ -220,7 +220,7 @@ TEST(NetworkSolPrepDiscTest, CbExcursionMarkLandsInRRecordAndReplays) {
 
     EXPECT_EQ(r.retro_emit_sats.count("G03"), 1u);
     EXPECT_TRUE((net::present(h.ctx->entities.sats, net::Disc::CbExcursion) == 0));
-    EXPECT_EQ(h.ctx->carry.cb_exc_bumps, 1);              // run-end telemetry intact
+    EXPECT_EQ(h.ctx->counters.cb_exc_bumps, 1);              // run-end telemetry intact
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G03"), 1);
@@ -312,7 +312,7 @@ TEST(NetworkSolPrepDiscTest, AbsentSatStaysPendingAndUnserialized) {
     EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::EphCutover)), 1u);
     EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::CbExcursion)), 1u);
     EXPECT_EQ(static_cast<std::size_t>(net::hasSat(h.ctx->entities.sats, "G09", net::Disc::CbReseed)), 1u);
-    EXPECT_EQ(h.ctx->carry.cb_exc_bumps, 0);
+    EXPECT_EQ(h.ctx->counters.cb_exc_bumps, 0);
 
     h.setup.emitter->emitToStore(r.sol, h.setup.network_store);
     EXPECT_EQ(h.setup.emitter->clockDiscontinuityCounter("G09"), 0);

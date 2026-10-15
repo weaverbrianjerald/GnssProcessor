@@ -3,6 +3,7 @@
 entity table (scripts/nom3_designs/N4_design.md section 6.0, checks V1 to V7).
 
     python scripts/nom_n4_verify.py --entity station [--tree DIR] [--base REV] [--runs DIR ...]
+    python scripts/nom_n4_verify.py --whole [--tree DIR]
 
 Every check first runs on a mutated copy of the tree (its negative control), which must
 FAIL; a control that passes stops the verifier before the real checks run.  Exit 0 when every
@@ -26,6 +27,14 @@ files and, for V7, one `git diff` against --base.
       the writer calls recordToSnapshot for it, and kRestoreOrder equals the reader's call order.
   V7  python scripts/nom_epoch_lint.py passes, and tests/test_network_epoch_contract.cpp differs
       from --base only by the reach sampler's lines (N4.0).
+
+--whole (step N4g) checks G1 for the whole struct instead of one entity:
+  G1  every data member of NetworkCarryState (comma declarations and arrays included) has
+      exactly one FieldDecl row named "carry.<member>" (a ResumeHandoff group: one row per
+      member of the group, "carry.<group>.<field>"); every TSV member not marked deleted has
+      exactly one FieldDecl row (was == member) in an entity table or net::kRunFields, with
+      the TSV's persistence; a "counters.<m>" row names a NetworkServiceCounters member.
+      Its negative control adds two undeclared members to NetworkCarryState.
 """
 import argparse
 import copy
@@ -53,6 +62,7 @@ TABLES = ('constellations', 'sats', 'sat_signals', 'stations', 'los', 'arcs')
 RUN_CTX = 'include/app/NetworkRunContext.hpp'
 ENT_HPP = 'include/app/NetworkEntities.hpp'
 ENT_CPP = 'src/core/app/NetworkEntities.cpp'
+RUN_CPP = 'src/core/app/NetworkRunFields.cpp'
 TSV = 'scripts/nom3_designs/N4_fields.tsv'
 WRITER = 'src/core/app/NetworkStateSnapshotWrite.cpp'
 READER = 'src/core/app/NetworkWarmResume.cpp'
@@ -117,13 +127,69 @@ def tsv_rows(tree, entity):
     return rows
 
 
-DECL_RE = re.compile(r'\{\s*"(\w+)",\s*"(\w+)",\s*Persist::(\w+),\s*"(\w*)",\s*"([\w.]*)",\s*'
+DECL_RE = re.compile(r'\{\s*"([\w.]+)",\s*"(\w+)",\s*Persist::(\w+),\s*"([\w+]*)",\s*"([\w.]*)",\s*'
                      r'([\w:&<>]+),\s*([\w:&<>]+),\s*([\w:&<>]+)\s*\}')
 
 
-def field_decls(tree):
+def field_decls(tree, files=(ENT_CPP,)):
+    """The FieldDecl rows of the entity tables (and, given RUN_CPP, of net::kRunFields)."""
     return [dict(zip(('name', 'was', 'persist', 'record', 'fp', 'to', 'frm', 'rows'), m.groups()))
-            for m in DECL_RE.finditer(strip_comments(tree.get(ENT_CPP)))]
+            for f in files if f in tree.files
+            for m in DECL_RE.finditer(strip_comments(tree.get(f)))]
+
+
+def split_top(s, sep):
+    """Split s at sep outside (), [], {} and <>."""
+    out, cur, d = [], '', 0
+    for ch in s:
+        d += ch in '([{<'
+        d -= ch in ')]}>'
+        if ch == sep and d == 0:
+            out.append(cur)
+            cur = ''
+        else:
+            cur += ch
+    out.append(cur)
+    return out
+
+
+def declared_members(body):
+    """Every data member a struct body declares at depth 1: comma declarations, arrays and
+    initializers with calls included; member functions, nested types and aliases skipped.
+    The body is the text between the struct's braces, comments stripped."""
+    stmts, cur, d = [], '', 0
+    for ch in body:
+        if ch == '{':
+            d += 1
+        elif ch == '}':
+            d -= 1
+            head = cur.split('{')[0]
+            if d == 0 and '(' in head and '=' not in head:
+                cur = ''          # a member function's body closed
+                continue
+        if ch == ';' and d == 0:
+            stmts.append(cur.strip())
+            cur = ''
+        else:
+            cur += ch
+    names = []
+    for st in stmts:
+        if not st or st.startswith(('using ', 'struct ', 'enum ', 'static ', 'friend ', 'template',
+                                    'typedef ', 'class ')):
+            continue
+        for k, dcl in enumerate(split_top(st, ',')):
+            dcl = re.split(r'=|\{|\[', dcl, maxsplit=1)[0].strip()
+            if k == 0 and '(' in dcl:
+                break             # a member function declaration
+            m = re.search(r'(\w+)\s*$', dcl)
+            if m:
+                names.append(m.group(1))
+    return names
+
+
+def members_of(tree, struct):
+    b = struct_body(strip_comments(tree.get(RUN_CTX)), struct)
+    return declared_members(b[1:-1]) if b else []
 
 
 def struct_members(body):
@@ -391,6 +457,53 @@ def controls(tree, entity):
     return out
 
 
+def g1_whole(tree):
+    """G1 for the whole struct (step N4g): see the module docstring."""
+    fails = []
+    decls = field_decls(tree, (ENT_CPP, RUN_CPP))
+    names = [d['name'] for d in decls]
+    carry_body = struct_body(strip_comments(tree.get(RUN_CTX)), 'NetworkCarryState') or '{}'
+    for m in declared_members(carry_body[1:-1]):
+        g = re.search(r'\b(\w+)\s+' + m + r'\s*[;{=]', carry_body)
+        if g and g.group(1) == 'ResumeHandoff':
+            for f in members_of(tree, 'ResumeHandoff'):
+                n = names.count(f'carry.{m}.{f}')
+                if n != 1:
+                    fails.append(f'carry.{m}.{f}: {n} FieldDecl rows (want 1)')
+            continue
+        n = names.count('carry.' + m)
+        if n != 1:
+            fails.append(f'NetworkCarryState::{m}: {n} FieldDecl rows (want 1)')
+    counters = set(members_of(tree, 'NetworkServiceCounters'))
+    for d in decls:
+        if d['name'].startswith('counters.') and d['name'][len('counters.'):] not in counters:
+            fails.append(f"{d['name']}: not a NetworkServiceCounters member")
+    for line in tree.tsv.splitlines():
+        if line.startswith('#') or line.startswith('hpp_line'):
+            continue
+        c = line.split('\t')
+        if len(c) < 9 or c[5] == 'deleted':
+            continue
+        rows = [d for d in decls if d['was'] == c[1]]
+        if len(rows) != 1:
+            fails.append(f'{c[1]}: {len(rows)} FieldDecl rows with was == member (want 1)')
+            continue
+        want = c[7].split(':')
+        d = rows[0]
+        if d['persist'] != want[0] or (want[0] == 'Record' and d['record'] != want[1]):
+            fails.append(f"{c[1]}: FieldDecl {d['persist']}:{d['record']} vs TSV {c[7]}")
+    return fails
+
+
+def whole_control(tree):
+    """G1's negative control: two undeclared members in NetworkCarryState."""
+    t = copy.deepcopy(tree)
+    s = t.files[RUN_CTX]
+    i = s.index('struct NetworkCarryState {') + len('struct NetworkCarryState {')
+    t.files[RUN_CTX] = s[:i] + '\n        long long g1_control_a = 0, g1_control_b = 0;\n' + s[i:]
+    return t
+
+
 def load_runs(tree, runs):
     for run in runs:
         lines = []
@@ -404,13 +517,29 @@ def load_runs(tree, runs):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('--entity', required=True, choices=sorted(STEP_OF))
+    ap.add_argument('--entity', choices=sorted(STEP_OF))
+    ap.add_argument('--whole', action='store_true', help='G1 for the whole struct (step N4g)')
     ap.add_argument('--tree', default=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     ap.add_argument('--base', default='nom/wave4', help='revision for the contract-test diff (V7)')
     ap.add_argument('--runs', nargs='*', default=[], help='run dirs whose reach table V4 reads')
     ap.add_argument('-v', '--verbose', action='store_true', help='list the loops and write sites')
     a = ap.parse_args()
     tree = Tree(a.tree)
+    if a.whole:
+        ctl = g1_whole(whole_control(tree))
+        print(f'  control G1: {"FAILS as it must" if ctl else "PASSES (control broken)"}'
+              + (f' ({ctl[0]})' if ctl else ''))
+        f = g1_whole(tree)
+        print(f"  G1 (whole struct: {len(members_of(tree, 'NetworkCarryState'))} NetworkCarryState "
+              f"members, {len(field_decls(tree, (ENT_CPP, RUN_CPP)))} FieldDecl rows): "
+              + ('PASS' if not f else 'FAIL'))
+        for x in f[:30]:
+            print('      ' + x)
+        ok = bool(ctl) and not f
+        print('nom_n4_verify --whole: ' + ('PASS' if ok else 'FAIL'))
+        return 0 if ok else 1
+    if not a.entity:
+        ap.error('--entity or --whole is required')
     tree.contract_diff = subprocess.run(['git', '-C', a.tree, 'diff', a.base, '--', CONTRACT],
                                         capture_output=True, text=True).stdout
     load_runs(tree, a.runs)

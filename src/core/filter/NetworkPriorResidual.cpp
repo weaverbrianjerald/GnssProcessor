@@ -133,8 +133,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
         // APPROX column is not quoted without its warning.  One-shot; the run-end
         // line carries the epoch counts.
         if ((g.flags & NetworkPriorResidual::kGlobalApprox)
-            && !ctx.carry.s0g_approx_warned) {
-            ctx.carry.s0g_approx_warned = true;
+            && !ctx.counters.s0g_approx_warned) {
+            ctx.counters.s0g_approx_warned = true;
             log->warn("Network (constraint-aware global σ̂₀): {} of this epoch's {} data row(s) "
                       "entered with r ≡ 1 at TOW {:.1f} — network.raim_redundancy_normalize is "
                       "off, so Σr_data is a ROW COUNT rather than a redundancy, the denominator "
@@ -144,8 +144,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                       g.s.n_data_approx, g.s.n_data, se.time.tow);
         }
         if ((g.flags & NetworkPriorResidual::kGlobalNoData)
-            && !ctx.carry.s0g_nodata_warned) {
-            ctx.carry.s0g_nodata_warned = true;
+            && !ctx.counters.s0g_nodata_warned) {
+            ctx.counters.s0g_nodata_warned = true;
             log->warn("Network (constraint-aware global σ̂₀): ZERO data rows at TOW {:.1f} — the "
                       "post-fit RAIM walk contributed nothing (network.raim off, not yet warm, or "
                       "no station qualified), so this epoch's sigma0_global is a PRIOR-ONLY "
@@ -263,8 +263,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
         ++q.prires_events;
     }
     // Invariant #4: a truncated identity stream must not read as a quiet epoch.
-    if (prires.hitsDropped() > 0 && !ctx.carry.prires_trunc_warned) {
-        ctx.carry.prires_trunc_warned = true;
+    if (prires.hitsDropped() > 0 && !ctx.counters.prires_trunc_warned) {
+        ctx.counters.prires_trunc_warned = true;
         log->warn("Network (prior-residual census): {} above-threshold row(s) exceeded the "
                   "per-epoch identity buffer ({}) at TOW {:.1f} and their INDIVIDUAL "
                   "identities were dropped.  Every LADDER count is complete and unaffected — "

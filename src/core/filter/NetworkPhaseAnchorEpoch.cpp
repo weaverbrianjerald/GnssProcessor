@@ -523,7 +523,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                                  steps ? 1 : 0));
                 }
             if (!pa_reref.empty()) {
-                ctx.carry.pa_reref_total +=
+                ctx.counters.pa_reref_total +=
                         static_cast<long long>(pa_reref.size() - pa_before);
                 // Declared anchor S-transform (RF-1 step 5, §3.6).  A frame step is a
                 // known, exact basis change, so the carry is expressed in the new
@@ -586,7 +586,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                         std::get<1>(k), std::get<2>(k), lc,
                         is_gd ? "gate_drop" : "anchor_reref");
                 }
-                ctx.carry.pa_reref_erase_total += n_erased;
+                ctx.counters.pa_reref_erase_total += n_erased;
                 ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: frame step
                 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbAnchorRerefErase,
                            n_erased);   // card PRM phase 3a

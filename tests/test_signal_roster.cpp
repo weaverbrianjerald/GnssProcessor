@@ -23,6 +23,7 @@
 
 #include <gtest/gtest.h>
 
+#include "app/NetworkEntities.hpp"
 #include "app/SignalRoster.hpp"
 #include "common/Constants.hpp"
 #include "common/PppObservation.hpp"
@@ -473,7 +474,8 @@ TEST(SignalRosterTest, FirstSightingOnReturnSeesTheReturningArcs) {
     // A family whose arcs are in a Gap or have just Reentered is a return, and the
     // election reading it as a birth is the class the audit named.  Both states
     // count toward the returning half; a Tracking arc does not.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(/*horizon_s=*/3900.0, kArcLedgerForgetEp);
     const auto a = FK(0, "G30", "L1W");
     const auto b = FK(1, "G30", "L1W");
@@ -495,7 +497,8 @@ TEST(SignalRosterTest, FirstSightingOnReturnSeesTheReturningArcs) {
 TEST(SignalRosterTest, FirstSightingOnReturnIgnoresOtherFamilies) {
     // The detection is per (satellite, signal): the same satellite on another band
     // and another satellite on the same band are not counted into it.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a  = FK(0, "G30", "L1W");
     const auto a2 = FK(0, "G30", "L2W");
@@ -520,7 +523,8 @@ TEST(SignalRosterTest, AGenuineFirstSightingHasNoReturningArcs) {
     // a family rising for the first time reads zero returning arcs, so a run
     // whose first-sighting count is high and whose return count is zero is a run
     // with nothing to fix.
-    ArcLedger led;
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
     led.configure(3900.0, kArcLedgerForgetEp);
     const auto a = FK(0, "G30", "L1W");
     fsAdmit(led, 0, { a });

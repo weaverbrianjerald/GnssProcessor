@@ -31,6 +31,9 @@ const char* persistName(Persist p) {
     case Persist::Pending:         return "Pending";
     case Persist::RunConst:        return "RunConst";
     case Persist::WriterTelemetry: return "WriterTelemetry";
+    case Persist::Epoch:           return "Epoch";
+    case Persist::Latch:           return "Latch";
+    case Persist::ResumeHandoff:   return "ResumeHandoff";
     }
     return "?";
 }
@@ -1064,6 +1067,8 @@ const std::vector<FieldDecl> kArcFields = {
      &eqrFromSnapshot, &retainedRows},
     {"anchor_arc_age", "anchor_arc_age", Persist::ColdStart, "", "", nullptr, nullptr,
      &arcRows<&R::anchor_arc_age>},
+    {"ledger", "arc_ledger", Persist::ColdStart, "", "", nullptr, nullptr,
+     &arcRows<&R::ledger>},
 };
 
 const std::array<EntityFields, 6> kEntityFieldTables = {{

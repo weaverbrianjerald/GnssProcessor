@@ -4,6 +4,8 @@
 # (inflated where another struct shares the name); files_carry_bind counts files with carry.field or cs.field.
 # Step N4e2 re-placed ten of the Satellite rows by their key (override): emitted_anchor, emitted_anchor_s and eq34_sat_root ("sat_signal") to SatSignal; last_cb_family_partner ("<c>|<signal>") to Constellation.channel; bb_event_last ("station\x1fsat") to Los; cg_event_last (station name) to Station; eq34_epoch_bridged (the per-epoch twin of eq34_epoch_declared), pc_trace_rows and amb_if_rows (trace rows drained each epoch) to N5a; ddfold_degen_prev (a DD block label "grp:u-v") to N4g run.labels.
 # Step N4f1 (the step column read N4f) re-placed four of the Arc rows whose old key keeps a string no ArcId reproduces (O4) onto the owner of its typed prefix (override): amb_flag_ep ((station, ambiguity key)), adm_arc ((station, "<sat>|<band>")) and adm_event_last ("event|station|sat|band", the station by name) to Station; relevel_pend ((station, sat, "sig1_sig2")) to Los.
+# Step N4g re-placed three telemetry rows by their readers (override): wh_era_len and wh_last_loop_ep (the withhold era's length and freshness: era_live drives wh_escalated, a RAIM decision) and snap_path (a run constant that gates the warm resume and the writer) stay in NetworkCarryState as run state; the other 82 telemetry rows moved to NetworkServiceCounters (D6). It added bb (the Block-Baarda run accumulator, a NetworkCarryState member the survey's parser missed: run.state ColdStart).
+# Decision D9 (step N4g): iono_carry (LosState::iono) and gl_hold_iono stay declared. The code proves both empty on every run (the only writer of each is the other, and both start empty), but deleting them retires the carry sites iono_coupling and hold_iono_coupling, rows of the run-end site table and the manifest param_sites record: an output move, left to a step that may move output.
 hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_access	files_carry_bind	write_like_sites	snap_writer	snap_reader	confidence	top_files
 1015	prev_carry	std::vector<CarryPrior>	vector	CarryPrior	run.state	cross-epoch	Record:D	N4g	27	25	46	1	1	auto	test_carry_sites:30 test_handover_stransform:24 test_handover_stransform_dense:19 NClockClone:5
 1019	nbp_prev_iode	std::map<std::string, int>	map	std::string	Satellite	cross-epoch	ColdStart	N4e2	1	1	0	0	0	auto	NBrdcWire:1
@@ -228,8 +230,8 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2201	ep_we_refloat_sats	int	scalar		run.state	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NRaimWithinEpoch:2 NSolveGlue:2 NStashStatus:2
 2202	ep_we_clk_move_max	double	scalar		run.state	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NRaimWithinEpoch:2 NSolveGlue:2 NStashStatus:2
 2203	ep_we_clk_move_sat	std::string	aggregate		run.state	per-epoch	Epoch	N5a	3	3	2	0	0	auto	NRaimWithinEpoch:2 NSolveGlue:1 NStashStatus:1
-2213	wh_era_len	int	scalar		run.telemetry	cross-epoch	ColdStart	N4g	1	1	3	0	0	auto	NRaimWithinEpoch:12
-2214	wh_last_loop_ep	long long	scalar		run.telemetry	cross-epoch	ColdStart	N4g	1	1	2	0	0	auto	NRaimWithinEpoch:3
+2213	wh_era_len	int	scalar		run.state	cross-epoch	ColdStart	N4g	1	1	3	0	0	override	NRaimWithinEpoch:12
+2214	wh_last_loop_ep	long long	scalar		run.state	cross-epoch	ColdStart	N4g	1	1	2	0	0	override	NRaimWithinEpoch:3
 2221	staf_ewma	std::map<int, double>	map	int	Station	cross-epoch	ColdStart	N4a	1	1	1	0	0	override	NRaim:10
 2222	staf_updates	std::map<int, long long>	map	int	Station	cross-epoch	ColdStart	N4a	1	1	3	0	0	override	NRaim:2
 2223	staf_departed	std::set<int>	set	int	Station	cross-epoch	ColdStart	N4a	1	1	2	0	0	override	NRaim:4
@@ -288,7 +290,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2377	sd_ewl_fix	std::map<std::pair<std::size_t, char>, std::map<std::string, SdEwlFix>>	map	std::pair<std::size_t, char>	Station.signal	cross-epoch	ColdStart	N4a	1	1	0	0	0	override	NSdEwlAr:2
 2378	sd_ewl_r0	std::map<char, std::string>	map	char	Constellation	cross-epoch	ColdStart	N4b	1	1	0	0	0	override	NSdEwlAr:1
 2383	sd_ewl_prev	std::map<std::tuple<std::size_t, char, std::string>, std::pair<long long, std::size_t>>	map	std::tuple<std::size_t, char, std::string>	Los	cross-epoch	ColdStart	N4c	1	1	0	0	0	override	NSdEwlAr:1
-2389	snap_path	std::filesystem::path	aggregate		run.telemetry	cross-epoch	RunConst	N4g	8	8	4	1	1	auto	NRun:1 NSnapshotFingerprint:1 NStateSnapshotWrite:1 NWarmResume:1
+2389	snap_path	std::filesystem::path	aggregate		run.state	cross-epoch	RunConst	N4g	8	8	4	1	1	override	NRun:1 NSnapshotFingerprint:1 NStateSnapshotWrite:1 NWarmResume:1
 2390	last_snapshot_write_s	double	scalar		run.state	cross-epoch	WriterTelemetry	N4g	1	1	0	1	0	auto	NStateSnapshotWrite:1
 2391	live_fingerprint	uint64_t	scalar		run.state	cross-epoch	Record:M	N4g	7	7	0	1	1	auto	test_exl_switch_on_resume:4 NSnapshotFingerprint:2 NStateSnapshotWrite:1 NWarmResume:1
 2392	live_fingerprint_ctu_off	uint64_t	scalar		run.state	cross-epoch	RunConst	N4g	3	3	2	0	1	auto	NSnapshotFingerprint:3 NWarmResume:3 test_exl_switch_on_resume:3
@@ -346,6 +348,7 @@ hpp_line	field	type	kind	key_type	entity	scope	persistence	step	files_member_acc
 2525	ep_s0g_flags	int	scalar		run.state	per-epoch	Epoch	N5a	2	2	1	0	0	auto	NPriorResidual:1 NStashStatus:1
 2543	bb_hits	std::vector<BlockBaardaHit>	vector	BlockBaardaHit	run.state	per-epoch	Epoch	N5a	3	3	1	0	0	auto	NRedundancyCensus:4 NBlockBaarda:2 test_block_baarda:1
 2544	bb_event_last	std::map<std::string, long long>	map	std::string	Los	cross-epoch	ColdStart	N4e2	2	2	1	0	0	override	NBlockBaarda:3 test_block_baarda:1
+2203	bb	NetworkBlockBaarda	aggregate		run.state	cross-epoch	ColdStart	N4g	0	0	0	0	0	override	NBlockBaarda
 2567	cg	NetworkCongruence	aggregate		run.state	cross-epoch	ColdStart	N4g	5	5	1	0	0	auto	NCongruence:5 NRedundancyCensus:4 NCongruenceSetup:1 NCongruence.hpp:1
 2568	cg_hits	std::vector<CongruenceHit>	vector	CongruenceHit	run.state	per-epoch	Epoch	N5a	2	2	1	0	0	auto	NCongruence:3 NRedundancyCensus:1
 2569	cg_event_last	std::map<std::string, long long>	map	std::string	Station	cross-epoch	ColdStart	N4e2	1	1	1	0	0	override	NCongruence:3

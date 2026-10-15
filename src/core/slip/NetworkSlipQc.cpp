@@ -1467,7 +1467,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
                 if (!it->second.amb) continue;
                 const double age_s = pl_now_s - it->second.amb->last_seen_s;
                 if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
-                const ArcRecord* a = arc_ledger->find(net::arcTuple(it->first));
+                const ArcRecord* a = it->second.ledger ? &*it->second.ledger : nullptr;   // one row (N4f2)
                 if (a == nullptr || a->ep_first_admitted < 0) fallback = true;
                 else if (a->adm_state == ArcState::Dead)       continue;
                 const std::string sig = net::signalKey(it->first.signal);

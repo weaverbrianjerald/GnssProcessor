@@ -96,8 +96,8 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep) {
     if (es.info() != Eigen::Success) {
         // Logged once per run: a failed eigensolve is a diagnostic gap, not a solve
         // problem (the solution is untouched), but it is reported.
-        if (ctx.carry.sh_spectrum_fail_logged == false) {
-            ctx.carry.sh_spectrum_fail_logged = true;
+        if (ctx.counters.sh_spectrum_fail_logged == false) {
+            ctx.counters.sh_spectrum_fail_logged = true;
             log->warn("Network (P1-3): SelfAdjointEigenSolver did not converge on the "
                       "{}x{} reduced shared normals (TOW {:.1f}); network_sh_spectrum.csv "
                       "will be missing this and any similarly-failing epoch.",
@@ -167,7 +167,7 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep) {
     // ~kModesReported × kTopColumns rows per traced epoch.
     const int stride = config_.getNetworkConfig().trace_sh_spectrum_stride;
     if (stride > 0 && traces.sh_spectrum_mode_trace.is_open()
-        && (ctx.carry.sh_spectrum_epochs % stride) == 0) {
+        && (ctx.counters.sh_spectrum_epochs % stride) == 0) {
         auto& m = traces.sh_spectrum_mode_trace;
         const Eigen::Index nmodes = std::min<Eigen::Index>(kModesReported, n);
         for (Eigen::Index j = 0; j < nmodes; ++j) {
@@ -189,7 +189,7 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep) {
             }
         }
     }
-    ++ctx.carry.sh_spectrum_epochs;
+    ++ctx.counters.sh_spectrum_epochs;
 }
 
 void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
@@ -325,7 +325,7 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
                     // satellite and the signal are the row tag's (the observation's own
                     // code, card OWD), so a row whose only shared column is the clock
                     // keeps its signal.
-                    if (row_sig.empty()) ++ctx.carry.pf_rows_no_signal;
+                    if (row_sig.empty()) ++ctx.counters.pf_rows_no_signal;
                     auto& t = traces.pf_rows_trace;
                     t << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
                       << stations[i].name << ','
@@ -336,12 +336,12 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
                       << fmt::format("{:.6e}", w) << ',';
                     const auto el = row_sat.empty() ? sta_el.end() : sta_el.find(row_sat);
                     if (el != sta_el.end()) t << fmt::format("{:.2f}", el->second);
-                    else ++ctx.carry.pf_rows_no_elev;
+                    else ++ctx.counters.pf_rows_no_elev;
                     t << '\n';
-                    ++ctx.carry.pf_rows_written;
-                    ++(phase_row ? ctx.carry.pf_rows_phase : ctx.carry.pf_rows_code);
+                    ++ctx.counters.pf_rows_written;
+                    ++(phase_row ? ctx.counters.pf_rows_phase : ctx.counters.pf_rows_code);
                 } else {
-                    ++ctx.carry.pf_rows_unattributed;
+                    ++ctx.counters.pf_rows_unattributed;
                 }
             }
         }
@@ -366,10 +366,10 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
     ctx.carry.ep_sigma0_pf       = robust(pool_all);
     ctx.carry.ep_sigma0_pf_code  = robust(pool_code);
     ctx.carry.ep_sigma0_pf_phase = robust(pool_phase);
-    if (ctx.carry.ep_pf_rows > 0) ++ctx.carry.pf_epochs_total;
-    else if (ctx.carry.pf_epochs_total == 0 && !ctx.carry.pf_empty_logged) {
+    if (ctx.carry.ep_pf_rows > 0) ++ctx.counters.pf_epochs_total;
+    else if (ctx.counters.pf_epochs_total == 0 && !ctx.counters.pf_empty_logged) {
         // Invariant #4: an inert diagnostic must say so, not look clean.
-        ctx.carry.pf_empty_logged = true;
+        ctx.counters.pf_empty_logged = true;
         log->warn("Network (P1-4): network.trace_postfit_sigma0 is ON but the first "
                   "computed epoch pooled 0 residual rows — every station was skipped "
                   "(no solve membership, dimension mismatch, or reconstruct failure). "
@@ -532,14 +532,14 @@ static int networkPostfitRunEnd(const NetworkRunEndView& v) {
                   "redundancy, hence no phase fault detection without phase-leveling). "
                   "MEASURE-ONLY — the A4 withhold ceiling still reads the within-epoch "
                   "RAIM's sigma0_adapt, so this run's emit decisions are unchanged.",
-                  ctx.carry.pf_epochs_total, ctx.carry.ep_pf_rows,
+                  ctx.counters.pf_epochs_total, ctx.carry.ep_pf_rows,
                   ctx.carry.ep_pf_code_rows, ctx.carry.ep_pf_phase_rows,
                   ctx.carry.ep_sigma0_pf, ctx.carry.ep_sigma0_pf_code,
                   ctx.carry.ep_sigma0_pf_phase);
     if (config_.getNetworkConfig().trace_postfit_rows)
         // "0 rows under an armed trace" logs at warn level, not as a clean line
         // (invariant #4).
-        log->log(ctx.carry.pf_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
+        log->log(ctx.counters.pf_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
                  "Network (§24.6 post-fit rows): {} SIGNED per-row post-fit residual(s) written "
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
                  "elev_deg); {} row(s) the pass visited were attributed to neither "
@@ -549,9 +549,9 @@ static int networkPostfitRunEnd(const NetworkRunEndView& v) {
                  "means the pass never pooled a station: read the P1-4 line.  Card OWD: {} "
                  "written with an empty signal (pf_rows_no_signal, the row tag named no "
                  "signal); 0 expected.",
-                 ctx.carry.pf_rows_written, ctx.carry.pf_rows_code, ctx.carry.pf_rows_phase,
-                 ctx.carry.pf_rows_no_elev, ctx.carry.pf_rows_unattributed,
-                 ctx.carry.pf_rows_no_signal);
+                 ctx.counters.pf_rows_written, ctx.counters.pf_rows_code, ctx.counters.pf_rows_phase,
+                 ctx.counters.pf_rows_no_elev, ctx.counters.pf_rows_unattributed,
+                 ctx.counters.pf_rows_no_signal);
     return 0;
 }
 
@@ -573,7 +573,7 @@ static int networkShSpectrumRunEnd(const NetworkRunEndView& v) {
     if (config_.getNetworkConfig().trace_sh_spectrum)
         log->info("Network (P1-3 shared-normal spectrum): {} epoch(s) written to "
                   "network_sh_spectrum.csv (mode detail every {} traced epoch(s)).",
-                  ctx.carry.sh_spectrum_epochs,
+                  ctx.counters.sh_spectrum_epochs,
                   config_.getNetworkConfig().trace_sh_spectrum_stride);
     return 0;
 }

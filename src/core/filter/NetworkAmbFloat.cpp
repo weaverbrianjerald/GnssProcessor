@@ -556,7 +556,7 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                  "read the election, not this line.",
                  C.n_amb_stransform, C.n_amb_stransform_cols, C.n_amb_sts_identity,
                  C.n_amb_sts_refused_cold, C.n_amb_sts_refused_no_level,
-                 ctx.carry.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
+                 ctx.counters.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
     }
     // Joint-block fallback bar (RF-1 step 3, design risk #3): a fallback rate above a
     // small threshold is a run-end failure, not a note.  Under float_kf a non-SPD block

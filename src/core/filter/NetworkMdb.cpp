@@ -197,7 +197,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     // The flush is the epoch clock for the per-cell event holdoff.  It advances on
     // every pass, including empty ones, so a holdoff configured in epochs counts
     // epochs rather than epochs on which something was fed.
-    const long long seq = ctx.carry.mdb_seq++;
+    const long long seq = ctx.counters.mdb_seq++;
 
     // Not this epoch's accumulator ⇒ neither feed site ran.  That is a legal
     // state (the census is strided; RAIM needs a warm carry) and differs from
@@ -325,8 +325,8 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
                 se.time.tow, acc.census_rows, acc.census_unchk, nc.redundancy_eps,
                 cen_rows, cen_unchk);
             if (q.join_first_mismatch.empty()) q.join_first_mismatch = msg;
-            if (!ctx.carry.mdb_join_warned) {
-                ctx.carry.mdb_join_warned = true;
+            if (!ctx.counters.mdb_join_warned) {
+                ctx.counters.mdb_join_warned = true;
                 log->warn("Network (MDB): the uncheckable JOIN does not reconcile — {}. "
                           "One number, two instruments: a disagreement is a bug in the "
                           "row domain of one of them, not a finding about the data.  "

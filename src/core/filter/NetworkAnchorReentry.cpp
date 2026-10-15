@@ -9,6 +9,7 @@
  * (@c NetworkPhaseGateDrop.hpp) and its own rule.
  */
 #include "filter/NetworkAnchorReentry.hpp"
+#include "app/NetworkEntities.hpp"   // the arc rows the ledger records live in (step N4f2)
 
 namespace GnssProcessor {
 
@@ -27,25 +28,28 @@ void anchorReentryFamilyCensus(const ArcLedger& led, const std::string& sat,
                                std::map<int, int>* gen) {
     n_tracking = n_gap = n_dead = 0;
     if (gen) gen->clear();
-    for (const auto& [key, a] : led.arcs()) {
-        if (std::get<1>(key) != sat || std::get<2>(key) != signal) continue;
+    const std::optional<ArcId> want = net::arcKey(ArcLedger::Key{0, sat, signal});
+    if (!want) return;   // a key that does not round-trip has no record (O2)
+    net::forEach(led.arcs(), &net::ArcState::ledger,   // the records (step N4f2)
+                 [&](const ArcId& id, const ArcRecord& a) {
+        if (id.sat != want->sat || id.signal != want->signal) return;
         // The admitted side throughout: the carried ambiguity, the leveling level
         // and the phase-bias column are admitted-side objects, so a raw-side state
         // would answer a different question than the one the election is asking.
         switch (a.adm_state) {
         case ArcState::Tracking:
             ++n_tracking;
-            if (gen) (*gen)[std::get<0>(key)] = a.adm_generation;
+            if (gen) (*gen)[id.station.index] = a.adm_generation;
             break;
         case ArcState::Reentered:
             ++n_gap;
-            if (gen) (*gen)[std::get<0>(key)] = a.adm_generation;
+            if (gen) (*gen)[id.station.index] = a.adm_generation;
             break;
         case ArcState::Gap:  ++n_gap;  break;
         case ArcState::Dead: ++n_dead; break;
         case ArcState::Absent: break;
         }
-    }
+    });
 }
 
 AnchorReentryClass anchorReentryClassify(const ArcLedger& led,

@@ -1111,15 +1111,16 @@ namespace GnssProcessor {
                         // calls_unknown.
                         if (!ctx.reasons.armed || r != "allowlist") continue;
                         long long n_hit = 0;
-                        const auto& arcs = ctx.arc_ledger.arcs();
-                        for (auto ait = arcs.lower_bound(
-                                 ArcLedger::Key{ static_cast<int>(i), "", "" });
+                        const auto& arcs = ctx.entities.arcs;   // the records' rows (N4f2; O8 scan)
+                        for (auto ait = net::arcsOfStation(arcs, static_cast<int>(i));
                              ait != arcs.end()
-                             && std::get<0>(ait->first) == static_cast<int>(i); ++ait) {
-                            if (std::get<2>(ait->first) != sig) continue;
-                            if (ait->second.adm_state != ArcState::Tracking
-                                && ait->second.adm_state != ArcState::Reentered) continue;
-                            arcReasonRecord(ctx.reasons, ait->first, kArcReasonAllowlist);
+                             && ait->first.station.index == static_cast<int>(i); ++ait) {
+                            if (!ait->second.ledger) continue;
+                            if (net::signalKey(ait->first.signal) != sig) continue;
+                            if (ait->second.ledger->adm_state != ArcState::Tracking
+                                && ait->second.ledger->adm_state != ArcState::Reentered) continue;
+                            arcReasonRecord(ctx.reasons, net::arcTuple(ait->first),
+                                            kArcReasonAllowlist);
                             ++n_hit;
                         }
                         if (n_hit == 0)
@@ -1600,13 +1601,14 @@ namespace GnssProcessor {
             if (a->adm_state == ArcState::Dead)        ++ctr.lc_adm_arc_dead;
             else if (a->adm_state == ArcState::Absent) ++ctr.lc_adm_arc_unknown;
         });
-        for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-            if (!a.modelled) continue;
-            const bool carried = (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) != nullptr);
-            if (carried) continue;
+        net::forEachRow(ctx.entities.arcs, &net::ArcState::ledger,   // one row: record and carry (N4f2)
+                        [&](const ArcId&, const ArcRecord& a, const net::ArcState& row) {
+            if (!a.modelled) return;
+            const bool carried = row.amb.has_value();
+            if (carried) return;
             if (a.state == ArcState::Tracking)     ++ctr.lc_tracking_no_entry;
             if (a.adm_state == ArcState::Tracking) ++ctr.lc_adm_tracking_no_entry;
-        }
+        });
 
         // --- (d) StateManager ambiguity presence against the ledger ------------
         // The prune is not touched: the comparison reads the surviving key set and
@@ -1618,7 +1620,7 @@ namespace GnssProcessor {
             // arcs are one contiguous range.  Walking it that way keeps the class at
             // O(arcs) for the whole network instead of O(stations x arcs), which keeps
             // the observatory inside its cost bar at 305 stations.
-            const auto& arcs = ctx.arc_ledger.arcs();
+            const auto& arcs = ctx.entities.arcs;   // the records' rows (N4f2)
             for (std::size_t i = 0; i < stations.size(); ++i) {
                 const StateManager* sm = stations[i].sm.get();
                 if (sm == nullptr) continue;
@@ -1641,15 +1643,17 @@ namespace GnssProcessor {
                     if (a->adm_state == ArcState::Gap)         ++ctr.amb_adm_arc_gapped;
                     else if (a->adm_state == ArcState::Absent) ++ctr.amb_adm_arc_unknown;
                 }
-                for (auto it = arcs.lower_bound(ArcLedger::Key{ si, "", "" });
-                     it != arcs.end() && std::get<0>(it->first) == si; ++it) {
-                    if (!it->second.modelled) continue;
+                for (auto it = net::arcsOfStation(arcs, si);   // O8
+                     it != arcs.end() && it->first.station.index == si; ++it) {
+                    if (!it->second.ledger) continue;
+                    const ArcRecord& a = *it->second.ledger;
+                    if (!a.modelled) continue;
                     const bool alive =
-                        live.count(StateKeys::makeAmbiguityKey(std::get<1>(it->first),
-                                                               std::get<2>(it->first))) > 0;
+                        live.count(StateKeys::makeAmbiguityKey(net::satKey(it->first.sat),
+                                                               net::signalKey(it->first.signal))) > 0;
                     if (alive) continue;
-                    if (it->second.state == ArcState::Gap)     ++ctr.amb_destroyed_in_gap;
-                    if (it->second.adm_state == ArcState::Gap) ++ctr.amb_adm_destroyed_in_gap;
+                    if (a.state == ArcState::Gap)     ++ctr.amb_destroyed_in_gap;
+                    if (a.adm_state == ArcState::Gap) ++ctr.amb_adm_destroyed_in_gap;
                 }
             }
         }
@@ -1673,15 +1677,17 @@ namespace GnssProcessor {
                 const std::string& sat = parts->satellite;
                 const std::string& sig = parts->signal;
                 bool returned = false;
-                for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-                    if (std::get<1>(key) != sat || std::get<2>(key) != sig) continue;
-                    if (a.state == ArcState::Reentered
-                        || (a.state == ArcState::Tracking && a.generation > 1
-                            && a.ep_state_changed == ctx.arc_ledger.epochIndex())) {
-                        returned = true;
-                        break;
-                    }
-                }
+                const std::optional<ArcId> want = net::arcKey(ArcLedger::Key{0, sat, sig});
+                if (want)
+                    net::forEach(ctx.entities.arcs, &net::ArcState::ledger,   // the records (N4f2)
+                                 [&](const ArcId& id, const ArcRecord& a) {
+                        if (returned) return;   // the old loop's break
+                        if (id.sat != want->sat || id.signal != want->signal) return;
+                        if (a.state == ArcState::Reentered
+                            || (a.state == ArcState::Tracking && a.generation > 1
+                                && a.ep_state_changed == ctx.arc_ledger.epochIndex()))
+                            returned = true;
+                    });
                 if (returned) ++ctr.anchor_first_sighting_reentry;
             });
             rs.anchor_prev.swap(now);
@@ -1695,13 +1701,13 @@ namespace GnssProcessor {
         // is tracked and not carried, and the SID audit's medians are carried ones.
         {
             std::map<std::string, int> support;
-            for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-                if (!a.modelled) continue;
-                if (a.state != ArcState::Tracking && a.state != ArcState::Reentered) continue;
-                if (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) == nullptr)
-                    continue;
-                ++support[familyKey(std::get<1>(key), std::get<2>(key))];
-            }
+            net::forEachRow(ctx.entities.arcs, &net::ArcState::ledger,   // one row: record and carry (N4f2)
+                            [&](const ArcId& id, const ArcRecord& a, const net::ArcState& row) {
+                if (!a.modelled) return;
+                if (a.state != ArcState::Tracking && a.state != ArcState::Reentered) return;
+                if (!row.amb) return;
+                ++support[familyKey(net::satKey(id.sat), net::signalKey(id.signal))];
+            });
             for (const auto& [fam, n] : support) rs.family_support[fam].add(n);
         }
 
@@ -1747,14 +1753,14 @@ namespace GnssProcessor {
         // The `answered` test is defined at the top of this pass (the admitted census
         // uses it too).
         (void)freed;
-        for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-            if (a.state != ArcState::Reentered) continue;
-            if (a.gap_len_ep < 2 || a.gap_len_ep > 30) continue;
-            if (net::getArc(ctx.entities.arcs, std::make_tuple(std::get<0>(key), std::get<1>(key), std::get<2>(key)), &net::ArcState::amb) == nullptr)
-                continue;
-            if (answered(std::get<0>(key), std::get<1>(key), std::get<2>(key)))
+        net::forEachRow(ctx.entities.arcs, &net::ArcState::ledger,   // one row: record and carry (N4f2)
+                        [&](const ArcId& id, const ArcRecord& a, const net::ArcState& row) {
+            if (a.state != ArcState::Reentered) return;
+            if (a.gap_len_ep < 2 || a.gap_len_ep > 30) return;
+            if (!row.amb) return;
+            if (answered(id.station.index, net::satKey(id.sat), net::signalKey(id.signal)))
                 ++ctr.gap_2_30_answered;
-        }
+        });
 
         // The carry-side census, driven epoch to epoch by the carry's own re-stash
         // stamp.  This is the SID audit's population: `network_amb_state.csv` writes
@@ -1836,12 +1842,15 @@ namespace GnssProcessor {
         auto& ctr = ctx.counters.sid;
         ++ctr.gate_drop_edges;
         bool gapped = false, tracking = false;
-        for (const auto& [key, a] : ctx.arc_ledger.arcs()) {
-            if (std::get<1>(key) != sat || std::get<2>(key) != signal) continue;
-            if (a.state == ArcState::Gap) gapped = true;
-            if (a.state == ArcState::Tracking || a.state == ArcState::Reentered)
-                tracking = true;
-        }
+        const std::optional<ArcId> want = net::arcKey(ArcLedger::Key{0, sat, signal});
+        if (want)
+            net::forEach(ctx.entities.arcs, &net::ArcState::ledger,   // the records (N4f2)
+                         [&](const ArcId& id, const ArcRecord& a) {
+                if (id.sat != want->sat || id.signal != want->signal) return;
+                if (a.state == ArcState::Gap) gapped = true;
+                if (a.state == ArcState::Tracking || a.state == ArcState::Reentered)
+                    tracking = true;
+            });
         if (gapped)             ++ctr.gate_drop_edges_gapped;
         else if (tracking)      ++ctr.gate_drop_edges_tracking;
         // The same edges, read on the admitted side and per arc (phase 4a, S2).

@@ -391,12 +391,12 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         }
         // Observatory, ZWD half (§18.12).  The Z rows are restored and counted
         // like the L rows (n_resume_cpl_zrows, and they arm the same
-        // resume_cpl_census_pending latch), so a census that covered only the L
+        // resume.cpl_census latch), so a census that covered only the L
         // side would report rel ≈ 0 on a leg whose ZWD regression was stale, an
         // instrument that reads clean because it never looked (invariant #4).
         // Same measure-only body as the phase-leveling census above; read before
         // the stash below moves `coupling` out.
-        if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond
+        if (ctx.carry.resume.cpl_census && carry_cpl_cond
             && !coupling.empty()) {
             const auto* zold = net::get(sta_rows, StationId{static_cast<int>(i)},
                                         &net::StationState::zwd);

@@ -285,8 +285,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     auto& tal    = ctx.counters.gross_los;
     net::LosTable& los_rows = ctx.entities.los;   // the gross-LOS dispositions (card NOM step N4c)
     ++tal.epochs;
-    ++ctx.carry.gl_seq;
-    const long long seq = ctx.carry.gl_seq;
+    ++ctx.counters.gl_seq;
+    const long long seq = ctx.counters.gl_seq;
     // This epoch's deferred work (RF-3b B3).  Cleared at the start of every screened
     // epoch, so the lists hold only this epoch's edges and emission sets.
     ctx.carry.gl_act_declare.clear();

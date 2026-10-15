@@ -4,8 +4,8 @@
  *        instrument (card PVN).
  *
  * Written as a seam, not relocated from the driver.  Seam contract: a free function over
- * the run context that owns no state; the open window is in @c ctx.carry, the run totals in
- * @c ctx.counters.
+ * the run context that owns no state; the open window and the run totals are in
+ * @c ctx.counters (the window moved there in card NOM step N4g).
  */
 
 #include "filter/NetworkPhaseVisibleDiag.hpp"
@@ -66,7 +66,6 @@ void networkPhaseVisibleMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- End of the bindings ----
     if (!ctx.knobs.pv_on) return;
     auto& k = ctx.counters;
-    auto& c = ctx.carry;
     ++k.pv_epochs;
     const bool settled = k.pv_epochs > kPvSettledEp;
     if (ws.cap_dense_keys.empty() || ws.cap_dense_cov.rows() == 0) {
@@ -91,10 +90,10 @@ void networkPhaseVisibleMonitor(NetworkRun& run, const NetworkEpoch& ep) {
                 k.pv_abs_e.push_back(std::abs(r.e_hat));
                 k.pv_sqrt_sp.push_back(sqrt_sp);
                 k.pv_sqrt_su.push_back(std::sqrt(r.Sm - r.Sp));
-                c.pv_win_nis_sum += nis;
-                ++c.pv_win_nis_n;
-                c.pv_win_e2_sum += r.e_hat * r.e_hat;
-                c.pv_win_su_sum += r.Sm - r.Sp;
+                k.pv_win_nis_sum += nis;
+                ++k.pv_win_nis_n;
+                k.pv_win_e2_sum += r.e_hat * r.e_hat;
+                k.pv_win_su_sum += r.Sm - r.Sp;
             }
             if (tr)
                 tr << fmt::format("{},{:.3f},{},{},{},{:.6f},{:.6f},{:.6f},{},{}\n",
@@ -107,18 +106,18 @@ void networkPhaseVisibleMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     }
     // Close the window on the epoch count (epochs without a capture count too, so windows
     // stay aligned with time).
-    if (++c.pv_win_ep >= ctx.knobs.pv_window_ep) {
-        if (c.pv_win_nis_n > 0) {
-            k.pv_win_nis.push_back(c.pv_win_nis_sum / static_cast<double>(c.pv_win_nis_n));
-            k.pv_win_ratio.push_back(c.pv_win_su_sum > 0.0
-                                         ? std::sqrt(c.pv_win_e2_sum / c.pv_win_su_sum)
+    if (++k.pv_win_ep >= ctx.knobs.pv_window_ep) {
+        if (k.pv_win_nis_n > 0) {
+            k.pv_win_nis.push_back(k.pv_win_nis_sum / static_cast<double>(k.pv_win_nis_n));
+            k.pv_win_ratio.push_back(k.pv_win_su_sum > 0.0
+                                         ? std::sqrt(k.pv_win_e2_sum / k.pv_win_su_sum)
                                          : 0.0);
         }
-        c.pv_win_ep = 0;
-        c.pv_win_nis_sum = 0.0;
-        c.pv_win_nis_n = 0;
-        c.pv_win_e2_sum = 0.0;
-        c.pv_win_su_sum = 0.0;
+        k.pv_win_ep = 0;
+        k.pv_win_nis_sum = 0.0;
+        k.pv_win_nis_n = 0;
+        k.pv_win_e2_sum = 0.0;
+        k.pv_win_su_sum = 0.0;
     }
 }
 

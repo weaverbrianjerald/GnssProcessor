@@ -62,19 +62,19 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep) {
     const auto& nc  = config_.getNetworkConfig();
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     auto& carry_prev_tow = ctx.carry.carry_prev_tow;
-    auto& carry_epochs = ctx.carry.carry_epochs;
-    auto& carry_born_total = ctx.carry.carry_born_total;
-    auto& carry_marg_total = ctx.carry.carry_marg_total;
-    auto& carry_merges_total = ctx.carry.carry_merges_total;
-    auto& carry_splits_total = ctx.carry.carry_splits_total;
-    auto& carry_swaps_total = ctx.carry.carry_swaps_total;
-    auto& carry_zdim_last = ctx.carry.carry_zdim_last;
-    auto& carry_slipkills_total = ctx.carry.carry_slipkills_total;
-    auto& carry_dropped_total = ctx.carry.carry_dropped_total;
+    auto& carry_epochs = ctx.counters.carry_epochs;
+    auto& carry_born_total = ctx.counters.carry_born_total;
+    auto& carry_marg_total = ctx.counters.carry_marg_total;
+    auto& carry_merges_total = ctx.counters.carry_merges_total;
+    auto& carry_splits_total = ctx.counters.carry_splits_total;
+    auto& carry_swaps_total = ctx.counters.carry_swaps_total;
+    auto& carry_zdim_last = ctx.counters.carry_zdim_last;
+    auto& carry_slipkills_total = ctx.counters.carry_slipkills_total;
+    auto& carry_dropped_total = ctx.counters.carry_dropped_total;
     auto& carry_innov_pending = ctx.carry.carry_innov_pending;
-    auto& carry_innov_flags_total = ctx.carry.carry_innov_flags_total;
-    auto& carry_innov_retaps_total = ctx.carry.carry_innov_retaps_total;
-    auto& carry_innov_map_miss = ctx.carry.carry_innov_map_miss;
+    auto& carry_innov_flags_total = ctx.counters.carry_innov_flags_total;
+    auto& carry_innov_retaps_total = ctx.counters.carry_innov_retaps_total;
+    auto& carry_innov_map_miss = ctx.counters.carry_innov_map_miss;
     // Tag corroborated-flat flags so next epoch's carry-membership test can spare
     // them.  The loader already forces the knob false without innov_gate (Card 4 D5 v4).
     const bool retap_only =

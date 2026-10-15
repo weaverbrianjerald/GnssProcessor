@@ -98,7 +98,7 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
     // every record while its configuration reads as armed; the count of epochs with a
     // usable value is what shows it (invariant #4).
     if (config_.networkHSigma0PrefitCensus()) {
-        if (ctx.carry.h_sig0_census_nonzero == 0)
+        if (ctx.counters.h_sig0_census_nonzero == 0)
             log->warn("Network (H-rider census σ̂₀): ARMED but NO epoch ever produced a "
                       "usable pooled σ̂₀ — the H wire carried the 0.0000 'unavailable' "
                       "sentinel all run (empty pool: check the class mask '{}' against "
@@ -109,7 +109,7 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
                       "{} epoch(s) (classes '{}'; hsig=pc advertised on the S contract; "
                       "last value {:.4f}).  The A4 withhold ceiling still read "
                       "sigma0_adapt, unchanged.",
-                      ctx.carry.h_sig0_census_nonzero, config_.networkHSigma0Classes(),
+                      ctx.counters.h_sig0_census_nonzero, config_.networkHSigma0Classes(),
                       ctx.carry.ep_h_sigma0_census);
     }
     return 0;

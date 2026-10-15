@@ -248,7 +248,9 @@ void networkLedgerEmitFold(NetworkRun& run, const NetworkEpoch& nep) {
     std::map<std::string, FamArcs> fam;
     std::map<ArcLedger::Key, int>  now_gen;
     const long long ep = led.epochIndex();
-    for (const auto& [key, rec] : led.arcs()) {
+    net::forEach(led.arcs(), &net::ArcState::ledger,   // the records (step N4f2)
+                 [&](const ArcId& id, const ArcRecord& rec) {
+        const ArcLedger::Key key = net::arcTuple(id);
         const std::string fk = std::get<1>(key) + "|" + std::get<2>(key);
         FamArcs& fa = fam[fk];
         ++fa.known;
@@ -258,11 +260,11 @@ void networkLedgerEmitFold(NetworkRun& run, const NetworkEpoch& nep) {
             ++fa.alive;
         fa.max_gen = std::max(fa.max_gen, rec.adm_generation);
         now_gen[key] = rec.adm_generation;
-        if (!le.prev_adm_gen_valid) continue;
+        if (!le.prev_adm_gen_valid) return;
         const auto pit = le.prev_adm_gen.find(key);
         const int  prev = (pit == le.prev_adm_gen.end()) ? 0 : pit->second;
         if (rec.adm_generation > prev) ++fa.births;
-    }
+    });
 
     // (2) The comparison, one family at a time.
     const auto event = [&](long long& per_class, const char* name,

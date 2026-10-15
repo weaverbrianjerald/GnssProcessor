@@ -2162,12 +2162,12 @@ auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
 auto& eq34_sat_root = station_maps.eq34_sat_root;   // card NOM step N4e2 shim
 auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
-auto& eq34_reref_total = ctx.carry.eq34_reref_total;
-auto& eq34_erase_total = ctx.carry.eq34_erase_total;
-auto& eq34_shift_total = ctx.carry.eq34_shift_total;
-auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
-auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
-auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
+auto& eq34_reref_total = ctx.counters.eq34_reref_total;
+auto& eq34_erase_total = ctx.counters.eq34_erase_total;
+auto& eq34_shift_total = ctx.counters.eq34_shift_total;
+auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
+auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
+auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
 auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
 auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
 auto& eq34_reref = ctx.carry.eq34_reref;
@@ -3365,12 +3365,12 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
         return "eq34_retained_edges";
     if (a.eq34_epoch_declared != b.eq34_epoch_declared) return "eq34_epoch_declared";
     if (a.eq34_epoch_bridged != b.eq34_epoch_bridged) return "eq34_epoch_bridged";
-    if (a.eq34_reref_total != b.eq34_reref_total) return "eq34_reref_total";
-    if (a.eq34_erase_total != b.eq34_erase_total) return "eq34_erase_total";
-    if (a.eq34_shift_total != b.eq34_shift_total) return "eq34_shift_total";
-    if (a.eq34_cpl_sprev_total != b.eq34_cpl_sprev_total) return "eq34_cpl_sprev_total";
-    if (a.eq34_gap_repin_total != b.eq34_gap_repin_total) return "eq34_gap_repin_total";
-    if (a.eq34_mismatch_epochs != b.eq34_mismatch_epochs) return "eq34_mismatch_epochs";
+    if (f.counters.eq34_reref_total != l.counters.eq34_reref_total) return "eq34_reref_total";
+    if (f.counters.eq34_erase_total != l.counters.eq34_erase_total) return "eq34_erase_total";
+    if (f.counters.eq34_shift_total != l.counters.eq34_shift_total) return "eq34_shift_total";
+    if (f.counters.eq34_cpl_sprev_total != l.counters.eq34_cpl_sprev_total) return "eq34_cpl_sprev_total";
+    if (f.counters.eq34_gap_repin_total != l.counters.eq34_gap_repin_total) return "eq34_gap_repin_total";
+    if (f.counters.eq34_mismatch_epochs != l.counters.eq34_mismatch_epochs) return "eq34_mismatch_epochs";
     const auto lca = net::arcMap(f.entities.arcs, &net::ArcState::amb);
     const auto lcb = net::arcMap(l.entities.arcs, &net::ArcState::amb);
     if (lca.size() != lcb.size()) return "local_carry size";
@@ -3503,9 +3503,9 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         std::cout << "[ NetworkArcGraphOracle ] chain lineage " << lineage << " (longevity " << kn.longevity
                   << ", slip-aware " << kn.slip_aware << ", extend-only " << kn.extend_only << ", shift "
                   << kn.carry_shift << ", round " << kn.pin_round << ", hygiene " << hyg_shape.active << "/"
-                  << hyg_shape.min_arc_ep << "): reref " << ctx_l.carry.eq34_reref_total << ", erased "
-                  << ctx_l.carry.eq34_erase_total << ", shifted " << ctx_l.carry.eq34_shift_total << ", gap re-pins "
-                  << ctx_l.carry.eq34_gap_repin_total << ", deseeded " << c.eq34_slip_deseeded << ", readmitted "
+                  << hyg_shape.min_arc_ep << "): reref " << ctx_l.counters.eq34_reref_total << ", erased "
+                  << ctx_l.counters.eq34_erase_total << ", shifted " << ctx_l.counters.eq34_shift_total << ", gap re-pins "
+                  << ctx_l.counters.eq34_gap_repin_total << ", deseeded " << c.eq34_slip_deseeded << ", readmitted "
                   << c.eq34_slip_readmitted << ", cold " << c.hyg.cold_fallback_pins << ", reattaches "
                   << c.hyg.reattaches << ", ramps " << c.hyg.fresh_pin_ramps << "\n";
     }
