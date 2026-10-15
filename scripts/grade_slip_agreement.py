@@ -134,6 +134,9 @@ LAMBDA_WL_DEFAULT = 0.8619
 # SPEC_lane_slip_response and would push a real slip counter out of the tail
 # window; they belong to a lane-integer instrument, not a slip counter.
 _TIMING_NOISE = ('other-net ms', ' ms (', 'lane observatory')
+# The producer's first run-end line (the run-timing report, the second row of the run-end
+# table, filter/NetworkRunEnd.cpp).
+_RUN_END_START = 'Network[timing]: epoch-loop wall'
 
 
 # ---------------------------------------------------------------------------
@@ -1117,10 +1120,12 @@ def section_counters(path, summary):
         print('  [skip] main_log.log: file not found (%s), section skipped' % path)
         summary['counters'] = None
         return
-    lines = []
+    lines, run_end = [], None
     try:
         with open(path, encoding='utf-8', errors='replace') as f:
             for line in f:
+                if _RUN_END_START in line:
+                    run_end = len(lines)  # the run-end block starts here (the last one wins)
                 if 'Network (' in line and 'slip' in line.lower():
                     if any(tag in line for tag in _TIMING_NOISE):
                         continue          # per-epoch timing chatter, not a counter
@@ -1129,11 +1134,16 @@ def section_counters(path, summary):
         print('  [skip] main_log.log unreadable (%s), section skipped' % e)
         summary['counters'] = None
         return
-    if not lines:
+    # The run-end counters are every match inside the run-end block, read in message order:
+    # the run end prints by subsystem (card NOM2 step TD2), so its order is not a reading
+    # key.  A log without the block start (an older producer) keeps the last 12 matches.
+    picked = lines[run_end:] if run_end is not None else lines[-12:]
+    picked = sorted(picked, key=lambda l: l.split('] ', 3)[-1])
+    if not picked:
         print('  no "Network (... slip ...)" counter lines found')
-    for line in lines[-12:]:              # run-end counters are the last matches
+    for line in picked:
         print('  ' + line)
-    summary['counters'] = lines[-12:]
+    summary['counters'] = picked
 
 
 # ---------------------------------------------------------------------------
