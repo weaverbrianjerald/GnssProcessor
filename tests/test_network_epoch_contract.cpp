@@ -156,9 +156,9 @@ using SigCarryDecide = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 adapt
 static_assert(std::is_same_v<decltype(static_cast<SigCarryDecide>(&networkCarryDecide)), SigCarryDecide>);
 using SigCouplingExactPrepare = void (*)(NetworkRun&, const NetworkEpoch&);   // W1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigCouplingExactPrepare>(&networkCouplingExactPrepare)), SigCouplingExactPrepare>);
-using SigBuildCarryDdPriors = void (*)(NetworkRun&, const NetworkEpoch&, EpochDdBuild&, NetworkSlipFunnel&);   // W2 direct
+using SigBuildCarryDdPriors = void (*)(NetworkRun&, const NetworkEpoch&, EpochDdBuild&);   // W2 direct; EP1c: reads the funnel through ep
 static_assert(std::is_same_v<decltype(static_cast<SigBuildCarryDdPriors>(&networkBuildCarryDdPriors)), SigBuildCarryDdPriors>);
-using SigSolveGlue = NetworkSolveGlueResult (*)(NetworkRun&, const NetworkEpoch&, EpochWorkspace&, std::vector<int>&, EpochDdBuild&, NetworkSlipFunnel&);   // W2 direct
+using SigSolveGlue = NetworkSolveGlueResult (*)(NetworkRun&, const NetworkEpoch&, EpochWorkspace&, std::vector<int>&, EpochDdBuild&);   // W2 direct; EP1c: no funnel output
 static_assert(std::is_same_v<decltype(static_cast<SigSolveGlue>(&networkSolveGlue)), SigSolveGlue>);
 using SigInstallCarry = void (*)(NetworkRun&, const NetworkEpoch&);   // W2 direct
 static_assert(std::is_same_v<decltype(static_cast<SigInstallCarry>(&networkInstallCarry)), SigInstallCarry>);

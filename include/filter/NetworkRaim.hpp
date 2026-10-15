@@ -232,35 +232,18 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the carried-phase RAIM pools: admissions and the re-host.
+ * @brief Run-end report: RAIM: the carried-phase pools and the re-host, the withhold era, the R2
+ *        station factor, the R4 rate hygiene.
  *
- * The carried-phase RAIM pools: their admissions per contribution kind (card NOM N2b,
- * card RPA; a pool that never walked prints nothing) and the RAIM pool re-host on the
- * invariant carry (network.raim_carry_invariant).
- *
- * Gate: each section under its own condition, as in the teardown: always (a block);
- * `ctx.knobs.raim_ci_on`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkRaimPoolRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the withhold era, the R2 station factor, the R4 rate hygiene.
- *
- * The withhold-era release policy at both edges, the R2 station factor and the R4 rate
- * hygiene.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRaimWithholdAdaptEscalate() > 0 ||
- * config_.networkRaimWithholdFreeErase()`; `config_.networkRaimStationFactor()`;
- * `config_.networkRaimRateHygiene()`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkRaim.cpp, print in this order, each gated on its own knob:
+ *   - networkRaimPoolRunEnd: the carried-phase RAIM pools: admissions and the re-host.
+ *   - networkRaimWithholdRunEnd: the withhold era, the R2 station factor, the R4 rate hygiene.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkRaimWithholdRunEnd(const NetworkRunEndView& v);
+int networkRaimRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

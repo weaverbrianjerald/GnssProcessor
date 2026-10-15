@@ -155,29 +155,16 @@ void networkCarryPivotFrame(NetworkRunContext& ctx);
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the pivot-frame clock noise (PFQ).
+ * @brief Run-end report: the pivot-frame clock noise (PFQ) and the fold's dispositions of the
+ *        carried border (PRM 1b).
  *
- * The pivot-frame clock noise (card PFQ): clocks that took the pivot's walk, at which
- * rate source, and the pairs the dense fold and the exact update carried.
- *
- * Gate: returns 0 at once unless `ctx.knobs.pfq_on`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPivotFrameQRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the fold's dispositions of the carried border (PRM 1b).
- *
- * The fold's dispositions of the carried border over the run (card PRM phase 1b), with
- * the `param_dispositions` manifest record.
- *
- * Gate: each section under its own condition, as in the teardown: always;
- * `C.prm_undecided_at_fold > 0`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkCarryDisposition.cpp, print in this order, each gated on its own knob:
+ *   - networkPivotFrameQRunEnd: the pivot-frame clock noise (PFQ).
+ *   - networkCarryDispositionTableRunEnd: the fold's dispositions of the carried border (PRM 1b).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
 int networkCarryDispositionRunEnd(const NetworkRunEndView& v);
 

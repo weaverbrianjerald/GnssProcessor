@@ -11,6 +11,7 @@
  */
 
 #include "filter/NetworkZwdCarry.hpp"
+#include "filter/NetworkRunEnd.hpp"
 #include "filter/NetworkStationBuild.hpp"   // StationBuild, StationCarryFrame (card NOM3 step PB1b)
 #include "app/NetworkEpoch.hpp"
 #include "app/NetworkRunContext.hpp"
@@ -472,5 +473,30 @@ void networkZwdSeamWindowStep(NetworkRun& run, const NetworkEpoch& ep) {
 }
 
 // ---- End of the harvest half ----
+
+// ---- Run-end report (card NOM2 step TD2: moved here from app/NetworkResumeRunEnd.cpp, beside the harvest) ----
+
+// Run-end report: the seam-scoped ZWD re-seed.
+int networkZwdSeamRunEnd(const NetworkRunEndView& v) {
+    const GnssConfig& config_ = v.config;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    const auto& C = v.ctx.counters;
+
+    // Seam-scoped ZWD re-seed (network.zwd_seam_reseed): ON-path telemetry
+    // (invariant #4).  An armed knob with 0 folds means the window never armed (no
+    // warm resume, or the snapshot carried no Z rows) or every fold was skipped
+    // (stale entries, carry_warm cold); the resume-time ARMED/INERT log line says
+    // which.
+    if (config_.networkZwdSeamReseed())
+        log->info("Network (ZWD seam re-seed): {} station-fold(s) over {} epoch(s) of the "
+                  "post-resume window (horizon {} epochs).{}",
+                  C.n_zwd_seam_folds, C.n_zwd_seam_epochs,
+                  config_.networkZwdSeamReseedEpochs(),
+                  C.n_zwd_seam_folds == 0
+                      ? "  ⚠ 0 folds under an ARMED knob — the wiring was inert this "
+                        "run; check the resume log for the ARMED/INERT line."
+                      : "");
+    return 0;
+}
 
 } // namespace GnssProcessor

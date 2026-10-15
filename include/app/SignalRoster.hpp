@@ -1238,30 +1238,16 @@ namespace GnssProcessor {
     struct NetworkRunEndView;
 
     /**
-     * @brief Run-end report: signals as planned (NOM N3a).
+     * @brief Run-end report: the signal roster: signals as planned (NOM N3a), the roster and the
+     *        arc ledger (SID phase 1).
      *
-     * The table's row for "signals as planned" (card NOM N3a) and its manifest record; the
-     * report is the overload above.
-     *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
-     *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
-     */
-    int networkSignalRosterPlanRunEnd(const NetworkRunEndView& v);
-
-    /**
-     * @brief Run-end report: the signal roster and the arc ledger (SID phase 1).
-     *
-     * The table's row for the signal roster's run end (SID phase 1); the report is the
-     * overload above.
-     *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
+     * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+     * beside it in SignalRoster.cpp, print in this order, each gated on its own knob:
+     *   - networkSignalRosterPlanRunEnd: signals as planned (NOM N3a).
+     *   - networkSignalRosterLedgerRunEnd: the signal roster and the arc ledger (SID phase 1).
      *
      * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
+     * @return 0, or the last non-zero verdict of its sections.
      */
     int networkSignalRosterRunEnd(const NetworkRunEndView& v);
 

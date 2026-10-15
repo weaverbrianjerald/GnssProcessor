@@ -16,7 +16,15 @@
  * row with what it reports and its home file, so it reads as the run end's table of
  * contents.
  *
- * Adding a report:
+ * One report per subsystem (card NOM2 step TD2): a subsystem, the file a report lives in,
+ * has one row.  A subsystem that prints several blocks writes each as a file-local section
+ * (`static int networkXxxRunEnd(const NetworkRunEndView& v)`, gated on its own knob) and
+ * its row's report lists them in print order with @ref networkRunEndSections.  The walk
+ * (@ref networkRunEndCallRow) prints one heading line, `Network[run-end] <row name>`, ahead
+ * of the lines of every row that prints, so the run-end log reads by subsystem.
+ *
+ * Adding a run-end line: it goes in its subsystem's report, or in a new section of it,
+ * beside the subsystem's code.  Adding a report (a subsystem with no row yet):
  *   1. Write the function in the subsystem's .cpp and declare it, with its Doxygen (what it
  *      reports, the knob that gates it, what it returns), in the subsystem's header.  When
  *      the subsystem's state lives in one of the large files (app/NetworkLocalCarryHarvest.cpp,
@@ -49,10 +57,18 @@
  *     emitted nothing returns 1 whatever the rows returned.
  *   - Scripts read the run-end text by its order as well as its wording (first or last
  *     match, windows of N lines, done markers), so a row moves only with its readers.
+ *     Since TD2 the readers that took first or last matches read the run-end block in
+ *     message order (scripts/grade_slip_agreement.py, scripts/refound_grade.py).
+ *   - A subsystem whose sections must sit at two places in this order (the run artifacts:
+ *     the trace close first, the manifest's complete record after every record, the run
+ *     summary last) keeps one row per place; of the run artifacts only the run summary
+ *     prints.
  */
 
 #include <array>
 #include <cstddef>
+#include <functional>
+#include <initializer_list>
 #include <memory>
 
 namespace spdlog { class logger; }
@@ -88,9 +104,50 @@ struct NetworkRunEndRow {
 };
 
 /// The number of rows of @ref kNetworkRunEndReports.
-inline constexpr std::size_t kNetworkRunEndReportCount = 106;
+inline constexpr std::size_t kNetworkRunEndReportCount = 82;
 
 /// The run-end reports in print order (defined in filter/NetworkRunEnd.cpp).
 extern const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndReports;
+
+/**
+ * @brief A subsystem's run-end report as its sections in print order (card NOM2 step TD2).
+ *
+ * Calls every section in order with the same view and combines their verdicts by the
+ * table's rule: a later non-zero verdict replaces an earlier one.
+ *
+ * @param v        The run at its end.
+ * @param sections The subsystem's file-local sections, in print order.
+ * @return 0, or the last non-zero verdict of the sections.
+ */
+int networkRunEndSections(const NetworkRunEndView& v,
+                          std::initializer_list<NetworkRunEndReport> sections);
+
+/**
+ * @brief Runs one report with its heading line (card NOM2 step TD2).
+ *
+ * The lines @p report writes through @p lg are held while it runs (the logger's sinks are
+ * swapped for a holding sink) and are then written to the logger's own sinks, unchanged,
+ * after one heading line `Network[run-end] <name>` (info, stamped with the first held line's
+ * time and thread).  A report that writes nothing gets no heading.  Lines written through
+ * another logger (the consumer's rt_engine summaries) are not held and get no heading.  On an
+ * exception the held lines are written before it propagates.
+ *
+ * @param lg     The logger whose lines are headed (the run end's main_log logger).
+ * @param name   The heading text after `Network[run-end] `.
+ * @param report The report to run.
+ * @return The report's verdict.
+ */
+int networkRunEndWithHeading(spdlog::logger& lg, const char* name,
+                             const std::function<int()>& report);
+
+/**
+ * @brief Calls one row of the table with its heading line: @ref networkRunEndWithHeading on
+ *        the view's logger with the row's name.
+ *
+ * @param row The row.
+ * @param v   The run at its end.
+ * @return The row's verdict.
+ */
+int networkRunEndCallRow(const NetworkRunEndRow& row, const NetworkRunEndView& v);
 
 } // namespace GnssProcessor

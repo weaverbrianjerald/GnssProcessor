@@ -1953,7 +1953,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep) {
     const NetworkRunTraces& traces = run.traces;
     const SyncedEpoch& se = ep.se;
     const std::vector<NetStation>& stations = run.setup.stations;
-    NetworkEstimator& est = run.engines.est;
+    const NetworkEstimator& est = run.engines.est;
     const NetworkEstimator::Datum& plan_datum = ep.solve.plan.shared_datum;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;

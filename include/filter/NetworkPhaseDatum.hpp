@@ -615,43 +615,19 @@ int networkApplyPhaseAnchorCarryReref(
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the held S-basis (RF-2).
+ * @brief Run-end report: the phase datum: the held S-basis (RF-2), the prioritized drop and heal,
+ *        the anchored-union gate and its drop edge.
  *
- * The held S-basis (RF-2): elections against holds, declared handovers, the retired
- * erase and the held property's drift.
- *
- * Gate: returns 0 at once unless `ctx.knobs.pd_held_basis`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkHeldSbasisRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the prioritized-datum drop-and-heal.
- *
- * The prioritized-datum drop-and-heal: the recoveries and the attempts (card PA).
- *
- * Gate: each section under its own condition, as in the teardown: `n_healed_epochs > 0`;
- * `ctx.counters.n_heal_attempt_epochs > 0`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkPhaseDatum.cpp, print in this order, each gated on its own knob:
+ *   - networkHeldSbasisRunEnd: the held S-basis (RF-2).
+ *   - networkDropHealRunEnd: the prioritized-datum drop-and-heal.
+ *   - networkPhaseDatumGatesRunEnd: the anchored-union coverage gate and its drop edge.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkDropHealRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the anchored-union coverage gate and its drop edge.
- *
- * The anchored-union coverage gate and its drop edge (card EV7).
- *
- * Gate: each section under its own condition, as in the teardown: `n_gated_epochs > 0`;
- * `ctx.counters.n_pd_gate_drop_edges > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v);
+int networkPhaseDatumRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

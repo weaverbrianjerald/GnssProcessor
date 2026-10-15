@@ -94,7 +94,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
 
 void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        NetworkRunTraces& traces, const GnssTime& t,
-                       NetworkEstimator& est, const Eigen::VectorXd& x_s,
+                       const NetworkEstimator& est, const Eigen::VectorXd& x_s,
                        const NetworkSbasis::Plan& plan,
                        const SphericalHarmonicIonosphere* sh_model,
                        const SphericalHarmonicIonosphere* sh_model2,

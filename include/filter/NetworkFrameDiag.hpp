@@ -177,8 +177,8 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep);
  * under its former name.
  *
  * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
- *            run.traces (traces), run.engines.est (est). Read: run.config (config_), run.log
- *            (log), run.setup.stations (stations).
+ *            run.traces (traces). Read: run.config (config_), run.log (log), run.setup.stations
+ *            (stations), run.engines.est (est).
  * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.assembly.asm_res (asm_res), ep.assembly.est_index_of (est_index_of),
  *           &ep.pass_a.modeled (modeled).
@@ -262,30 +262,18 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the post-fit sigma0 and the post-fit rows.
+ * @brief Run-end report: frame diagnostics: the post-fit sigma0 and rows, the shared-normal
+ *        spectrum trace.
  *
- * The post-fit sigma0 pool (P1-4) and the post-fit row trace, each under its trace knob.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.getNetworkConfig().trace_postfit_sigma0`;
- * `config_.getNetworkConfig().trace_postfit_rows`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPostfitRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the shared-normal spectrum trace.
- *
- * The shared-normal spectrum trace (P1-3): epochs written and the stride.
- *
- * Gate: prints under `config_.getNetworkConfig().trace_sh_spectrum`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkFrameDiag.cpp, print in this order, each gated on its own knob:
+ *   - networkPostfitRunEnd: the post-fit sigma0 and the post-fit rows.
+ *   - networkShSpectrumRunEnd: the shared-normal spectrum trace.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkShSpectrumRunEnd(const NetworkRunEndView& v);
+int networkFrameDiagRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

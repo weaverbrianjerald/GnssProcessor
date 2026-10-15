@@ -11,6 +11,7 @@
  */
 
 #include "filter/NetworkRxClockCarry.hpp"
+#include "filter/NetworkRunEnd.hpp"
 #include "filter/NetworkStationBuild.hpp"   // StationBuild, StationCarryFrame (card NOM3 step PB1b)
 #include "app/NetworkEpoch.hpp"
 #include "app/NetworkRunContext.hpp"
@@ -482,5 +483,35 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
 }
 
 // ---- End of the harvest half ----
+
+// ---- Run-end report (card NOM2 step TD2: the jump-gate line, moved here from
+//      filter/NetworkLevelingCarryRunEnd.cpp, beside the harvest) ----
+
+// Run-end report: the receiver-clock carry's jump gate (network.carry_rx_clock_in_block).
+int networkRxClockCarryRunEnd(const NetworkRunEndView& v) {
+    const GnssConfig& config_ = v.config;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    const auto& C = v.ctx.counters;
+
+    // The jump gate's scale in metres, printed only with network.carry_rx_clock_in_block
+    // armed (with it off the log is byte-identical).  `refused` above is a count, and
+    // k alone does not say whether a given event is above or below the gate.  var_pred
+    // is per station-epoch (harvested variance + drift extrapolation + q), so the gate
+    // is a distribution, reported as mean, min and max.  The largest |innovation| is
+    // the largest step the gate saw; on a quiet bed with no injected event it is the
+    // noise ceiling, and an injected rx_clock_step must clear the gate at its own
+    // station to be refused.
+    if (config_.networkCarryRxClockInBlock())
+        log->info("Network (F3 carry, rx-clock JUMP GATE): k = {:.1f} sigma over {} "
+                  "station-epoch test(s) ⇒ gate mean {:.4f} m, min {:.4f} m, max {:.4f} m; "
+                  "largest |innovation| seen {:.4f} m; {} refusal(s).  An injected or real "
+                  "step BELOW the gate is absorbed by the carried prior (it FIGHTS the "
+                  "step); above it the carry is erased and re-born cold.",
+                  config_.networkCarryRxClockJumpK(), C.n_rxclk_gate_tests,
+                  C.n_rxclk_gate_tests ? C.sum_rxclk_gate_m / C.n_rxclk_gate_tests : 0.0,
+                  C.min_rxclk_gate_m, C.max_rxclk_gate_m, C.max_rxclk_innov_m,
+                  C.n_rxclk_carry_refused);
+    return 0;
+}
 
 } // namespace GnssProcessor

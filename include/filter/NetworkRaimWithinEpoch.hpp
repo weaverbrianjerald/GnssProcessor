@@ -24,7 +24,6 @@ struct NetworkRun;
 struct NetworkEpoch;
 struct NetworkRunEndView;
 struct EpochDdBuild;            // app/NetworkEpoch.hpp
-struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp
 struct NetworkPostFitHandoff;   // filter/NetworkSolveGlue.hpp
 struct SolveDatum;              // filter/NetworkSolveGlue.hpp
 struct WithinEpochOutcome;      // filter/NetworkSolveGlue.hpp
@@ -46,7 +45,6 @@ struct WithinEpochCulprits;     // filter/NetworkWithinEpochCulprits.hpp
  * @param ws           [in/out] The replay capture and the culprit sets (adapted, then cleared).
  * @param est_index_of [in/out] The station-slot map, rebuilt by each replay.
  * @param dd_build     [in/out] The DD carry build, rewritten by each replay's DD rebuild.
- * @param funnel       [in/out] The slip funnel the DD rebuild reads (EP1c makes it const).
  * @param handoff      [in/out] The post-fit hand-off: the tier's refloat and retro-feed sets.
  * @param we           [out] The tier's outcome (WithinEpochOutcome).
  * @return SkipEpoch when an undo cannot complete (exit WeRestoreFailed), else Proceed.
@@ -54,8 +52,7 @@ struct WithinEpochCulprits;     // filter/NetworkWithinEpochCulprits.hpp
 EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
                                     Eigen::VectorXd& x_s, EpochWorkspace& ws,
                                     std::vector<int>& est_index_of, EpochDdBuild& dd_build,
-                                    NetworkSlipFunnel& funnel, NetworkPostFitHandoff& handoff,
-                                    WithinEpochOutcome& we);
+                                    NetworkPostFitHandoff& handoff, WithinEpochOutcome& we);
 
 /// The culprit the adaptation loop drops next (card NOM3 step SG2): its granularity and identity.
 struct WeChoice {

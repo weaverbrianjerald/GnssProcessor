@@ -1,9 +1,9 @@
 #pragma once
 /**
  * @file NetworkResumeRunEnd.hpp
- * @brief Run-end reports of the warm resume and the state snapshot (cards RTB-7, RS-2 to RS-9, section 18.12).
+ * @brief Run-end report of the warm resume and the state snapshot (cards RTB-7, RS-2 to RS-9, section 18.12).
  *
- * The run-end reports defined in NetworkResumeRunEnd.cpp; each is a row of kNetworkRunEndReports
+ * The run-end report defined in NetworkResumeRunEnd.cpp, one row of kNetworkRunEndReports
  * (filter/NetworkRunEnd.hpp).
  */
 
@@ -14,58 +14,18 @@ namespace GnssProcessor {
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: warm-resume restores: frame, coupling regressors, dense border.
+ * @brief Run-end report: warm resume: restores (frame, coupling regressors, dense border), then
+ *        resume and snapshot (RTB-7, RS-2 to RS-9, the coupling capture).
  *
- * The warm resume's restores: the frame restore and slip warm-up, the coupling-regressor
- * restore at both edges, and the dense-border restore.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkResumeFrameRestore() || config_.networkResumeSlipWarmupEp() > 0`;
- * `config_.networkResumeCouplingRestore()`; always (a block).
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkResumeRestoreRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the seam-scoped ZWD re-seed.
- *
- * The seam-scoped ZWD re-seed (network.zwd_seam_reseed): folds and skips.
- *
- * Gate: prints under `config_.networkZwdSeamReseed()`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkResumeRunEnd.cpp, print in this order, each gated on its own knob:
+ *   - networkResumeRestoreRunEnd: warm-resume restores: frame, coupling regressors, dense border.
+ *   - networkResumeSnapshotRunEnd: resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkZwdSeamRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture.
- *
- * The resume and state-snapshot events: RTB-7(d/e), RS-2, RS-3, RS-5, RS-6, RS-8, RS-9,
- * RS-4 and the coupling capture. The RS-8 canonical audit is summed into locals, as it
- * was printed; the two run-context counters it also set had no other reader and are
- * gone.
- *
- * Gate: each section under its own condition, as in the teardown: `carry_invariant &&
- * !config_.getNetworkConfig().state_snapshot_path.empty()`;
- * `config_.getNetworkConfig().state_snapshot_datum_capture ||
- * config_.networkResumeDatumRestore()`;
- * `config_.getNetworkConfig().state_snapshot_emit_capture ||
- * config_.networkResumeEmitRestore()`;
- * `config_.getNetworkConfig().state_snapshot_station_capture ||
- * config_.networkResumeStationRestore()`;
- * `config_.getNetworkConfig().state_snapshot_signal_capture ||
- * config_.networkResumeSignalCanonRestore()`;
- * `config_.getNetworkConfig().state_snapshot_rxcb_lin_capture ||
- * config_.networkResumeRxCbLinRestore()`; `config_.networkResumePbSeamMark()`;
- * `config_.getNetworkConfig().state_snapshot_coupling_capture`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkResumeSnapshotRunEnd(const NetworkRunEndView& v);
+int networkResumeRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

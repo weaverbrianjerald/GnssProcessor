@@ -879,60 +879,20 @@ private:
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the PD-safe invariant-DD fold.
+ * @brief Run-end report: the invariant carry driver: the PD-safe DD fold, the card 4/M1 carry, the
+ *        D5 gate and its map misses.
  *
- * The PD-safe invariant-DD fold (card 4, INC-0 and INC-1/2): folded and inert blocks and
- * the block rebirths; on a carry_invariant run that never folded, the zero-fold line.
- *
- * Gate: prints under `ctx.knobs.carry_invariant && ctx.counters.ddfold_epochs > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkCarryDdFoldRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the card 4/M1 invariant carry.
- *
- * The card 4/M1 invariant carry's run line: epochs driven, carried DDs, births,
- * marginalizations, merges, splits, swaps, slip kills and drops.
- *
- * Gate: prints under `carry_invariant`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkInvariantCarryDriver.cpp, print in this order, each gated on its own knob:
+ *   - networkCarryDdFoldRunEnd: the PD-safe invariant-DD fold.
+ *   - networkInvariantCarryRunEnd: the card 4/M1 invariant carry.
+ *   - networkD5GateRunEnd: the D5 fine-slip innovation gate and its variants.
+ *   - networkD5MapMissRunEnd: D5 flags missing from the carry map.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkInvariantCarryRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the D5 fine-slip innovation gate and its variants.
- *
- * The D5 fine-slip innovation gate and its variants: the v3 corroboration, the v5
- * carried-only, the v4 re-tap-only and the v2 LS-VCE calibration.
- *
- * Gate: each section under its own condition, as in the teardown: `carry_innov_gate`;
- * `carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()`;
- * `carry_innov_gate && config_.networkCarryInvariantInnovCarriedOnly()`;
- * `carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly()`; `carry_innov_gate
- * && config_.networkCarryInvariantInnovCalibrate()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkD5GateRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: D5 flags missing from the carry map.
- *
- * D5 innovation flags that did not resolve in the carry's block map, a wiring
- * inconsistency.
- *
- * Gate: prints under `carry_innov_gate && carry_innov_map_miss > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkD5MapMissRunEnd(const NetworkRunEndView& v);
+int networkInvariantCarryDriverRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
