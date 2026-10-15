@@ -121,6 +121,7 @@ armed logs a warning. Members need no RECOMMEND_* row.
 | A14 | 2026-10-01 | Accumulated wind-up and its restart refloat armed; census median -2.6 cm | [WUP](refound/WUP_windup_accumulated_promotion_2026-10-01.md) |
 | A15 | 2026-10-01 | Exact coupling update, four companions, interim phase-clock hold armed; fresh convergence only | [EXL](refound/EXL_exact_update_lah_promotion_2026-10-01.md) |
 | A16 | 2026-10-13 | Galileo E1 / E5a with the family-difference clock datum and birth prior armed | [GAD](refound/GAD_galileo_adoption_2026-10-13.md) |
+| A17 | 2026-10-14 | The 144 REMOVE keys and five orphaned lane keys deleted with their code: 784 to 635 rows; `cold_clock_seed` regime `"False"` | [RKD](refound/RKD_retired_key_deletion_2026-10-14.md) |
 
 The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG_promotion_ledger.md`).
 

@@ -167,3 +167,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`; IRD-1 next.
+- [RKD](RKD_retired_key_deletion_2026-10-14.md): open, 2026-10-14: the 144 retired network keys and five lane keys
+  they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); goldens equal the gate's
+  reference goldens in every value; the same-build golden comparison is owed.

@@ -411,12 +411,12 @@ bound; accumulated wind-up with restart refloat. No lanes, F3, SH constraint or 
 - **Armed QC and observability** (in both goldens; verdicts in the ledger): RAIM with attribution,
   within-epoch tier and `raim_withhold_sigma0` 6.0, clock runaway check, prefit census, topology,
   RHS attribution on trip, run manifest and epoch status, postfit traces, `emit_ura`,
-  `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`; `parallel_carry` true
-  with `parallel_reduce` false. Response doctrine: adapt and EMIT within the detected epoch; a
+  `emit_clock_disc`, the CB jump test with `mw_detect`, `cold_clock_seed`; `parallel_carry` true.
+  Response doctrine: adapt and EMIT within the detected epoch; a
   withhold is the backstop, graded as an adaptation failure unless the epoch is provably
-  unrecoverable. Not armed: `prefit_fuse_sigma`, `sh_health_gate`, the old lane layer
-  (`lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*` (inert without
-  `carry_invariant`).
+  unrecoverable. Not armed: `prefit_fuse_sigma`. Deleted from the code on 2026-10-14 (card RKD,
+  `docs/refound/RKD_retired_key_deletion_2026-10-14.md`): `sh_health_gate`, the old lane layer
+  (`mw_wl.*`, `lane_carry.*`; lanes return only as card AB3's new build) and `emit_pb_filter*`.
 
 **Baseline: card GAD (2026-10-13, `docs/refound/GAD_galileo_adoption_2026-10-13.md`).** The
 Galileo package is armed: `processing.active_systems` `["GPS","Galileo"]` with E1/E5a in both code
@@ -458,10 +458,12 @@ yaw steering only, E14 / E18 broadcast unhealthy and kept (GAD section 4).
 
 - Card-4 `carry_invariant` lineage (`emit_pb_filter_gate_v2`, `emit_pb_filter_jump_k` 8.0,
   `raim_carry_invariant`, the `trace_station_residuals` zero-row trap): float vehicle, cards RF-1,
-  RF-2b, GRB; ledger rows.
-- MW/WL lane layer cost and retention (AGU-26, 63 and 305 stations): ledger `lane_carry.*`, card AB3.
+  RF-2b, GRB; ledger rows (the `emit_pb_filter*` rows left with their keys, card RKD:
+  `git show 4bdd693:docs/CONFIG_promotion_ledger.json`).
+- MW/WL lane layer cost and retention (AGU-26, 63 and 305 stations): card AB3; the `lane_carry.*`
+  and `mw_wl.*` keys were deleted by card RKD (rows: `git show 4bdd693:docs/CONFIG_promotion_ledger.json`).
 - Lane slip responses (`relevel_retap_*`, `relevel_lane_snap`, lane-preserving refloat):
-  `docs/cards/slip/`, ledger rows.
+  `docs/cards/slip/`; the keys were deleted by card RKD (rows at `4bdd693`, as above).
 - SH and GIM ionosphere level (GIM mean series, DEFECT 2, rx-CB carry memory, SH gate release):
   `docs/cards/ionosphere/LV-CORRECTION-AND-12H.md`, card AB1.
 - Pre-golden armed set (the Jul-28 guard list, `scripts/p2_make_guard_configs.py`,
@@ -626,7 +628,7 @@ JSON to retain the compressed copy (for byte-exact archival).
 - **New diagnostic/trace sweep** → `NetworkIonoDiag` / `NetworkDdFrac` / `NetworkShDevVtec` / `NetworkShHealth` / `NetworkLeveling` / `NetworkStashStatus`, or a new diag seam. Trace-stream ownership + run-summary/manifest writers live in `logging/NetworkRunTraces` (NOT the driver).
 - **New run-end telemetry / readout** → the subsystem's own run-end report, `int networkXxxRunEnd(const NetworkRunEndView&)` in the subsystem's `.cpp` (or a `<Subsystem>RunEnd.cpp` beside it when its state lives in one of the large files), registered as one row of `kNetworkRunEndReports` (`filter/NetworkRunEnd.hpp`, whose header states the order constraints). `filter/NetworkTeardown` only walks the table (card NOM step TD1b, 2026-10-09: the 7,277-line run-end function became 107 owned reports). Never add lines to `NetworkTeardown.cpp`.
 - **New carried/persistent state, counters, or config snapshots** → `app/NetworkRunContext` (`NetworkCarryState` / `NetworkServiceCounters` / `NetworkKnobs`), aliased in the driver and passed to the seams — do NOT add a bare function-local (that is precisely what INC-12 spent a pass deleting: 191 dead aliases left behind by relocated blocks).
-- **New run-loop-local helper type a seam must name** → `filter/NetworkRunTypes` (general) or `filter/NetworkWlRunTypes` (WL / section-timing).
+- **New run-loop-local helper type a seam must name** → `filter/NetworkRunTypes` (general) or `filter/NetworkWlRunTypes` (section timing).
 - **Setup** (validation / sinks / consumer) → `app/ApplicationNetworkSetup`; **assembly** (PASS A/B) → `app/ApplicationNetworkAssembly`.
 
 Seam contract: a free function over `(NetworkRunContext& ctx, const GnssConfig& config_, log, NetworkRunTraces&, …)` opening with an alias preamble that reconstructs the driver's `ctx.*` / `setup.*` aliases so the body reads the original names; it owns NO state (every carry object is a reference into `ctx`). The driver keeps only the `subBegin/subEnd` brackets and the call. New `.cpp` seams need a manual `CMakeLists.txt` entry (no globbing).
