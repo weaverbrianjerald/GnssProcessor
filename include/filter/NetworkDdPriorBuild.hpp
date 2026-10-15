@@ -88,4 +88,17 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
 void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdBuild& dd_build,
                                NetworkSlipFunnel& funnel);
 
+/**
+ * @brief The DD carry's z-store predict (q_z times the TOW step on the carried DD covariance),
+ *        once per epoch ahead of the DD build (card NOM3 step EP2).
+ *
+ * The build and the fold may re-run on a within-epoch re-solve; this predict does not.  The
+ * step is TOW-only (card NOM3 section 2 finding 4) and always clean (D5 v2).  Under
+ * network.carry_invariant, its first line.  The body is the frozen driver text, moved by
+ * scripts/nom_ep2_cut.py.
+ *
+ * @param run The run: the carry driver (written), ctx.carry.carry_prev_tow (read).
+ * @param ep  The epoch, read: se.time.tow.
+ */
+void networkCarryDriverBeginEpoch(NetworkRun& run, const NetworkEpoch& ep);
 } // namespace GnssProcessor

@@ -116,6 +116,7 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationNetwork.cpp
     src/core/app/ApplicationNetworkEpoch.cpp
     src/core/app/NetworkRun.cpp
+    src/core/app/NetworkEpochAdmission.cpp
     src/core/app/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
@@ -150,6 +151,7 @@ add_library(gnss_core STATIC
 	src/core/slip/SlipBridgeKernel.cpp
 	src/core/slip/NetworkRawObservables.cpp
 	src/core/slip/NetworkSlipQc.cpp
+	src/core/slip/NetworkGapResumeCensus.cpp
 	src/core/slip/NetworkSlipOracle.cpp
 	src/core/slip/NetworkCommonBandScope.cpp
 	src/core/slip/NetworkGfArcJump.cpp
@@ -204,6 +206,8 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkChannelAll.cpp
     src/core/filter/NetworkMultiGnss.cpp
     src/core/filter/NetworkPhaseDatum.cpp
+    src/core/filter/NetworkPhaseAnchorEpoch.cpp
+    src/core/filter/NetworkSlipFunnel.cpp
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkAnchorHygiene.cpp
     src/core/filter/NetworkSignalIntegrity.cpp
@@ -319,6 +323,11 @@ if(MSVC)
     # pivoted LU, the rank and condition-number references) cross the Debug section
     # limit (C1128).
     set_source_files_properties(tests/test_network_detached_fold.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_pb_hold_block.cpp and tests/test_pb_hold_smoothed.cpp (card NOM3 step EP2): the
+    # run fixture (tests/support/NetworkTestRun.hpp) brings the run's engines into the
+    # translation unit and crosses the Debug section limit (C1128).
+    set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)

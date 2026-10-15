@@ -25,6 +25,7 @@
  */
 #include "filter/NetworkRunGroups.hpp"   // NetworkRunEngines, NetworkEngineSpec, the TD1a groups
 #include "filter/NetworkWlRunTypes.hpp"  // SubBlock
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <type_traits>
@@ -91,5 +92,44 @@ void networkSubBegin(NetworkRun& run, SubBlock b);
 /// Closes D0b sub-block @p b: adds its wall and timed deltas to NetworkRunTiming::sub_blocks.
 /// Formerly the driver closure subEnd; the body is unchanged.
 void networkSubEnd(NetworkRun& run, SubBlock b);
+
+struct NetworkEpoch;
+
+/// One epoch's section-timer baseline (D0): the estimator's run-cumulative accumulators and the
+/// wall clock at the epoch top.  Both members stay default (never read) when
+/// network.trace_section_timers is off.  Written by networkSectionTimersBegin, read by
+/// networkSectionTimersReadout; a value of one epoch (card NOM3 step EP2).
+struct EpochSectionTimers {
+    NetworkNormalEquations::SectionTimers t0;        ///< est.sectionTimers() at the epoch top.
+    std::chrono::steady_clock::time_point epoch_t0;  ///< The epoch wall's start.
+};
+
+/**
+ * @brief The per-epoch section-timer baseline (D0): snapshots the estimator's accumulators, the
+ *        wall clock and the D0b sub-block totals (timing.sec_sub_ep0).
+ *
+ * Inert (no clock read) unless network.trace_section_timers (NetworkKnobs::sec_timers_on).
+ * The body is the frozen driver text (card NOM3 step EP2), plus the return of the two values.
+ *
+ * @param run The run: reads the estimator's section timers; writes timing.sec_sub_ep0.
+ * @return The baseline the readout differences against.
+ */
+EpochSectionTimers networkSectionTimersBegin(NetworkRun& run);
+
+/**
+ * @brief The per-epoch section-timer readout, emitted-epoch path (D0 and D0b): the epoch's
+ *        kernel cost against @p sec and the per-sub-block attribution of the rest.
+ *
+ * Two log lines per epoch and one NetworkRunTiming::profiled_epochs count, only under
+ * network.trace_section_timers (its first line).  The body is the frozen driver text (card
+ * NOM3 step EP2).
+ *
+ * @param run The run: reads the estimator's section timers and timing.sub_blocks; writes
+ *            timing.profiled_epochs; logs.
+ * @param ep  The epoch, read: se, columns.n_present, assembly.sec_asm_ms_epoch.
+ * @param sec This epoch's baseline, from networkSectionTimersBegin.
+ */
+void networkSectionTimersReadout(NetworkRun& run, const NetworkEpoch& ep,
+                                 const EpochSectionTimers& sec);
 
 } // namespace GnssProcessor

@@ -34,6 +34,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkLedgerEmitFold's epoch form takes
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/ArcLedger.hpp"
@@ -458,16 +459,16 @@ namespace {
 
 /// Drives one epoch of the capture and fold pair over a context whose ledger is
 /// advanced by hand.  Returns nothing; the tests read the counters.
-void runEpoch(NetworkRunContext& ctx, NetworkRunTraces& traces,
+void runEpoch(NetworkTestRun& fx,
               const NetworkProductEmitter& emitter, const NetworkSolutionEpoch& sol,
               const std::set<ArcLedger::Key>& admitted, long long ep) {
+    NetworkRunContext& ctx = fx.ctx();
     ctx.arc_ledger.beginEpoch(ep, 259200.0 + 30.0 * static_cast<double>(ep));
     networkLedgerEmitCapture(ctx, emitter, sol);
     std::vector<std::pair<ArcLedger::Key, ArcStep>> steps;
     ctx.arc_ledger.admitEpoch(admitted, steps);
-    SyncedEpoch se;
-    se.time = GnssTime{ 2313, 259200.0 + 30.0 * static_cast<double>(ep) };
-    networkLedgerEmitFold(ctx, traces, se);
+    NetworkEpoch& e = fx.newEpoch(GnssTime{ 2313, 259200.0 + 30.0 * static_cast<double>(ep) });
+    networkLedgerEmitFold(fx.run(), e);
 }
 
 }  // namespace
@@ -477,7 +478,8 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
     Loaded L("gen", "    \"signal_roster\": true,\n    \"ledger_emit\": true,\n");
     ASSERT_TRUE(L.cfg.networkSignalRoster());
     ASSERT_TRUE(L.cfg.networkLedgerEmit());
-    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
+    NetworkTestRun fx(L.cfg);   // the run networkLedgerEmitFold's epoch form takes
+    NetworkRunContext& ctx = fx.ctx();
     ctx.ledger_emit.armed = true;
     ctx.arc_ledger.configure(3900.0, kArcLedgerForgetEp);
     auto traces = quietTraces();
@@ -488,40 +490,40 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
     // Epoch 0: both arcs are born and the key is emitted for the first time.
     // A first emission is not a change a consumer could compare, so it is
     // excluded from both classes and counted by the first-sighting half.
-    runEpoch(ctx, *traces, emitter, makeEpoch(kT0, 1), { a, b }, 0);
+    runEpoch(fx, emitter, makeEpoch(kT0, 1), { a, b }, 0);
     EXPECT_EQ(ctx.counters.le.gen_changed, 0);
     EXPECT_EQ(ctx.counters.le.first_phase, 3)   // G01 L1C, G01 L2W and G02 L1C
         << "the emitter has no baseline at all on the first epoch";
 
     // Epoch 1: the same arcs, the same generation.  Nothing moves.
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259230.0 }, 1), { a, b }, 1);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259230.0 }, 1), { a, b }, 1);
     EXPECT_EQ(ctx.counters.le.gen_changed, 0);
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 0);
 
     // Epoch 2: the hold restarts (generation 1 -> 2) while both arcs keep
     // tracking: a hold restart with no arc birth behind it.
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259260.0 }, 2), { a, b }, 2);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259260.0 }, 2), { a, b }, 2);
     EXPECT_EQ(ctx.counters.le.gen_changed, 1);
     EXPECT_EQ(ctx.counters.le.gen_no_birth, 1);
     EXPECT_EQ(ctx.counters.le.gen_with_birth, 0);
 
     // Epoch 3: arc b leaves (an admitted gap opens).
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259290.0 }, 2), { a }, 3);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259290.0 }, 2), { a }, 3);
     // Epoch 4: b is back after a gap, so it re-enters.  A re-entry is not a
     // birth, and no generation change is due.
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259320.0 }, 2), { a, b }, 4);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259320.0 }, 2), { a, b }, 4);
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 0)
         << "a re-entry is not a birth: the admitted generation does not advance";
 
     // Epoch 5: a new arc of the same family is born at a third station while the
     // hold generation stays put: a birth the consumer never learns about.
     const ArcLedger::Key c{ 2, "G01", "L1C" };
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259350.0 }, 2), { a, b, c }, 5);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259350.0 }, 2), { a, b, c }, 5);
     EXPECT_EQ(ctx.counters.le.birth_no_gen, 1);
 
     // Epoch 6: a birth and a generation change together (the agreement class).
     const ArcLedger::Key d{ 3, "G01", "L1C" };
-    runEpoch(ctx, *traces, emitter, makeEpoch(GnssTime{ 2313, 259380.0 }, 3), { a, b, c, d }, 6);
+    runEpoch(fx, emitter, makeEpoch(GnssTime{ 2313, 259380.0 }, 3), { a, b, c, d }, 6);
     EXPECT_EQ(ctx.counters.le.gen_with_birth, 1);
     EXPECT_EQ(ctx.counters.le.gen_no_birth, 1) << "the earlier class did not move";
     EXPECT_GT(ctx.counters.le.epochs, 0);
@@ -532,7 +534,8 @@ TEST(LedgerEmitTest, HoldGenerationAgainstAdmittedArcBirths) {
 /// already admitted is a return, whatever the emitter's baseline map says.
 TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     Loaded L("first", "    \"signal_roster\": true,\n    \"ledger_emit\": true,\n");
-    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
+    NetworkTestRun fx(L.cfg);   // the run networkLedgerEmitFold's epoch form takes
+    NetworkRunContext& ctx = fx.ctx();
     ctx.ledger_emit.armed = true;
     ctx.arc_ledger.configure(3900.0, kArcLedgerForgetEp);
     auto traces = quietTraces();
@@ -544,7 +547,7 @@ TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     // the keys without an arc are true first sightings.
     {
         NetworkProductEmitter fresh(0.05, false);
-        runEpoch(ctx, *traces, fresh, makeEpoch(kT0, 1), { a }, 0);
+        runEpoch(fx, fresh, makeEpoch(kT0, 1), { a }, 0);
     }
     EXPECT_EQ(ctx.counters.le.first_phase, 3);
     EXPECT_EQ(ctx.counters.le.first_phase_return, 1) << "G01 L1C has a ledger arc";
@@ -560,7 +563,7 @@ TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
     NetworkSolutionEpoch  seed = makeEpoch(kT0, 1);
     warm.emitToStore(seed, store);
     const long long before = ctx.counters.le.first_phase;
-    runEpoch(ctx, *traces, warm, makeEpoch(GnssTime{ 2313, 259230.0 }, 1), { a }, 1);
+    runEpoch(fx, warm, makeEpoch(GnssTime{ 2313, 259230.0 }, 1), { a }, 1);
     EXPECT_EQ(ctx.counters.le.first_phase, before);
 }
 
@@ -568,12 +571,13 @@ TEST(LedgerEmitTest, EmitterFirstSightingOnAReturnIsCounted) {
 /// which keeps an unarmed run byte-identical and free of cost.
 TEST(LedgerEmitTest, DisarmedTheSeamsDoNothing) {
     Loaded L("off", "");
-    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
+    NetworkTestRun fx(L.cfg);   // the run networkLedgerEmitFold's epoch form takes
+    NetworkRunContext& ctx = fx.ctx();
     EXPECT_FALSE(L.cfg.networkLedgerEmit());
     EXPECT_FALSE(ctx.ledger_emit.armed);
     auto traces = quietTraces();
     NetworkProductEmitter emitter(0.05, false);
-    runEpoch(ctx, *traces, emitter, makeEpoch(kT0, 1), { ArcLedger::Key{ 0, "G01", "L1C" } }, 0);
+    runEpoch(fx, emitter, makeEpoch(kT0, 1), { ArcLedger::Key{ 0, "G01", "L1C" } }, 0);
     EXPECT_EQ(ctx.counters.le.epochs, 0);
     EXPECT_EQ(ctx.counters.le.families, 0);
     EXPECT_EQ(ctx.counters.le.first_phase, 0);

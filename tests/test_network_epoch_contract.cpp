@@ -71,6 +71,15 @@
 #include "filter/NetworkSolveGlue.hpp"
 #include "filter/NetworkStashStatus.hpp"
 #include "filter/NetworkStationBlock.hpp"
+#include "app/NetworkEpochAdmission.hpp"      // card NOM3 step EP2
+#include "filter/NetworkAmbFloat.hpp"
+#include "filter/NetworkAmbStateTrace.hpp"
+#include "filter/NetworkBlockBaarda.hpp"
+#include "filter/NetworkCongruence.hpp"
+#include "filter/NetworkDdPriorBuild.hpp"
+#include "filter/NetworkPhaseAnchorEpoch.hpp"
+#include "filter/NetworkSlipFunnel.hpp"
+#include "slip/NetworkGapResumeCensus.hpp"
 
 #include <gtest/gtest.h>
 
@@ -216,6 +225,29 @@ static_assert(std::is_same_v<decltype(static_cast<SigAmbStateTrace>(&networkAmbS
 using SigWriteStateSnapshot = void (*)(NetworkRun&, const NetworkEpoch&);   // W1 direct
 static_assert(std::is_same_v<decltype(static_cast<SigWriteStateSnapshot>(&networkWriteStateSnapshot)), SigWriteStateSnapshot>);
 
+// Card NOM3 step EP2: the seams the driver's inline blocks became, and the admission.
+using SigAdmitEpoch = EpochAdmission (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigAdmitEpoch>(&networkAdmitEpoch)), SigAdmitEpoch>);
+using SigSlipFunnelOpen = void (*)(NetworkRun&, const NetworkEpoch&, NetworkSlipFunnel&);   // EP2 direct, funnel writer
+static_assert(std::is_same_v<decltype(static_cast<SigSlipFunnelOpen>(&networkSlipFunnelOpen)), SigSlipFunnelOpen>);
+using SigSlipFunnelUnionRaw = void (*)(NetworkRun&, const NetworkEpoch&, NetworkSlipFunnel&);   // EP2 direct, funnel writer
+static_assert(std::is_same_v<decltype(static_cast<SigSlipFunnelUnionRaw>(&networkSlipFunnelUnionRaw)), SigSlipFunnelUnionRaw>);
+using SigPhaseAnchorEpoch = void (*)(NetworkRun&, const NetworkEpoch&, EpochPassA&);   // EP2 direct, pass_a writer
+static_assert(std::is_same_v<decltype(static_cast<SigPhaseAnchorEpoch>(&networkPhaseAnchorEpoch)), SigPhaseAnchorEpoch>);
+using SigReceiverPhaseBiasAllocation = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigReceiverPhaseBiasAllocation>(&networkReceiverPhaseBiasAllocation)), SigReceiverPhaseBiasAllocation>);
+using SigAmbFloatDropEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigAmbFloatDropEpoch>(&networkAmbFloatDropEpoch)), SigAmbFloatDropEpoch>);
+using SigCarryDriverBeginEpoch = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigCarryDriverBeginEpoch>(&networkCarryDriverBeginEpoch)), SigCarryDriverBeginEpoch>);
+using SigBlockBaardaPredict = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigBlockBaardaPredict>(&networkBlockBaardaPredict)), SigBlockBaardaPredict>);
+using SigCongruencePredict = void (*)(NetworkRun&, const NetworkEpoch&);   // EP2 direct
+static_assert(std::is_same_v<decltype(static_cast<SigCongruencePredict>(&networkCongruencePredict)), SigCongruencePredict>);
+using SigSectionTimersReadout = void (*)(NetworkRun&, const NetworkEpoch&, const EpochSectionTimers&);   // EP2 direct, kept parameter
+static_assert(std::is_same_v<decltype(static_cast<SigSectionTimersReadout>(&networkSectionTimersReadout)), SigSectionTimersReadout>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkGapResumeCensus)), NetworkEpochObserver>);
+static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkBufferedTraceDrains)), NetworkEpochObserver>);
 // Every measure-only row has the observer form.
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkParamInventoryNoteSatellites)), NetworkEpochObserver>);
 static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&networkLevelAuthorityCensus)), NetworkEpochObserver>);
@@ -242,6 +274,6 @@ static_assert(std::is_same_v<decltype(static_cast<NetworkEpochObserver>(&network
 } // namespace
 
 TEST(NetworkEpochContract, CompiledChecks) {
-    // Every check of this file is a static_assert; the case records that it built (56 converted seams).
+    // Every check of this file is a static_assert; the case records that it built (56 converted seams of step EP1, 12 of step EP2).
     SUCCEED();
 }

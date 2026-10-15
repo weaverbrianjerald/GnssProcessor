@@ -55,6 +55,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep) {
     int n_threads = run.setup.n_threads;
     int seam_threads = run.setup.seam_threads;
     // ---- End of the bindings ----
+    if (!ctx.knobs.carry_invariant) return;   // the driver's gate (card NOM3 step EP2)
     // --- Alias preamble: reconstructs the run-TU aliases the relocated
     //     SB_INSTALL body reads (nc, the D5 gate switch and the ctx.carry aliases).
     //     Copies of the former runNetwork() lines. ----

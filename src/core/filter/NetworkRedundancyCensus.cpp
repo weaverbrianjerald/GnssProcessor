@@ -220,6 +220,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep) {
     const std::vector<int>& est_index_of = nep.assembly.est_index_of;
     const Eigen::VectorXd& x_s = nep.solve.x_s;
     // ---- End of the bindings ----
+    if (!ctx.knobs.redun_census_on) return;   // the driver's gate (card NOM3 step EP2)
     // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
     auto& carry         = ctx.carry;
