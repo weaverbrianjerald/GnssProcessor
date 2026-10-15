@@ -86,19 +86,32 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       order; NetworkRunEngines with the engines in the frozen construction order, of their
       frozen types, built by one constructor with an empty body and nothing after its
       parameter list; LoopSignal.  (e) Every
-      changed code line of the tree (a line diff of src/, include/, tests/ and
-      CMakeLists.txt against <B>; a new file of the step diffed against nothing) is an
-      #include or forward-declaration line, or every token of it lies in a token range
-      another check verified (so code appended on a verified line is not accounted with
-      it), or it is a line a check compared whole.  No changed line is a preprocessor
+      changed line of the build's inputs (a line diff against <B> of every file the base
+      has under src/, include/ and tests/, every C, C++ or CMake file the candidate has
+      there whatever its extension, CMakeLists.txt and, when the tree carries them,
+      third_party/ and the root CMake configuration files; a C++
+      file read without its comments, any other file as written, so a `/*` in CMake hides
+      nothing; a new file of the step diffed against nothing, any other new file failed)
+      is an #include or forward-declaration line, or every token of it lies in a token
+      range another check verified (so code appended on a verified line is not accounted
+      with it), or it is a line a check compared whole.  No changed line is a preprocessor
       directive but #include, a new header's #pragma once, or a conditional group of
-      #include lines.  The step's new source files hold only what the specification puts
-      there (NetworkRun.cpp the three definitions, ApplicationNetworkEpoch.cpp the one
+      #include lines; no frozen #include is removed.  An #include that enters the tree
+      names its header literally and inside the include directories (no `..`), and
+      reaches a header (.hpp or .h under include/ or third_party/) the frozen tree has or
+      one of the step's two new headers, a C++ standard library header, or a library
+      header the frozen tree includes by that spelling: never a source, a test or an
+      unread file.  CMakeLists.txt changes by the step's build-list lines alone: each new
+      source named once, as a bare line of its target's list (gnss_core, gnss_tests), and
+      nowhere else, so no per-source option or definition, forced include or test source
+      in gnss_core enters.  The step's new source files hold only what the specification
+      puts there (NetworkRun.cpp the three definitions, ApplicationNetworkEpoch.cpp the one
       epoch function, the contract test its probe, static_asserts and one TEST case), the
-      hand-written engine specification test excepted (the suite checks it).  Of a struct
-      the base already has (NetworkRunTiming,
-      NetworkSolveGlueResult) only the moved or new members are claimed, so any other edit
-      there (a member's default, a stray field) is unaccounted.
+      hand-written engine specification test excepted (the suite checks its text; this
+      check its one listing in gnss_tests and that no file includes it).  Of a struct the
+      base already has (NetworkRunTiming, NetworkSolveGlueResult) only the moved or new
+      members are claimed, so any other edit there (a member's default, a stray field) is
+      unaccounted.
   V2  Signatures: each converted seam has one epoch-form declaration and one definition,
       (NetworkRun&, const NetworkEpoch&, kept..., outs...) as its row says (the card's
       NetworkEpoch& under --presolve-writer epoch, for a writer before the solve); kept
@@ -163,9 +176,16 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       form (the frozen return type, the row's parameters), and every alias is one seam's;
       the manifest's pairing agrees.  Declared entries whose frozen object is missing at
       this base are listed.
-  V9  No new overload: no translation unit that newly reaches app/NetworkRun.hpp or
-      app/NetworkEpoch.hpp calls, in its frozen code, a function name that only the new
-      headers it reaches declare; the two headers hold only their plain structs (no base
+  V9  No new overload: for every translation unit whose include closure (every tree
+      file it reaches, any file type) differs from its frozen counterpart's (its own frozen
+      file; ApplicationNetwork.cpp for the two units cut from runNetwork), over the names
+      its code calls, every free-function declaration newly visible is a converted seam's
+      epoch form (the parameter types V2 checks) or one of the step's new functions, and
+      none visible at the base is gone but a converted seam's explicit form; no newly
+      reached file #defines an identifier of the unit, brings in a called name by a
+      using-declaration or holds a using-directive; the two cut units reach no project
+      header the frozen driver did not but the two new headers, and include no library
+      header it did not read.  The two headers hold only their plain structs (no base
       clause), forward declarations, static_asserts, the declarations of networkEngineSpec
       and the two brackets (each its definition's signature: return type, parameter types,
       default arguments, specifiers after the list) and the observer alias, and
@@ -205,24 +225,24 @@ to its initializer), so `snap.n_emitted` is another object.  A failed proof fail
 --controls builds each pre-registered negative control as a mutation of the candidate (an
 overlay: one or two of its files replaced in memory, no disk copy) and runs every check on
 it: the sixteen of spec 5.7 (N1 to N16), seventeen added at the review round (R1 to R17),
-seventeen at the first hardening round (R18 to R34) and eleven at the second (R35 to R45),
-each R a mutation an earlier version of this verifier accepted or (R40 to R45) the same
-mutation at another head the step writes.  A control fires when its
-named check fails (N8 V1a or V3c, N10 V1a or V3e, N16 V4 or V6, N13 V2 or V8; N4 only when
+seventeen at the first hardening round (R18 to R34), eleven at the second (R35 to R45) and
+seven at the third (R46 to R52), each R a mutation an earlier version of this verifier
+accepted or (R40 to R45, R49, R50) the same mutation by another route.  A control fires when
+its named check fails (N8 V1a or V3c, N10 V1a or V3e, N16 V4 or V6, N13 V2 or V8; N4 only when
 V3a and V10 both fail, R35 to R37 only when V2 and V8 both fail, R38 only when V1a and V1d
-both fail).  N4's mutation keeps the trip's adapter and gives the solve's
-internal call the epoch form, which binds ep.solve.plan at that call exactly as the spec's
-direct conversion would (a declared deviation from the spec's wording, not from its
-target).  N11 cuts the debug_r_scale warning where the base still has it, else a synthetic
-warning, so it does not depend on the lane layer.  On an empty conversion the controls run in
+both fail, R46, R47 and R49 only when V1e and V9 both fail).  N4's mutation keeps the trip's
+adapter and gives the solve's internal call the epoch form, which binds ep.solve.plan at that
+call exactly as the spec's direct conversion would (a declared deviation from the spec's
+wording, not from its target).  N11 cuts the debug_r_scale warning where the base still has
+it, else a synthetic warning, so it does not depend on the lane layer.  On an empty conversion the controls run in
 their frozen-tree form (spec 7: "N5-N12 fire on synthetic mutations of <B>").  A control
 whose target the stage cannot have yet (an unconverted seam, no epoch function) is pending;
 one whose target the stage must have (its `due` rule) but the tree lacks is MISSING, which
 fails the run, so a control never falls silent at a later base.  On an epoch tree the
 standalone lint (scripts/nom_epoch_lint.py, with --partial while rows remain unconverted and
 with this run's --presolve-writer) runs on the unmutated candidate, where it must pass, and on
-N7, N16 and R24 to R26, which fire only when it also fails there.  --rows takes row names space- or
-comma-separated, or `all`.
+N7, N16, R24 to R26 and R46 to R50, which fire only when it also fails there.  --rows takes
+row names space- or comma-separated, or `all`.
 
 Not covered here (spec 5.8): run-time behaviour (default construction then assignment,
 construction and destruction order, code generation), which gate G-EP's arms cover; the
@@ -260,6 +280,19 @@ NEW_FILES = ("include/app/NetworkRun.hpp", "src/core/app/NetworkRun.cpp",
              "tests/test_network_epoch_contract.cpp", "tests/test_network_engine_spec.cpp")
 CONTRACT_TEST = "tests/test_network_epoch_contract.cpp"
 ENGINE_SPEC_TEST = "tests/test_network_engine_spec.cpp"   # hand-written (spec 5.9)
+# The build's inputs V1e diffs against <B> (build_inputs), and those it diffs only when the
+# candidate carries them (an export of src/, include/, tests/ and CMakeLists.txt does not).
+BUILD_INPUTS = ("src", "include", "tests", "CMakeLists.txt")
+BUILD_INPUTS_IF_PRESENT = ("third_party", "CMakeSettings.json", "CMakePresets.json", "CMakeUserPresets.json")
+CPP_EXT = (".cpp", ".hpp", ".h")             # read as C++ (comments removed); any other file line by line
+# A file of the candidate alone that a compiler or CMake could read (V1e fails it as new).
+SOURCE_EXT = (".c", ".cc", ".cpp", ".cxx", ".c++", ".cppm", ".ixx", ".h", ".hh", ".hpp", ".hxx", ".h++",
+              ".inl", ".ipp", ".tpp", ".tcc", ".inc", ".def", ".cmake")
+# The step's build-list entries (spec 4.1): each new source, the command and target that list it.
+CMAKE_ENTRIES = (("src/core/app/ApplicationNetworkEpoch.cpp", "add_library", "gnss_core"),
+                 ("src/core/app/NetworkRun.cpp", "add_library", "gnss_core"),
+                 (CONTRACT_TEST, "add_executable", "gnss_tests"),
+                 (ENGINE_SPEC_TEST, "add_executable", "gnss_tests"))
 RUN_HPP = "include/app/NetworkRun.hpp"
 RUN_CPP = "src/core/app/NetworkRun.cpp"
 SOLVE_CPP = "src/core/filter/NetworkSolveGlue.cpp"
@@ -2206,10 +2239,11 @@ class Verifier:
         each region claimed for V1e: the third-band predicate and the two bracket closures as
         functions (moved_closure), the timer scratch in NetworkRunTiming, the hand-off fields
         in NetworkPostFitHandoff (FIELD_MOVE), the engines' owner NetworkRunEngines,
-        LoopSignal in Application (TYPE_MOVE), and the declared header hunks of step EP1a-1
-        (the run's and the epoch's declarations, the build list).  Only the lines a rule
-        checks are claimed: every other line of a struct that existed at the base is left to
-        V1e's line diff, so an edit there (a member's default, a stray field) fails."""
+        LoopSignal in Application (TYPE_MOVE), and the declared header hunk of step EP1a-1
+        (the epoch function's declaration; the build list is V1e's cmake_build_list).  Only
+        the lines a rule checks are claimed: every other line of a struct that existed at the
+        base is left to V1e's line diff, so an edit there (a member's default, a stray field)
+        fails."""
         R, fz = self.R, self.fz
         fT = fz.rn.T
         froot = {d.name: d for d in fz.rn.scopes.root.decls}
@@ -2257,10 +2291,7 @@ class Verifier:
                         self.tclaim(T, j, e2 + 1 if T.t(e2) == ";" else e2)
                 elif T.t(j) == "friend" and T.t(j + 2) == "NetworkEpochContractProbe":
                     self.tclaim(T, j, j + 4 if T.t(j + 3) == ";" else j + 3)
-        cm = self.tree.read("CMakeLists.txt") or ""
-        for k, ln in enumerate(cm.split("\n"), 1):
-            if any(pathlib.PurePosixPath(p).name in ln for p in NEW_FILES):
-                self.claim("CMakeLists.txt", k, k)
+        # The build list (CMakeLists.txt) is cmake_build_list's, run by V1e.
 
     def moved_closure(self, closure, fname, froot):
         """A driver closure that became a free function (CALLABLE, BRACKET): one definition,
@@ -3868,32 +3899,136 @@ class Verifier:
                     if not f["deleted"] and f["name"] not in live_ok.get(name, set()):
                         R.fail("V9", f"{h}:{HT.line(f['start'])}: {name} declares the member function "
                                      f"{f['name']}")
-        fg, ng = include_graph(self.fz.tree), include_graph(self.tree)
+        self.v9_translation_units()
+
+    def v9_translation_units(self):
+        """No call can resolve otherwise than at the base.  For each translation unit whose
+        include closure is not its frozen counterpart's, file for file and text for text (the
+        counterpart is the unit's own frozen file; for ApplicationNetworkEpoch.cpp and
+        NetworkRun.cpp, which hold code cut from runNetwork, ApplicationNetwork.cpp), over the
+        names its code calls: every free-function declaration the closure newly makes visible
+        (any namespace, any file type the closure reaches) is a converted seam's epoch form,
+        with the parameter types V2 checks, or one of the step's new functions
+        (networkEngineSpec, the brackets, the moved predicate, which V9's header checks and
+        V1d pin to one definition); none the frozen closure made visible is gone but a
+        converted seam's explicit form; no newly reached file #defines an identifier of the
+        unit, brings in a called name by a using-declaration or holds a using-directive.  The
+        two units cut from runNetwork also reach no project header the frozen driver did not,
+        but the step's two new headers, and include no library header the frozen driver's
+        closure did not read (a library header included by a header is include_problem's).
+        So a narrowed overload of a seam in any file a unit includes, an overload of a
+        library name, or a dropped include that leaves another overload the better match,
+        fails here."""
+        R = self.R
+        fzt, nt = self.fz.tree, self.tree
         newh = {RUN_HPP, lint.EPOCH_HPP}
-        fmemo, nmemo = {}, {}
+        allowed, removed = collections.defaultdict(set), collections.defaultdict(set)
+        for name in self.converted:
+            r = self.by_name[name]
+            allowed[name].add(tuple(self.epoch_signature(r)[0]))
+            fdecl = self.fdecls.get(name, (None, None))[0]
+            if r.mech != ADAPTER and fdecl is not None and fdecl.params is not None:
+                removed[name].add(tuple(lint.ptype(p) for p in fdecl.params))
+        new_names = {"networkEngineSpec", "networkSubBegin", "networkSubEnd"}
+        new_names |= {"network" + n[0].upper() + n[1:] for n in SUBST.callable + SUBST.bracket}
+        changed = self.changed_files()
+        fcache = self.fz.__dict__.setdefault("_ep1_v9", {"clo": {}})
+        cut = {lint.EPOCH_CPP: DRIVER_PATH, RUN_CPP: DRIVER_PATH}
 
-        def declared_names(tree, memo, path):
-            if path not in memo:
-                idx = tree.index(path)
-                memo[path] = {f.name for f in (idx.funcs if idx else []) if not f.cls}
-            return memo[path]
+        # A root the candidate does not carry (an export without third_party/) is read on
+        # neither side, so the base's declarations there are not taken for removed ones.
+        hidden = tuple(r + "/" for r in BUILD_INPUTS_IF_PRESENT if not nt.files(r))
 
+        def readable(p):
+            return not p.startswith(("../", "/")) and not (hidden and p.startswith(hidden))
+
+        def visible(tree, files, name):
+            out = set()
+            for p in files:
+                out.update(t for t, _ in lint.file_decls(tree, p)[0].get(name, ()))
+            return out
+
+        def check_unit(tu, ftu):
+            """(problems, checked?) of one translation unit."""
+            probs = []
+            if ftu not in fcache["clo"]:
+                fcache["clo"][ftu] = lint.include_closure(fzt, ftu)
+            fclo, nclo = fcache["clo"][ftu], lint.include_closure(nt, tu)
+            if tu == ftu and set(nclo) == set(fclo) and not (set(nclo) & changed):
+                return probs, False, set(nclo)
+            ncalls, nids = lint.file_calls(nt, tu)
+            called = set(ncalls) | (lint.file_calls(fzt, ftu)[0] if tu == ftu else set())
+            # A file both closures read with the same text declares the same on both sides, so
+            # only the files that differ are indexed whole; a common file is read for a name
+            # only when the two sides differ in it and its text names it.
+            fset = {p for p in fclo if readable(p)}
+            nset = {p for p in nclo if readable(p)}
+            common = {p for p in fset & nset if p not in changed}
+            for name in sorted(called - new_names):
+                a, b = visible(fzt, fset - common, name), visible(nt, nset - common, name)
+                if a == b:
+                    continue
+                c = visible(fzt, [p for p in common if name in (fzt.read(p) or "")], name)
+                old, new = a | c, b | c
+                for t in sorted(new - old - allowed.get(name, set())):
+                    probs.append(f"{tu}: {name}({', '.join(t)}) is newly visible to a unit that calls {name}: "
+                                 "an overload the step does not declare can take the call")
+                for t in sorted(old - new - removed.get(name, set())):
+                    probs.append(f"{tu}: {name}({', '.join(t)}), visible at the base, is not visible any more: "
+                                 "the call may resolve to another overload")
+            for p in sorted(set(nclo) - set(fclo) - {tu}):
+                if p.startswith(("../", "/")):
+                    continue
+                _, macros, usings, directive, _ = lint.file_decls(nt, p)
+                for m in sorted(macros & nids):
+                    probs.append(f"{tu}: the newly reached {p} #defines `{m}`, an identifier of the unit")
+                for u in sorted(usings & called):
+                    probs.append(f"{tu}: the newly reached {p} brings in `{u}`, a name the unit calls, by a "
+                                 "using-declaration")
+                if directive:
+                    probs.append(f"{tu}: the newly reached {p} holds a using-directive")
+            if tu in cut:
+                for p in sorted(set(nclo) - set(fclo) - newh - {tu}):
+                    probs.append(f"{tu} reaches {p}, which {ftu} did not reach at the base (only "
+                                 f"{RUN_HPP} and {lint.EPOCH_HPP} are new to the code cut from runNetwork)")
+                base_libs = {(q, nm) for items in fclo.values() for _, q, nm, r in items
+                             if r is None and q is not None}
+                for _, q, nm, r in nclo[tu]:
+                    if r is None and q is not None and (q, nm) not in base_libs:
+                        probs.append(f"{tu} includes the library header {lint.include_spelling(q, nm)}, which "
+                                     f"{ftu} did not read at the base")
+            return probs, True, set(nclo) | {tu}
+
+        # An overlay (a control's mutation) that edits no file a unit reads reuses the unit's
+        # result on the unmutated tree.
+        root, ov, structural = lint.overlay_parts(nt)
+        memo = root.__dict__.setdefault("_ep1_v9_units", {})
+        key = (self.fz.base, frozenset(self.converted), self.presolve_writer)
         n = 0
-        for tu in [p for p in self.tree.files("src", "tests") if p.endswith(".cpp")]:
-            if tu not in fg:
-                continue                  # a new translation unit has no frozen calls
-            nreach = reach(ng, tu) | {tu}
-            if not (nreach & newh):
-                continue
-            n += 1
-            old = set().union(*(declared_names(self.fz.tree, fmemo, h) for h in reach(fg, tu) | {tu}))
-            new = set().union(*(declared_names(self.tree, nmemo, h) for h in nreach))
-            FT = self.fz.tree.tokens(tu)
-            called = {leaf(c.name) for c in calls_in(FT, 0, FT.n)}
-            hit = ((new - old) & called) - allowed
-            if hit:
-                R.fail("V9", f"{tu}: newly visible {sorted(hit)} are names its frozen code calls")
-        R.note("V9", f"{n} translation units newly reach the run or epoch header")
+        for tu in sorted(p for p in nt.files("src", "tests") if p.endswith(".cpp")):
+            if tu in (CONTRACT_TEST, ENGINE_SPEC_TEST):
+                continue                  # V1e's new_sources holds the contract test; the suite the other
+            ftu = cut.get(tu, tu)
+            if fzt.read(ftu) is None:
+                continue                  # a new file outside the step: V1e fails it
+            hit = memo.get((key, tu))
+            if hit is not None and not structural and not (hit[2] & set(ov)):
+                probs, checked = hit[0], hit[1]
+            else:
+                probs, checked, files = check_unit(tu, ftu)
+                if not ov:
+                    memo[(key, tu)] = (probs, checked, files)
+            n += checked
+            for x in probs:
+                R.fail("V9", x)
+        R.note("V9", f"{n} translation units whose include closure changed checked for overloads")
+
+    def changed_files(self):
+        """The build inputs whose text differs from <B> (a new file included)."""
+        if getattr(self, "_changed", None) is None:
+            fzt, nt = self.fz.tree, self.tree
+            self._changed = {p for p in self.build_inputs() if fzt.read(p) != nt.read(p)}
+        return self._changed
 
     # ==== V10, V11 ========================================================================
     def v10_11(self):
@@ -3921,33 +4056,39 @@ class Verifier:
 
     # ==== V1e: every hunk accounted for ===================================================
     def v1e(self):
-        """Every changed code line of src/, include/, tests/ and CMakeLists.txt is accounted
-        for, token by token: each token of a changed line lies in a token range a check
-        verified (tclaim), or the line is an #include, a forward declaration, or a line another
-        check compared whole (claim).  On an epoch tree the step's new files are diffed against
-        nothing, so every line of them is accounted for the same way (their structure is
-        checked by new_sources and, for the two headers, V9), except the hand-written engine
-        specification test (spec 5.9, checked by the suite).  No changed line may be a
-        preprocessor directive other than #include, a new header's #pragma once, or a
+        """Every changed line of the build's inputs (build_inputs: every file under src/,
+        include/ and tests/ whatever its extension, CMakeLists.txt, and third_party/ and the
+        root CMake configuration files when the tree carries them) is accounted for, token by
+        token: each token of a changed line lies in a token range a check verified (tclaim),
+        or the line is an #include (include_problem), a forward declaration, or a line another
+        check compared whole (claim; CMakeLists.txt's are cmake_build_list's).  A C++ file is
+        read without its comments, any other file as written.  On an epoch tree the step's new
+        files are diffed against nothing, so every line of them is accounted for the same way
+        (their structure is checked by new_sources and, for the two headers, V9), except the
+        hand-written engine specification test (spec 5.9, checked by the suite; its one
+        listing is cmake_build_list's, and include_problem fails any #include of it).  Any
+        other new file fails, whatever its extension: an inline file or a source included by
+        name would put code into a translation unit that no check reads.  No changed line may
+        be a preprocessor directive other than #include, a new header's #pragma once, or a
         conditional group that holds only #include lines (cond_include_lines): a #define, an
         #if 0 or an #else can change what the compiler builds without changing a token any
-        check reads."""
+        check reads.  No frozen #include is removed: a call could resolve to another overload
+        once a declaration it found is gone."""
         R = self.R
         if self.epoch:
             self.new_sources()
-        paths = set(p for p in self.fz.tree.files("src", "include", "tests", "CMakeLists.txt"))
-        paths |= set(p for p in self.tree.files("src", "include", "tests", "CMakeLists.txt"))
+        self.cmake_build_list()
+        paths = self.build_inputs()
         n_files = n_lines = 0
         for path in sorted(paths):
-            if not path.endswith((".cpp", ".hpp", ".h", ".txt", ".cmake")):
-                continue
             ft, nt = self.fz.tree.read(path), self.tree.read(path)
             if ft == nt:
                 continue
             if ft is None:
                 if path in NEW_FILES and self.epoch:
                     if path == ENGINE_SPEC_TEST:
-                        continue        # hand-written (spec 5.9); the suite checks it
+                        continue        # hand-written (spec 5.9); the suite checks it, cmake_build_list
+                                        # its one use and include_problem that no file includes it
                     ft = ""
                 else:
                     R.fail("V1e", f"{path}: a new file outside the step's declared new files")
@@ -3955,13 +4096,15 @@ class Verifier:
             if nt is None:
                 R.fail("V1e", f"{path}: deleted")
                 continue
-            fl = _code_lines(ft)
-            nl = _code_lines(nt)
+            cpp = path.endswith(CPP_EXT)
+            fl = _code_lines(ft, cpp)
+            nl = _code_lines(nt, cpp)
             if [x[1] for x in fl] == [x[1] for x in nl]:
                 continue
             n_files += 1
-            T = self.tree.tokens(path) if path.endswith((".cpp", ".hpp", ".h")) else None
+            T = self.tree.tokens(path) if cpp else None
             condl = cond_include_lines(T) if T is not None else set()
+            new_incs = {lint.include_target(t) for _, t in nl if T is not None and pp_directive(t) == "include"}
             sm = difflib.SequenceMatcher(None, [x[1] for x in fl], [x[1] for x in nl], autojunk=False)
             for op, a0, a1, b0, b1 in sm.get_opcodes():
                 if op == "equal":
@@ -3971,7 +4114,12 @@ class Verifier:
                     n_lines += 1
                     d = pp_directive(txt) if T is not None else None
                     if d is not None:
-                        if d == "include" or ln in condl or (
+                        if d == "include":
+                            prob = self.include_problem(path, txt)
+                            if prob:
+                                R.fail("V1e", f"{path}:{ln}: `{txt.strip()[:90]}` {prob}")
+                            continue
+                        if ln in condl or (
                                 txt.split() == ["#pragma", "once"] and path in NEW_FILES and path.endswith(".hpp")):
                             continue
                         R.fail("V1e", f"{path}:{ln}: a preprocessor directive enters the tree: "
@@ -3988,10 +4136,115 @@ class Verifier:
                                          if bad and len(bad) < len(txt.split()) else ""))
                 for q in range(a0, a1):
                     ln, txt = fl[q]
+                    if T is not None and pp_directive(txt) == "include":
+                        if lint.include_target(txt) not in new_incs:
+                            R.fail("V1e", f"{path}: frozen line {ln} `{txt.strip()[:90]}` removed: a declaration a "
+                                          "call resolved to may no longer be visible (the step removes no #include)")
+                        continue
                     if not self.fclaimed(path, ln, txt):
                         R.fail("V1e", f"{path}: frozen line {ln} removed or changed outside a declared "
                                       f"region: `{txt.strip()[:90]}`")
-        R.note("V1e", f"{n_files} changed files, {n_lines} changed code lines")
+        R.note("V1e", f"{n_files} changed files, {n_lines} changed code lines; {len(paths)} build inputs read")
+
+    def build_inputs(self):
+        """The files the build reads, which V1e diffs against <B>: every file the frozen tree
+        has under src/, include/ and tests/ (whatever its extension), every C, C++ or CMake file
+        the candidate has there (an inline file, a template body, a source included by name:
+        SOURCE_EXT), CMakeLists.txt, and, when the candidate carries them (a full checkout, not
+        an export of the four), third_party/ and the CMake configuration files at the root.  A
+        file the frozen tree lacks is new, and only the step's new files may be.  A data file
+        the candidate alone has (a run's logs under tests/) is not read: no build compiles it,
+        and include_problem fails any #include that would."""
+        if getattr(self, "_inputs", None) is None:
+            fzt, nt = self.fz.tree, self.tree
+
+            def sources(files):
+                return {p for p in files if p.endswith(SOURCE_EXT) or p.rsplit("/", 1)[-1] == lint.CMAKE}
+
+            paths = set(fzt.files(*BUILD_INPUTS)) | sources(nt.files(*BUILD_INPUTS))
+            for root in BUILD_INPUTS_IF_PRESENT:
+                mine = nt.files(root)
+                if mine:
+                    paths |= sources(mine) | set(fzt.files(root)) | ({root} & set(mine))
+            self._inputs = paths
+        return self._inputs
+
+    def include_problem(self, path, txt):
+        """Why an #include line that enters the tree is not declared, or None.  The directive
+        names its header literally, stays inside the include directories (no `..`, no absolute
+        path) and resolves there as the compiler resolves it (a quoted name found beside the
+        including file must be that same file); the file it reaches is a header (.hpp or .h
+        under include/ or third_party/) the frozen tree has, or one of the step's two new
+        headers, so never a source, a test (the hand-written engine specification test above
+        all) or an unread file; a name the tree does not hold is a C++ standard library header
+        (in angle brackets) or a library header the frozen tree already includes by that
+        spelling."""
+        q, name = lint.include_target(txt)
+        if q is None:
+            return "names its header through a macro"
+        parts = name.replace("\\", "/").split("/")
+        if ".." in parts or name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
+            return "leaves the include directories (`..` or an absolute path)"
+        beside = lint.resolve_include(self.tree, path, q, name) if q == '"' else None
+        found = lint.resolve_include(self.tree, path, "<", name)
+        if beside is not None and beside != found:
+            return f"reaches {beside}, beside the including file, not a header of the include directories"
+        if found is None:
+            if not (q == "<" and name in lint.STD_HEADERS) and (q, name) not in self.fz_include_vocabulary():
+                return ("names a header the tree does not hold, not a standard library header, and the frozen "
+                        "tree never includes it by that spelling")
+            return None
+        if not lint.is_header_path(found):
+            return f"reaches {found}, which is not a header (.hpp or .h under include/ or third_party/)"
+        if self.fz.tree.read(found) is None and found not in (RUN_HPP, lint.EPOCH_HPP):
+            return f"reaches {found}, a header neither the frozen tree nor the step declares"
+        return None
+
+    def fz_include_vocabulary(self):
+        """{(quote, name)} of every #include directive in the frozen tree's src/, include/ and
+        tests/: the library and system headers the project already reads."""
+        cache = self.fz.__dict__
+        if "_inc_vocab" not in cache:
+            vocab = set()
+            for p in self.fz.tree.files("src", "include", "tests"):
+                for _, q, name in lint.file_includes(self.fz.tree, p):
+                    if q is not None:
+                        vocab.add((q, name))
+            cache["_inc_vocab"] = vocab
+        return cache["_inc_vocab"]
+
+    def cmake_build_list(self):
+        """The step's build-list edit, exactly (spec 4.1): CMakeLists.txt names each of the
+        step's new sources once, as a bare source line in its target's list
+        (src/core/app/ApplicationNetworkEpoch.cpp and src/core/app/NetworkRun.cpp in
+        add_library(gnss_core ...), the contract test and, when it exists, the hand-written
+        engine specification test in add_executable(gnss_tests ...)), and nowhere else.  Only
+        those lines are claimed, so any other changed line of the file (a per-source compile
+        option or definition, a forced include, a test source moved into gnss_core) is
+        unaccounted in V1e.  On an empty conversion the file names none of them."""
+        R = self.R
+        text = self.tree.read(lint.CMAKE)
+        if text is None:
+            R.fail("V1e", f"{lint.CMAKE}: missing")
+            return
+        cmds = lint.cmake_commands(text)
+        lines = text.split("\n")
+        for path, cmd, target in CMAKE_ENTRIES:
+            base = pathlib.PurePosixPath(path).name
+            raw = [k for k, ln in enumerate(lines, 1) if base in ln]
+            hits = [(name, args, a, ln) for name, args, _ in cmds for a, ln in args if base in a]
+            want = 1 if self.epoch and (path != ENGINE_SPEC_TEST or self.tree.read(path) is not None) else 0
+            if len(raw) != want or len(hits) != want:
+                R.fail("V1e", f"{lint.CMAKE}: names {path} on {len(raw)} line(s) ({', '.join(map(str, raw[:5]))}); "
+                              f"the step lists it {want} time(s), as a source of {target}")
+                continue
+            for name, args, a, ln in hits:
+                if name != cmd or not args or args[0][0] != target or a != path or lines[ln - 1].strip() != path:
+                    where = f"{name}({args[0][0] if args else ''} ...)"
+                    R.fail("V1e", f"{lint.CMAKE}:{ln}: `{lines[ln - 1].strip()[:90]}` in {where}; the step "
+                                  f"lists {path} as a bare source line of {cmd}({target} ...)")
+                    continue
+                self.claim(lint.CMAKE, ln, ln)
 
     def line_tokens(self, T, ln):
         """Indices of the tokens of T that lie on source line @p ln (a token spanning lines,
@@ -4030,9 +4283,9 @@ class Verifier:
 
     def claimed(self, path, ln, txt, T=None):
         s = txt.strip()
-        if s.startswith("#include") or re.match(r"^(struct|class)\s+\w+;$", s) or \
-                re.match(r"^namespace\s+\w+\s*\{\s*(class|struct)\s+\w+;\s*\}$", s):
-            return True
+        if T is not None and (s.startswith("#include") or re.match(r"^(struct|class)\s+\w+;$", s) or
+                              re.match(r"^namespace\s+\w+\s*\{\s*(class|struct)\s+\w+;\s*\}$", s)):
+            return True     # a C++ file's include (include_problem) or forward declaration
         if any(a <= ln <= b for a, b in self.claims.get(path, ())):
             return True
         return T is not None and bool(self.line_tokens(T, ln)) and not self.unclaimed_tokens(T, ln)
@@ -4246,9 +4499,11 @@ def _preflight(T, a, b, outs, declared_only=False):
     return found
 
 
-def _code_lines(text):
+def _code_lines(text, cpp=True):
+    """(line, text) of the non-blank lines of @p text: C++ comments removed when @p cpp, else
+    every line as written (a `//` or `/*` in CMake is text the build reads, not a comment)."""
     out = []
-    for k, ln in enumerate(lint.strip_comments(text).split("\n"), 1):
+    for k, ln in enumerate((lint.strip_comments(text) if cpp else text).split("\n"), 1):
         if ln.strip():
             out.append((k, ln.rstrip()))
     return out
@@ -4670,34 +4925,6 @@ def params_doc(text):
     for m in re.finditer(r"@param\s+(\w+)\s+(.*?)(?=@param|@return|@brief|$)", t, re.S):
         out.append((m.group(1), m.group(2).strip()))
     return out
-
-
-def include_graph(tree):
-    """{file: [the project headers it includes]} over src/, include/ and tests/."""
-    g = {}
-    for p in tree.files("src", "include", "tests"):
-        if not p.endswith((".cpp", ".hpp", ".h")):
-            continue
-        text = tree.read(p) or ""
-        incs = []
-        for m in re.finditer(r'^\s*#\s*include\s+"([^"]+)"', text, re.M):
-            inc = m.group(1)
-            cand = "include/" + inc
-            if tree.read(cand) is not None:
-                incs.append(cand)
-        g[p] = incs
-    return g
-
-
-def reach(g, start):
-    seen, stack = set(), [start]
-    while stack:
-        x = stack.pop()
-        for y in g.get(x, ()):
-            if y not in seen:
-                seen.add(y)
-                stack.append(y)
-    return seen
 
 
 # ---------------------------------------------------------------------------------------------
@@ -5710,6 +5937,141 @@ def ctl_r45(v):
     return _member_noexcept(v, lint.EPOCH_HPP, "NetworkEpoch", "x_emit", "x_emit() declared noexcept")
 
 
+# Hardening round 3: what the epoch's translation unit reads beyond its own text, and how the
+# build compiles it.
+def _narrowed_overload(v, prefer="networkEmitStore", spine_only=False):
+    """(seam, text) of an inline overload of a seam the epoch function calls, its epoch
+    parameter narrowed from `const NetworkEpoch&` to `NetworkEpoch&`: an exact match for the
+    spine's non-const `ep`, so overload resolution prefers it to the seam's epoch form.  For
+    networkEmitStore it empties the per-satellite discontinuity bumps and the global datum bump
+    before forwarding (fooling FA).  A converted free seam is preferred (@p spine_only: only
+    one); else any network* seam the epoch function calls."""
+    free = [n for n in sorted(v.converted) if v.by_name[n].mech not in (RUN, MEMBER)]
+    name = prefer if prefer in free else (free[0] if free else None)
+    if name is not None:
+        types = list(v.epoch_signature(v.by_name[name])[0])
+    elif spine_only or not v.epoch:
+        return None, None
+    else:
+        name, types = _called_name(v, prefer), ["NetworkRun&", "const NetworkEpoch&"]
+        if name is None:
+            return None, None
+    params = ", ".join(f"{t.replace('const NetworkEpoch&', 'NetworkEpoch&')} a{k}" for k, t in enumerate(types))
+    args = ", ".join(["a0", "static_cast<const NetworkEpoch&>(a1)"] + [f"a{k}" for k in range(2, len(types))])
+    body = ("a1.prep.retro_emit_sats.clear(); a1.prep.global_bump = false; "
+            if name == "networkEmitStore" else "")
+    text = (f"namespace GnssProcessor {{\n"
+            f"inline void {name}({params}) {{ {body}{name}({args}); }}\n"
+            f"}} // namespace GnssProcessor\n")
+    return name, text
+
+
+def _include_in_epoch_tu(v, line):
+    """The epoch translation unit's text with @p line in place of the blank line before
+    `namespace GnssProcessor {` (no line moves), or inserted there."""
+    src = v.cand.T.source
+    k = src.find("\n\nnamespace GnssProcessor {")
+    if k >= 0:
+        return src[:k] + "\n" + line + src[k + 1:]
+    k = src.find("namespace GnssProcessor {")
+    return None if k < 0 else src[:k] + line + "\n" + src[k:]
+
+
+def ctl_r46(v):
+    """FA: a new include/app/NetworkEpochCompat.inl holds a narrowed overload of a called seam;
+    the epoch's translation unit includes it on its blank line before the namespace."""
+    if not v.epoch:
+        return None, "no epoch function"
+    name, text = _narrowed_overload(v)
+    tu = _include_in_epoch_tu(v, '#include "app/NetworkEpochCompat.inl"')
+    if name is None or tu is None:
+        return None, "the epoch function calls no network* seam"
+    inl = "#pragma once\n#include \"app/NetworkEpoch.hpp\"\n#include \"app/NetworkRun.hpp\"\n" + text
+    return {"include/app/NetworkEpochCompat.inl": inl, lint.EPOCH_CPP: tu}, \
+        f"a narrowed overload of {name} in an included .inl file"
+
+
+def ctl_r47(v):
+    """FB: the hand-written engine specification test (listed in gnss_tests) holds a narrowed
+    overload of a called seam; the epoch's translation unit includes it by a relative path."""
+    if not v.epoch:
+        return None, "no epoch function"
+    name, text = _narrowed_overload(v)
+    tu = _include_in_epoch_tu(v, f'#include "../../../{ENGINE_SPEC_TEST}"')
+    if name is None or tu is None:
+        return None, "the epoch function calls no network* seam"
+    ov = {ENGINE_SPEC_TEST: (v.tree.read(ENGINE_SPEC_TEST) or "// The engine specification test (spec 5.9).\n")
+          + "\n#include \"app/NetworkEpoch.hpp\"\n#include \"app/NetworkRun.hpp\"\n" + text,
+          lint.EPOCH_CPP: tu}
+    cm = v.tree.read(lint.CMAKE) or ""
+    if ENGINE_SPEC_TEST not in cm:
+        m = re.search(r"^([ \t]*)" + re.escape(CONTRACT_TEST) + r"[ \t]*\n", cm, re.M)
+        if m is None:
+            return None, f"{CONTRACT_TEST} is not listed"
+        ov[lint.CMAKE] = cm[:m.end()] + f"{m.group(1)}{ENGINE_SPEC_TEST}\n" + cm[m.end():]
+    return ov, f"a narrowed overload of {name} in the engine specification test, included by the epoch's unit"
+
+
+def ctl_r48(v):
+    """FC: a CMakeLists.txt line that names the epoch's translation unit compiles it /fp:fast."""
+    if not v.epoch:
+        return None, "no epoch function"
+    cm = v.tree.read(lint.CMAKE)
+    return {lint.CMAKE: cm.rstrip("\n") + f"\nset_source_files_properties({lint.EPOCH_CPP} PROPERTIES "
+                                          "COMPILE_OPTIONS \"/fp:fast\")\n"}, \
+        "a per-source /fp:fast on the epoch's translation unit"
+
+
+def ctl_r49(v):
+    """A narrowed overload of a converted seam in a new header under include/ (so only the
+    overload rules see it), included by the epoch's translation unit."""
+    if not v.epoch:
+        return None, "no epoch function"
+    name, text = _narrowed_overload(v, spine_only=True)
+    tu = _include_in_epoch_tu(v, '#include "app/NetworkEpochCompat.hpp"')
+    if name is None or tu is None:
+        return None, "no converted free seam"
+    hdr = "#pragma once\n#include \"app/NetworkEpoch.hpp\"\n#include \"app/NetworkRun.hpp\"\n" + text
+    return {"include/app/NetworkEpochCompat.hpp": hdr, lint.EPOCH_CPP: tu}, \
+        f"a narrowed overload of {name} in an included header"
+
+
+def ctl_r50(v):
+    """A target-wide compile definition makes one called seam's name another's (the macro
+    class of R25, through the build)."""
+    a = _called_name(v, "networkIonoDiag")
+    b = _called_name(v, "networkDdFrac")
+    if a is None or b is None or a == b:
+        return None, "the epoch function calls fewer than two network* seams"
+    cm = v.tree.read(lint.CMAKE)
+    return {lint.CMAKE: cm.rstrip("\n") + f"\ntarget_compile_definitions(gnss_core PRIVATE {a}={b})\n"}, \
+        f"`{a}={b}` defined for gnss_core"
+
+
+def ctl_r51(v):
+    """A CMake line hidden from a C++ reading: `/*` after a comment line, a compile option, and
+    `# */` (CMake reads two comments around the option)."""
+    cm = v.tree.read(lint.CMAKE)
+    lines = cm.split("\n")
+    k = next((i for i in range(len(lines) - 1) if lines[i].startswith("#") and lines[i + 1].startswith("#")), None)
+    if k is None:
+        return None, f"no two comment lines in {lint.CMAKE}"
+    lines[k:k + 1] = [lines[k] + " /*", "add_compile_options(/fp:fast)", "# */"]
+    return {lint.CMAKE: "\n".join(lines)}, "add_compile_options(/fp:fast) inside a C++ block comment"
+
+
+def ctl_r52(v):
+    """A frozen #include removed from the driver's translation unit."""
+    T = v.tree.tokens(DRIVER_PATH)
+    incs = [j for j in range(T.n) if T.k(j) == "pp" and pp_directive(T.t(j)) == "include"
+            and lint.include_target(T.t(j))[0] == '"']
+    if not incs:
+        return None, f"no quoted #include in {DRIVER_PATH}"
+    j = incs[-1]
+    a, b = T[j].pos, T[j].end
+    return {DRIVER_PATH: T.source[:a] + T.source[b:]}, f"`{T.t(j).strip()[:60]}` removed from {DRIVER_PATH}"
+
+
 def _conv(*names):
     return lambda v: all(n in v.converted for n in names)
 
@@ -5805,19 +6167,32 @@ CONTROLS = (
     Control("R43", "V3d", "NetworkRun's constructor noexcept", ctl_r43, _epoch_only),
     Control("R44", "V1d", "NetworkRunEngines' constructor noexcept", ctl_r44, _epoch_only),
     Control("R45", "V3c", "x_emit() noexcept", ctl_r45, _epoch_only),
+    # Hardening round 3 (R46 to R48 each a mutation the round-2 verifier and lint accepted;
+    # R49 to R52 the same channels by another route).
+    Control("R46", "V1e", "a narrowed seam overload in an included .inl file", ctl_r46, _epoch_only),
+    Control("R47", "V1e", "a narrowed seam overload in the engine specification test, included", ctl_r47,
+            _epoch_only),
+    Control("R48", "V1e", "a per-source /fp:fast on the epoch's translation unit", ctl_r48, _epoch_only),
+    Control("R49", "V9", "a narrowed seam overload in an included new header", ctl_r49,
+            lambda v: v.epoch and any(v.by_name[n].mech not in (RUN, MEMBER) for n in v.converted)),
+    Control("R50", "V1e", "a compile definition of a called seam's name", ctl_r50),
+    Control("R51", "V1e", "a CMake line inside a C++ block comment", ctl_r51),
+    Control("R52", "V1e", "a frozen #include removed", ctl_r52),
 )
 ALSO = {"N8": ("V3c",), "N10": ("V3e",), "N16": ("V6",), "N4": ("V10",), "N13": ("V8",),
-        "R35": ("V8",), "R36": ("V8",), "R37": ("V8",), "R38": ("V1d",)}
+        "R35": ("V8",), "R36": ("V8",), "R37": ("V8",), "R38": ("V1d",),
+        "R46": ("V9",), "R47": ("V9",), "R49": ("V1e",)}
 # Controls that fire only when every named check fails (spec 5.7: N4 fails V3a at the solve's
 # internal call "and V10"; R35 to R37 edit a seam's head and its contract-test alias together,
 # which V2 and V8 each catch; R38 edits the epoch function's declaration, V1d's, and its
-# definition, V1a's).
-REQUIRE_ALL = {"N4", "R35", "R36", "R37", "R38"}
+# definition, V1a's; R46, R47 and R49 carry an overload into the epoch's translation unit, which
+# the include rule or the new-file rule of V1e and the overload rule of V9 each catch).
+REQUIRE_ALL = {"N4", "R35", "R36", "R37", "R38", "R46", "R47", "R49"}
 # Controls the permanent lint (scripts/nom_epoch_lint.py, run standalone on the mutated tree)
 # must also fail (spec 5.7: N7 "V4 (and the lint)"; N16 is a driver write the lint's V4 owns;
-# R24 to R26 change what the compiler builds from the epoch's translation unit, which the lint's
-# V0 owns).
-LINT_CONTROLS = ("N7", "N16", "R24", "R25", "R26")
+# R24 to R26 and R46 to R50 change what the compiler builds from the epoch's translation unit,
+# which the lint's V0 owns).
+LINT_CONTROLS = ("N7", "N16", "R24", "R25", "R26", "R46", "R47", "R48", "R49", "R50")
 
 
 def _lint_rc(tree, partial, presolve_writer):

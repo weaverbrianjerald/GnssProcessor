@@ -20,7 +20,18 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       epoch function calls is declared in that translation unit outside the function (a
       better-matching overload, a variable or a type of a seam's name would capture the
       call); and each converted seam the spine calls has one epoch-form definition of that
-      arity.
+      arity.  What the translation unit reads beyond its own text: every tree file it reaches
+      through #include, directly or through a header, is a header (.hpp or .h under include/
+      or third_party/), so no source, test or inline file carries a declaration into it, and
+      every directive names its header literally; no declaration in that closure can take a
+      spine call from its seam (a declaration of the seam's name whose first parameter binds
+      `run` exactly, through NetworkRun, an alias of it, a template parameter or `auto`, has
+      the parameter types of the seam's one epoch-form definition: a narrowed overload taking
+      `NetworkEpoch&` would be the better match).  How the build compiles it: CMakeLists.txt
+      lists the translation unit once, as a target's source, and names it nowhere else (no
+      per-source compile option, definition or flag but `COMPILE_FLAGS "/bigobj"`); no compile
+      definition defines a name the epoch function calls; no option forces a header into
+      every translation unit (/FI, -include, precompiled headers).
   V4  Driver writes after the solve.  In Application::networkProcessEpoch_, after the
       statement `ep.solve = networkSolveGlue(...)`, the only writes into `ep` are the four
       driver stores `ep.ar_fixes =`, `ep.fixed_cycles =`, `ep.prep =`, `ep.emitted =` (each
@@ -80,7 +91,7 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, statements,  # noqa: E402
+from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_angle, statements,  # noqa: E402
                      strip_parens)
 from rt_seam_verify import strip_comments  # noqa: E402
 
@@ -228,6 +239,355 @@ def cond_include_lines(T):
             continue
         stack[-1]["clean"] = False        # code, or another directive, inside the group
     return ok
+
+
+# ---------------------------------------------------------------------------------------------
+# What a translation unit reads: its #include closure, the declarations there, the build list
+# ---------------------------------------------------------------------------------------------
+# The include directories of the project's targets (CMakeLists.txt: include/ for every target,
+# third_party/sofa through the sofa library gnss_core links); a name found in none of them, nor
+# beside an including file, is a library or system header.
+INCLUDE_DIRS = ("include", "third_party/sofa")
+HEADER_EXT = (".hpp", ".h")
+CMAKE = "CMakeLists.txt"
+# The C++17 standard library headers (an angle include of one names no file of the tree).
+STD_HEADERS = frozenset("""
+algorithm any array atomic bitset cassert cctype cerrno cfenv cfloat charconv chrono cinttypes
+ciso646 climits clocale cmath codecvt complex condition_variable csetjmp csignal cstdarg cstddef
+cstdint cstdio cstdlib cstring ctime cuchar cwchar cwctype deque exception execution filesystem
+forward_list fstream functional future initializer_list iomanip ios iosfwd iostream istream
+iterator limits list locale map memory memory_resource mutex new numeric optional ostream queue
+random ratio regex scoped_allocator set shared_mutex sstream stack stdexcept streambuf string
+string_view system_error thread tuple type_traits typeindex typeinfo unordered_map
+unordered_set utility valarray variant vector
+""".split())
+_INCLUDE = re.compile(r'\s*(?:#|%:)\s*include\s*(?:"([^"\n]*)"|<([^>\n]*)>)')
+
+
+def include_target(text):
+    """(quote, name) of an #include directive's text: ('"', 'app/X.hpp') or ('<', 'vector');
+    (None, the directive's text) when it names its header through a macro."""
+    m = _INCLUDE.match(text)
+    if not m:
+        return None, text.strip()
+    return ('"', m.group(1)) if m.group(1) is not None else ("<", m.group(2))
+
+
+def include_spelling(quote, name):
+    return f'"{name}"' if quote == '"' else f"<{name}>"
+
+
+def resolve_include(tree, includer, quote, name, tu=None):
+    """The tree file an #include names, searched as the compiler searches: a quoted name beside
+    the including file, then beside the translation unit @p tu, then in each include
+    directory; an angle name in the include directories only.  None when no tree file matches
+    (a library or system header).  A name that leaves the tree (`..` above the root, an
+    absolute path) is returned as normalized, starting with `../` or `/`, so no caller takes
+    it for a header of the tree."""
+    import posixpath
+    if name.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", name):
+        return "/" + name.lstrip("/\\")
+    name = name.replace("\\", "/")
+    dirs = []
+    if quote == '"':
+        dirs.append(posixpath.dirname(includer))
+        if tu is not None and posixpath.dirname(tu) not in dirs:
+            dirs.append(posixpath.dirname(tu))
+    dirs += list(INCLUDE_DIRS)
+    for d in dirs:
+        c = posixpath.normpath(posixpath.join(d, name)) if d else posixpath.normpath(name)
+        if c == ".." or c.startswith("../"):
+            return c
+        if tree.read(c) is not None:
+            return c
+    return None
+
+
+def is_header_path(path):
+    """A header of the project or of a vendored library: a .hpp or .h file under include/ or
+    third_party/."""
+    return path is not None and path.endswith(HEADER_EXT) and path.startswith(("include/", "third_party/"))
+
+
+# What a file declares, includes and calls depends on its text alone, so the readings below are
+# kept per text: a file the candidate shares with the frozen tree is read once.
+_BY_TEXT = {}
+
+
+def _by_text(kind, tree, path, compute):
+    text = tree.read(path)
+    if text is None:
+        return None
+    key = (kind, text)
+    if key not in _BY_TEXT:
+        _BY_TEXT[key] = compute(text)
+    return _BY_TEXT[key]
+
+
+_INCLUDE_LINE = re.compile(r"^[ \t]*(?:#|%:)[ \t]*include\b.*$", re.M)
+
+
+def file_includes(tree, path):
+    """[(line, quote, name)] of every #include directive of @p path (conditional ones too), in
+    order, read from its comment-free text; quote None for a directive that names its header
+    through a macro."""
+    def compute(text):
+        out = []
+        if "include" in text:
+            text = strip_comments(text)
+            for m in _INCLUDE_LINE.finditer(text):
+                q, name = include_target(m.group())
+                out.append((text.count("\n", 0, m.start()) + 1, q, name))
+        return out
+    return _by_text("includes", tree, path, compute) or []
+
+
+def overlay_parts(tree):
+    """(the tree that owns the unchanged files, the overlay's replaced paths, whether the overlay
+    adds or deletes a file): an overlay that only edits files resolves every include as its
+    parent does."""
+    root = getattr(tree, "parent", None) or tree
+    ov = getattr(tree, "overrides", None) or {}
+    structural = any(v is None or root.read(p) is None for p, v in ov.items())
+    return root, ov, structural
+
+
+def include_closure(tree, tu):
+    """{file: [(line, quote, name, resolved)]} of the translation unit @p tu and every tree file
+    it reaches through #include, conditional directives included (a superset of what one
+    configuration compiles); resolved is None for a library or system header.  The closure of
+    a tree is kept; an overlay that only edits files outside it reuses its parent's."""
+    root, ov, structural = overlay_parts(tree)
+    cache = root.__dict__.setdefault("_ep1_closures", {})
+    hit = cache.get(tu)
+    if hit is not None and not structural and not (set(ov) & set(hit)):
+        return hit
+    rcache = {} if structural else root.__dict__.setdefault("_ep1_resolved", {})
+    clo = _include_closure(tree, tu, rcache)
+    if not ov:
+        cache[tu] = clo
+    return clo
+
+
+def _include_closure(tree, tu, rcache):
+    import posixpath
+    tudir = posixpath.dirname(tu)
+    out, stack = {}, [tu]
+    while stack:
+        p = stack.pop()
+        if p in out:
+            continue
+        items = []
+        if not p.startswith(("../", "/")) and p != "..":
+            for ln, q, name in file_includes(tree, p):
+                r = None
+                if q is not None:
+                    key = (p, q, name, tudir if q == '"' else None)
+                    if key not in rcache:
+                        rcache[key] = resolve_include(tree, p, q, name, tu)
+                    r = rcache[key]
+                items.append((ln, q, name, r))
+                if r is not None and r not in out:
+                    stack.append(r)
+        out[p] = items
+    return out
+
+
+def _is_template(T, f):
+    """True when the declaration @p f follows a `template <...>` head."""
+    if T.t(f.start - 1) not in (">", ">>"):
+        return False
+    for k in range(f.start - 2, max(-1, f.start - 400), -1):
+        if T.t(k) == "template" and T.t(k + 1) == "<":
+            m = match_angle(T, k + 1, T.n)
+            return m == f.start - 1
+    return False
+
+
+def _first_type(types):
+    """The bare type name of a parameter list's first parameter: cv-qualifiers, references,
+    pointers and namespace qualifiers removed (`const ns::NetworkRun&` reads `NetworkRun`)."""
+    if not types:
+        return ""
+    t = re.sub(r"\b(const|volatile)\b", " ", types[0])
+    t = re.sub(r"[&*\s]+", " ", t).strip()
+    return t.split("::")[-1].strip()
+
+
+def file_decls(tree, path):
+    """What one file declares that can change how a call resolves: {name: [(parameter types,
+    template?)]} of its free functions (declarations and definitions, in any namespace;
+    member functions excluded), the names it #defines, the names its using-declarations
+    bring in, whether it holds a using-directive, and {alias: aliased type text} of its
+    type aliases (`using A = B;`, `typedef B A;`)."""
+    return _by_text("decls", tree, path, lambda text: _file_decls(tree, path)) or ({}, set(), set(), False, {})
+
+
+def _file_decls(tree, path):
+    T, idx = tree.tokens(path), tree.index(path)
+    funcs = collections.defaultdict(list)
+    macros, usings, aliases, directive = set(), set(), {}, False
+    if T is not None:
+        for f in idx.funcs:
+            if f.cls:
+                continue
+            types = tuple(ptype(q) for q in f.params) if f.params is not None else ("?",)
+            funcs[f.name].append((types, _is_template(T, f)))
+        for j in range(T.n):
+            x = T.t(j)
+            if T.k(j) == "pp":
+                m = re.match(r"\s*(?:#|%:)\s*define\s+(\w+)", x)
+                if m:
+                    macros.add(m.group(1))
+                continue
+            if x == "using":
+                e = j + 1
+                while e < T.n and T.t(e) not in (";", "{", "}"):
+                    e += 1
+                body = [T.t(q) for q in range(j + 1, e)]
+                if body[:1] == ["namespace"]:
+                    directive = True
+                elif "=" in body and body and T.k(j + 1) == "id":
+                    aliases[body[0]] = " ".join(body[body.index("=") + 1:])
+                elif body:
+                    usings.add(body[-1])
+            elif x == "typedef":
+                e = j + 1
+                while e < T.n and T.t(e) not in (";", "{", "}"):
+                    e += 1
+                if e - 1 > j + 1 and T.k(e - 1) == "id":
+                    aliases[T.t(e - 1)] = " ".join(T.t(q) for q in range(j + 1, e - 1))
+    return dict(funcs), macros, usings, directive, aliases
+
+
+def file_calls(tree, path):
+    """({called name}, {identifier}) of @p path: the last component of every `name(` call and
+    every identifier token."""
+    def compute(text):
+        T = tree.tokens(path)
+        return ({re.split(r"\.|->|::", c.name)[-1] for c in calls_in(T, 0, T.n)},
+                {T.t(j) for j in range(T.n) if T.k(j) == "id"})
+    return _by_text("calls", tree, path, compute) or (set(), set())
+
+
+def cmake_commands(text):
+    """The command invocations of a CMake file: [(name, [(argument, line)], first line)], the
+    name lower-cased, quoted arguments without their quotes, comments (`#` to the end of the
+    line, `#[[...]]`) removed."""
+    out, i, n, line = [], 0, len(text), 1
+
+    def skip_comment(i, line):
+        m = re.match(r"#\[(=*)\[", text[i:])
+        if m:
+            end = text.find("]" + m.group(1) + "]", i)
+            end = n if end < 0 else end + len(m.group(1)) + 2
+        else:
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+        return end, line + text.count("\n", i, end)
+
+    while i < n:
+        c = text[i]
+        if c == "\n":
+            line += 1
+            i += 1
+        elif c == "#":
+            i, line = skip_comment(i, line)
+        elif re.match(r"[A-Za-z_]", c):
+            m = re.match(r"[A-Za-z_]\w*", text[i:])
+            name, j = m.group(), i + m.end()
+            while j < n and text[j] in " \t":
+                j += 1
+            if j >= n or text[j] != "(":
+                i = j
+                continue
+            first, depth, args, j = line, 1, [], j + 1
+            while j < n and depth:
+                c = text[j]
+                if c == "\n":
+                    line += 1
+                    j += 1
+                elif c in " \t\r":
+                    j += 1
+                elif c == "#":
+                    j, line = skip_comment(j, line)
+                elif c == "(":
+                    depth += 1
+                    j += 1
+                elif c == ")":
+                    depth -= 1
+                    j += 1
+                elif c == '"':
+                    k, start = j + 1, line
+                    while k < n and text[k] != '"':
+                        if text[k] == "\\":
+                            k += 1
+                        elif text[k] == "\n":
+                            line += 1
+                        k += 1
+                    args.append((text[j + 1:k], start))
+                    j = k + 1
+                elif c == "[" and re.match(r"\[=*\[", text[j:]):
+                    m2 = re.match(r"\[(=*)\[", text[j:])
+                    end = text.find("]" + m2.group(1) + "]", j)
+                    end = n if end < 0 else end
+                    args.append((text[j + m2.end():end], line))
+                    line += text.count("\n", j, end)
+                    j = end + len(m2.group(1)) + 2
+                else:
+                    m2 = re.match(r'(?:[^\s()#"\\]|\\.)+', text[j:])
+                    if not m2:
+                        j += 1
+                        continue
+                    args.append((m2.group(), line))
+                    j += m2.end()
+            out.append((name.lower(), args, first))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+_CMAKE_KEYWORDS = frozenset(("PRIVATE", "PUBLIC", "INTERFACE", "BEFORE", "AFTER", "PROPERTIES",
+                             "SOURCE", "TARGET", "DIRECTORY", "APPEND", "APPEND_STRING", "GLOBAL"))
+
+
+def cmake_macro_names(cmds):
+    """{name: line} of every preprocessor macro the CMake commands define for a compile: the
+    entries of add_compile_definitions / target_compile_definitions and of a COMPILE_DEFINITIONS
+    property, and any `-D` / `/D` option (in add_definitions, compile options or a flags
+    string)."""
+    out = {}
+    for name, args, _ in cmds:
+        defs = name in ("add_compile_definitions", "target_compile_definitions")
+        in_prop = False
+        for k, (a, ln) in enumerate(args):
+            for m in re.finditer(r"(?:^|[\s;])[-/]D\s*([A-Za-z_]\w*)", a):
+                out.setdefault(m.group(1), ln)
+            if a.upper().startswith("COMPILE_DEFINITIONS"):
+                in_prop = True
+                continue
+            if defs and (k == 0 and name == "target_compile_definitions"):
+                continue
+            if (defs or in_prop) and a not in _CMAKE_KEYWORDS:
+                for item in a.split(";"):
+                    m = re.match(r"\s*([A-Za-z_]\w*)", item)
+                    if m:
+                        out.setdefault(m.group(1), ln)
+    return out
+
+
+def cmake_forced_includes(cmds):
+    """[(line, text)] of the CMake commands and options that force a header into every
+    translation unit of a target (`/FI`, `-include`, target_precompile_headers)."""
+    out = []
+    for name, args, first in cmds:
+        if name == "target_precompile_headers":
+            out.append((first, name))
+        for a, ln in args:
+            if re.search(r"(?:^|[\s;])(?:[-/]FI|-include\b|/Yu|/Yc)", a):
+                out.append((ln, a))
+    return out
 
 
 class Sub:
@@ -855,6 +1215,108 @@ class Lint:
                 P.append(f"{fn.path}:{T.line(sc.call.tok)}: {sc.callee} has {len(ds)} epoch-form definitions "
                          f"of arity {sc.call.nargs} ({', '.join(f'{f.path}:{f.line}' for f in ds)})")
         self.info["V0"].append(f"one definition, {len(called)} called names, {len(self.spine)} spine calls")
+        clo = self.v0_includes()
+        self.v0_overloads(clo)
+        self.v0_cmake(called)
+
+    def v0_includes(self):
+        """The epoch function's translation unit reads only headers: every tree file it
+        reaches through #include, directly or through a header, is a .hpp or .h file under
+        include/ or third_party/, and every directive names its header literally.  A source
+        file, a test file, an inline file or a file beside the translation unit would carry
+        declarations into the epoch function's scope that no header review reads.  Returns the
+        include closure ({file: [(line, quote, name, resolved)]})."""
+        P = self.problems["V0"]
+        clo = include_closure(self.tree, self.fn.path)
+        for p in sorted(clo):
+            for ln, q, name, r in clo[p]:
+                if q is None:
+                    P.append(f"{p}:{ln}: `{name[:70]}` names its header through a macro (the epoch function's "
+                             "translation unit includes headers by name only)")
+                elif r is not None and not is_header_path(r):
+                    P.append(f"{p}:{ln}: `#include {include_spelling(q, name)}` reaches {r}, which is not a header "
+                             "under include/ or third_party/: the epoch function's translation unit reads "
+                             "headers only")
+        self.info["V0"].append(f"{len(clo)} files in its translation unit")
+        return clo
+
+    def v0_overloads(self, clo):
+        """No declaration the translation unit sees can take a spine call from its seam: every
+        declaration of a spine seam's name in the include closure whose first parameter can
+        bind `run` exactly (its bare type NetworkRun or an alias of it, a template parameter,
+        `auto`) has the parameter types of the seam's one epoch-form definition.  A narrowed
+        overload (`NetworkEpoch&` for `const NetworkEpoch&`) is an exact match that overload
+        resolution prefers, so the spine would call it instead of the seam."""
+        P = self.problems["V0"]
+        decls = {p: file_decls(self.tree, p) for p in clo if not p.startswith(("../", "/"))}
+        run_names, grew = {"NetworkRun"}, True
+        while grew:
+            grew = False
+            for _, _, _, _, aliases in decls.values():
+                for a, target in aliases.items():
+                    if a not in run_names and _first_type([target]) in run_names:
+                        run_names.add(a)
+                        grew = True
+        n = 0
+        for sc in self.spine:
+            leaf = re.split(r"\.|->|::", sc.callee)[-1]
+            ds = [f for f in self.defs.find(leaf) if len(f.params) == sc.call.nargs]
+            if len(ds) != 1:
+                continue
+            want = tuple(ptype(q) for q in ds[0].params)
+            for p, (funcs, _, _, _, _) in sorted(decls.items()):
+                for types, tmpl in funcs.get(leaf, ()):
+                    n += 1
+                    first = _first_type(types)
+                    if types != want and (tmpl or first in run_names or first in ("auto", "")
+                                          or first.startswith("decltype")):
+                        P.append(f"{p}: declares {leaf}({', '.join(types)}){' (a template)' if tmpl else ''}, which "
+                                 f"can take the spine call at {self.fn.path}:{self.fn.T.line(sc.call.tok)} from the "
+                                 f"seam's epoch form {leaf}({', '.join(want)})")
+        self.info["V0"].append(f"{n} declarations of spine seams' names in the translation unit")
+
+    def v0_cmake(self, called):
+        """The build compiles the epoch function's translation unit as it reads: CMakeLists.txt
+        lists src/core/app/ApplicationNetworkEpoch.cpp once, as a target's source, and names it
+        nowhere else (no per-source property: compile options, definitions or flags, the one
+        exception being MSVC's section-count flag `COMPILE_FLAGS "/bigobj"`); no compile
+        definition defines a name the epoch function calls (`networkIonoDiag=networkDdFrac`
+        is a macro the compiler applies and the lint would not read); no option forces a header
+        into the translation units (`/FI`, `-include`, precompiled headers)."""
+        P = self.problems["V0"]
+        text = self.tree.read(CMAKE)
+        if text is None:
+            self.info["V0"].append(f"no {CMAKE} in the tree")
+            return
+        cmds = cmake_commands(text)
+        base = EPOCH_CPP.rsplit("/", 1)[-1]
+        listed = 0
+        for name, args, first in cmds:
+            hits = [(a, ln) for a, ln in args if base in a]
+            if not hits:
+                continue
+            if name in ("add_library", "add_executable", "target_sources"):
+                for a, ln in hits:
+                    if re.sub(r"^\$\{CMAKE_(?:CURRENT_)?SOURCE_DIR\}/", "", a) == EPOCH_CPP:
+                        listed += 1
+                    else:
+                        P.append(f"{CMAKE}:{ln}: `{a[:70]}` in {name}(...) names the epoch function's translation "
+                                 f"unit otherwise than as the source {EPOCH_CPP}")
+                continue
+            props = [a for a, _ in args]
+            if name == "set_source_files_properties" and "PROPERTIES" in props and \
+                    props[props.index("PROPERTIES") + 1:] == ["COMPILE_FLAGS", "/bigobj"]:
+                continue
+            P.append(f"{CMAKE}:{first}: {name}(...) names {EPOCH_CPP}: a per-source property compiles the epoch "
+                     "function otherwise than the lint reads it")
+        if listed != 1:
+            P.append(f"{CMAKE}: {EPOCH_CPP} is listed {listed} times as a target's source (once expected)")
+        for m, ln in sorted(cmake_macro_names(cmds).items()):
+            if m in called:
+                P.append(f"{CMAKE}:{ln}: a compile definition of `{m}`, a name the epoch function calls")
+        for ln, a in cmake_forced_includes(cmds):
+            P.append(f"{CMAKE}:{ln}: `{a[:70]}` forces a header into every translation unit of a target")
+        self.info["V0"].append(f"{CMAKE}: {len(cmds)} commands, the translation unit listed {listed} time(s)")
 
     def v4(self):
         fn = self.fn
