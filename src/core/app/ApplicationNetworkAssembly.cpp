@@ -40,6 +40,10 @@
 #include "filter/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
 #include "filter/NetworkContributions.hpp" // row tags and the contribution tallies (card NOM N2a)
 #include "filter/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
+#include "filter/NetworkShDevVtec.hpp"     // networkShDevCarryAge (card NOM3 step PB1a)
+#include "filter/NetworkStationBuild.hpp"  // networkAssemblyTally (card NOM3 step PB1a)
+#include "filter/NetworkSolveStations.hpp" // the consume and the in-solve track (PB1a)
+#include "filter/NetworkChainDatum.hpp"    // networkEq34PinAudit (card NOM3 step PB1a)
 #include "filter/NetworkArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps (card ARL)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
@@ -2888,16 +2892,11 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     NetworkSetupResult& setup = run.setup;
     NetworkRunTraces& traces = run.traces;
     NetworkEstimator& est = run.engines.est;
-    const std::set<std::pair<int, std::string>>& carry_slipped_ambs = nep.funnel.carry_slipped_ambs;
-    const std::set<std::pair<int, std::string>>& carry_slipped_raw = nep.funnel.carry_slipped_raw;
     bool carry_warm = nep.clock.carry_warm;
     double pl_now_s = nep.clock.pl_now_s;
     std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;  // written
     std::vector<bool>& present = pass_a.present;  // written
     const std::set<std::string>& shared_phase_keys = nep.pass_a.shared_phase_keys;
-    const std::vector<std::string>& registered_clock_sats = nep.columns.registered_clock_sats;
-    const std::vector<std::pair<std::string, std::string>>& registered_code_keys =
-        nep.columns.registered_code_keys;
     int n_clock = nep.columns.n_clock;
     int n_pb = nep.columns.n_pb;
     int n_present = nep.columns.n_present;
@@ -2907,17 +2906,8 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     double& sec_asm_ms_epoch = assembly.sec_asm_ms_epoch;  // written
     double& sec_asm_wall_ms = run.timing.asm_wall_ms;
     // ---- End of the bindings ----
-    // Alias block (INC-7 migration mechanic): copies of the runNetwork()
-    // alias/derivation lines, bound to the same underlying objects.
-    auto log = log_manager_.getLogger("main_log");
-    const auto& nc = config_.getNetworkConfig();
     const bool sec_timers_on = ctx.knobs.sec_timers_on;
-    // The SH-deviation carry's switches, resolved in NetworkKnobs::snapshot (card NOM3
-    // step EP0; they were parameters, computed by the driver with the same expressions).
-    const double sh_dev_tau     = ctx.knobs.sh_dev_tau;
     const bool   sh_dev_on      = ctx.knobs.sh_dev_on;
-    const bool   sh_dev_demean  = ctx.knobs.sh_dev_demean;    // anti-ratchet de-mean (Iono-2 v3)
-    const bool   sh_dev_d5_keep = ctx.knobs.sh_dev_d5_keep;   // erase-policy split (v3k)
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     auto& stations = setup.stations;
     const int n_sta_total = setup.n_sta_total;
@@ -2929,11 +2919,9 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     const double q_clock = ctx.params.q(SharedParamKind::Clock);     // m²/s
     const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s
     const double q_cb    = ctx.params.q(SharedParamKind::CodeBias);  // m²/s (W6 OSB carry-forward)
-    const bool   pl_on         = ctx.knobs.pl_on;
     const double pl_q_amb      = ctx.knobs.pl_q_amb;
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     const double pl_var_floor  = ctx.knobs.pl_var_floor;  // lock-in guard; 0 = off
-    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide jointly whitened local block at inject (F3, SPEC_amb_iono_split_overcount); off = byte-identical
     // Record, per folded ambiguity column, the variance the fold actually used and the
     // route it took, into this station's own StationAssembly (network.trace_amb_state,
     // RF-1 §7.4).  Measure-only; when off the map is never touched, so the produce loop
@@ -2948,7 +2936,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     const bool   amb_floor_on  = ctx.knobs.amb_birth_floor_on;   // amb_float_kf and a birth floor > 0
     // Read-only parallel consult of the latched free-epoch set
     // (SPEC_slip_relevel_walk; filled serially in PASS-A, const for the whole produce).
-    const bool   relevel_free_on = config_.networkCycleSlipRelevelFreeEpoch();
+    const bool   relevel_free_on = ctx.knobs.relevel_free_on;
     // Simulation-only oracle ambiguity pin (filter/NetworkOraclePin): this epoch's
     // pin table, built serially before PASS B and only read here.  A const pointer,
     // null on every run with no `oracle_pin` event armed, so the produce loop's pin
@@ -2962,9 +2950,8 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // Live predicate for F3: the block's rows are Card-1 coupling rows (A_s/A_r) (the
     // loader warns that the knob is inert without them).  A single const bool, so the
     // off path never reaches a block branch.
-    const bool   pl_blk_on = pl_local_block && carry_cpl_cond;
+    const bool   pl_blk_on = ctx.knobs.pl_blk_on;
     const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection, κ shrink + M²κq inflation (Card 1d); requires carry_cpl_cond (enforced at load)
-    const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // widen the reinit feed to the realization-step sources and honour it with κ off (Card 1g); requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // carry per-station ZWD across epochs (B9)
     // ZWD carry random-walk process noise (B9, m²/s): both fold sites read
     // `zwd_q_eff` below rather than a bare `zwd_q` alias, so a seam window's own q
@@ -2994,7 +2981,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // per-column route (F3 off, coupling rows off) is never touched; there the ZWD
     // keeps its B9 row.  The loader already refuses the arm without carry_zwd +
     // phase_leveling_local_block; this is the live half of the same gate.
-    const bool   zwd_blk_on    = ctx.knobs.zwd_in_block && pl_blk_on;
+    const bool   zwd_blk_on    = ctx.knobs.zwd_blk_on;
     // Live predicate for I-in-block (network.carry_iono_in_block): the station's
     // carried per-LOS slant-iono columns join the F3 whitened block.  Conjoined with
     // pl_blk_on as for the ZWD, and here the conjunction is load-bearing: the card has
@@ -3002,7 +2989,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // QUEUE-8(b) vehicle), so off the block path there is nothing to do.  The loader
     // already refuses the arm without phase_leveling + phase_leveling_local_block;
     // this is the live half of that gate.
-    const bool   iono_blk_on   = ctx.knobs.iono_blk && pl_blk_on;
+    const bool   iono_blk_on   = ctx.knobs.iono_blk_on;
     const double iono_blk_q    = ctx.knobs.iono_blk_q_m2;      // m² at L1, per epoch
     const double iono_blk_gap_s = ctx.knobs.iono_blk_max_gap_s;
     // Live predicate for RX-CLK-in-block (network.carry_rx_clock_in_block): the
@@ -3013,7 +3000,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // off the block path there is nothing to do.  The loader already refuses the arm
     // without phase_leveling + phase_leveling_local_block; this is the live half of
     // that gate.
-    const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk && pl_blk_on;
+    const bool   rxclk_blk_on  = ctx.knobs.rxclk_blk_on;
     const double rxclk_q       = ctx.knobs.rxclk_q_m2;       // m², per epoch
     const double rxclk_gap_s   = ctx.knobs.rxclk_max_gap_s;
     const double rxclk_rate_var0 = ctx.knobs.rxclk_rate_var0; // m²/s², the unknown-drift prior
@@ -3028,8 +3015,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // every station-epoch (no diagonal fallback, as for the receiver clock).  The
     // loader guarantees the carry, the coupling rows and a local block; pl_blk_on is the
     // live half of that gate.
-    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk && pl_blk_on && rx_cb_on;
-    const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
+    const bool   rxcb_blk_on   = ctx.knobs.rxcb_blk_on;
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md): build the carry-neutral
     // checkable-column census `qc_amb` alongside (not instead of) the carry's pl_amb.
@@ -3052,11 +3038,8 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     // empty (byte-identical, no allocation).
     const bool congruence_rows         = ctx.knobs.cg_on;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
-    const double eq34_rpb_prior_sigma = ctx.knobs.eq34_rpb_prior_sigma;
     const double eq34_rpb_prior_w = ctx.knobs.eq34_rpb_prior_w;
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
-    auto& prev_carry = ctx.carry.prev_carry;
-    auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
     auto& tu_reinit_hist = ctx.carry.tu_reinit_hist;
     auto& local_carry = ctx.carry.local_carry;
     auto& zwd_carry = ctx.carry.zwd_carry;
@@ -3066,10 +3049,6 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     auto& rpb_carry = ctx.carry.rpb_carry;
     auto& sh_dev_carry = ctx.carry.sh_dev_carry;
     auto& rx_cb_carry = ctx.carry.rx_cb_carry;   // rx-CB carry: produce phase reads only
-    auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
-    auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
-    auto& n_cpl_terms_shrunk = ctx.counters.n_cpl_terms_shrunk;
-    auto& n_cpl_row_dump = ctx.counters.n_cpl_row_dump;
     auto& n_skipped = ctx.counters.n_skipped;
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
@@ -3094,150 +3073,9 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
     std::chrono::steady_clock::time_point sec_asm_t0;
     if (sec_timers_on) sec_asm_t0 = std::chrono::steady_clock::now();
 
-    // Age the SH-deviation carries once per epoch (T5v2), serially; the parallel
-    // assembly below only reads them.  GM prediction in vertical TECU: dev *= λ,
-    // P → λ²P + σ_ss²(1−λ²); entries unseen for > 5τ are dropped (fully
-    // decorrelated, so the cold seed the pin then uses is statistically
-    // equivalent).  Slip integration (Iono-2, standing invariant #1): a cycle slip
-    // aliases n·λ into the GF slant iono, so any (station,sat) with an entry in
-    // this epoch's C3c funnel is erased (reset, not repair; cold re-tap at σ_ss),
-    // subject to the v3k split below.  The funnel's per-signal keys project to the
-    // satellite (union semantics; an LLI single-band event still resets the
-    // per-sat state).  They are recorded at the PASS-A detection site, so the erase
-    // lands in the epoch the slip was seen and a corrupted pre-slip deviation never
-    // constrains a post-slip row.
-    if (sh_dev_on) {
-        std::set<std::string> slipped_los;   // "STATION|SAT" projection of the funnel
-        std::set<std::string> raw_los;       // the raw-detector-confirmed subset (v3k)
-        for (const auto& sk : carry_slipped_ambs) {
-            if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
-            const auto parts = StateKeys::parseAmbiguityKey(sk.second);
-            if (!parts) continue;
-            slipped_los.insert(stations[static_cast<std::size_t>(sk.first)].name
-                               + "|" + parts->satellite);
-        }
-        if (sh_dev_d5_keep) {
-            for (const auto& sk : carry_slipped_raw) {
-                if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
-                const auto parts = StateKeys::parseAmbiguityKey(sk.second);
-                if (!parts) continue;
-                raw_los.insert(stations[static_cast<std::size_t>(sk.first)].name
-                               + "|" + parts->satellite);
-            }
-        }
-        const double now_s = se.time.week * 604800.0 + se.time.tow;
-        for (auto it = sh_dev_carry.begin(); it != sh_dev_carry.end();) {
-            ShDevCarry& dc = it->second;
-            const double dt = now_s - dc.t_s;
-            if (!slipped_los.empty() && slipped_los.count(it->first)) {
-                // v3k erase-policy split (SPEC_iono2_mechB_v3 addendum): a
-                // raw-confirmed slip (MW/LLI/IF-TD this epoch) aliases n·λ into
-                // the GF iono, so the pre-slip deviation is invalid and is erased
-                // (invariant #1).  A D5-only re-tap (97 % have no raw observable
-                // step) is iono tension the deviation exists to absorb: keep the
-                // accumulated level and re-tap the confidence to steady state (a
-                // weak prior, so a missed fine slip is re-estimated away within a
-                // few harvests instead of being carried stiffly).  The v3 de-mean
-                // removes any common mode of the kept levels, so the keep cannot
-                // re-open the ratchet.
-                if (!sh_dev_d5_keep || raw_los.count(it->first)) {
-                    ++ctx.carry.shdev_slip_resets_total;
-                    it = sh_dev_carry.erase(it);
-                    continue;
-                }
-                shDevD5Retap(dc);
-                ++ctx.carry.shdev_d5_keeps_total;
-                // falls through to staleness + GM aging (retap is idempotent
-                // under the aging step: λ²σ_ss² + (1−λ²)σ_ss² = σ_ss²).
-            }
-            if (dc.t_s <= 0.0 || dt > 5.0 * sh_dev_tau) {
-                it = sh_dev_carry.erase(it);
-                continue;
-            }
-            if (dt > 0.0) {
-                const double lam = std::exp(-dt / sh_dev_tau);
-                dc.dev *= lam;
-                dc.var  = lam * lam * dc.var + dc.var_ss * (1.0 - lam * lam);
-            }
-            ++it;
-        }
-        // Anti-ratchet (Iono-2 v3, docs/SPEC_iono2_mechB_v3.md): remove the
-        // information-weighted global and per-station means from the carried
-        // priors.  A common vertical-TECU deviation shares the a00 column's exact
-        // row signature (M(el)·tecu_to_m), so the pair is quasi-null and the
-        // harvest→age→re-assert alternation ratchets it (a00 went from 25 to 104
-        // TECU over 3 h with the carry alone, 207–255 with the dual layer).  The
-        // common component belongs to a00 / the receiver DCB, which each epoch's
-        // data re-derives; the carry must not re-assert it as an independent
-        // prior.  Same serial context as the aging above.  Thresholds 30/4 per
-        // the spec (constants, not knobs).
-        if (sh_dev_demean) {
-            const ShDevDemeanStats ds = shDevDemean(sh_dev_carry, 30, 4);
-            if (ds.applied) {
-                ++ctx.carry.shdev_demean_epochs_total;
-                ctx.carry.shdev_demean_sta_total += ds.n_sta;
-                ctx.carry.shdev_demean_abs_g_sum += std::abs(ds.g_tecu);
-            }
-        }
-    }
-
-    // Coupling-row time update (Card 1d, network.carry_coupling_time_update): record
-    // the (kind, sat) shared keys whose carried state folds this epoch with the loose
-    // clock-monitor reinit variance (the D2 inflate_q path: the stash marks the
-    // flagged sat's clock and its phase-/code-bias entries, independently of kind;
-    // the phase-hold path keeps its pb time-locked by design and is stashed with
-    // inflate_q=false, so mirroring the stash flags reproduces the fold's exact
-    // per-kind treatment).  A coupling term on such a column must not shrink-carry:
-    // the reinit decorrelates the border column from its stashed value, so the term
-    // is fully marginalized (κ=0, σ² += M²·P_prev), mirroring the dense fold's
-    // decorrelation rule.  Kept as a history map (key → content time of the last
-    // reinit fold): a coupling row injects against its own harvest time, so a reinit
-    // inside a multi-epoch carry gap still marginalizes (a q=∞ segment anywhere
-    // inside the gap composes to κ=0).  The Clock entry also covers the clock_model
-    // on oscillator reinit (the clock never rides prev_carry there) and the
-    // hard-refloat mode (clk_mon_reinit_sig ≤ 0 skip-stashes the flagged sat
-    // entirely, so there is no prev_carry entry to mirror; all three kinds
-    // decorrelate, matching the skip-stash).  Updated serially; PASS B only reads it.
-    //
-    // Card 1g (network.carry_coupling_reinit_sources) widens both halves of this: the
-    // key gains a signal field (empty = the satellite-wide wildcard that these
-    // clock-QC feeds write, since they decorrelate a whole satellite kind by kind),
-    // and the realization-step sources below join it.  Those are a different
-    // failure: not a decorrelated variance but a frame step.  A phase-anchor
-    // handover, an eq34 chain re-reference or a datum-slip PB re-realization each
-    // erase the re-referenced family's own carry, yet every other carried local
-    // keeps a coupling[] entry on that column holding a retired-frame ŝ_prev; folded
-    // at full weight, that injects the step as row bias at conditional-variance
-    // confidence.  The step is unknown (unlike the eq34 D4 S-transform, which knows
-    // its own shift and re-bases the carry exactly), so the departed route is the
-    // only correct treatment.  Both reref sets are resolved at the phase-datum
-    // election, strictly before this serial write and hence before PASS B reads it.
-    if (carry_cpl_tu || carry_cpl_reinit) {
-        for (const CarryPrior& cp : prev_carry)
-            if (cp.inflate_q)
-                tu_reinit_hist[{cp.kind, cp.sat, std::string{}}] = pl_now_s;
-        for (const std::string& sat : prev_clock_refloat_sats) {
-            tu_reinit_hist[{SharedParamKind::Clock, sat, std::string{}}] = pl_now_s;
-            if (!(clk_mon_reinit_sig > 0.0)) {
-                tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
-                tu_reinit_hist[{SharedParamKind::CodeBias, sat, std::string{}}] = pl_now_s;
-            }
-        }
-    }
-    if (carry_cpl_reinit) {
-        // The anchored-election handovers (QUEUE item 1(d)) and the eq34 chain
-        // datum's re-references: both are sets of (sat, signal), which is exactly
-        // the granularity at which a phase-bias datum is realized.
-        for (const auto& [sat, sig] : ctx.carry.phase_anchor_reref)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
-        for (const auto& [sat, sig] : ctx.carry.eq34_reref)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, sig}] = pl_now_s;
-        // The datum-slip re-realization marks whole satellites (the slip is on the
-        // pin-holder's arc, not on one signal), so it uses the satellite-wide
-        // wildcard.
-        for (const std::string& sat : ctx.carry.datum_reref_pb_sats)
-            tu_reinit_hist[{SharedParamKind::PhaseBias, sat, std::string{}}] = pl_now_s;
-    }
+    // The serial stages before the parallel produce (card NOM3 step PB1a).
+    networkShDevCarryAge(run, nep);
+    networkCouplingReinitHistory(run, nep);
 
     #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(parallel_on)
     for (int i = 0; i < n_sta_total; ++i) {
@@ -4928,531 +4766,12 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& nep,
         }
     }
 
-    // Coupling observability (Card 1/1d), serial and post-produce: fold the
-    // per-station coupling-term counts into the run totals, plus the one-shot Card-1d
-    // debug dump of the first few assembled coupling rows (see
-    // filter/NetworkCoupling.hpp).  Free-epoch skips (SPEC_slip_relevel_walk): fold
-    // the per-station counts (serial, post-produce, the same discipline as the
-    // coupling fold below).
-    if (relevel_free_on)
-        for (const StationAssembly& Rc : asm_res)
-            ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
-    // Card NOM N1: the stations' parameter inventories, folded serially (the same
-    // discipline); networkParamInventoryEpochTail writes the table after the first
-    // emitted epoch and the teardown writes the run's.  `present` tells a roster station
-    // with no usable observations from one that was assembled but never reached its split.
-    networkParamInventoryDrain(ctx.param_inventory, asm_res, present, se.time.week, se.time.tow);
-    // Card PRM phase 3a: the produce phase's per-station response counts, folded into the
-    // run's response table (serial, the same discipline; zero where a site is unarmed).
-    for (const StationAssembly& Rc : asm_res) {
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatch,    Rc.prm_amb_free_latch);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatchReentry,
-                   Rc.prm_amb_free_latch_reentry);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbPendingReseedSkip, Rc.prm_amb_pending_reseed_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapSkip,           Rc.prm_amb_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapSkip,          Rc.prm_rxcb_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbJumpSkip,         Rc.prm_rxcb_jump_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapSkip,          Rc.prm_iono_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapSkip,         Rc.prm_rxclk_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapSkip,           Rc.prm_zwd_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapSkip,           Rc.prm_rpb_gap_skip);
-    }
-    // Simulation-only oracle ambiguity pin: fold this epoch's per-station pin
-    // accounting into the run-scope counters (serial, post-produce, the same
-    // discipline).  Null pointer when off, so this is unreachable on an unarmed run.
-    if (ctx.carry.oracle_pin) {
-        auto& op = *ctx.carry.oracle_pin;
-        for (const StationAssembly& Rc : asm_res) {
-            op.rows_injected        += Rc.opin_rows;
-            op.gauge_pinned_skipped += Rc.opin_gauge_skipped;
-            op.no_column            += Rc.opin_no_column;
-        }
-    }
-    // Fold the inject-side stale skips (the cliff mechanism, SPEC_withhold_era_release
-    // §8) and record the worst epoch with a handle a trace filter can use.
-    {
-        long long stale_ep = 0, stale_sta = 0;
-        for (const StationAssembly& Rc : asm_res)
-            if (Rc.inject_stale_skips > 0) { stale_ep += Rc.inject_stale_skips; ++stale_sta; }
-        if (stale_ep > 0) {
-            ctx.counters.n_cr_inject_stale += stale_ep;
-            ++ctx.counters.n_cr_inject_stale_epochs;
-            if (stale_ep > ctx.counters.n_cr_inject_stale_max) {
-                ctx.counters.n_cr_inject_stale_max      = stale_ep;
-                ctx.counters.n_cr_inject_stale_max_week = se.time.week;
-                ctx.counters.cr_inject_stale_max_tow    = se.time.tow;
-                ctx.counters.n_cr_inject_stale_max_sta  = stale_sta;
-            }
-        }
-    }
-    // Fold the per-station block telemetry (F3, network.phase_leveling_local_block;
-    // same discipline).  Keyed on the knob, not the live predicate, so an armed but
-    // inert posture still prints its zeros at run end (invariant #4).
-    // A non-SPD block under float_kf is a vehicle change on one station-epoch (RF-1
-    // step 3, design risk #3): the arc reverts to the per-column route the vehicle
-    // exists to replace, so it is named with its identities here, in the serial
-    // scatter (the produce loop is parallel and its log lines would interleave).
-    // Limited to the first 20 so a pathological posture cannot flood the log; the
-    // run-end bar carries the totals either way.
-    if (ctx.knobs.pl_blk_from_vehicle)
-        for (std::size_t si = 0; si < asm_res.size(); ++si) {
-            if (asm_res[si].pl_blk_fallback <= 0) continue;
-            if (ctx.counters.n_amb_block_fallback < 20)
-                log->warn("Network (RF-1 step 3): station '{}' TOW {:.1f} — the joint local "
-                          "block (dim {}) was NON-SPD after the ridge retry, so this "
-                          "station-epoch folded the carried prior as INDEPENDENT per-column "
-                          "rows instead.  Under ambiguity_vehicle = float_kf that is a "
-                          "VEHICLE CHANGE on one station-epoch, not a degraded option: those "
-                          "columns carry today's over-count for this epoch.  The run FAILS if "
-                          "the rate exceeds 1 % of attempted station-epochs.",
-                          si < stations.size() ? stations[si].name : std::string("?"),
-                          pl_now_s, asm_res[si].pl_blk_fallback_dim);
-            ctx.counters.n_amb_block_fallback += asm_res[si].pl_blk_fallback;
-        }
-    if (pl_local_block)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;
-            ctx.counters.n_pl_blk_rows         += Rc.pl_blk_rows;
-            ctx.counters.n_pl_blk_marg_cols    += Rc.pl_blk_marg_cols;
-            ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
-            ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
-            ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
-            // B9-in-block: same discipline (counted in the parallel produce, reduced here).
-            ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
-            ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;
-            ctx.counters.n_pl_blk_zwd_missing_cross += Rc.pl_blk_zwd_missing_cross;
-            // I-in-block: same discipline (counted in the parallel produce, reduced here).
-            ctx.counters.n_pl_blk_iono_cols          += Rc.pl_blk_iono_cols;
-            ctx.counters.n_pl_blk_iono_not_folded    += Rc.pl_blk_iono_not_folded;
-            ctx.counters.n_pl_blk_iono_missing_cross += Rc.pl_blk_iono_missing_cross;
-            ctx.counters.n_iono_blk_gap_drop         += Rc.pl_blk_iono_gap_drop;
-            // RX-CLK-in-block: same discipline (counted in the parallel produce,
-            // reduced here).  n_rxclk_carry_refused is not folded here: the jump
-            // response fires at the serial harvest, where the one-step prediction
-            // innovation exists.
-            ctx.counters.n_pl_blk_rxclk_cols          += Rc.pl_blk_rxclk_cols;
-            ctx.counters.n_pl_blk_rxclk_isb_cols      += Rc.pl_blk_rxclk_isb_cols;
-            ctx.counters.n_pl_blk_rxclk_not_folded    += Rc.pl_blk_rxclk_not_folded;
-            ctx.counters.n_pl_blk_rxclk_missing_cross += Rc.pl_blk_rxclk_missing_cross;
-            ctx.counters.n_pl_blk_rxcb_cols           += Rc.pl_blk_rxcb_cols;
-            ctx.counters.n_pl_blk_rxcb_not_folded     += Rc.pl_blk_rxcb_not_folded;
-            ctx.counters.n_pl_blk_rxcb_missing_cross  += Rc.pl_blk_rxcb_missing_cross;
-            ctx.counters.n_rxcb_blk_restored_skip     += Rc.pl_rxcb_restored_skip;
-            ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
-            for (int b = 0; b < 5; ++b)
-                ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
-            if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
-                ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
-        }
-    // Card LGM: the phase-colour prior edges, counted in the parallel produce and reduced
-    // here.  Off: the loop does not run.
-    if (ctx.knobs.pc_on)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_pc_birth_rows     += Rc.pc_birth_rows;
-            ctx.counters.n_pc_backstop_rows  += Rc.pc_backstop_rows;
-            ctx.counters.n_pc_block_folds    += Rc.pc_block_folds;
-            ctx.counters.n_pc_fallback_folds += Rc.pc_fallback_folds;
-        }
-    // Latch the first warm epoch's present/departed split across this fold (§18.12).
-    // A restore that reads its rows and then marginalizes most of their terms has
-    // softened the rows (σ² += Sum M²·P_prev), rung 3's mechanism by another route,
-    // and must be read as a failure even though every "restored" counter looks
-    // normal.  Both names are run-total aliases into ctx.counters (see the alias block
-    // at the top of this function), so the seam value is a difference bracketing this
-    // one call, not anything the call returns.
-    const long long cpl_p0 = n_cpl_terms_present, cpl_d0 = n_cpl_terms_departed;
-    foldAndDumpCouplingRows(carry_cpl_cond, asm_res, est,
-                            registered_clock_sats, shared_phase_keys, registered_code_keys,
-                            se.time.tow, log,
-                            n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
-                            ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
-                            ctx.counters.n_cpl_reinit_diverted,
-                            ctx.counters.n_cpl_readmit_diverted,
-                            n_cpl_row_dump,
-                            &ctx.counters.cpl_orphan_fam_total);
-    if (ctx.carry.resume_cpl_census_pending && carry_cpl_cond) {
-        ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
-        ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
-    }
-    // Card CTU: fold each station's exact-update counts into the run totals (serial; the
-    // produce wrote only its own slot).
-    if (ctx.knobs.carry_cpl_exact)
-        for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);
-
-    // SD pre-reduce EWL trace drain (serial, post-produce; SPEC_sd_ewl_prereduce §6).
-    // The rows were formatted per station inside the parallel produce; writing them
-    // here in station index order makes the file independent of the thread count.
-    // Flushed per epoch: this stream exists to diagnose runs that are killed
-    // mid-flight, and an unflushed tail would lose exactly that evidence.
-    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
-        for (size_t i = 0; i < asm_res.size(); ++i)
-            for (const std::string& row : asm_res[i].sd_ewl_trace)
-                traces.sd_ewl_trace << row;
-        traces.sd_ewl_trace.flush();
-    }
-
-    // --- Structural fuse (docs/SPEC_prefit_census_observability.md §4, INC-2) ---
-    // The single last-touch site for every data row's weight: every appender
-    // (splitStation, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows)
-    // has finished, and nothing between here and est.addStation writes R.w.  Serial
-    // by design: the row build is parallel, so a fuse inside it would make the event
-    // order depend on the thread count.  s_fuse <= 0 (the default) skips the whole
-    // block (no classification, no allocation), so the off path is structurally
-    // byte-identical.  The rows are classified from their tags (card NOM step N2b).
-    const double pc_fuse_sigma = ctx.knobs.pc_fuse_sigma;
-    if (pc_fuse_sigma > 0.0) {
-        const Eigen::Index fuse_n_shared = est.numShared();
-        if (fuse_n_shared > 0) {
-            ++ctx.counters.pc.fuse_epochs;
-            for (size_t i = 0; i < stations.size(); ++i) {
-                if (!present[i]) continue;
-                StationAssembly& R = asm_res[i];
-                if (!R.ok || R.threw || R.state_mismatch || R.empty_innov) continue;
-                networkPrefitFuseStation(ctx, traces, se.time, fuse_n_shared,
-                                         stations[i].name, R, pc_fuse_sigma);
-            }
-        }
-    }
-
-    // --- Name the null column behind each addStation PD rejection (card RF-PD) ---
-    // The drop below removes a station for the epoch without network_epoch_status.csv
-    // reporting it (n_present still counts the station), and its only other record is
-    // a warn line naming a pivot magnitude, with no parameter.  Counting is
-    // unconditional (free, no output); the knob (trace_station_pd_null) arms the
-    // kernel's eigen read and these event rows.
-    const bool pd_null_on = nc.trace_station_pd_null;
-    int  n_pd_dropped_ep  = 0;
-    auto pdDropEvent = [&](const NetStation& sta, const StationAssembly& RA,
-                           const char* action) {
-        ++ctx.counters.pd_drop_total;
-        ++n_pd_dropped_ep;
-        if (!pd_null_on) return;
-        const auto& f = est.normals().lastStationPdFailure();
-        if (!f.valid) {
-            // Armed but no record: the throw came from a different addStation guard
-            // (dimension / symmetry / non-finite LDLᵀ), not the PD test.  The event
-            // says so rather than carrying no direction (invariant #4).
-            traces.emitEvent(se.time, "TOPOLOGY", "sta_pd_dropped", "", sta.name,
-                             std::nullopt, std::nullopt, action, "no_pd_record");
-            return;
-        }
-        // Local column -> StateManager label, through the assembly's own h2local
-        // map (the same inverse network.neq_export_epoch uses).  The kernel has no
-        // label vocabulary, so the naming must happen here.
-        std::vector<std::string> names(static_cast<std::size_t>(f.n_local), "?");
-        {
-            const auto sm_labels = sta.sm->getStateLabels();
-            for (const auto& kv : RA.h2local) {
-                const auto lc = static_cast<std::size_t>(kv.second);
-                if (kv.second >= 0 && lc < names.size()
-                    && static_cast<std::size_t>(kv.first) < sm_labels.size())
-                    names[lc] = sm_labels[static_cast<std::size_t>(kv.first)];
-            }
-        }
-        // Top-5 |weight| entries of the null eigenvector, descending.
-        std::vector<Eigen::Index> ord;
-        ord.reserve(static_cast<std::size_t>(f.null_vec.size()));
-        for (Eigen::Index k = 0; k < f.null_vec.size(); ++k) ord.push_back(k);
-        const std::size_t topn = std::min<std::size_t>(5, ord.size());
-        std::partial_sort(ord.begin(), ord.begin() + static_cast<std::ptrdiff_t>(topn),
-                          ord.end(), [&](Eigen::Index a, Eigen::Index b) {
-                              const double fa = std::abs(f.null_vec(a));
-                              const double fb = std::abs(f.null_vec(b));
-                              if (fa != fb) return fa > fb;
-                              return a < b;              // determinism on ties
-                          });
-        // DIR-row style: FAMILY|SAT|SIG=weight.  The StateManager key delimiters
-        // (':' after the family tag, the first '_' inside the key) become '|'; an
-        // iono-free signal combo keeps its own underscore (AMB|G01|L1C_L5Q).
-        auto dirName = [](std::string s) {
-            const auto c = s.find(':');
-            if (c != std::string::npos) {
-                s[c] = '|';
-                const auto u = s.find('_', c + 1);
-                if (u != std::string::npos) s[u] = '|';
-            }
-            return s;
-        };
-        std::string cols;
-        for (std::size_t k = 0; k < topn; ++k) {
-            if (k) cols += ' ';
-            cols += fmt::format("{}={:.4f}", dirName(names[static_cast<std::size_t>(ord[k])]),
-                                f.null_vec(ord[k]));
-        }
-        // The null vector can be spread almost evenly over a whole family (every L2W
-        // ambiguity at ~0.285), so a top-5 slice under-reports the families that
-        // carry real mass in the tail, above all the receiver code bias.  The full
-        // eigenvector's per-family mass Σw² (summing to 1) is carried beside the
-        // top-5, so the census does not depend on where the cut fell.
-        std::map<std::string, double> fam_mass;
-        for (Eigen::Index k = 0; k < f.null_vec.size(); ++k) {
-            const std::string& lb = names[static_cast<std::size_t>(k)];
-            const auto c = lb.find(':');
-            fam_mass[c != std::string::npos ? lb.substr(0, c)
-                                            : (lb == "?" ? std::string("other") : lb)]
-                += f.null_vec(k) * f.null_vec(k);
-        }
-        std::string fam_s;
-        for (const auto& [k, v] : fam_mass) {
-            if (!fam_s.empty()) fam_s += ' ';
-            fam_s += fmt::format("{}:{:.4f}", k, v);
-            ctx.counters.pd_drop_family_mass[k] += v;
-        }
-        if (topn > 0) {
-            std::string fam = names[static_cast<std::size_t>(ord[0])];
-            const auto c = fam.find(':');
-            fam = (c != std::string::npos) ? fam.substr(0, c)
-                                           : (fam == "?" ? std::string("other") : fam);
-            ++ctx.counters.pd_drop_family[fam];
-        }
-        ++ctx.counters.pd_drop_named;
-        traces.emitEvent(se.time, "TOPOLOGY", "sta_pd_dropped", "", sta.name,
-                         f.ev_min, f.d_ref, action,
-                         // `statistic` carries ev_min too, but emitEvent formats every
-                         // numeric column as {:.6f}: a 1e-10 eigenvalue prints as
-                         // 0.000000 there and its sign is lost, so the headline number
-                         // of this row would read as zero on every rejection.  It is
-                         // repeated in the detail in scientific notation, which is the
-                         // copy to read when grading.
-                         fmt::format("evmin={:.6e};dmin={:.6e};dmax={:.6e};evmax={:.6e};"
-                                     "neig={};nlocal={};fam={};cols={}",
-                                     f.ev_min, f.d_min, f.d_max, f.ev_max, f.n_eig_below,
-                                     static_cast<long long>(f.n_local), fam_s, cols));
-    };
-
-    // Serial consume: scatter each station's block into the shared arrowhead
-    // in deterministic station order, preserving the exact pivot-aborts-epoch
-    // / drop-non-pivot disposition of the original single-pass loop.
-    total_pins = 0;
-    bool epoch_ok   = true;
-    for (size_t i = 0; i < stations.size() && epoch_ok; ++i) {
-        if (!present[i]) continue;
-        NetStation&      st = stations[i];
-        StationAssembly& R  = asm_res[i];
-
-        if (R.empty_innov) { present[i] = false; continue; }
-        if (R.state_mismatch) {
-            log->warn("Network: station '{}' H/state mismatch ({})", st.name, R.err);
-            // Legacy: the single pivot carries the whole datum, so its loss skips
-            // the epoch.  Prioritized: the gauge is distributed across anchors, so
-            // this station is dropped like any other; any keys it anchored are
-            // pruned by the null-space gate, and the next epoch recovers on its own.
-            if (!phase_datum_prioritized && st.is_pivot) { epoch_ok = false; break; }
-            present[i] = false;
-            continue;
-        }
-        if (R.threw || !R.ok) {
-            // computeMeasurementUpdate / splitStation threw.  Under threads the
-            // exception must be caught inside the produce loop, so its disposition
-            // is decided here, matching the addStation policy below: a failed pivot
-            // (legacy datum) skips the epoch, any other station is dropped.
-            const std::string why = R.err.empty() ? "no usable block" : R.err;
-            if (!phase_datum_prioritized && st.is_pivot) {
-                log->warn("Network: PIVOT '{}' assembly failed ({}); skipping epoch",
-                          st.name, why);
-                epoch_ok = false;
-                break;
-            }
-            log->warn("Network: station '{}' assembly failed ({}); dropping it this epoch",
-                      st.name, why);
-            present[i] = false;
-            continue;
-        }
-
-        total_pins += R.np;
-
-        try {
-            // Hand addStation this station's own datum rows (card RF-PD-fix), so the
-            // PD test judges the block the solve uses.  R.prior_* is empty unless
-            // network.station_prior_before_pd is armed; the kernel then takes no
-            // copy of N_rr and folds nothing, so the off path is byte-identical.
-            // The failure path is unchanged by construction: addStation builds and
-            // validates the whole local block before it touches the shared border,
-            // so a rejected station still leaves N_ss_/u_s_ untouched and there is
-            // nothing to roll back (which is why the prior goes into addStation
-            // rather than into a two-phase add + validate).
-            est_index_of[i] = static_cast<int>(
-                est.addStation(R.A_s, R.A_r, R.w, R.y,
-                               NetworkNormalEquations::StationPrior{
-                                   R.prior_cols, R.prior_dNrr, R.prior_dur}));
-        } catch (const std::exception& ex) {
-            // One station's rank-deficient / ill-conditioned local block must not
-            // cost the whole epoch in a large heterogeneous network: the station is
-            // dropped and the rest are kept (the null-space gate still guards the
-            // result).  On the legacy path the pivot is the exception: it carries
-            // the S-basis, so without it the epoch has no datum and is skipped.
-            // Prioritized: the gauge is distributed, so the pivot is dropped too (an
-            // anchor loss is caught by the null-space gate, which withholds, and the
-            // next epoch recovers).
-            if (!phase_datum_prioritized && st.is_pivot) {
-                log->warn("Network: PIVOT '{}' addStation rejected ({}); skipping epoch",
-                          st.name, ex.what());
-                ++ctx.counters.pd_drop_pivot_abort;   // the epoch-skipping case (RF-PD)
-                pdDropEvent(st, R, "epoch_sunk");
-                epoch_ok = false;
-                break;
-            }
-            log->warn("Network: station '{}' addStation rejected ({}); dropping it this epoch",
-                      st.name, ex.what());
-            pdDropEvent(st, R, "dropped");            // name the null column (RF-PD)
-            // A station whose epoch holds rows of a non-GPS system and no GPS row has
-            // its receiver clock and inter-system bias collinear, so this rejection is
-            // structural (card GAL, R2).  Counted here, at the one drop site.
-            if (i < modeled.size() && networkStationNonGpsOnly(modeled[i]))
-                ++ctx.counters.mgnss.nongps_only_pd_drops;
-            present[i] = false;
-            continue;
-        }
-
-        // Phase-leveling carry: fold this station's diagonal carried prior into its
-        // local block now (after addStation, before the gate/solve trigger reduce), so
-        // the single arrowhead solve already reflects it.  The pivot's ambiguity
-        // columns are gauge-pinned (never carried), but its ZWD column may be (B9), so
-        // the gate is a non-empty carry set, not !is_pivot: for the pivot
-        // R.carry_cols holds at most the ZWD column, and is empty (no call,
-        // byte-identical) unless network.carry_zwd is on.  A rejection here drops only
-        // this station's carry, not the station; its data is already in the system.
-        // rx-CB carry (SPEC_rx_cb_carry): rx_cb_on joins the gate.  When carry_warm is
-        // false the legacy inject paths (inside legacy_local_inject = carry_warm && …)
-        // build nothing, so the extended gate folds the rx-CB rows, and
-        // rx_cb_on=false remains byte-identical.
-        // RXCB-DATUM joins it for the same reason, and has to, because this is the
-        // install site: widening only the build gate above would produce rows that are
-        // coalesced into R.carry_cols and then dropped here, and the gauge counter
-        // would then report folds that never reached the normal equations.  Both edges
-        // of the datum move together or neither does.
-        // Under network.station_prior_before_pd (card RF-PD-fix) the RXCB-DATUM rows
-        // are not in R.carry_cols: they went to addStation above and were folded
-        // before the PD test.  They must not be folded a second time here
-        // (addStationPrior does not sum with what addStation already put in N_rr), and
-        // they are not, because the routing is exclusive at the emplace.
-        // `rx_cb_datum` stays in the gate below because on a datum-only run with the
-        // knob on, R.carry_cols is then empty and the second conjunct already
-        // suppresses the call.
-        // The oracle pin joins the install gate for the same reason as RXCB-DATUM: its
-        // rows are coalesced into R.carry_cols above, and a gate that built them and
-        // then dropped them would leave the run-end clause reporting folds that never
-        // reached the normal equations.  Both edges move together or neither does.
-        if ((carry_warm || rx_cb_on || rx_cb_datum || R.opin_rows > 0)
-            && !R.carry_cols.empty()) {
-            try {
-                est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
-                                    R.carry_cols, R.carry_dNrr, R.carry_dur);
-                R.carry_prior_folded = true;   // its entries count as folded (card NOM N2a)
-            } catch (const std::exception& ex) {
-                log->warn("Network[phase-leveling]: station '{}' carry inject rejected "
-                          "({}); proceeding without its carry this epoch", st.name, ex.what());
-            }
-        }
-    }
-
-    // Roll this epoch's PD-drop count up (card RF-PD).  The denominator is every epoch
-    // that reached the consume loop, so "0 dropped" is distinguishable from "the loop
-    // never ran" (standing invariant #4).
-    ++ctx.counters.pd_drop_epochs;
-    if (n_pd_dropped_ep > ctx.counters.pd_drop_max_ep) {
-        ctx.counters.pd_drop_max_ep     = n_pd_dropped_ep;
-        ctx.counters.pd_drop_max_ep_tow = se.time.tow;
-    }
-
-    // --- In-solve count and invariant #7's re-coupling edge (card RF-PD-fix) ----
-    // network_epoch_status.csv reports `n_present`, the roster that reached the consume
-    // loop, not the set that entered the arrowhead: a station dropped here is still
-    // counted present.  Record what actually went into the solve, per epoch, and mark
-    // every return, so a station's re-entry is never read as a first sighting (the
-    // failure invariant #7 names; the decoupling edge is already instrumented by
-    // RF-PD's `sta_pd_dropped`).  Counting is unconditional and free; the event rows
-    // go to network.trace_topology, the topology ledger that owns invariant #7's
-    // edges.  Skipped on an aborted epoch (a pivot rejection breaks the loop early),
-    // where the later stations were never judged and an absence would be an artifact
-    // of the break.
-    if (epoch_ok) {
-        auto& cnt = ctx.counters;
-        int n_in_solve_ep = 0;
-        for (size_t i = 0; i < stations.size(); ++i) {
-            const bool in_solve = (est_index_of[i] >= 0);
-            if (in_solve) ++n_in_solve_ep;
-            const std::string& nm = stations[i].name;
-            auto& tr = cnt.sta_solve_track[nm];
-            if (in_solve) {
-                if (tr.ever_in_solve && tr.absent_streak > 0) {
-                    ++cnt.sta_readmit_events;
-                    if (tr.absent_streak > cnt.sta_readmit_max_gap_ep)
-                        cnt.sta_readmit_max_gap_ep = tr.absent_streak;
-                    if (nc.trace_topology)
-                        traces.emitEvent(se.time, "TOPOLOGY", "sta_readmitted", "", nm,
-                                         static_cast<double>(tr.absent_streak), std::nullopt,
-                                         "readmitted",
-                                         fmt::format("epochs_absent={};prior_rows={};"
-                                                     "pre_pd_prior={}",
-                                                     tr.absent_streak,
-                                                     asm_res[i].prior_cols.size(),
-                                                     sta_prior_pre_pd ? 1 : 0));
-                }
-                tr.ever_in_solve  = true;
-                tr.absent_streak  = 0;
-            } else {
-                ++tr.absent_streak;
-            }
-        }
-        ++cnt.sta_in_solve_epochs;
-        cnt.sta_in_solve_ep.push_back(n_in_solve_ep);
-        if (cnt.sta_in_solve_min < 0 || n_in_solve_ep < cnt.sta_in_solve_min) {
-            cnt.sta_in_solve_min     = n_in_solve_ep;
-            cnt.sta_in_solve_min_tow = se.time.tow;
-        }
-    }
-
-    // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): compare the pins that
-    // landed (folded by foldAmb/foldRpb and on a station est.addStation accepted)
-    // against the election's declared per-group gauge dimension Σ (n_c + m_c), minus
-    // the hygiene bridge pins realized on the shared side.  Serial, after the consume,
-    // so acceptance is known (est_index_of ≥ 0); an aborted epoch (pivot failure)
-    // never reaches a solve and is not audited.  Log-only run tallies; no solve input
-    // is touched.
-    if (phase_datum_eq34 && epoch_ok) {
-        auto& pa = ctx.counters.eq34_pin_audit;
-        ++pa.epochs;
-        std::map<std::string, long long> folded_ep, landed_ep;
-        for (size_t i = 0; i < stations.size(); ++i) {
-            for (const auto& [grp, t] : asm_res[i].pin_audit) {
-                folded_ep[grp]     += t[0];
-                pa.miss_state[grp] += t[1];
-                pa.miss_row[grp]   += t[2];
-                if (est_index_of[i] >= 0) landed_ep[grp] += t[0];
-            }
-            // Feed each accepted station's fold-realized targets into the next
-            // epoch's pinmove baseline (seed-round, §3.4).  Without this the election
-            // reads the provisional 0 and computes a spurious km-scale step every
-            // epoch, re-referencing the (sat,σ) permanently.  A dropped station's pin
-            // did not land; its arc re-elects from scratch in the next epoch.
-            if (est_index_of[i] >= 0) {
-                for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
-                    ctx.carry.eq34_prev_target[{static_cast<int>(i), amb}] = tgt;
-                    ++ctx.counters.seed_round_deferred;
-                    const double ay = std::abs(y);
-                    if (ay > ctx.counters.seed_round_max_abs_y_m)
-                        ctx.counters.seed_round_max_abs_y_m = ay;
-                }
-            }
-        }
-        for (const auto& [grp, decl] : ctx.carry.eq34_epoch_declared) {
-            const auto bit = ctx.carry.eq34_epoch_bridged.find(grp);
-            const long long bridged =
-                bit == ctx.carry.eq34_epoch_bridged.end() ? 0 : bit->second;
-            pa.declared[grp] += decl;
-            pa.bridged[grp]  += bridged;
-            pa.folded[grp]   += folded_ep[grp];
-            pa.landed[grp]   += landed_ep[grp];
-            pa.dropped_station[grp] += folded_ep[grp] - landed_ep[grp];
-            const long long short_n = (decl - bridged) - landed_ep[grp];
-            if (short_n > 0) {
-                ++pa.short_epochs[grp];
-                if (static_cast<int>(short_n) > pa.worst_short[grp])
-                    pa.worst_short[grp] = static_cast<int>(short_n);
-            }
-        }
-    }
+    // The serial stages after the parallel produce (card NOM3 step PB1a).
+    networkAssemblyTally(run, nep, assembly);
+    networkPrefitFuseEpoch(run, nep, assembly);
+    const bool epoch_ok = networkAssemblyConsume(run, nep, pass_a, assembly);
+    networkSolveStationsTrack(run, nep, assembly, epoch_ok);
+    networkEq34PinAudit(run, nep, assembly, epoch_ok);
 
     // Close the assembly wall-clock timer (D0; produce + scatter).  Accumulated even
     // when the epoch skips below, because the assembly work was still spent.
