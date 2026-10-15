@@ -33,7 +33,7 @@ generation, never a crash.
 
 | file | role |
 | --- | --- |
-| `scripts/nom_cpp.py` | The C++ reading layer: lexer, statement splitter, declaration and parameter parsers, per-file function index, scope walker, call extraction, the resolver that follows reference declarations to their initializers, `GitTree` (the frozen revision) and `Driver` (the shape of `runNetwork` and its lambda). `--selftest` reproduces the EP1 inventory's counts on the frozen driver. |
+| `scripts/nom_cpp.py` | The C++ reading layer: lexer, statement splitter, declaration and parameter parsers, per-file function index, scope walker, call extraction, the resolver that follows reference declarations to their initializers, `GitTree` (the frozen revision) and `Driver` (the shape of `runNetwork` and its lambda). `reading_problems` names what the lexer would read otherwise than the compiler (it implements no translation phase 1 or 2): a line splice that changes the tokens, a carriage return that ends no line, a control character, bytes that are not UTF-8. `--selftest` reproduces the EP1 inventory's counts on the frozen driver. |
 | `scripts/nom_ep1/__init__.py` | `DEFAULT_BASE`, the row-file list and the row loader; `REMOVE_KEY`, `RENAMED` and `bind_base()`, which binds every table to the entries that apply at a base. |
 | `scripts/nom_ep1/model.py` | The row type `Seam`, the realization tables (lambda local to epoch member, driver name to run member, the engine constructors and the spec fields) and the fold grammar. Generator input only: the verifier does not import it beyond the row type. |
 | `scripts/nom_ep1/declared.py` | The closed list of declared substitutions of spec 5.6 (eleven classes, and the twelfth, `UNREAD_ALIAS`, of the review round), each with its reason and a locator that finds its frozen object at any base; the write proofs of COPY_SOURCE and VALUE_EQUAL (`Writers`), which the survey and the verifier evaluate; the declared member order of `NetworkEpoch` (`EPOCH_LAYOUT`, check V3c); and the declared non-conversions (the input stage, the calls inside the EP2 blocks, the method calls). |
@@ -50,7 +50,7 @@ generation, never a crash.
 | `scripts/nom_ep1/docs.py` | The comment rewrites of the review round (`DOC_HUNKS`: comment-only hunks the generator applies to its finished text, each checked to change no token) and the stale-spelling census (`STALE`), the docs pass's worklist. |
 | `scripts/nom_ep1/manifest_<rows>.json` | Written by each generator run under `--root`: the base, the rows, every written file with its digest, the frozen ranges each transform resolved, each converted call and preamble. The verifier reads it for pairing only. |
 | `scripts/nom_ep1_cut.py` | The generator: `--survey`, `--stage ep1a1`, `--stage ep1b`, `--shared-only`, `--presolve-writer`, `--check`. |
-| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 69 negative controls (the sixteen of spec 5.7, seventeen added at the review round, seventeen at hardening round 1, eleven at hardening round 2, seven at hardening round 3 and one at the EP1 review round). It reads the rows and `declared.py` and nothing the generator computes. |
+| `scripts/nom_ep1_verify.py` | The relocation verifier: checks V1 to V13, the two write proofs, and 95 negative controls (the sixteen of spec 5.7, seventeen added at the review round, seventeen at hardening round 1, eleven at hardening round 2, seven at hardening round 3, twenty-six at hardening round 4 and one at the EP1 review round). It reads the rows and `declared.py` and nothing the generator computes. |
 | `scripts/nom_epoch_lint.py` | The permanent lint: checks V0 (the reading), V4, V10 and V11 on any tree, with no git revision. It also holds the readers both tools share: the tree, the preprocessor lines, a translation unit's include closure and the declarations in it, and the CMake commands. |
 
 ## Step EP1a-1, the base
@@ -76,11 +76,13 @@ One worker, serial. The commands run from the repository root, in this order.
    nothing and names the shape it did not recognize.
 5. Build Debug and Release with `scripts/vs2026_build.ps1`, then run the unit suite.
 6. Verify: `python scripts/nom_ep1_verify.py --tree . --base <B> --controls`. This is the
-   positive control of spec 5.7: every applicable check passes with no row converted. 51
-   controls fire (N5 to N8, N10 to N12, N16, R1, R2, R5 to R11, R13 to R20, R22 to R34, R38,
-   R40 to R48 and R50 to R52; N7, N16, R24 to R26, R46 to R48 and R50 also fail the lint); the
-   other seventeen are pending (their target is a converted seam). A control whose target this
-   stage must have but the tree lacks is MISSING and fails the run.
+   positive control of spec 5.7: every applicable check passes with no row converted. At
+   `926dafa`, 69 controls fire (N5 to N8, N10 to N12, N16, R1, R2, R7 to R11, R13 to R20, R22
+   to R34, R38, R40 to R48, R50 to R52, R59 to R62 and R64 to R79; N7, N16, R24 to R26, R46 to
+   R48, R50, R59 to R62, R64, R65, R75 and R77 also fail the lint); the other twenty-six are
+   pending (their target is a converted seam, or, R4 to R6, the third-band forwarder the
+   REMOVE-key deletion took). A control whose target this stage must have but the tree lacks
+   is MISSING and fails the run.
 7. Lint: `python scripts/nom_epoch_lint.py --partial` (no seam has an epoch form yet, so the
    writer banner is checked only for writers that exist).
 8. Idempotence: `python scripts/nom_ep1_cut.py --stage ep1a1 --base <B> --check` exits 0
@@ -95,18 +97,20 @@ workers). The two shared generated files, `src/core/app/ApplicationNetworkEpoch.
 at each merge, never hand-merged.
 
 The controls column follows from each control's target (N5 to N8, N10 to N12, N16, R1,
-R2, R6 to R11, R13 to R20, R22 to R34, R38, R40 to R48 and R50 to R52 run on every tree with
-an epoch function; R5, the
+R2, R6 to R11, R13 to R20, R22 to R34, R38, R40 to R48, R50 to R52, R59 to R62 and R64 to
+R79 run on every tree with an epoch function; R5, the
 epoch preamble's third-band forwarder, runs until W2 converts the DD build, which takes the
 forwarder with it; R21 runs once a worker's rows convert an adapter, R49 once they convert a
-free seam); the W2 row was confirmed by a run at `c483a11`, R49 on it at `0e14eb9`.
+free seam, R53, R56 to R58 and R63 once they convert a seam with generated bindings); the W2
+row was confirmed by a run at `c483a11`, R49 on it at `0e14eb9`, and the round-4 controls on
+it at `0e14eb9`.
 
 | worker | `--rows` | seams | negative controls its own rows make runnable |
 | --- | --- | --- | --- |
-| W1 app | `app` | 10 | N2, N9, R39, R49 |
-| W2 pre-solve and solve | `solve` | 13 | N1, N9, N14, N15, R4, R21, R35, R49 (R5 becomes pending) |
-| W3 emit and post-fit | `emit` | 15 | N3, N9, N13, R3, R12, R21, R36, R37, R49 (N4 also needs W2's solve) |
-| W4 diagnostics | `diag` | 24 | N9, R21, R49 |
+| W1 app | `app` | 10 | N2, N9, R39, R49, R53, R54, R56 to R58, R63 |
+| W2 pre-solve and solve | `solve` | 13 | N1, N9, N14, N15, R4, R21, R35, R49, R53, R55 to R58, R63 (R5 becomes pending) |
+| W3 emit and post-fit | `emit` | 15 | N3, N9, N13, R3, R12, R21, R36, R37, R49, R53, R56 to R58, R63 (N4 also needs W2's solve) |
+| W4 diagnostics | `diag` | 24 | N9, R21, R49, R53, R56 to R58, R63 |
 
 On a worker branch, from the repository root:
 
@@ -136,9 +140,9 @@ Integration, in the order W2, W1, W3, W4. After each merge:
    <merged>`, `python scripts/nom_epoch_lint.py --partial`.
 
 After the last merge: `python scripts/nom_ep1_verify.py --tree . --base <B> --rows all
---controls` (67 controls fire and none is MISSING; R5 is pending by design, its forwarder having
-gone with the DD build's conversion; at a base after the REMOVE-key deletion R4 to R6 are pending
-and 66 fire), `python scripts/nom_epoch_lint.py` without `--partial`,
+--controls` (at `926dafa`, 92 of the 95 controls fire and none is MISSING; R4 to R6 are pending,
+the third-band forwarder having gone with the DD build's conversion and the REMOVE-key deletion;
+before the deletion R5 alone was pending), `python scripts/nom_epoch_lint.py` without `--partial`,
 the full G-EP and the cost pair.
 
 The card's pre-solve form (author decision 1, `NetworkEpoch& ep` for the writers before the
@@ -156,17 +160,17 @@ are ignored throughout.
 | check | what it proves |
 | --- | --- |
 | V1a | Every top-level statement of the frozen lambda is carried, character-exact and shifted four columns, by the epoch function, or is the old side of a declared transform of spec 5.3 whose new side is checked by rule (the epoch's construction, the dropped workspace, an alias, a sized or a result store at the local's frozen position, the clock store, `ep.emitted`, the brackets, the converted calls, the two replay closures). Each carried statement and store is paired with its frozen text token by token: an `ep.<path>` that stands for a local must pair with a frozen token that is that lambda local (the DD-carry predict's own `dt` is not `ep.clock.dt`), `ep.emitted` with the frozen comparison. The epoch function's definition has the frozen lambda's head: `NetworkRun& run`, then the lambda's parameter list, its trailing return type (`Application::LoopSignal`), and after the list the lambda's specifiers but `mutable` (none, so no `noexcept`: an exception that escapes an epoch reaches `Application::run`'s handler, which logs it and returns 1, instead of calling `std::terminate`). The VALUE_EQUAL proof. |
-| V1b | Each converted seam's body below its bindings equals the frozen body, the solve's two replay lines and three hand-off lines excepted; the bindings open the body (no code before the opening marker) and hold declarations only. |
+| V1b | Each converted seam's body below its bindings equals the frozen body, the solve's two replay lines and three hand-off lines excepted; the bindings open the body (no code before the opening marker) and hold one declaration per statement, each of a frozen parameter of the seam that V3a compares, and each once: not a kept parameter or an output (both stay parameters), not a removed CALLBACK_DIRECT (no line binds it), and the CALLABLE predicate only in the seam that has it as a parameter. A declaration under any other name is a statement no check reads, whose type's constructor or immediately invoked lambda would run unchecked. |
 | V1c | Every unconverted seam and every adapter's explicit form is byte-identical to frozen. |
 | V1d | `runNetwork` equals frozen apart from the spec 4.1 edits and the `UNREAD_ALIAS` lines (each gone line one declarator, a reference or a const builtin copy of a member path, and no token left in `runNetwork` names it), every declaration left in its outermost scope is read, and what those edits took out is where the specification puts it: the epoch function's one declaration in `Application`, with the lambda's head as in V1a; the predicate and the two brackets as functions with the closures' parameters, return type, specifiers after the list (none) and body, each declaration with its definition's head, under a preamble that binds exactly the closures' captures (by reference where the capture was, each to the captured object); the timer scratch; the hand-off fields with their frozen declarations; `NetworkRunEngines` with the engines in frozen construction order and frozen types, one constructor with an empty body and nothing after its parameter list; `LoopSignal`. |
-| V1e | Every changed line of the build's inputs is accounted for. The inputs are every file the base has under `src/`, `include/` and `tests/`, every C, C++ or CMake file the candidate has there whatever its extension (so an untracked `.inl` or `.cpp` left there fails as a new file), `CMakeLists.txt`, and, when the tree carries them, `third_party/` and the root CMake configuration files. A C++ file is read without its comments, any other file as written (a `/*` in CMake hides nothing). A new file of the step is diffed against nothing; any other new file fails. A changed line is an include or forward-declaration line, or every token of it lies in a token range another check verified, so code appended on a verified line (after a definition's `}`, beside a namespace brace) is not accounted with it. No changed line is a preprocessor directive but `#include`, a new header's `#pragma once` or a conditional group of `#include` lines: a `#define` of a seam's name or an `#if 0` around the read copy changes what the compiler builds without changing a token any check reads. No frozen `#include` is removed. An `#include` that enters the tree names its header literally, without `..`, and reaches a header (`.hpp` or `.h` under `include/` or `third_party/`) the base has or one of the step's two new headers, a C++ standard library header, or a library header the base includes by that spelling; never a source, a test, an inline file or a file outside the include directories. `CMakeLists.txt` changes by the step's build-list lines alone: each new source named once, as a bare line of its target's list (`gnss_core`, `gnss_tests`), and nowhere else, so no per-source compile option or definition, no forced include and no test source in `gnss_core` enters. The new source files hold only what the specification puts there: `NetworkRun.cpp` the three definitions, `ApplicationNetworkEpoch.cpp` the one epoch function, the contract test its probe, static_asserts and one TEST case (the hand-written engine specification test's text is the suite's; its one listing in `gnss_tests`, and that nothing includes it, are checked here). Of `NetworkRunTiming` and `NetworkSolveGlueResult` only the moved and new members are claimed, so any other edit there (a default, a stray field) fails. No stray edit enters the tree. |
+| V1e | Every changed line of the build's inputs is accounted for. The inputs are every file the base has under `src/`, `include/` and `tests/`, every C, C++ or CMake file the candidate has there whatever its extension (so an untracked `.inl` or `.cpp` left there fails as a new file), `CMakeLists.txt`, and, when the tree carries them, `third_party/` and the root CMake configuration files. A C++ file is read without its comments, any other file as written (a `/*` in CMake hides nothing). A new file of the step is diffed against nothing; any other new file fails. No changed file holds what the reading layer reads otherwise than the compiler (`nom_cpp.reading_problems`) beyond its frozen text: the compiler splices `/* a *\<NL>/ code /* b */` into live code that every check reads as one comment, and a `//` comment ending in a backslash and a carriage return hides the next line from the checks only. A changed line is an `#include` at file scope, a forward declaration at namespace scope of a class the project already names, or every token of it lies in a token range another check verified, so code appended on a verified line (after a definition's `}`, beside a namespace brace) is not accounted with it; inside a body, `struct X;` is a statement (the whole substatement of a braceless `if`) and is code like any other. A lone brace line is accounted for only beside a line a check verified, never beside one accounted for by its text, so forward declarations and braces cannot split a block. No changed line is a preprocessor directive but `#include`, a new header's `#pragma once` or a conditional group of `#include` lines: a `#define` of a seam's name or an `#if 0` around the read copy changes what the compiler builds without changing a token any check reads. A conditional group that enters the tree or changes holds no frozen `#include` (`#if 0` around one removes it). No frozen `#include` is removed. An `#include` that enters the tree names its header literally, without `..`, and reaches a header (`.hpp` or `.h` under `include/` or `third_party/`) the base has or one of the step's two new headers, a C++ standard library header, or a library header the base includes by that spelling; never a source, a test, an inline file or a file outside the include directories. `CMakeLists.txt` changes by the step's build-list lines alone: each new source named once, as a bare line of its target's list (`gnss_core`, `gnss_tests`), and nowhere else, so no per-source compile option or definition, no forced include and no test source in `gnss_core` enters. The new source files hold only what the specification puts there: `NetworkRun.cpp` the three definitions, `ApplicationNetworkEpoch.cpp` the one epoch function, the contract test its probe, static_asserts and one TEST case (the hand-written engine specification test's text is the suite's; its one listing in `gnss_tests`, and that nothing includes it, are checked here). Of `NetworkRunTiming` and `NetworkSolveGlueResult` only the moved and new members are claimed, so any other edit there (a default, a stray field) fails. No stray edit enters the tree. |
 | V2 | Each converted seam has one epoch-form declaration and one definition with the parameter list its row states; kept parameters keep their frozen declaration; after the solve only the hand-off and the prepared solution are outputs. The head around the list is the frozen form's (an adapter's, that of the explicit form it forwards to): the return type and every specifier before the name, every specifier after the list, and no default argument but a kept parameter's frozen one. So no epoch form returns a reference to its local or to the explicit form's temporary (the spine's store would copy a destroyed object), and none is `noexcept`. |
-| V3a | At every frozen call site paired with its new site (and at the solve's two replay calls), every frozen parameter binds the same storage object, derived independently from the frozen and the new source and equal modulo the declared substitutions; the binding line is `<the frozen declarator> = <expression>;`, so a reference stays a reference, a copy stays a copy and no type changes; `// written` marks exactly the epoch writes; the DD build's third-band binding is the one declared forwarder to `networkIsUncarriedThirdBand` over the knobs; adapters' other callers keep their text. |
+| V3a | At every frozen call site paired with its new site (and at the solve's two replay calls), every frozen parameter binds the same storage object, derived independently from the frozen and the new source and equal modulo the declared substitutions; the binding line is `<the frozen declarator> = <expression>;`, so a reference stays a reference, a copy stays a copy and no type changes; `// written` marks exactly the epoch writes; the DD build's third-band binding is the one declared forwarder to `networkIsUncarriedThirdBand` over the knobs; every binding line of a definition is one the call site compares (with or without an initializer); adapters' other callers keep their text. |
 | V3b | Every read of a captured driver name in the epoch function resolves to the frozen object (a reference, or a copy only where the frozen name was one), over every token V1a paired; each preamble line keeps the frozen declarator (a run reference under its spec type, an owned engine as a reference of its frozen type, `const` alone addable on a reference); the epoch preamble's third-band forwarder is the declared form. The COPY_SOURCE proof. |
 | V3c | Each epoch member is realized at its local's frozen position, with the local's type and initializer, and is bound nowhere before it; `NetworkEpoch` holds only the declared members, in the declared layout (`declared.EPOCH_LAYOUT`), and each group exactly its declared locals in their declared order, so construction and destruction order are declared; `NetworkEpoch`, `EpochClock` and the groups are plain structs (no base clause, no friend, nested type, alias or static member; no member function in a group), so no base takes an aggregate initializer's values, no nested alias re-types a member and no hidden friend captures a seam call; the epoch's constructor binds `se`, does nothing else and has nothing after its parameter list, and `x_emit()`, with exactly `const` after its list, returns the frozen `x_emit` initializer under the epoch-member mapping. |
 | V3d | The `NetworkRun` construction binds each reference member to the frozen object of its role; `NetworkRun` is a plain struct whose members are the references, `engines` and the run's groups in the spec's order; each reference member is declared with its spec type and bound to a constructor parameter of that type; the owned members have the frozen types and no defaults; the constructor builds only what the spec declares, has an empty body and has nothing after its parameter list. |
 | V3e | No body reads a free `run`, `ep`, `nrun` or `nep` other than its parameters. |
-| V3f | Every folded argument parses in the fold grammar (member reads, `&` or `*`, `.get()`, `ep.x_emit()`, literals, side-effect-free conditionals), so folding moves no side effect. |
+| V3f | Every folded argument parses in the fold grammar (member reads, `&` or `*`, `.get()`, `ep.x_emit()`, literals, side-effect-free conditionals), so folding moves no side effect. Every binding's initializer is folded but the CALLABLE forwarder's; a declaration is a closure only when its initializer is a lambda and nothing more, so an immediately invoked lambda is a call. |
 | V4 | After the solve, the epoch function writes `ep` only through its four stores and the three post-solve output arguments; `ep.clock` is stored once, before its first read. |
 | V5 | Const is deep: no member of `NetworkEpoch`, or of a project type held by value inside it, is a non-const reference, a pointer to non-const, a smart pointer, a `std::function` or a `std::reference_wrapper`. |
 | V6 | The ordered events (calls, log calls with level and format literal, brackets with their `SB_*`, `LoopSignal` returns, the inserted stores) of the epoch function and of `runNetwork` equal the frozen ones. |
@@ -190,15 +194,19 @@ named check before a pass is believed. N1 to N16 are spec 5.7's (N4 must fail bo
 its mutation keeps the trip's adapter and gives the solve's internal call the epoch form, which
 binds `ep.solve.plan` there exactly as the spec's direct conversion would; N11 cuts the
 `debug_r_scale` warning while the base has it, else a synthetic warning). R1 to R17 were added
-at the review round, R18 to R34 at hardening round 1, R35 to R39 at hardening round 2 and R46
-to R48, R51 and R52 at hardening round 3 and R53 at the EP1 review round, one per mutation an
-earlier verifier accepted; R40 to
-R45 (hardening round 2) put the edit of R35 to R39 on the other function heads the step
-writes, and R49 and R50 (hardening round 3) carry the overload of R46 and the build-flag
-channel of R48 by another route. R35 to R37 must fail both V2 and V8 (the mutation edits the
-seam's head and its contract-test alias together), R38 both V1a and V1d (the epoch function's
-definition and its declaration), R46, R47 and R49 both V1e and V9 (the include or the new file,
-and the overload it carries):
+at the review round, R18 to R34 at hardening round 1, R35 to R39 at hardening round 2, R46
+to R48, R51 and R52 at hardening round 3, R53 to R77 at hardening round 4 and R79 at the EP1
+review round, one per mutation an earlier verifier accepted; R40 to R45 (hardening round 2)
+put the edit of R35 to R39 on the other function heads the step writes, R49 and R50
+(hardening round 3) carry the overload of R46 and the build-flag channel of R48 by another
+route, and R78 (hardening round 4) is the route to R52 that building the round's fixes
+found. R35 to R37 must fail both V2 and V8 (the mutation edits the seam's head and its
+contract-test alias together), R38 both V1a and V1d (the epoch function's definition and its
+declaration), R46, R47 and R49 both V1e and V9 (the include or the new file, and the overload
+it carries), R53 to R58 both V1b and V3a (a binding under a name no frozen parameter of the
+seam asks for). The scope controls R67 to R74 and R78 edit files the step does not touch, at
+the round's sites where the base still has them, else at the first matching site of the same
+file:
 
 | id | mutation | check |
 | --- | --- | --- |
@@ -254,13 +262,41 @@ and the overload it carries):
 | R50 | `target_compile_definitions(gnss_core PRIVATE networkIonoDiag=networkDdFrac)` appended to `CMakeLists.txt` | V1e, lint |
 | R51 | `add_compile_options(/fp:fast)` in `CMakeLists.txt` between a comment line ending in `/*` and a line `# */` (two CMake comments, one C++ block comment) | V1e |
 | R52 | the last quoted `#include` of `ApplicationNetwork.cpp` removed | V1e |
-| R53 | an `UNREAD_ALIAS` line kept in `runNetwork` at its frozen place (the review round's defect: nothing reads it once the lambda has moved) | V1d |
+| R53 | `networkIonoDiag`'s bindings declare the CALLABLE name, `const bool isUncarriedThirdBand = [&run]() -> bool { run.ctx.carry.local_carry.clear(); return false; }();` (the phase-leveling carry emptied every epoch) | V1b, V3a |
+| R54 | the same in `networkPassB_`, a member seam with the fallback names (the carry emptied before PASS B injects it) | V1b, V3a |
+| R55 | the solve's bindings declare a removed CALLBACK_DIRECT's name, `const bool buildCarryDdPriors = [&run]() -> bool { run.ctx.carry.local_carry.clear(); return true; }();`, with the include the replay needs on a blank line | V1b, V3a |
+| R56 | `networkIonoDiag`'s bindings declare the CALLABLE name by an immediately invoked lambda that zeroes `ep.solve.x_s` through `const_cast<NetworkEpoch&>` | V1b, V3a |
+| R57 | `networkIonoDiag`'s bindings declare `std::ofstream isUncarriedThirdBand(run.traces.soln_path);` (the solution trace truncated every epoch) | V1b, V3a |
+| R58 | `networkIonoDiag`'s bindings declare `std::unique_ptr<NetworkProductWriter> isUncarriedThirdBand(run.setup.product_writer.get());` (the product writer deleted at the seam's end) | V1b, V3a |
+| R59 | `n_emitted = 0;` after the `ep.emitted` store, behind `/* r4 *\<NL>/ ... /* r4 */` (the VALUE_EQUAL object written; the proof read no writer) | V1e, lint |
+| R60 | `return LoopSignal::Next;` before the state snapshot, behind the same splice | V1e, lint |
+| R61 | `return LoopSignal::Stop;` after `++n_loop_epochs;`, behind the same splice | V1e, lint |
+| R62 | `throw std::runtime_error("r4");` before the state snapshot, behind the same splice | V1e, lint |
+| R63 | `return;` right below `networkIonoDiag`'s bindings, behind the same splice | V1e |
+| R64 | a second copy of the epoch statement that calls `networkIonoDiag` behind the same splice | V1e, lint |
+| R65 | `return LoopSignal::Next;` before the epoch function's first `return LoopSignal::Stop;` (the max-duration cutoff), behind the same splice | V1e, lint |
+| R66 | a call after `runNetwork`'s per-epoch dispatch, behind the same splice | V1e |
+| R67 | two forward declarations and two lone braces split the no-veteran block of `NetworkSbasis::codeFamilyDiffTimeLink` (its reseed runs on every call) | V1e |
+| R68 | the SMH block's `dmax` in `NetworkClosedLoopRunEnd.cpp` wrapped in its own block between forward declarations (the SMH log line reads the PBH block's `dmax`) | V1e |
+| R69 | R67's split with one forward declaration and a single `}{` line | V1e |
+| R70 | `NetworkEstimator::solve`'s epoch-open guard split (every solve throws) | V1e |
+| R71 | `networkSetup_`'s marker-to-ARP block split (every station reduced to its ARP) | V1e |
+| R72 | `CycleSlipManager::detectAndRepair`'s local `is_bssd_pivot` and its block wrapped in their own block (the soft-LLI test reads the outer `std::function` of that name) | V1e |
+| R73 | R69's split with `#include <vector>` as the `}{` line's neighbour | V1e |
+| R74 | `struct EpFwdA;` as the substatement of `networkSetup_`'s braceless `if (config_.networkHSigma0PrefitCensus())` (every product contract advertises `hsig=pc`) | V1e |
+| R75 | after the `ep.emitted` store, a `//` comment ending in a backslash and a carriage return, then `if (!ep.emitted) return LoopSignal::Next;` | V1e, lint |
+| R76 | in the solve, after `result.x_s = std::move(x_s);`, the same comment, then `result.x_s *= 1.0001;` | V1e |
+| R77 | in the epoch's translation unit, the same comment, then `#define networkPostFitRaim(...) ((void)0)` | V1e, lint |
+| R78 | `#if 0` and `#endif` around the last quoted `#include` of `ApplicationNetwork.cpp` | V1e |
+| R79 | an `UNREAD_ALIAS` line kept in `runNetwork` at its frozen place (the EP1 review round's defect: nothing reads it once the lambda has moved) | V1d |
 
 A control whose target the stage cannot have yet is pending; one whose target the stage must
 have but the tree lacks is MISSING and fails the run, so no control falls silent at a later
-base. N7, N16, R24 to R26 and R46 to R50 must also fail the standalone lint, which must pass
-on the unmutated candidate. The lint (`nom_epoch_lint.py`) is the permanent form of V4, V10 and
-V11, with V0, its reading: the epoch function is defined once, its translation unit holds no
+base. N7, N16, R24 to R26, R46 to R50, R59 to R62, R64, R65, R75 and R77 must also fail the
+standalone lint, which must pass on the unmutated candidate. The lint (`nom_epoch_lint.py`)
+is the permanent form of V4, V10 and V11, with V0, its reading: the epoch function is defined
+once, its translation unit and every project file it reaches hold nothing the lexer reads
+otherwise than the compiler (`nom_cpp.reading_problems`), its translation unit holds no
 directive but `#include` and conditional groups of them and declares no name the function
 calls, and each spine seam has one epoch-form definition of its arity; every file the unit
 reaches through `#include` is a header (`.hpp` or `.h` under `include/` or `third_party/`)
@@ -374,7 +410,7 @@ none by hand in the generated text.
    `gen_setup.unread_aliases` removes each one that nothing reads after the other edits and
    refuses a generation that would leave any outermost declaration of `runNetwork` unread; V1d
    accepts a gone line only as one declarator, a reference or a const builtin copy of a member
-   path, with no token left naming it, and fails any unread declaration (control R53). Their
+   path, with no token left naming it, and fails any unread declaration (control R79). Their
    orphaned comments are `docs.py` hunks.
 3. **The banner's grep recipes** in `NetworkEpoch.hpp` now hold (`ep\.pass_a[,)]`, `n?ep\.pass_a\.present`)
    and name the lint's V11 as the authority.
@@ -408,4 +444,8 @@ round 3, measured at `0e14eb9` with the three acceptance runs side by side: the 
 55 seconds (V9 reads every translation unit's include closure once, about 25 seconds; a
 control that edits no file of a unit's closure reuses that unit's result), `--controls` 20
 minutes for all rows (67 run, 12 to 45 seconds each), 10 minutes for EP1a-1 (51 run) and 1.5
-minutes on the frozen tree (13 run); the lint 5 to 15 seconds.
+minutes on the frozen tree (13 run); the lint 5 to 15 seconds. With the 94 controls of
+hardening round 4, measured at `0e14eb9` with the three acceptance runs and up to three other
+verifier jobs side by side: the verifier 45 to 60 seconds alone and 4 to 5 minutes so loaded;
+`--controls` 72 minutes for all rows (93 run, 26 to 93 seconds each), 23 minutes for EP1a-1
+(70 run) and 5.5 minutes on the frozen tree (24 run).

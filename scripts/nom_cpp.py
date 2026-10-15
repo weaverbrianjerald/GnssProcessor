@@ -11,7 +11,10 @@ this module can be re-run after the base moves.  What the module provides:
                         string, character and raw-string literals, operators (longest match),
                         one token per preprocessor directive; comments are dropped and every
                         token keeps its line and its character span in the source.
-  Tokens                a lexed file with its bracket-match table and three text views of a
+  reading_problems()    what lex() would read otherwise than the compiler: a line splice, a
+                        carriage return that ends no line, a control character, bytes that
+                        are not UTF-8 (lex() implements no translation phase 1 or 2).
+  Tokens               a lexed file with its bracket-match table and three text views of a
                         token range: src() verbatim (comments inside kept), norm() the call
                         table's normalized text, join() minimal spacing.
   stmt_end()            the statement splitter (blocks, if/else, for, while, do, switch,
@@ -118,6 +121,62 @@ def lex(text):
             at_line_start = False
         pos = m.end()
     return toks
+
+
+# What the lexer does not read as the compiler does.  lex() implements no translation phase 1
+# or 2: it splices no line and reads text whose CR LF line ends the reader already folded.
+_SPLICE = "\\\n"
+_LOOSE_SPLICE = re.compile(r"(?:\\[ \t\f\v]+|\?\?/[ \t\f\v]*)\n")
+_CONTROL_CHAR = re.compile(r"[\x00-\x08\x0e-\x1f\x7f]")
+_REPLACEMENT_CHAR = chr(0xFFFD)
+
+
+def reading_problems(text, cpp=True):
+    """[(line, why)] of what in @p text (as GitTree and DiskTree return it: decoded as UTF-8
+    with every CR LF folded to LF) a check would read otherwise than the compiler does.
+
+    In a C++ file, a line splice that changes the tokens: the compiler deletes each backslash
+    right before a line end before it recognizes comments, so `/* a *\\<NL>/ code /* b */` is
+    one comment to lex() and live `code` to the compiler.  A splice is read faithfully when
+    lex() of the text and lex() of the spliced text give the same tokens (a splice inside a
+    comment that forms no comment delimiter, a `//` comment's or a directive's continuation,
+    a splice in a string literal); any other is reported.  A backslash, or the trigraph
+    `??/`, with whitespace before the line end is reported too: compilers disagree whether it
+    splices.  In any file: a carriage return that is not half of a CR LF line end (after the
+    fold, backslash CR CR LF reads as a `//` comment's continuation, and MSVC does not
+    continue it), a control character other than tab, vertical tab and form feed (MSVC may
+    read Ctrl-Z as the end of a file), and a byte sequence that is not UTF-8 (decoded as
+    U+FFFD, one character, whatever the compiler makes of the bytes).  Callers compare the
+    result with the frozen file's where there is one (three realtime sources of the base are
+    not UTF-8)."""
+    out = []
+
+    def line_of(pos):
+        return text.count("\n", 0, pos) + 1
+
+    if cpp:
+        for m in _LOOSE_SPLICE.finditer(text):
+            out.append((line_of(m.start()), "a backslash (or `??/`) and whitespace before the line end, "
+                                            "which compilers splice differently"))
+        if _SPLICE in text:
+            read = lex(text)
+            spliced = lex(text.replace(_SPLICE, ""))
+            a = [(t.kind, t.text.replace(_SPLICE, "")) for t in read]
+            b = [(t.kind, t.text) for t in spliced]
+            if a != b:
+                k = next((k for k, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+                pos = read[k].pos if k < len(read) else len(text)
+                at = text.rfind(_SPLICE, 0, pos)        # the last splice before the first difference
+                out.append((line_of(at if at >= 0 else pos),
+                            "a line splice that changes the tokens (the compiler splices before it "
+                            "recognizes comments)"))
+    for m in re.finditer("\r", text):
+        out.append((line_of(m.start()), "a carriage return that does not end a line"))
+    for m in _CONTROL_CHAR.finditer(text):
+        out.append((line_of(m.start()), f"the control character U+{ord(m.group()):04X}"))
+    for m in re.finditer(_REPLACEMENT_CHAR, text):
+        out.append((line_of(m.start()), "a byte sequence that is not UTF-8"))
+    return out
 
 
 OPEN = {"(": ")", "[": "]", "{": "}"}
@@ -520,8 +579,13 @@ def parse_declaration(T, i, e, context="stmt"):
                      is_ptr=is_ptr, is_const=(type_const if not is_ptr else ptr_const),
                      init=init, init_kind=ik, type_span=(i, type_end), stmt=(i, e),
                      ops="".join(ops))
-            if ik == "=" and T.t(init[0]) == "[" and _lambda_at(T, init[0], init[1]):
-                d.kind = "closure"
+            if ik == "=" and T.t(init[0]) == "[":
+                # A closure is a variable whose initializer IS a lambda.  One that only starts
+                # with a lambda (`[&]{...}()`, an immediately invoked lambda) is a variable
+                # initialized by a call, read like any other initializer.
+                lam = _lambda_at(T, init[0], init[1])
+                if lam and T.match[lam[2]] + 1 == init[1]:
+                    d.kind = "closure"
             decls.append(d)
         else:
             return None

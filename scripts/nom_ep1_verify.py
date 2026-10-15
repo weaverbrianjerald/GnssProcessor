@@ -71,8 +71,11 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       (none: no noexcept).  The VALUE_EQUAL proof runs here (below).  (b) Each converted body
       below its bindings equals the frozen body, except the solve's two replay lines and
       three epilogue lines; the bindings open the body (no code between the `{` and the
-      opening marker) and hold declarations only.  (c) Every unconverted row's declaration
-      and definition, and every adapter's explicit form, equal frozen (the solve's three
+      opening marker) and hold one declaration per statement, each of a frozen parameter of
+      the seam that V3a compares, once (not a kept parameter, an output or a removed
+      CALLBACK_DIRECT; the CALLABLE predicate only where it is a parameter).  (c) Every
+      unconverted row's declaration and definition, and every adapter's explicit form,
+      equal frozen (the solve's three
       epilogue lines excepted from step EP1a-1 on).  (d) runNetwork equals frozen apart from
       the spec 4.1 edits and the UNREAD_ALIAS lines (each gone line one declarator, a
       reference or a const builtin copy of a member path, and no token left in runNetwork
@@ -95,13 +98,18 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       third_party/ and the root CMake configuration files; a C++
       file read without its comments, any other file as written, so a `/*` in CMake hides
       nothing; a new file of the step diffed against nothing, any other new file failed)
-      is an #include or forward-declaration line, or every token of it lies in a token
-      range another check verified (so code appended on a verified line is not accounted
-      with it), or it is a line a check compared whole.  No changed line is a preprocessor
-      directive but #include, a new header's #pragma once, or a conditional group of
-      #include lines; no frozen #include is removed.  An #include that enters the tree
-      names its header literally and inside the include directories (no `..`), and
-      reaches a header (.hpp or .h under include/ or third_party/) the frozen tree has or
+      is an #include at file scope, a forward declaration at namespace scope of a class the
+      project already names, or every token of it lies in a token range another check
+      verified (so code appended on a verified line is not accounted with it), or it is a
+      line a check compared whole; a lone brace line only beside a line a check verified.
+      No changed file holds what the reading layer reads otherwise than the compiler (a
+      line splice that changes the tokens, a carriage return that ends no line, a control
+      character, bytes that are not UTF-8: nom_cpp.reading_problems) beyond its frozen
+      text.  No changed line is a preprocessor directive but #include, a new header's
+      #pragma once, or a conditional group of #include lines, and no such group that
+      enters or changes holds a frozen #include; no frozen #include is removed.  An
+      #include that enters the tree names its header literally and inside the include
+      directories (no `..`), and reaches a header (.hpp or .h under include/ or third_party/) the frozen tree has or
       one of the step's two new headers, a C++ standard library header, or a library
       header the frozen tree includes by that spelling: never a source, a test or an
       unread file.  CMakeLists.txt changes by the step's build-list lines alone: each new
@@ -129,10 +137,11 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       one name), keeps the frozen declarator and carries `// written` exactly when it
       writes the epoch; a kept argument keeps its text; a removed std::function parameter
       is a declared CALLBACK_DIRECT, or the CALLABLE predicate's one declared forwarder
-      (below); adapters' other callers keep their text.  (b) Every read of a captured driver
-      name in the epoch body resolves to the frozen object, over every token V1a paired;
-      each preamble line declares a captured name with the frozen declarator (a run
-      reference member under its spec type, an owned engine or a moved timer vector as a
+      (below); adapters' other callers keep their text; every binding line of a definition is
+      one a call site compares.  (b) Every read of a captured driver name in the epoch body
+      resolves to the frozen object, over every token V1a paired; each preamble line
+      declares a captured name with the frozen declarator (a run reference member under its
+      spec type, an owned engine or a moved timer vector as a
       reference of the frozen type, anything else with the frozen type text and operators,
       `const` alone addable on a reference) and binds the frozen object.  The third-band
       forwarder, in the epoch preamble and in the DD build's bindings, is exactly
@@ -161,7 +170,8 @@ The checks (comments and blank lines are ignored throughout, as in scripts/rt_se
       nrun or nep (the solve's replay calls excepted).  (f) Folded arguments are member
       reads with an optional & or *, a final
       .get(), ep.x_emit(), literals, conditionals over those, or
-      TimeUtils::continuousGpsSeconds of a member read.
+      TimeUtils::continuousGpsSeconds of a member read; every binding's initializer is
+      folded but the CALLABLE forwarder's (an immediately invoked lambda is a call).
   V4  Driver writes into the epoch after the solve (scripts/nom_epoch_lint.py).
   V5  Deep const: no member of NetworkEpoch, or of a project type held by value inside it,
       is a non-const reference, a pointer to non-const, a smart pointer, a std::function or
@@ -228,13 +238,15 @@ to its initializer), so `snap.n_emitted` is another object.  A failed proof fail
 --controls builds each pre-registered negative control as a mutation of the candidate (an
 overlay: one or two of its files replaced in memory, no disk copy) and runs every check on
 it: the sixteen of spec 5.7 (N1 to N16), seventeen added at the review round (R1 to R17),
-seventeen at the first hardening round (R18 to R34), eleven at the second (R35 to R45) and
-seven at the third (R46 to R52) and one at the EP1 review round (R53, the dead alias the
-review found), each R a mutation an earlier version of this verifier
-accepted or (R40 to R45, R49, R50) the same mutation by another route.  A control fires when
+seventeen at the first hardening round (R18 to R34), eleven at the second (R35 to R45),
+seven at the third (R46 to R52), twenty-six at the fourth (R53 to R78) and one at the EP1
+review round (R79, the dead alias the review found), each R a mutation an earlier version
+of this verifier accepted or (R40 to R45, R49, R50) the same mutation by another route.  A
+control fires when
 its named check fails (N8 V1a or V3c, N10 V1a or V3e, N16 V4 or V6, N13 V2 or V8; N4 only when
 V3a and V10 both fail, R35 to R37 only when V2 and V8 both fail, R38 only when V1a and V1d
-both fail, R46, R47 and R49 only when V1e and V9 both fail).  N4's mutation keeps the trip's
+both fail, R46, R47 and R49 only when V1e and V9 both fail, R53 to R58 only when V1b and V3a
+both fail).  N4's mutation keeps the trip's
 adapter and gives the solve's internal call the epoch form, which binds ep.solve.plan at that
 call exactly as the spec's direct conversion would (a declared deviation from the spec's
 wording, not from its target).  N11 cuts the debug_r_scale warning where the base still has
@@ -245,7 +257,8 @@ one whose target the stage must have (its `due` rule) but the tree lacks is MISS
 fails the run, so a control never falls silent at a later base.  On an epoch tree the
 standalone lint (scripts/nom_epoch_lint.py, with --partial while rows remain unconverted and
 with this run's --presolve-writer) runs on the unmutated candidate, where it must pass, and on
-N7, N16, R24 to R26 and R46 to R50, which fire only when it also fails there.  --rows takes
+N7, N16, R24 to R26, R46 to R50, R59 to R62, R64, R65, R75 and R77, which fire only when it
+also fails there.  --rows takes
 row names space- or comma-separated, or `all`.
 
 Not covered here (spec 5.8): run-time behaviour (default construction then assignment,
@@ -268,7 +281,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from nom_cpp import (APPLICATION_HPP, BUILTIN_TYPES, DRIVER_PATH, KEYWORDS, LAMBDA_NAME, SEAM_CALL,  # noqa: E402
                      CallNode, Cond, Copy, Driver, Expr, FileIndex, GitTree, Lit, Opaque, Ref, Resolver,
                      Scopes, Tokens, _lambda_at, calls_in, match_angle, parse_declaration,
-                     parse_params, statements)
+                     parse_params, reading_problems, statements)
 from nom_ep1 import DEFAULT_BASE, ROW_MODULES, bind_base, load_rows, declared  # noqa: E402
 from nom_ep1.model import ADAPTER, MEMBER, RUN, Explicit  # noqa: E402  (the row type only)
 import nom_epoch_lint as lint  # noqa: E402
@@ -3200,12 +3213,18 @@ class Verifier:
                                   "marker must be the first thing in the body)")
                 self.tclaim(NT, decl_start(NT, f), sp[1] if sp[1] > sp[0] else f.body[0] + 1)
                 self.fclaim(r.cpp, FT.line(decl_start(FT, fdef)), FT.line(fdef.body[0]))
-                names = {p.name for p in fdef.params} | set(SUBST.callable)
+                names = self.binding_names(r, fdef, f)
+                seen = collections.Counter()
                 for s2, e2 in statements(NT, *sp):
                     ds2 = parse_declaration(NT, s2, e2) or []
-                    if not ds2 or any(x.name not in names for x in ds2):
-                        R.fail("V1b", f"{f.path}:{NT.line(s2)}: {name}'s bindings hold a statement that "
-                                      f"binds no frozen parameter: `{NT.join(s2, min(e2, s2 + 10))}...`")
+                    if len(ds2) != 1 or ds2[0].name not in names:
+                        R.fail("V1b", f"{f.path}:{NT.line(s2)}: {name}'s bindings hold a statement that is "
+                                      f"not one binding of a frozen parameter of the seam that V3a compares: "
+                                      f"`{NT.join(s2, min(e2, s2 + 10))}...`")
+                    else:
+                        seen[ds2[0].name] += 1
+                for nm in sorted(k for k, c in seen.items() if c > 1):
+                    R.fail("V1b", f"{f.path}: {name}'s bindings declare {nm} {seen[nm]} times")
                 a = render(FT, fdef.body[0] + 1, fdef.body[1])
                 b = render(NT, sp[1], f.body[1])
                 edited = []
@@ -3224,6 +3243,22 @@ class Verifier:
                     R.fail("V1b", f"{f.path}: {name}'s body below its bindings differs from frozen at code "
                                   f"line {k}: frozen `{x[1] if x else '<end>'}`, here `{y[1] if y else '<end>'}`")
         R.note("V1b", f"{n} converted bodies compared with frozen")
+
+    @staticmethod
+    def binding_names(r, fdef, f):
+        """The names a converted seam's bindings may declare: each frozen parameter of the
+        seam that the conversion replaces by a binding line, so neither a kept parameter nor
+        an output (both stay parameters of the definition @p f) nor a removed CALLBACK_DIRECT
+        (the solve's replay calls its builder directly; no line binds it).  The CALLABLE
+        predicate is one of them only where it is a frozen parameter (the DD build).  V3a
+        compares each at every call site, so a declaration under another name (a parameter
+        of another seam, a removed callback's, the predicate's in a seam that never had it)
+        is a statement no check reads: its type's constructor or an immediately invoked
+        lambda would run unchecked."""
+        own = {p.name for p in f.params}
+        return {p.name for p in fdef.params
+                if p.name not in r.kept and p.name not in own
+                and not (p.kind == "F" and p.name in SUBST.callbacks)}
 
     @staticmethod
     def forwarding_call(T, s, e, name):
@@ -3278,6 +3313,7 @@ class Verifier:
         R, fT, fres = self.R, self.fz.drv.T, self.fz.res
         b = self.new_bindings(r, f, DT, actual)
         n = 0
+        compared = set()
         for k, p in enumerate(fdecl.params):
             if k >= fc.nargs:
                 continue
@@ -3288,8 +3324,11 @@ class Verifier:
                 continue
             if p.kind == "F":
                 self.removed_param(r, p, f, DT, actual)
+                if p.name in SUBST.callable:
+                    compared.add(p.name)       # its one forwarder, check_forwarder's
                 continue
             n += 1
+            compared.add(p.name)
             want = apply_declarator(p.kind, frozen_canon(fres.resolve(*fc.args[k])))
             if fT.join(*fc.args[k]).replace(" ", "") == (self.value_equal or "?").replace(" ", ""):
                 want = apply_declarator(p.kind, Ref("L:emitted"))
@@ -3298,6 +3337,9 @@ class Verifier:
                 R.fail("V3a", f"{r.name}: no binding line for frozen parameter {p.name}")
                 continue
             node, dtext, written, form = got
+            if node is None:
+                R.fail("V3a", f"{r.name}: {p.name}'s binding `{dtext}` has no initializer")
+                continue
             if form not in ("param", "forward", "="):
                 R.fail("V3a", f"{r.name}: {p.name}'s binding `{dtext}` is initialized with `{form}`; a "
                               "binding line is `<the frozen declarator> = <expression>;`")
@@ -3316,6 +3358,13 @@ class Verifier:
             ww = normalize(want, self.const_roots)
             if show(gw) != show(ww):
                 R.fail("V3a", f"{r.name} at {where}: {p.name} binds {show(gw)}, frozen {show(ww)}")
+        # Every binding line is one this call site compares: a line under any other name
+        # (another seam's parameter, a removed callback's, a parameter the frozen call leaves
+        # to its default) declares an object no check reads.
+        for nm, (_, dtext, _, form) in sorted(b.items()):
+            if form not in ("param", "forward") and nm not in compared:
+                R.fail("V3a", f"{r.name} at {where}: the binding line `{dtext} ...` declares {nm}, which "
+                              "binds no frozen parameter this call site passes")
         return n
 
     def replay_sites(self, nres):
@@ -3388,7 +3437,8 @@ class Verifier:
         for s, e in statements(DT, sp[0], sp[1]):
             ds = parse_declaration(DT, s, e) or []
             for d in ds:
-                if not d.init:
+                if not d.init:          # default-initialized: compare_site fails it, or V1b
+                    out[d.name] = (None, DT.src(d.type_span[0], d.tok + 1).strip(), False, "none")
                     continue
                 node = res.resolve(*d.init)
                 if not d.is_ref and not d.is_ptr:
@@ -3470,10 +3520,15 @@ class Verifier:
                     fwd = next((c for c in calls_in(DT, *st[0]) if c.name == name), None) if st else None
                     spans = list(fwd.args) if fwd else []
                 else:
+                    # The CALLABLE predicate's forwarder, where the seam has that parameter, is
+                    # the one binding that is a lambda (check_forwarder reads it whole); any
+                    # other initializer, an immediately invoked lambda included, is folded.
+                    fdef = self.fdecls[name][1] if name in self.fdecls else None
+                    fwd = {p.name for p in (fdef.params if fdef else ()) if p.kind == "F" and p.name in SUBST.callable}
                     sp = lint.preamble_span(DT, f)
                     for s, e in (statements(DT, *sp) if sp else []):
                         for d in parse_declaration(DT, s, e) or []:
-                            if d.init and d.kind != "closure":
+                            if d.init and not (d.kind == "closure" and d.name in fwd):
                                 spans.append(d.init)
                 for s, e in spans:
                     n += 1
@@ -4129,9 +4184,16 @@ class Verifier:
         include/ and tests/ whatever its extension, CMakeLists.txt, and third_party/ and the
         root CMake configuration files when the tree carries them) is accounted for, token by
         token: each token of a changed line lies in a token range a check verified (tclaim),
-        or the line is an #include (include_problem), a forward declaration, or a line another
-        check compared whole (claim; CMakeLists.txt's are cmake_build_list's).  A C++ file is
-        read without its comments, any other file as written.  On an epoch tree the step's new
+        or the line is an #include at file scope (include_problem), a forward declaration at
+        namespace scope of a class the project already names (textual_claim), or a line
+        another check compared whole (claim; CMakeLists.txt's are cmake_build_list's); a lone
+        brace line is accounted for only beside a line a check verified, never beside one
+        accounted for by its text.  A C++ file is read without its comments, any other file
+        as written, and no changed file holds what the reading layer reads otherwise than the
+        compiler (nom_cpp.reading_problems: a line splice, a carriage return that ends no
+        line, a control character, bytes that are not UTF-8) beyond its frozen
+        counterpart's: the compiler splices `/* a *\\<NL>/ code /* b */` into live code
+        that every check reads as one comment.  On an epoch tree the step's new
         files are diffed against nothing, so every line of them is accounted for the same way
         (their structure is checked by new_sources and, for the two headers, V9), except the
         hand-written engine specification test (spec 5.9, checked by the suite; its one
@@ -4141,8 +4203,10 @@ class Verifier:
         be a preprocessor directive other than #include, a new header's #pragma once, or a
         conditional group that holds only #include lines (cond_include_lines): a #define, an
         #if 0 or an #else can change what the compiler builds without changing a token any
-        check reads.  No frozen #include is removed: a call could resolve to another overload
-        once a declaration it found is gone."""
+        check reads; a conditional group that enters the tree, or whose directive changes,
+        holds no #include of a header the frozen file includes (`#if 0` around a frozen
+        #include removes it).  No frozen #include is removed: a call could resolve to another
+        overload once a declaration it found is gone."""
         R = self.R
         if self.epoch:
             self.new_sources()
@@ -4166,6 +4230,7 @@ class Verifier:
                 R.fail("V1e", f"{path}: deleted")
                 continue
             cpp = path.endswith(CPP_EXT)
+            self.reading(path, ft, nt, path.endswith(SOURCE_EXT) and not path.endswith(".cmake"))
             fl = _code_lines(ft, cpp)
             nl = _code_lines(nt, cpp)
             if [x[1] for x in fl] == [x[1] for x in nl]:
@@ -4175,7 +4240,11 @@ class Verifier:
             condl = cond_include_lines(T) if T is not None else set()
             new_incs = {lint.include_target(t) for _, t in nl if T is not None and pp_directive(t) == "include"}
             sm = difflib.SequenceMatcher(None, [x[1] for x in fl], [x[1] for x in nl], autojunk=False)
-            for op, a0, a1, b0, b1 in sm.get_opcodes():
+            ops = sm.get_opcodes()
+            if T is not None:
+                changed = {nl[q][0] for op, a0, a1, b0, b1 in ops if op != "equal" for q in range(b0, b1)}
+                self.cond_groups(path, T, ft, changed)
+            for op, a0, a1, b0, b1 in ops:
                 if op == "equal":
                     continue
                 for q in range(b0, b1):
@@ -4187,6 +4256,10 @@ class Verifier:
                             prob = self.include_problem(path, txt)
                             if prob:
                                 R.fail("V1e", f"{path}:{ln}: `{txt.strip()[:90]}` {prob}")
+                            elif not self.textual_claim(T, ln, txt):
+                                R.fail("V1e", f"{path}:{ln}: `{txt.strip()[:90]}` inside a brace (an #include "
+                                              "enters the tree at file scope only: inside a namespace, a class "
+                                              "or a body it pastes the header's declarations there)")
                             continue
                         if ln in condl or (
                                 txt.split() == ["#pragma", "once"] and path in NEW_FILES and path.endswith(".hpp")):
@@ -4196,7 +4269,8 @@ class Verifier:
                                       "a conditional group of #include lines are declared)")
                         continue
                     if re.match(r"^[{}]+;?$", txt.strip()) and any(
-                            0 <= x < len(nl) and self.claimed(path, *nl[x], T) for x in (q - 1, q + 1)):
+                            0 <= x < len(nl) and self.claimed(path, *nl[x], T, textual=False)
+                            for x in (q - 1, q + 1)):
                         continue      # a lone brace the diff paired on the far side of a region
                     if not self.claimed(path, ln, txt, T):
                         bad = self.unclaimed_tokens(T, ln) if T is not None else []
@@ -4350,24 +4424,130 @@ class Verifier:
                 out.append(T.t(j))
         return out
 
-    def claimed(self, path, ln, txt, T=None):
-        s = txt.strip()
-        if T is not None and (s.startswith("#include") or re.match(r"^(struct|class)\s+\w+;$", s) or
-                              re.match(r"^namespace\s+\w+\s*\{\s*(class|struct)\s+\w+;\s*\}$", s)):
-            return True     # a C++ file's include (include_problem) or forward declaration
+    def claimed(self, path, ln, txt, T=None, textual=True):
+        """Whether changed line @p ln of @p path is accounted for: by a line claim, by token
+        claims covering each of its tokens, or (@p textual) by its text alone (textual_claim).
+        A lone brace's neighbour must be claimed otherwise than by its text (v1e)."""
+        if textual and T is not None and self.textual_claim(T, ln, txt):
+            return True
         if any(a <= ln <= b for a, b in self.claims.get(path, ())):
             return True
         return T is not None and bool(self.line_tokens(T, ln)) and not self.unclaimed_tokens(T, ln)
 
     def fclaimed(self, path, ln, txt):
-        s = txt.strip()
-        if s.startswith("#include") or re.match(r"^(struct|class)\s+\w+;$", s):
+        FT = self.fz.tree.tokens(path) if path.endswith(CPP_EXT) else None
+        if FT is not None and self.textual_claim(FT, ln, txt):
             return True
         return any(a <= ln <= b for a, b in self.frozen_claims.get(path, ()))
+
+    _FWD_DECL = re.compile(r"^(?:namespace\s+\w+\s*\{\s*)?(?:struct|class)\s+(\w+)\s*;(?:\s*\})?$")
+
+    def textual_claim(self, T, ln, txt):
+        """Line @p ln of T accounted for by its text alone: an #include at file scope (every
+        brace closed; include_problem reads its target), or a forward declaration `struct X;`
+        / `class X;` (or `namespace N { class X; }`) at namespace scope that names a class the
+        frozen tree or one of the step's new headers already names (class_names).  Inside a
+        function body, a class body or any other block such a line is code like any other:
+        `struct X;` is a statement there (the whole substatement of a braceless `if`), and an
+        #include inside a body pastes a header's text into it."""
+        s = txt.strip()
+        toks = self.line_tokens(T, ln)
+        if not toks:
+            return False
+        depth, nonns = brace_scope(T)
+        if pp_directive(s) == "include":
+            return all(T.k(j) == "pp" for j in toks) and all(depth[j] == 0 for j in toks)
+        m = self._FWD_DECL.match(s)
+        if m is None or any(nonns[j] for j in toks):
+            return False
+        return m.group(1) in self.class_names()
+
+    def class_names(self):
+        """Every name the frozen tree's src/, include/ and tests/ use as a class name (`struct
+        X` or `class X` before `{`, `;`, `:` or `final`), and every class a changed C++ file of
+        the candidate defines (a definition V1e must account for in its turn: the step's new
+        types, NetworkPostFitHandoff in a header the base has)."""
+        cache = self.fz.__dict__
+        if "_class_names" not in cache:
+            pat = re.compile(r"\b(?:struct|class)\s+(\w+)\s*(?:final\b\s*)?[;{:]")
+            names = set()
+            for p in self.fz.tree.files("src", "include", "tests"):
+                if p.endswith(CPP_EXT):
+                    names.update(pat.findall(lint.strip_comments(self.fz.tree.read(p) or "")))
+            cache["_class_names"] = names
+        if getattr(self, "_class_names", None) is None:
+            names = set(cache["_class_names"])
+            for h in sorted(self.changed_files()):
+                if h.endswith(CPP_EXT):
+                    names.update(re.findall(r"\b(?:struct|class)\s+(\w+)\s*(?:final\b\s*)?[{:]",
+                                            lint.strip_comments(self.tree.read(h) or "")))
+            self._class_names = names
+        return self._class_names
+
+    def reading(self, path, ft, nt, cpp):
+        """V1e: the changed file @p path holds nothing the reading layer reads otherwise than
+        the compiler (nom_cpp.reading_problems) beyond what its frozen text holds."""
+        flines = (ft or "").split("\n")
+        have = collections.Counter((why, flines[ln - 1].strip()) for ln, why in reading_problems(ft or "", cpp))
+        lines = nt.split("\n")
+        for ln, why in reading_problems(nt, cpp):
+            key = (why, lines[ln - 1].strip())
+            if have[key] > 0:
+                have[key] -= 1
+                continue
+            shown = lines[ln - 1].strip().encode("unicode_escape").decode("ascii")
+            self.R.fail("V1e", f"{path}:{ln}: {why}; the checks would read the file otherwise than the "
+                               f"compiler: `{shown[:90]}`")
+
+    def cond_groups(self, path, T, ft, changed):
+        """V1e: a conditional group of #include lines (lint.cond_include_groups) that enters
+        the tree or whose directive changed holds no #include of a header the frozen file
+        includes: `#if 0` and `#endif` around a frozen #include remove it as surely as
+        deleting the line."""
+        frozen = {lint.include_target(t) for _, t in _code_lines(ft or "") if pp_directive(t) == "include"}
+        for directives, incs in lint.cond_include_groups(T):
+            if not any(ln in changed for ln in directives):
+                continue
+            for ln, target in incs:
+                if target in frozen:
+                    self.R.fail("V1e", f"{path}:{ln}: `#include {lint.include_spelling(*target)}`, which the "
+                                       f"frozen file includes, inside the conditional group at line "
+                                       f"{directives[0]} that enters the tree or changes")
+
 
 # ---------------------------------------------------------------------------------------------
 # Helpers of the checks
 # ---------------------------------------------------------------------------------------------
+_BRACE_SCOPE = {}
+
+
+def brace_scope(T):
+    """(depth, nonns): per token of T, the number of braces open at it and how many of them
+    are not a namespace's (`namespace [N[::M]] {`, `inline namespace N {`) or an
+    `extern "C"` block's; a token with nonns 0 is at namespace scope."""
+    hit = _BRACE_SCOPE.get(id(T))
+    if hit is not None and hit[0] is T:
+        return hit[1], hit[2]
+    depth, nonns = [0] * T.n, [0] * T.n
+    stack, other = [], 0
+    for j in range(T.n):
+        t, k = T.t(j), T.k(j)
+        if k == "op" and t == "}" and stack:
+            other -= 0 if stack.pop() else 1
+        depth[j], nonns[j] = len(stack), other
+        if k == "op" and t == "{":
+            q = j - 1
+            while q >= 0 and ((T.k(q) == "id" and T.t(q) != "namespace") or T.t(q) == "::"):
+                q -= 1
+            ns = T.t(q) == "namespace" or (T.k(j - 1) == "str" and T.t(j - 2) == "extern")
+            stack.append(ns)
+            other += 0 if ns else 1
+    if len(_BRACE_SCOPE) > 256:
+        _BRACE_SCOPE.clear()
+    _BRACE_SCOPE[id(T)] = (T, depth, nonns)
+    return depth, nonns
+
+
 def _drop_nested(subs):
     subs = sorted(subs, key=lambda x: (x.a, -(x.b - x.a)))
     out, end = [], -1
@@ -6141,7 +6321,409 @@ def ctl_r52(v):
     return {DRIVER_PATH: T.source[:a] + T.source[b:]}, f"`{T.t(j).strip()[:60]}` removed from {DRIVER_PATH}"
 
 
+# Hardening round 4.  R53 to R58: a declaration in a converted seam's bindings under a name V3a
+# never compares (the CALLABLE predicate's, a removed CALLBACK_DIRECT's), whose initializer or
+# type's constructor does the work.  R59 to R66: code the compiler reads behind a line splice
+# that every check reads as part of a comment.  R67 to R74: forward declarations and lone
+# braces that V1e accounted for by their text, wherever they stood.  R75 to R77: a carriage
+# return that is not half of a line end.  R78: a conditional group around a frozen #include.
+def _extra_binding(v, prefer, line, what, member=False):
+    """@p line (a format over the seam's run and epoch parameter names) inserted before the
+    end-of-bindings marker of the converted seam @p prefer when the tree converts it, else of
+    the first converted direct seam (a member seam when @p member) whose frozen parameters do
+    not hold the name @p line declares: a binding no frozen parameter of the seam asks for."""
+    names = [prefer] + sorted(n for n in v.converted if n != prefer)
+    for name in names:
+        r = v.by_name.get(name)
+        if name not in v.converted or r is None or r.mech == ADAPTER or (member and r.mech != MEMBER):
+            continue
+        fdef = v.fdecls.get(name, (None, None))[1]
+        for f in v.new_defs(name):
+            text = line.format(run=f.params[0].name, ep=f.params[1].name)
+            declared_name = re.search(r"(\w+)\s*(?:=|\()", text.split("[")[0])
+            if fdef is not None and declared_name and any(p.name == declared_name.group(1) for p in fdef.params):
+                continue
+            T = v.tree.tokens(f.path)
+            k = T.source.find("// ---- End of the bindings", T[f.body[0]].pos, T[f.body[1]].pos)
+            if k < 0:
+                continue
+            return {f.path: T.source[:k] + text + "\n    " + T.source[k:]}, f"{name}'s bindings gain `{text}` ({what})"
+    return None, f"no converted {'member ' if member else ''}seam with generated bindings"
+
+
+def _callable_name():
+    return SUBST.callable[0] if SUBST.callable else "isUncarriedThirdBand"
+
+
 def ctl_r53(v):
+    """U01: an immediately invoked lambda under the CALLABLE name empties the phase-leveling
+    carry in a seam that never had the predicate (networkIonoDiag)."""
+    return _extra_binding(v, "networkIonoDiag", "const bool " + _callable_name() +
+                          " = [&{run}]() -> bool {{ {run}.ctx.carry.local_carry.clear(); return false; }}();",
+                          "the carry emptied every epoch")
+
+
+def ctl_r54(v):
+    """U01p: the same in a member seam that takes the fallback names (networkPassB_)."""
+    return _extra_binding(v, "networkPassB_", "const bool " + _callable_name() +
+                          " = [&{run}]() -> bool {{ {run}.ctx.carry.local_carry.clear(); return false; }}();",
+                          "the carry emptied before PASS B injects it", member=True)
+
+
+def ctl_r55(v):
+    """U02b: the solve's bindings declare a removed CALLBACK_DIRECT's name (no line binds it),
+    an immediately invoked lambda that empties the carry; the include the replay needs added
+    on a blank line."""
+    if lint.SOLVE not in v.converted or not SUBST.callbacks:
+        return None, f"{lint.SOLVE} is not converted"
+    cb = "buildCarryDdPriors" if "buildCarryDdPriors" in SUBST.callbacks else SUBST.callbacks[0]
+    ov, what = _extra_binding(v, lint.SOLVE, "const bool " + cb +
+                              " = [&{run}]() -> bool {{ {run}.ctx.carry.local_carry.clear(); return true; }}();",
+                              "a removed callback's name")
+    if ov is None:
+        return ov, what
+    path, src = next(iter(ov.items()))
+    inc = '#include "filter/NetworkDdPriorBuild.hpp"'
+    if inc not in src:
+        k = src.find('#include "math/TimeUtils.hpp"\n\n')
+        if k >= 0:
+            k += len('#include "math/TimeUtils.hpp"\n')
+            src = src[:k] + inc + src[k:]
+    return {path: src}, what
+
+
+def ctl_r56(v):
+    """U03: the CALLABLE name's immediately invoked lambda writes the const epoch through a
+    const_cast (the solution zeroed after the emit)."""
+    return _extra_binding(v, "networkIonoDiag", "const bool " + _callable_name() +
+                          " = [&{ep}]() -> bool {{ const_cast<NetworkEpoch&>({ep}).solve.x_s.setZero(); "
+                          "return false; }}();", "the epoch written through a const_cast")
+
+
+def ctl_r57(v):
+    """U04: a declaration under the CALLABLE name whose type's constructor truncates the
+    solution trace, direct-initialized from a member read."""
+    return _extra_binding(v, "networkIonoDiag", "std::ofstream " + _callable_name() + "({run}.traces.soln_path);",
+                          "a constructor with a side effect")
+
+
+def ctl_r58(v):
+    """U07: a declaration under the CALLABLE name whose type adopts the product writer."""
+    return _extra_binding(v, "networkIonoDiag", "std::unique_ptr<NetworkProductWriter> " + _callable_name() +
+                          "({run}.setup.product_writer.get());", "the product writer deleted at the seam's end")
+
+
+def _hidden(code):
+    """`/* r4 *\\<NL>/ CODE /* r4 */`: one comment to a reader that splices no line, `/* r4 */
+    CODE /* r4 */` to the compiler, which splices before it recognizes comments."""
+    return "/* r4 *" + chr(92) + "\n/ " + code + " /* r4 */"
+
+
+def _epoch_stmt(v, test):
+    """(start, end) token span of the first top-level statement of the epoch function for
+    which @p test(text) holds, or None."""
+    c = v.cand
+    T = c.T
+    return next(((s, e) for s, e in c.stmts if test(T.join(s, e))), None)
+
+
+def _hide_at_epoch(v, test, code, before, what):
+    if not v.epoch:
+        return None, "no epoch function"
+    T = v.cand.T
+    st = _epoch_stmt(v, test)
+    if st is None:
+        return None, f"no epoch statement for {what}"
+    if before:
+        at = T.source.rfind("\n", 0, T[st[0]].pos) + 1
+        return {T.path: T.source[:at] + "    " + _hidden(code) + "\n" + T.source[at:]}, what
+    at = T[st[1] - 1].end
+    return {T.path: T.source[:at] + "\n    " + _hidden(code) + T.source[at:]}, what
+
+
+def ctl_r59(v):
+    """m03: a hidden `n_emitted = 0;` after the ep.emitted store (the VALUE_EQUAL object)."""
+    return _hide_at_epoch(v, lambda t: t.startswith("ep.emitted="), "n_emitted = 0;", False,
+                          "a hidden write of n_emitted after the ep.emitted store")
+
+
+def ctl_r60(v):
+    """m01: a hidden `return LoopSignal::Next;` before the state snapshot."""
+    return _hide_at_epoch(v, lambda t: t.startswith("networkWriteStateSnapshot("), "return LoopSignal::Next;",
+                          True, "a hidden return before the state snapshot")
+
+
+def ctl_r61(v):
+    """m04: a hidden `return LoopSignal::Stop;` near the top of the epoch body."""
+    return _hide_at_epoch(v, lambda t: t.startswith("++n_loop_epochs"), "return LoopSignal::Stop;", False,
+                          "a hidden Stop after the epoch count")
+
+
+def ctl_r62(v):
+    """m05: a hidden throw before the state snapshot."""
+    return _hide_at_epoch(v, lambda t: t.startswith("networkWriteStateSnapshot("),
+                          'throw std::runtime_error("r4");', True, "a hidden throw before the state snapshot")
+
+
+def ctl_r63(v):
+    """m06: a hidden `return;` right below a converted seam's bindings (networkIonoDiag)."""
+    names = ["networkIonoDiag"] + sorted(n for n in v.converted if n != "networkIonoDiag")
+    for name in names:
+        if name not in v.converted or v.by_name[name].mech == ADAPTER:
+            continue
+        for f in v.new_defs(name):
+            T = v.tree.tokens(f.path)
+            k = T.source.find("// ---- End of the bindings ----\n", T[f.body[0]].pos, T[f.body[1]].pos)
+            if k < 0:
+                continue
+            k += len("// ---- End of the bindings ----\n")
+            return {f.path: T.source[:k] + "    " + _hidden("return;") + "\n" + T.source[k:]}, \
+                f"a hidden return below {name}'s bindings"
+    return None, "no converted seam with generated bindings"
+
+
+def ctl_r64(v):
+    """m02: a hidden second call of a spine seam (networkIonoDiag)."""
+    name = _called_name(v, "networkIonoDiag") if v.epoch else None
+    if name is None:
+        return None, "no epoch function"
+    st = _epoch_stmt(v, lambda t: t.startswith(name + "("))
+    if st is None:
+        return None, f"no epoch statement that calls {name}"
+    T = v.cand.T
+    call = T.join(*st)              # the statement's tokens on one line (the epoch form, or EP1a-1's explicit call)
+    return _hide_at_epoch(v, lambda t: t == call, call, False, f"a hidden second {name} call")
+
+
+def ctl_r65(v):
+    """m09: a hidden `return LoopSignal::Next;` before the max-duration cutoff's Stop."""
+    if not v.epoch:
+        return None, "no epoch function"
+    T = v.cand.T
+    k = T.source.find("return LoopSignal::Stop;", T[v.cand.open].pos, T[v.cand.close].pos)
+    if k < 0:
+        return None, "the epoch function returns no LoopSignal::Stop"
+    at = T.source.rfind("\n", 0, k) + 1
+    ind = T.source[at:k]
+    return {T.path: T.source[:at] + ind + _hidden("return LoopSignal::Next;") + "\n" + T.source[at:]}, \
+        "a hidden Next before the first LoopSignal::Stop"
+
+
+def ctl_r66(v):
+    """m10: a hidden call in runNetwork's loop body, after the per-epoch dispatch."""
+    T = v.tree.tokens(DRIVER_PATH)
+    disp = "networkProcessEpoch_" if v.epoch else LAMBDA_NAME
+    c = next((c for c in calls_in(T, 0, T.n) if c.name == disp and T.t(c.tok - 1) != "::"
+              and T.t(c.close + 1) != "{"), None)
+    if c is None:
+        return None, f"runNetwork does not call {disp}"
+    at = T.source.find("\n", T[c.close].end)
+    code = "run.engines.est.sectionTimers();" if v.epoch else "est.sectionTimers();"
+    return {T.path: T.source[:at] + "\n            " + _hidden(code) + T.source[at:]}, \
+        f"a hidden call after runNetwork's {disp} dispatch"
+
+
+# The scope foolings: each a site of the round-4 reproducer, else a generic one found in the
+# same file, so the control does not depend on one statement surviving a later base.
+_IF_BLOCK = re.compile(r"^([ \t]*)if \([^\n]*\) \{\n([ \t]+)([^\n{}]+;)\n", re.M)
+_BRACELESS_IF = re.compile(r"^([ \t]*)if \([^\n{};]*\)\n([ \t]+)([^\n{}]+;)\n", re.M)
+_LOCAL_DECL = re.compile(r"^([ \t]+)(?:const )?(?:double|int|bool|auto) \w+ = [^\n{}]+;\n", re.M)
+
+
+def _site(v, path, anchor, pattern):
+    """(text, match position, match end) of @p anchor in @p path, else the first match of the
+    regular expression @p pattern there (returned as a Match), or None."""
+    src = v.tree.read(path)
+    if src is None:
+        return None
+    if anchor and src.count(anchor) == 1:
+        k = src.find(anchor)
+        return src, k, k + len(anchor)
+    m = pattern.search(src)
+    return (src, m) if m else None
+
+
+def _split_block(v, path, anchor, new, one_line=False, include=False):
+    """Split the block that opens just above a statement: forward declarations (or an
+    #include) and lone braces close the block and open a new one, so the statements below run
+    unconditionally (s01, s03, s04, s05, s07)."""
+    hit = _site(v, path, anchor, _IF_BLOCK)
+    if hit is None:
+        return None, f"no braced if block in {path}"
+    if len(hit) == 3:
+        src, a, b = hit
+        return {path: src[:a] + new + src[b:]}, f"a block split in {path}"
+    src, m = hit
+    ind, ind2 = m.group(1), m.group(2)
+    head = src[m.start():m.end(2) + len(m.group(3)) + 1]
+    first = ("#include <vector>" if include else "struct EpFwdA;")
+    mid = (f"{ind2}{first}\n{ind}}}{{\n" if one_line
+           else f"{ind2}{first}\n{ind}}}\n{ind}struct EpFwdB;\n{ind}{{\n")
+    return {path: src[:m.start()] + head.split("\n", 1)[0] + "\n" + mid + head.split("\n", 1)[1] + src[m.end():]}, \
+        f"a block split in {path}"
+
+
+def _wrap_decl(v, path, anchor, new):
+    """Wrap one local declaration in its own block between forward declarations (s02, s06):
+    a later use of the name reads an outer declaration instead."""
+    hit = _site(v, path, anchor, _LOCAL_DECL)
+    if hit is None:
+        return None, f"no local declaration in {path}"
+    if len(hit) == 3:
+        src, a, b = hit
+        return {path: src[:a] + new + src[b:]}, f"a declaration wrapped in its own block in {path}"
+    src, m = hit
+    ind = m.group(1)
+    return {path: src[:m.start()] + f"{ind}struct EpFwdA;\n{ind}{{\n" + m.group(0) + f"{ind}struct EpFwdB;\n{ind}}}\n"
+            + src[m.end():]}, f"a declaration wrapped in its own block in {path}"
+
+
+def ctl_r67(v):
+    """s01: two forward declarations and two lone braces split NetworkSbasis'
+    codeFamilyDiffTimeLink no-veteran block, so its reseed runs on every call."""
+    return _split_block(v, "src/core/filter/NetworkSbasis.cpp",
+                        "        out.jac_sats = common_sats;\n        out.rhs      = 0.0;\n",
+                        "        out.jac_sats = common_sats;\n        struct EpFwdA;\n    }\n    struct EpFwdB;\n    {\n"
+                        "        out.rhs      = 0.0;\n")
+
+
+def ctl_r68(v):
+    """s02: the SMH block's `dmax` wrapped in its own block, so the SMH log line reads the PBH
+    block's `dmax`."""
+    old = "            const double dmax = da.empty() ? 0.0 : *std::max_element(da.begin(), da.end());\n"
+    return _wrap_decl(v, "src/core/app/NetworkClosedLoopRunEnd.cpp", old,
+                      "            struct EpFwdA;\n            {\n" + old + "            struct EpFwdB;\n            }\n")
+
+
+def ctl_r69(v):
+    """s03: one forward declaration and a single `}{` line split the same block."""
+    return _split_block(v, "src/core/filter/NetworkSbasis.cpp",
+                        "        out.jac_sats = common_sats;\n        out.rhs      = 0.0;\n",
+                        "        out.jac_sats = common_sats;\n        struct EpFwdA;\n    }{\n        out.rhs      = 0.0;\n",
+                        one_line=True)
+
+
+def ctl_r70(v):
+    """s04: NetworkEstimator::solve's epoch-open guard split, so every solve throws."""
+    old = ('    if (!epoch_open_) {\n        throw std::logic_error("NetworkEstimator::solve: call beginEpoch() '
+           'first");\n')
+    return _split_block(v, "src/core/filter/NetworkEstimator.cpp", old,
+                        '    if (!epoch_open_) {\n        struct EpFwdA;\n    }\n    struct EpFwdB;\n    {\n'
+                        '        throw std::logic_error("NetworkEstimator::solve: call beginEpoch() first");\n')
+
+
+def ctl_r71(v):
+    """s05: networkSetup_'s marker-to-ARP block split, so every station is reduced to its ARP."""
+    old = "                if (marker_to_arp) {\n                    st.ecef = Coordinates::markerToArp(st.ecef, hen);\n"
+    return _split_block(v, "src/core/app/ApplicationNetworkSetup.cpp", old,
+                        "                if (marker_to_arp) {\n                    struct EpFwdA;\n                }\n"
+                        "                struct EpFwdB;\n                {\n"
+                        "                    st.ecef = Coordinates::markerToArp(st.ecef, hen);\n")
+
+
+def ctl_r72(v):
+    """s06: CycleSlipManager's local `is_bssd_pivot` and its if-block wrapped in their own
+    block, so the soft-LLI test reads the outer std::function of that name."""
+    path = "src/core/slip/CycleSlipManager.cpp"
+    src = v.tree.read(path)
+    a = "                    bool is_bssd_pivot = false;\n"
+    b = ("                        is_bssd_pivot = (pit != pivots.end() && pit->second == sat_id);\n"
+         "                    }\n")
+    if src is not None and src.count(a) == 1 and src.count(b) == 1:
+        src = src.replace(a, "                    struct EpFwdA;\n                    {\n" + a)
+        src = src.replace(b, b + "                    struct EpFwdB;\n                    }\n")
+        return {path: src}, f"a declaration and its block wrapped in their own block in {path}"
+    return _wrap_decl(v, path, None, None)
+
+
+def ctl_r73(v):
+    """s07: the split of R69 with `#include <vector>` as the `}{` line's neighbour."""
+    return _split_block(v, "src/core/filter/NetworkSbasis.cpp",
+                        "        out.jac_sats = common_sats;\n        out.rhs      = 0.0;\n",
+                        "        out.jac_sats = common_sats;\n#include <vector>\n    }{\n        out.rhs      = 0.0;\n",
+                        one_line=True, include=True)
+
+
+def ctl_r74(v):
+    """s08: one forward declaration as the substatement of a braceless if, so the statement
+    below it runs unconditionally (every product contract advertises hsig=pc)."""
+    path = "src/core/app/ApplicationNetworkSetup.cpp"
+    old = ('            if (config_.networkHSigma0PrefitCensus())\n'
+           '                pending_contract.h_sigma0_source = "pc";\n')
+    hit = _site(v, path, old, _BRACELESS_IF)
+    if hit is None:
+        return None, f"no braceless if in {path}"
+    if len(hit) == 3:
+        src, a, b = hit
+        return {path: src[:a] + old.replace("\n", "\n                struct EpFwdA;\n", 1) + src[b:]}, \
+            f"a forward declaration as a braceless if's substatement in {path}"
+    src, m = hit
+    k = src.find("\n", m.start()) + 1
+    return {path: src[:k] + m.group(2) + "struct EpFwdA;\n" + src[k:]}, \
+        f"a forward declaration as a braceless if's substatement in {path}"
+
+
+def _cr_hidden(code):
+    """A `//` comment ending in backslash and carriage return, then @p code on the next line:
+    after the CR LF fold the reader continues the comment over @p code, MSVC does not."""
+    return "    // the store above " + chr(92) + "\r\n    " + code + "\n"
+
+
+def ctl_r75(v):
+    """s09: after the ep.emitted store, a comment ending in backslash CR hides
+    `if (!ep.emitted) return LoopSignal::Next;`."""
+    if not v.epoch:
+        return None, "no epoch function"
+    T = v.cand.T
+    st = _epoch_stmt(v, lambda t: t.startswith("ep.emitted="))
+    if st is None:
+        return None, "no ep.emitted store"
+    at = T.source.find("\n", T[st[1] - 1].end) + 1
+    return {T.path: T.source[:at] + _cr_hidden("if (!ep.emitted) return LoopSignal::Next;") + T.source[at:]}, \
+        "a carriage-return comment hides a return after the ep.emitted store"
+
+
+def ctl_r76(v):
+    """s10: in the solve, a comment ending in backslash CR hides `result.x_s *= 1.0001;`."""
+    src = v.tree.read(SOLVE_CPP)
+    anchor = "    result.x_s = std::move(x_s);\n"
+    if src is None or src.count(anchor) != 1:
+        return None, f"`{anchor.strip()}` is not in {SOLVE_CPP} once"
+    k = src.find(anchor) + len(anchor)
+    return {SOLVE_CPP: src[:k] + _cr_hidden("result.x_s *= 1.0001;") + src[k:]}, \
+        "a carriage-return comment hides a scaling of the solve's solution"
+
+
+def ctl_r77(v):
+    """s11: in the epoch's unit, a comment ending in backslash CR hides a #define of a called
+    seam's name (R25 by a channel no check read)."""
+    if not v.epoch:
+        return None, "no epoch function"
+    T = v.cand.T
+    name = _called_name(v, "networkPostFitRaim")
+    k = T.source.find("namespace GnssProcessor {")
+    if name is None or k < 0:
+        return None, "no namespace or no called seam in the epoch's unit"
+    hidden = "// the epoch's own unit " + chr(92) + "\r\n" + f"#define {name}(...) ((void)0)\n"
+    return {T.path: T.source[:k] + hidden + T.source[k:]}, f"a carriage-return comment hides `#define {name}(...)`"
+
+
+def ctl_r78(v):
+    """`#if 0` and `#endif` around the driver unit's last quoted frozen #include (R52 by a
+    conditional group, which V1e admitted as a group of #include lines)."""
+    T = v.tree.tokens(DRIVER_PATH)
+    incs = [j for j in range(T.n) if T.k(j) == "pp" and pp_directive(T.t(j)) == "include"
+            and lint.include_target(T.t(j))[0] == '"']
+    if not incs:
+        return None, f"no quoted #include in {DRIVER_PATH}"
+    j = incs[-1]
+    a = T.source.rfind("\n", 0, T[j].pos) + 1
+    b = T.source.find("\n", T[j].end)
+    return {DRIVER_PATH: T.source[:a] + "#if 0\n" + T.source[a:b] + "\n#endif" + T.source[b:]}, \
+        f"`#if 0` around `{T.t(j).strip()[:60]}` in {DRIVER_PATH}"
+
+
+def ctl_r79(v):
     """The review round's defect: an UNREAD_ALIAS line left in runNetwork at its frozen place,
     where nothing reads it once the lambda has moved (so V1d's statement match accepts it and
     only the unread-declaration rule can fail it)."""
@@ -6173,6 +6755,11 @@ def _conv(*names):
 
 def _epoch_only(v):
     return v.epoch
+
+
+def _direct_conv(v):
+    """The tree converts a seam that has generated bindings (not only adapters)."""
+    return any(v.by_name[n].mech != ADAPTER for n in v.converted)
 
 
 CONTROLS = (
@@ -6273,23 +6860,62 @@ CONTROLS = (
     Control("R50", "V1e", "a compile definition of a called seam's name", ctl_r50),
     Control("R51", "V1e", "a CMake line inside a C++ block comment", ctl_r51),
     Control("R52", "V1e", "a frozen #include removed", ctl_r52),
+    # Hardening round 4 (R53 to R77 each a mutation the round-3 verifier and lint accepted;
+    # R78 the route to R52 that building the fixes found).
+    Control("R53", "V1b", "a binding under the CALLABLE name empties the carry", ctl_r53, _direct_conv),
+    Control("R54", "V1b", "the same in a member seam with the fallback names", ctl_r54, _conv("networkPassB_")),
+    Control("R55", "V1b", "a binding under a removed callback's name empties the carry", ctl_r55,
+            _conv("networkSolveGlue")),
+    Control("R56", "V1b", "a binding under the CALLABLE name writes the epoch through a const_cast", ctl_r56,
+            _direct_conv),
+    Control("R57", "V1b", "a binding under the CALLABLE name whose constructor truncates a trace", ctl_r57,
+            _direct_conv),
+    Control("R58", "V1b", "a binding under the CALLABLE name that adopts the product writer", ctl_r58,
+            _direct_conv),
+    Control("R59", "V1e", "a write of n_emitted behind a line splice", ctl_r59, _epoch_only),
+    Control("R60", "V1e", "a return before the state snapshot behind a line splice", ctl_r60, _epoch_only),
+    Control("R61", "V1e", "a Stop at the top of the epoch behind a line splice", ctl_r61, _epoch_only),
+    Control("R62", "V1e", "a throw behind a line splice", ctl_r62, _epoch_only),
+    Control("R63", "V1e", "a return below a seam's bindings behind a line splice", ctl_r63, _direct_conv),
+    Control("R64", "V1e", "a second call of a seam behind a line splice", ctl_r64, _epoch_only),
+    Control("R65", "V1e", "a Next before a Stop behind a line splice", ctl_r65, _epoch_only),
+    Control("R66", "V1e", "a call in runNetwork's loop behind a line splice", ctl_r66),
+    Control("R67", "V1e", "forward declarations and lone braces split a block", ctl_r67),
+    Control("R68", "V1e", "a declaration wrapped in its own block (a later use reads another)", ctl_r68),
+    Control("R69", "V1e", "a forward declaration and a `}{` line split a block", ctl_r69),
+    Control("R70", "V1e", "the estimator's epoch-open guard split", ctl_r70),
+    Control("R71", "V1e", "the setup's marker-to-ARP block split", ctl_r71),
+    Control("R72", "V1e", "a local and its block wrapped (a later test reads the outer name)", ctl_r72),
+    Control("R73", "V1e", "an #include and a `}{` line split a block", ctl_r73),
+    Control("R74", "V1e", "a forward declaration as a braceless if's substatement", ctl_r74),
+    Control("R75", "V1e", "a return in the epoch behind a comment ending in a carriage return", ctl_r75,
+            _epoch_only),
+    Control("R76", "V1e", "a scaling of the solution behind a comment ending in a carriage return", ctl_r76),
+    Control("R77", "V1e", "a #define of a called seam behind a comment ending in a carriage return", ctl_r77,
+            _epoch_only),
+    Control("R78", "V1e", "#if 0 around a frozen #include", ctl_r78),
     # The EP1 review round (the dead aliases the move of the lambda left in runNetwork).
-    Control("R53", "V1d", "an alias only the lambda read left in runNetwork", ctl_r53, _epoch_only),
+    Control("R79", "V1d", "an alias only the lambda read left in runNetwork", ctl_r79, _epoch_only),
 )
 ALSO = {"N8": ("V3c",), "N10": ("V3e",), "N16": ("V6",), "N4": ("V10",), "N13": ("V8",),
         "R35": ("V8",), "R36": ("V8",), "R37": ("V8",), "R38": ("V1d",),
-        "R46": ("V9",), "R47": ("V9",), "R49": ("V1e",)}
+        "R46": ("V9",), "R47": ("V9",), "R49": ("V1e",),
+        "R53": ("V3a",), "R54": ("V3a",), "R55": ("V3a",), "R56": ("V3a",), "R57": ("V3a",), "R58": ("V3a",)}
 # Controls that fire only when every named check fails (spec 5.7: N4 fails V3a at the solve's
 # internal call "and V10"; R35 to R37 edit a seam's head and its contract-test alias together,
 # which V2 and V8 each catch; R38 edits the epoch function's declaration, V1d's, and its
 # definition, V1a's; R46, R47 and R49 carry an overload into the epoch's translation unit, which
-# the include rule or the new-file rule of V1e and the overload rule of V9 each catch).
-REQUIRE_ALL = {"N4", "R35", "R36", "R37", "R38", "R46", "R47", "R49"}
+# the include rule or the new-file rule of V1e and the overload rule of V9 each catch; R53 to
+# R58 declare a binding under a name no frozen parameter of the seam asks for, which V1b's name
+# rule and V3a's every-binding-compared rule each catch).
+REQUIRE_ALL = {"N4", "R35", "R36", "R37", "R38", "R46", "R47", "R49", "R53", "R54", "R55", "R56", "R57", "R58"}
 # Controls the permanent lint (scripts/nom_epoch_lint.py, run standalone on the mutated tree)
 # must also fail (spec 5.7: N7 "V4 (and the lint)"; N16 is a driver write the lint's V4 owns;
 # R24 to R26 and R46 to R50 change what the compiler builds from the epoch's translation unit,
-# which the lint's V0 owns).
-LINT_CONTROLS = ("N7", "N16", "R24", "R25", "R26", "R46", "R47", "R48", "R49", "R50")
+# which the lint's V0 owns; so do R59 to R62, R64, R65, R75 and R77, code the compiler reads in
+# that unit and the lint read as a comment).
+LINT_CONTROLS = ("N7", "N16", "R24", "R25", "R26", "R46", "R47", "R48", "R49", "R50",
+                 "R59", "R60", "R61", "R62", "R64", "R65", "R75", "R77")
 
 
 def _lint_rc(tree, partial, presolve_writer):

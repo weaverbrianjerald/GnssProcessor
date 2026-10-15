@@ -736,7 +736,7 @@ and the loop counters), the dead-alias defect INC-12 and EP0 removed before. The
 twelfth declared class UNREAD_ALIAS (5.6), with the comment blocks that only introduced them
 (`scripts/nom_ep1/docs.py`); what those blocks said that is still true moves to the declaration
 it describes. A generation that would leave any declaration of `runNetwork`'s outermost scope
-unread is refused by name, and V1d fails one (control R53).
+unread is refused by name, and V1d fails one (control R79).
 
 ### 4.2 `Application::networkProcessEpoch_` (`src/core/app/ApplicationNetworkEpoch.cpp`, new, about 1 400 lines)
 

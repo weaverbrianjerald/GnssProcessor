@@ -20,8 +20,12 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       epoch function calls is declared in that translation unit outside the function (a
       better-matching overload, a variable or a type of a seam's name would capture the
       call); and each converted seam the spine calls has one epoch-form definition of that
-      arity.  What the translation unit reads beyond its own text: every tree file it reaches
-      through #include, directly or through a header, is a header (.hpp or .h under include/
+      arity.  The text read is the text compiled: the unit, every project file it reaches and
+      CMakeLists.txt hold no line splice (a backslash before a line end: the compiler splices
+      `/* a *\\<NL>/ code /* b */` into live code the lexer reads as one comment), no
+      carriage return that ends no line, no control character and no bytes that are not UTF-8
+      (nom_cpp.reading_problems).  What the translation unit reads beyond its own text:
+      every tree file it reaches through #include, directly or through a header, is a header (.hpp or .h under include/
       or third_party/), so no source, test or inline file carries a declaration into it, and
       every directive names its header literally; no declaration in that closure can take a
       spine call from its seam (a declaration of the seam's name whose first parameter binds
@@ -91,8 +95,8 @@ import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_angle, statements,  # noqa: E402
-                     strip_parens)
+from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_angle, reading_problems,  # noqa: E402
+                     statements, strip_parens)
 from rt_seam_verify import strip_comments  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -239,6 +243,39 @@ def cond_include_lines(T):
             continue
         stack[-1]["clean"] = False        # code, or another directive, inside the group
     return ok
+
+
+def cond_include_groups(T):
+    """[(directive lines, [(line, include_target)])] of the groups cond_include_lines accepts
+    (those that hold only #include directives and nested such groups), each with the
+    #include lines it holds, nested groups' included.  The relocation verifier fails a group
+    that enters the tree around a frozen #include (V1e): a group can choose a header, and
+    `#if 0` chooses none."""
+    out, stack = [], []
+    for j in range(T.n):
+        d = pp_directive(T.t(j)) if T.k(j) == "pp" else None
+        if d in ("if", "ifdef", "ifndef"):
+            stack.append({"lines": [T.line(j)], "clean": True, "incs": []})
+            continue
+        if not stack:
+            continue
+        if d in ("elif", "else"):
+            stack[-1]["lines"].append(T.line(j))
+            continue
+        if d == "endif":
+            grp = stack.pop()
+            if grp["clean"]:
+                out.append((grp["lines"] + [T.line(j)], grp["incs"]))
+                if stack:
+                    stack[-1]["incs"] += grp["incs"]
+            elif stack:
+                stack[-1]["clean"] = False
+            continue
+        if d == "include":
+            stack[-1]["incs"].append((T.line(j), include_target(T.t(j))))
+            continue
+        stack[-1]["clean"] = False
+    return out
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1216,6 +1253,7 @@ class Lint:
                          f"of arity {sc.call.nargs} ({', '.join(f'{f.path}:{f.line}' for f in ds)})")
         self.info["V0"].append(f"one definition, {len(called)} called names, {len(self.spine)} spine calls")
         clo = self.v0_includes()
+        self.v0_reading(clo)
         self.v0_overloads(clo)
         self.v0_cmake(called)
 
@@ -1239,6 +1277,32 @@ class Lint:
                              "headers only")
         self.info["V0"].append(f"{len(clo)} files in its translation unit")
         return clo
+
+    def v0_reading(self, clo):
+        """The lint reads the text the compiler reads: the epoch function's translation unit,
+        every project file it reaches (under src/ or include/) and CMakeLists.txt hold nothing
+        nom_cpp.reading_problems names (a line splice, a carriage return that ends no line, a
+        control character, bytes that are not UTF-8).  The lexer implements no translation
+        phase 1 or 2, so `/* a *\\<NL>/ return LoopSignal::Next; /* b */` in the epoch
+        function is one comment to every check and a return to the compiler, and a `//`
+        comment ending in a backslash and a carriage return hides the next line from the
+        checks only.  Library headers under third_party/ are not read here (the relocation
+        verifier diffs them against the base when the tree carries them)."""
+        P = self.problems["V0"]
+        n = 0
+        for p in sorted(set(clo) | {self.fn.path}):
+            if p.startswith(("../", "/")) or not p.startswith(("src/", "include/")):
+                continue
+            text = self.tree.read(p)
+            if text is None:
+                continue
+            n += 1
+            for ln, why in reading_problems(text, cpp=True):
+                P.append(f"{p}:{ln}: {why}, which the lint reads otherwise than the compiler")
+        cm = self.tree.read(CMAKE)
+        for ln, why in reading_problems(cm or "", cpp=False):
+            P.append(f"{CMAKE}:{ln}: {why}, which the lint reads otherwise than CMake")
+        self.info["V0"].append(f"{n} files of the translation unit read as the compiler reads them")
 
     def v0_overloads(self, clo):
         """No declaration the translation unit sees can take a spine call from its seam: every
