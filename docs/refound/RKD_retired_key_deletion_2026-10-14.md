@@ -4,14 +4,14 @@
 
 - **id:** RKD
 - **topic:** config-ledger
-- **status:** open
-- **summary:** Built 2026-10-14 on branch `rmk/delete`: the 144 network keys the ledger rebuild marked REMOVE, and five lane keys they orphan, deleted with their parse sites, members, getters and every code path they armed. 149 ledger rows leave the ledger (784 to 635); the goldens unset 20 keys in 17 entries and drop one pin. The regenerated goldens equal the gate's reference goldens in every value. Open until the same-build golden comparison (plan section 5.1) is appended.
+- **status:** closed
+- **summary:** LANDED 2026-10-14: the 144 network keys the ledger rebuild marked REMOVE, and five lane keys they orphan, deleted with their parse sites, members, getters and every code path they armed. 149 ledger rows leave the ledger (784 to 635); the goldens unset 20 keys in 17 entries and drop one pin. Same-build comparison PASSED: both goldens and eight further arms identical in every product record and CSV row, the differences exactly the declared text moves; the four arms that arm a deleted mechanism are attributed by control runs (section 6).
 - **source:** the REMOVE verdicts of the ledger rebuild (main `4bdd693`, [CONFIG_promotion_ledger](../CONFIG_promotion_ledger.md)); the register item "Delete the REMOVE keys" ([OPEN_ITEMS](../status/OPEN_ITEMS.md)); the deletion plan of 2026-10-13 (session scratchpad, `rmk/PLAN.md`: sections 3 to 6, 11 and appendices A and B)
 - **keys:** 144 under `network.` (appendix A of the plan, by family in section 1 below) plus `mw_wl.d5_dump`, `.lane_trace`, `.sigma_floor_cyc`, `.max_rows_per_epoch`, `.fix_weight_sigma_cyc` and `iono_constraint_deweight_stations` (no ledger row); `cold_clock_seed` stays (regime `"False"`)
 - **dates in the text:** 2026-10-13, 2026-10-14
-- **hashes / run dirs:** base main `4bdd693`; deletion `72d84db`..`82f0015` (35 commits, rebased from `d5b33a0`); ledger and goldens `9a5c8d3`; the pre-deletion ledger is `git show 4bdd693:docs/CONFIG_promotion_ledger.json`; candidate exe `build/x64-Release/gnss_processor_rmkcand.exe` (hash recorded with the gate result); gate not run
+- **hashes / run dirs:** base main `4bdd693`; deletion `72d84db`..`82f0015` (35 commits, rebased from `d5b33a0`); ledger and goldens `9a5c8d3`; the pre-deletion ledger is `git show 4bdd693:docs/CONFIG_promotion_ledger.json`; reference exe `gnss_processor_rmkref2.exe` (main `4bdd693`, SHA256 `A5DD9102...`), candidate `gnss_processor_rmkcand.exe` (`08fe7f2`, SHA256 `1AEC2AB2...`) and the pre-rebase candidate `gnss_processor_rmkpre.exe` (SHA256 `A2924FFB...`); gate runs `D:/GnssProcessorSupport/runs_rmk/_rap_rmk2_{ref2,pre,fin,ctl}_*` and `_rmk2_{ref2,pre}_ppp`
 
-**Outcome.** Question: can the ledger's retired network keys be deleted with their code while the golden posture moves only on declared lines? The deletion is built: 149 keys leave the loader and the ledger, 30 C++ files (11,281 lines) are deleted, and `src/`, `include/` and `tests/` lose about 31,900 lines net. The regenerated goldens equal the reference goldens of the gate in every value; `make_golden_config.py --verify`, `config_posture_check.py --verify-loader`, `ledger_render.py --check` and the Debug suites pass. Verdict pending: the same-build comparison of section 5.1 has not run. Status: open.
+**Outcome.** Question: can the ledger's retired network keys be deleted with their code while the golden posture moves only on declared lines? The deletion is built: 149 keys leave the loader and the ledger, 30 C++ files (11,281 lines) are deleted, and `src/`, `include/` and `tests/` lose about 31,900 lines net. The regenerated goldens equal the reference goldens of the gate in every value; `make_golden_config.py --verify`, `config_posture_check.py --verify-loader`, `ledger_render.py --check` and the Debug suites pass. Verdict: PASS. On both goldens and eight further arms every product record and CSV row is identical; the differences are the declared text moves of section 3. The four arms that arm a deleted mechanism move, and control runs without the deleted keys reproduce them. Status: closed, landed on main (section 6).
 
 ## 1. What was deleted
 
@@ -154,3 +154,25 @@ records fails to parse and cold-starts; `ZL` rows still parse.
   still models the lane objects and is re-surveyed before EP1a-1 is re-run.
 - **Documentation notes:** listed in [OPEN_ITEMS](../status/OPEN_ITEMS.md) ("Retired-key deletion:
   documentation notes").
+
+## 6. 2026-10-14: the same-build golden comparison
+
+Reference: Release of main `4bdd693` (`gnss_processor_rmkref2.exe`). Arms: the gate set of card NOM3
+step EP0 minus `cil` and `fcs2` (their lane and FC-1 postures are deleted), plus `clm`
+(`network.clock_level_monitor` on the field golden, 2 h, plan R7) and a 6 h user-PPP run of
+`config/ppp_internal.json` (plan R5). The two goldens of every arm are the post-deletion values (the 20
+unset keys absent), equal value for value to the regenerated goldens of `9a5c8d3`. Grader:
+`scripts/nom_td_gate.py --whole`, residual log lines read after the gate's masks.
+
+| arms | result |
+| --- | --- |
+| `f2`, `s2` (the 2 h goldens), `zero`, `bcl`, `snapw`, `snapr`, `dec`, `pdx`, `vce`, `clm` | every product record, every CSV row, `rt_engine.log` and the exit code identical; `snapw`'s snapshot identical byte for byte (189 439 bytes, its UTC field masked), and `snapr`, a warm resume of the candidate from the reference's snapshot, identical |
+| the same, text | exactly the declared moves: the products.txt legend (M26), the provenance line of `network_amb_state.csv` (no F1 term), and the log lines of section 3 (M1 to M18 and the extra moves); the B6 round trip reads 236 bytes fewer, the two legend lines |
+| user PPP | identical apart from the run directory and the wall time |
+| `joint` (arms `carry_coupling_joint_whiten`) | moves; the reference on the same arm without the deleted keys equals the candidate in every product record and CSV row |
+| `wcff`, `trc`, `shd` (the retired `golden_field_gps_dual.json`: lanes, SH gate, deweight gate, PB filter armed) | move (plan R9); the reference without the deleted keys equals the candidate except the deweight weights of the SH-tie `TOPOLOGY` events (`w_prev=`, `w_now=`), deleted with the gate (C15) and printed only on postures with the SH field |
+
+The final candidate (`08fe7f2`, rebased onto `4bdd693`) differs from the pre-rebase candidate
+(`82f0015` before the rebase) on `f2` and `s2` only in the posture table, which now prints the
+reference's rows and tallies (ON 23/23, SCOPED 53/55). Debug `gnss_tests` 2975 passed, 0 failed,
+24 skipped (fixture-gated); `gnss_simulator_selftest` 99 of 99. Verdict: PASS; landed.

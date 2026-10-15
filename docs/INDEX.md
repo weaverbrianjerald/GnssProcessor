@@ -399,7 +399,7 @@ Standing documents (not split this pass):
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [RKD](refound/RKD_retired_key_deletion_2026-10-14.md), the 144 retired network keys deleted with
-their code (open, 2026-10-14; the same-build golden comparison is owed).
+their code (closed, 2026-10-14: landed; the same-build golden comparison passed).
 
 ### `queues` — [topics/queues.md](topics/queues.md)
 
