@@ -38,7 +38,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     NetworkRunTraces& traces = run.traces;
     NetworkEstimator& est = run.engines.est;
     bool carry_warm = ep.clock.carry_warm;
-    std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;  // written
+    const std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;
     std::vector<bool>& present = pass_a.present;  // written
     std::vector<StationAssembly>& asm_res = assembly.asm_res;  // written
     std::vector<int>& est_index_of = assembly.est_index_of;  // written

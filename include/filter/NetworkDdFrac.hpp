@@ -58,8 +58,8 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * under its former name.
  *
  * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
- *            run.traces (traces), run.setup (setup), run.engines.est (est). Read: run.config
- *            (config_), run.log (log).
+ *            run.traces (traces), run.setup (setup). Read: run.config (config_), run.log (log),
+ *            run.engines.est (est).
  * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.solve.plan (plan), ep.assembly.asm_res (asm_res),
  *           ep.assembly.est_index_of (est_index_of).
