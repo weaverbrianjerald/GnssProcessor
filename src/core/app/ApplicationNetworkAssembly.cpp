@@ -624,8 +624,15 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                         bands6b.push_back('1');
                     }
                     for (const char bd : bands6b) {
+                    // The band's phase as the roster's Modelled role names it, the
+                    // latch where the roster has none yet (card NOM step N3b; every
+                    // read compared with the latch: census site latch_read_second_phase).
                     const std::string latched =
-                        st.model ? st.model->latchedCanonicalPhaseOnBandDigit(cons, bd)
+                        st.model ? signalRosterModelledOr(
+                                       ctx.roster,
+                                       st.model->latchedCanonicalPhaseOnBandDigit(cons, bd),
+                                       i, cons, bd, 'L', &ctx.counters.sid.n3b,
+                                       RosterN3bSite::LatchReadSecondPhase)
                                  : std::string{};
                     // The per-band candidate list: the configured allow-list under the
                     // phase-6a knob, and every other raw phase of this band under the
@@ -730,12 +737,22 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         // vector rather than copied into a table, because the latch is locked for
         // the run and lives on each station's own PppModel.  A station whose model
         // is absent returns empty, which the tracker reads as "change nothing".
+        //
+        // Card NOM step N3b: the lookup reads the roster's Modelled role, which is the
+        // latch the roster copies, and the latch answers only where the roster has no
+        // role yet (a constellation's first epoch; the fallback the roster read below
+        // states).  Every read is compared with the latch (census site
+        // latch_read_tracker, 0 on every census arm), so the tracker names each band as
+        // before.
         const TrackerLatchLookup latch =
-            [&stations](int sta, const std::string& system, char band) -> std::string {
+            [&stations, &ctx](int sta, const std::string& system, char band) -> std::string {
                 if (sta < 0 || sta >= static_cast<int>(stations.size())) return {};
                 const auto& m = stations[static_cast<std::size_t>(sta)].model;
                 if (!m) return {};
-                return m->latchedCanonicalPhaseOnBandDigit(system, band);
+                return signalRosterModelledOr(ctx.roster,
+                                              m->latchedCanonicalPhaseOnBandDigit(system, band),
+                                              sta, system, band, 'L', &ctx.counters.sid.n3b,
+                                              RosterN3bSite::LatchReadTracker);
             };
         // The tracker's read of the phase-1 roster (card SID phase 2,
         // network.roster_tracker).  Same lookup shape, bound to the roster's
@@ -1068,7 +1085,10 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                                   carry_slipped_ambs, qc.counters, se, traces,
                                   log, relevel_ptr, &ctx.carry.relevel_pend,
                                   ctx.carry.slip_oracle.get(),    // simulation-only oracle
-                                  &local_carry, pl_now_s, ctx.knobs.pl_max_gap_s);
+                                  &local_carry, pl_now_s, ctx.knobs.pl_max_gap_s,
+                                  // The arc identity from the arc ledger (card NOM step N3b).
+                                  ctx.roster.active ? &ctx.arc_ledger : nullptr,
+                                  &ctx.counters.sid.n3b);
 
     // ---- Gap re-entry refloat (card G response) ------------------------------
     // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears within

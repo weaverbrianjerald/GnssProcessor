@@ -128,6 +128,7 @@ add_library(gnss_core STATIC
     src/core/app/NetworkBorderStash.cpp
     src/core/app/NetworkLocalCarryHarvest.cpp
     src/core/app/SignalRoster.cpp
+    src/core/app/SignalRosterSites.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
@@ -480,6 +481,7 @@ add_executable(gnss_tests
     tests/test_signal_roster.cpp
     tests/test_signal_roster_plan.cpp
     tests/test_signal_roster_always_on.cpp
+    tests/test_signal_roster_sites.cpp
     tests/test_arc_ledger.cpp
     tests/test_ledger_anchor.cpp
     tests/test_ledger_reentry.cpp

@@ -298,6 +298,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "filter/NetworkCanonicalPairAdmission.cpp", networkCanonicalPairRunEnd},
     {"the signal roster and the arc ledger (SID phase 1)",
      "app/SignalRoster.cpp", networkSignalRosterRunEnd},
+    {"the roster's site census (NOM N3b)",
+     "app/SignalRosterSites.cpp", networkSignalRosterSitesRunEnd},
     {"the all-channel census (SID phase 6b)",
      "filter/NetworkChannelAll.cpp", networkChannelAllRunEnd},
     {"the second constellation (GAL)",
