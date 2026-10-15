@@ -16,7 +16,9 @@
  * (scripts/nom_ep2_cut.py, checked by scripts/nom_ep2_verify.py): step EP2 moved its inline
  * blocks to their concerns (the admission, the slip funnel's drains, the phase datum, the
  * gap-resume census, the float drop, the DD-carry predict, the section-timer frame) and the
- * driver-side gates to their seams' first lines.  It is maintained by hand; nothing
+ * driver-side gates to their seams' first lines.  Step EP3 replaced the calls of the 21
+ * measure-only instruments by six networkObserveEpoch slot calls; the rows, their slots and
+ * their order constraints are filter/NetworkEpochObservers.hpp.  It is maintained by hand; nothing
  * regenerates it.  Two checks guard every change: `python scripts/nom_epoch_lint.py` (the
  * epoch function's reading, the post-solve write discipline, each group read only after its
  * first writer, the writer banner of app/NetworkEpoch.hpp), run before any commit that touches
@@ -32,6 +34,7 @@
 #include "filter/NetworkSlipFunnel.hpp"       // the slip funnel's drains (card NOM3 step EP2)
 #include "filter/NetworkPhaseAnchorEpoch.hpp" // the phase datum of the epoch (card NOM3 step EP2)
 #include "slip/NetworkGapResumeCensus.hpp"    // the arc-resumption bridge census (card NOM3 step EP2)
+#include "filter/NetworkEpochObservers.hpp"  // the measure-only instruments, a declared table (card NOM3 step EP3)
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
@@ -177,7 +180,6 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;
     NetworkRunTiming& timing = run.timing;
-    NetworkEstimator& est = run.engines.est;
     // ---- End of the run's names ----
 
     // The start-offset fast-forward (app/NetworkEpochAdmission.cpp): before the injector, so
@@ -236,10 +238,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     const EpochAdmission admission = networkAdmitEpoch(run, ep);
     if (admission == EpochAdmission::Stop) return LoopSignal::Stop;
     if (admission == EpochAdmission::Skip) return LoopSignal::Next;
-    // The satellite ids of no modelled constellation, and of SBAS (card NOM N0b), counted
-    // on every processed epoch before any model reads its observations.  Measure-only;
-    // the count is printed under the parameter table in the run-end tail.
-    networkParamInventoryNoteSatellites(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::Admitted);
 
     // Per-epoch section-timer baseline (D0, app/NetworkRun.cpp); inert when the toggle is off.
     const EpochSectionTimers sec = networkSectionTimersBegin(run);
@@ -347,12 +347,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // outputs are fresh per epoch; the empty-system skip keeps its bookkeeping inside
     // (SkipEpoch return), and the Next return below bypasses networkSubEnd(SB_PREASM).
     // est.beginEpoch() runs inside on Proceed.
-    // --- Level-authority census (LV-6) --
-    // Serial, after PASS A's CS-GF advance; it runs before the RegisterColumns
-    // SkipEpoch below (an empty-system epoch still gets its census row) and upstream
-    // of every withhold decision (the census measures through withhold eras).
-    // Measure-only; no-op unless armed.
-    networkLevelAuthorityCensus(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::BeforeColumns);
 
     if (networkAssemblyRegisterColumns_(run, ep, ep.columns)
         == EpochAction::SkipEpoch)
@@ -563,9 +559,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubBegin(run, SB_CLOCKUPD); // block 8: two-state clock update + fault QC + retro-flag feed (D0b)
     networkClockQc(run, ep, ep.solve.handoff);
     networkSubEnd(run, SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
-    // The phase-visible consistency instrument (card PVN): measure-only, after the
-    // epoch's last re-solve, while the fold capture in ws still holds the prior.
-    networkPhaseVisibleMonitor(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::AfterClockQc);
     // Roster disagreement pass (app/SignalRoster.cpp, card SID phase 1).  It sits here
     // because this is the first point at which every input of P4 exists in one scope:
     // the arc-level tracker's rows were built in PASS A, local_carry is post-harvest
@@ -580,45 +575,13 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // second lifecycle.  They are in the same scope as every other input of the pass,
     // which is why the pass runs here and not at the build seam.
     networkSignalRosterAudit(run, ep);
-    // Fold half of the ledger emit (card SID phase 5a, E1).  It runs here and not at
-    // the emit site because the ledger's admitted machine is advanced by the audit
-    // pass immediately above: an admitted arc birth at this epoch does not exist
-    // before that pass runs.  Read-only; every class is a counter plus an ARC event.
-    // Disarmed, or with no capture from this epoch, it returns on its first line.
-    networkLedgerEmitFold(run, ep);
-    // Epoch tail of the second phase channel (card SID phase 6a, R3 + R4).  It sits
-    // here for the same reason as the pass above: this is the first point at which
-    // both of its inputs are final.  `relevel.free_cause` carries every tier's
-    // freeing verdict for this epoch (including the post-solve RAIM ones, written at
-    // SB_RAIM) and is not cleared until the next epoch's slip scan, and the
-    // phase-datum anchors have been elected.  Read-only; every class is a counter.
-    // Disarmed, it returns on its first line.
-    networkSecondPhaseEpochTail(run, ep);
-    // All-channel census (card SID phase 6b), folded here beside the tail above
-    // because it reads the same two republished cell sets plus the stations' own
-    // state maps, all final at this point.  Measure-only; it returns on its first
-    // line unless the widening is active.
-    networkChannelAllEpoch(run, ep);
-    // Second-constellation census (card GAL): inter-system bias columns, satellites
-    // per constellation, and the non-GPS-only station-epochs.  It sits here for the
-    // same reason as the census above: `present` is final.  Measure-only; it returns
-    // on its first line unless a constellation other than GPS is active.
-    networkMultiGnssEpoch(run, ep);
-    // Parameters as armed (card NOM N1): every parameter instance with its treatment,
-    // from the inventory PASS B drained, written once after the first emitted epoch.
-    // Trace class; it returns on its first line once the table is out.
-    networkParamInventoryEpochTail(run, ep);
-    // Contributions as armed (card NOM N2a): every contribution to the normal equations
-    // by its declared kind (the station side drained after PASS B, this epoch's shared
-    // folds from the estimator), written once after the first emitted epoch.  Trace class.
-    networkContributionsEpochTail(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::RosterTail);
     networkSubEnd(run, SB_ROSTER);
-    // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  It runs before
-    // the stash/status block, because the epoch-status row written there reads the
-    // post-fit sigma0 this fills in.  All off by default; an unarmed run makes
-    // neither call (byte-identical, no cost beyond the flag tests).  The §4.3 keyed
-    // trace and the per-row trace use the same residual pass, so any of the three
-    // trace toggles runs it.
+    // The frame diagnostics (SPEC_day129_frame_guards P1-3/P1-4) and the censuses run
+    // before the stash/status block, because the epoch-status row written there reads
+    // the post-fit sigma0 and the prefit scalars they fill in.  All off by default;
+    // unarmed, each returns on its first line.
     networkSubBegin(run, SB_FRAMEDIAG);
     // Predict half of the block-Baarda census (BLOCKFORMAL): each family's σ̂₀
     // through the previous epoch is frozen and the per-epoch ladders are cleared
@@ -630,71 +593,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the previous epoch is frozen before the census's rider feeds this epoch's
     // stations, so a station cannot standardize its own coordinate fault away.
     networkCongruencePredict(run, ep);
-    networkPostfitSigma0(run, ep);
-    networkShSpectrum(run, ep);
-    // Per-station local-block audit (card ZP, SPEC_event_harness §24.10).
-    // Measure-only (const accessors on the solved estimator); it belongs in this
-    // group because it is the station-side companion of the shared-side spectrum
-    // above.  Its cadence gate (emitted epochs 1..20, then every 60th) lives in the
-    // seam, so the driver carries no counter.
-    networkStationBlock(run, ep);
-    // Prefit innovation census, seed-birth tripwire and topology ledger
-    // (docs/SPEC_prefit_census_observability.md INC-1/3/4), all on one walk of this
-    // epoch's assembled row stacks.  It is first in the measure-only group: it costs
-    // O(rows), it writes the epoch-status scalars the stash block picks up, and it is
-    // the free tier the redundancy census escalates from.  The master knob keeps an
-    // unarmed run out of the translation unit entirely.
-    if (ctx.knobs.pc_walk_on)
-        networkPrefitCensus(run, ep);
-    // Redundancy / testability census (docs/SPEC_redundancy_census.md).  It runs
-    // before networkRhsAttribution: a flight-recorder trip epoch forces a full sweep,
-    // and the trip predicate is the attribution's own (unconsumed) window test, so the
-    // census must read it before the attribution seam advances rhs_attrib_done.
-    // Measure-only; the master knob keeps an unarmed run out of the translation unit
-    // entirely.
-    networkRedundancyCensus(run, ep);
-    // Block-Baarda drain (docs/SPEC_redundancy_census.md BB-INC-1..3): drains this
-    // epoch's LOS-block ladders, writes network_block_baarda.csv and emits the block
-    // identities.  The feed is inside the census above (the block sweep inherits its
-    // stride and escalation instead of adding a scheduler), so this must run after
-    // it.  The accumulator carries nothing forward, so an epoch that swept blocks and
-    // never reached here does not report them.
-    networkBlockBaardaEmit(run, ep);
-    // Congruence drain (docs/SPEC_redundancy_census.md CG-INC-1..3): drains this
-    // epoch's per-station coordinate-offset records, writes network_congruence.csv and
-    // emits the identities of the flagged stations.  The feed is inside the census
-    // above (same host, same stride, no scheduler of its own), so this must run after
-    // it.  It does not read ctx.carry.bb_hits (the separability join was resolved at
-    // the sweep site), so its position relative to the block census's own emit is
-    // free.
-    networkCongruenceEmit(run, ep);
-    // MDB drain (docs/SPEC_redundancy_census.md MDB-INC-1): aggregates this epoch's
-    // Baarda MDB rows, writes network_mdb.csv, emits the reporting events and
-    // reconciles the uncheckable join.  Both orderings matter: after
-    // networkPostfitSigma0, whose per-family σ̂₀ the scaled variant needs (read
-    // earlier it would apply the previous epoch's inflation), and after the redundancy
-    // census, whose per-epoch row counts the join compares against.  The feed sites are
-    // in SB_RAIM and in the census; this is only the drain, and the accumulator is
-    // stamped so an epoch that fed rows and never reached here leaks nothing forward.
-    networkMdbFlush(run, ep);
-    // Structural S-basis dimension (docs/SPEC_datum_graph_census.md): predicted from
-    // this epoch's admitted support topology and reconciled against the spectral count
-    // the solve glue handed forward.  It is measure-only: it reads the registration
-    // sets and `modeled`, and writes nothing but rows, events and counters.  Its order
-    // within the group is free (it shares no accumulator with the censuses above), so
-    // it sits last among them, ahead of the attribution seams that consume the trip
-    // predicate.  The master knob keeps an unarmed run out of the translation unit
-    // entirely.
-    if (ctx.knobs.dg_on)
-        networkDatumGraphCensus(run, ep);
-    if (est.attribArmed())
-        networkRhsAttribution(run, ep);
-    // Flight recorder (INC-5): consumes a trip raised anywhere earlier this epoch
-    // (clock runaway, a00-band exit; the A4 withhold consumes its own,
-    // since that epoch never reaches here), then retains this epoch as the next trip's
-    // "before" frame.  Last in the group, so a trip dump sees the same kernel state
-    // every other diagnostic just read.
-    networkRhsAttribTrip(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::FrameDiag);
     networkSubEnd(run, SB_FRAMEDIAG);
     networkSubBegin(run, SB_STASH_STATUS); // D2/C1/SH carry re-stash + VCE fold + epoch-status QC (D0b)
     networkStashStatus(run, ep);
@@ -706,12 +606,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // fold.  It runs only on a kept epoch, which is every epoch that reaches here.
     // No-op off.
     networkClockLevelMonitor(run, ep);
-    // Drains this epoch's buffered carry-state rows (RF-1 §7.4).  It is last inside
-    // the bracket because this is the first point after every row source has run: the
-    // leveling harvest and the gap prune (SB_LEVELING), the T4 / T3 refloats (SB_RAIM)
-    // and the phase-anchor carry re-reference (the datum block).  A no-op with an
-    // empty buffer, which is every unarmed run.
-    networkAmbStateTrace(run, ep);
+    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    networkObserveEpoch(run, ep, NetworkObserverSlot::StashTail);
     networkBufferedTraceDrains(run, ep);   // cards LGM and AIL: the buffered trace rows
     networkSubEnd(run, SB_STASH_STATUS);   // close the stash and epoch-status tail, before the readout (D0b)
 
