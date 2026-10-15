@@ -1146,4 +1146,33 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                                   std::map<std::tuple<int, std::string, std::string>,
                                            RelevelPend>* relevel_pend = nullptr);
 
+struct NetworkRun;
+
+/**
+ * @brief Fills the slip-QC channel's parameters from the configuration and sizes its per-station history.
+ *
+ * The channel (run.engines.slip_qc) carries the knobs, the per-station cross-epoch state, the
+ * epoch's raw evidence and the run-end counters into the PASS-A slip seam and the assembly
+ * pre-filter; it is sized once so the per-station EWMAs survive the whole run.  Setup builder
+ * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.slip_qc.params and run.engines.slip_qc.hist.
+ */
+void networkSlipQcConfigure(NetworkRun& run);
+
+class LogManager;
+
+/**
+ * @brief Builds the raw-slip path's wavelength provider when any of its consumers is armed.
+ *
+ * Called after NetworkRunTraces::openAll: the raw-slip trace it opens is one of the consumers.
+ * Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.slip_qc.utils.
+ * @param log_manager_ The application's logging manager (Application::log_manager_).
+ */
+void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager_);
+
 } // namespace GnssProcessor

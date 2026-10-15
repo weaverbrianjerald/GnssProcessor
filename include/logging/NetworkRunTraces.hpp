@@ -1213,4 +1213,18 @@ namespace GnssProcessor {
         void closeAll();
     };
 
+struct NetworkRun;
+
+/**
+ * @brief Writes the run manifest's startup record and logs the parameter model as armed.
+ *
+ * The parameter-model table also goes to the manifest (card PRM).  Setup builder (card NOM3
+ * step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.traces (the manifest's startup records).
+ * @param config_path_ The configuration file's path (Application::config_path_).
+ */
+void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& config_path_);
+
 } // namespace GnssProcessor

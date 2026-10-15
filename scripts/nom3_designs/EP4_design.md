@@ -35,7 +35,7 @@ member it names. B1 runs before the run exists and has the explicit form.
 | B11 | 595-646 | estimator configuration | `networkEstimatorConfigure(run, engine_spec)` | `filter/NetworkEstimator.{hpp,cpp}` |
 | B12 | 648-668 | D0 section timers armed (estimator, carry driver) | `networkSectionTimersArm(run)` | `app/NetworkRun.{hpp,cpp}` (beside the EP2 timer seams) |
 | B13 | 672-717 | run arming: snapshot path, fingerprint, warm resume, the two restores, injector, CPA, signal roster, ledger emit | `networkRunArm(run, log_manager_)` | `app/NetworkRun.{hpp,cpp}` |
-| B14 | 719-807 | code-bias admission census and its table | `networkCbAdmissionCensus(run)` | `filter/NetworkBiasAdmission.{hpp,cpp}` |
+| B14 | 719-808 | code-bias admission census and its table | `networkCbAdmissionCensus(run)` | `filter/NetworkBiasAdmission.{hpp,cpp}` |
 
 The driver keeps: the replay branch, the banner, validation, `resolveData`, `networkSetup_`, the
 alias lines still read (`sync`, `synced`, `closed_loop_on`, `sh_model`, `shc`, `parallel_on`,
@@ -80,8 +80,8 @@ Anything else the verifier finds is a failure.
 - **D3 const tightening.** `slip_qc` binds const in B7 and B8 (read only; compile-proven).
 - **D4 unwrap.** A frozen `{ ... }` block that is a builder's whole body loses its outer brace
   lines (B2: 286, 344; B4: 367, 375); the content is dedented one level.
-- **D5 dropped driver lines.** Aliases with no remaining driver reader: 236 (`stations`), 238 to
-  241 (`n_threads`, `seam_threads`, `carry_par`, `emitter`); frozen declarators that became
+- **D5 dropped driver lines.** Aliases with no remaining driver reader: 237 (`stations`), 239 to
+  242 (`n_threads`, `seam_threads`, `carry_par`, `emitter`); frozen declarators that became
   bindings: 279, 285, 411, 534, 558, 559, 573. Comment-only lines (385 to 388, the stale
   `=== Epoch loop ===` heading; 550 to 557 and 560 to 572 move above the binding they document)
   are not statements.
@@ -107,7 +107,8 @@ tokens. The tool holds its own manifest and imports nothing from the cut script.
   with `@brief` and one `@param` per parameter.
 - **Negative controls** (each must fail first): a swapped pair of lines in B2, a dropped line in
   B14, a const added to a written binding (B2's `slip_qc`), a reordered log call in B14, two
-  builder calls swapped in the driver, a missing `@param` in a header.
+  builder calls swapped in the driver, a missing `@param` in a header, a binding to the wrong
+  member (the last added at the cut).
 
 `python scripts/nom_epoch_lint.py` passes. No epoch writer changes (the builders write no
 `NetworkEpoch` group), so `tests/test_network_epoch_contract.cpp` gets no row.

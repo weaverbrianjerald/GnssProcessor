@@ -231,6 +231,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDatumGraph.cpp
     src/core/filter/NetworkBlockBaarda.cpp
     src/core/filter/NetworkCongruence.cpp
+    src/core/filter/NetworkCongruenceSetup.cpp
     src/core/filter/NetworkPriorResidual.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
@@ -274,6 +275,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkLevelingCarryRunEnd.cpp
     src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp
     src/core/filter/NetworkCarryVceRunEnd.cpp
+    src/core/filter/NetworkCarryVceApply.cpp
     src/core/slip/NetworkSlipQcRunEnd.cpp
     src/core/filter/NetworkRunEnd.cpp
     src/core/filter/NetworkInject.cpp
@@ -281,6 +283,7 @@ add_library(gnss_core STATIC
     src/core/filter/ArcLedger.cpp
     src/core/filter/NetworkAnchorReentry.cpp
     src/core/filter/NetworkOraclePin.cpp
+    src/core/filter/NetworkOraclePinSetup.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkClockClone.cpp

@@ -744,4 +744,17 @@ int networkBlockBaardaRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+struct NetworkRun;
+
+/**
+ * @brief Seats the block-Baarda census and its corroboration resolver when the census is armed.
+ *
+ * A census arm.  An unarmed run keeps the default-constructed empty-family instance.  Setup
+ * builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx.carry.bb.
+ */
+void networkBlockBaardaArm(NetworkRun& run);
+
 }  // namespace GnssProcessor

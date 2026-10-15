@@ -1663,4 +1663,20 @@ int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+struct NetworkRun;
+struct NetworkEngineSpec;
+
+/**
+ * @brief Configures the joint estimator once for the run.
+ *
+ * Thread counts, rank-gate tolerance, dense-fold kappa, the station PD guard and its
+ * null-direction trace, and the PD-safe DD fold; the estimator keeps them across its per-epoch
+ * reset().  Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in
+ * the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.est.
+ * @param engine_spec The engine specification the run was built from (its carry-driver configuration).
+ */
+void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_spec);
+
 } // namespace GnssProcessor
