@@ -161,6 +161,11 @@ LINE_DROPS = [re.compile(p) for p in (
     r'Network \(FC-1\)   tick wall',
     r'Network \(FC-1\): slowest tick',
 )]
+# Opt-in (NOM_GATE_DROP_POSTURE=1): the loader's POSTURE lines print the ledger JSON read from the
+# main tree at run time, so a reference run made before a ledger commit differs there without any
+# code difference (card NOM3, 2026-10-15).
+if os.environ.get('NOM_GATE_DROP_POSTURE') == '1':
+    LINE_DROPS.append(re.compile(r'\[gnss_config\] \[\w+\] .*(POSTURE|\^ CHAIN:)'))
 _NUM = r'-?\d+(?:\.\d+)?'
 # Value masks that apply only on the lines of one family: (family, [(value, replacement)]).
 FAMILY_MASKS = [
