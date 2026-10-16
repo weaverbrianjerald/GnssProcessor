@@ -312,4 +312,13 @@ void arCycleTallyLife(ArCycleBasisCounters& c, const ArcLifeStep& step);
 void arCycleBasisRunEndClause(const ArCycleBasisCounters& c, bool sticky,
                               const std::shared_ptr<spdlog::logger>& log);
 
+/// @brief Run-scope counters of ArCycleBasis, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ArCycleBasisRunCounters {
+    /// The search's cycle basis (network/ar/ArCycleBasis.hpp): coverage per
+    /// band against the lattice dimension, rows by kind, links kept and re-seats, the map
+    /// against the stored basis, the arc lives and the build cost.  All zero unless
+    /// network.ambiguity_resolution.cycle_basis.
+    ArCycleBasisCounters netar_cycle;
+};
+
 }  // namespace GnssProcessor

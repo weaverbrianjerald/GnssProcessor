@@ -896,4 +896,17 @@ int networkInvariantCarryDriverRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of InvariantCarryDriver, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct InvariantCarryDriverCounters {
+    long long ddfold_rebirths      = 0;  ///< blocks rebirthed at install, INC-2a (0 unless pd_safe).
+    long long ddfold_rebirth_rows  = 0;  ///< Σ carried rows re-seeded by those rebirths.
+    long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
+              carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
+              carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
+
+    // D5 innovation gate counters.
+    long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
+    long long carry_innov_map_miss = 0;   // reverse-map misses from a D5 flag to its ambiguity (should stay 0)
+};
+
 }  // namespace GnssProcessor

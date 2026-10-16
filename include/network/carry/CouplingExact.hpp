@@ -241,4 +241,14 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of CouplingExact, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CouplingExactRunCounters {
+    // Exact-update run totals (invariant 4): the per-station row and term counts folded
+    // serially after PASS B, the epoch builds, and what the fold changed after the rows
+    // were built from the shared decision: keys in S that a
+    // clock-pivot handover re-expressed (the S-transform) or retired, on the handover
+    // epochs the fold counts.
+    CouplingExactCounters cxu{};
+};
+
 }  // namespace GnssProcessor

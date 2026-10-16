@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 /**
  * @file EpochAdmission.hpp
  * @brief The epoch admission of the network producer: whether a synced epoch is processed,
@@ -63,5 +64,12 @@ EpochAdmission networkFastForward(NetworkRun& run, const SyncedEpoch& se_raw);
  * @return Process, Skip or Stop (see EpochAdmission).
  */
 EpochAdmission networkAdmitEpoch(NetworkRun& run, const NetworkEpoch& ep);
+
+/// @brief Run-scope counters of EpochAdmission, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct EpochAdmissionCounters {
+    double max_dur_anchor_s = 0.0;
+    bool   max_dur_anchored = false;
+    std::size_t decim_counter = 0;   // counts post-offset raw epochs for epoch_decimation_n (T2e)
+};
 
 } // namespace GnssProcessor

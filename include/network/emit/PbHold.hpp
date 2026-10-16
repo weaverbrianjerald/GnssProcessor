@@ -77,6 +77,8 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
+#include <utility>
 
 namespace spdlog { class logger; }
 
@@ -154,6 +156,38 @@ void networkPbHold(NetworkRunContext& ctx,
 bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
                            const std::map<std::string, double>& prev_clock_m,
                            char constellation, double& median_m);
+
+/// @brief Run-scope counters of PbHold, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PbHoldCounters {
+    // --- The emit-side phase-bias hold (network.emit_pb_hold) ---
+    // On-path telemetry of invariant #4 and the two edges of invariant #7.  All zero on
+    // an off run, so a run reporting 0 held emissions has an inert hold however clean
+    // the log reads.  The cost of the decoupling edge is not a count but a distribution
+    // (ctx.carry.pb_hold_dev_abs_m, |estimate - held| over every held emission) plus the
+    // coupled-mark clock step (pb_hold_coupled_step_m); the re-coupling edge is
+    // n_pbh_gen_first + n_pbh_gen_gap, one PB_HOLD/gen_start event each.
+    long long n_pbh_keys           = 0;  ///< distinct (sat, signal) keys the hold ever held
+    long long n_pbh_gen_first      = 0;  ///< generations started by a first sighting
+    long long n_pbh_gen_gap        = 0;  ///< generations started by a gap > emit_pb_hold_max_gap_s
+    long long n_pbh_held_emissions = 0;  ///< emissions whose value the hold overwrote
+    long long n_pbh_coupled_marks  = 0;  ///< coupled clock+phase-bias marks reaching a held key
+    // --- Level-aware hold (network.emit_pb_hold_phase_clock) ---
+    long long n_pbh_frz_moved      = 0;  ///< held emissions whose value the transfer moved (non-zero)
+    long long n_pbh_frz_noclock    = 0;  ///< held emissions on an epoch without the satellite's emitted clock (last transfer reused)
+    long long n_pbh_frz_noref      = 0;  ///< held emissions of a generation started without a clock (held plainly)
+    long long n_pbh_frz_epochs     = 0;  ///< epochs that advanced M (at least one satellite with a clock at both emissions)
+    long long n_pbh_frz_coupled    = 0;  ///< coupled clock+phase-bias marks whose clock step the mode transferred
+    long long smh_bridges          = 0;  ///< switches from a live clone to the phase-clock transfer at a disengagement
+    long long smh_held_bridged     = 0;  ///< held emissions on the phase-clock transfer while the key waits for a clone
+    long long smh_reverts          = 0;  ///< held keys switched to LAH's transfer by their clone's death
+    long long smh_held_smoothed    = 0;  ///< held emissions that wrote the clone's transfer
+    long long smh_held_lah         = 0;  ///< held emissions that wrote LAH's transfer after a revert (the rest of the generation)
+    long long smh_w_invalid        = 0;  ///< held emissions whose W is void (the parent clock left S this generation)
+    std::vector<double> smh_xfer_abs;    ///< |the clone's transfer| per smoothed held emission (m)
+    std::vector<double> smh_diff_abs;    ///< |the clone's transfer - LAH's| per smoothed held emission (m)
+    std::vector<double> smh_phi_abs;     ///< |Phi| per smoothed held emission (m)
+    std::map<std::pair<char, int>, std::pair<double, long long>> smh_r;   ///< (constellation, hour) -> (sum r, count), r = Phi^2 / (W - V_post)
+};
 
 }  // namespace GnssProcessor
 

@@ -16,6 +16,8 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <map>
+#include <cstddef>
 
 namespace GnssProcessor {
 
@@ -87,5 +89,31 @@ void networkCodeBiasDatumRecord(NetworkRun& run, const NetworkEpoch& ep,
  */
 void networkCodeBiasDatumFirstNLog(NetworkRun& run, const NetworkEpoch& ep,
                                    const NetworkSbasis::CodeBiasDatumRows& cbd);
+
+/// @brief Run-scope counters of CodeBiasDatum, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CodeBiasDatumCounters {
+    // Epochs on which the satellite code-bias datum was folded with no ionosphere
+    // constraint behind it (RF-0b, network.w6_iono_constraint = none), and the
+    // cumulative count of sum-to-zero (constellation, signal) rows in those epochs,
+    // which are the datum in that posture.  Standing invariant #4: an armed "none" run
+    // with n_w6_iono_none_epochs == 0 never reached the W6 block at all (no registered
+    // code columns), and one with n_w6_iono_none_s2z_rows == 0 folded the IF pin
+    // against nothing; in both cases the satellite code biases have no datum at all,
+    // which a clean-looking log would not reveal.
+    size_t n_w6_iono_none_epochs = 0, n_w6_iono_none_s2z_rows = 0;
+    size_t n_sat_gf_tgd = 0, n_sat_gf_tgd0 = 0, n_sat_gf_fallback = 0;
+    // The per-signal extension (RF-0d).  `extra` counts the rows beyond the
+    // ionosphere-free pair (which make a sparse channel's level a datum), `isc0` how
+    // many of those asserted a zero inter-signal correction the navigation message
+    // never stated, `sameband` the columns deliberately left estimable, and
+    // `s2z_suppressed` the sum-to-zero rows dropped because the datum already pins
+    // every column of that channel.
+    size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
+    size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
+    /// The RF-0c / RF-0d geometry-free datum counters split per constellation letter,
+    /// accumulated from @c NetworkSbasis::CodeBiasDatumRows::sat_gf_by_const beside the
+    /// global counters (R3 iii).  Read only by the Galileo run-end line.
+    std::map<std::string, NetworkSbasis::SatGfConstCounts> sat_gf_by_const;
+};
 
 } // namespace GnssProcessor

@@ -480,4 +480,9 @@ void networkClockCloneHarvestEnd(ClockCloneHarvest& h, NetworkRunContext& ctx);
 void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                                const std::shared_ptr<spdlog::logger>& log);
 
+/// @brief Run-scope counters of ClockClone, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ClockCloneRunCounters {
+    ClockCloneCounters ccl{};              ///< clock-clone run totals (filter/NetworkClockClone)
+};
+
 }  // namespace GnssProcessor

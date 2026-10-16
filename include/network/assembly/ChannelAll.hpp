@@ -199,4 +199,14 @@ namespace GnssProcessor {
 
     // ---- End of the run-end reports ----
 
+    /// @brief Run-scope counters of ChannelAll, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct ChannelAllCounters {
+        /// The family census and cross-channel exposure of the all-channel widening (see
+        /// docs/refound/SID_signal_identity_2026-09-22.md).  Folded once per
+        /// epoch by @c networkChannelAllEpoch and read at teardown; every class is
+        /// measure-only, and the struct stays empty unless `processing.channel_mode: all` is
+        /// active on the network path.
+        NetworkChannelAllCounters channel_all;
+    };
+
 }  // namespace GnssProcessor

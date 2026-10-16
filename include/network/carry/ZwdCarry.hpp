@@ -98,4 +98,18 @@ void networkZwdSeamWindowStep(NetworkRun& run, const NetworkEpoch& ep);
  */
 int networkZwdSeamRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of ZwdCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ZwdCarryCounters {
+
+    // Siblings on the same gap predicate, for other carries (departures).
+    long long n_cr_zwd_gap_prune      = 0;  ///< ZWD carry entries dropped by the pl_max_gap_s prune
+
+    // --- Seam-scoped ZWD re-seed (network.zwd_seam_reseed) ---
+    // On-path telemetry (standing invariant #4): 0 folds under an armed knob means the
+    // window never armed (no warm resume, or no restored Z rows) or every fold was
+    // skipped; check the resume log line as well.
+    long long n_zwd_seam_folds        = 0;  ///< station-fold count inside the post-resume window
+    long long n_zwd_seam_epochs       = 0;  ///< epochs inside the window with >= 1 fold
+};
+
 } // namespace GnssProcessor

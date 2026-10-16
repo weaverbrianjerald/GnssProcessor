@@ -457,4 +457,26 @@ void networkCouplingRegionRows(StationCarryFrame& carry);
 
 // ---- End of the PASS B station steps, declarations ----
 
+/// @brief Run-scope counters of Coupling, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CouplingCounters {
+    long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
+    // On-path telemetry for the departed-column gauge defect.  `held` counts
+    // (constellation, kind) families whose coefficient sum was restored to its harvest
+    // value against a truncated column; `orphan` counts families whose truncated mass
+    // had no present recipient, i.e. the rows the projection could not make
+    // gauge-invariant.  Standing invariant #4: armed with both at 0 means no row was
+    // ever truncated, so the projection is inert, not clean.
+    long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
+    /// Orphan attribution: run totals per (constellation, SharedParamKind), as the
+    /// orphan count and the summed |truncated mass| left gauge-dirty.  Structurally a
+    /// channel of two or more constellations (a row's minority family can lose all its
+    /// present columns while the majority family survives); GPS-only arms measure 0.
+    /// Fed by foldAndDumpCouplingRows, read at teardown.
+    std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam_total;
+    /// The denominator of the reinit-sources probe: terms diverted to the departed route by the widened
+    /// (kind, sat, signal) probe specifically.  Armed with this at 0 means the
+    /// realization-step feeds never matched a live coupling term: inert, not clean.
+    long long n_cpl_reinit_diverted = 0;
+};
+
 } // namespace GnssProcessor

@@ -21,6 +21,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/assembly/Responses.hpp"
 
 namespace GnssProcessor {
 
@@ -219,5 +220,98 @@ void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,
                             EpochAssembly& assembly);
 
 // ---- End of the PASS B station build: the step tables ----
+
+/// @brief Run-scope counters of StationBuild, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct StationBuildCounters {
+
+    // (B) The cliff: the inject-side stale skip, the mechanism §1.3 observed as the pl
+    //     prires rows falling to 0.  The carried prior is not injected because its gap
+    //     exceeded the horizon, so the arc solves free and is then re-stashed from one
+    //     epoch of code.  The entry is never erased, which is why the prune above cannot
+    //     see it.  Counted at the inject predicate itself.
+    long long n_cr_inject_stale       = 0;  ///< carried priors skipped for gap > pl_max_gap_s (the mass re-level)
+    long long n_cr_inject_stale_epochs= 0;  ///< epochs on which at least one prior was skipped stale
+    long long n_cr_inject_stale_max   = 0;  ///< largest single-epoch stale-skip count
+    long long n_cr_inject_stale_max_week = 0; ///< GPS week of that epoch
+    double    cr_inject_stale_max_tow = 0.0;  ///< TOW (s) of that epoch: the attribution handle for a cliff
+    long long n_cr_inject_stale_max_sta  = 0; ///< distinct stations in that epoch's stale set (separates a fleet-wide era from one station dropping out)
+    long long n_amb_block_fallback    = 0;  ///< station-epochs whose joint block fell back to per-column rows under the float_kf vehicle (RF-1 step 3, risk #3): a vehicle change on one station-epoch, so it is counted rather than noted.  The run-end bar (on n_pl_blk_fallback) fails a run whose fallback rate exceeds 1 % of attempted station-epochs.
+
+    // On-path telemetry of the station-wide jointly whitened leveling-carry block (F3,
+    //     network.phase_leveling_local_block, SPEC_amb_iono_split_overcount; invariant
+    //     #4).  Counted per station in the parallel produce phase (StationAssembly) and
+    //     folded here serially; the two refloat counters are written directly by the
+    //     serial within-epoch RAIM re-solve.  Armed with blocks = 0 means the inject never
+    //     built a block: a miswire (carry_cpl_cond off, or no station
+    //     with an injectable carried column), not a quiet run.  pair_missing ≈
+    //     Σ n(n−1)/2 over the stations on the first post-resume epoch is the expected
+    //     one-epoch degradation (the harvest block is not snapshotted); a steady non-zero
+    //     rate afterwards means columns re-harvested at different epochs (satellites
+    //     dropping in and out).  marg_cols is the decoupling edge of invariant #7: every
+    //     carried entry not admitted to its station's block this epoch (departed, stale,
+    //     freed, reseed); the block omits it and never conditions on it.
+    long long n_pl_blk_blocks       = 0;             ///< blocks whitened (station-epochs)
+    long long n_pl_blk_rows         = 0;             ///< whitened rows emitted
+    long long n_pl_blk_marg_cols    = 0;             ///< carried entries not injected (marginalized out of their station's block)
+    long long n_pl_blk_pair_missing = 0;             ///< (i,j) pairs zeroed: harvested at different epochs / no harvest block
+    long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row screen (non-finite RHS or non-positive variance)
+    long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → per-column rows
+    long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
+    long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
+    // Invariant #4/#7 telemetry of B9-in-block (network.carry_zwd_in_block).  A run with
+    // the knob armed and n_pl_blk_zwd_cols == 0 is unwired, not clean; a large
+    // n_pl_blk_zwd_fallback_diag says most station-epochs degraded, without a signal,
+    // to the diagonal B9 row that the in-block carry replaces.
+    long long n_pl_blk_zwd_cols     = 0;             ///< ZWD columns admitted into a block build (station-epochs; a block that then failed to factorize still counts, and n_pl_blk_zwd_fallback_diag says how many of those ended up on the diagonal row instead)
+    long long n_pl_blk_zwd_fallback_diag = 0;        ///< station-epochs whose ZWD fell back to the B9 diagonal row (no block for the station this epoch, or the block's factorization failed)
+    long long n_pl_blk_zwd_missing_cross = 0;        ///< (ambiguity, ZWD) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / ZWD stashed without a block); a subset of n_pl_blk_pair_missing
+    // Invariant #4/#7 telemetry of I-in-block (network.carry_iono_in_block), with the
+    // discipline of the ZWD split above.  An armed run with n_pl_blk_iono_cols == 0 is
+    // unwired, not clean.  n_pl_blk_iono_not_folded is not a "degraded to the old row"
+    // count: the in-block carry has no diagonal iono row (that is the FALSIFIED
+    // QUEUE-8(b) vehicle), so those columns carried nothing that station-epoch.
+    long long n_pl_blk_iono_cols    = 0;             ///< per-LOS iono columns admitted into a block build (a block that then failed to factorize still counts; n_pl_blk_iono_not_folded says how many of those did not act)
+    long long n_pl_blk_iono_not_folded = 0;          ///< iono columns pushed but not folded (non-SPD block / no block): their carry did not act this station-epoch, and there is no diagonal fallback, on purpose
+    long long n_pl_blk_iono_missing_cross = 0;       ///< (iono, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block); a subset of n_pl_blk_pair_missing
+    // Invariant #4/#7 telemetry of RX-CLK-in-block (network.carry_rx_clock_in_block),
+    // with the discipline of the ZWD and iono splits.  An armed run with
+    // n_pl_blk_rxclk_cols == 0 is unwired, not clean.  n_pl_blk_rxclk_not_folded is not
+    // a "degraded to the old row" count: the in-block carry has no diagonal clock row
+    // (a diagonal prior on the most station-common direction of all is the over-count
+    // that falsified the diagonal ZWD carry), so those columns carried nothing that
+    // station-epoch.
+    long long n_pl_blk_rxclk_cols   = 0;             ///< receiver-clock-family columns admitted into a block build (a block that then failed to factorize still counts; n_pl_blk_rxclk_not_folded says how many did not act)
+    long long n_pl_blk_rxclk_isb_cols = 0;           ///< …of which are ISB columns.  0 is not an alarm (a GPS-only / BSSD posture allocates no per-system time-offset state).
+    long long n_pl_blk_rxclk_not_folded = 0;         ///< clock-family columns pushed but not folded (non-SPD block): their carry did not act, and there is no diagonal fallback, on purpose
+    long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block); a subset of n_pl_blk_pair_missing
+    // Invariant #4/#7 telemetry of RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block).
+    // An armed run with n_pl_blk_rxcb_cols == 0 is unwired, not clean; the not-folded
+    // count is a "carried nothing" count (no diagonal fallback, as for the clock).
+    long long n_pl_blk_rxcb_cols = 0;                ///< receiver code-bias columns admitted into a block build
+    long long n_pl_blk_rxcb_not_folded = 0;          ///< receiver code-bias columns pushed but not folded (non-SPD block)
+    long long n_pl_blk_rxcb_missing_cross = 0;       ///< (receiver code-bias, other) pairs zeroed for a missing harvest cross term
+    long long n_rxcb_blk_restored_skip = 0;          ///< RXCB-IN-BLOCK: carried entries without a harvest-block row (restored from a diagonal-carry snapshot) left out of the block and re-harvested
+    // The per-line-of-sight phase nuisance state: every edge counted.
+    long long n_pc_birth_rows         = 0;  ///< columns given the birth prior row (no live carry)
+    long long n_pc_backstop_rows      = 0;  ///< planned carried columns the builder refused, given a birth row instead
+    long long n_pc_block_folds        = 0;  ///< carried columns folded through the whitened block
+    long long n_pc_fallback_folds     = 0;  ///< carried columns folded by the per-column fallback (non-SPD block)
+    long long n_resume_cpl_seam_present  = 0;  ///< first warm epoch: coupling terms that resolved to a live column
+    long long n_resume_cpl_seam_departed = 0;  ///< ...that marginalized (departed or reinit-diverted)
+    long long n_cpl_readmit_diverted  = 0;  ///< coupling terms diverted to the departed route by a re-admission window
+    // The responses of the carried instances, per site of the
+    // declared table (network/assembly/Responses.hpp; the sites whose count source is
+    // Increment), and the free-epoch latch per cause (keys latched with the bit set; of
+    // those, keys with a carried entry at the response), the unique latched keys, the
+    // keys with more than one cause, and the ambiguities the gap prune erased in the
+    // epoch the stale-gap drop dropped them.
+    long long prm_resp[kResponseSites]{};
+    /// Run total of inject-site free-epoch skips (relevel_free_epoch;
+    /// SPEC_slip_relevel_walk).  Armed with this at 0 on a slip-bearing run is a
+    /// miswire (invariant #4): the drains latched but the inject never consulted, or no
+    /// marked arc ever had a live carry.
+    long long n_relevel_free_skips = 0;
+    int n_cpl_row_dump = 12;   // debug budget of the time update: one-shot assembled coupling-row dump
+};
 
 } // namespace GnssProcessor

@@ -325,4 +325,11 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
 NetworkSolveGlueResult networkSolveGlue(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws,
                                         std::vector<int>& est_index_of, EpochDdBuild& dd_build, EpochEvents& events);
 
+/// @brief Run-scope counters of SolveGlue, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SolveGlueCounters {
+    int n_cpl_solve_dump = 8;  // debug budget of the time update: one-shot full-precision solve-checksum dump
+    long long ddfold_degen_blocks  = 0;  ///< Σ blocks that folded inertly (the PD screen tripped, so M = 0).
+    long long ddfold_degen_rows    = 0;  ///< Σ K over those blocks: the carried dimension that took no data.
+};
+
 } // namespace GnssProcessor

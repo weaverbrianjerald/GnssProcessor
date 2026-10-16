@@ -281,4 +281,15 @@ namespace GnssProcessor {
 
     // ---- End of the run-end reports ----
 
+    /// @brief Run-scope counters of CanonicalPairAdmission, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct CanonicalPairAdmissionCounters {
+
+        /// --- Run-end telemetry of canonical-pair admission.
+        /// The on-path readout of the rule (standing invariant 4): a `withheld_total` of
+        /// zero on an armed run is dead wiring, and the teardown line says so in those words
+        /// rather than reading as a quiet run.  Untouched unless
+        /// network.canonical_pair_admission.
+        NetworkCanonicalPairCounters cpa;
+    };
+
 } // namespace GnssProcessor

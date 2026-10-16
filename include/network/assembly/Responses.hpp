@@ -373,4 +373,12 @@ int networkResponsesRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of Responses, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ResponsesCounters {
+    long long prm_latch_keys[kLatchCauses]{};
+    long long prm_latch_carried[kLatchCauses]{};
+    long long prm_latch_unique = 0, prm_latch_unique_carried = 0, prm_latch_multi = 0;
+    long long prm_latch_epochs = 0;
+};
+
 }  // namespace GnssProcessor

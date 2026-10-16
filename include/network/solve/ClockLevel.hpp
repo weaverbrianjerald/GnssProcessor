@@ -207,4 +207,41 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of ClockLevel, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ClockLevelCounters {
+    // Clock-level monitor and raise.  Ratios are counted for a satellite from its
+    // second epoch of code information on (its first solve is the code-only batch).
+    long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,
+              clm_no_clock = 0, clm_raised = 0;
+    double    clm_min_ratio = 0.0, clm_raised_sum = 0.0, clm_raised_max = 0.0;
+    std::vector<double> clm_ratios;        ///< every counted ratio (the run-end median)
+    std::map<std::string, long long> clm_raised_by_sat;   ///< raises per satellite (invariant 7)
+    // Level innovation instrument.
+    long long clm_innov_rows{0};           ///< satellite-epoch innovations formed
+    long long clm_innov_tripped{0};        ///< satellite-epochs left out because the anchor withdrew the clock's prior
+    double    clm_innov_nis_sum{0.0};      ///< summed NIS after epoch 15
+    long long clm_restore_raised{0};       ///< satellites raised on restore
+    double    clm_restore_raise_sum{0.0};  ///< …summed variance added (m^2)
+    double    clm_restore_raise_max{0.0};  ///< …largest (m^2)
+    long long clm_innov_nis_n{0};          ///< NIS values summed
+    long long clm_innov_nis_gt{0};         ///< NIS values above 6.63 (chi2(1), 1 %)
+    std::vector<double> clm_win_nees;      ///< per window: the split-half truth-free level NEES
+    std::vector<double> clm_win_rms;       ///< per window: rms over satellites of the mean innovation (m)
+    std::vector<double> clm_win_T;         ///< per window: mean over satellites of T = nubar^2 / var(nubar)
+    std::vector<double> clm_win_phi;       ///< per window: split-half noise over the white prediction
+    long long clm_win_Tgt{0};              ///< window satellites with T above 6.63
+    long long clm_win_Tn{0};               ///< window satellites with a T
+
+    // ==========================================================================
+    // Instrument state moved from NetworkCarryState (decision D6):
+    // run-end counters, one-shot warn latches, the window sums of measure-only
+    // instruments and the event-holdoff clocks of the censuses.  Nothing in the solve
+    // reads them.  Each keeps its name and has its FieldDecl row in net::kRunFields
+    // (src/core/network/state/RunFields.cpp), the G1 trail of its former member.
+    // ==========================================================================
+
+    // Level innovation instrument, measure-only.
+    int                           clm_win_ep{0};        ///< epochs in the current window
+};
+
 }  // namespace GnssProcessor

@@ -16,6 +16,9 @@
  */
 
 #include <memory>
+#include <set>
+#include <string>
+#include <utility>
 
 namespace spdlog { class logger; }
 
@@ -73,5 +76,20 @@ struct NetworkRunEndView;
 int networkBrdcWireRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of BrdcWire, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct BrdcWireCounters {
+    // Native broadcast clock a priori.  `stamped 0` means the wire was never
+    // stamped (inert wiring); `not_held > 0` means a consumer could not reconstruct.
+    long long nbp_epochs{0};               ///< emitted epochs the wire stamp ran on
+    long long nbp_stamped{0};              ///< clock records stamped (iode=k, C_wire = C_est + O)
+    long long nbp_unstamped{0};            ///< clock records with no selectable record (value unchanged, no iode)
+    long long nbp_held{0};                 ///< stamped records the store held (current or previous) at consume
+    long long nbp_not_held{0};             ///< stamped records the store did not hold
+    long long nbp_switches{0};             ///< stamp changes of a satellite between its emissions (cut-overs seen on the wire)
+    double    nbp_offset_min_m{0.0};       ///< smallest O on the wire (m)
+    double    nbp_offset_max_m{0.0};       ///< largest O on the wire (m)
+    std::set<std::pair<std::string, int>> nbp_records;   ///< distinct (satellite, IODE) stamped
+};
 
 } // namespace GnssProcessor

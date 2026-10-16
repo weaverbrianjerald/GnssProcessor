@@ -71,6 +71,56 @@
 #include "network/solve/AnchorReentry.hpp" // the anchor drop memo and its read
 #include "network/emit/LedgerEmit.hpp"    // the emitter read and the declared roster
 #include "network/diag/RunTraces.hpp" // FlagRate (B8 counters)
+#include "network/solve/SolveStations.hpp"                   // SolveStationsCounters
+#include "network/solve/ClockAnchor.hpp"                     // ClockAnchorCounters
+#include "network/solve/ClockDatum.hpp"                      // ClockDatumCounters
+#include "network/state/StateSnapshotCounters.hpp"           // StateSnapshotCounters
+#include "network/solve/HandoverStransformCounters.hpp"      // HandoverStransformCounters
+#include "network/state/BorderCounters.hpp"                  // BorderCounters
+#include "network/ar/SdEwlAr.hpp"                            // SdEwlArCounters
+#include "network/solve/ChainDatum.hpp"                      // ChainDatumCounters
+#include "network/emit/SolPrep.hpp"                          // SolPrepCounters
+#include "network/qc/RaimWithinEpoch.hpp"                    // RaimWithinEpochCounters
+#include "network/carry/LevelingCarry.hpp"                   // LevelingCarryCounters
+#include "network/assembly/StationBuild.hpp"                 // StationBuildCounters
+#include "network/ar/AmbFloat.hpp"                           // AmbFloatCounters
+#include "network/solve/PhaseAnchorEpoch.hpp"                // PhaseAnchorEpochCounters
+#include "network/diag/AmbStateTrace.hpp"                    // AmbStateTraceCounters
+#include "network/carry/SlantIonoCarry.hpp"                  // SlantIonoCarryCounters
+#include "network/carry/RxCodeBiasCarry.hpp"                 // RxCodeBiasCarryCounters
+#include "network/state/WarmResumeCounters.hpp"              // WarmResumeCounters
+#include "network/carry/RxClockCarry.hpp"                    // RxClockCarryCounters
+#include "network/carry/ZwdCarry.hpp"                        // ZwdCarryCounters
+#include "network/carry/PhaseColourCarry.hpp"                // PhaseColourCarryCounters
+#include "network/emit/EmitStore.hpp"                        // EmitStoreCounters
+#include "network/slip/PassASlipScanCounters.hpp"            // PassASlipScanCounters
+#include "network/carry/InstallCarry.hpp"                    // InstallCarryCounters
+#include "network/diag/DdFrac.hpp"                           // DdFracCounters
+#include "network/carry/LevelAuthority.hpp"                  // LevelAuthorityCounters
+#include "network/emit/PbHold.hpp"                           // PbHoldCounters
+#include "network/solve/RankGate.hpp"                        // RankGateCounters
+#include "network/solve/CodeBiasDatum.hpp"                   // CodeBiasDatumCounters
+#include "network/carry/Coupling.hpp"                        // CouplingCounters
+#include "network/state/CarryDisposition.hpp"                // CarryDispositionCounters
+#include "network/solve/ClockLevel.hpp"                      // ClockLevelCounters
+#include "network/emit/BrdcWire.hpp"                         // BrdcWireCounters
+#include "network/diag/PhaseVisibleDiag.hpp"                 // PhaseVisibleDiagCounters
+#include "network/assembly/SecondCodeScope.hpp"              // SecondCodeScopeCounters
+#include "network/assembly/SecondPhaseScope.hpp"             // SecondPhaseScopeCounters
+#include "network/slip/CommonBandScope.hpp"                  // CommonBandScopeCounters
+#include "network/solve/SolveGlue.hpp"                       // SolveGlueCounters
+#include "network/solve/PhaseDatum.hpp"                      // PhaseDatumCounters
+#include "network/driver/EpochAdmission.hpp"                 // EpochAdmissionCounters
+#include "network/solve/SbasisCompletion.hpp"                // SbasisCompletionCounters
+#include "network/diag/FrameDiag.hpp"                        // FrameDiagCounters
+#include "network/qc/RedundancyCensus.hpp"                   // RedundancyCensusCounters
+#include "network/qc/PriorResidual.hpp"                      // PriorResidualCounters
+#include "network/carry/InvariantCarryDriver.hpp"            // InvariantCarryDriverCounters
+#include "network/ar/ProducerAr.hpp"                         // ProducerArCounters
+#include "network/carry/DdPriorBuild.hpp"                    // DdPriorBuildCounters
+#include "network/diag/StationBlock.hpp"                     // StationBlockCounters
+#include "network/qc/ClockQc.hpp"                            // ClockQcCounters
+#include "network/diag/ShDevVtec.hpp"                        // ShDevVtecCounters
 
 #include <Eigen/Dense>
 
@@ -2129,1235 +2179,10 @@ namespace GnssProcessor {
         NetworkCanonicalPairState cpa;
     };
 
-    /// @internal Service counters, health-window anchors and B8 flag-rate tallies,
-    /// relocated from the run loop.
-    struct NetworkServiceCounters {
-        /// --- The addStation positive-definiteness drop, counted.
-        /// The drop removes one station for one epoch
-        /// (ApplicationNetworkAssembly.cpp: `present[i]=false`), and
-        /// `network_epoch_status.csv` does not report it: `n_present` still counts the
-        /// station, and otherwise the only record is a warning line in a rotating log.
-        /// These are always counted (the increment costs nothing and writes no output);
-        /// `network.trace_station_pd_null` arms the run-end readout and the per-rejection
-        /// `sta_pd_dropped` event rows.
-        long long pd_drop_epochs = 0;       ///< epochs whose serial consume loop ran (denominator)
-        long long pd_drop_total = 0;        ///< station-epochs dropped by the addStation PD rejection
-        long long pd_drop_named = 0;        ///< …of those, ones whose null direction was eigen-named (armed only)
-        long long pd_drop_pivot_abort = 0;  ///< epochs lost because the rejected station was the legacy pivot
-        int       pd_drop_max_ep = 0;       ///< largest per-epoch drop count over the run
-        double    pd_drop_max_ep_tow = 0.0; ///< …its epoch
-        /// Top-column family census over the named rejections (label prefix:
-        /// "AMB" / "IONO" / "CBIAS" / "ZWD" / "CLK" / "RPB" / "ISB" / "other").  The read
-        /// script does the per-station and persistence analysis off the event rows; this
-        /// is the run-end one-liner that says which family dominates without opening a
-        /// trace.
-        std::map<std::string, long long> pd_drop_family;
-        /// The same census weighted by mass: Σ over rejections of the null eigenvector's
-        /// per-family mass Σw² (each rejection contributes 1.0 in total).  The top-column
-        /// count above depends on where the top-5 cut fell; this one does not, and here
-        /// that matters: the null is spread nearly evenly over a whole band of ambiguities,
-        /// so the family ranked first is close to arbitrary while the mass split is stable.
-        std::map<std::string, double> pd_drop_family_mass;
-        /// --- The actual in-solve station count, and the re-coupling edge of invariant #7
-        ///.  `network_epoch_status.csv`'s `n_present` is the roster that
-        /// reached the consume loop, not the set that entered the arrowhead, so a
-        /// PD-dropped (or assembly-dropped) station still reads as present.  The run-end
-        /// tail and `network_run_summary.csv` report these instead, and they are always
-        /// accumulated; the `sta_readmitted` event rows ride `network.trace_topology`, the
-        /// counters do not.  The per-station return bookkeeping lives here in the run
-        /// context so that no seam keeps it in a function-local (the INC-12 rule).
-        struct StationSolveTrack {
-            bool      ever_in_solve = false;  ///< distinguishes a return from a first sighting
-            long long absent_streak = 0;      ///< consecutive consume epochs out of the solve
-        };
-        std::map<std::string, StationSolveTrack> sta_solve_track;
-        std::vector<int> sta_in_solve_ep;        ///< per consume epoch: stations that entered the arrowhead
-        long long sta_in_solve_epochs = 0;       ///< number of epochs the above was recorded for (denominator)
-        int       sta_in_solve_min = -1;         ///< min over the run (−1 = never recorded)
-        double    sta_in_solve_min_tow = 0.0;    ///< …its epoch
-        long long sta_readmit_events = 0;        ///< stations that re-entered the solve after ≥ 1 absent epoch
-        long long sta_readmit_max_gap_ep = 0;    ///< longest absence that ended in a readmission
-        // --- Guarded temporal clock anchor.
-        // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
-        // mechanism is inert however clean the log reads, so every disposition is counted
-        // against a denominator.  Trips are split by reason because the reasons are not
-        // interchangeable evidence: a `gap` trip shows the staleness guard works, an `nis`
-        // trip shows the detector works, and a run that only ever shows `resume` has
-        // tested neither.
-        long long cta_epochs = 0;            ///< epochs the anchor seam ran (denominator)
-        long long cta_folded_anchored = 0;   ///< (sat,epoch) clock priors folded at the anchor variance
-        long long cta_folded_loose = 0;      ///< (sat,epoch) clock priors folded at the legacy variance (loose)
-        long long cta_floor_hits = 0;        ///< folds where the variance floor bound (the deviation-#1 cap binding)
-        long long cta_trip_nis = 0;          ///< decouples: |w| over network.clock_anchor_k
-        long long cta_trip_abs = 0;          ///< decouples: |ê| over network.clock_anchor_abs_m
-        long long cta_trip_gap = 0;          ///< decouples: per-sat elapsed time over network.clock_anchor_max_gap_s
-        long long cta_trip_datum = 0;        ///< decouples: a datum change retired this satellite's frame
-        long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
-        long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-emit half)
-        long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
-        // Broadcast health on the network path.  All zero unless network.sat_health.
-        long long hlt_unhealthy_registered = 0; ///< (sat,epoch) registered clock satellites the broadcast flags unhealthy (processed in "pivot" mode, absent in "exclude")
-        long long hlt_pivot_skips = 0;          ///< (constellation,epoch) pivot picks that passed over an unhealthy satellite
-        long long hlt_pivot_fallbacks = 0;      ///< (constellation,epoch) with no healthy registered satellite, where the lexical first stood
-        /// The closed-loop consumer's snapshot written beside each network history copy
-        /// (`<state_snapshot_path>.consumer.epNNNN`).  Invariant #4: a seed
-        /// with `closed_loop.state_snapshot` armed and `cl_snap_written == 0` has no
-        /// consumer warm start to offer a leg, however clean the log reads.
-        long long cl_snap_written = 0;       ///< consumer snapshots written with the network copy's tow
-        long long cl_snap_skipped = 0;       ///< history epochs where the consumer had not processed that tow (nothing written)
-        // Handover S-transform telemetry (queue item 1(b); invariant #4): these are the
-        // mechanism's on-path counters, and transforms applied with sts_rows_retained == 0 mean
-        // the fold release is mis-wired however clean the log looks.
-        long long sts_edges = 0;             ///< pivot-switch (constellation,epoch) edges the transform handled
-        long long sts_applied = 0;           ///< carried rows whose mean/var the transform re-expressed
-        long long sts_rows_retained = 0;     ///< carry rows folded that the baseline skip would have dropped
-        long long sts_noop_no_carry = 0;     ///< edges skipped: the incoming pivot had no carried clock level
-        long long sts_pre_edges = 0;         ///< edges re-expressed before the coupling rows
-        long long sts_pre_redetected = 0;    ///< re-detections after a skipped epoch, released without a second transform
-        long long sts_pre_mismatch = 0;      ///< changed constellations the solve glue elected differently from the preview (the transform ran after PASS B instead)
-        long long sts_pre_undone = 0;        ///< previewed transforms undone after a skipped epoch, the next election having chosen another pivot
-        long long sts_selfcheck_fail = 0;    ///< post-transform |x_q| or re-derived c0 above tolerance (§8.4 INC-3)
-        double    sts_max_abs_c0 = 0.0;      ///< largest |c0| applied over the run (m)
-        double    sts_last_c0 = 0.0;         ///< the last c0 applied (m)
-        // Dense handover S-transform (network.handover_stransform_dense; invariant #4: armed with 0 dense edges
-        // on a run with a handover means the kernel is mis-wired).
-        long long sts_dense_edges = 0;          ///< edges the dense kernel re-expressed (S P S^T)
-        long long sts_dense_fallback = 0;       ///< edges the dense kernel could not apply (the diagonal kernel ran)
-        long long sts_dense_rows = 0;           ///< carried clocks with a block row re-expressed
-        long long sts_dense_parked = 0;         ///< carried clocks without a block row moved by the diagonal rule
-        long long sts_dense_p_added = 0;        ///< outgoing pivots appended to the block and the carry
-        long long sts_dense_selfcheck_fail = 0; ///< dense edges whose self-check failed
-        double    sts_dense_var_saved = 0.0;    ///< summed (diagonal kernel's variance - dense variance) over the re-expressed clocks (m^2)
-        double    sts_dense_contrast_maxdev = 0.0; ///< largest |change| of a between-clock contrast variance over the run (m^2; rounding)
-        long long cta_datum_kept = 0;           ///< anchored clocks kept engaged at a dense-transformed handover (no datum decouple)
-        long long cta_datum_kept_refused = 0;   ///< armed datum decouples the keep rule refused (no dense edge, no row, a loose fold)
-        /// The baseline that increment 0 named as missing: clock-pivot handovers per
-        /// constellation over the run.  Counted whenever pivotHandoverSignalled raises the
-        /// edge, transform armed or not, so an off run states the population an on run
-        /// acts on.
-        std::map<char, long long> pivot_handovers;
-        long long cta_recouples = 0;         ///< re-coupling edges: a loose satellite re-earned the anchor
-        long long cta_marks = 0;             ///< per-sat wire discontinuities queued at a decoupling edge
-        long long cta_gf_keys = 0;           ///< (sat,epoch) clock priors whose information was gauge-downdated.  0 on an armed gauge-free run means the downdate never reached a group of >= 2 carried clocks: the step is inert and the anchor still constrains the gauge.
-        long long cta_gf_inert = 0;          ///< epochs where the gauge-free step was armed but downdated nothing (every constellation contributed < 2 carried clocks, or UᵀΛU was singular)
-        double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
-        double    cta_max_w_tow = 0.0;       ///< …its epoch
-        std::string cta_max_w_sat;           ///< …its satellite
-        // --- The guard's own realized distribution (the k derivation).
-        // `k` is read off a measured |t| ladder, and the ladder moves with q: the
-        // denominator √(P⁻ − P⁺) shrinks as the anchor tightens, so a fixed k means a
-        // different number of metres at every rung.  Without these, re-deriving k per
-        // rung would need a second, disarmed run per rung.  Accumulated over anchored rows
-        // on the first guard pass only (a later pass re-tests survivors against a moved
-        // median and would count them twice).
-        //
-        // The population is truncated across epochs, not within one: a tripped satellite
-        // goes loose and stops contributing until it re-couples, so the guard's own action
-        // suppresses the upper tail.  For the untruncated null, run an arm with
-        // `clock_anchor_k` beyond the top rung and `clock_anchor_abs_m: 0`; that is what
-        // §3 means by "with the guard disarmed", and it is the only reading that
-        // calibrates k without the truncation.
-        long long cta_w_rows = 0;            ///< anchored rows contributing to the two ladders below (denominator)
-        std::array<long long, 8> cta_w_ge{}; ///< |w| ≥ @ref kCtaWLadder[i]: the dimensionless ladder k is read off
-        std::array<long long, 8> cta_e_ge{}; ///< |ê| ≥ @ref kCtaELadder[i] (m): the ladder the absolute backstop's rail is read off
-        double    cta_sum_sqrt_s = 0.0;      ///< Σ √S over those rows, so mean √S = the metres that one unit of k buys at this rung
-        double    cta_sum_abs_e = 0.0;       ///< Σ |ê| over those rows (m)
-        // The phase-space statistic (network.clock_anchor_guard_space).
-        long long cta_phi_rows = 0;          ///< anchored pass-0 rows with a phase statistic
-        long long cta_phi_unavail = 0;       ///< rows tested without one (no dense clock + two-band PB prior this epoch): abs only in phase mode
-        long long cta_phi_floor_rows = 0;    ///< rows whose phase sqrt(S) sat at its floor
-        std::array<long long, 8> cta_phi_w_ge{};   ///< |w_phi| >= kCtaWLadder[i]
-        std::array<long long, 8> cta_phi_e_ge{};   ///< |e_phi| >= kCtaELadder[i] (m)
-        double    cta_phi_sum_w2 = 0.0;      ///< sum w_phi^2 (the phase statistic's own sigma0)
-        long long cta_x_both = 0;            ///< anchored pass-0 rows over k on both statistics
-        long long cta_x_clk_only = 0;        ///< …on the clock statistic only (the level's motion)
-        long long cta_x_phi_only = 0;        ///< …on the phase statistic only
-        long long cta_trip_phi = 0;          ///< decouples decided by the phase statistic (phase mode)
-        double    cta_sum_w2 = 0.0;          ///< Σ w², so √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
-
-        // --- Run tallies of the SD EWL Route-B integer decision (increment 2a).  Standing
-        // invariant #4: on an armed run, `sdewl_dd_fixed == 0` means the decision never
-        // fired, which is not the same as "the integers had no effect", so every rejection
-        // path below is counted against a denominator.  The 2b row tallies live per
-        // station in NetStation::SdEwlCounters (the row build is parallel).
-        long long sdewl_epochs = 0;             ///< epochs the decision seam ran (the denominator for everything else).
-        long long sdewl_components = 0;         ///< (constellation, connected component) instances processed.
-        long long sdewl_dd_pairs_seen = 0;      ///< (station, satellite) arcs admitted to the integer graph.
-        long long sdewl_dd_fix_attempts = 0;    ///< DD roundings attempted along spanning-tree / closure edges.
-        long long sdewl_dd_fixed = 0;           ///< integers published usable this epoch: measured plus datum values (see sdewl_dd_datum; both are legitimately foldable, but only the measured ones went through a rounding gate).
-        long long sdewl_dd_datum = 0;           ///< of those, values assigned as a datum rather than measured: the reference station's own satellites, each station's link satellite, and a satellite framed on first sighting.  A datum value carries no rounding decision, so it cannot be wrong: it defines the frame.
-        long long sdewl_dd_reject_frac = 0;     ///< rejected: |fractional residue| over sd_ewl.fix_max_frac_cyc.
-        long long sdewl_dd_reject_ffr = 0;      ///< rejected: rounding success probability under sd_ewl.fix_min_ffr.
-        long long sdewl_dd_flip = 0;            ///< integer disagreed with the previous epoch on a continuous arc: counted and vetoed (the invariant #1 response).
-        long long sdewl_dd_restart = 0;         ///< arc restarted (lagged count fell): memory replaced, no flip charged.
-        long long sdewl_sd_ref_reelected = 0;   ///< the sticky component reference station r0 changed (re-datums the whole component's SD frame).
-        long long sdewl_dd_skip_channel = 0;    ///< (station, satellite) excluded: its MW arc is on a different tracking-channel pair than the network-common election, so B^s would not cancel in the DD.
-
-        // Slip-aware eq34 election (network.phase_datum_eq34_slip_aware_election).
-        // All three are needed to read the mechanism, because two of them are the policy
-        // working and the third is the graph refusing it:
-        //   * deseeded:   slipped incumbents denied their sticky tree seat;
-        //   * demoted:    slipped arcs whose arcLife ranking was pushed below the clean
-        //                 band (inert unless the longevity election is armed); each slipped
-        //                 arc counts once per epoch (it counted the
-        //                 sort's comparator calls before);
-        //   * readmitted: slipped arcs that became tree edges anyway, because the
-        //                 component had no other route to the vertex.  Those still
-        //                 mass-refloat, and a large share here means the topology, not the
-        //                 election, is the binding constraint (standing invariant #4:
-        //                 report the failure mode, and do not let "deseeded > 0" read as
-        //                 "no tree edge slipped").
-        long long eq34_slip_deseeded   = 0;
-        long long eq34_slip_demoted    = 0;
-        long long eq34_slip_readmitted = 0;
-        // Run tallies of the chain-pin audit (docs/SPEC_synthetic_minimum_network.md
-        // §14 T1; measured record §12.8), keyed "<cons>|<signal>" (the election's dr_key).
-        // A pin can leak silently from a three-stage pipeline: declared (the election's
-        // per-group Σ (n_c + m_c) gauge dimension), folded (foldAmb/foldRpb built the 1e10
-        // row; the lambdas return early on a missing state index or a missing live phase
-        // row), and landed (the folded row sits on a station that est.addStation accepted;
-        // a rejected or dropped station takes every folded pin down with it, the loss mode
-        // network.station_pd_pin_aware exists to prevent).  A group whose landed <
-        // declared − bridged in any epoch ran with an under-constrained datum that reads
-        // like a working one (standing invariant #4); the W6+SH n-invariant L2W near-null
-        // is the suspect that motivated the audit.  Accumulated serially after PASS B's
-        // consume; logged once by networkChainDatumRunEnd.  All zero unless
-        // network.phase_datum_eq34.
-        struct Eq34PinAudit {
-            std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
-            std::map<std::string, long long> bridged;          ///< Σ hygiene INC-2 bridge pins (shared-side)
-            std::map<std::string, long long> folded;           ///< pins foldAmb/foldRpb built (all producing stations)
-            std::map<std::string, long long> landed;           ///< folded pins on accepted stations
-            std::map<std::string, long long> miss_state;       ///< fold refused: state index absent
-            std::map<std::string, long long> miss_row;         ///< fold refused: no live phase row (h2local miss)
-            std::map<std::string, long long> dropped_station;  ///< folded pins lost with dropped/rejected stations
-            std::map<std::string, int>       short_epochs;     ///< epochs with landed < declared − bridged
-            std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
-            int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
-        } eq34_pin_audit;
-        // Run tallies of the seed round.  The audit asserts |pin innovation| ≤ λ/2
-        // at all times, so a max_abs_y above λ_max/2 is a logic error.  `pins` counts
-        // election-side targets (the state existed at election time); `deferred` counts
-        // fold-computed targets (state allocated in PASS B: cold start and new arcs);
-        // `target_steps` counts same-station target changes between epochs (the reref
-        // pressure this knob generates; about 0 expected on static receivers).  All zero
-        // unless network.phase_datum_eq34_seed_round.
-        long long seed_round_pins         = 0;
-        long long seed_round_deferred     = 0;
-        long long seed_round_frozen       = 0;   ///< targets reused verbatim from eq34_prev_target, so the frame is realized once (INC-1)
-        long long seed_round_target_steps = 0;
-        double    seed_round_max_abs_y_m  = 0.0;
-        // Re-host tallies (INC-2).  `framed` = re-hosts whose frame step was computed
-        // from the new host's own state and therefore stayed shiftable (the carried PB
-        // prior is S-transformed, not marginalized); `cold` = re-hosts that INC-2 could
-        // not frame (no allocated state: the fold-deferred path), which keep the legacy
-        // unknown-step reref.  `max_step_m` is the largest |frame step| any framed re-host
-        // applied.  It is bounded by λ/2 only when the new host's float is
-        // frame-consistent, so a large value signals that the solution at the new host had
-        // drifted off the realized frame: read it as a diagnostic of the runaway the audit
-        // probes, never as a quality bound.
-        long long seed_round_rehost_framed  = 0;
-        long long seed_round_rehost_cold    = 0;
-        double    seed_round_rehost_max_step_m = 0.0;
-        // Run tallies of eq34 reattach hygiene; every field is documented on the struct.
-        // Bumped only when ctx.knobs.anchor_hygiene_on, and reported by
-        // networkAnchorHygieneRunEnd (network/solve/AnchorHygiene.cpp).
-        NetworkAnchorTallies hyg;
-        // Run tallies of flicker/gap signal integrity; every field is documented on the
-        // struct.  Bumped only when ctx.knobs.sig_integrity_on, and reported by
-        // networkSignalIntegrityRunEnd (network/assembly/SignalIntegrity.cpp).  `demoted_rows`
-        // stays 0 here: the report sums the per-station NetStation::si_rows_demoted counters
-        // into its own copy (the fold runs inside the parallel produce, so the row tally
-        // cannot live here).
-        NetworkSignalIntegrityTallies sig;
-        /// Run-end telemetry of the RAIM pool re-host.  All zero unless
-        /// ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from "census
-        /// empty" from "nothing flagged" (standing invariant #4).
-        NetworkRaimCiTallies raim_ci;
-        /// Run-end telemetry of the gross line-of-sight screen (
-        /// docs/SPEC_event_harness.md §24.18).  All zero unless ctx.knobs.gl_on; the
-        /// denominators separate "seam never ran" from "no code row reached it" from
-        /// "nothing cleared the bar" from "evidence never persisted" (standing invariant
-        /// #4).
-        NetworkGrossLosTallies gross_los;
-        // Run tallies of product-referenced measurement admission; every field is
-        // documented on the struct.  Bumped only when ctx.knobs.adm_on, and reported by
-        // networkMeasurementAdmissionRunEnd.  Named `adm` and not reachable
-        // as `ctx.admission` on purpose: that name belongs to the CB-ADM W6 code-bias
-        // admission census (@ref NetworkBiasAdmission below), a different mechanism, and
-        // the two are easy to confuse.
-        NetworkMeasurementAdmissionTallies adm;
-        long long sdewl_dd_skip_frame = 0;      ///< (station, satellite) excluded: BIA frame disagrees with the constellation majority.
-        long long sdewl_dd_no_link = 0;         ///< (station, satellite) left unfixed: no admissible link satellite reached it from the tree/closure.
-        long long sdewl_dd_no_graph = 0;        ///< stations isolated: fewer than two co-visible satellites with any neighbour, so no DD can be formed.
-
-        double prev_tow = -1.0;
-        int    prev_week = -1;
-        int    iod = 0;
-        // Per-run solution-generation id, minted at the first emit from that epoch's GPS
-        // time: deterministic under replay (the id is serialized per epoch), and different
-        // across live restarts, which make their first emit later.  0 = unset.
-        uint32_t generation_id = 0;
-        // Product time (s) of the last written S contract line (the deferred v2 header
-        // counts as the first); -1 until the contract writer opens.
-        double last_contract_emit_s = -1.0;
-        size_t n_emitted = 0, n_skipped = 0, n_gate_withheld = 0, n_runaway_epochs = 0;
-        // Operator health-record state (network.health_interval_s > 0).
-        double last_health_write_s = -1.0;   // content time of the last health row (s)
-        double last_emit_content_s = -1.0;   // content time of the last emitted epoch (s)
+    /// @brief Run-scope counters of the Application drivers, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct GeneralCounters {
         int    last_n_present      = 0;      // stations present in the most recent processed epoch
         int    last_n_clock_sats   = 0;      // registered clock sats in the most recent processed epoch (P4b)
-        // ms_per_epoch_window anchors (P4(b)): wall ms and loop-epoch count as of the
-        // previous health row, so each row reports the mean over its own window (the
-        // operationally useful "is it slowing down now" signal), not a cumulative run mean
-        // labelled "rolling".
-        double health_win_ms_anchor     = 0.0;
-        size_t health_win_epochs_anchor = 0;
-        size_t n_sigma0_withheld = 0;   // A4/R8: epochs skipped specifically by the σ̂0 withhold ceiling (subset of n_skipped)
-        // Withhold-era release policy: era telemetry for both edges, per invariant #7.  All
-        // zero unless one of the two knobs is armed (the era bookkeeping itself is
-        // knob-gated to keep the events CSV byte-identical on off paths).
-        long long n_wh_era_entries        = 0;  ///< SIGMA0/era_enter events
-        long long n_wh_era_exits          = 0;  ///< SIGMA0/era_exit events (a run ending mid-era exits nowhere; max_len covers it)
-        long long n_wh_era_max_len        = 0;  ///< longest era (withheld decides)
-        long long n_wh_escalated_epochs   = 0;  ///< era epochs run at the escalated budget
-        long long n_wh_escalate_landed    = 0;  ///< escalated epochs that landed σ̂₀ ≤ ceiling (took the accepted path)
-        long long n_wh_escalate_exhausted = 0;  ///< escalated epochs that still withheld
-        long long n_wh_free_erases        = 0;  ///< carry entries erased at the withhold branch (§3b)
-        long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
-
-        // --- Leveling-carry retirement census ---
-        // Every path that removes a phase-leveling carry entry is counted at its own site,
-        // so a run can attribute a fleet-scale carry loss instead of inferring it.  The gap
-        // prune reads only `last_seen_s`, i.e. it selects on elapsed time and nothing else;
-        // these counters separate it from the four quality-driven retirement paths that run
-        // beside it.  §7's promotion refusal assumes that the invariant-#1 gap cliff
-        // usefully retires stressed carries, and these counters measure that.  Pure
-        // telemetry (no solve effect, no CSV row), always on.
-        // (A) Departures: entries physically removed and not replaced this epoch.  The gap
-        //     prune runs immediately after the harvest has refreshed last_seen_s for every
-        //     arc it stashed, so its candidate set is disjoint from the arcs observed this
-        //     epoch: it can only retire arcs that were not harvested (set satellites, absent
-        //     stations, harvest failures).  It is therefore a departure counter and not the
-        //     cliff; (B) is the cliff.
-        long long n_cr_gap_prune          = 0;  ///< amb-carry entries dropped by the pl_max_gap_s prune (departures; selected by time)
-        long long n_cr_gap_prune_epochs   = 0;  ///< epochs on which that prune removed at least one entry
-        long long n_cr_gap_prune_max      = 0;  ///< largest single-epoch prune removal
-        long long n_cr_gap_prune_max_week = 0;  ///< GPS week of that epoch (attribution handle)
-        double    cr_gap_prune_max_tow    = 0.0;///< TOW (s) of that epoch; joins directly to the `tow` column of every trace CSV
-        long long n_cr_gap_prune_max_fleet= 0;  ///< carry size immediately before that removal
-
-        // (B) The cliff: the inject-side stale skip, the mechanism §1.3 observed as the pl
-        //     prires rows falling to 0.  The carried prior is not injected because its gap
-        //     exceeded the horizon, so the arc solves free and is then re-stashed from one
-        //     epoch of code.  The entry is never erased, which is why the prune above cannot
-        //     see it.  Counted at the inject predicate itself.
-        long long n_cr_inject_stale       = 0;  ///< carried priors skipped for gap > pl_max_gap_s (the mass re-level)
-        long long n_cr_inject_stale_epochs= 0;  ///< epochs on which at least one prior was skipped stale
-        long long n_cr_inject_stale_max   = 0;  ///< largest single-epoch stale-skip count
-        long long n_cr_inject_stale_max_week = 0; ///< GPS week of that epoch
-        double    cr_inject_stale_max_tow = 0.0;  ///< TOW (s) of that epoch: the attribution handle for a cliff
-        long long n_cr_inject_stale_max_sta  = 0; ///< distinct stations in that epoch's stale set (separates a fleet-wide era from one station dropping out)
-
-        // Ambiguity-vehicle telemetry (RF-1, docs/refound/RF-1_float_ambiguities_design.md
-        //     §7.2 / §7.4).  Standing invariant #4: these counters are the on-path evidence,
-        //     and design §7.4's D3 states the rule in the other direction too: a float_kf
-        //     run with 0 drops is a miswire, not a quiet run.  The trace counters
-        //     (@c n_amb_state_rows / @c n_amb_state_events / @c n_amb_state_epochs), the
-        //     drop counters (step 4) and the S-transform counters (step 5) are all reported
-        //     at run end, so an arm that arms a mechanism and moves none of them is visible
-        //     at once rather than after a grade.
-        long long n_amb_drop              = 0;  ///< carried priors dropped back to their birth prior, value_abs kept (RF-1 step 4).
-        long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.
-        long long n_amb_drop_relevel_free = 0;  ///< …of which from the detectors' latched free-epoch set (the level vehicle skips one inject instead).
-        long long n_amb_drop_stale_gap    = 0;  ///< …of which from the inject-site gap cliff (the level vehicle skips one inject instead).
-        long long n_amb_drop_t4           = 0;  ///< …of which from the RAIM prominence-attribution refloat (the level vehicle erases the entry instead).
-        long long n_amb_drop_t3           = 0;  ///< …of which from the RAIM per-satellite consensus refloat (the level vehicle erases the entry instead).
-        long long n_amb_drop_idempotent   = 0;  ///< drop calls that found the arc already at or below birth strength: two detectors on one arc in one epoch, or an arc that never converged.  The age clock still restarts; the variance does not move.
-        long long n_amb_birth_floored     = 0;  ///< birth stashes whose var_birth was raised by network.amb_float_birth_var_m2 above the arc's own first-stash variance: the on-path telemetry of the floor (invariant #4: 0 under an armed floor means every arc was already born looser than it).
-        // Telemetry of the drop-only floor (RF-3a,
-        //     docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A2), maintained in both knob
-        //     states so an off run reports the walk it suffers (standing invariant #4).
-        long long n_amb_drop_floored      = 0;  ///< drops whose restored variance came from network.amb_float_drop_var_m2, i.e. the drop floor at this LOS exceeded max(var_birth, var_first, birth floor).  0 by construction with the knob at 0.
-        long long n_amb_drop_pre_gate     = 0;  ///< drops taken before network.amb_float_drop_floor_after_ep opened, with an armed drop floor: the population the gate withheld the floor from (RF-3c).  0 with no gate, and 0 with no floor.
-        /// |value change| (m) absorbed by the first fold after a drop, one entry per drop
-        /// that restarted the age clock (RF-3a A2).  Measured at the harvest from the
-        /// carry's value before and after that fold, so it is the size of the correction
-        /// the drop's restored prior let through in one epoch.  With a stiff restored prior
-        /// the first fold absorbs little and the value then walks for tens of epochs; with
-        /// a stated floor the correction lands at once.  Read at run end as max and median.
-        std::vector<double> amb_walk_fold1_m;
-        /// The same at the second fold after the drop, i.e. the residual walk itself
-        /// (RF-3a A2).  A stiff restored prior is still moving here; a floored one has
-        /// settled.
-        std::vector<double> amb_walk_fold2_m;
-        long long n_amb_stransform        = 0;  ///< declared anchor S-transformations applied to the carry, one per (sat,signal) family per handover (RF-1 step 5).
-        long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.
-        long long n_amb_sts_identity      = 0;  ///< …families whose Δ was exactly 0 (already in the new basis: a station re-pinning itself): the transform is the identity, and the family is still owned (no erase).
-        long long n_amb_sts_refused_cold  = 0;  ///< handovers refused by the transform because the election was cold (no carried level for the successor, so no new basis to express the family in): the erase stands; this is the limit of step 5 and the subject of RF-2.
-        long long n_amb_sts_refused_no_level = 0; ///< …refused because the ledger said continuous but the incoming anchor held no live carry this epoch: a ledger/carry disagreement, counted apart from a cold election.
-        // On-path telemetry of the held S-basis (RF-2; invariant #4).
-        long long n_pb_basis_held          = 0;  ///< family-epochs re-pinned at their frozen basis value (the held property in action).
-        long long n_pb_basis_elected       = 0;  ///< new basis entries written: first sightings plus handovers.
-        long long n_pb_basis_cold          = 0;  ///< …of which cold (no level to inherit): the new basis is 0 and the emitted phase bias steps by the outgoing value.
-        long long n_pb_basis_refuse_young  = 0;  ///< candidate-family evaluations refused by the arc-age gate (never a newborn low arc).
-        long long n_pb_basis_refuse_flagged= 0;  ///< …refused by the screen-flag quiet window (item 3), which is also item 4's depose trigger on the incumbent.
-        long long n_pb_basis_rank_changed  = 0;  ///< elections whose elevation rank picked a different station than the coverage order would have, plus incumbents deposed by a flag.
-        long long n_pb_basis_declared      = 0;  ///< handovers declared to the consumer (markSatDiscontinuity through the retro-bump queue), continuous and cold alike (RF-2 item 2).
-        long long n_pb_basis_declared_cold = 0;  ///< …of which cold, i.e. the wire's phase bias stepped.
-        // Why the datum moved: one counter per deposition cause (RF-2b).
-        long long n_pb_basis_refuse_unusable = 0; ///< candidate evaluations refused because their carried level is not usable as a datum (the continuous branch's ledgerVerdict), the test that RF-2's rank lacked.
-        long long n_pb_basis_elev_fallback   = 0; ///< elections where no candidate was ledger-usable and the rank fell back to elevation only (a cold pin).
-        long long n_pb_basis_depose_flag     = 0; ///< incumbents deposed by a screen flag on their own basis column.
-        long long n_pb_basis_depose_death    = 0; ///< …deposed because the basis arc has no carry left at all.
-        long long n_pb_basis_depose_unusable = 0; ///< …deposed because their own carried level stopped passing the ledger verdict.
-        long long n_pb_basis_value_drift   = 0;  ///< mid-tenure basis-value changes refused: the alarm of the held property itself.  Must read 0.
-        long long n_amb_sts_selfcheck_fail = 0; ///< transforms whose exactness self-check failed: the incoming anchor's carried level did not read 0 within kStsExactTolM afterwards.  A transform defect, never noise; logged as a warning with identities.
-        long long n_amb_block_fallback    = 0;  ///< station-epochs whose joint block fell back to per-column rows under the float_kf vehicle (RF-1 step 3, risk #3): a vehicle change on one station-epoch, so it is counted rather than noted.  The run-end bar (on n_pl_blk_fallback) fails a run whose fallback rate exceeds 1 % of attempted station-epochs.
-        long long n_amb_state_rows        = 0;  ///< network_amb_state.csv: trajectory rows written (one per carried (station,sat,signal) per traced epoch).
-        long long n_amb_state_events      = 0;  ///< network_amb_state.csv: rows carrying a non-empty `event` (birth / drop / erase / stransform).
-        long long n_amb_state_epochs      = 0;  ///< network_amb_state.csv: epochs that wrote at least one row.
-        long long n_amb_state_erase_rows  = 0;  ///< network_amb_state.csv: `erase:<cause>` rows, entries captured at the four erase sites before deletion.
-
-        // On-path telemetry of the station-wide jointly whitened leveling-carry block (F3,
-        //     network.phase_leveling_local_block, SPEC_amb_iono_split_overcount; invariant
-        //     #4).  Counted per station in the parallel produce phase (StationAssembly) and
-        //     folded here serially; the two refloat counters are written directly by the
-        //     serial within-epoch RAIM re-solve.  Armed with blocks = 0 means the inject never
-        //     built a block: a miswire (carry_cpl_cond off, or no station
-        //     with an injectable carried column), not a quiet run.  pair_missing ≈
-        //     Σ n(n−1)/2 over the stations on the first post-resume epoch is the expected
-        //     one-epoch degradation (the harvest block is not snapshotted); a steady non-zero
-        //     rate afterwards means columns re-harvested at different epochs (satellites
-        //     dropping in and out).  marg_cols is the decoupling edge of invariant #7: every
-        //     carried entry not admitted to its station's block this epoch (departed, stale,
-        //     freed, reseed); the block omits it and never conditions on it.
-        long long n_pl_blk_blocks       = 0;             ///< blocks whitened (station-epochs)
-        long long n_pl_blk_rows         = 0;             ///< whitened rows emitted
-        long long n_pl_blk_marg_cols    = 0;             ///< carried entries not injected (marginalized out of their station's block)
-        long long n_pl_blk_pair_missing = 0;             ///< (i,j) pairs zeroed: harvested at different epochs / no harvest block
-        long long n_pl_blk_col_refused  = 0;             ///< block columns dropped by the scalar-row screen (non-finite RHS or non-positive variance)
-        long long n_pl_blk_fallback     = 0;             ///< station-epochs whose block factorization failed → per-column rows
-        long long n_pl_blk_hist[5]      = {0, 0, 0, 0, 0}; ///< block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75
-        long long n_pl_blk_max_dim      = 0;             ///< largest block dimension over the run
-        // Invariant #4/#7 telemetry of B9-in-block (network.carry_zwd_in_block).  A run with
-        // the knob armed and n_pl_blk_zwd_cols == 0 is unwired, not clean; a large
-        // n_pl_blk_zwd_fallback_diag says most station-epochs degraded, without a signal,
-        // to the diagonal B9 row that the in-block carry replaces.
-        long long n_pl_blk_zwd_cols     = 0;             ///< ZWD columns admitted into a block build (station-epochs; a block that then failed to factorize still counts, and n_pl_blk_zwd_fallback_diag says how many of those ended up on the diagonal row instead)
-        long long n_pl_blk_zwd_fallback_diag = 0;        ///< station-epochs whose ZWD fell back to the B9 diagonal row (no block for the station this epoch, or the block's factorization failed)
-        long long n_pl_blk_zwd_missing_cross = 0;        ///< (ambiguity, ZWD) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / ZWD stashed without a block); a subset of n_pl_blk_pair_missing
-        // Invariant #4/#7 telemetry of I-in-block (network.carry_iono_in_block), with the
-        // discipline of the ZWD split above.  An armed run with n_pl_blk_iono_cols == 0 is
-        // unwired, not clean.  n_pl_blk_iono_not_folded is not a "degraded to the old row"
-        // count: the in-block carry has no diagonal iono row (that is the FALSIFIED
-        // QUEUE-8(b) vehicle), so those columns carried nothing that station-epoch.
-        long long n_pl_blk_iono_cols    = 0;             ///< per-LOS iono columns admitted into a block build (a block that then failed to factorize still counts; n_pl_blk_iono_not_folded says how many of those did not act)
-        long long n_pl_blk_iono_not_folded = 0;          ///< iono columns pushed but not folded (non-SPD block / no block): their carry did not act this station-epoch, and there is no diagonal fallback, on purpose
-        long long n_pl_blk_iono_missing_cross = 0;       ///< (iono, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block); a subset of n_pl_blk_pair_missing
-        long long n_iono_blk_erased_t4  = 0;             ///< in-block iono carries erased by a T4/consensus arc refloat (invariant #1: the T4 statistic reads level and iono error as a sum, so the LOS re-draws both)
-        long long n_iono_blk_gap_drop   = 0;             ///< in-block iono carries dropped at the harvest prune for exceeding carry_iono_in_block_max_gap_s without a sighting (the absent-satellite / eclipse edge)
-        long long n_raim_pool_iono_rows = 0;             ///< post-fit RAIM pool admissions (station-epochs × rows) whose admitted row is one of the iono columns' whitened block rows: the §7 item 4 interaction measured for the I half, as n_raim_pool_zwd_rows measures it for the ρ half.  Counted only; the pool rule is unchanged.
-        // Invariant #4/#7 telemetry of RX-CLK-in-block (network.carry_rx_clock_in_block),
-        // with the discipline of the ZWD and iono splits.  An armed run with
-        // n_pl_blk_rxclk_cols == 0 is unwired, not clean.  n_pl_blk_rxclk_not_folded is not
-        // a "degraded to the old row" count: the in-block carry has no diagonal clock row
-        // (a diagonal prior on the most station-common direction of all is the over-count
-        // that falsified the diagonal ZWD carry), so those columns carried nothing that
-        // station-epoch.
-        long long n_pl_blk_rxclk_cols   = 0;             ///< receiver-clock-family columns admitted into a block build (a block that then failed to factorize still counts; n_pl_blk_rxclk_not_folded says how many did not act)
-        long long n_pl_blk_rxclk_isb_cols = 0;           ///< …of which are ISB columns.  0 is not an alarm (a GPS-only / BSSD posture allocates no per-system time-offset state).
-        long long n_pl_blk_rxclk_not_folded = 0;         ///< clock-family columns pushed but not folded (non-SPD block): their carry did not act, and there is no diagonal fallback, on purpose
-        long long n_pl_blk_rxclk_missing_cross = 0;      ///< (clock-family, other) pairs zeroed because the harvest cross term was missing (harvest-stamp mismatch / entry stashed without a block); a subset of n_pl_blk_pair_missing
-        // Invariant #4/#7 telemetry of RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block).
-        // An armed run with n_pl_blk_rxcb_cols == 0 is unwired, not clean; the not-folded
-        // count is a "carried nothing" count (no diagonal fallback, as for the clock).
-        long long n_pl_blk_rxcb_cols = 0;                ///< receiver code-bias columns admitted into a block build
-        long long n_pl_blk_rxcb_not_folded = 0;          ///< receiver code-bias columns pushed but not folded (non-SPD block)
-        long long n_pl_blk_rxcb_missing_cross = 0;       ///< (receiver code-bias, other) pairs zeroed for a missing harvest cross term
-        long long n_rxcb_blk_harvested = 0;              ///< receiver code-bias entries stashed with a border regression and a harvest-block row
-        long long n_rxcb_blk_harvest_fail = 0;           ///< receiver code-bias columns whose coupling harvest failed (not stashed; the column is cold next epoch)
-        long long n_amb_drop_decoupled_idem = 0;         ///< drops at birth strength that cleared a regression / block row (network.amb_float_drop_decouple_always)
-        long long cxu_resume_stash = 0;                  ///< the exact update's stash stamp rebuilt from a restored dense border
-        long long n_rxcb_blk_restored_skip = 0;          ///< RXCB-IN-BLOCK: carried entries without a harvest-block row (restored from a diagonal-carry snapshot) left out of the block and re-harvested
-        long long n_rxcb_blk_step_reset = 0;             ///< receiver code-bias entries erased at the harvest by the frame-invariant step test (10 sigma of the two harvested variances, the walk and a 0.5 m guard): the event response of invariant #1
-        long long n_rxcb_blk_no_block = 0;               ///< receiver code-bias entries stashed without a harvest-block row (cross terms to the station's other columns missing next epoch)
-        // rx-CB carry run counters (armed-only run-end line).
-        long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
-                  rx_cb_harvested_total = 0;
-        /// Per-station fold/withhold tally of the rx-CB carry (RS-9 rider, §21.18), kept on
-        /// every run where the carry is armed; trace-class, with byte-identical products.
-        /// It shows what the pooled "N folded, M withheld" line hides.  Keyed by station
-        /// name (the teardown has no station roster); value = {station-epochs with at least
-        /// one rx-CB carry decision, station-epochs in which every decision was a
-        /// withhold}.  A station whose second number is > 90 % of its first carried nothing
-        /// for the run, while the run-end line still counted it among the "N carried" (a
-        /// blind spot of the kind standing invariant #4 names, measured by the RS-7b
-        /// census).  §21.18(b) gives the cause:
-        /// the harvest overwrites a withheld entry unconditionally and the prune drops only
-        /// entries older than 900 s, so a refused station is refreshed and refused for the
-        /// whole run.  Written serially at the post-solve harvest from the produce phase's
-        /// per-station StationAssembly tallies, so it is race-free like the counters beside
-        /// it.
-        std::map<std::string, std::pair<long long, long long>> rx_cb_sta_tally;
-        long long n_rxclk_carry_refused = 0;             ///< clock carries erased by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma means the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  The wired response of invariant #1 for a quantity that has no other jump detector on the network path.
-        long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
-        // --- The jump gate's own scale, so a leg can say what it would have caught ---
-        // The gate is |innovation| > k*sqrt(var_pred), and var_pred is per station-epoch
-        // (harvested variance + drift extrapolation + q), so "the gate" is a distribution,
-        // not a constant.  Without this census a report can quote only k; with it, it can
-        // quote the metres an event has to exceed.  Armed-only (the whole rx-clock harvest
-        // block is inside `if (rxclk_blk_on)`), so an off run moves none of it.
-        long long n_rxclk_gate_tests = 0;                ///< station-epochs the jump gate tested (primary clock only; an ISB has no rate)
-        double    sum_rxclk_gate_m = 0.0;                ///< Σ k*sqrt(var_pred) over those tests, metres
-        double    min_rxclk_gate_m = 0.0;                ///< smallest k*sqrt(var_pred) seen (0 = never tested)
-        double    max_rxclk_gate_m = 0.0;                ///< largest  k*sqrt(var_pred) seen (0 = never tested)
-        double    max_rxclk_innov_m = 0.0;               ///< largest |innovation| seen, metres: the largest step the gate saw
-        long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row is one of the clock-family columns' whitened block rows: the SPEC_amb_iono_split_overcount §7 item 4 interaction measured for the rho half, as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged.
-        long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row is the ZWD's whitened block row: the §7 item 4 interaction, measured (the pool admits a row whose coefficient on the ambiguity column exceeds 0.5 and whose kind the declared rule admits, filter/NetworkRowClassify @c raimPoolAdmitsKind; a ZWD block row is a carried-prior block kind the rule admits, and it mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged.
-        /// The carried-phase RAIM pools' admissions per contribution kind (
-        /// filter/NetworkRowClassify @c raimPoolAdmitsKind): the post-fit pool
-        /// (Raim.cpp; one walk per epoch it runs) and the within-epoch assess pool
-        /// (SolveGlue.cpp; one walk per assess call, the first and each replay's).
-        /// Read at run end; the declared rule admits the observation phase rows, the
-        /// coupling and block carried-prior rows and the SD-EWL constraint rows, so the
-        /// non-data rows' share is on record for the later science decision.
-        RaimPoolAdmissionTally raim_pool_postfit;
-        RaimPoolAdmissionTally raim_pool_within;   ///< As @c raim_pool_postfit, for the within-epoch assess pool.
-        long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (the re-coupling edge of invariant #7, counted)
-        long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (a safe degradation: the refloated arcs re-float from data)
-
-        // (C) One-solve refloats: the entry is erased after the harvest, so the arc
-        //     refloats on the next epoch.  Selected by quality.
-        long long n_cr_raim_attrib        = 0;  ///< attribution refloat, T4 (live only when network.raim_attribution is armed)
-        long long n_cr_raim_consensus     = 0;  ///< consensus refloat, T3 (live only when raim_attribution is not armed; the two are a run-constant either/or, never a split)
-        long long n_cr_gross_los          = 0;  ///< level entries erased by a gross line-of-sight declaration (docs/SPEC_event_harness.md §24.18).  Family (C) like the T4 erase: the arc is still tracked and its next harvest re-stashes it.  Zero unless network.gross_los_screen.
-
-        // (D) One-solve frame skips: the frame stepped, so the carried value is stale in the
-        //     old gauge; the same epoch's harvest re-stashes any still-tracked arc, so the
-        //     cost is one solve of continuity.
-        long long n_cr_eq34_reref         = 0;  ///< eq34 D4 chain-datum re-reference
-        long long n_cr_phase_datum_reref  = 0;  ///< phase-datum family re-reference
-
-        // Siblings on the same gap predicate, for other carries (departures).
-        long long n_cr_zwd_gap_prune      = 0;  ///< ZWD carry entries dropped by the pl_max_gap_s prune
-        // The per-line-of-sight phase nuisance state: every edge counted.
-        long long n_pc_birth_rows         = 0;  ///< columns given the birth prior row (no live carry)
-        long long n_pc_backstop_rows      = 0;  ///< planned carried columns the builder refused, given a birth row instead
-        long long n_pc_block_folds        = 0;  ///< carried columns folded through the whitened block
-        long long n_pc_fallback_folds     = 0;  ///< carried columns folded by the per-column fallback (non-SPD block)
-        long long n_pc_stash              = 0;  ///< entries harvested
-        long long n_pc_stash_fail         = 0;  ///< harvest attempts refused (non-finite or a failed regression)
-        long long n_pc_gap_prune          = 0;  ///< entries pruned past the maximum gap
-        long long n_pc_erase_raim         = 0;  ///< entries erased by the RAIM attribution erase of their line of sight
-        long long n_pc_erase_gross        = 0;  ///< entries erased by the gross line-of-sight erase
-        double    pc_abs_sum              = 0.0;///< sum of |estimate| over harvested entries (m)
-        double    pc_sq_sum               = 0.0;///< sum of estimate^2 over harvested entries (m^2)
-        long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
-
-        // --- Seam-scoped ZWD re-seed (network.zwd_seam_reseed) ---
-        // On-path telemetry (standing invariant #4): 0 folds under an armed knob means the
-        // window never armed (no warm resume, or no restored Z rows) or every fold was
-        // skipped; check the resume log line as well.
-        long long n_zwd_seam_folds        = 0;  ///< station-fold count inside the post-resume window
-        long long n_zwd_seam_epochs       = 0;  ///< epochs inside the window with >= 1 fold
-        // Resume frame restore (network.resume_frame_restore, §18.10): the identities of the
-        // re-coupling edge, i.e. what the seam reconnected, so a 0 under an armed knob reads
-        // as inert (standing invariant #4).
-        long long n_resume_frame_anchors     = 0;  ///< phase-anchor incumbents restored
-        long long n_resume_frame_targets     = 0;  ///< sticky pin targets restored
-        long long n_resume_frame_cta         = 0;  ///< clock-anchor per-sat states restored
-        long long n_resume_frame_cta_anchored = 0; ///< ...of which anchored
-        long long n_resume_frame_clk_keys    = 0;  ///< CLK-R held-frame per-sat keys restored
-        long long n_resume_frame_ledger      = 0;  ///< handover-ledger entries primed from restored leveling rows
-        // Resume datum restore (RS-3, network.resume_datum_restore, SPEC_event_harness
-        // §21.7): the re-coupling edge's identities for the two datum memories, and the
-        // first-post-resume-epoch event counts that say whether the datum continued.  0
-        // restored under an armed knob means inert (invariant #4); the three first-epoch
-        // figures are counted on every warm resume, armed or not, so the control leg of an
-        // A/B reports them from the same instrument.
-        long long n_resume_datum_eq34_rx      = 0;  ///< sticky datum receivers restored (EQD)
-        long long n_resume_datum_eq34_edges   = 0;  ///< receiver parent edges restored (EQP)
-        long long n_resume_datum_sat_roots    = 0;  ///< satellite component roots restored (EQS)
-        long long n_resume_datum_prev_targets = 0;  ///< last-epoch pin targets restored (EQT)
-        long long n_resume_datum_prev_el      = 0;  ///< longevity elevations restored (EQE)
-        long long n_resume_datum_retained     = 0;  ///< gap-retained tree edges restored (EQR)
-        long long n_resume_datum_cb_prev      = 0;  ///< code-bias previous values restored (CBP)
-        long long n_resume_datum_cb_seen      = 0;  ///< code-bias ever-seen satellites restored (CBS)
-        long long n_resume_datum_cb_pair      = 0;  ///< code-bias IF-pin reference pairs restored (CBI); 0 here with CBP > 0 means the IF-pin half re-seeds anyway
-        long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
-        long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
-        long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there
-        long long n_pb_seam_keys_tested = 0; ///< phase-bias keys the first post-resume emit compared with a restored baseline, the jump test's own population (RS-4)
-        long long n_pb_seam_keys_over   = 0; ///< of those, keys beyond discThresholdM (RS-4)
-        long long n_pb_seam_marks       = 0; ///< constellations markDatumChange'd by the seam rule; 0 with the knob off, and 0 on a cold start (RS-4)
-        // Resume emit-layer restore (RS-5, network.resume_emit_restore, SPEC_event_harness
-        // §21.10): the re-coupling edge's identities for the emit re-base.  0 under an
-        // armed knob means inert (standing invariant #4): the snapshot carried no ER rows (a
-        // writer without network.state_snapshot_emit_capture) or no warm resume happened,
-        // and the run-end line says which.
-        long long n_resume_emit_rebase_keys = 0; ///< emission-frame keys restored into NetworkEmitRebase (ER)
-        // Resume station-layer restore (RS-6, network.resume_station_restore,
-        // SPEC_event_harness §21.13): the re-coupling edge's identities for the two station
-        // memories.  0 under an armed knob means inert (standing invariant #4): the
-        // snapshot carried no RC / SD rows (a writer without
-        // network.state_snapshot_station_capture), the run arms neither carry, a sub-switch
-        // withheld that half, or no warm resume happened; the run-end line says which.
-        long long n_resume_station_rxcb  = 0; ///< rx-CB carry entries restored (RC)
-        long long n_resume_station_shdev = 0; ///< entries of the T5 per-LOS deviation carry restored (SD)
-        // Resume canonical-signal restore (RS-8, network.resume_signal_canon_restore,
-        // SPEC_event_harness §21.16).  0 stations under an armed knob means inert (standing
-        // invariant #4): the snapshot carried no CN rows (a writer without
-        // network.state_snapshot_signal_capture) or no warm resume happened, and the
-        // run-end line says which.  The disagree count measures the problem directly: it is
-        // the number of restored entries that this run's first epoch would have latched
-        // differently, i.e. the flips the restore prevents, so a nonzero value confirms the
-        // restore acted, and a zero one says the seam epoch happened to agree.
-        long long n_resume_canon_stations = 0; ///< stations whose canonical latch was restored (CN)
-        long long n_resume_canon_entries  = 0; ///< canonical entries restored across those stations
-        // Resume rx-CB linearization-point restore (RS-9, network.resume_rxcb_lin_restore,
-        // SPEC_event_harness §21.18): the re-coupling edge's identities for the frame
-        // against which the rx-CB inject gate judges the restored carry.  0 entries under an
-        // armed knob means inert (invariant #4): the snapshot carried no RL rows (a writer
-        // without network.state_snapshot_rxcb_lin_capture), or no warm resume happened.
-        //
-        // `_uncovered` is scoped to the keys for which the RL rows carry a reference.  The
-        // rows pair 1:1 with the RC rows, so that is exactly the set with an rx-CB carry,
-        // i.e. the set whose x_lin the inject gate reads.  A code-bias family with no carry
-        // (GPS_IFB5 beside the carried GPS_DCB on a GPS L1/L2/L5 station) takes the
-        // one-epoch seed and is not a miss, so it is not counted.  A nonzero `_uncovered`
-        // therefore means a carried key whose restored reference could not be applied (a
-        // non-finite value, or a state index this run does not hold), which is a defect.
-        long long n_resume_rxcb_lin_stations  = 0; ///< stations handed an RL override map
-        long long n_resume_rxcb_lin_entries   = 0; ///< RL entries installed across them
-        long long n_resume_rxcb_lin_uncovered = 0; ///< carried code-bias keys whose restored reference could not be applied (expected 0)
-        long long n_resume_slip_warmup_epochs = 0; ///< epochs the MW/LLI drain ran diagnostic-only post-resume
-        long long n_resume_d5_warmup_epochs = 0;   ///< epochs the D5 innovation gate ran diagnostic-only post-resume (RS-2b)
-        // Coupling-regressor restore (network.resume_coupling_restore, §18.12): both
-        // edges of the seam (standing invariant #7).  rows/zrows/terms/dict are the
-        // re-coupling edge's identities; seed_reinit is the decoupling edge (columns the
-        // write epoch was re-drawing, diverted on purpose); seam_present/seam_departed are
-        // what the first fold bound to.  Rows > 0 with seam_present == 0 indicates a
-        // miswire, not a clean run.
-        long long n_resume_cpl_rows        = 0;  ///< L leveling rows whose regression was rebuilt
-        long long n_resume_cpl_zrows       = 0;  ///< Z (ZWD) rows whose regression was rebuilt
-        long long n_resume_cpl_terms       = 0;  ///< regressor entries restored across both
-        long long n_resume_cpl_dict        = 0;  ///< shared-column dictionary entries read
-        long long n_resume_cpl_orphan      = 0;  ///< QL/QZ rows with no live carry to attach to
-        long long n_resume_cpl_seed_reinit = 0;  ///< tu_reinit_hist seeds planted (loose anchor / eph cutover)
-        long long n_resume_cpl_seam_present  = 0;  ///< first warm epoch: coupling terms that resolved to a live column
-        long long n_resume_cpl_seam_departed = 0;  ///< ...that marginalized (departed or reinit-diverted)
-        long long n_resume_cpl_diag_border   = 0;  ///< border keys (C1) that folded diagonally at the first post-resume fold (the known one-epoch coupling asymmetry; see networkInjectD2CarryPrior in BorderPrior.cpp)
-        // First-post-resume-harvest observatory (measure-only, byte-identical): the restored
-        // M against the epoch's own freshly derived M_d for the same key.  This is the only
-        // direct evidence that the restored row was frame-valid, and it needs no second
-        // leg.  It also separates "the regressors were stale" from "the residual is the
-        // diagonal C1 border" if the trips do not reach 0.
-        long long n_resume_cpl_census_rows      = 0;  ///< rows compared against their own fresh harvest
-        long long n_resume_cpl_census_terms     = 0;  ///< identities matched in both vectors
-        long long n_resume_cpl_census_unmatched = 0;  ///< restored identities the fresh harvest did not produce
-        // The dense D2 covariance side-car across the resume seam (§18.12 (2a)).
-        long long n_resume_cpl_cov_keys    = 0;  ///< dense-carry keys restored from the snapshot's QK/QP records
-        long long n_resume_cpl_cov_dropped = 0;  ///< QK keys with no restored D row (row and column dropped)
-        /// Carried D rows present at a warm resume with a dense (full-cov) carry (RS-7,
-        /// §21.14).  The marker that separates "no warm resume happened" from "the border
-        /// came back complete": n_resume_cpl_diag_border is 0 in both cases, so the run-end
-        /// readout needs its own denominator.
-        long long n_resume_dense_carry_keys = 0;
-        /// Clock-anchor decouples of the clock anchor (nis + abs + gap + datum + ext) accumulated over
-        /// the first post-resume epoch, latched when the census retires (RS-7, §21.14).  The
-        /// readout of §18.11: a restored carry injected as a plain stiff prior on a border
-        /// with no cross-covariance out-votes the anchored clock priors and trips them at the
-        /// first fold, so "trips at the seed's level" is the check on the border.
-        /// Structurally 0 on a lineage that does not arm network.clock_anchor; the run-end
-        /// line says which case it is (invariant #4).
-        long long n_resume_first_fold_cta_trips = 0;
-        // Readmit continuity (E2), both edges (standing invariant #7): parked is the
-        // decoupling edge (what left, and when); seeded is the re-coupling edge (what came
-        // back and was re-validated: by the Q3 guard for the clock, by the stash-side seed
-        // check for every kind); expired / dropped are what was not reconnected, and why.
-        long long n_readmit_parked        = 0;  ///< entries of the D2 Clock/CodeBias carry parked at a satellite's departure
-        long long n_readmit_seeded_clk    = 0;  ///< clock columns seeded from a parked entry on re-registration
-        long long n_readmit_seeded_cb     = 0;  ///< code-bias columns seeded
-        long long n_readmit_seeded_anch   = 0;  ///< ...of the clock seeds, folded anchored over the gap (instead of loose)
-        long long n_readmit_expired       = 0;  ///< parked entries dropped: the gap exceeded the horizon
-        long long n_readmit_dropped_datum = 0;  ///< parked entries dropped: a clock-datum change retired their frame
-        long long n_readmit_dropped_stale = 0;  ///< parked entries dropped: the column returned but the entry was not consumed (skip-stash / pinned)
-        // The DD trace's reference identity, made visible (§6.12.5).  Standing invariant #4:
-        // a reference policy that never changes the elected satellite is inert, and only a
-        // count shows it.  Both counters are written on every traced epoch regardless of
-        // policy, so the `lowest` default reports its own switch rate too.
-        long long n_ddfrac_ref_switch     = 0;  ///< (cons,signal) reference changes across traced epochs
-        long long n_ddfrac_ref_epochs     = 0;  ///< (cons,signal) reference elections performed (denominator)
-        long long n_ddfrac_ref_age_win    = 0;  ///< elections where `oldest` chose a different satellite than `lowest` would have (0 means the policy is inert on this run)
-        long long n_readmit_events        = 0;  ///< re-admissions detected (clock column back after >= kReadmitMinGapEp loop epochs)
-        long long n_readmit_seed_moved    = 0;  ///< nis/abs trips of the Q3 guard within kReadmitVerifyWindowS of a clock seed: the data rejected the seed
-        long long n_readmit_seed_check    = 0;  ///< stash-side seed-vs-solve checks run (all seeded kinds)
-        long long n_readmit_seed_outlier  = 0;  ///< ...of which |e|/sqrt(S) > kReadmitSeedK
-        long long n_readmit_marg_windows  = 0;  ///< coupling marginalization windows opened
-        long long n_cpl_readmit_diverted  = 0;  ///< coupling terms diverted to the departed route by a re-admission window
-        long long n_snap_parked_excluded  = 0;  ///< parked entries excluded from written snapshots
-
-        // Declaration telemetry for both edges (invariant #7) and hygiene accounting
-        // (QUEUE item 4 R2/R4).
-        long long n_staf_departs          = 0;  ///< depart events (EWMA ratio > threshold; R2)
-        long long n_staf_returns          = 0;  ///< return events (hysteresis 0.8×; R2)
-        double    staf_max_ratio          = 0.0;///< run-max EWMA ratio to the network median
-        long long n_staf_epochs           = 0;  ///< epochs the factor was computed on
-        long long n_t3_untestable_cells   = 0;  ///< s_raw==0 cells excluded from the T3 opportunities (R4)
-        // Invariant #4 counters of the LV-6 census.
-        long long n_lvlauth_epochs   = 0;       ///< epochs with a FLEET row
-        long long n_lvlauth_immature = 0;       ///< LOS skipped at the min_n screen
-        double    lvlauth_sum = 0.0;            ///< Σ L_cs (teardown mean)
-        double    lvlauth_min =  1.0e30;        ///< run min L_cs (TECU)
-        double    lvlauth_max = -1.0e30;        ///< run max L_cs (TECU)
-        // Invariant #4 counters for the per-satellite consumer readout (
-        // network.trace_consumer_sat).  0 epochs on an armed run means the consumer
-        // deferred every epoch (admission gates) and the file is a bare header; 0 rows
-        // with non-zero epochs is impossible by construction.
-        long long n_cst_epochs = 0;  ///< consumer epochs that contributed >= 1 row
-        long long n_cst_rows   = 0;  ///< (satellite, raw phase signal) rows written
-        // The edges of invariant #7 for the consumer's ambiguity level re-validation,
-        // counted (network.closed_loop.amb_level_check).  All four stay 0 on an
-        // off run.  n_amb_level_checks == 0 on an armed run means no satellite ever filled
-        // a window (the instrument never fired) however clean the run reads; trips == 0
-        // with checks > 0 is the real null.  In `act` mode n_amb_level_refloats ==
-        // trips_wl + trips_if by construction, and in `observe` mode it is 0, which is how
-        // the mode is read back off the run.
-        long long n_amb_level_checks   = 0;  ///< full-window (satellite, epoch) evaluations
-        long long n_amb_level_trips_wl = 0;  ///< wide-lane test trips
-        long long n_amb_level_trips_if = 0;  ///< iono-free test trips
-        long long n_amb_level_refloats = 0;  ///< satellites refloated (two ambiguities each)
-        // --- Per-channel discontinuity marks (network.disc_mark_scope) ---
-        // The decoupling identity of invariant #7 for a per-satellite mark: which channel
-        // generations it stepped, and which it was withheld from.  All zero under the
-        // default `sat` scope (nothing is counted there), so a run that reports 0/0/0 with
-        // the scope armed has inert wiring however clean it reads.
-        long long n_mark_clk = 0;  ///< satellite-epochs whose clock generation a mark bumped
-        long long n_mark_cb  = 0;  ///< (sat, signal) code-bias cells a mark bumped
-        long long n_mark_pb  = 0;  ///< (sat, signal) phase-bias cells a mark bumped
-        long long n_mark_suppressed_by_scope     = 0;  ///< (sat, channel) marks the scope withheld, in total
-        long long n_mark_suppressed_by_scope_clk = 0;  ///< …of which the clock channel
-        long long n_mark_suppressed_by_scope_cb  = 0;  ///< …of which the code-bias channel
-        long long n_mark_suppressed_by_scope_pb  = 0;  ///< …of which the phase-bias channel
-        // --- The emit-side phase-bias hold (network.emit_pb_hold) ---
-        // On-path telemetry of invariant #4 and the two edges of invariant #7.  All zero on
-        // an off run, so a run reporting 0 held emissions has an inert hold however clean
-        // the log reads.  The cost of the decoupling edge is not a count but a distribution
-        // (ctx.carry.pb_hold_dev_abs_m, |estimate - held| over every held emission) plus the
-        // coupled-mark clock step (pb_hold_coupled_step_m); the re-coupling edge is
-        // n_pbh_gen_first + n_pbh_gen_gap, one PB_HOLD/gen_start event each.
-        long long n_pbh_keys           = 0;  ///< distinct (sat, signal) keys the hold ever held
-        long long n_pbh_gen_first      = 0;  ///< generations started by a first sighting
-        long long n_pbh_gen_gap        = 0;  ///< generations started by a gap > emit_pb_hold_max_gap_s
-        long long n_pbh_held_emissions = 0;  ///< emissions whose value the hold overwrote
-        long long n_pbh_coupled_marks  = 0;  ///< coupled clock+phase-bias marks reaching a held key
-        // --- Level-aware hold (network.emit_pb_hold_phase_clock) ---
-        long long n_pbh_frz_moved      = 0;  ///< held emissions whose value the transfer moved (non-zero)
-        long long n_pbh_frz_noclock    = 0;  ///< held emissions on an epoch without the satellite's emitted clock (last transfer reused)
-        long long n_pbh_frz_noref      = 0;  ///< held emissions of a generation started without a clock (held plainly)
-        long long n_pbh_frz_epochs     = 0;  ///< epochs that advanced M (at least one satellite with a clock at both emissions)
-        long long n_pbh_frz_coupled    = 0;  ///< coupled clock+phase-bias marks whose clock step the mode transferred
-        // --- Smoothed hold (network.emit_pb_hold_smoothed) ---
-        long long smh_births           = 0;  ///< clones born on a stashed clock
-        long long smh_births_pinned    = 0;  ///< clones born on the constellation's pinned clock (a transfer of zero)
-        long long smh_births_deferred  = 0;  ///< clones born at least one stash after their birth was queued (section 9)
-        long long smh_rebirths         = 0;  ///< clones born after a disengagement within their generation (section 9)
-        long long smh_defer_loose      = 0;  ///< stashes at which a pending birth waited because the anchor did not hold the clock
-        long long smh_defer_nostash    = 0;  ///< stashes at which a pending birth waited for a stashed clock (or a dense stash)
-        long long smh_pending_dropped  = 0;  ///< pending births dropped because their generation was superseded
-        long long smh_bridges          = 0;  ///< switches from a live clone to the phase-clock transfer at a disengagement
-        long long smh_held_bridged     = 0;  ///< held emissions on the phase-clock transfer while the key waits for a clone
-        std::vector<double> smh_defer_ep;    ///< epochs waited, per deferred birth
-        long long smh_updates          = 0;  ///< clone-epochs advanced by the exact route
-        long long smh_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< clone deaths by cause
-        long long smh_reverts          = 0;  ///< held keys switched to LAH's transfer by their clone's death
-        long long smh_held_smoothed    = 0;  ///< held emissions that wrote the clone's transfer
-        long long smh_held_lah         = 0;  ///< held emissions that wrote LAH's transfer after a revert (the rest of the generation)
-        long long smh_terms_s          = 0;  ///< clone terms updated by the one rule
-        long long smh_terms_d          = 0;  ///< clone terms re-attributed through P
-        long long smh_terms_outside    = 0;  ///< clone terms outside the dense block (kappa or marginalized)
-        long long smh_deficit_orphan   = 0;  ///< clock-family deficits with no pivot (dropped)
-        long long smh_epochs_restricted = 0; ///< epochs whose exact inputs were restricted to the keys the solve folded
-        long long smh_keys_unfolded    = 0;  ///< S keys the solve did not fold (a withdrawn clock, a skipped handover), summed
-        long long smh_w_invalid        = 0;  ///< held emissions whose W is void (the parent clock left S this generation)
-        std::vector<double> smh_xfer_abs;    ///< |the clone's transfer| per smoothed held emission (m)
-        std::vector<double> smh_diff_abs;    ///< |the clone's transfer - LAH's| per smoothed held emission (m)
-        std::vector<double> smh_phi_abs;     ///< |Phi| per smoothed held emission (m)
-        std::map<std::pair<char, int>, std::pair<double, long long>> smh_r;   ///< (constellation, hour) -> (sum r, count), r = Phi^2 / (W - V_post)
-        // --- The block clones (carried whenever network.emit_pb_hold_smoothed) ---
-        long long smh_pv_births         = 0;  ///< block clones born on a stashed clock
-        long long smh_pv_births_pinned  = 0;  ///< block clones born on the constellation's pinned clock
-        long long smh_pv_rebirths       = 0;  ///< block clones born again within their generation
-        long long smh_pv_defer_anchor   = 0;  ///< stashes at which a pending block birth waited for the anchor
-        long long smh_pv_defer_nostash  = 0;  ///< stashes at which a pending block birth waited for a stashed clock
-        long long smh_pv_defer_nopair   = 0;  ///< stashes at which a pending block birth waited for phase biases on two bands
-        long long smh_pv_pending_dropped = 0; ///< pending block births dropped with their generation
-        long long smh_pv_updates        = 0;  ///< block-clone epochs advanced (both rows)
-        long long smh_pv_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< block-clone deaths by cause
-        long long smh_pv_follow[static_cast<int>(PbHoldFollow::kCount)]{};       ///< block-clone retirements by the step followed
-        long long smh_pv_reref_unmarked = 0;  ///< block clones retired at a re-reference whose satellite carried no phase-channel mark
-        long long smh_pv_steps_unmarked = 0;  ///< live block-clone steps of D above the smallest emitter jump bar of the pair (passed as motion), per held key
-        std::map<int, long long> smh_pv_steps_unmarked_hour;   ///< the same by hour of the run
-        double    smh_pv_step_unmarked_max = 0.0;  ///< the largest such step (m)
-        std::map<std::string, long long> smh_pv_pairs;   ///< the pair at birth ("L1C+L2W") -> block births
-        std::vector<double> smh_pv_phi_abs;   ///< |Phi_D| per live block clone at a held emission (m)
-        std::vector<double> smh_pv_lvl_abs;   ///< |Phi_c - Phi_D| (the level part) per live block clone at a held emission (m)
-        std::map<std::pair<char, int>, std::pair<double, long long>> smh_pv_r;   ///< (constellation, hour) -> (sum r_D, count), r_D = Phi_D^2 / (W_D - V_D)
-        // Observability of the prioritized-datum drop-and-heal: epochs where the gate threw
-        // and the near-null phase-bias soft anchor recovered it, and the total columns
-        // anchored.  Without these a run that recovers every epoch would look successful
-        // with no trace (the success log line is at debug level).
-        size_t n_healed_epochs = 0, n_healed_cols = 0;
-        // The same quantities counted on every fired attempt, recovered or not.  The pair
-        // above counts successes only, so an attempt that fires every epoch and never
-        // rescues the gate would read as "0 healed"; the withhold warning in
-        // NetworkSolveGlue then carries "drop-and-heal failed" as a trailing clause.  That
-        // is the inert-looking but live wiring standing invariant #4 exists to catch, so
-        // the attempt is counted separately: attempts > 0 with recoveries == 0 is the
-        // signature of an attempt that aims at the right columns but cannot resolve the
-        // residual alone (the insufficiency criterion, PA5).
-        size_t n_heal_attempt_epochs = 0, n_heal_attempt_cols = 0;
-        // Epochs on which the admitted-OSB physical-bound prior was folded, and the
-        // cumulative column count.  Standing invariant #4: an armed KP run with
-        // n_kp_epochs == 0 means the prior never reached a solve (no registered code
-        // columns, or the W6 block never ran), which clean-looking log output would not
-        // reveal.
-        size_t n_kp_epochs = 0, n_kp_cols = 0;
-        bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
-        // Epochs on which the satellite code-bias datum was folded with no ionosphere
-        // constraint behind it (RF-0b, network.w6_iono_constraint = none), and the
-        // cumulative count of sum-to-zero (constellation, signal) rows in those epochs,
-        // which are the datum in that posture.  Standing invariant #4: an armed "none" run
-        // with n_w6_iono_none_epochs == 0 never reached the W6 block at all (no registered
-        // code columns), and one with n_w6_iono_none_s2z_rows == 0 folded the IF pin
-        // against nothing; in both cases the satellite code biases have no datum at all,
-        // which a clean-looking log would not reveal.
-        size_t n_w6_iono_none_epochs = 0, n_w6_iono_none_s2z_rows = 0;
-        // Epochs on which the hard per-satellite geometry-free datum folded (RF-0c,
-        // network.sat_gf_datum), the cumulative row count, and, under broadcast_tgd, how
-        // those rows were targeted: `tgd` a non-zero c*T_GD from the navigation message,
-        // `tgd0` a satellite the constellation broadcasts at T_GD = 0 exactly (physical,
-        // just numerically zero), `fallback` a satellite with no navigation record or
-        // whose pinned pair is not (L1, L2).  The split matters because all three look
-        // identical on the wire: only the fallback count says the run pinned a value the
-        // navigation message never asserted.
-        size_t n_sat_gf_epochs = 0, n_sat_gf_rows = 0;
-        size_t n_sat_gf_tgd = 0, n_sat_gf_tgd0 = 0, n_sat_gf_fallback = 0;
-        // The per-signal extension (RF-0d).  `extra` counts the rows beyond the
-        // ionosphere-free pair (which make a sparse channel's level a datum), `isc0` how
-        // many of those asserted a zero inter-signal correction the navigation message
-        // never stated, `sameband` the columns deliberately left estimable, and
-        // `s2z_suppressed` the sum-to-zero rows dropped because the datum already pins
-        // every column of that channel.
-        size_t n_sat_gf_extra = 0, n_sat_gf_isc0 = 0;
-        size_t n_sat_gf_sameband = 0, n_sat_gf_s2z_suppressed = 0;
-        // e2's split of geometry-free rows into carried (a change pin on the previous
-        // solved value) and anchored (first sighting, the absolute broadcast target),
-        // RF-0e.  The anchored count is the only place the broadcast frame is re-asserted
-        // under e2, so a run with 0 of them has carried its frame from epoch 1 and never
-        // re-checked it.
-        size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
-        // Band-2 companion columns left free because a station bridged the two signals,
-        // and those pinned at 0 because none did (RF-0f).  The pinned ones are the part of a
-        // C2X product that is asserted rather than estimated, and they are not emitted.
-        size_t n_isc_observed = 0, n_isc_pinned = 0;
-        // The three dispositions of an extra-band code-bias column under
-        // `network.sat_gf_extra_band_free`: freed, because some station's cell
-        // carried the pin pair's two bands and the signal; carried at its own previous
-        // solved geometry-free combination, because none did this epoch; or held by a
-        // level row in the channel's own frame at a first sighting with nothing to carry
-        // (and then withheld from the wire).  Standing invariant #4: 0 freed with the knob
-        // armed means the run exercised nothing.  `n_s2z_reseed_*` is the decoupling edge
-        // (invariant #7) on the level the freed channels now stand on: the re-seeds of the
-        // veteran-linked sum-to-zero row, and the satellites they marked for the
-        // consumer's discontinuity channel.
-        size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
-        size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
-        /// Family clock datum (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
-        /// pair holds and changes per constellation
-        /// (@c network.code_datum_pair_continuity) and the
-        /// secondary-family level realizations per (constellation, band digit)
-        /// (@c network.code_datum_family_difference), counted once per kept epoch by
-        /// @c networkCodeDatumFamilyKeptEpoch.  Read only by
-        /// @c networkCodeDatumFamilyRunEnd; empty unless an arm is effective.
-        std::map<System, NetworkSbasis::CodeDatumPairCounts> cb_pair_by_const;
-        std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;
-        /// The first-sighting family prior rows, and the satellites given no row, per
-        /// (constellation, band digit) (
-        /// @c network.code_family_birth_prior_sigma_m), counted once per kept epoch
-        /// by @c networkCodeDatumFamilyKeptEpoch and read only by
-        /// @c networkCodeDatumFamilyRunEnd; empty unless the prior is effective.
-        std::map<std::pair<System, char>, NetworkSbasis::CodeFamilyBirthCounts> cb_family_birth_by_band;
-        /// Kept epochs with at least one secondary-family channel realized, the
-        /// denominator of the family-difference run-end line, and the switches of a
-        /// channel between the family-difference row and the sum-to-zero row (or between
-        /// partners) declared as "CB_DATUM"/"family_row" events.
-        size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;
-        /// Emit-site outcome of the continued pair changes (emit_clock_disc
-        /// only): re-selection discontinuities left undeclared for a continued satellite
-        /// (its last emitted pair was the pair the builder continued from, and no re-seed
-        /// was marked or pending); declared anyway (the last emitted pair differed, as for
-        /// a satellite pruned from an earlier kept epoch's emission, or a re-seed was
-        /// marked or pending); and continued satellites outside that epoch's emission,
-        /// compared when they next emit (the conservative direction).
-        size_t n_if_pin_continued_undeclared = 0, n_if_pin_continued_declared = 0,
-               n_if_pin_continued_unemitted = 0;
-        // Zero-mean receiver code-bias prior rows folded over the run, one per
-        // station-epoch per constellation.  0 with the toggle armed is
-        // the standing invariant #4 reading: no receiver DCB column ever existed.
-        size_t n_rxcb_gauges = 0;
-        // Observability of the coupling carry: run-total volume, as harvest-side
-        // stash counts (non-empty regression, empty regression degraded to a plain
-        // diagonal row, outright harvest failure) and inject-side term counts (present,
-        // departed, κ-shrunk).  Without these, a run whose coupling carry degrades to
-        // diagonal rows without a signal (or never runs) cannot be told apart from a
-        // working one, and a byte-identical A/B would hide it (the coupling-rows trap).
-        // Logged once at run end when the mechanism is armed.
-        size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
-        long long n_cpl_terms_present = 0, n_cpl_terms_departed = 0, n_cpl_terms_shrunk = 0;
-        // Exact-update run totals (invariant 4): the per-station row and term counts folded
-        // serially after PASS B, the epoch builds, and what the fold changed after the rows
-        // were built from the shared decision: keys in S that a
-        // clock-pivot handover re-expressed (the S-transform) or retired, on the handover
-        // epochs the fold counts.
-        CouplingExactCounters cxu{};
-        long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
-                  cxu_epochs_nostash = 0;
-        long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};
-        long long cxu_q_negative = 0;          ///< row inflations below 0 (a VCE factor < 1), clamped to 0
-        long long cxu_fold_handover_epochs = 0, cxu_fold_diag_fallback = 0;
-        long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
-        long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
-        long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
-        PivotFrameCounters pfq{};              ///< pivot-frame process-noise run totals (network/carry/PivotFrameQ.hpp)
-        ClockCloneCounters ccl{};              ///< clock-clone run totals (filter/NetworkClockClone)
-        SharedHistoryCounters shx{};           ///< shared-history run totals (filter/NetworkSharedHistory)
-        // The decided-once fold disposition (networkCarryDecide before
-        // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
-        // (SharedParamKind, the disposition the fold applied); prm_departed the foldable
-        // ones whose column had left the layout (the estimator marginalizes them).  A key
-        // re-expressed between the decision and the fold (the handover S-transform, the
-        // ephemeris cut-over re-level) is counted with its largest variance change: the rows
-        // were built on the decided variance.  prm_undecided_at_fold: entries the fold met
-        // with no decision this epoch (0 unless a path skips the pass).
-        long long prm_decide_epochs = 0;
-        long long prm_disp[4][kCarryDispositions]{};
-        long long prm_departed[4]{};
-        long long prm_reexpressed = 0, prm_reexpressed_epochs = 0, prm_undecided_at_fold = 0;
-        double    prm_reexpressed_max_dvar = 0.0;
-        // The carried references each mechanism moved, per site, through
-        // forEachCarriedReference (filter/NetworkCarrySites), and the mechanism's calls.
-        CarryMovedTally prm_ref_moved{};
-        long long prm_ref_calls[kCarryMechanisms]{};
-        // The responses of the carried instances, per site of the
-        // declared table (network/assembly/Responses.hpp; the sites whose count source is
-        // Increment), and the free-epoch latch per cause (keys latched with the bit set; of
-        // those, keys with a carried entry at the response), the unique latched keys, the
-        // keys with more than one cause, and the ambiguities the gap prune erased in the
-        // epoch the stale-gap drop dropped them.
-        long long prm_resp[kResponseSites]{};
-        long long prm_latch_keys[kLatchCauses]{};
-        long long prm_latch_carried[kLatchCauses]{};
-        long long prm_latch_unique = 0, prm_latch_unique_carried = 0, prm_latch_multi = 0;
-        long long prm_latch_epochs = 0;
-        long long prm_pruned_after_drop = 0;
-        // Held phase-bias emissions (pb_hold) of a (satellite,
-        // signal) family that a phase-bias shift moved (the eq34 D4 shift, the declared anchor
-        // handover) and that stayed in the old frame: PbHold is exempt from both shifts with or
-        // without network.carry_rebase_complete (its own design is owed).  Measure-only.
-        long long prm_pbhold_unmoved_at_shift = 0;
-        // Clock-level monitor and raise.  Ratios are counted for a satellite from its
-        // second epoch of code information on (its first solve is the code-only batch).
-        long long clm_epochs = 0, clm_skip_datum = 0, clm_rows = 0, clm_below1 = 0,
-                  clm_no_clock = 0, clm_raised = 0;
-        double    clm_min_ratio = 0.0, clm_raised_sum = 0.0, clm_raised_max = 0.0;
-        std::vector<double> clm_ratios;        ///< every counted ratio (the run-end median)
-        std::map<std::string, long long> clm_raised_by_sat;   ///< raises per satellite (invariant 7)
-        // Level innovation instrument.
-        long long clm_innov_rows{0};           ///< satellite-epoch innovations formed
-        long long clm_innov_tripped{0};        ///< satellite-epochs left out because the anchor withdrew the clock's prior
-        double    clm_innov_nis_sum{0.0};      ///< summed NIS after epoch 15
-        long long clm_restore_raised{0};       ///< satellites raised on restore
-        double    clm_restore_raise_sum{0.0};  ///< …summed variance added (m^2)
-        double    clm_restore_raise_max{0.0};  ///< …largest (m^2)
-        long long clm_innov_nis_n{0};          ///< NIS values summed
-        long long clm_innov_nis_gt{0};         ///< NIS values above 6.63 (chi2(1), 1 %)
-        std::vector<double> clm_win_nees;      ///< per window: the split-half truth-free level NEES
-        std::vector<double> clm_win_rms;       ///< per window: rms over satellites of the mean innovation (m)
-        std::vector<double> clm_win_T;         ///< per window: mean over satellites of T = nubar^2 / var(nubar)
-        std::vector<double> clm_win_phi;       ///< per window: split-half noise over the white prediction
-        long long clm_win_Tgt{0};              ///< window satellites with T above 6.63
-        // Native broadcast clock a priori.  `stamped 0` means the wire was never
-        // stamped (inert wiring); `not_held > 0` means a consumer could not reconstruct.
-        long long nbp_epochs{0};               ///< emitted epochs the wire stamp ran on
-        long long nbp_stamped{0};              ///< clock records stamped (iode=k, C_wire = C_est + O)
-        long long nbp_unstamped{0};            ///< clock records with no selectable record (value unchanged, no iode)
-        long long nbp_held{0};                 ///< stamped records the store held (current or previous) at consume
-        long long nbp_not_held{0};             ///< stamped records the store did not hold
-        long long nbp_switches{0};             ///< stamp changes of a satellite between its emissions (cut-overs seen on the wire)
-        double    nbp_offset_min_m{0.0};       ///< smallest O on the wire (m)
-        double    nbp_offset_max_m{0.0};       ///< largest O on the wire (m)
-        std::set<std::pair<std::string, int>> nbp_records;   ///< distinct (satellite, IODE) stamped
-        // Phase-visible consistency instrument.  `rows 0` means inert.
-        long long pv_epochs{0};                ///< epochs the instrument ran
-        long long pv_epochs_nocap{0};          ///< …of which without a dense fold capture (no rows)
-        long long pv_rows{0};                  ///< satellite-epoch rows formed
-        long long pv_su_nonpos{0};             ///< rows whose S- - S+ was not positive (no NIS)
-        double    pv_nis_sum{0.0};             ///< summed NIS after epoch 15
-        long long pv_nis_n{0};                 ///< NIS values summed
-        long long pv_nis_gt{0};                ///< NIS values above 6.63 (chi2(1), 1 %)
-        std::vector<double> pv_abs_e;          ///< |contrast update| after epoch 15 (m), the run-end median
-        std::vector<double> pv_sqrt_sp;        ///< stated posterior sd sqrt(S+) after epoch 15 (m)
-        std::vector<double> pv_sqrt_su;        ///< predicted update sd sqrt(S- - S+) after epoch 15 (m)
-        std::vector<double> pv_win_nis;        ///< per window: mean NIS
-        std::vector<double> pv_win_ratio;      ///< per window: rms update over rms predicted update sd
-        long long clm_win_Tn{0};               ///< window satellites with a T
-        // On-path telemetry for the departed-column gauge defect.  `held` counts
-        // (constellation, kind) families whose coefficient sum was restored to its harvest
-        // value against a truncated column; `orphan` counts families whose truncated mass
-        // had no present recipient, i.e. the rows the projection could not make
-        // gauge-invariant.  Standing invariant #4: armed with both at 0 means no row was
-        // ever truncated, so the projection is inert, not clean.
-        long long n_cpl_gauge_held = 0, n_cpl_gauge_orphan = 0;
-        /// Orphan attribution: run totals per (constellation, SharedParamKind), as the
-        /// orphan count and the summed |truncated mass| left gauge-dirty.  Structurally a
-        /// channel of two or more constellations (a row's minority family can lose all its
-        /// present columns while the majority family survives); GPS-only arms measure 0.
-        /// Fed by foldAndDumpCouplingRows, read at teardown.
-        std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam_total;
-        /// The denominator of the reinit-sources probe: terms diverted to the departed route by the widened
-        /// (kind, sat, signal) probe specifically.  Armed with this at 0 means the
-        /// realization-step feeds never matched a live coupling term: inert, not clean.
-        long long n_cpl_reinit_diverted = 0;
-        /// Run total of inject-site free-epoch skips (relevel_free_epoch;
-        /// SPEC_slip_relevel_walk).  Armed with this at 0 on a slip-bearing run is a
-        /// miswire (invariant #4): the drains latched but the inject never consulted, or no
-        /// marked arc ever had a live carry.
-        long long n_relevel_free_skips = 0;
-        /// Anchor-slip handover (network.cycle_slip.anchor_slip_handover;
-        /// docs/SPEC_event_harness.md §12.7).  staged: directives the seam put up (families
-        /// whose anchor arc a slip response freed).  handed: of those, the ones the election
-        /// re-hosted.  continuous / cold: the successor pinned at its own carried value_abs,
-        /// or pinned at 0 because no usable ledger entry survived the variance gates; a cold
-        /// outcome is a gauge re-realization and is never folded into the continuous total.
-        /// no_successor: the ban left no candidate, so the family went unpinned for the
-        /// epoch.  inert: the directive matched no family in this epoch's union (gated,
-        /// bridged or pruned column).  Armed with staged = 0 on a run whose detectors fired
-        /// does not prove a quiet network; it is the first thing to check (invariant #4).
-        /// staged > 0 with handed = 0 is dead wiring.
-        long long n_anc_slip_staged = 0, n_anc_slip_handed = 0,
-                  n_anc_slip_continuous = 0, n_anc_slip_cold = 0,
-                  n_anc_slip_no_successor = 0, n_anc_slip_inert = 0,
-                  n_anc_slip_epochs = 0;
-        /// MW detect-only admission census (network.cycle_slip.mw_evidence_refloat).
-        /// Reduced serially from PassABuffers::sta_mw_admit after the parallel scan, and
-        /// collected independently of the knob, on purpose.  legacy: admitted by the
-        /// integer gate.  evidence: admitted by the strength rule alone with the knob armed.
-        /// would_admit: the same population with the knob off, i.e. exactly what arming
-        /// would change (an off run that reports 0 here says the knob is inert on that
-        /// lineage, with no run needed).  drop_loose / drop_unknown: the two refused
-        /// populations, a flag with a known integer whose rounding residual exceeded
-        /// turbo_edit_frac_max, and a flag with no usable integer at all.
-        long long n_mw_admit_legacy = 0, n_mw_evidence_admitted = 0,
-                  n_mw_evidence_would_admit = 0, n_mw_drop_loose = 0,
-                  n_mw_drop_unknown = 0;
-        /// Detector rows the network did not form under `primary`, summed over stations
-        /// (network.cycle_slip.mw_detect_pairs).  Zero under the default `all` and
-        /// on a two-band lineage; a `primary` run reporting zero on a three-band lineage is
-        /// dead wiring (standing invariant #4).
-        long long n_mw_pair_scope_skipped = 0;
-        /// Run-end telemetry of the second code channel, including both edges of standing
-        /// invariant #7 (docs/refound/SCC_second_code_channel_2026-09-21.md, R7).
-        /// Everything except @c rows / @c fallback_rows is reduced in the serial post-PASS-A
-        /// sweep; those two are summed from the per-station NetStation counters at
-        /// teardown, as the L5P row counter is.
-        ///
-        /// Standing invariant #4: @c rows == 0 with the knob armed means the run exercised
-        /// nothing (no station reported a second allow-listed band-1 code), and the teardown
-        /// warns instead of reporting a clean run.
-        struct SecondCode {
-            long long cells = 0;          ///< Companion (station, satellite, signal) cells open, summed over epochs.
-            long long cell_open = 0;      ///< Cell openings (the re-coupling edge): a cell that was not open last epoch.
-            long long cell_close = 0;     ///< Cell closings (the decoupling edge): a cell that was open last epoch and is gone.
-            long long rows = 0;           ///< Companion code rows folded into the solve, over the run.
-            long long fallback_rows = 0;  ///< Rows routed through the inter-signal state that were not companions (R2's fallback case).
-            long long isc_states_max = 0; ///< Receiver inter-signal states alive network-wide, maximum over epochs.
-            long long isc_reseeds = 0;    ///< States created at a station that had held that state before and was not restored by the receiver code-bias carry.
-            /// (satellite, signal) columns that reached the >= 2-station registration bar
-            /// only through companions, i.e. that would have had fewer than two supporting
-            /// stations without the second code channel.  Per epoch, summed.  It measures
-            /// the premise directly: zero of these means the second code channel
-            /// added rows without ever adding a column the wire did not already carry.
-            long long cols_via_companion = 0;
-        };
-        SecondCode second_code;
-        /// Run-end telemetry of the second phase channel, including both edges of standing
-        /// invariant #7 (docs/refound/SID_signal_identity_2026-09-22.md
-        /// section 4, R7).  The cell classes and the tier census are reduced in serial
-        /// sweeps; @c rows is summed from the per-station NetStation counters at teardown,
-        /// as for the second code.
-        ///
-        /// Standing invariant #4: @c rows == 0 with the knob armed means the run exercised
-        /// nothing (no station reported a second allow-listed band-1 phase), and the
-        /// teardown warns instead of reporting a clean run.
-        struct SecondPhase {
-            long long cells = 0;          ///< Second-phase (station, satellite, signal) cells open, summed over epochs.
-            long long cell_open = 0;      ///< Cell openings (the re-coupling edge): a cell that was not open last epoch.
-            long long cell_close = 0;     ///< Cell closings (the decoupling edge): a cell that was open last epoch and is gone.
-            long long rows = 0;           ///< Second-phase rows folded into the solve, over the run.
-            /// The fallback case: an allow-listed band-1 phase this station reports for a
-            /// satellite with no latched phase of that band beside it.  Those rows are not
-            /// added (the latch decides what "second" means); the count is a finding about
-            /// the canonical latch, not about the second phase channel.
-            long long fallback_rows = 0;
-            long long arcs_born = 0;      ///< Distinct (station, satellite, signal) cells the run ever opened.
-            long long arcs_live_max = 0;  ///< Cells open network-wide, maximum over epochs.
-            long long stations_max = 0;   ///< Stations contributing at least one second phase, maximum over epochs.
-            /// Phase-datum anchor incumbencies held on a second-phase arc, summed over
-            /// epochs.  R3's question as a number: a second-phase arc is a candidate like any
-            /// other, and this says whether the election ever seats one.
-            long long anchors = 0;
-            /// (satellite, signal) columns that reached the >= 2-station registration bar
-            /// only through second-phase arcs.  Per epoch, summed.  It measures the
-            /// premise directly: zero of these means the channel added rows without ever
-            /// widening a family's roster.
-            long long cols_via_second = 0;
-            // --- Slip census on second-phase arcs, by tier (R4) ---
-            // Keyed on RelevelEpochState::kCause*, the producer's own tier vocabulary, so
-            // these cannot drift from what the tiers did.  A tier that reads zero here
-            // while its arcs exist does not screen the second-phase rows, which is what
-            // standing invariant #1 asks about.
-            long long slip_arcs = 0;      ///< Second-phase arcs freed by any tier, summed over epochs.
-            long long slip_mw = 0;        ///< ... of those, with the MW wide-lane bit.
-            long long slip_lli = 0;       ///< ... with the receiver LLI bit.
-            long long slip_iftd = 0;      ///< ... with the IF-phase time-difference bit.
-            long long slip_t4 = 0;        ///< ... with the RAIM prominence-attribution (T4) bit.
-            long long slip_t3 = 0;        ///< ... with the RAIM per-satellite consensus (T3) bit.
-            long long slip_windup = 0;    ///< ... with the wind-up restart bit.
-            long long slip_gap = 0;       ///< ... with the gap re-entry bit (either gap tier).
-            // --- The between-channel witness (R8; observatory: counts, no action) ---
-            long long witness_pairs = 0;  ///< (station, satellite) pair-epochs with both band-1 phases and a previous epoch.
-            long long witness_jumps = 0;  ///< ... of those, whose epoch-to-epoch change exceeded 0.5 cycles.
-            double    witness_max = 0.0;  ///< The largest absolute change seen, in cycles.
-            std::string witness_max_id;   ///< "<station>|<satellite>|<signal>@<tow>" of that change.
-        };
-        SecondPhase second_phase;
-        /// The family census and cross-channel exposure of the all-channel widening (see
-        /// docs/refound/SID_signal_identity_2026-09-22.md).  Folded once per
-        /// epoch by @c networkChannelAllEpoch and read at teardown; every class is
-        /// measure-only, and the struct stays empty unless `processing.channel_mode: all` is
-        /// active on the network path.
-        NetworkChannelAllCounters channel_all;
-        /// The second-constellation telemetry (
-        /// docs/refound/GAL_gps_galileo_dual_2026-09-22.md): inter-system bias, clock
-        /// S-basis per constellation, the station-epochs that are not GPS-only, and the
-        /// anchor per constellation.  Measure-only; stays empty unless a constellation
-        /// other than GPS is active on the network path.
-        NetworkMultiGnssCounters mgnss;
-        /// The RF-0c / RF-0d geometry-free datum counters split per constellation letter,
-        /// accumulated from @c NetworkSbasis::CodeBiasDatumRows::sat_gf_by_const beside the
-        /// global counters (R3 iii).  Read only by the Galileo run-end line.
-        std::map<std::string, NetworkSbasis::SatGfConstCounts> sat_gf_by_const;
-        /// Common-band scope census (network.cycle_slip.common_band_scope,
-        /// SPEC_event_harness §14).  Reduced per epoch from CommonBandEpoch and, like the MW
-        /// admission census above, collected independently of the knob, on purpose.
-        /// verdicts: (station, satellite) pairs that had at least one MW pair fire, i.e. the
-        /// population a band scope could act on.  narrowed: of those, the ones positive
-        /// exoneration restricted.  bands_kept: bands a narrowed verdict spared
-        /// (Σ|exonerated|), the headline number, because under the all-band union every live
-        /// band would otherwise have been freed.  all_no_exoneration / all_inconsistent: the
-        /// two fallbacks that return the unscoped response (nothing exonerated; every band
-        /// exonerated although a pair fired).  iftd_veto: silent pairs refused as
-        /// exonerators because the IF-TD detector flagged them (the equal-count trap).
-        /// immature_pairs: silent pairs refused for arc age.  would_narrow: the knob-off count
-        /// of verdicts that would have narrowed, i.e. exactly what arming changes; an off run
-        /// reporting 0 here says the knob is inert on that lineage, with no armed run needed.
-        /// weak_silence: exonerating silences whose detection threshold stood above 6
-        /// wide-lane cycles, a gate too loose to have excluded the slip sizes the scope
-        /// responds to.  Reported, never acted on; it measures how much narrowing rests on a
-        /// weak silence.
-        long long n_cb_verdicts = 0, n_cb_narrowed = 0, n_cb_all_no_exoneration = 0,
-                  n_cb_all_inconsistent = 0, n_cb_bands_kept = 0,
-                  n_cb_iftd_veto = 0, n_cb_immature_pairs = 0,
-                  n_cb_weak_silence = 0, n_cb_anchor_colocate = 0,
-                  n_cb_would_narrow = 0;
-        /// Silent pairs refused as exonerators because one of their bands carried a receiver
-        /// LLI at the previous epoch, so the detector withheld that pair's sample and kept
-        /// the arc (the count runs straight through the flagged epoch while the lane saw
-        /// nothing); §14.11 rule F2.  Its own counter, not folded into n_cb_immature_pairs:
-        /// the two refusals have different causes, and this one sizes the population the
-        /// spurious `keep` verdicts measured in §14.11 came from.
-        long long n_cb_lli_shadow = 0;
-        /// Verdicts formed from the receiver's LLI bits alone, at an epoch where every MW
-        /// sample of the satellite was withheld so the normal rule could not run, and how
-        /// many of those restrict a drain (§14.12 rule F3).  Independent of the knob
-        /// (invariant #4): an off run reports what arming would scope.  A run whose LLI drain
-        /// fires with lli_verdicts 0 is dead wiring.
-        long long n_cb_lli_verdicts = 0, n_cb_lli_narrowed = 0;
-        /// Of those, the ones the §14.5 anchor clause refused (also counted in
-        /// @ref n_cb_anchor_colocate); §14.12.5.  Its own counter because the co-locates of
-        /// the two paths must be distinguishable: attributing the split-reference
-        /// regression to the F3 path relies on this split.
-        long long n_cb_lli_anchor_colocate = 0;
-        /// Split-referenced satellite census (§14.5), always on and independent of the
-        /// knob: per processed epoch, how many satellites have >= 2 anchored phase-bias
-        /// families whose anchors sit at different stations.  Those satellites'
-        /// per-frequency biases are realized against arc levels that walk independently,
-        /// and this is the instrument that shows a split-reference regression.  It must read
-        /// the same with the scope off, which is why it is not knob-gated.  Sum and epochs
-        /// give the mean; the max is the worst epoch; the mean of multi_sum is the
-        /// population that can split.
-        long long n_cb_split_sats_sum = 0, n_cb_split_sats_max = 0,
-                  n_cb_split_multi_sum = 0, n_cb_split_epochs = 0;
-        /// IF-TD pair width (§14.10, network.cycle_slip.if_phase_td_pairs): the on-path
-        /// telemetry of the added pairs, per pair kind: how many samples the pooled test
-        /// thresholded, how many it flagged, and how many of those flags freed an
-        /// ambiguity.  Collected independently of the knob: a `first` run reports the one
-        /// watched pair, so the clause sizes the knob before it is armed, and an `all` run
-        /// whose extra pair kinds show evaluated ≫ 0 with flagged 0 over a slipped bed is
-        /// dead wiring, not a quiet lane (invariant #4).
-        IfTdPairTallies n_iftd_pair;
-        /// The veto's per-pair-kind breakdown (§14.10): silent MW pairs the common-band
-        /// scope refused as exonerators because an IF-TD pair flagged, attributed to the
-        /// IF-TD pair kind that vetoed.  The premise is that the vetoes come from
-        /// pairs the single-pair detector never watched, so the total
-        /// (@ref n_cb_iftd_veto) alone cannot show it.
-        std::map<std::string, long long> n_cb_iftd_veto_by_pair;
-        /// The reference-arc clause (§22, network.cycle_slip.common_band_ref_arc): silent MW
-        /// pairs refused as exonerators because their IF-TD sample sits on the chain's
-        /// reference arc, whose double difference is identically 0, so the pooled test could
-        /// not have flagged it and the silence is the absence of a test, not evidence of
-        /// continuity.  Counted apart from @ref n_cb_iftd_veto on purpose: a veto is
-        /// positive evidence the pair moved, this is a structural dead zone, and only the
-        /// second carries the clause's named cost (a real single-band slip on a reference
-        /// arc also stops narrowing).  Nonzero only with the clause armed, so an armed leg
-        /// whose event sits on a known reference arc and reports 0 here is dead wiring
-        /// (invariant #4); the by-pair map attributes the refusals to the chains whose
-        /// reference the arc is.
-        long long n_cb_iftd_ref_arc = 0;
-        std::map<std::string, long long> n_cb_iftd_ref_arc_by_pair;
-        int n_cpl_row_dump = 12;   // debug budget of the time update: one-shot assembled coupling-row dump
-        int n_cpl_solve_dump = 8;  // debug budget of the time update: one-shot full-precision solve-checksum dump
-        // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
-        // which >=1 thin column was excluded, and the cumulative column-epoch count.
-        size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
-        // The coverage gate's drop edge (network.phase_datum_gate_drop_erase;
-        // the rule is network/solve/PhaseGateDrop.hpp).  Counted in both knob states, so an
-        // off run reports the size of the class and an armed run reports how much of it the
-        // response reached (standing invariant #4: a counter that exists only on the armed
-        // path cannot say whether arming would matter).
-        /// (sat,signal) families the gate excluded while they still held an anchor
-        /// incumbent from the previous epoch.
-        size_t n_pd_gate_drop_edges = 0;
-        /// …of which the knob added to the re-reference set (= edges when armed with
-        /// phase_anchor_carry_reref, 0 when off or inert).
-        size_t n_pd_gate_drop_handled = 0;
-        /// Per-station carried ambiguities erased because of a drop edge: the subset of the
-        /// re-reference erase that the drop-edge response owns, separated from the
-        /// handover-driven `n_cr_phase_datum_reref` population it shares the path with (and
-        /// tagged `erase:gate_drop` in network_amb_state.csv).
-        size_t n_pd_gate_drop_arcs = 0;
         // The marker → antenna-reference-point roster census, copied out of
         // NetworkSetupResult once the context exists (it is a setup fact, not an epoch
         // counter; it is here only because the run-end readout and the run manifest both
@@ -3371,41 +2196,6 @@ namespace GnssProcessor {
         int    n_marker_arp_no_record = 0;
         double marker_arp_max_h       = 0.0;
         std::string marker_arp_max_h_station;
-        size_t n_perconst_partial_epochs = 0;     // epochs published partially: the σ̂0 carve-out pruned >=1 constellation (RTA-10)
-        size_t n_perconst_diffuse_published = 0;  // epochs published in full although the global σ̂0 tripped, every constellation being individually clean: the diffuse cross-constellation edge of the per-const approximation (RTA-10)
-        FlagRate fr_if_slip;    // tier T1: per (station,sat,pair) IF-phase sample, k=if_phase_td_k_mad
-        // Tier T1r: per (station, epoch, constellation) family of n>=2 non-ref DDs, the IF-TD
-        // reference arm.  Its action drains through sta_if_resets/refsat_reset and
-        // increments nothing in T1, so without its own tier the table reads T1 flags=0 while
-        // the arm drives acting refloats (§6.14.5 defect 1).  A separate tier on purpose:
-        // the opportunity denominator differs (station-epoch-constellations, not per-sat
-        // samples) and so does the threshold (hardened: max(k*s_eff, floor_frac*lambda_IF);
-        // legacy: a bare physical floor), and merging it into T1 would hide that asymmetry
-        // again.  Summed at run end from each station detector's RefGateCounters by the
-        // run-summary report (networkRunSummaryRunEnd), which hands it to the writer.
-        FlagRate fr_we_trigger; // tier T2: per warm within-epoch epoch, σ̂0_first > trig, k=sigma0_trigger
-        FlagRate fr_raim_cell;  // tier T3: per (sat,station) standardized residual, k=raim_k
-        FlagRate fr_raim_sat;   // tier T3 consensus: per spiked sat (>=min_sta), k=raim_k
-        FlagRate fr_attrib;     // tier T4: per median-polish sat column, eff/σ̂0 > k and σ̂0 > trigger (B8/P1-4)
-        FlagRate fr_attrib_arc; // tier T4: per median-polish arc interaction, inter/σ̂0 > k (the acting sub-path's criterion, before the persistence/maturity gates; without this line the tier reads 0 flags while it refloats arcs, §9.7.10)
-        FlagRate fr_clk_model;  // tier T5: per sat clock-model NIS (own, !ext), k=clock_model_k
-        FlagRate fr_clk_mon;    // tier T6: per sat clock-monitor abs/jump (own, !ext), absolute bounds
-        double max_dur_anchor_s = 0.0;
-        bool   max_dur_anchored = false;
-        int    spectrum_diag_budget = 6;    // estimability spectrum dump: the first N gate evaluations (a budget rather than one shot, because a rows epoch needs a later firing than epoch 1).  Seeded from network.trace_estimability_budget by the NetworkRunContext ctor (default 6 = this constant; RF-NS); under network.trace_estimability_deficit_only a clean epoch does not spend it.
-
-        // Timing: the processed-epoch count and the T2e decimation counter (relocated from
-        // the loop-timing cluster; t_loop_begin stayed a run-TU local, and is
-        // run.timing.loop_begin now).
-        std::size_t n_loop_epochs = 0;
-        std::size_t decim_counter = 0;   // counts post-offset raw epochs for epoch_decimation_n (T2e)
-
-        // Tallies of the W6 code-bias admission census (CB-ADM; run-end observability).
-        // Standing invariant #4: inert wiring is visible only through them, so a BDS-armed
-        // on run with n_cb_quarantined_census == 0 is a miswire.  n_cb_late_quarantined
-        // counts distinct (sat,signal) keys first seen at the registration site after the
-        // census window (implicitly quarantined).
-        std::size_t n_cb_admitted = 0, n_cb_quarantined_census = 0, n_cb_late_quarantined = 0;
 
         // The measurable cost of the deliberate CB-ADM granularity seam.  The phase co-gate
         // lives at state allocation and keys off the run-latched census-admitted set, while
@@ -3418,453 +2208,183 @@ namespace GnssProcessor {
         // admitted satellite has >= 2 present stations); a sparse run where it is nonzero
         // and coincides with withholds is the data that would justify revisiting the seam.
         std::size_t n_cbadm_phase_orphan_key_epochs = 0;
-
-        // Rank-gate calibration telemetry.  The gate is an exact-equality test that throws
-        // in both directions, so "withheld" alone hides which failure happened.
-        // Under-specified (observed > declared: a missing datum constraint, as in the
-        // BeiDou storm) and over-specified (observed < declared: the tolerance pushed below
-        // this config's own gauge depth, a mis-calibration that withholds a sound config)
-        // need opposite fixes and must be separate numbers.  min/max are over the first gate
-        // evaluation of each epoch (one sample per epoch, showing what the datum looked
-        // like); a post-heal re-gate is a different question and is counted in
-        // n_healed_epochs.
-        std::size_t n_gate_evaluated = 0;        ///< epochs on which the gate ran (denominator for the rest)
-        std::size_t n_gate_withheld_under = 0;   ///< withheld with observed > declared (missing datum constraint)
-        std::size_t n_gate_withheld_over  = 0;   ///< withheld with observed < declared (tolerance below the gauge depth)
-        int nullspace_obs_min = -1;              ///< min observed near-null count over the run (-1 = never evaluated)
-        int nullspace_obs_max = -1;              ///< max observed near-null count over the run (-1 = never evaluated)
-
-        // Datum-direction information ratio R = (vᵀNv/vᵀv)/cutoff, for standing invariant
-        // #7: one sample per (epoch × declared datum direction), on the same reduced normals
-        // and the same cutoff the rank gate judges by.  The gate collapses that spectrum to
-        // an integer, so a declared gauge that acquires information moves the observed count
-        // by one and reads like a mis-calibrated tolerance.  A coupling row with a
-        // truncated family sum can raise one clock gauge decades above the cutoff in a
-        // single epoch, with over-specified withholds as the only symptom.  R ≪ 1 = still a
-        // gauge; R ≥ 1 = something folded before the gate is pinning a direction the datum
-        // owns.  Computed unconditionally (one k×k quadratic form per constellation, against
-        // the gate's own O(n³) eigensolve), because a knob-gated version would be dark on
-        // the runs that need it.
-        std::size_t ddi_epochs        = 0;   ///< epochs the ratio was evaluated (denominator)
-        std::size_t ddi_dirs          = 0;   ///< (epoch × direction) samples
-        std::size_t ddi_breach_epochs = 0;   ///< epochs with >= 1 direction at R >= 1
-        std::size_t ddi_breach_edges  = 0;   ///< invariant #7 edges emitted (breach + clear)
-        std::size_t ddi_over_breach   = 0;   ///< over-specified withholds coincident with a breach: the discriminator the run-end advice branches on
-        double      ddi_ratio_max     = -1.0;///< largest R over the run (-1 = never evaluated)
-        double      ddi_ratio_max_tow = 0.0; ///< ...its epoch
-        std::string ddi_ratio_max_dir;       ///< ...its identity ("CLK|G")
-        double      ddi_ratio_min     = -1.0;///< smallest R: the floor at which a free datum sits
-
-        // Run-end telemetry of the S-basis completion (SBC, network.sbasis_complete).
-        // Standing invariant #4: an armed completion whose counters never move on a GPS+Gal
-        // run means the block never saw the deficiency it was built for (a miswire), not a
-        // clean run.  Every refusal path is counted separately because each needs a
-        // different fix (cap: a pathological epoch or tolerance; degenerate: an orphaned
-        // exact gauge, the territory of the soft anchors; weight: re-place rank_gate_tol).
-        std::size_t n_sbc_epochs = 0;        ///< epochs on which ≥1 completion row was folded
-        std::size_t n_sbc_dirs = 0;          ///< completion rows folded, cumulative
-        int         sbc_max_dirs = 0;        ///< max rows folded on one epoch
-        std::size_t n_sbc_release = 0;       ///< sbc_release events (satellite re-observed: the re-coupling edge of invariant #7)
-        std::size_t n_sbc_capped = 0;        ///< epochs refused: extras beyond sbasis_complete_max
-        std::size_t n_sbc_degenerate = 0;    ///< directions skipped as unseparated from the declared-gauge cluster (machine-zero orphans, left to the drop-and-heal; not epoch-fatal)
-        std::size_t n_sbc_weight_marginal = 0; ///< epochs refused: completion weight < 2 decades above the cutoff (K2)
-
-        // Run-end telemetry of WE-CI (network.raim_we_code_iono).  Standing invariant #4: an
-        // armed screening whose counters never move on an eventful window is a miswire, not
-        // a quiet run.
-        std::size_t we_ci_code_trips = 0;   ///< epochs whose first-assess code-pool σ̂0 exceeded the code trigger
-        std::size_t we_ci_iono_trips = 0;   ///< epochs whose first-assess iono-pool σ̂0 exceeded the iono trigger
-        std::size_t we_ci_sta_excl   = 0;   ///< epoch-scoped station exclusions chosen from the code/iono pools
-        std::size_t we_ci_sat_dw     = 0;   ///< network-wide satellite code-row de-weights chosen from the code pool
-        double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
-        double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
-
-        // Run-end counters for the three response classes of the within-epoch tier (R0).
-        // The withhold has its own run counter (n_sigma0_withheld); without these, the
-        // refloats and exclusions would exist only as per-epoch T2 event rows, and a run
-        // summary could not say how often the tier acted.  The clock move is the
-        // impulse-channel meter of §5.07.2: how far the within-epoch re-solves moved a
-        // satellite clock from the primary solve's value, with counters and identity per
-        // invariant #7.
-        long long we_refloat_sat_total = 0; ///< whole-sat within-epoch refloats settled over the run
-        long long we_refloat_arc_total = 0; ///< isolated-arc within-epoch refloats settled over the run
-        long long we_exclude_sta_total = 0; ///< epoch-scoped station exclusions settled over the run
-        double      we_clk_move_max_m   = 0.0; ///< largest |final − primary| clock move (m)
-        double      we_clk_move_max_tow = 0.0; ///< TOW of that move
-        std::string we_clk_move_max_sat;       ///< satellite of that move
-        // Failed within-epoch re-solves.  n_adapt counts landed
-        // re-solves only, so a failed one appeared in no counter before this counter.  A
-        // failure is undone to the last landed state; the undo drops, for the epoch, a
-        // station it cannot re-add, and an undo that still cannot complete skips the
-        // epoch.  The first failure's identity is kept (invariant #7).
-        long long   we_resolve_failed   = 0;   ///< re-solves that failed and were undone to the last landed state
-        long long   we_undo_sta_dropped = 0;   ///< station-epochs the undo could not re-add and left out of the final solve
-        long long   we_restore_failed   = 0;   ///< undos that could not complete (epoch skipped)
-        double      we_resolve_fail_tow = 0.0; ///< TOW of the first failed re-solve
-        std::string we_resolve_fail_at;        ///< where it failed: a station name, or "shared system"
-        /// The culprit withhold on the DD carry: the re-solves that ran with a
-        /// satellite or arc culprit (the writer's end), the DD-carry rebuilds that read one
-        /// and what they withheld (the reader's end), both counted only under
-        /// carry_invariant.  Reported by networkWithinEpochCulpritWithholdRunEnd
-        /// (filter/NetworkWithinEpochCulprits).
-        WithinEpochCulpritTally we_culprit_withhold;
-
-        // --- redundancy / testability census ---
-        // Standing invariant #4 in its statistical form.  The failure mode this census
-        // must be able to disprove is "the sweep ran and found nothing", which cannot be
-        // told apart from "the sweep never ran" without denominators, so the passes, the
-        // sweeps and the rows are reported before any finding.  `redun_max_cold_*` exists
-        // for the opposite reason: the prefer-fallback directive says uncheckable but quiet
-        // rows (for example single-frequency rising satellites) must be counted and never
-        // evented, and keeping the worst one makes that a checkable claim rather than an
-        // assertion.
-        long long redun_passes = 0;             ///< seam invocations (the denominator for everything else).
-        long long redun_sweeps = 0;             ///< epochs on which at least one station was swept.
-        long long redun_sweeps_full = 0;        ///< of those, stride/trip full sweeps.
-        long long redun_sweeps_targeted = 0;    ///< of those, escalation-driven single-station sweeps.
-        long long redun_sweeps_trip = 0;        ///< of the full sweeps, those forced by a flight-recorder trip epoch.
-        long long redun_station_sweeps = 0;     ///< (station, epoch) pairs swept: the real cost unit.
-        long long redun_escalate_flagged = 0;   ///< (station, epoch) latches raised by the free tier: the escalation's opportunity count.
-        long long redun_escalations = 0;        ///< targeted sweeps taken from those latches.  Necessarily 0 under stride 1 (the scheduled sweep already covered every station), so it must never be read as "the free tier found nothing"; redun_escalate_flagged answers that.
-        long long redun_rows = 0;               ///< data rows examined in sweeps.
-        long long redun_rows_all = 0;           ///< all rows examined (the closure domain: pins and coupling rows carry leverage too).
-        long long redun_uncheckable = 0;        ///< data rows with r_i < eps (uncheckable; counted, not acted on).
-        long long redun_uncheckable_hot = 0;    ///< of those, rows that also exceeded the magnitude threshold: the cross-flag.
-        long long redun_events = 0;             ///< events emitted (after the rate limit): hot cells and unobservable locals.
-        long long redun_pool_skips = 0;         ///< (station, epoch, pool) centring pools skipped for population < 4.
-        long long redun_r_clamped = 0;          ///< rows whose r_i hit the kernel's [0,1] clamp at 0 (leverage >= 1/w).
-        double    redun_mass = 0.0;             ///< sum of r_i over data rows: the redundancy mass of what was swept.
-        long long redun_pivot_cols = 0;         ///< local columns examined by the INC-2 pivot census.
-        long long redun_pivot_flagged = 0;      ///< of those, columns below the relative pivot floor (column-epochs).
-        long long redun_unobs_entered = 0;      ///< decoupling edges: (station, key) first appearances, each evented.
-        long long redun_unobs_cleared = 0;      ///< re-coupling edges: (station, key) that regained information.
-        bool      redun_closure_any = false;    ///< at least one closure sample exists.
-        double    redun_closure_min_slack = 0.0;///< worst (smallest) n_free − trace(H); must stay >= 0.
-        long long redun_closure_neg = 0;        ///< sweeps whose slack went negative (a covariance/row-stack defect, not a data finding).
-        double    redun_max_hot_s = 0.0;        ///< largest cross-flagged centred deviation over the run.
-        std::string redun_max_hot_id;           ///< its (station/sat/class @tow) identity.
-        double    redun_max_cold_s = 0.0;       ///< largest centred deviation on an uncheckable row that stayed below the cross-flag.
-        std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
-        double    redun_wall_ms = 0.0;          ///< run-total wall time inside the census seam (the cost claim).
-
-        /// Baarda reliability / MDB tallies.  Every field is documented on the struct;
-        /// reported by @c networkMdbRunEnd, which lives next to the aggregation that
-        /// produced the numbers so the counters and the sentences interpreting them cannot
-        /// drift apart.
-        NetworkMdbTallies mdb;
-
-        /// BlockFormal LOS block census tallies.  Named `bb`, not `block`:
-        /// `ctx.counters.bb` is the run-total POD and `ctx.carry.bb` is the accumulator that
-        /// produced it, two different objects spelled the same on purpose so a reader does
-        /// not have to remember which mechanism owns which prefix.  It is not the redundancy
-        /// census's `redun_*` block: that one counts rows, this one counts blocks, and their
-        /// denominators are not interchangeable.
-        NetworkBlockBaardaTallies bb;
-
-        /// Station congruence screen tallies.  Named `cg` on the same convention as `bb`:
-        /// `ctx.counters.cg` is the run-total POD and `ctx.carry.cg` is the accumulator that
-        /// produced it.  It counts station-epochs, where `bb` counts blocks and the
-        /// redundancy census's `redun_*` block counts rows: three denominators that are not
-        /// interchangeable and must never be divided into one another.
-        NetworkCongruenceTallies cg;
-
-        // --- prior-residual census ---
-        // Standing invariant #4: the ladder is the telemetry.  The per-family ladders live
-        // in the accumulator (NetworkPriorResidual) and are read from it at run end; these
-        // are the seam-level counters that make the ladders interpretable: how many epochs
-        // the seam ran, how many rows reached it, how many identities were emitted and how
-        // many were dropped to the per-epoch buffer cap.  A family with n_rows = 0 must read
-        // as "ran, saw nothing", distinct from "never ran", and that distinction is
-        // prires_epochs > 0 with prires_rows = 0.
-        long long prires_epochs = 0;            ///< census epochs advanced (beginEpoch): the "did the wiring execute at all" denominator.
-        long long prires_emit_passes = 0;       ///< emission-seam invocations (should track prires_epochs; a gap means an epoch fed rows nobody drained).
-        long long prires_rows = 0;              ///< carried priors censused over the run, all families and labels.
-        long long prires_reported = 0;          ///< of those, rows above the trace threshold (nothing acted on them).
-        long long prires_events = 0;            ///< PRIORRES events emitted (after the per-cell holdoff).
-        long long prires_hits_dropped = 0;      ///< above-threshold rows whose individual identity was dropped to the per-epoch buffer cap.  Never affects a ladder, but a nonzero value means the event stream is a sample, and a truncated stream must not read as a quiet run.
-        double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label, excluding the RNEG class (see below).
-        std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
-        // --- The RNEG class (post_var > fold_var), partitioned out of the ladders.  Its |t|
-        // is not a standardized residual: the dispersion is formed from a (prior,
-        // posterior) pair that does not describe one fold, so r hits the redundancy floor
-        // and |t| inflates by √((p+v)/(εp)).  Left in, this class would dominate the
-        // run-end |t| extremum; the readable extremum for it is |ê| in metres.
-        long long prires_rneg_rows = 0;         ///< RNEG rows over the run (a subset of prires_rows).
-        double    prires_rneg_max_e = 0.0;      ///< the worst |ê| (m) over the whole run's RNEG class.
-        std::string prires_rneg_max_id;         ///< its (family/label/station/sat/signal @tow) identity.
-        double    prires_wall_ms = 0.0;         ///< run-total wall time inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and cannot be separated).
-
-        // --- constraint-aware global σ̂₀ ---
-        // Standing invariant #4 for the rider.  The four sums live in the accumulator (they
-        // are the statistic); these are the seam-level counters that say whether the
-        // wiring executed and in which degraded mode.  "0 rows on the data side" and "the
-        // rider never ran" are different findings, and a run whose every epoch carried the
-        // approx flag must not read like one that never needed it.
-        long long s0g_epochs = 0;               ///< drained epochs the rider evaluated: the "did it execute at all" denominator.
-        long long s0g_formed = 0;               ///< of those, epochs with a defined σ̂₀²_global (Σr > 0).
-        long long s0g_data_rows = 0;            ///< data rows folded into Σw·v² over the run (RAIM pool, de-duplicated).
-        long long s0g_prior_rows = 0;           ///< folded census rows in Σw·ê² over the run.
-        long long s0g_ep_approx = 0;            ///< epochs whose data side used the r ≡ 1 fallback (Σr_data is a row count).
-        long long s0g_ep_no_data = 0;           ///< epochs with zero data rows (the number is prior-only).
-        long long s0g_ep_no_prior = 0;          ///< epochs with zero folded prior rows (the number is data-only, which is what this number corrects).
-        long long s0g_ep_degenerate = 0;        ///< epochs where Σr ≤ 0 and no number was formed.
-        double    s0g_max_tension = 0.0;        ///< the worst per-epoch Σw·ê²/Σw·v² of the run.
-        double    s0g_max_tension_tow = -1.0;   ///< its GPS TOW (the cliff's timestamp, for §6 gate 3).
-
-        /// Tallies of the prefit census, structural fuse, seed-birth tripwire, topology
-        /// ledger and flight recorder.  Every field is documented on the struct; reported by
-        /// networkPrefitCensusRunEnd (network/qc/PrefitCensus.cpp).  Standing invariant #4 applies
-        /// directly: the census is a tripwire, and a tripwire that never fires looks like a
-        /// tripwire that was never connected; only `epochs` / `rows` / `rec_consults`
-        /// separate them.
-        NetworkPrefitCensusTallies pc;
-
-        /// Run tallies of the datum graph census.  Standing invariant #4, with a twist
-        /// specific to this census: the expected reading of tier 1 on a sound global roster
-        /// is k = 1 everywhere with zero predictions, which is byte for byte what a seam
-        /// that never ran produces; only `epochs` against `epochs_quiet` tells the two
-        /// apart, and the teardown line prints both.
-        NetworkDatumGraphTallies dg;
-
-        // --- Run tallies of the PD-safe invariant-DD fold.
-        // Always on (INC-0) and solve-neutral: the counters are pure reads of a
-        // factorization the fold already computed.  Without them, the branch they observe
-        // (`M := 0` on a non-PD Pᶻ+B) has no counter, no log and no event, so a block that
-        // goes indefinite can freeze most of the carried state for the rest of the run
-        // while every downstream reading stays blind to the carry.
-        //
-        // Reported by networkCarryDdFoldRunEnd (network/carry/InvariantCarryDriver.cpp).  The per-epoch
-        // halves are not parked here: both epoch-status writers read them directly from
-        // @ref NetworkEstimator::ddFoldStats (see NetworkCarryState).
-        long long ddfold_epochs        = 0;  ///< accepted installs whose fold reached a factorization (the denominator).
-        long long ddfold_folds         = 0;  ///< Σ blocks factored over those epochs.
-        long long ddfold_fold_rows     = 0;  ///< Σ K over those blocks: the carried dimension offered to the data.
-        long long ddfold_degen_blocks  = 0;  ///< Σ blocks that folded inertly (the PD screen tripped, so M = 0).
-        long long ddfold_degen_rows    = 0;  ///< Σ K over those blocks: the carried dimension that took no data.
-        long long ddfold_degen_epochs  = 0;  ///< epochs with at least one degenerate block.
-        long long ddfold_repairs       = 0;  ///< eigen-clamp repairs applied, INC-1c (0 unless pd_safe).
-        long long ddfold_repair_rows   = 0;  ///< Σ K over repaired blocks.
-        long long ddfold_rebirths      = 0;  ///< blocks rebirthed at install, INC-2a (0 unless pd_safe).
-        long long ddfold_rebirth_rows  = 0;  ///< Σ carried rows re-seeded by those rebirths.
-        long long ddfold_transitions   = 0;  ///< edges into the degenerate state observed (the decoupling edge of invariant #7).
-        long long ddfold_recoveries    = 0;  ///< edges out of the degenerate state observed: the block's key left the degenerate set, because the block factors again or its component was re-formed (the key cannot tell which).
-        double    ddfold_min_pivot_rel = 1.0;///< worst relative pivot d_min/d_max seen all run (≤ 0 means indefinite).
-        double    ddfold_repair_worst  = 0.0;///< worst clamped |λ| / λ_max seen all run.  Values ≤ 1e-12 are numerical dust; > 1e-6 indicates a new bug and is logged as a warning.
-        long long ddfold_repair_loud   = 0;  ///< folds whose worst clamp exceeded 1e-6·λ_max: the population that is not dust.  A large clamp indicates a new bug and must be reported, not absorbed.
-
-        // --- Run tallies of producer AR, phase 2 (network.ambiguity_resolution).
-        // These give the diagnostic a run-end clause; otherwise its only output would be
-        // one log line per epoch.  Standing invariant #4 in its ordinary form:
-        // `netar_epochs == 0` on an armed run means the search never reached the ILS
-        // (min_epochs never cleared, the covariance request threw, or the basis never had
-        // two undifferenced columns), which cannot be told apart from a clean quiet run
-        // without a denominator.  The distributions are kept as raw per-epoch samples
-        // rather than running means because the reported statistic is a median: ratio and
-        // p_succ are both heavy-tailed (a degenerate epoch's ratio is 1e4 by construction),
-        // and a mean of either is dominated by the epochs a grader would discard.  One
-        // double per epoch per series is about 120 kB at 24 h.
-        long long netar_epochs     = 0;   ///< epochs the ILS search ran (denominator)
-        long long netar_fix_epochs = 0;   ///< …of those, epochs the acceptance battery passed (full or partial)
-        long long netar_dd_fixed   = 0;   ///< Σ fixed DDs over the run (kept.size() summed)
-        long long netar_rows       = 0;   ///< trace rows written: P1 for the trace (0 with the trace armed = dead wiring)
-        bool      netar_carry_aware = false; ///< covariance mode the search consumed (docs/SPEC_carry_aware_covariance.md §4); part of the reading, not a footnote
-        std::vector<double> netar_n_dd;      ///< per-epoch full DD-basis size
-        std::vector<double> netar_n_search;  ///< per-epoch searched subset size (== n_dd when uncapped)
-        std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
-        std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
-        std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles): the convergence gauge
-        /// The search's suspect-corner mask (network/ar/ArSuspect.hpp), both
-        /// edges: events and stamps by cause, DDs masked, corners released and what their
-        /// DDs got at the first search after the release.  All zero unless
-        /// knobs.ar_suspect_epochs > 0.
-        ArSuspectCounters   netar_suspect;
-        /// The search's cycle basis (network/ar/ArCycleBasis.hpp): coverage per
-        /// band against the lattice dimension, rows by kind, links kept and re-seats, the map
-        /// against the stored basis, the arc lives and the build cost.  All zero unless
-        /// network.ambiguity_resolution.cycle_basis.
-        ArCycleBasisCounters netar_cycle;
-        /// The ledger of fixed cycles (see
-        /// network/ar/ArLattice.hpp): fixes by verdict and waiting, releases by cause with the
-        /// rows they found and the dimensions lost, the units implied and failing, the lattice's
-        /// size and row lengths, the cost.  All zero unless the ledger runs
-        /// (network.ambiguity_resolution.trace_lattice, or the fold with source lattice).
-        ArLatticeCounters    netar_lattice;
-        /// The fixed-cycle fold (network/ar/FixedCycles.hpp): epochs with a
-        /// determined pair and held solves, units by fate, blocks, the guards' refusals, the
-        /// unit statistic, block acceptance against its stated mean, the float reproduction,
-        /// the shift and the cost.  All zero unless network.ambiguity_resolution.fixed_cycles.
-        /// fold is armed.
-        FixedCycleCounters   fixed_cycles;
-
-        /// --- Run-end telemetry of canonical-pair admission.
-        /// The on-path readout of the rule (standing invariant 4): a `withheld_total` of
-        /// zero on an armed run is dead wiring, and the teardown line says so in those words
-        /// rather than reading as a quiet run.  Untouched unless
-        /// network.canonical_pair_admission.
-        NetworkCanonicalPairCounters cpa;
-
-        /// --- The signal roster / arc ledger observatory.
-        /// Every disagreement class is a named counter with its own denominator (standing
-        /// invariant 4), and the run-end table prints all of them.  Counted on every
-        /// network run (network.signal_roster switches the
-        /// ledger's trace only).
-        NetworkSignalRosterCounters sid;
-
-        /// --- The emitter's per-family bookkeeping read against the arc ledger, and the
-        /// declared roster's own wire census (network.ledger_emit).
-        /// Untouched unless the knob is armed.
-        NetworkLedgerEmitCounters le;
-
-        // ==========================================================================
-        // Instrument state moved from NetworkCarryState (decision D6):
-        // run-end counters, one-shot warn latches, the window sums of measure-only
-        // instruments and the event-holdoff clocks of the censuses.  Nothing in the solve
-        // reads them.  Each keeps its name and has its FieldDecl row in net::kRunFields
-        // (src/core/network/state/RunFields.cpp), the G1 trail of its former member.
-        // ==========================================================================
-
-        // Level innovation instrument, measure-only.
-        int                           clm_win_ep{0};        ///< epochs in the current window
-        // Phase-visible consistency instrument, measure-only: the open window's sums.
-        int       pv_win_ep{0};           ///< epochs in the current window
-        double    pv_win_nis_sum{0.0};    ///< summed NIS in the window
-        long long pv_win_nis_n{0};        ///< NIS values in the window
-        double    pv_win_e2_sum{0.0};     ///< summed squared contrast update (m^2)
-        double    pv_win_su_sum{0.0};     ///< summed predicted update variance S- - S+ (m^2)
-        // Run-scope observability counters of the eq34 datum, logged once in the run-end producer
-        // summary (the per-epoch reref/erase lines are debug-only, so these totals are the
-        // only non-debug record of the reref volume).  Untouched on non-eq34 runs.
-        long long eq34_reref_total = 0, eq34_erase_total = 0;
-        long long eq34_shift_total = 0;   // carry values S-transformed (v2 shift) over the run
-        long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty (SPEC_card1_coupling_carry §14)
-        long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0 (I2)
-        int eq34_mismatch_epochs = 0;
-        // Run-scope observability for 1(d), as for eq34_reref_total: families marginalized
-        // and phase-leveling local carries erased over the run.
-        long long pa_reref_total = 0, pa_reref_erase_total = 0;
-        /// Screened-epoch sequence number, the holdoff's clock.
-        long long gl_seq{ 0 };
-
-        // Invariant-carry driver counters (decomposition INC-4), mirrored from
-        // carry_driver.counters() at the install; the one-time GLONASS warn latch.
-        bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
-        long long carry_epochs = 0, carry_born_total = 0, carry_marg_total = 0,
-                  carry_merges_total = 0, carry_splits_total = 0, carry_swaps_total = 0,
-                  carry_zdim_last = 0, carry_slipkills_total = 0, carry_dropped_total = 0;
-
-        // D5 innovation gate counters.
-        long long carry_innov_flags_total = 0, carry_innov_retaps_total = 0;
-        long long carry_innov_map_miss = 0;   // reverse-map misses from a D5 flag to its ambiguity (should stay 0)
-        // Carry arcs whose membership kill was suppressed by the D5 v4 flat set
-        // (NetworkCarryState::carry_innov_pending_flat).  The tripwire of
-        // invariant #4 for the knob: 0 with it armed means nothing reached it.  Counted per
-        // arc per buildCarryDdPriors call, so a within-epoch RAIM re-solve counts its arcs
-        // twice (the same convention as the driver's chords_born / slip_kills).  Only an
-        // arc that survives the call counts: one a T2 culprit kills in the re-solve does
-        // not (it is counted in we_culprit_withhold.ambs).
-        long long carry_innov_kill_suppressed = 0;
-
-        // Postfit sigma0 run-end counter and warn latch (networkPostfitSigma0).
-        long long pf_epochs_total    = 0;   ///< run-end counter (invariant #4: 0 means inert)
-        bool      pf_empty_logged    = false;  ///< one-shot "armed but pooled nothing" warn latch
-        // Run-end accounting of the signed per-row dump (SPEC_event_harness §24.6,
-        // network.trace_postfit_rows): rows written (code and phase), written rows with no
-        // elevation, and data rows the pass visited but could attribute to neither family
-        // (not written).  Invariant #4 needs all of them: "0 written under an armed trace"
-        // must be visible, and a non-zero unattributed count says which rows the dump does
-        // not carry.
-        long long pf_rows_written      = 0;
-        long long pf_rows_code         = 0;   ///< …of which kind=code
-        long long pf_rows_phase        = 0;   ///< …of which kind=phase
-        long long pf_rows_no_elev      = 0;   ///< …written with an empty elev_deg (station absent from the modeled set, or no satellite on the row)
-        long long pf_rows_unattributed = 0;   ///< rows attributed to neither family (the row tag is not an observation: pins, local prior and anchor rows, unclassified rows); counted, not written
-        long long pf_rows_no_signal    = 0;   ///< rows written with an empty signal (the row tag named no signal); 0 expected
-        // Run-end accounting of the per-station local-block audit (SPEC_event_harness
-        // §24.10, network.trace_station_block).  Invariant #4 needs all four: "0
-        // rows under an armed trace" must be visible, and the two refusal counts say which
-        // of the two ways the sweep can find nothing happened: no station reached the
-        // audit at all, or the block itself could not be decomposed (a non-finite or
-        // empty N_rr).
-        long long sb_rows_written     = 0;   ///< station-epoch rows written to network_station_block.csv
-        long long sb_epochs_written   = 0;   ///< traced epochs that wrote at least one row
-        long long sb_stations_skipped = 0;   ///< station-epochs skipped: not in the solve, no usable assembly, or no local block
-        long long sb_decomp_failed    = 0;   ///< station-epochs skipped: N_rr unavailable or its eigen-decomposition did not converge
-        std::size_t sb_last_emitted   = 0;   ///< n_emitted of the last audited emission (one row set per emitted epoch, never per solve)
-
-        // H-rider census counter (networkPrefitSigma0).
-        long long h_sig0_census_nonzero = 0;   ///< run counter: epochs with a usable census σ̂₀ on the H wire (invariant #4)
-        // --- Spectrum bookkeeping (P1-3) ---
-        long long sh_spectrum_epochs      = 0;      ///< traced epochs (also drives the mode-detail stride)
-        bool      sh_spectrum_fail_logged = false;  ///< one-shot eigensolve-failure warn latch
-
-        // CB-carry event response telemetry (SPEC_day129_frame_guards Phase 2.1).
-        long long cb_exc_trips           = 0;   ///< epochs the detector tripped
-        long long cb_exc_reinits         = 0;   ///< (sat,epoch) CB carries marked for reinit
-        long long cb_exc_bumps           = 0;   ///< code-bias discontinuity bumps landed
-        long long cb_exc_nonpivot_would  = 0;   ///< (sat,epoch) non-pivot sats a per-satellite rule would have tripped (the D1 counter)
-        double    cb_exc_max_median      = 0.0; ///< largest median |Δclock| observed (m): the trip statistic's run maximum
-        double    cb_exc_max_median_tow  = -1.0;///< its epoch
-        // Iono-2 run-end counters (invariant #4: wiring that is inert shows only through
-        // them): warm-prior harvests, cold seeds, C3c-funnel slip resets, and
-        // no-information harvest skips (V̂ ≥ P_pred + f²).
-        long long shdev_warm_total = 0, shdev_cold_total = 0,
-                  shdev_slip_resets_total = 0, shdev_nodata_total = 0;
-        // Iono-2 v3 de-mean: epochs the global de-mean applied, station-mean removals, and
-        // Σ|g| for the run-end mean |g|.
-        long long shdev_demean_epochs_total = 0, shdev_demean_sta_total = 0;
-        double    shdev_demean_abs_g_sum = 0.0;
-        // Iono-2 v3k: D5-only re-taps that kept the level (variance re-tap) instead of
-        // erasing it.  shdev_slip_resets_total then counts actual erases only.
-        long long shdev_d5_keeps_total = 0;
-
-        // State-snapshot writer telemetry (RTB-7(e)); the path stays in NetworkCarryState.
-        // Write-side telemetry (RTB-7(e), invariant #4).  The carry blob is about 99 % of
-        // the snapshot, so its size and shape are the only readout that shows
-        // network.state_snapshot_carry_diagonal took effect: a diagonal run otherwise looks
-        // like a dense one in every log line and counter.
-        long long snap_writes             = 0;      // snapshots written this run
-        long long snap_carry_bytes_last   = 0;      // bytes of the last serialized carry blob
-        bool      snap_carry_diagonal     = false;  // that blob was diagonal-only (v3)
-        // Coupling-regressor capture (§18.12, network.state_snapshot_coupling_capture): the
-        // QS/QL/QZ payload is about 37x the rest of the file, so the counts of rows, terms
-        // and shared columns are the only readout that shows the capture took effect.
-        // rows_dropped reports a writer-side numerical problem that is otherwise invisible:
-        // a row with a non-finite field is omitted whole, never in part, because a partial
-        // coefficient vector breaks the gauge identity.
-        long long snap_cpl_dict_last     = 0;   // shared columns in the last snapshot's QS dictionary (§18.12)
-        long long snap_cpl_rows_last     = 0;   // QL rows in the last snapshot (§18.12)
-        long long snap_cpl_zrows_last    = 0;   // QZ rows in the last snapshot (§18.12)
-        long long snap_cpl_terms_last    = 0;   // regressor entries in the last snapshot (§18.12)
-        long long snap_cpl_rows_dropped  = 0;   // rows omitted whole for a non-finite/negative field, run total (§18.12)
-        long long snap_datum_rows_last   = 0;   // EQ*/CB* datum rows in the last snapshot; 0 under an armed capture on an eq34/time-linked-CB run means the capture is inert (RS-3 §21.7)
-        long long snap_emit_rows_last    = 0;   // ER emit-layer rows in the last snapshot; 0 under an armed capture with the re-base running means the capture is inert (RS-5 §21.10)
-        long long snap_station_rows_last = 0;   // RC/SD station-layer rows in the last snapshot; 0 under an armed capture on a run that arms carry_rx_code_bias or the T5 deviation carry means the capture is inert (RS-6 §21.13)
-        long long snap_canon_rows_last   = 0;   // CN canonical-signal rows in the last snapshot; 0 under an armed capture means no station had decided a latch yet, which on a network run past epoch 1 means the capture is inert (RS-8 §21.16)
-        long long snap_rxcb_lin_rows_last = 0;  // RL code-bias linearization-point rows in the last snapshot; 0 under an armed capture means the capture is inert, since no station holds a finite code-bias state, i.e. estimate_ifb is off (RS-9 §21.18)
-
-        // Redundancy / testability census: the stride phase and event clock, and the
-        // one-shot warn latches (observer state of a measure-only instrument).
-        long long redun_epochs = 0;            ///< census seam passes: the stride phase counter and the event-holdoff clock.
-        bool      redun_cov_warned    = false; ///< one-shot: armed with no solved covariance to read.
-        bool      redun_closure_warned = false;///< one-shot: trace(H) exceeded the free-parameter bound.
-
-        // Baarda MDB: the event-holdoff clock and the join warn latch.
-        long long mdb_seq = 0;                 ///< flush passes: the per-cell event-holdoff clock.
-        bool      mdb_join_warned = false;     ///< one-shot: the uncheckable join disagreed with the census.
-
-        // Prior-residual census warn latch.
-        bool      prires_trunc_warned = false; ///< one-shot: the per-epoch identity buffer overflowed (ladders unaffected; the event stream became a sample).
-
-        // Constraint-aware global sigma0 warn latches.
-        bool      s0g_approx_warned = false;  ///< one-shot: the data side took the r ≡ 1 fallback.
-        bool      s0g_nodata_warned = false;  ///< one-shot: an epoch formed the number with no data rows at all.
-
-        // Prefit census warn latch.
-        bool prefit_empty_logged = false;  ///< one-shot "armed but classified zero data rows" warn latch.
-
-        // Reduced-RHS attribution: the retention warn latch.
-        bool rhs_prev_oversize_logged = false; ///< one-shot: retention disabled for network size.
     };
+
+    /// @internal Service counters, health-window anchors and B8 flag-rate tallies,
+    /// relocated from the run loop.
+    ///
+    /// The members are declared by owner: each base is an aggregate in the header of the
+    /// subsystem that writes its members (in a light Counters header beside it where the
+    /// owner header includes this file), so `ctx.counters.x` is spelled as it always was.
+    /// A new run-scope counter goes to the counter struct of the subsystem that writes it;
+    /// a new struct is one more base below.  Bases and the header declaring each:
+    ///   SolveStationsCounters              network/solve/SolveStations.hpp
+    ///   RunTracesCounters                  network/diag/RunTraces.hpp
+    ///   ClockAnchorCounters                network/solve/ClockAnchor.hpp
+    ///   ClockDatumCounters                 network/solve/ClockDatum.hpp
+    ///   StateSnapshotCounters              network/state/StateSnapshotCounters.hpp
+    ///   HandoverStransformCounters         network/solve/HandoverStransformCounters.hpp
+    ///   BorderCounters                     network/state/BorderCounters.hpp
+    ///   SdEwlArCounters                    network/ar/SdEwlAr.hpp
+    ///   ChainDatumCounters                 network/solve/ChainDatum.hpp
+    ///   AnchorHygieneCounters              network/solve/AnchorHygiene.hpp
+    ///   SignalIntegrityCounters            network/assembly/SignalIntegrity.hpp
+    ///   RaimCounters                       network/qc/Raim.hpp
+    ///   GrossLosCounters                   network/qc/GrossLos.hpp
+    ///   MeasurementAdmissionCounters       network/assembly/MeasurementAdmission.hpp
+    ///   SolPrepCounters                    network/emit/SolPrep.hpp
+    ///   GeneralCounters                    network/state/RunContext.hpp
+    ///   RaimWithinEpochCounters            network/qc/RaimWithinEpoch.hpp
+    ///   LevelingCarryCounters              network/carry/LevelingCarry.hpp
+    ///   StationBuildCounters               network/assembly/StationBuild.hpp
+    ///   AmbFloatCounters                   network/ar/AmbFloat.hpp
+    ///   PhaseAnchorEpochCounters           network/solve/PhaseAnchorEpoch.hpp
+    ///   AmbStateTraceCounters              network/diag/AmbStateTrace.hpp
+    ///   SlantIonoCarryCounters             network/carry/SlantIonoCarry.hpp
+    ///   RxCodeBiasCarryCounters            network/carry/RxCodeBiasCarry.hpp
+    ///   WarmResumeCounters                 network/state/WarmResumeCounters.hpp
+    ///   RxClockCarryCounters               network/carry/RxClockCarry.hpp
+    ///   ZwdCarryCounters                   network/carry/ZwdCarry.hpp
+    ///   PhaseColourCarryCounters           network/carry/PhaseColourCarry.hpp
+    ///   EmitStoreCounters                  network/emit/EmitStore.hpp
+    ///   PassASlipScanCounters              network/slip/PassASlipScanCounters.hpp
+    ///   InstallCarryCounters               network/carry/InstallCarry.hpp
+    ///   DdFracCounters                     network/diag/DdFrac.hpp
+    ///   LevelAuthorityCounters             network/carry/LevelAuthority.hpp
+    ///   PbHoldCounters                     network/emit/PbHold.hpp
+    ///   PbHoldCloneCounters                network/emit/PbHoldClone.hpp
+    ///   RankGateCounters                   network/solve/RankGate.hpp
+    ///   BiasAdmissionCounters              network/assembly/BiasAdmission.hpp
+    ///   CodeBiasDatumCounters              network/solve/CodeBiasDatum.hpp
+    ///   SbasisCounters                     network/solve/Sbasis.hpp
+    ///   CouplingCounters                   network/carry/Coupling.hpp
+    ///   CouplingExactRunCounters           network/carry/CouplingExact.hpp
+    ///   PivotFrameQCounters                network/carry/PivotFrameQ.hpp
+    ///   ClockCloneRunCounters              network/carry/ClockClone.hpp
+    ///   SharedHistoryRunCounters           network/carry/SharedHistory.hpp
+    ///   CarryDispositionCounters           network/state/CarryDisposition.hpp
+    ///   CarrySitesCounters                 network/state/CarrySites.hpp
+    ///   ResponsesCounters                  network/assembly/Responses.hpp
+    ///   ClockLevelCounters                 network/solve/ClockLevel.hpp
+    ///   BrdcWireCounters                   network/emit/BrdcWire.hpp
+    ///   PhaseVisibleDiagCounters           network/diag/PhaseVisibleDiag.hpp
+    ///   SecondCodeScopeCounters            network/assembly/SecondCodeScope.hpp
+    ///   SecondPhaseScopeCounters           network/assembly/SecondPhaseScope.hpp
+    ///   ChannelAllCounters                 network/assembly/ChannelAll.hpp
+    ///   MultiGnssCounters                  network/assembly/MultiGnss.hpp
+    ///   RawObservablesCounters             network/slip/RawObservables.hpp
+    ///   CommonBandScopeCounters            network/slip/CommonBandScope.hpp
+    ///   SolveGlueCounters                  network/solve/SolveGlue.hpp
+    ///   PhaseDatumCounters                 network/solve/PhaseDatum.hpp
+    ///   EpochAdmissionCounters             network/driver/EpochAdmission.hpp
+    ///   SbasisCompletionCounters           network/solve/SbasisCompletion.hpp
+    ///   FrameDiagCounters                  network/diag/FrameDiag.hpp
+    ///   WithinEpochCulpritsCounters        network/qc/WithinEpochCulprits.hpp
+    ///   RedundancyCensusCounters           network/qc/RedundancyCensus.hpp
+    ///   MdbCounters                        network/qc/Mdb.hpp
+    ///   BlockBaardaCounters                network/qc/BlockBaarda.hpp
+    ///   CongruenceCounters                 network/qc/Congruence.hpp
+    ///   PriorResidualCounters              network/qc/PriorResidual.hpp
+    ///   PrefitCensusCounters               network/qc/PrefitCensus.hpp
+    ///   DatumGraphCounters                 network/solve/DatumGraph.hpp
+    ///   InvariantCarryDriverCounters       network/carry/InvariantCarryDriver.hpp
+    ///   ProducerArCounters                 network/ar/ProducerAr.hpp
+    ///   ArSuspectRunCounters               network/ar/ArSuspect.hpp
+    ///   ArCycleBasisRunCounters            network/ar/ArCycleBasis.hpp
+    ///   ArLatticeRunCounters               network/ar/ArLattice.hpp
+    ///   FixedCyclesCounters                network/ar/FixedCycles.hpp
+    ///   CanonicalPairAdmissionCounters     network/assembly/CanonicalPairAdmission.hpp
+    ///   SignalRosterCounters               network/assembly/SignalRoster.hpp
+    ///   LedgerEmitCounters                 network/emit/LedgerEmit.hpp
+    ///   DdPriorBuildCounters               network/carry/DdPriorBuild.hpp
+    ///   StationBlockCounters               network/diag/StationBlock.hpp
+    ///   ClockQcCounters                    network/qc/ClockQc.hpp
+    ///   ShDevVtecCounters                  network/diag/ShDevVtec.hpp
+    ///   RhsAttribCounters                  network/qc/RhsAttrib.hpp
+    struct NetworkServiceCounters
+        : SolveStationsCounters,
+          RunTracesCounters,
+          ClockAnchorCounters,
+          ClockDatumCounters,
+          StateSnapshotCounters,
+          HandoverStransformCounters,
+          BorderCounters,
+          SdEwlArCounters,
+          ChainDatumCounters,
+          AnchorHygieneCounters,
+          SignalIntegrityCounters,
+          RaimCounters,
+          GrossLosCounters,
+          MeasurementAdmissionCounters,
+          SolPrepCounters,
+          GeneralCounters,
+          RaimWithinEpochCounters,
+          LevelingCarryCounters,
+          StationBuildCounters,
+          AmbFloatCounters,
+          PhaseAnchorEpochCounters,
+          AmbStateTraceCounters,
+          SlantIonoCarryCounters,
+          RxCodeBiasCarryCounters,
+          WarmResumeCounters,
+          RxClockCarryCounters,
+          ZwdCarryCounters,
+          PhaseColourCarryCounters,
+          EmitStoreCounters,
+          PassASlipScanCounters,
+          InstallCarryCounters,
+          DdFracCounters,
+          LevelAuthorityCounters,
+          PbHoldCounters,
+          PbHoldCloneCounters,
+          RankGateCounters,
+          BiasAdmissionCounters,
+          CodeBiasDatumCounters,
+          SbasisCounters,
+          CouplingCounters,
+          CouplingExactRunCounters,
+          PivotFrameQCounters,
+          ClockCloneRunCounters,
+          SharedHistoryRunCounters,
+          CarryDispositionCounters,
+          CarrySitesCounters,
+          ResponsesCounters,
+          ClockLevelCounters,
+          BrdcWireCounters,
+          PhaseVisibleDiagCounters,
+          SecondCodeScopeCounters,
+          SecondPhaseScopeCounters,
+          ChannelAllCounters,
+          MultiGnssCounters,
+          RawObservablesCounters,
+          CommonBandScopeCounters,
+          SolveGlueCounters,
+          PhaseDatumCounters,
+          EpochAdmissionCounters,
+          SbasisCompletionCounters,
+          FrameDiagCounters,
+          WithinEpochCulpritsCounters,
+          RedundancyCensusCounters,
+          MdbCounters,
+          BlockBaardaCounters,
+          CongruenceCounters,
+          PriorResidualCounters,
+          PrefitCensusCounters,
+          DatumGraphCounters,
+          InvariantCarryDriverCounters,
+          ProducerArCounters,
+          ArSuspectRunCounters,
+          ArCycleBasisRunCounters,
+          ArLatticeRunCounters,
+          FixedCyclesCounters,
+          CanonicalPairAdmissionCounters,
+          SignalRosterCounters,
+          LedgerEmitCounters,
+          DdPriorBuildCounters,
+          StationBlockCounters,
+          ClockQcCounters,
+          ShDevVtecCounters,
+          RhsAttribCounters {};
 
     /// @internal The run context: one instance per runNetwork() invocation, passed by
     /// reference into the relocated lifecycle functions.  Non-copyable (it owns move-only,

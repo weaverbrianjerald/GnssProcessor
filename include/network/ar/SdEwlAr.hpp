@@ -443,4 +443,29 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 
 // ---- End of the PASS B station steps, declarations ----
 
+/// @brief Run-scope counters of SdEwlAr, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SdEwlArCounters {
+
+    // --- Run tallies of the SD EWL Route-B integer decision (increment 2a).  Standing
+    // invariant #4: on an armed run, `sdewl_dd_fixed == 0` means the decision never
+    // fired, which is not the same as "the integers had no effect", so every rejection
+    // path below is counted against a denominator.  The 2b row tallies live per
+    // station in NetStation::SdEwlCounters (the row build is parallel).
+    long long sdewl_epochs = 0;             ///< epochs the decision seam ran (the denominator for everything else).
+    long long sdewl_components = 0;         ///< (constellation, connected component) instances processed.
+    long long sdewl_dd_pairs_seen = 0;      ///< (station, satellite) arcs admitted to the integer graph.
+    long long sdewl_dd_fix_attempts = 0;    ///< DD roundings attempted along spanning-tree / closure edges.
+    long long sdewl_dd_fixed = 0;           ///< integers published usable this epoch: measured plus datum values (see sdewl_dd_datum; both are legitimately foldable, but only the measured ones went through a rounding gate).
+    long long sdewl_dd_datum = 0;           ///< of those, values assigned as a datum rather than measured: the reference station's own satellites, each station's link satellite, and a satellite framed on first sighting.  A datum value carries no rounding decision, so it cannot be wrong: it defines the frame.
+    long long sdewl_dd_reject_frac = 0;     ///< rejected: |fractional residue| over sd_ewl.fix_max_frac_cyc.
+    long long sdewl_dd_reject_ffr = 0;      ///< rejected: rounding success probability under sd_ewl.fix_min_ffr.
+    long long sdewl_dd_flip = 0;            ///< integer disagreed with the previous epoch on a continuous arc: counted and vetoed (the invariant #1 response).
+    long long sdewl_dd_restart = 0;         ///< arc restarted (lagged count fell): memory replaced, no flip charged.
+    long long sdewl_sd_ref_reelected = 0;   ///< the sticky component reference station r0 changed (re-datums the whole component's SD frame).
+    long long sdewl_dd_skip_channel = 0;    ///< (station, satellite) excluded: its MW arc is on a different tracking-channel pair than the network-common election, so B^s would not cancel in the DD.
+    long long sdewl_dd_skip_frame = 0;      ///< (station, satellite) excluded: BIA frame disagrees with the constellation majority.
+    long long sdewl_dd_no_link = 0;         ///< (station, satellite) left unfixed: no admissible link satellite reached it from the tree/closure.
+    long long sdewl_dd_no_graph = 0;        ///< stations isolated: fewer than two co-visible satellites with any neighbour, so no DD can be formed.
+};
+
 } // namespace GnssProcessor

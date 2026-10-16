@@ -155,6 +155,7 @@ A value that survives an epoch is a field of an entity-table row
 A per-epoch value a later stage reads is a member of the writing stage's group of
 `EpochEvents` (`include\network\driver\Epoch.hpp`, its writer list updated), never an
 undeclared `NetworkCarryState` member (which needs a `kRunFields` row); counters go in
+the counter struct of the writing subsystem (its own header), a base of
 `NetworkServiceCounters`.
 
 ## 6. Configuration (REQUIRED)

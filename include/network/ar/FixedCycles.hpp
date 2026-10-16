@@ -530,4 +530,14 @@ FixedCycleEmission networkFixedCycles(NetworkRun& run, const NetworkEpoch& ep);
  */
 int networkFixedCyclesRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of FixedCycles, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct FixedCyclesCounters {
+    /// The fixed-cycle fold (network/ar/FixedCycles.hpp): epochs with a
+    /// determined pair and held solves, units by fate, blocks, the guards' refusals, the
+    /// unit statistic, block acceptance against its stated mean, the float reproduction,
+    /// the shift and the cost.  All zero unless network.ambiguity_resolution.fixed_cycles.
+    /// fold is armed.
+    FixedCycleCounters   fixed_cycles;
+};
+
 }  // namespace GnssProcessor

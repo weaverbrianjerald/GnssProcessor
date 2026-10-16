@@ -981,4 +981,15 @@ StationStep networkCongruenceRowGeometry(StationBuild& build);
 
 // ---- End of the PASS B station steps, declarations ----
 
+/// @brief Run-scope counters of Congruence, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CongruenceCounters {
+
+    /// Station congruence screen tallies.  Named `cg` on the same convention as `bb`:
+    /// `ctx.counters.cg` is the run-total POD and `ctx.carry.cg` is the accumulator that
+    /// produced it.  It counts station-epochs, where `bb` counts blocks and the
+    /// redundancy census's `redun_*` block counts rows: three denominators that are not
+    /// interchangeable and must never be divided into one another.
+    NetworkCongruenceTallies cg;
+};
+
 }  // namespace GnssProcessor

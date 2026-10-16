@@ -281,4 +281,12 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of AnchorHygiene, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct AnchorHygieneCounters {
+    // Run tallies of eq34 reattach hygiene; every field is documented on the struct.
+    // Bumped only when ctx.knobs.anchor_hygiene_on, and reported by
+    // networkAnchorHygieneRunEnd (network/solve/AnchorHygiene.cpp).
+    NetworkAnchorTallies hyg;
+};
+
 } // namespace GnssProcessor

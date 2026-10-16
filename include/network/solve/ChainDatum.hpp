@@ -239,4 +239,95 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep);
 
 // ---- End of the harvest half, declarations ----
 
+/// @brief Run-scope counters of ChainDatum, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ChainDatumCounters {
+
+    // Slip-aware eq34 election (network.phase_datum_eq34_slip_aware_election).
+    // All three are needed to read the mechanism, because two of them are the policy
+    // working and the third is the graph refusing it:
+    //   * deseeded:   slipped incumbents denied their sticky tree seat;
+    //   * demoted:    slipped arcs whose arcLife ranking was pushed below the clean
+    //                 band (inert unless the longevity election is armed); each slipped
+    //                 arc counts once per epoch (it counted the
+    //                 sort's comparator calls before);
+    //   * readmitted: slipped arcs that became tree edges anyway, because the
+    //                 component had no other route to the vertex.  Those still
+    //                 mass-refloat, and a large share here means the topology, not the
+    //                 election, is the binding constraint (standing invariant #4:
+    //                 report the failure mode, and do not let "deseeded > 0" read as
+    //                 "no tree edge slipped").
+    long long eq34_slip_deseeded   = 0;
+    long long eq34_slip_demoted    = 0;
+    long long eq34_slip_readmitted = 0;
+    // Run tallies of the chain-pin audit (docs/SPEC_synthetic_minimum_network.md
+    // §14 T1; measured record §12.8), keyed "<cons>|<signal>" (the election's dr_key).
+    // A pin can leak silently from a three-stage pipeline: declared (the election's
+    // per-group Σ (n_c + m_c) gauge dimension), folded (foldAmb/foldRpb built the 1e10
+    // row; the lambdas return early on a missing state index or a missing live phase
+    // row), and landed (the folded row sits on a station that est.addStation accepted;
+    // a rejected or dropped station takes every folded pin down with it, the loss mode
+    // network.station_pd_pin_aware exists to prevent).  A group whose landed <
+    // declared − bridged in any epoch ran with an under-constrained datum that reads
+    // like a working one (standing invariant #4); the W6+SH n-invariant L2W near-null
+    // is the suspect that motivated the audit.  Accumulated serially after PASS B's
+    // consume; logged once by networkChainDatumRunEnd.  All zero unless
+    // network.phase_datum_eq34.
+    struct Eq34PinAudit {
+        std::map<std::string, long long> declared;         ///< Σ per-epoch gauge dim (n_c+m_c)
+        std::map<std::string, long long> bridged;          ///< Σ hygiene INC-2 bridge pins (shared-side)
+        std::map<std::string, long long> folded;           ///< pins foldAmb/foldRpb built (all producing stations)
+        std::map<std::string, long long> landed;           ///< folded pins on accepted stations
+        std::map<std::string, long long> miss_state;       ///< fold refused: state index absent
+        std::map<std::string, long long> miss_row;         ///< fold refused: no live phase row (h2local miss)
+        std::map<std::string, long long> dropped_station;  ///< folded pins lost with dropped/rejected stations
+        std::map<std::string, int>       short_epochs;     ///< epochs with landed < declared − bridged
+        std::map<std::string, int>       worst_short;      ///< max per-epoch shortfall
+        int epochs = 0;                                    ///< audited (consumed, non-aborted) epochs
+    } eq34_pin_audit;
+    // Run tallies of the seed round.  The audit asserts |pin innovation| ≤ λ/2
+    // at all times, so a max_abs_y above λ_max/2 is a logic error.  `pins` counts
+    // election-side targets (the state existed at election time); `deferred` counts
+    // fold-computed targets (state allocated in PASS B: cold start and new arcs);
+    // `target_steps` counts same-station target changes between epochs (the reref
+    // pressure this knob generates; about 0 expected on static receivers).  All zero
+    // unless network.phase_datum_eq34_seed_round.
+    long long seed_round_pins         = 0;
+    long long seed_round_deferred     = 0;
+    long long seed_round_frozen       = 0;   ///< targets reused verbatim from eq34_prev_target, so the frame is realized once (INC-1)
+    long long seed_round_target_steps = 0;
+    double    seed_round_max_abs_y_m  = 0.0;
+    // Re-host tallies (INC-2).  `framed` = re-hosts whose frame step was computed
+    // from the new host's own state and therefore stayed shiftable (the carried PB
+    // prior is S-transformed, not marginalized); `cold` = re-hosts that INC-2 could
+    // not frame (no allocated state: the fold-deferred path), which keep the legacy
+    // unknown-step reref.  `max_step_m` is the largest |frame step| any framed re-host
+    // applied.  It is bounded by λ/2 only when the new host's float is
+    // frame-consistent, so a large value signals that the solution at the new host had
+    // drifted off the realized frame: read it as a diagnostic of the runaway the audit
+    // probes, never as a quality bound.
+    long long seed_round_rehost_framed  = 0;
+    long long seed_round_rehost_cold    = 0;
+    double    seed_round_rehost_max_step_m = 0.0;
+
+    // (D) One-solve frame skips: the frame stepped, so the carried value is stale in the
+    //     old gauge; the same epoch's harvest re-stashes any still-tracked arc, so the
+    //     cost is one solve of continuity.
+    long long n_cr_eq34_reref         = 0;  ///< eq34 D4 chain-datum re-reference
+    long long n_cr_rpb_gap_prune      = 0;  ///< receiver-PB carry entries dropped by the pl_max_gap_s prune
+    long long n_resume_datum_first_reref    = 0; ///< PHASE_DATUM/eq34_reref (sat,σ) at the first post-resume epoch
+    // Held phase-bias emissions (pb_hold) of a (satellite,
+    // signal) family that a phase-bias shift moved (the eq34 D4 shift, the declared anchor
+    // handover) and that stayed in the old frame: PbHold is exempt from both shifts with or
+    // without network.carry_rebase_complete (its own design is owed).  Measure-only.
+    long long prm_pbhold_unmoved_at_shift = 0;
+    // Run-scope observability counters of the eq34 datum, logged once in the run-end producer
+    // summary (the per-epoch reref/erase lines are debug-only, so these totals are the
+    // only non-debug record of the reref volume).  Untouched on non-eq34 runs.
+    long long eq34_reref_total = 0, eq34_erase_total = 0;
+    long long eq34_shift_total = 0;   // carry values S-transformed (v2 shift) over the run
+    long long eq34_cpl_sprev_total = 0;   // coupling s_prev references re-based with those shifts; structurally 0 with coupling off, since the stashes are empty (SPEC_card1_coupling_carry §14)
+    long long eq34_gap_repin_total = 0;   // tree edges resumed from a carry-alive gap, re-pinned to their pre-gap integer instead of re-leveling from 0 (I2)
+    int eq34_mismatch_epochs = 0;
+};
+
 } // namespace GnssProcessor

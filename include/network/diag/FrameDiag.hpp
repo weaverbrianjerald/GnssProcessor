@@ -44,6 +44,8 @@
 
 #include <memory>
 #include <vector>
+#include <string>
+#include <cstddef>
 
 namespace spdlog { class logger; }
 
@@ -276,5 +278,49 @@ struct NetworkRunEndView;
 int networkFrameDiagRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of FrameDiag, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct FrameDiagCounters {
+
+    // Datum-direction information ratio R = (vᵀNv/vᵀv)/cutoff, for standing invariant
+    // #7: one sample per (epoch × declared datum direction), on the same reduced normals
+    // and the same cutoff the rank gate judges by.  The gate collapses that spectrum to
+    // an integer, so a declared gauge that acquires information moves the observed count
+    // by one and reads like a mis-calibrated tolerance.  A coupling row with a
+    // truncated family sum can raise one clock gauge decades above the cutoff in a
+    // single epoch, with over-specified withholds as the only symptom.  R ≪ 1 = still a
+    // gauge; R ≥ 1 = something folded before the gate is pinning a direction the datum
+    // owns.  Computed unconditionally (one k×k quadratic form per constellation, against
+    // the gate's own O(n³) eigensolve), because a knob-gated version would be dark on
+    // the runs that need it.
+    std::size_t ddi_epochs        = 0;   ///< epochs the ratio was evaluated (denominator)
+    std::size_t ddi_dirs          = 0;   ///< (epoch × direction) samples
+    std::size_t ddi_breach_epochs = 0;   ///< epochs with >= 1 direction at R >= 1
+    std::size_t ddi_breach_edges  = 0;   ///< invariant #7 edges emitted (breach + clear)
+    std::size_t ddi_over_breach   = 0;   ///< over-specified withholds coincident with a breach: the discriminator the run-end advice branches on
+    double      ddi_ratio_max     = -1.0;///< largest R over the run (-1 = never evaluated)
+    double      ddi_ratio_max_tow = 0.0; ///< ...its epoch
+    std::string ddi_ratio_max_dir;       ///< ...its identity ("CLK|G")
+    double      ddi_ratio_min     = -1.0;///< smallest R: the floor at which a free datum sits
+
+    // Postfit sigma0 run-end counter and warn latch (networkPostfitSigma0).
+    long long pf_epochs_total    = 0;   ///< run-end counter (invariant #4: 0 means inert)
+    bool      pf_empty_logged    = false;  ///< one-shot "armed but pooled nothing" warn latch
+    // Run-end accounting of the signed per-row dump (SPEC_event_harness §24.6,
+    // network.trace_postfit_rows): rows written (code and phase), written rows with no
+    // elevation, and data rows the pass visited but could attribute to neither family
+    // (not written).  Invariant #4 needs all of them: "0 written under an armed trace"
+    // must be visible, and a non-zero unattributed count says which rows the dump does
+    // not carry.
+    long long pf_rows_written      = 0;
+    long long pf_rows_code         = 0;   ///< …of which kind=code
+    long long pf_rows_phase        = 0;   ///< …of which kind=phase
+    long long pf_rows_no_elev      = 0;   ///< …written with an empty elev_deg (station absent from the modeled set, or no satellite on the row)
+    long long pf_rows_unattributed = 0;   ///< rows attributed to neither family (the row tag is not an observation: pins, local prior and anchor rows, unclassified rows); counted, not written
+    long long pf_rows_no_signal    = 0;   ///< rows written with an empty signal (the row tag named no signal); 0 expected
+    // --- Spectrum bookkeeping (P1-3) ---
+    long long sh_spectrum_epochs      = 0;      ///< traced epochs (also drives the mode-detail stride)
+    bool      sh_spectrum_fail_logged = false;  ///< one-shot eigensolve-failure warn latch
+};
 
 }  // namespace GnssProcessor

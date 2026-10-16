@@ -255,4 +255,19 @@ int networkStationBlockRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of StationBlock, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct StationBlockCounters {
+    // Run-end accounting of the per-station local-block audit (SPEC_event_harness
+    // §24.10, network.trace_station_block).  Invariant #4 needs all four: "0
+    // rows under an armed trace" must be visible, and the two refusal counts say which
+    // of the two ways the sweep can find nothing happened: no station reached the
+    // audit at all, or the block itself could not be decomposed (a non-finite or
+    // empty N_rr).
+    long long sb_rows_written     = 0;   ///< station-epoch rows written to network_station_block.csv
+    long long sb_epochs_written   = 0;   ///< traced epochs that wrote at least one row
+    long long sb_stations_skipped = 0;   ///< station-epochs skipped: not in the solve, no usable assembly, or no local block
+    long long sb_decomp_failed    = 0;   ///< station-epochs skipped: N_rr unavailable or its eigen-decomposition did not converge
+    std::size_t sb_last_emitted   = 0;   ///< n_emitted of the last audited emission (one row set per emitted epoch, never per solve)
+};
+
 }  // namespace GnssProcessor

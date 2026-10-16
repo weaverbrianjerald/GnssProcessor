@@ -1140,4 +1140,16 @@ double networkRobustStepScale(std::vector<double>& abs_steps);
 bool networkLliCredibilityStep(bool credible_in, double frac_ewma, long count,
                                const SlipQcParams& p);
 
+/// @brief Run-scope counters of RawObservables, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RawObservablesCounters {
+    /// IF-TD pair width (§14.10, network.cycle_slip.if_phase_td_pairs): the on-path
+    /// telemetry of the added pairs, per pair kind: how many samples the pooled test
+    /// thresholded, how many it flagged, and how many of those flags freed an
+    /// ambiguity.  Collected independently of the knob: a `first` run reports the one
+    /// watched pair, so the clause sizes the knob before it is armed, and an `all` run
+    /// whose extra pair kinds show evaluated ≫ 0 with flagged 0 over a slipped bed is
+    /// dead wiring, not a quiet lane (invariant #4).
+    IfTdPairTallies n_iftd_pair;
+};
+
 } // namespace GnssProcessor

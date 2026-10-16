@@ -54,6 +54,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstddef>
 
 namespace spdlog { class logger; }
 
@@ -266,5 +267,63 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 StationStep networkRaimColumnCensus(StationBuild& build);
 
 // ---- End of the PASS B station steps, declarations ----
+
+/// @brief Run-scope counters of Raim, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RaimCounters {
+    /// Run-end telemetry of the RAIM pool re-host.  All zero unless
+    /// ctx.knobs.raim_ci_on; the denominators separate "seam never ran" from "census
+    /// empty" from "nothing flagged" (standing invariant #4).
+    NetworkRaimCiTallies raim_ci;
+
+    // Ambiguity-vehicle telemetry (RF-1, docs/refound/RF-1_float_ambiguities_design.md
+    //     §7.2 / §7.4).  Standing invariant #4: these counters are the on-path evidence,
+    //     and design §7.4's D3 states the rule in the other direction too: a float_kf
+    //     run with 0 drops is a miswire, not a quiet run.  The trace counters
+    //     (@c n_amb_state_rows / @c n_amb_state_events / @c n_amb_state_epochs), the
+    //     drop counters (step 4) and the S-transform counters (step 5) are all reported
+    //     at run end, so an arm that arms a mechanism and moves none of them is visible
+    //     at once rather than after a grade.
+    long long n_amb_drop              = 0;  ///< carried priors dropped back to their birth prior, value_abs kept (RF-1 step 4).
+    long long n_amb_drop_t4           = 0;  ///< …of which from the RAIM prominence-attribution refloat (the level vehicle erases the entry instead).
+    long long n_amb_drop_t3           = 0;  ///< …of which from the RAIM per-satellite consensus refloat (the level vehicle erases the entry instead).
+    // Telemetry of the drop-only floor (RF-3a,
+    //     docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A2), maintained in both knob
+    //     states so an off run reports the walk it suffers (standing invariant #4).
+    long long n_amb_drop_floored      = 0;  ///< drops whose restored variance came from network.amb_float_drop_var_m2, i.e. the drop floor at this LOS exceeded max(var_birth, var_first, birth floor).  0 by construction with the knob at 0.
+    long long n_amb_drop_pre_gate     = 0;  ///< drops taken before network.amb_float_drop_floor_after_ep opened, with an armed drop floor: the population the gate withheld the floor from (RF-3c).  0 with no gate, and 0 with no floor.
+    long long n_iono_blk_erased_t4  = 0;             ///< in-block iono carries erased by a T4/consensus arc refloat (invariant #1: the T4 statistic reads level and iono error as a sum, so the LOS re-draws both)
+    long long n_raim_pool_iono_rows = 0;             ///< post-fit RAIM pool admissions (station-epochs × rows) whose admitted row is one of the iono columns' whitened block rows: the §7 item 4 interaction measured for the I half, as n_raim_pool_zwd_rows measures it for the ρ half.  Counted only; the pool rule is unchanged.
+    long long n_amb_drop_decoupled_idem = 0;         ///< drops at birth strength that cleared a regression / block row (network.amb_float_drop_decouple_always)
+    long long n_raim_pool_rxclk_rows = 0;            ///< post-fit RAIM pool admissions (station-epochs x rows) whose admitted row is one of the clock-family columns' whitened block rows: the SPEC_amb_iono_split_overcount §7 item 4 interaction measured for the rho half, as n_raim_pool_zwd_rows / n_raim_pool_iono_rows measure it for theirs.  Counted only; the pool rule is unchanged.
+    long long n_raim_pool_zwd_rows  = 0;             ///< post-fit RAIM pool admissions (station-epochs) whose admitted row is the ZWD's whitened block row: the §7 item 4 interaction, measured (the pool admits a row whose coefficient on the ambiguity column exceeds 0.5 and whose kind the declared rule admits, filter/NetworkRowClassify @c raimPoolAdmitsKind; a ZWD block row is a carried-prior block kind the rule admits, and it mixes into ambiguity columns through L⁻¹).  Counted only; the pool rule is unchanged.
+    /// The carried-phase RAIM pools' admissions per contribution kind (
+    /// filter/NetworkRowClassify @c raimPoolAdmitsKind): the post-fit pool
+    /// (Raim.cpp; one walk per epoch it runs) and the within-epoch assess pool
+    /// (SolveGlue.cpp; one walk per assess call, the first and each replay's).
+    /// Read at run end; the declared rule admits the observation phase rows, the
+    /// coupling and block carried-prior rows and the SD-EWL constraint rows, so the
+    /// non-data rows' share is on record for the later science decision.
+    RaimPoolAdmissionTally raim_pool_postfit;
+    RaimPoolAdmissionTally raim_pool_within;   ///< As @c raim_pool_postfit, for the within-epoch assess pool.
+
+    // (C) One-solve refloats: the entry is erased after the harvest, so the arc
+    //     refloats on the next epoch.  Selected by quality.
+    long long n_cr_raim_attrib        = 0;  ///< attribution refloat, T4 (live only when network.raim_attribution is armed)
+    long long n_cr_raim_consensus     = 0;  ///< consensus refloat, T3 (live only when raim_attribution is not armed; the two are a run-constant either/or, never a split)
+    long long n_pc_erase_raim         = 0;  ///< entries erased by the RAIM attribution erase of their line of sight
+
+    // Declaration telemetry for both edges (invariant #7) and hygiene accounting
+    // (QUEUE item 4 R2/R4).
+    long long n_staf_departs          = 0;  ///< depart events (EWMA ratio > threshold; R2)
+    long long n_staf_returns          = 0;  ///< return events (hysteresis 0.8×; R2)
+    double    staf_max_ratio          = 0.0;///< run-max EWMA ratio to the network median
+    long long n_staf_epochs           = 0;  ///< epochs the factor was computed on
+    long long n_t3_untestable_cells   = 0;  ///< s_raw==0 cells excluded from the T3 opportunities (R4)
+
+    // Timing: the processed-epoch count and the T2e decimation counter (relocated from
+    // the loop-timing cluster; t_loop_begin stayed a run-TU local, and is
+    // run.timing.loop_begin now).
+    std::size_t n_loop_epochs = 0;
+};
 
 } // namespace GnssProcessor

@@ -238,4 +238,12 @@ void networkAmbIfTraceStation(NetworkRun& run, const NetworkEpoch& ep,
 
 // ---- End of the harvest half, declarations ----
 
+/// @brief Run-scope counters of AmbStateTrace, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct AmbStateTraceCounters {
+    long long n_amb_state_rows        = 0;  ///< network_amb_state.csv: trajectory rows written (one per carried (station,sat,signal) per traced epoch).
+    long long n_amb_state_events      = 0;  ///< network_amb_state.csv: rows carrying a non-empty `event` (birth / drop / erase / stransform).
+    long long n_amb_state_epochs      = 0;  ///< network_amb_state.csv: epochs that wrote at least one row.
+    long long n_amb_state_erase_rows  = 0;  ///< network_amb_state.csv: `erase:<cause>` rows, entries captured at the four erase sites before deletion.
+};
+
 }  // namespace GnssProcessor

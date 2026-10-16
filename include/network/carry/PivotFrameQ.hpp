@@ -56,4 +56,9 @@ struct PivotFrameCounters {
     double    rate_max{0.0};      ///< the largest pivot rate used (m^2/s)
 };
 
+/// @brief Run-scope counters of PivotFrameQ, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PivotFrameQCounters {
+    PivotFrameCounters pfq{};              ///< pivot-frame process-noise run totals (network/carry/PivotFrameQ.hpp)
+};
+
 }  // namespace GnssProcessor

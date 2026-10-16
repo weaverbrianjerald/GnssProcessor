@@ -188,8 +188,19 @@ def declared_members(body):
 
 
 def members_of(tree, struct):
-    b = struct_body(strip_comments(tree.get(RUN_CTX)), struct)
-    return declared_members(b[1:-1]) if b else []
+    """Members of a RunContext.hpp struct, including those of its bases.  The bases of
+    NetworkServiceCounters are counter structs declared in their owners' headers."""
+    text = strip_comments(tree.get(RUN_CTX))
+    b = struct_body(text, struct)
+    out = declared_members(b[1:-1]) if b else []
+    m = re.search(r'\bstruct\s+' + struct + r'\s*:([^{;]*)\{', text)
+    for base in [x.strip() for x in m.group(1).split(',')] if m else []:
+        pat = re.compile(r'\bstruct\s+' + base + r'\s*\{')
+        for p, src in tree.files.items():
+            if p.startswith('include/') and pat.search(src):
+                bb = struct_body(strip_comments(src), base)
+                out += declared_members(bb[1:-1]) if bb else []
+    return out
 
 
 def struct_members(body):

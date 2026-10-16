@@ -9,6 +9,8 @@
  */
 
 #include <memory>
+#include <map>
+#include <string>
 
 namespace GnssProcessor {
 
@@ -67,5 +69,54 @@ void networkSolveStationsTrack(NetworkRun& run, const NetworkEpoch& ep,
                                const EpochAssembly& assembly, bool epoch_ok);
 
 // ---- End of the PASS B serial stages, declarations ----
+
+/// @brief Run-scope counters of SolveStations, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SolveStationsCounters {
+
+    /// --- The addStation positive-definiteness drop, counted.
+    /// The drop removes one station for one epoch
+    /// (ApplicationNetworkAssembly.cpp: `present[i]=false`), and
+    /// `network_epoch_status.csv` does not report it: `n_present` still counts the
+    /// station, and otherwise the only record is a warning line in a rotating log.
+    /// These are always counted (the increment costs nothing and writes no output);
+    /// `network.trace_station_pd_null` arms the run-end readout and the per-rejection
+    /// `sta_pd_dropped` event rows.
+    long long pd_drop_epochs = 0;       ///< epochs whose serial consume loop ran (denominator)
+    long long pd_drop_total = 0;        ///< station-epochs dropped by the addStation PD rejection
+    long long pd_drop_named = 0;        ///< …of those, ones whose null direction was eigen-named (armed only)
+    long long pd_drop_pivot_abort = 0;  ///< epochs lost because the rejected station was the legacy pivot
+    int       pd_drop_max_ep = 0;       ///< largest per-epoch drop count over the run
+    double    pd_drop_max_ep_tow = 0.0; ///< …its epoch
+    /// Top-column family census over the named rejections (label prefix:
+    /// "AMB" / "IONO" / "CBIAS" / "ZWD" / "CLK" / "RPB" / "ISB" / "other").  The read
+    /// script does the per-station and persistence analysis off the event rows; this
+    /// is the run-end one-liner that says which family dominates without opening a
+    /// trace.
+    std::map<std::string, long long> pd_drop_family;
+    /// The same census weighted by mass: Σ over rejections of the null eigenvector's
+    /// per-family mass Σw² (each rejection contributes 1.0 in total).  The top-column
+    /// count above depends on where the top-5 cut fell; this one does not, and here
+    /// that matters: the null is spread nearly evenly over a whole band of ambiguities,
+    /// so the family ranked first is close to arbitrary while the mass split is stable.
+    std::map<std::string, double> pd_drop_family_mass;
+    /// --- The actual in-solve station count, and the re-coupling edge of invariant #7
+    ///.  `network_epoch_status.csv`'s `n_present` is the roster that
+    /// reached the consume loop, not the set that entered the arrowhead, so a
+    /// PD-dropped (or assembly-dropped) station still reads as present.  The run-end
+    /// tail and `network_run_summary.csv` report these instead, and they are always
+    /// accumulated; the `sta_readmitted` event rows ride `network.trace_topology`, the
+    /// counters do not.  The per-station return bookkeeping lives here in the run
+    /// context so that no seam keeps it in a function-local (the INC-12 rule).
+    struct StationSolveTrack {
+        bool      ever_in_solve = false;  ///< distinguishes a return from a first sighting
+        long long absent_streak = 0;      ///< consecutive consume epochs out of the solve
+    };
+    std::map<std::string, StationSolveTrack> sta_solve_track;
+    long long sta_in_solve_epochs = 0;       ///< number of epochs the above was recorded for (denominator)
+    int       sta_in_solve_min = -1;         ///< min over the run (−1 = never recorded)
+    double    sta_in_solve_min_tow = 0.0;    ///< …its epoch
+    long long sta_readmit_events = 0;        ///< stations that re-entered the solve after ≥ 1 absent epoch
+    long long sta_readmit_max_gap_ep = 0;    ///< longest absence that ended in a readmission
+};
 
 } // namespace GnssProcessor

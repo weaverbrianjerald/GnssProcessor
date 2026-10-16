@@ -85,4 +85,14 @@ int networkLevelAuthorityRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of LevelAuthority, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct LevelAuthorityCounters {
+    // Invariant #4 counters of the LV-6 census.
+    long long n_lvlauth_epochs   = 0;       ///< epochs with a FLEET row
+    long long n_lvlauth_immature = 0;       ///< LOS skipped at the min_n screen
+    double    lvlauth_sum = 0.0;            ///< Σ L_cs (teardown mean)
+    double    lvlauth_min =  1.0e30;        ///< run min L_cs (TECU)
+    double    lvlauth_max = -1.0e30;        ///< run max L_cs (TECU)
+};
+
 }  // namespace GnssProcessor
