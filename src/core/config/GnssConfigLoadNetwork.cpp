@@ -6164,6 +6164,12 @@ namespace GnssProcessor {
         // rows: a behavior change, graded as one and fingerprinted.
         network_n3c_band_signal_ =
             jval<bool>(json, "network.n3c_band_signal", "network_n3c_band_signal", false);
+        // The wire carries one bias per modelled signal.  Default off; armed, a modelled
+        // signal a satellite has no column for is filled from the same-band signal of its
+        // channel family, which changes the wire and the consumer that reads it, so it is
+        // graded as a behavior change and is fingerprinted.
+        network_n3c_wire_per_signal_ =
+            jval<bool>(json, "network.n3c_wire_per_signal", "network_n3c_wire_per_signal", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest

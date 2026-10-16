@@ -257,6 +257,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // The tracker pair without the lexical substitute changes which satellites the slip
         // detectors see and what their history holds.  Appended only when armed.
         if (config_.networkN3cBandSignal()) add("n3c:band_signal");
+        // The wire's per-signal records carry values the columns do not, so a closed-loop
+        // consumer resumed across the flip would hold a different bias set.  Appended only
+        // when armed.
+        if (config_.networkN3cWirePerSignal()) add("n3c:wire_per_signal");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

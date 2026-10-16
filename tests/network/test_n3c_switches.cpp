@@ -12,6 +12,8 @@
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp"
+#include "network/assembly/SignalRoster.hpp"
+#include "network/emit/SolPrep.hpp"
 #include "network/slip/RawObservables.hpp"
 #include "network/solve/Sbasis.hpp"
 
@@ -171,6 +173,74 @@ TEST(N3cSwitchesTest, TrackerLeavesAnUnusableModelledBandOutInsteadOfTheLexicalP
                                         true);
     ASSERT_NE(kept, nullptr);
     EXPECT_EQ(kept->sig1, "L1C");
+}
+
+// ---- D6: the wire carries one bias per modelled signal ----
+
+/// A roster whose one station models the given phase and code on band 1 of @p cons.
+SignalRoster oneStationRoster(const std::string& cons, const std::string& phase,
+                              const std::string& code) {
+    SignalRoster rs;
+    rs.by_station.resize(1);
+    BandRoster& cell = rs.by_station[0][cons]['1'];
+    cell.modelled_phase = phase;
+    cell.modelled_code  = code;
+    return rs;
+}
+
+TEST(N3cSwitchesTest, WireFillCopiesTheSameBandSignalOfTheSameFamily) {
+    // The network models L1W / C1W on GPS; the satellite has estimated L1C / C1C only.
+    const SignalRoster rs = oneStationRoster("GPS", "L1W", "C1W");
+    NetworkSolutionEpoch sol;
+    NetworkSatSolution s;
+    s.sat = "G05";
+    s.has_clock = true;
+    s.phase_bias["L1C"].bias_m = 0.25;
+    s.phase_bias["L1C"].sigma_m = 0.01;
+    s.code_bias_m["C1C"] = 1.5;
+    sol.sats.push_back(s);
+    const NetworkWireFillCounts f = networkWireFillModelledSignals(sol, rs);
+    EXPECT_EQ(f.phase, 1);
+    EXPECT_EQ(f.code, 1);
+    EXPECT_EQ(f.sats, 1);
+    const NetworkSatSolution& r = sol.sats.front();
+    ASSERT_EQ(r.phase_bias.count("L1W"), 1u);
+    EXPECT_DOUBLE_EQ(r.phase_bias.at("L1W").bias_m, 0.25);
+    EXPECT_DOUBLE_EQ(r.phase_bias.at("L1W").sigma_m, 0.01);
+    EXPECT_DOUBLE_EQ(r.code_bias_m.at("C1W"), 1.5);
+    // The estimated records stand, and the pass is idempotent.
+    EXPECT_EQ(r.phase_bias.size(), 2u);
+    EXPECT_EQ(networkWireFillModelledSignals(sol, rs).phase, 0);
+}
+
+TEST(N3cSwitchesTest, WireFillNeverCrossesFamiliesBandsOrConstellations) {
+    // Galileo models the combined I+Q signals (X); the satellite has the pilot signals only.
+    SignalRoster rs = oneStationRoster("Galileo", "L1X", "C1X");
+    NetworkSolutionEpoch sol;
+    NetworkSatSolution e;
+    e.sat = "E03";
+    e.has_clock = true;
+    e.phase_bias["L1C"].bias_m = 0.4;
+    e.code_bias_m["C1C"] = 2.0;
+    e.code_bias_m["C5Q"] = 3.0;
+    sol.sats.push_back(e);
+    // A GPS satellite: the Galileo roster names nothing for it.
+    NetworkSatSolution g;
+    g.sat = "G05";
+    g.has_clock = true;
+    g.phase_bias["L1C"].bias_m = 0.1;
+    sol.sats.push_back(g);
+    // A satellite without a clock record gets nothing.
+    NetworkSatSolution n;
+    n.sat = "E04";
+    n.phase_bias["L1C"].bias_m = 0.2;
+    sol.sats.push_back(n);
+    const NetworkWireFillCounts f = networkWireFillModelledSignals(sol, rs);
+    EXPECT_EQ(f.phase + f.code, 0);
+    EXPECT_EQ(sol.sats[0].phase_bias.count("L1X"), 0u);   // X is another family than C
+    EXPECT_EQ(sol.sats[0].code_bias_m.count("C1X"), 0u);
+    EXPECT_EQ(sol.sats[1].phase_bias.size(), 1u);
+    EXPECT_EQ(sol.sats[2].phase_bias.size(), 1u);
 }
 
 }  // namespace
