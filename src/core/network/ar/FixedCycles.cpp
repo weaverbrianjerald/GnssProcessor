@@ -837,7 +837,7 @@ int networkFixedCyclesRunEnd(const NetworkRunEndView& v) {
     for (double t : C.unit_t) if (!(t <= unit_bar)) ++t_above;
     const auto act = [&](UnitAction a) { return C.by_action[static_cast<std::size_t>(a)]; };
 
-    v.log->info("Network (fixed-cycle fold, card FCF): mode {}, source {}, hold {} cycle.  {} "
+    v.log->info("Network (fixed-cycle fold): mode {}, source {}, hold {} cycle.  {} "
                 "epoch(s) armed, {} with the search, {} with a determined L1/L2 pair; {} held "
                 "solve(s) accepted ({} pass(es) run){}.  {} unit(s): [{}].  Folded units per "
                 "accepted epoch p50 {:.0f}, max {:.0f}; {} block(s) folded (K p50 {:.0f}, max {:.0f}).",
@@ -848,7 +848,7 @@ int networkFixedCyclesRunEnd(const NetworkRunEndView& v) {
                 C.units, actionText(C.by_action), RobustStats::median(C.units_per_epoch),
                 maxOf(C.units_per_epoch), C.blocks_folded, RobustStats::median(C.block_k),
                 maxOf(C.block_k));
-    v.log->info("Network (fixed-cycle fold, card FCF): unit test T (chi-square, 2 dof) p50 {:.3f}, "
+    v.log->info("Network (fixed-cycle fold): unit test T (chi-square, 2 dof) p50 {:.3f}, "
                 "p95 {:.3f}, max {:.3f}; {} of {} above the bar {:.2f} (alpha {:.0e}, rate {:.2e}).  "
                 "Block acceptance: own statistic over its stated mean p50 {:.3f}, p95 {:.3f}; "
                 "stated mean over K p50 {:.3f}; {} block failure(s) (dropped {}, left float {}).",
@@ -858,7 +858,7 @@ int networkFixedCyclesRunEnd(const NetworkRunEndView& v) {
                 quantileOf(C.chi2_ratio, 0.5), quantileOf(C.chi2_ratio, 0.95),
                 quantileOf(C.expect_per_dof, 0.5), C.blocks_failed, act(UnitAction::Dropped),
                 act(UnitAction::LeftFloat));
-    v.log->info("Network (fixed-cycle fold, card FCF): guards: float_mismatch {} unit(s), "
+    v.log->info("Network (fixed-cycle fold): guards: float_mismatch {} unit(s), "
                 "non_finite {}, kernel_errors {}, shift_refused {}, degenerate block(s) {} ({} "
                 "dependent), epochs with a pair and no accepted held solve {}.  Float reproduction "
                 "(normwise backward error) p50 {:.2e}, p95 {:.2e}, max {:.2e} (bar {:.0e}); largest "
@@ -872,7 +872,7 @@ int networkFixedCyclesRunEnd(const NetworkRunEndView& v) {
                 quantileOf(C.seam_ms, 0.95), maxOf(C.seam_ms));
     if (lattice) {
         const ArLatticeCounters& L = v.ctx.counters.netar_lattice;
-        v.log->info("Network (fixed-cycle fold, card FCF): the ledger's units (admitted after {} "
+        v.log->info("Network (fixed-cycle fold): the ledger's units (admitted after {} "
                     "epoch(s) at one integer): implied per searched epoch p50 {:.0f}, max {:.0f}; "
                     "{} implied, {} failing their float test and released (the ledger's report "
                     "names the rows), {} released with another unit's rows, {} lapsed (lapse_ep "
@@ -886,22 +886,22 @@ int networkFixedCyclesRunEnd(const NetworkRunEndView& v) {
                     ar.fixed_cycle_lapse_ep > 0 ? "" : ", off", C.folded_unkept, C.onsets, C.offsets,
                     C.late_t3t4, C.plants);
         if (L.units == 0)
-            v.log->warn("Network (fixed-cycle fold, card FCF): source lattice ARMED, but the ledger "
+            v.log->warn("Network (fixed-cycle fold): source lattice ARMED, but the ledger "
                         "never implied a unit ({} step(s)); every fold number above is structurally "
                         "empty (standing invariant 4).", L.epochs);
     }
     if (C.held_solves != C.epochs_with_pair)
-        v.log->warn("Network (fixed-cycle fold, card FCF): {} epoch(s) had a determined L1/L2 pair "
+        v.log->warn("Network (fixed-cycle fold): {} epoch(s) had a determined L1/L2 pair "
                     "but only {} held solve(s) were accepted (standing invariant 4): {} epoch(s) "
                     "stayed float; their units' fates are counted above and traced.",
                     C.epochs_with_pair, C.held_solves, C.epochs_with_pair - C.held_solves);
     if (C.held_solves == 0)
-        v.log->warn("Network (fixed-cycle fold, card FCF): ARMED, but no held solve was ever "
+        v.log->warn("Network (fixed-cycle fold): ARMED, but no held solve was ever "
                     "accepted ({} epoch(s) with a pair); every fold number above is structurally "
                     "empty (standing invariant 4).", C.epochs_with_pair);
     if (act(UnitAction::KernelError) + act(UnitAction::FloatMismatch) + act(UnitAction::NonFinite) > 0
         || C.blocks_degenerate > 0)
-        v.log->warn("Network (fixed-cycle fold, card FCF): the kernel refused or failed: {} unit(s) "
+        v.log->warn("Network (fixed-cycle fold): the kernel refused or failed: {} unit(s) "
                     "by kernel error, {} by float mismatch, {} by a non-finite held estimate, {} "
                     "degenerate block(s); each such epoch stayed float.",
                     act(UnitAction::KernelError), act(UnitAction::FloatMismatch),

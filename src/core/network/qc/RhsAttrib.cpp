@@ -1613,7 +1613,7 @@ void writeLocalShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecompo
     const NetworkRhsLocalShares ls = networkRhsAttribLocalShares(f, dec, labels);
     if (!ls.valid) {
         if (once("<no local capture>"))
-            log->warn("Network (rhs-attrib, card L5B): [{}] tow {:.1f}: the frame holds no "
+            log->warn("Network (rhs-attrib decomposition): [{}] tow {:.1f}: the frame holds no "
                       "station-local capture, so the {} station-local label(s) are not "
                       "decomposed (the capture needs the solve's x_s, which the armed "
                       "network.rhs_attrib_tow dumps and a trip's current-epoch dump carry and "
@@ -1650,7 +1650,7 @@ void writeLocalShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecompo
                        t.resolved ? num(t.solved) : "", "", ""});
         if (!t.resolved) {
             if (once(t.label))
-                log->warn("Network (rhs-attrib, card L5B): [{}] tow {:.1f}: '{}' not "
+                log->warn("Network (rhs-attrib decomposition): [{}] tow {:.1f}: '{}' not "
                           "decomposed: {} (its slot is kept; named once)",
                           kind, f.tow, t.label, t.note);
             continue;
@@ -1681,14 +1681,14 @@ void writeLocalShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecompo
 
         // ---- the run log -----------------------------------------------------------------
         const std::string what = t.key == "GFDIR" ? std::string("level direction") : t.name;
-        log->info("Network (rhs-attrib, card L5B): [{}] tow {:.1f} {} ({}): x_r {:.6f} = "
+        log->info("Network (rhs-attrib decomposition): [{}] tow {:.1f} {} ({}): x_r {:.6f} = "
                   "direct (this station's rows and folds) {:.6f} + feedback through the shared "
                   "solution {:.6f} + constraints {:.6f} (closure abs {:.3e} rel {:.3e}, "
                   "unattributed {:.3e})",
                   kind, f.tow, t.label, what, t.solved, t.attributed, t.feedback,
                   t.sumzero + t.ddprior, t.closure_abs, t.closure_rel, t.unattributed);
         if (!t.fb_split) {
-            log->warn("Network (rhs-attrib, card L5B): [{}] tow {:.1f} {}: the constrained "
+            log->warn("Network (rhs-attrib decomposition): [{}] tow {:.1f} {}: the constrained "
                       "operator did not factorize; the shared-path shares are empty and no "
                       "station net is written", kind, f.tow, t.label);
             continue;
@@ -1714,7 +1714,7 @@ void writeLocalShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecompo
             }
             if (q.record == "FBFOLD") folds += q.share;
         }
-        log->info("Network (rhs-attrib, card L5B): [{}] tow {:.1f} {}: by station net (every "
+        log->info("Network (rhs-attrib decomposition): [{}] tow {:.1f} {}: by station net (every "
                   "kind together, direct + through the shared solution): this station {:.6f} "
                   "(direct {:.6f}, shared {:.6f}), {} other stations {:.6f}, shared folds, DD "
                   "folds and datum {:.6f}, constraints {:.6f} (split closure {:.3e}); largest "
@@ -1732,7 +1732,7 @@ void writeLocalShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecompo
             checks += fmt::format("{}{} {}: {:+.6f} vs {:+.6f}", checks.empty() ? "" : "; ",
                                   q.channel, who, q.share, q.check);
         }
-        log->info("Network (rhs-attrib, card L5B): [{}] tow {:.1f} {}: checks of single "
+        log->info("Network (rhs-attrib decomposition): [{}] tow {:.1f} {}: checks of single "
                   "parts: one refinement step moved a part by at most {:.3e} m ({}); "
                   "attributed vs re-solved without the group's prefits: {} (largest "
                   "difference {:.3e} m)",

@@ -31,7 +31,7 @@ bool secondCodeAllowEntryValid(const std::string& entry, std::string* why) {
     if (obsTypeOf(entry) != ObsType::Code)
         return refuse("not a CODE type (must start with 'C')");
     if (entry[1] != '1')
-        return refuse("not on band 1 (band 2 is a follow-up card: it would wake "
+        return refuse("not on band 1 (band 2 is a follow-up: it would wake "
                       "the untested bridging path of network.sat_isc_state)");
     if (why) why->clear();
     return true;
@@ -98,7 +98,7 @@ int networkSecondCodeScopeRunEnd(const NetworkRunEndView& v) {
         C.fallback_rows += st.scc_fallback_rows;
     }
     if (C.rows == 0 && C.cells == 0) {
-        log->warn("Network (SECOND CODE CHANNEL, card SCC): ARMED but NO companion code "
+        log->warn("Network (SECOND CODE CHANNEL): ARMED but NO companion code "
                   "row was ever added — no station reported a second allow-listed band-1 "
                   "code besides its latched canonical one, so this run exercised nothing "
                   "and is byte-equivalent to the unarmed posture (standing invariant #4).  "
@@ -106,31 +106,31 @@ int networkSecondCodeScopeRunEnd(const NetworkRunEndView& v) {
                   "construction; on the field roster it means the allow-list names codes "
                   "the stations do not track.");
     } else {
-        log->info("Network (SECOND CODE CHANNEL, card SCC): {} companion cell-epoch(s) over "
+        log->info("Network (SECOND CODE CHANNEL): {} companion cell-epoch(s) over "
                   "{} opening(s) and {} closing(s) (standing invariant #7's two edges), "
                   "folding {} companion code row(s) at sigma x {:.3f}; {} row(s) took the "
                   "FALLBACK path (an allow-listed band-1 code with no latched canonical "
-                  "beside it — a finding about the latch, not about this card).  Receiver "
+                  "beside it — a finding about the latch, not about this channel).  Receiver "
                   "inter-signal states alive at the busiest epoch: {}, of which {} "
                   "RESEED(s) over the run — a reseed is a state a station had held before, "
                   "did not hold last epoch and holds again, i.e. one the receiver "
                   "code-bias carry did not restore, so it re-determined itself from one "
                   "epoch of code.  {} (satellite, signal) column-epoch(s) reached the "
                   "two-station registration bar ONLY through companions: that number is "
-                  "the card's thesis, and a zero means the channel added rows without "
+                  "the channel's thesis, and a zero means the channel added rows without "
                   "ever adding a column the wire did not already carry.",
                   C.cells, C.cell_open, C.cell_close, C.rows,
                   config_.networkSecondCodeSigmaScale(), C.fallback_rows,
                   C.isc_states_max, C.isc_reseeds, C.cols_via_companion);
         if (C.isc_states_max == 0)
-            log->warn("Network (SECOND CODE CHANNEL, card SCC): companion rows were folded "
+            log->warn("Network (SECOND CODE CHANNEL): companion rows were folded "
                       "but NO receiver inter-signal state ever existed — every companion "
                       "row therefore ASSERTED a zero receiver inter-signal bias and pushed "
-                      "the difference into the satellite column, which is the defect card "
-                      "B5D measured at metres on a third band.  Check that "
+                      "the difference into the satellite column, which is the band-5 code-datum defect"
+                      " measured at metres on a third band.  Check that "
                       "estimate_ifb / the network satellite code bias are on.");
         if (C.cols_via_companion == 0)
-            log->warn("Network (SECOND CODE CHANNEL, card SCC): NO (satellite, signal) "
+            log->warn("Network (SECOND CODE CHANNEL): NO (satellite, signal) "
                       "column reached the two-station bar only through companions — the "
                       "channel added rows to columns the wire already carried and widened "
                       "no family's roster.");

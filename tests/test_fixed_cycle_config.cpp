@@ -186,7 +186,7 @@ constexpr const char* kRecord = "Network producer AR ARMED, but the emitted prod
 /// The Emit variant's first clause.
 constexpr const char* kEmitVariant = "Network producer AR ARMED with fixed_cycles.fold EMIT";
 /// The slip-fix refusal (Emit) and warning (Observe).
-constexpr const char* kSlipRefusal = "requires the slip fixes of card ARL section 13";
+constexpr const char* kSlipRefusal = "requires the slip fixes";
 constexpr const char* kSlipWarning = "fixed_cycles.fold observe runs without the slip fixes";
 
 TEST(FixedCycleConfig, DefaultsAreTheUnarmedPosture) {
@@ -426,7 +426,7 @@ TEST(FixedCycleConfig, TheRecordsWarningIsUnchangedUnlessEmit) {
     EXPECT_EQ(emit.text.find(kRecord), std::string::npos);
     EXPECT_NE(emit.text.find(kEmitVariant), std::string::npos);
     EXPECT_NE(emit.text.find("screened by a per-unit test"), std::string::npos);
-    EXPECT_NE(emit.text.find("the guard is the slip fixes of card ARL section 13"), std::string::npos);
+    EXPECT_NE(emit.text.find("the guard is the slip fixes"), std::string::npos);
 }
 
 }  // namespace

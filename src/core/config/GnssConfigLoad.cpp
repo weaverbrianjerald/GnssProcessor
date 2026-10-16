@@ -684,13 +684,13 @@ namespace GnssProcessor {
                       "no position information, so the phase model stays consistent only if the "
                       "ambiguity absorbs it exactly; a satellite-common move is absorbed "
                       "uniformly and is exactly consistent.  This REPLACES the reset reaction "
-                      "AND the card-CC declared-step carry, so a declared step is translated "
+                      "AND the declared-step carry, so a declared step is translated "
                       "exactly once.  First sightings / A5 freshness edges, an NL/WL basis, a "
                       "BSSD consumer and unknown keys still take the reset when DECLARED and "
                       "are a counted no-op when not.",
                       ssr_phase_bias_step_translate_eps_m_);
             if (ssr_phase_bias_disc_carry_)
-                log->warn("processing.ssr_phase_bias_disc_carry is also armed: the card-CC carry "
+                log->warn("processing.ssr_phase_bias_disc_carry is also armed: the declared-step carry "
                           "seam is NOT entered while the step translation is on (its counters "
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
@@ -704,9 +704,9 @@ namespace GnssProcessor {
         if (ssr_pb_hold_presence_flip_) {
             log->info("SSR phase-bias hold PRESENCE EDGES ON: a held phase bias that "
                       "appears on a row the consumer already uses, or leaves it, takes the A5 "
-                      "reaction of an unheld key (reset; carry under card CC; translate under "
-                      "card PBT) instead of none.  The hold still owns the discontinuity counter "
-                      "and the generation.");
+                      "reaction of an unheld key (reset; carry under the declared-step carry; "
+                      "translate under the step translation) instead of none.  The hold still "
+                      "owns the discontinuity counter and the generation.");
             if (!enable_ssr_bias_max_age_)
                 log->warn("processing.ssr_pb_hold_presence_flip is armed without "
                           "processing.enable_ssr_bias_max_age: the A5 edge is tracked only under "
@@ -1084,7 +1084,7 @@ namespace GnssProcessor {
                 nc.orbit_clock_max_skew_s = 0.0;
             }
             if (nc.orbit_clock_max_skew_s > 0.0)
-                log->info("Network-consumer orbit/clock coherence budget (Card 7): "
+                log->info("Network-consumer orbit/clock coherence budget: "
                           "orbit_clock_max_skew_s = {:.1f}s — a network clock whose "
                           "orbit echo disagrees with the applied SSR orbit (IOD-SSR, "
                           "presence, or content-epoch skew beyond the budget) is "

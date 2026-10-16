@@ -743,7 +743,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                     t.second += o.second;
                 }
             }
-            log->info("Network (Card 1f orphan attribution) tow {:.0f}: {} family-sum "
+            log->info("Network (coupling orphan attribution) tow {:.0f}: {} family-sum "
                       "orphan(s) this epoch — {} — truncated mass with no present "
                       "same-constellation recipient; the row stays gauge-dirty for that "
                       "family (no cross-constellation fallback by design).",
@@ -805,7 +805,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                         gsum[letterOfSat(d.sat)] += Rc.A_s(row, col);
                 std::string gs;
                 for (const auto& [cch, v] : gsum) gs += fmt::format("{}:{:+.3e} ", cch, v);
-                log->info("Network (Card 1d dbg): TOW {:.1f} sta {} cplrow {} local_col {}: "
+                log->info("Network (coupling-carry debug): TOW {:.1f} sta {} cplrow {} local_col {}: "
                           "w={:.9e} y={:.9e} A_s nnz={} max|A_s|={:.9e} data_rows_on_local={} "
                           "gauge_sums[{}]",
                           tow, i, r, lc, Rc.w(row), Rc.y(row), nnz,
@@ -846,7 +846,7 @@ static int networkCouplingCarryRunEnd(const NetworkRunEndView& v) {
     const auto& n_cpl_terms_shrunk = v.ctx.counters.n_cpl_terms_shrunk;
 
     if (carry_cpl_cond)
-        log->info("Network (Card 1/1d): coupling-carry volume — stashes: {} with a regression, "
+        log->info("Network: coupling-carry volume — stashes: {} with a regression, "
                   "{} EMPTY-regression (diagonal degrade), {} harvest failures; injected terms: "
                   "{} present, {} departed, {} kappa-shrunk (time-update {}).",
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
@@ -877,14 +877,14 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
     // departed count moves for many reasons and cannot tell armed-and-working from
     // armed-and-inert.
     if (carry_cpl_cond && ctx.knobs.carry_cpl_reinit) {
-        log->info("Network (Card 1g): realization-step reinit sources — {} coupling term(s) "
+        log->info("Network: realization-step reinit sources — {} coupling term(s) "
                   "diverted to the departed route by the WIDENED (kind,sat,signal) probe "
                   "(terms the legacy sat-wide probe would have folded as PRESENT, in a "
                   "retired frame).", ctx.counters.n_cpl_reinit_diverted);
         if (ctx.counters.n_cpl_reinit_diverted == 0)
-            log->warn("Network (Card 1g): armed but diverted ZERO terms — no realization-step "
+            log->warn("Network: armed but diverted ZERO terms — no realization-step "
                       "mark ever coincided with a live coupling term on the same "
-                      "(kind,sat,signal).  The card is INERT for this run: either no "
+                      "(kind,sat,signal).  The diversion is INERT for this run: either no "
                       "re-reference occurred, or the feeds are miswired.  Check the "
                       "PBGAUGE / eq34 / datum-slip event counts before reading an A/B as "
                       "'no effect'.");
@@ -893,15 +893,15 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
     // truncated rows, so "0 held / 0 orphan" with departed terms > 0 is a miswire, not a
     // quiet run; the line distinguishes the two (invariant #4).
     if (carry_cpl_cond && ctx.knobs.carry_cpl_gauge) {
-        log->info("Network (Card 1f): coupling-row datum-gauge projection — {} "
+        log->info("Network (coupling gauge): coupling-row datum-gauge projection — {} "
                   "(constellation,kind) family sum(s) HELD at their harvest value against a "
                   "truncated column, {} ORPHANED (truncated mass with no present recipient — "
                   "those rows stayed gauge-dirty).",
                   ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan);
         if (ctx.counters.n_cpl_gauge_held == 0 && ctx.counters.n_cpl_gauge_orphan == 0
             && n_cpl_terms_departed > 0)
-            log->warn("Network (Card 1f): {} departed coupling term(s) were injected but the "
-                      "gauge projection held NOTHING — the card is armed and inert.  Expected "
+            log->warn("Network (coupling gauge): {} departed coupling term(s) were injected but the "
+                      "gauge projection held NOTHING — the gauge projection is armed and inert.  Expected "
                       "causes: every departed term was VtecSh or had an empty satellite id "
                       "(both excluded by design), or the rows never reached the restore.  "
                       "Investigate before reading an A/B as 'no effect'.",
@@ -921,10 +921,10 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
                                           fam_detail.empty() ? "" : ", ",
                                           fam.first, kind_s, o.first, o.second);
             }
-            log->warn("Network (Card 1f): {} family(ies) had truncated coefficient mass with NO "
+            log->warn("Network (coupling gauge): {} family(ies) had truncated coefficient mass with NO "
                       "present column to carry it — the whole family departed at once, so the "
                       "row cannot be made gauge-invariant this epoch and still observes the "
-                      "datum gauge.  This is the residue the card cannot remove; if it is a "
+                      "datum gauge.  This is the residue the gauge projection cannot remove; if it is a "
                       "large fraction of `held`, the carry is outliving its border.  "
                       "Attribution: [{}].",
                       ctx.counters.n_cpl_gauge_orphan, fam_detail);

@@ -50,7 +50,7 @@ R_MIN_EPOCHS = 10
 WL_PAIRS = (("L1C", "L2W"), ("L1W", "L2W"))
 
 COUNTER_PATTERNS = {
-    "reref_erase_shift": re.compile(r"Network \(Card 3/eq34\): (\d+) \(sat,\S+\) re-reference\(s\), "
+    "reref_erase_shift": re.compile(r"Network \((?:Card 3/)?eq34\): (\d+) \(sat,\S+\) re-reference\(s\), "
                                     r"(\d+) local carry value\(s\) erased, (\d+) carry value\(s\) "
                                     r"S-transformed"),
     "shift_calls": re.compile(r"mechanism eq34_shift: (\d+) call\(s\)"),

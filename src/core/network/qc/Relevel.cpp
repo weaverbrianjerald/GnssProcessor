@@ -146,7 +146,7 @@ if (brdc_rts) {
                                  ctx.knobs.rebase_complete);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
-            log->info("Network (Card 6): {} eph cutover IODE {}->{} — re-leveled carried "
+            log->info("Network (ephemeris cutover): {} eph cutover IODE {}->{} — re-leveled carried "
                       "clock by {:.4f} m (−Δ_eph); no discontinuity bump.",
                       sat, old_iode, new_iode, -d);
             emitEvent("RELEVEL", "eph_cutover_relevel", sat, "", -d, std::nullopt,
@@ -158,7 +158,7 @@ if (brdc_rts) {
             // ambiguity across the step); NetworkSolPrep lands it at the satellite's next
             // actual emit.  Not expected when the check runs every epoch.
             net::markSat(ctx.entities, sat, net::Disc::EphCutover);
-            log->warn("Network (Card 6): {} eph cutover IODE {}->{} but the prior version "
+            log->warn("Network (ephemeris cutover): {} eph cutover IODE {}->{} but the prior version "
                       "is no longer held — forcing a per-sat discontinuity (Δ_eph "
                       "incomputable).", sat, old_iode, new_iode);
             emitEvent("RELEVEL", "eph_cutover_disc", sat, "", std::nullopt, std::nullopt,

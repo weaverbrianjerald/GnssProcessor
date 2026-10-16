@@ -463,9 +463,9 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
         log->info("Network (station congruence): INC-3 separability over {} joined "
                   "station-epoch(s) — congruence LOUD x [block quiet {}, block flagged "
                   "{}] | congruence quiet x [{}, {}].  The a-cell (loud here, quiet "
-                  "there) is the population ONLY this card can see: a coherent "
+                  "there) is the population ONLY this screen can see: a coherent "
                   "all-LOS coordinate offset.  A large b-cell instead means the two "
-                  "tiers are firing on the same events and this card is not adding a "
+                  "tiers are firing on the same events and this screen is not adding a "
                   "fault class.",
                   n, c[0][0], c[0][1], c[1][0], c[1][1]);
     }
@@ -486,7 +486,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
     log->info("Network (station congruence): MEASURE-ONLY — no coordinate was moved, "
               "deweighted or re-estimated, and no downstream consumer read any number "
               "above.  Re-coordinating a station is a DATUM act (invariant #7, both "
-              "edges) and belongs to its own card.");
+              "edges) and belongs to its own change.");
 }
 
 // ---- The predict half (frozen text of Application::networkProcessEpoch_,

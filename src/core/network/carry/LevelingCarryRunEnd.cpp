@@ -119,11 +119,11 @@ static int networkLevelingRetirementRunEnd(const NetworkRunEndView& v) {
                   "ZWD in block: {} col(s), {} diagonal fallback(s), {} missing cross "
                   "term(s), {} RAIM-pool admission(s) of the ZWD row{}.  "
                   "Iono in block: {} col(s), {} fallback(s) (block non-SPD ⇒ NOT "
-                  "folded; this card has no diagonal iono row by design), {} missing "
+                  "folded; this carry has no diagonal iono row by design), {} missing "
                   "cross term(s), {} RAIM-pool admission(s), {} erased by T4, {} "
                   "dropped at gaps; q {:.3e} m² per epoch at L1, gap bound {:.0f} s{}.  "
                   "Rx clock in block: {} col(s) ({} ISB), {} not folded (block non-SPD "
-                  "⇒ carried nothing; this card has no diagonal clock row by design), "
+                  "⇒ carried nothing; this carry has no diagonal clock row by design), "
                   "{} missing cross term(s), {} RAIM-pool admission(s), {} refused "
                   "(innovation: a clock JUMP at >{:.1f} sigma, carry erased), {} dropped "
                   "at gaps; bias q {:.3e} m² per epoch, drift q {:.3e} m²/s² per epoch "
@@ -233,7 +233,7 @@ static int networkLevelingResponseRunEnd(const NetworkRunEndView& v) {
         log->info("Network (leveling-carry retirement census) [C]: on the float vehicle "
                   "the T4 and T3 responses are bounded drops (value kept, variance back to "
                   "birth strength, regression cleared), not erases; the counts above are "
-                  "drops (card PRM phase 3a, the response table).");
+                  "drops (the response table).");
     return 0;
 }
 

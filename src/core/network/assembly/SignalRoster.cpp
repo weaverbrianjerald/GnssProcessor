@@ -485,13 +485,11 @@ namespace GnssProcessor {
               "the two rules latch a different signal on at least one (band, "
               "observation type)" },
             { RosterSite::SlipTrackerBand, "slip_tracker_band", "signal",
-              "the arc-level slip tracker's band pair (networkComputeRawObservables; "
-              "card NOM section 18 E9)",
+              "the arc-level slip tracker's band pair (networkComputeRawObservables)",
               "tracker band slots on a band with a modelled phase",
               "the slot names a phase other than the modelled one" },
             { RosterSite::IfPinPair, "if_pin_pair", "signal",
-              "the S-basis ionosphere-free pin pair (NetworkSbasis::selectIfPinPair; "
-              "card NOM section 18 A1)",
+              "the S-basis ionosphere-free pin pair (NetworkSbasis::selectIfPinPair)",
               "roster cells with a modelled code, given the pinned code of their "
               "(constellation, band)",
               "the pinned code is not the station's modelled code" },
@@ -816,7 +814,7 @@ namespace GnssProcessor {
                                   tail));
         }
         out.push_back("not in this table: the other band-role and signal-choice sites of "
-                      "card NOM section 18 (groups A to G), which have no counter against "
+                      "the object-model audit (groups A to G), which have no counter against "
                       "the roster yet; step N3b adds one per site");
         return out;
     }
@@ -910,7 +908,7 @@ namespace GnssProcessor {
         for (const auto& st : stations)
             if (st.sm) st.sm->setRecordPrunedAmbiguities(true);
 
-        log->info("Network (card SID / SIGNAL ROSTER + ARC LEDGER, card NOM step N3a): "
+        log->info("Network (SIGNAL ROSTER + ARC LEDGER): "
                   "built on every epoch.  The roster (per station, constellation and "
                   "band: the tracked, modelled, companion, excluded and datum signals, "
                   "copied from the canonical latch) and the arc ledger are read by the "
@@ -930,7 +928,7 @@ namespace GnssProcessor {
                            : "OFF (no ledger row is written; the census does not "
                              "depend on it)");
         if (ctx.reasons.armed)
-            log->info("Network (card SID phase 4a / LEDGER SCREENS): ARMED "
+            log->info("Network (LEDGER SCREENS): ARMED "
                       "(network.ledger_screens).  Every removal screen records the arcs "
                       "it removed and its reason bit into the per-epoch buffer, and the "
                       "audit pass folds the buffer into the admitted gap it opened; a "
@@ -2038,7 +2036,7 @@ namespace GnssProcessor {
         if (wire_cb.empty()) wire_cb = "none";
 
         log->info(
-            "Network (card SID phase 1 / SIGNAL ROSTER + ARC LEDGER, OBSERVATORY): "
+            "Network (SIGNAL ROSTER + ARC LEDGER, OBSERVATORY): "
             "the run-end table.  BUILD: {} epoch(s), {} (station, constellation, "
             "band) cell(s) of which {} carry a modelled role, {} tracked signal(s), "
             "{} companion(s), {} exclusion(s) [{} allowlist + {} not_latched + {} "
@@ -2055,7 +2053,7 @@ namespace GnssProcessor {
                 : "");
 
         log->info(
-            "Network (card SID phase 1 / DISAGREEMENT CLASSES): "
+            "Network (DISAGREEMENT CLASSES): "
             "(a) TRACKER vs modelled_phase: {} of {} compared row-slot(s) name a "
             "different signal ({} slot(s) had no modelled phase to compare against); "
             "run-end CELL census {} of {} (station, constellation, band) cell(s) whose DOMINANT "
@@ -2063,7 +2061,7 @@ namespace GnssProcessor {
             "band 2 {}].  "
             "(b) COUNT rule vs PRIORITY rule: {} of {} station(s) latch differently on "
             "at least one (band, obs type), of which {} differ on the BAND-1 PHASE "
-            "(card CSL's own population); {} station(s) unreachable: their candidate "
+            "(the canonical signal latch's own population); {} station(s) unreachable: their candidate "
             "list was never retained.  "
             "(c) local_carry vs the ledger: {} entr(y|ies) examined, {} at a DEAD arc, "
             "{} at an arc the ledger never saw, and {} MODELLED arc(s) Tracking with "
@@ -2094,7 +2092,7 @@ namespace GnssProcessor {
             c.gate_drop_edges, c.gate_drop_edges_gapped, c.gate_drop_edges_tracking);
 
         log->info(
-            "Network (card SID phase 1 / ARC LEDGER): horizon {:.0f} s [= max(pl {:.0f}, "
+            "Network (ARC LEDGER): horizon {:.0f} s [= max(pl {:.0f}, "
             "pb_hold {:.0f}, readmit {:.0f})], forget {} epoch(s).  "
             "TRANSITIONS: {} birth, {} gap, {} reentry, {} death; {} re-entry(ies) "
             "after any gap, {} after 2 to 30 missed epochs at an arc with a live "
@@ -2103,7 +2101,7 @@ namespace GnssProcessor {
             "arrival site is upstream of the elevation mask, the allow list and every "
             "admission screen, so the ledger tracks what the RECEIVER reported, which "
             "is a strict superset of what the estimator carries.  The CARRY-SIDE "
-            "census, which is the population the card's 195 / 68 were measured on "
+            "census, which is the population the earlier 195 / 68 were measured on "
             "(the carry's RE-STASH stamp epoch to epoch, which is exactly what "
             "network_amb_state.csv writes a row for), reads {} return(s) after at "
             "least one missed epoch over {} re-stash(es) walked, {} of them after 2 to "
@@ -2150,7 +2148,7 @@ namespace GnssProcessor {
         if (datum_ph_line.empty()) datum_ph_line = "none";
 
         log->info(
-            "Network (card SID phase 2 / THE READER, THE WRITER AND THE ADMITTED "
+            "Network (THE READER, THE WRITER AND THE ADMITTED "
             "LIFECYCLE): "
             "TRACKER READ (network.roster_tracker): {} lookup(s) answered by a roster "
             "cell, {} fell back to the station LATCH (the roster is built upstream of "
@@ -2207,7 +2205,7 @@ namespace GnssProcessor {
         // Phase 3: the prune and expiry edges, and the unified answered split
         // ---------------------------------------------------------------
         log->info(
-            "Network (card SID phase 3 / PRUNE AND EXPIRY EDGES): "
+            "Network (PRUNE AND EXPIRY EDGES): "
             "(R3a) the leveling carry's gap prune retired {} entr(y|ies) at "
             "phase_leveling_max_gap_s = {:.0f} s, each an ARC arc_death with "
             "reason=horizon in the ledger's trace ({}); that edge emitted NOTHING "
@@ -2236,7 +2234,7 @@ namespace GnssProcessor {
             return d > 0 ? 100.0 * static_cast<double>(n) / static_cast<double>(d) : 0.0;
         };
         log->info(
-            "Network (card SID phase 3 / THE UNIFIED ANSWERED SPLIT, R4): over "
+            "Network (THE UNIFIED ANSWERED SPLIT, R4): over "
             "ADMITTED re-entries after 2 to 30 missed epochs, read off the "
             "RESPONSE's OWN record per arc rather than inferred: {} in the "
             "population, {} FREED ({:.1f} per cent), {} BRIDGED BY VERDICT (a raw "
@@ -2294,7 +2292,7 @@ namespace GnssProcessor {
                 silent += arcReasonName(bit);
             }
             log->info(
-                "Network (card SID phase 4a / REASON-MASK WRITERS, S1): {} admitted "
+                "Network (REASON-MASK WRITERS, S1): {} admitted "
                 "GAP(s) were stamped with a reason, {} of them carrying more than one "
                 "(so the per-reason counts below do not sum to the total).  GAPS "
                 "OPENED PER REASON: {}.  WRITER CALLS (arc records made, per reason): "
@@ -2317,11 +2315,11 @@ namespace GnssProcessor {
             // separately; a single "no-verdict by reason" number would be one or the
             // other without saying which.
             log->info(
-                "Network (card SID phase 4a / THE R4 BRIDGED-NO-VERDICT BUCKET BY "
+                "Network (THE R4 BRIDGED-NO-VERDICT BUCKET BY "
                 "REASON, S1): {} re-entr(y|ies) of the 2-to-30-epoch R4 population that "
                 "no raw tier saw, split by the reason mask of the GAP THAT PRECEDED the "
                 "return: {}.  {} of them carry NO mask at all (the gap opened before the "
-                "writers were armed, or outside the fold).  The card's own no-verdict "
+                "writers were armed, or outside the fold).  The ledger's own no-verdict "
                 "population (the response's, over the whole carry horizon) is "
                 "attributed on the phase-3 line above.{}",
                 c.nv_total, nv_split.empty() ? "none" : nv_split, c.nv_no_mask,
@@ -2335,7 +2333,7 @@ namespace GnssProcessor {
         // Phase 4a / 4b: the anchor election read against the ledger (S2 / B1 / B2)
         // ---------------------------------------------------------------
         log->info(
-            "Network (card SID phase 4 / THE ANCHOR ELECTION AGAINST THE LEDGER, S2): "
+            "Network (THE ANCHOR ELECTION AGAINST THE LEDGER, S2): "
             "the election treated {} (satellite, signal) famil(y|ies) as a FIRST "
             "SIGHTING; {} of them ({:.1f} per cent) had at least one arc the ledger "
             "calls Reentered or Gap, which is a RETURN read as a birth — the class the "
@@ -2359,7 +2357,7 @@ namespace GnssProcessor {
                   "never ran.  This is DEAD WIRING, not an agreement."
                 : "");
         log->info(
-            "Network (card SID phase 4b / THE RESTORE, B1 and B2): network.ledger_anchor "
+            "Network (THE RESTORE, B1 and B2): network.ledger_anchor "
             "is {}.  {} return(s) RESTORED the previous incumbent, {} same-generation "
             "return(s) were REFUSED by the election's own rules (untracked, banned, "
             "hygiene or basis), and {} return(s) proceeded as today because their arcs "

@@ -37,7 +37,7 @@ bool secondPhaseAllowEntryValid(const std::string& entry, std::string* why) {
         return refuse("not a 3-character RINEX observation code");
     if (obsTypeOf(entry) != ObsType::Phase)
         return refuse("not a PHASE type (must start with 'L'); a code type belongs "
-                      "to card SCC");
+                      "to the second code channel");
     if (entry[1] != '1')
         return refuse("not on band 1 (band 2 belongs to phase 6b, which lifts the "
                       "channel_mode interlock instead of working around it)");
@@ -160,7 +160,7 @@ int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v) {
     C.rows = 0;
     for (const auto& st : stations) C.rows += st.spc_rows;
     if (C.rows == 0 && C.cells == 0) {
-        log->warn("Network (SECOND PHASE CHANNEL, card SID phase 6a): ARMED but NO "
+        log->warn("Network (SECOND PHASE CHANNEL): ARMED but NO "
                   "second-phase row was ever added — no station reported a second "
                   "allow-listed band-1 phase besides its latched canonical one, so "
                   "this run exercised nothing and is byte-equivalent to the unarmed "
@@ -169,16 +169,16 @@ int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v) {
                   "field roster it means the allow-list names phases the stations do "
                   "not track.");
     } else {
-        log->info("Network (SECOND PHASE CHANNEL, card SID phase 6a): {} second-phase "
+        log->info("Network (SECOND PHASE CHANNEL): {} second-phase "
                   "cell-epoch(s) over {} opening(s) and {} closing(s) (standing "
                   "invariant #7's two edges) at {} distinct arc(s), folding {} phase "
                   "row(s) at sigma x {:.3f}; peak {} cell(s) alive at {} station(s) in "
                   "one epoch.  {} row(s) took the FALLBACK path (an allow-listed "
                   "band-1 phase reported with no latched phase of that band beside it "
                   "— NOT added, and a finding about the latch rather than about this "
-                  "card).  {} (satellite, signal) column-epoch(s) reached the "
+                  "channel).  {} (satellite, signal) column-epoch(s) reached the "
                   "two-station registration bar ONLY through second phases: that "
-                  "number is the card's thesis, and a zero means the channel added "
+                  "number is the channel's thesis, and a zero means the channel added "
                   "rows without ever widening a family's roster.  Phase-datum anchor "
                   "incumbency-epochs seated ON a second-phase arc: {}.",
                   C.cells, C.cell_open, C.cell_close, C.arcs_born, C.rows,
@@ -187,7 +187,7 @@ int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v) {
         // A second-phase arc needs a wired slip response beyond the post-fit
         // attribution (invariant #1; R4), and this line says whether it has one.  A
         // tier reading zero here while arcs exist does not screen second-phase rows.
-        log->info("Network (SECOND PHASE CHANNEL, card SID phase 6a): slip census on "
+        log->info("Network (SECOND PHASE CHANNEL): slip census on "
                   "second-phase arcs — {} arc-epoch(s) freed by any tier: MW {}, LLI "
                   "{}, IF-TD {}, T4 attribution {}, T3 consensus {}, wind-up restart "
                   "{}, gap re-entry {}.  A tier at zero with arcs alive does NOT screen "
@@ -200,22 +200,22 @@ int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v) {
                   config_.getNetworkConfig().slip_qc.gap_reentry_per_signal
                       ? "armed" : "NOT armed");
         if (C.slip_arcs == 0)
-            log->warn("Network (SECOND PHASE CHANNEL, card SID phase 6a): second-phase "
+            log->warn("Network (SECOND PHASE CHANNEL): second-phase "
                       "arcs exist and NO tier ever freed one.  Either the bed is quiet "
                       "or every row-level response is blind to them; check the per-tier "
                       "counts against the same tiers' totals for the latched arcs.");
         if (config_.getNetworkConfig().second_phase_warn_no_per_signal)
-            log->warn("Network (SECOND PHASE CHANNEL, card SID phase 6a): this run was "
+            log->warn("Network (SECOND PHASE CHANNEL): this run was "
                       "armed WITHOUT network.cycle_slip.gap_reentry_per_signal, so the "
                       "only response a second-phase arc's re-entry had is the post-fit "
                       "T4 attribution (the load-time warning, restated here).");
         if (config_.getNetworkConfig().second_phase_warn_iftd_pairs)
-            log->warn("Network (SECOND PHASE CHANNEL, card SID phase 6a): this run was "
+            log->warn("Network (SECOND PHASE CHANNEL): this run was "
                       "armed with the IF-TD tier on and if_phase_td_pairs NOT 'all', so "
                       "that tier's single pair was degenerate for every satellite with "
                       "two band-1 phases (the load-time warning, restated here).");
         // Between-channel witness (R8): observatory only, no action taken.
-        log->info("Network (SECOND PHASE CHANNEL, card SID phase 6a, R8): the "
+        log->info("Network (SECOND PHASE CHANNEL, R8): the "
                   "between-channel WITNESS — {} consecutive-epoch pair(s) of the two "
                   "band-1 phases compared, {} with a change above 0.5 cycle(s); largest "
                   "{:.3f} cycle(s) at {}.  A slip on ONE channel is an integer here and "

@@ -482,7 +482,7 @@ void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
                   "{} / {} = {:.1f}%.  This is the population invisible to EVERY existing "
                   "tier: loud as a block, and every one of its rows individually below "
                   "the same threshold.  SPEC 8.4 — if this is ~0 the block tier adds "
-                  "nothing here and that closes the card honestly.",
+                  "nothing here and that closes the question honestly.",
                   tot_block_only, tot_reported,
                   100.0 * static_cast<double>(tot_block_only)
                         / static_cast<double>(tot_reported));

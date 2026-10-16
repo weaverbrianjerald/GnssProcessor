@@ -293,7 +293,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.carry_coupling_exact_update",
               "re-express each coupling row on the moved border with the fold's own Q, not "
               "the legacy clock q (a young arc's ambiguity information was discarded every "
-              "epoch, 75 mm sim / 157 mm field below 20 epochs, card AIL): sim clock level "
+              "epoch, 75 mm sim / 157 mm field below 20 epochs): sim clock level "
               "0.16 -> 0.02 m, IF code spread sim 0.143 -> 0.057 m, field 0.266 -> 0.164 m; "
               "ships only with the phase-clock hold (field consumer 3.878 / 2.245 m in hours "
               "1 / 2 under the plain hold, 0.108 / 0.024 m under the phase-clock hold); armed "
@@ -303,15 +303,15 @@ namespace GnssProcessor {
                   && network_carry_rx_code_bias_ && network_carry_conditional_coupling_,
               network_carry_rx_code_bias_in_block_,
               Tier::SCOPED, true , "network.carry_rx_code_bias_in_block",
-              "fold the receiver code-bias carry inside the station's whitened block as card 1 "
-              "coupling rows (the diagonal fold at the conditional variance doubled the border "
-              "information every epoch, card CTU2 section 2); a companion of the exact update" },
+              "fold the receiver code-bias carry inside the station's whitened block as c"
+              "oupling rows (the diagonal fold at the conditional variance doubled the border "
+              "information every epoch); a companion of the exact update" },
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf,
               network_amb_float_drop_decouple_always_,
               Tier::SCOPED, true , "network.amb_float_drop_decouple_always",
               "a drop clears the arc's border regression and block row even at birth strength "
               "(without it the field level jumps by metres at the first fold under the exact "
-              "update, card CTU2 section 6); a companion of the exact update" },
+              "update); a companion of the exact update" },
             { !network_carry_invariant_ && network_phase_leveling_,
               network_shared_carry_full_cov_,
               Tier::SCOPED, false, "network.shared_carry_full_cov",
@@ -836,7 +836,7 @@ namespace GnssProcessor {
               "receiver inter-signal state (the priority latch otherwise leaves the wire's "
               "C1W code biases on 18 stations): census hour 1 better by a median of 0.136 m, "
               "code-bias dropouts 50 -> 4, QUIN00USA's excursion gone, median count 282 -> "
-              "331.5; costs WTZZ00DEU about 0.02 m from hour 3 and FAILS card SCC's frozen "
+              "331.5; costs WTZZ00DEU about 0.02 m from hour 3 and FAILS the second code channel's frozen "
               "B1, armed as the author's decision; scale 10" },
             { network_phase_datum_prioritized_ && !network_phase_datum_eq34_ &&
                   network_station_pd_pin_aware_ && n_sta <= 100,
@@ -989,7 +989,7 @@ namespace GnssProcessor {
             { warm && network_resume_frame_restore_,
               network_resume_coupling_restore_,
               Tier::SCOPED, false, "network.resume_coupling_restore",
-              "warm resume rebuilds the Card-1 regressors + the dense border from a v3 (QK/QP) "
+              "warm resume rebuilds the coupling regressors + the dense border from a v3 (QK/QP) "
               "snapshot: first-fold clock trips 33 -> 1, consumer h12 2.05 -> 0.62 m rms (a cold "
               "consumer on the wire converges like on the continuous run)" },
             // --- Datum restore at the seam, the read half (RS-3, SPEC_event_harness s21.7):
@@ -1001,7 +1001,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.resume_datum_restore",
               "restore the eq34 tree maps and the code-bias datum memory at a warm resume (RS-3): "
               "eq34 rerefs at +1 110 -> 8, CB re-seed discs 30 -> 0, R record 30 -> 0 sats; a ~10 m "
-              "phase-bias re-realization remains and is the next card (SPEC_event_harness s21.9)" },
+              "phase-bias re-realization remains and is the next step (SPEC_event_harness s21.9)" },
             // --- Phase-bias seam declaration, the declaration half of the same seam (RS-4,
             //     SPEC_event_harness s21.9): the first post-resume emit marks datum_changed for
             //     any constellation whose phase-bias level re-realized against the restored

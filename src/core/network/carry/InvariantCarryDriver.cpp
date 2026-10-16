@@ -1183,7 +1183,7 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
         const double degen_frac = (c.ddfold_fold_rows > 0)
             ? static_cast<double>(c.ddfold_degen_rows)
               / static_cast<double>(c.ddfold_fold_rows) : 0.0;
-        log->info("Network (Card 4 PD-safe fold, INC-0): {} epoch(s) folded {} DD-prior "
+        log->info("Network (PD-safe fold, INC-0): {} epoch(s) folded {} DD-prior "
                   "block(s) / {} carried row(s); {} block-epoch(s) and {} row-epoch(s) "
                   "({:.2f} % of the carried dimension) folded INERTLY on a failed PD "
                   "screen, over {} epoch(s).  Worst relative pivot d_min/d_max = {:.6g}.  "
@@ -1195,7 +1195,7 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
                   c.ddfold_transitions, c.ddfold_recoveries,
                   carry_driver.counters().d5_nonpos_var_rows);
         if (ctx.knobs.carry_invariant_pd_safe) {
-            log->info("Network (Card 4 PD-safe fold, INC-1/2): ARMED — {} eigen-clamp "
+            log->info("Network (PD-safe fold, INC-1/2): ARMED — {} eigen-clamp "
                       "repair(s) over {} row(s) (worst clamped |lambda|/lambda_max = "
                       "{:.6g}; {} fold(s) above the 1e-6 'this is not dust' bar), {} "
                       "block rebirth(s) re-seeding {} carried row(s), {} block(s) "
@@ -1204,19 +1204,19 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
                       c.ddfold_repair_loud, c.ddfold_rebirths, c.ddfold_rebirth_rows,
                       carry_driver.resumeCarryRebirthBlocks());
             if (c.ddfold_repair_loud > 0)
-                log->warn("Network (Card 4 PD-safe fold, INC-1c): {} fold(s) needed a "
+                log->warn("Network (PD-safe fold, INC-1c): {} fold(s) needed a "
                           "repair LARGER than 1e-6 x lambda_max.  The repair exists for "
                           "round-off dust; a clamp this size means the block arrived "
                           "genuinely broken.  Do NOT read the repaired covariance as "
                           "healthy — find the upstream defect.", c.ddfold_repair_loud);
             if (c.ddfold_degen_rows > 0 && c.ddfold_rebirths == 0)
-                log->warn("Network (Card 4 PD-safe fold, INC-2a): {} row-epoch(s) folded "
+                log->warn("Network (PD-safe fold, INC-2a): {} row-epoch(s) folded "
                           "inertly yet ZERO blocks were rebirthed — the re-coupling edge "
                           "never fired, so those blocks were decoupled with no bounded "
                           "response (standing invariant #7).  This is a WIRING failure, "
                           "not a quiet run.", c.ddfold_degen_rows);
         } else if (c.ddfold_degen_rows > 0) {
-            log->warn("Network (Card 4 PD-safe fold): {} row-epoch(s) ({:.2f} % of the "
+            log->warn("Network (PD-safe fold): {} row-epoch(s) ({:.2f} % of the "
                       "carried dimension) folded INERTLY and network."
                       "carry_invariant_pd_safe is OFF — those blocks took NO data and, "
                       "their priors never improving, will not factor again: the "
@@ -1235,10 +1235,10 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
         // would go unreported.  The per-epoch trace columns are gated on the same
         // `blocks > 0`, so they give no fallback either, and a run with no line reads as
         // "clean".
-        log->warn("Network (Card 4 PD-safe fold, INC-0): network.carry_invariant is ON but "
+        log->warn("Network (PD-safe fold, INC-0): network.carry_invariant is ON but "
                   "the DD-prior fold ran on ZERO epochs — no accepted install ever reached a "
                   "factorization, so every INC-0 tally is structurally empty and this run is "
-                  "evidence about NOTHING in the card (standing invariant #4: inert wiring "
+                  "evidence about NOTHING in the PD-safe fold (standing invariant #4: inert wiring "
                   "must be VISIBLE — this line is the only place it is).  Expected on a run "
                   "with no shared datum or no foldable chord; unexpected otherwise, and then "
                   "it means the carry never engaged.{}  D5 rows the gate could not test "
@@ -1249,9 +1249,9 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
                       : "",
                   carry_driver.counters().d5_nonpos_var_rows);
     } else if (ctx.knobs.carry_invariant_pd_safe) {
-        log->warn("Network (Card 4 PD-safe fold): ARMED but the DD-prior fold ran on ZERO "
+        log->warn("Network (PD-safe fold): ARMED but the DD-prior fold ran on ZERO "
                   "epochs — the wiring never executed (invariant #4).  Nothing in this run "
-                  "is evidence about the card.");
+                  "is evidence about the PD-safe fold.");
     }
     return 0;
 }
@@ -1282,7 +1282,7 @@ static int networkInvariantCarryRunEnd(const NetworkRunEndView& v) {
     const auto& carry_dropped_total = v.ctx.counters.carry_dropped_total;
 
     if (carry_invariant)
-        log->info("Network (Card 4/M1 invariant carry): {} epoch(s) driven, {} carried DD(s) at "
+        log->info("Network (invariant carry): {} epoch(s) driven, {} carried DD(s) at "
                   "run end; {} chord birth(s), {} marginalization(s), {} slip refloat(s), "
                   "{} unresolvable-cycle drop(s), {} tree swap(s) (basis re-expression), "
                   "{} component merge(s), {} split(s) over the run "
@@ -1324,7 +1324,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
         // suppressions (RS-2b): "armed and suppressed nothing" is a finding (the window
         // closed before any chord tripped, or nothing was restored to trip), and a clause
         // printed only on a nonzero count could not state it (invariant #4).
-        log->info("Network (Card 4/M1 D5 fine-slip innovation gate): {} carried-DD innovation "
+        log->info("Network (D5 fine-slip innovation gate): {} carried-DD innovation "
                   "flag(s), {} fresh re-tap(s) over the run (k={}; the estimation-side reset for "
                   "the fine slips the coarse MW/LLI/IF-TD layer is relaxed against — each flagged "
                   "chord re-taps data-only + marks its arc slipped for the next epoch).{}",
@@ -1341,7 +1341,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
     if (carry_innov_gate && config_.networkCarryInvariantInnovCorroborate()) {
         const long long sup = carry_driver.counters().innov_suppressed;
         const long long tripped = carry_innov_flags_total + sup;
-        log->info("Network (Card 4/M1 D5 v3 corroboration gate): {} of {} gate trips SUPPRESSED "
+        log->info("Network (D5 v3 corroboration gate): {} of {} gate trips SUPPRESSED "
                   "({:.1f}%) because the raw observables measured the arc as CONTINUOUS; {} "
                   "re-tapped (raw step, or no raw evidence — absence of evidence never "
                   "suppresses).  Backstop k = {}.",
@@ -1350,7 +1350,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                   carry_innov_flags_total,
                   config_.networkCarryInvariantInnovCorroborateBackstopK());
         if (sup == 0)
-            log->warn("Network (Card 4/M1 D5 v3): the corroboration gate is ARMED but suppressed "
+            log->warn("Network (D5 v3): the corroboration gate is ARMED but suppressed "
                       "NOTHING — the flat set never reached the driver.  Standing invariant #4: "
                       "check that a slip-QC DECISION CARD ran the QUALIFY pass this run "
                       "(network.cycle_slip.gap_instrument / .mw_lli_corroborate / "
@@ -1361,7 +1361,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
     }
     if (carry_innov_gate && config_.networkCarryInvariantInnovCarriedOnly()) {
         const long long bs = carry_driver.counters().innov_born_skipped;
-        log->info("Network (Card 4/M1 D5 v5 carried-only): {} chord-row(s) NOT gated because "
+        log->info("Network (D5 v5 carried-only): {} chord-row(s) NOT gated because "
                   "the chord was BORN this epoch — no carried prior, so Cov(v) is the diffuse "
                   "fresh-chord variance and the standardized ratio is not a hypothesis test.  "
                   "Read against the {} flag(s) that DID fire: on the untreated 3 h reference "
@@ -1371,14 +1371,14 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                   "that would have flagged.",
                   bs, carry_innov_flags_total);
         if (bs == 0)
-            log->warn("Network (Card 4/M1 D5 v5): carried-only is ARMED but skipped NOTHING — "
+            log->warn("Network (D5 v5): carried-only is ARMED but skipped NOTHING — "
                       "no born chord ever reached the gate.  Standing invariant #4: INERT, not "
                       "benign.  Either the carry never births chords (check the invariant-carry "
                       "line's birth count) or the chord_carried mask is not being populated.");
     }
     if (carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly()) {
         const long long sup = ctx.counters.carry_innov_kill_suppressed;
-        log->info("Network (Card 4/M1 D5 v4 re-tap-only): {} carry-arc membership kill(s) "
+        log->info("Network (D5 v4 re-tap-only): {} carry-arc membership kill(s) "
                   "SUPPRESSED over the run — a D5 flag whose arc the raw observables MEASURED "
                   "as continuous no longer excludes that arc from A_old, so the in-epoch "
                   "re-tap the gate already installed survives instead of being refloated from "
@@ -1393,7 +1393,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                   "except an arc a culprit of the re-solve kills.]",
                   sup, carry_slipkills_total);
         if (sup == 0)
-            log->warn("Network (Card 4/M1 D5 v4): re-tap-only is ARMED but suppressed NOTHING — "
+            log->warn("Network (D5 v4): re-tap-only is ARMED but suppressed NOTHING — "
                       "no corroborated-flat D5 flag ever reached a carry arc.  Standing "
                       "invariant #4: the knob is INERT this run, not benign.  Check, in order: "
                       "did the D5 gate flag at all (the innovation-gate line above); did a "
@@ -1425,7 +1425,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
         // post-run accumulator state (it includes the last install's own rows, which no gate
         // consulted), while the range covers the values the gate used.  The final value can
         // therefore sit outside the range; that is correct.
-        log->info("Network (Card 4/M1 D5 v2 LS-VCE calibration): post-run empirical inflation "
+        log->info("Network (D5 v2 LS-VCE calibration): post-run empirical inflation "
                   "σ̂₀ = {:.2f}× in state '{}' (raw σ̂₀² = {:.4g}, n_eff = {:.0f}; gate threshold "
                   "k·σ̂₀ = {:.1f} formal-σ).  Over {} install(s) the σ̂₀ state was: active {} / "
                   "floored {} / warm-up {} / capped {}.  RAW σ̂₀² the gate CONSULTED past "
@@ -1438,7 +1438,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                   cc.d5_calib_epochs, cc.d5_calib_active_epochs, cc.d5_calib_floored_epochs,
                   cc.d5_calib_warmup_epochs, cc.d5_calib_capped_epochs, raw_range);
         if (cc.d5_calib_floored_epochs > 0)
-            log->warn("Network (Card 4/M1 D5 v2 LS-VCE calibration): the σ̂₀² FLOOR CLAMP bound "
+            log->warn("Network (D5 v2 LS-VCE calibration): the σ̂₀² FLOOR CLAMP bound "
                       "on {} of {} install(s) ({:.1f}% of the run counting warm-up) — over "
                       "those epochs the calibration was ARMED but the gate ran as the RAW "
                       "FORMAL (v1) test, because the raw σ̂₀² fell below 1 (min {:.4g}) and the "
@@ -1452,7 +1452,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                       cc.d5_calib_floored_epochs, cc.d5_calib_epochs, inert_pct,
                       cc.d5_calib_raw_min);
         else if (cc.d5_calib_active_epochs == 0)
-            log->warn("Network (Card 4/M1 D5 v2 LS-VCE calibration): the calibration NEVER "
+            log->warn("Network (D5 v2 LS-VCE calibration): the calibration NEVER "
                       "reached the active state over {} install(s) — {} in warm-up, {} capped. "
                       " Standing invariant #4: the knob is INERT this run, not benign; every "
                       "D5 number below came from a gate that was not calibrated.",
@@ -1478,7 +1478,7 @@ static int networkD5MapMissRunEnd(const NetworkRunEndView& v) {
     const auto& carry_innov_map_miss = v.ctx.counters.carry_innov_map_miss;
 
     if (carry_innov_gate && carry_innov_map_miss > 0)
-        log->warn("Network (Card 4/M1 D5): {} innovation flag(s) over the run did not resolve in the "
+        log->warn("Network (D5): {} innovation flag(s) over the run did not resolve in the "
                   "flag→ambiguity reverse map (next-epoch re-tap skipped for them) — a reverse-map/"
                   "block wiring inconsistency; investigate.", carry_innov_map_miss);
     return 0;

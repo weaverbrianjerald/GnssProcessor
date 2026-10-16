@@ -560,7 +560,7 @@ void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
             C.hold_rows_hist, C.hold_terms_hist, C.hold_rows_stale, C.hold_terms_stale,
             C.hold_stale_var);
     }
-    log->info("Network (card SCL2 / shared history X2, k = {}): {} epoch(s) with history columns, "
+    log->info("Network (shared history X2, k = {}): {} epoch(s) with history columns, "
               "registered {:.1f} mean / {} max per epoch ({} unreferenced direction(s) not "
               "registered, {} generation mismatch(es), {} prior(s) folded); rows: {} with "
               "history terms ({} term(s)), {} marginalized ({} term(s), {:.4e} m^2); "
@@ -580,7 +580,7 @@ void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
               ks.second, rs.first, rs.second, cs.first, cs.second, hold);
     if (ctx.knobs.emit_pb_hold_smoothed) {
         if (C.hold_pending > 0 && C.hold_projected == 0)
-            log->warn("Network (card SCL2 X2b): the smoothed hold's rows were kept pending but "
+            log->warn("Network: the smoothed hold's rows were kept pending but "
                       "none was projected: amendment A1 is INERT for this run (every row took "
                       "the per-row term).");
     }

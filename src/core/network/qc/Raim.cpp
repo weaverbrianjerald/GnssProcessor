@@ -1255,7 +1255,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
             if (data_rows_only) {
                 const bool disagree = t.own_col_cleared_other > 0 || t.own_col_not_cleared > 0;
                 log->log(disagree ? spdlog::level::warn : spdlog::level::info,
-                         "Network (RAIM pool admission, {}, data rows only, card RPA): {}; {}",
+                         "Network (RAIM pool admission, {}, data rows only): {}; {}",
                          which, t.text(), t.ownColumnText());
                 return;
             }
@@ -1286,7 +1286,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
         if (rc.epochs > 0 && rc.pool_cells == 0)
             log->warn("Network (RAIM pool re-host): DEAD WIRING — the seam ran {} time(s) and "
                       "the qc_amb census was EMPTY every time, so the screen still saw "
-                      "nothing.  This is the defect the card exists to fix presenting itself "
+                      "nothing.  This is the defect the re-host exists to fix presenting itself "
                       "again: the census walk found no station with an unpinned ambiguity "
                       "column present in A_r, so check the gauge-pin partition and the "
                       "station/signal admission before trusting any RAIM verdict here.",
@@ -1304,7 +1304,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
         if (rc.pool_cells > 0 && rc.sats_flagged == 0 && rc.arcs_flagged == 0)
             log->info("Network (RAIM pool re-host): ZERO OPPORTUNITY — the screen ran on a "
                       "live census and nothing exceeded the gate.  That is a clean window, "
-                      "NOT evidence the screen works: its POWER under Card 4 is unproven "
+                      "NOT evidence the screen works: its POWER under the invariant carry is unproven "
                       "(the local ambiguity column is free each epoch and the time-link "
                       "lives in the DD chord's prior, so a slipped arc's tension may be "
                       "absorbed locally and never reach this residual).  Grade against a "
@@ -1313,7 +1313,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
             log->warn("Network (RAIM pool re-host): the screen flagged {} sat-epoch(s) / {} "
                       "arc-epoch(s), and the re-host is measure-only — those flags reached NO "
                       "carry consumer (the seam's local_carry erase and pending-reseed mark "
-                      "cannot move the Card-4 solve).  This line exists so the run is never "
+                      "cannot move the invariant-carry solve).  This line exists so the run is never "
                       "mistaken for a protected one.",
                       rc.sats_flagged, rc.arcs_flagged);
     }

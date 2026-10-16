@@ -1319,7 +1319,7 @@ static int networkDropHealRunEnd(const NetworkRunEndView& v) {
         // Printing it when attempts == recoveries (every firing recovered, the PA4 emit
         // case) would read as a warning on a clean run.
         const bool insufficient = ctx.counters.n_heal_attempt_epochs > n_healed_epochs;
-        log->info("Network (Card PA): drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
+        log->info("Network: drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
                   "near-null phase-bias column(s); {} epoch(s) were RECOVERED by it ({} "
                   "column(s)).{}  Per-column attribution (sat/signal/eigenvalue/span) is in "
                   "network_events.csv under tier GATE, event phase_heal, when "

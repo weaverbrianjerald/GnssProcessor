@@ -161,7 +161,7 @@ int networkEmitRebaseRunEnd(const NetworkRunEndView& v) {
     // A/B: high integer/fractional churn with a silent disc counter is the datum
     // freedom the carry buys; a disc step that survives is a genuine event.
     const auto& rb = emit_rebase_engine.counters();
-    log->info("Network (Card 4/M1 phase D emit re-base): {} emit epoch(s), {} component "
+    log->info("Network (phase D emit re-base): {} emit epoch(s), {} component "
               "re-base(s), {} integer cycle(s) removed across {} key(s), {} reference-path "
               "slip step(s) preserved; mean |common-fractional δ| = {:.4f} m over the run "
               "(OUTPUTS-only S-selection; DDs invariant).",

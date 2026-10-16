@@ -510,7 +510,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
               "single-frequency; a large second with a small first means it drops "
               "the line of sight instead.  Separately, {} arc(s) were never once "
               "observed dual ({} LOS-epoch(s)) — the standing single-frequency "
-              "class, whose permanent-demotion policy this card deliberately "
+              "class, whose permanent-demotion policy this audit deliberately "
               "leaves open (spec section 7).",
               s.sf_continuation_epochs, s.los_vanished_dual, s.standing_sf_arcs,
               s.standing_sf_epochs);
@@ -538,7 +538,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
     if (s.epochs == 0)
         log->warn("Network (signal integrity): ARMED but the classifier ran on ZERO "
                   "epochs — the wiring never executed (invariant #4).  Nothing in "
-                  "this run is evidence about the card.");
+                  "this run is evidence about the classifier.");
     else if (s.los_epochs == 0)
         log->warn("Network (signal integrity): ARMED and the classifier ran, but it "
                   "classified ZERO lines of sight — every verdict was the default, "
@@ -564,7 +564,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
         log->warn("Network (signal integrity): {} re-entry(ies) arrived with a "
                   "SURVIVING ambiguity state, which should be structurally "
                   "impossible (ensureRequiredStates prunes an ambiguity the epoch "
-                  "its phase observable is absent, with no grace).  The card's "
+                  "its phase observable is absent, with no grace).  The classifier's "
                   "re-entry reasoning assumes that prune; re-derive it before "
                   "trusting any re-entry verdict from this run.",
                   s.reentry_amb_state_live);
@@ -576,15 +576,15 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
                   "has just been pruned — so the receiver said 'loss of lock', "
                   "nothing was marked, and any carried invariant-DD chord for that "
                   "arc (keyed independently of the StateManager) was not re-tapped. "
-                  "This card MEASURES that hole and deliberately does not close it.",
+                  "This check MEASURES that hole and deliberately does not close it.",
                   s.lli_at_reentry - s.lli_at_reentry_funnelled, s.lli_at_reentry);
     if (s.reentry_unrefloated > 0)
         log->warn("Network (signal integrity INC-3a): {} of {} re-entry(ies) were "
                   "NOT already refloated by a PASS-A detector.  The spec's premise "
-                  "is that a true re-entry already refloats via the funnel (Card G "
+                  "is that a true re-entry already refloats via the funnel (gap instrumentation "
                   "measured 0 bridged); this run FALSIFIES it at that rate.  Per "
-                  "spec section 2 this card asserts the premise and does not act "
-                  "on it — report the number, do not read it as a defect this card "
+                  "spec section 2 this check asserts the premise and does not act "
+                  "on it — report the number, do not read it as a defect this check "
                   "left unfixed.",
                   s.reentry_unrefloated, s.reentries);
     if (s.arcs_forgotten > 0)

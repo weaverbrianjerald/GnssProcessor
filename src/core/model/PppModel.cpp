@@ -708,7 +708,7 @@ std::vector<std::string> activeFrequencyBands(
             if (!declared_note.empty())
                 log_manager_.getLogger("main_log")->info(
                     "Canonical latch FOLLOWS the producer's declared roster for {} station "
-                    "'{}' (card SID phase 5b, network.closed_loop.roster_latch): {}",
+                    "'{}' (network.closed_loop.roster_latch): {}",
                     cons, canonical_trace_label_.empty() ? "-" : canonical_trace_label_,
                     declared_note);
 
@@ -1600,7 +1600,7 @@ std::vector<std::string> activeFrequencyBands(
                     if (second_phase_out) second_phase_out->insert(sig);
                     log_manager_.getLogger("ppp_model")->trace(
                         "Uncombined band {} for {} {}: second phase {} added beside the "
-                        "latched {} (card SID phase 6a)",
+                        "latched {} (second phase channel)",
                         band, obs.satellite, system_str, sig, best_phase);
                 }
             }

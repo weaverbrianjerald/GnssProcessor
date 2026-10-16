@@ -1220,7 +1220,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
         mx  = *std::max_element(sd.begin(), sd.end());
     }
     const double per = C.epochs > 0 ? 1.0 / static_cast<double>(C.epochs) : 0.0;
-    log->info("Network (card SCL / clock clone): {} epoch(s) with clones, registered {:.1f} mean "
+    log->info("Network (clock clone): {} epoch(s) with clones, registered {:.1f} mean "
               "/ {} max per epoch; rows on the clone epoch {} epoch(s) ({:.1f} clones moved per "
               "epoch, {} unfactored, {} seam pair(s) dropped); gate: {:.1f} referenced / {:.1f} "
               "idle per epoch, {} empty clone direction(s), {} view failure(s); fold: {} epoch(s), "
@@ -1230,7 +1230,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
               "dropped), regression mass {:.4e}, conditional variance added {:.4e} m^2, {} clock "
               "deficit(s) onto the pinned clock ({} orphan, |d| {:.4e}), {} F3 "
               "pair(s); clone posterior sd p50 {:.4f} m, max {:.4f} m ({} sample(s)); {} walk(s) "
-              "withdrawn by card Q3.",
+              "withdrawn by the clock anchor.",
               C.epochs, static_cast<double>(C.registered) * per, C.registered_max, C.rows_epochs,
               C.rows_epochs > 0 ? static_cast<double>(C.active) / static_cast<double>(C.rows_epochs) : 0.0,
               C.prepare_unfactored, C.q_off_dropped,
@@ -1244,7 +1244,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
               C.harvest_f3_pairs, p50, mx, sd.size(), C.refloat_walks);
     if (ctx.knobs.pfq_on) {
         // Pivot-frame process noise on the clone: the pivot's walk enters once, in the joint walk factor.
-        log->info("Network (card PFQ / on the clock clone): {} joint fold(s) with the pivot's "
+        log->info("Network (on the clock clone): {} joint fold(s) with the pivot's "
                   "walk shared between the stood-in clocks' walks ({} pair(s)); {} joint "
                   "covariance(s) that did not factor (folded per walk); {} pair(s) between a "
                   "stood-in clone and a clock on its own column, lost.",
@@ -1263,7 +1263,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                                r[static_cast<int>(CouplingExactDRoute::Skipped)]);
         };
         const double perb = C.bcl_epochs > 0 ? 1.0 / static_cast<double>(C.bcl_epochs) : 0.0;
-        log->info("Network (card BCL / the previous border on clones): {} epoch(s) with clones, "
+        log->info("Network (the previous border on clones): {} epoch(s) with clones, "
                   "{:.1f} registered mean / {} max per epoch; BCL-a {}: {} bias key(s) on their "
                   "clones in the rows, {} screened, {} stood in with a walk, {} moved or "
                   "unfolded; BCL-d {}: in the rows {}, without a clone {}, {} row(s) without a "
@@ -1278,22 +1278,22 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                   C.bcl_d_fold_retry, C.bcl_free, C.bcl_isolated);
         if (ctx.knobs.carry_cpl_bclone && C.bcl_a_standin == 0)
             log->warn("Network: network.carry_coupling_bias_clone is ARMED but no "
-                      "bias clone stood in: the card is INERT for this run.");
+                      "bias clone stood in: the bias clone is INERT for this run.");
         long long d_active = 0;
         for (int r = 0; r < kCouplingExactRoutes; ++r) d_active += C.bcl_d_active[r];
         if (ctx.knobs.carry_cpl_dclone && d_active == 0 && C.bcl_d_prior == 0)
             log->warn("Network: network.carry_coupling_departed_clone is ARMED but no "
-                      "re-attributed key was put on a clone: the card is INERT for this run.");
+                      "re-attributed key was put on a clone: the departed clone is INERT for this run.");
     }
     if (C.fold_dense_epochs > 0 || C.fold_dense_noref > 0)
-        log->info("Network (card SCL / clock clone, B2): {} joint fold(s) across a "
+        log->info("Network (clock clone, B2): {} joint fold(s) across a "
                   "dense-transformed handover ({} clone(s) stood in in the outgoing frame, the "
                   "walks referencing the incoming pivot's clone); {} dense-transformed "
                   "constellation-epoch(s) whose clones could not stand in.",
                   C.fold_dense_epochs, C.fold_dense_standin, C.fold_dense_noref);
     if (X.terms_clone == 0)
         log->warn("Network: network.carry_coupling_clock_clone is ARMED but no row "
-                  "referenced a clone: the card is INERT for this run.");
+                  "referenced a clone: the clock clone is INERT for this run.");
 }
 
 }  // namespace GnssProcessor

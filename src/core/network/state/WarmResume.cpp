@@ -587,14 +587,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (ctx.knobs.clm_on && !snap.level_info.empty()) {
                         net::recordFromSnapshot("LB", snap, ctx);   // the satellites (N4e1)
                         ctx.carry.resume.clm_raise = ctx.knobs.clm_restore_raise;
-                        log->info("Network (card CTU G5): {} satellite(s) of contrast-frame level "
+                        log->info("Network (clock level restore): {} satellite(s) of contrast-frame level "
                                   "information restored from the snapshot's LB rows{}.",
                                   snap.level_info.size(),
                                   ctx.knobs.clm_restore_raise
                                       ? "; the level raise on restore is armed for the first "
                                         "leg epoch" : "");
                     } else if (ctx.knobs.clm_restore_raise) {
-                        log->warn("Network (card CTU G5): network.clock_level_restore_raise is "
+                        log->warn("Network (clock level restore): network.clock_level_restore_raise is "
                                   "armed but the snapshot carries no LB rows (the writer did not "
                                   "run network.clock_level_monitor): nothing to raise to, INERT.");
                     }
@@ -911,7 +911,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.counters.n_resume_cpl_seed_reinit = n_seed;
 
                             log->info("Network (resume coupling restore): ARMED at the resume "
-                                      "seam — {} L row(s) + {} Z row(s) rebuilt their Card-1 "
+                                      "seam — {} L row(s) + {} Z row(s) rebuilt their coupling "
                                       "regression from {} term(s) over a {}-column dictionary "
                                       "({} row(s) had no matching carry); {} clock reinit "
                                       "seed(s) planted ({} LOOSE anchor(s), {} pending eph "
@@ -1059,7 +1059,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // the install seam.
                     if (ctx.knobs.resume_d5_warmup_ep > 0) {
                         ctx.carry.resume_d5_warmup_left = ctx.knobs.resume_d5_warmup_ep;
-                        log->info("Network (RS-2b resume D5 warm-up): ARMED — the Card-4 D5 "
+                        log->info("Network (RS-2b resume D5 warm-up): ARMED — the invariant-carry D5 "
                                   "innovation gate acts diagnostic-only for the next {} "
                                   "processed epoch(s): trips are counted, never re-tapped and "
                                   "never marked slipped.  The σ̂₀ feed, the v3 corroboration "
@@ -1242,7 +1242,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // non-zero count when resuming from a pd_safe-armed run is a new
                             // defect, because the writing run's blocks were PD by construction.
                             if (carry_driver.resumeCarryRebirthBlocks() > 0)
-                                log->warn("Network (Card 4 PD-safe fold, INC-2c): {} restored "
+                                log->warn("Network (PD-safe fold, INC-2c): {} restored "
                                           "carry block(s) FAILED the equilibrated PD screen "
                                           "and were REBIRTHED — means kept, Pᶻ re-seeded to "
                                           "the diffuse fresh-chord prior.  Those blocks take "
@@ -1386,7 +1386,7 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
         log->warn("Network (RS-9 rx-CB frame restore): {} restored station index(es) did "
                   "not resolve to a live station model and were DROPPED — those stations "
                   "re-derive their code-bias linearization point from the resume epoch's "
-                  "code, which is the pre-card behaviour for them.", orphan);
+                  "code, which is the pre-restore behaviour for them.", orphan);
     log->info("Network (RS-9 rx-CB frame restore): installed on {} station(s), {} "
               "linearization point(s) — consumed at each station's first-epoch code-bias "
               "initialization (the one-shot isCodeBiasInitialized latch), so the rx-CB "

@@ -164,7 +164,7 @@ int networkBiasAdmissionRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (config_.networkCbKaulaPrior())
-        log->info("Network (Card KP): admitted-OSB physical-bound prior folded on {} epoch(s), "
+        log->info("Network: admitted-OSB physical-bound prior folded on {} epoch(s), "
                   "{} column-epoch(s) total at sigma {:g} m.  [Invariant #4: an ARMED run "
                   "reporting 0 epochs never reached a solve with the prior — check that "
                   "network.estimate_sat_code_bias is on and that code columns registered.]",
@@ -174,7 +174,7 @@ int networkBiasAdmissionRunEnd(const NetworkRunEndView& v) {
         log->info("Network (CB-ADM): {} code pairs admitted (shared columns), {} "
                   "quarantined at census, {} late-quarantined (first seen post-census) "
                   "— census {} (active={}).  [Invariant #4: a BDS-armed ON run with 0 "
-                  "quarantined-at-census is a MISWIRE.]  Card H2 orphan window: {} "
+                  "quarantined-at-census is a MISWIRE.]  H2 orphan window: {} "
                   "(key, epoch) pair(s) where an ADMITTED code key was per-epoch-withheld "
                   "(< 2 present stations) while its same-signal PHASE column stayed shared "
                   "— the deliberate cost of keeping the phase co-gate at CENSUS "
@@ -265,14 +265,14 @@ void networkKaulaMargin(NetworkRun& run) {
             const double decades = (cutoff > 0.0 && info > 0.0)
                 ? std::log10(info / cutoff) : 0.0;
             if (decades >= 2.0)
-                log->info("Network (Card KP): prior info {:.3e} vs rank-gate cutoff {:.3e} "
+                log->info("Network: prior info {:.3e} vs rank-gate cutoff {:.3e} "
                           "— margin {:.1f} decades ABOVE the cutoff (K2 requires >= 2.0).  "
                           "sigma {:g} m on the admitted OSB columns.",
                           info, cutoff, decades, config_.networkCbKaulaSigmaM());
             else
-                log->warn("Network (Card KP): prior info {:.3e} sits only {:.1f} decades "
+                log->warn("Network: prior info {:.3e} sits only {:.1f} decades "
                           "above the rank-gate cutoff {:.3e} — BELOW the K2 minimum of 2.0.  "
-                          "This is the exact configuration the CB-ADM card rejected (prior "
+                          "This is the exact configuration the CB-ADM study rejected (prior "
                           "information AT the cutoff either trips the gate or survives by "
                           "coincidence).  TIGHTEN network.cb_kaula_sigma_m or re-place "
                           "network.rank_gate_tol from this config's estimability dump before "

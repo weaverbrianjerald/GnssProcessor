@@ -495,7 +495,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             ctx.counters.le.decl_records += static_cast<long long>(n);
             for (const std::string& l : signalDeclarationToWire(ctx.ledger_emit.decl))
                 ctx.counters.le.decl_bytes += static_cast<double>(l.size() + 1);
-            log->info("Network (card SID phase 5a): declared signal roster written to the wire "
+            log->info("Network: declared signal roster written to the wire "
                       "({} N record(s), TOW {:.1f}): {}",
                       n, se.time.tow, signalDeclarationSummary(ctx.ledger_emit.decl));
         }

@@ -82,7 +82,7 @@ int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v) {
                       C.n_rxcb_blk_no_block, C.n_rxcb_blk_harvest_fail,
                       C.n_rxcb_blk_step_reset);
             if (C.n_rxcb_blk_restored_skip > 0 || ctx.carry.ctu_switch_on_resume)
-                log->info("Network (RXCB-IN-BLOCK / card CTU G5): switch-on warm resume {}; {} "
+                log->info("Network (RXCB-IN-BLOCK): switch-on warm resume {}; {} "
                           "restored diagonal rx-CB entr(y/ies) kept out of the block and "
                           "re-harvested; exact-update stash stamp rebuilt from the restored "
                           "border {} time(s).",

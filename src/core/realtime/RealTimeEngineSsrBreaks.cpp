@@ -71,7 +71,7 @@ void RealTimeEngine::refreshDeclaredRoster_() {
     auto log = log_manager_.getLogger("rt_engine");
     if (ssr_declared_roster_.present) {
         declared_roster_logged_ = true;
-        log->info("[RT] Card SID phase 5: the producer DECLARES its signal roster on this "
+        log->info("[RT] Signal identity: the producer DECLARES its signal roster on this "
                   "wire: {}.  The consumer's band latch {} it (network.closed_loop."
                   "roster_latch {}), and every freshness flip is attributed against it.",
                   signalDeclarationSummary(ssr_declared_roster_),
@@ -79,7 +79,7 @@ void RealTimeEngine::refreshDeclaredRoster_() {
                   config_.consumerRosterLatch() ? "armed" : "off");
     } else if (config_.consumerRosterLatch() && roster_consumer_.epochs > 1) {
         declared_roster_logged_ = true;
-        log->warn("[RT] Card SID phase 5b: network.closed_loop.roster_latch is armed but this "
+        log->warn("[RT] Signal identity: network.closed_loop.roster_latch is armed but this "
                   "wire carries NO declared signal roster (the producer did not arm "
                   "network.ledger_emit), so the knob is INERT: the latch keeps the "
                   "consumer's own rule and every freshness flip keeps today's response.");
@@ -146,7 +146,7 @@ void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
     // an earlier wire prints nothing, so its log is byte-identical.
     if (r.epochs_declared == 0 && !config_.consumerRosterLatch()) return;
     auto log = log_manager_.getLogger("rt_engine");
-    log->info("[RT] Card SID phase 5, declared roster ({}): {} of {} epoch(s) held a "
+    log->info("[RT] Signal identity, declared roster ({}): {} of {} epoch(s) held a "
               "declaration ({} change(s)) -> latch compared {} cells: agree {} / differ {} "
               "(of which the consumer's own signal is NOT declared at all: {}) / none of "
               "the declared signals tracked {}; latch taken FROM the declaration {} / left "
@@ -154,7 +154,7 @@ void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
               tag, r.epochs_declared, r.epochs, r.decl_changes, d.compared, d.agree,
               d.differ, d.own_not_declared, d.none_tracked, d.from_roster, d.own_rule,
               config_.consumerRosterLatch() ? "ARMED" : "off");
-    log->info("[RT] Card SID phase 5, freshness flips ({}): {} total (phase {} / code {}; "
+    log->info("[RT] Signal identity, freshness flips ({}): {} total (phase {} / code {}; "
               "to stale {} / to fresh {}) -> UNDECLARED {} (the network carries no family "
               "for the signal) / OFF-WIRE {} (it does, and this satellite has no record) / "
               "STALE {} (a record exists and the age gate refused it) / unattributable {} "
@@ -165,8 +165,8 @@ void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
               r.flip_suppressed, r.flip_events, r.flip_events_suppressed,
               kRosterFlipEventCap);
     if (config_.ssrPhaseBiasStepTranslate() || config_.ssrPhaseBiasDiscCarry())
-        log->warn("[RT] Card SID phase 5: this consumer runs the card-PBT translation or the "
-                  "card-CC carry as its phase-bias reaction, and the flip census above is "
+        log->warn("[RT] Signal identity: this consumer runs the phase-bias translation or the declared-step"
+                  " carry as its phase-bias reaction, and the flip census above is "
                   "wired on the RESET path only: the PHASE half of the count is therefore "
                   "dead wiring on this posture.  The CODE half is unaffected.");
 }
@@ -341,7 +341,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                         ++roster_consumer_.flip_suppressed;
                         log->info("{}SSR phase-bias freshness flip ({} -> {}) on {} {}: NOT a "
                                   "staleness: the producer declares no phase-bias family for "
-                                  "this signal, so the ambiguity is left alone (card SID 5b)",
+                                  "this signal, so the ambiguity is left alone",
                                   epoch_prefix, it->second ? "fresh" : "stale",
                                   applied_now ? "fresh" : "stale", obs.satellite, code);
                     } else {
@@ -720,7 +720,7 @@ void RealTimeEngine::logPbHoldPresenceSummary(const char* tag) const {
     if (!config_.ssrPbHoldPresenceFlip() || pb_hold_.counters().cells == 0) return;
     const auto& c = pb_hold_presence_;
     log_manager_.getLogger("rt_engine")->info(
-        "[RT] SSR phase-bias HOLD presence edges ({}, card PBF): {} (appear {} / vanish {}) "
+        "[RT] SSR phase-bias HOLD presence edges ({}, phase-bias hold): {} (appear {} / vanish {}) "
         "answered by the A5 reaction ({}), {} left alone by the declared roster",
         tag, c.appear + c.vanish, c.appear, c.vanish,
         config_.ssrPhaseBiasStepTranslate() ? "translate"
@@ -807,7 +807,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                             log->info("{}SSR code-bias freshness flip ({} -> {}) on {} {}: NOT a "
                                       "datum re-reference: the producer declares no code-bias "
                                       "family for this signal, so the receiver code-bias states "
-                                      "are left alone (card SID 5b)",
+                                      "are left alone",
                                       epoch_prefix, it->second ? "applied" : "absent",
                                       applied_now ? "applied" : "absent", obs.satellite, code);
                         } else {
@@ -963,11 +963,11 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
 void RealTimeEngine::logReinflateSummary(const char* tag) const {
     if (!state_manager_) return;
     log_manager_.getLogger("rt_engine")->info(
-        "[RT] card OWD re-inflations ({}): {}", tag,
+        "[RT] state re-inflations ({}): {}", tag,
         StateManager::reinflateSummary(state_manager_->reinflateCounters()));
     if (config_.ssrLevelStepInflate())
         log_manager_.getLogger("rt_engine")->info(
-            "[RT] card CLV2 declared level steps ({}): {} (satellite, epoch) above the dead "
+            "[RT] declared level steps ({}): {} (satellite, epoch) above the dead "
             "band, {} answered along the phase-blind direction, {} refused; mean sigma "
             "{:.4f} m, max {:.4f} m, scale k {:.2f}.",
             tag, level_step_events_, level_step_inflated_, level_step_refused_,
