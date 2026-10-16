@@ -15,12 +15,12 @@
  */
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
-#include "app/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/NetworkRunContext.hpp"
+#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkCarrySites.hpp"
-#include "filter/NetworkParamRegistry.hpp"
-#include "filter/NetworkResponses.hpp"
+#include "network/state/NetworkCarrySites.hpp"
+#include "network/assembly/NetworkParamRegistry.hpp"
+#include "network/assembly/NetworkResponses.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

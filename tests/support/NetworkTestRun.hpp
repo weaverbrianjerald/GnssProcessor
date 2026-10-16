@@ -35,13 +35,13 @@
  * Neither copyable nor movable (the run holds references into the fixture).  Build it on the
  * heap (std::make_unique) when a test needs several, since a NetworkRun is large.
  */
-#include "app/NetworkEpoch.hpp"
-#include "app/NetworkRun.hpp"
-#include "app/NetworkRunContext.hpp"
-#include "app/NetworkSetupResult.hpp"
+#include "network/driver/NetworkEpoch.hpp"
+#include "network/driver/NetworkRun.hpp"
+#include "network/state/NetworkRunContext.hpp"
+#include "network/driver/NetworkSetupResult.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkEstimator.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/solve/NetworkEstimator.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "rinex/MultiRinexSync.hpp"
 

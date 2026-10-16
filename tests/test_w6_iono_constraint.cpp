@@ -45,8 +45,8 @@
 #include <vector>
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkSbasis.hpp"
+#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/NetworkSbasis.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkProductIO.hpp"   // the S-line declaration (RF-0d item 2)
 

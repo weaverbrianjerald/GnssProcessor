@@ -71,7 +71,7 @@
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/AmbiguityResolver.hpp"
-#include "filter/NetworkSbasis.hpp"
+#include "network/solve/NetworkSbasis.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkProductEmitter.hpp"

@@ -43,14 +43,14 @@
 
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkMeasurementAdmission.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/assembly/NetworkMeasurementAdmission.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "support/NetworkTestRun.hpp"   // the run and epoch the seam's epoch form takes
 

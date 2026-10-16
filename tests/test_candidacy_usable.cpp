@@ -45,10 +45,10 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkAnchorHygiene.hpp"
-#include "filter/NetworkInject.hpp"
-#include "filter/NetworkPhaseDatum.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/solve/NetworkAnchorHygiene.hpp"
+#include "network/carry/NetworkInject.hpp"
+#include "network/solve/NetworkPhaseDatum.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

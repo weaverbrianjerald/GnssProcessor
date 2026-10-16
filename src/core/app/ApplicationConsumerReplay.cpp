@@ -39,7 +39,7 @@
 #include "app/Application.hpp"
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkSbasis.hpp"   // kWindUpYawModelId (wind-up model revision pin)
+#include "network/solve/NetworkSbasis.hpp"   // kWindUpYawModelId (wind-up model revision pin)
 #include "logging/LogManager.hpp"
 #include "math/Coordinates.hpp"
 #include "math/TimeUtils.hpp"

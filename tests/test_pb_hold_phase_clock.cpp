@@ -23,12 +23,12 @@
 
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "filter/NetworkPbHold.hpp"
+#include "network/emit/NetworkPbHold.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"

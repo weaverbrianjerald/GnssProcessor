@@ -32,8 +32,8 @@
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
-#include "filter/NetworkSecondCodeScope.hpp"   // secondCodeCompanions (card SCC, R1)
-#include "filter/NetworkSecondPhaseScope.hpp"  // secondPhaseCompanions (card SID phase 6a, R1)
+#include "network/assembly/NetworkSecondCodeScope.hpp"   // secondCodeCompanions (card SCC, R1)
+#include "network/assembly/NetworkSecondPhaseScope.hpp"  // secondPhaseCompanions (card SID phase 6a, R1)
 #include <algorithm>
 #include <cctype>
 #include <filesystem>

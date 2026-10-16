@@ -45,9 +45,9 @@
 #include <string>
 #include <vector>
 
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkDatumGraph.hpp"
+#include "network/solve/NetworkDatumGraph.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

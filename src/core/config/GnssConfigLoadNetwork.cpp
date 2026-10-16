@@ -47,14 +47,14 @@
  */
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkPrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
-#include "filter/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
-#include "filter/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
-#include "filter/NetworkOraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
-#include "filter/NetworkParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
-#include "filter/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
-#include "filter/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
-#include "filter/NetworkSbasis.hpp"         // pinPairContinuityBlocker (card GFC)
+#include "network/qc/NetworkPrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
+#include "network/carry/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
+#include "network/carry/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
+#include "network/slip/NetworkOraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
+#include "network/assembly/NetworkParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
+#include "network/assembly/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
+#include "network/assembly/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
+#include "network/solve/NetworkSbasis.hpp"         // pinPairContinuityBlocker (card GFC)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)

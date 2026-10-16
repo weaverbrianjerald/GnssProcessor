@@ -43,15 +43,15 @@
 
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkAnchorHygiene.hpp"
-#include "filter/NetworkInject.hpp"
-#include "filter/NetworkPhaseDatum.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/solve/NetworkAnchorHygiene.hpp"
+#include "network/carry/NetworkInject.hpp"
+#include "network/solve/NetworkPhaseDatum.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
 #include <spdlog/spdlog.h>

@@ -12,7 +12,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "filter/NetworkSbasis.hpp"
+#include "network/solve/NetworkSbasis.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"
 #include "products/RinexNavParser.hpp"
 

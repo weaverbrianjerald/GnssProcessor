@@ -29,15 +29,15 @@
 
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
-#include "app/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/NetworkRunContext.hpp"
+#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkAnchorHygiene.hpp"
-#include "filter/NetworkChainDatum.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/solve/NetworkAnchorHygiene.hpp"
+#include "network/solve/NetworkChainDatum.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
 
 #include <spdlog/spdlog.h>

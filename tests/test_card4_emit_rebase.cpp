@@ -24,7 +24,7 @@
 
 #include <gtest/gtest.h>
 
-#include "products/NetworkEmitRebase.hpp"
+#include "network/emit/NetworkEmitRebase.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "common/Constants.hpp"

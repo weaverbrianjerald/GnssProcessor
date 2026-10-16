@@ -35,12 +35,12 @@
 #include <gtest/gtest.h>
 
 #include "support/NetworkTestRun.hpp"   // the run and epoch networkLedgerEmitFold's epoch form takes
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/ArcLedger.hpp"
-#include "filter/NetworkLedgerEmit.hpp"
+#include "network/state/ArcLedger.hpp"
+#include "network/emit/NetworkLedgerEmit.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "model/PppModel.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
