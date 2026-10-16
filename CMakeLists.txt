@@ -193,6 +193,8 @@ add_library(gnss_core STATIC
 	src/core/network/slip/SlipOracle.cpp
 	src/core/network/slip/CommonBandScope.cpp
 	src/core/network/slip/GfArcJump.cpp
+	src/core/network/slip/PassASlipScan.cpp
+	src/core/network/slip/PassASlipDrains.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -279,6 +281,7 @@ add_library(gnss_core STATIC
     src/core/network/diag/IonoDiag.cpp
     src/core/network/diag/DdFrac.cpp
     src/core/network/ar/SdEwlAr.cpp
+    src/core/network/ar/SdEwlRows.cpp
     src/core/network/diag/ShDevVtec.cpp
     src/core/network/solve/SolveStations.cpp
     src/core/network/assembly/StationBuild.cpp
