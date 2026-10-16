@@ -42,10 +42,8 @@ long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& e
                 case CarrySite::ZwdCoupling:
                 // network.carry_rebase_complete: every other coupling map's
                 // clock terms, on the same gate.
-                case CarrySite::IonoCoupling:
                 case CarrySite::IonoBlockCoupling:
                 case CarrySite::HoldAmbiguityCoupling:
-                case CarrySite::HoldIonoCoupling:
                 case CarrySite::HoldIonoBlockCoupling:
                 case CarrySite::RxClockCoupling:
                 case CarrySite::RxPhaseBiasCoupling:

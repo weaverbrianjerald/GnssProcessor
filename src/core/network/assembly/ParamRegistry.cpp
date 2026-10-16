@@ -447,15 +447,16 @@ int networkParamModelRunEnd(const NetworkRunEndView& v) {
     for (const CarryPrior& cp : ctx.carry.prev_carry) ++nb[cp.kind];
     for (const auto& line : ctx.params.modelTable())
         log->info("Network (param model, run end): {}", line);
+    // The diagonal slant-iono vehicle holds no state (its count is the constant 0 in the
+    // text); the line keeps its wording.
     log->info("Network (param model, run end): carried instances: sat_clock {}, "
               "sat_phase_bias {}, sat_code_bias {}, vtec_sh {}, ambiguity {}, zwd {}, "
-              "slant_iono {} (diagonal) + {} (in block), rx_clock {}, rx_phase_bias {}, "
+              "slant_iono 0 (diagonal) + {} (in block), rx_clock {}, rx_phase_bias {}, "
               "rx_code_bias {}",
               nb[SharedParamKind::Clock], nb[SharedParamKind::PhaseBias],
               nb[SharedParamKind::CodeBias], nb[SharedParamKind::VtecSh],
               net::present(ctx.entities.arcs, &net::ArcState::amb),
               net::present(ctx.entities.stations, &net::StationState::zwd),
-              net::present(ctx.entities.los, &net::LosState::iono),
               net::present(ctx.entities.los, &net::LosState::iono_blk),
               net::present(ctx.entities.stations, &net::StationState::signals,
                            &net::StationSignalState::rx_clk),

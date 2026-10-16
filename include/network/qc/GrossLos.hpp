@@ -57,7 +57,7 @@
  *  - **Response (the decoupling edge).**  The refloat vocabulary the T4
  *    attribution erase already uses, so the two responses stay consistent: erase
  *    the LOS's entries in @c ctx.entities.arcs (its zero-q phase levels),
- *    erase @c ctx.carry.iono_carry / @c iono_blk_carry for the LOS (so its slant
+ *    erase the LOS's in-block iono carry (@c LosState::iono_blk, so its slant
  *    iono re-draws from the SH tie rather than from a value estimated jointly with
  *    a level that is no longer trusted), and mark its ambiguities pending-reseed.
  *    Under @c network.gross_los_bound those entries are held at their
@@ -205,7 +205,7 @@ struct NetworkGrossLosTallies {
     long long max_concurrent = 0;    ///< Largest simultaneous declared set over the run.
     long long rows_deweighted = 0;   ///< Code rows actually folded at the deweighted σ (counted in the assembly).
     long long amb_refloated = 0;     ///< Ambiguity columns the declaration response reached: erased and marked pending-reseed, or held under @c network.gross_los_bound.
-    long long iono_erased = 0;       ///< Per-LOS iono carry entries erased (either vehicle).
+    long long iono_erased = 0;       ///< Per-LOS iono carry entries erased.
     double    r_max = 0.0;           ///< Largest standardized code residual any screened LOS reached.
     double    v_abs_max_m = 0.0;     ///< Largest |v| (metres) any screened LOS reached.
     std::map<std::string, long long> declared_by_station;   ///< Declarations per station name.
@@ -527,7 +527,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * Mutates persistent carries.  The response erases (or, under
  * @c network.gross_los_bound, holds) @c ctx.entities.arcs entries and marks
  * StateManager ambiguities pending-reseed for every declared LOS, and erases (or
- * holds) @c ctx.carry.iono_carry / @c iono_blk_carry for it.  The decision
+ * holds) the in-block iono carry (@c LosState::iono_blk) for it.  The decision
  * rewrites @c ctx.carry.gl_state (and the stations' @c gross_los, @c gl2_sat_down), which
  * the next epoch's assembly reads through @c NetStation::gl_code_sigma_scale.
  * The response must therefore run after the carry harvest and before the epoch

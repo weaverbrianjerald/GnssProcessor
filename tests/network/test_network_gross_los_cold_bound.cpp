@@ -230,7 +230,7 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     net::putArc(ctx.entities, l1, &net::ArcState::amb)    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
     net::putArc(ctx.entities, l2, &net::ArcState::amb)    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
     net::putArc(ctx.entities, other, &net::ArcState::amb) = LocalCarry{ 12.0, 1.0e-4, 100.0 };
-    net::putLos(ctx.entities, 0, "G07", &net::LosState::iono) = LocalCarry{ -91.0, 1.0e-2, 100.0 };
+    net::putLos(ctx.entities, 0, "G07", &net::LosState::iono_blk) = LocalCarry{ -91.0, 1.0e-2, 100.0 };
 
     events.gross.gl_act_cold_refloat.push_back({ 0, "G07" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
@@ -238,7 +238,7 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     EXPECT_EQ((net::getArc(ctx.entities.arcs, l1, &net::ArcState::amb) != nullptr), 0u);
     EXPECT_EQ((net::getArc(ctx.entities.arcs, l2, &net::ArcState::amb) != nullptr), 0u);
     EXPECT_EQ((net::getArc(ctx.entities.arcs, other, &net::ArcState::amb) != nullptr), 1u);
-    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, 0, "G07", &net::LosState::iono) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, 0, "G07", &net::LosState::iono_blk) != nullptr), 0u);
     EXPECT_EQ(ctx.counters.gross_los.cold_amb_erased, 2);
     EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0)) << "the cold path never holds";
 }

@@ -86,10 +86,8 @@ void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, Shared
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
     net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::amb) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(next(), t());
-    net::putLos(c_ent, 0, "G01", &net::LosState::iono) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(next(), t());
     net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::gl_hold_amb) = local(next(), t());
-    net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono) = local(next(), t());
     net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono_blk) = local(next(), t());
     net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "",
              &net::StationSignalState::rx_clk) = local(next(), t());
@@ -244,7 +242,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
             << "the entity field " << (*it)[1].str() << " (was " << was
             << ") has no site in NetworkCarrySites";
     }
-    EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02";
+    EXPECT_EQ(maps, 9) << "the nine local carry maps (the two dead iono carries are deleted)";
     // A carried container of LocalCarry by any other shape (a vector, a pointer) is a site
     // the scan above cannot see.
     EXPECT_EQ(body.find("std::vector<LocalCarry>"), std::string::npos);
@@ -267,8 +265,8 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
     using M = CarryMechanism;
     const auto moves = [](M m, S s) { return carryMechanismSite(m, s).moves; };
     const auto exempt = [](M m, S s) { return carryMechanismSite(m, s).reason != nullptr; };
-    const S couplings[] = {S::AmbiguityCoupling, S::ZwdCoupling, S::IonoCoupling,
-                           S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
+    const S couplings[] = {S::AmbiguityCoupling, S::ZwdCoupling,
+                           S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
                            S::HoldIonoBlockCoupling, S::RxClockCoupling,
                            S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling};
     // The ephemeris re-level: two of the local carries.
@@ -556,20 +554,20 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
         return bits;
     };
     EXPECT_EQ(carryMechanismOwedSites(M::EphRelevel),
-              mask({S::CxuPivot, S::CbExcPrevClk, S::PbHoldPrevClock, S::IonoCoupling,
-                    S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
+              mask({S::CxuPivot, S::CbExcPrevClk, S::PbHoldPrevClock,
+                    S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
                     S::HoldIonoBlockCoupling, S::RxClockCoupling, S::RxPhaseBiasCoupling,
                     S::RxCodeBiasCoupling, S::PhaseColourCoupling}));
     EXPECT_EQ(carryMechanismOwedSites(M::Handover), 0u);
     EXPECT_EQ(carryMechanismOwedSites(M::HandoverBeforeRows), 0u);
     EXPECT_EQ(carryMechanismOwedSites(M::Eq34Shift),
-              mask({S::PbLevelPrev, S::HoldAmbiguityValue, S::IonoCoupling, S::IonoBlockCoupling,
-                    S::HoldAmbiguityCoupling, S::HoldIonoCoupling, S::HoldIonoBlockCoupling,
+              mask({S::PbLevelPrev, S::HoldAmbiguityValue, S::IonoBlockCoupling,
+                    S::HoldAmbiguityCoupling, S::HoldIonoBlockCoupling,
                     S::RxClockCoupling, S::RxCodeBiasCoupling, S::PhaseColourCoupling}));
     EXPECT_EQ(carryMechanismOwedSites(M::DeclaredHandover),
               mask({S::PbLevelPrev, S::PinBridge, S::HoldAmbiguityValue, S::ZwdCoupling,
-                    S::IonoCoupling, S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
-                    S::HoldIonoCoupling, S::HoldIonoBlockCoupling, S::RxClockCoupling,
+                    S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
+                    S::HoldIonoBlockCoupling, S::RxClockCoupling,
                     S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling, S::PhaseColourCoupling}));
     for (int m = 0; m < kCarryMechanisms; ++m) {
         const auto mech = static_cast<M>(m);
@@ -673,7 +671,7 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
         EXPECT_EQ(movedTotal(counts), n_expect) << "complete=" << complete;
         // The legacy counters keep their meaning: the carried values, and every coupling term.
         EXPECT_EQ(nv, 3) << "complete=" << complete;
-        EXPECT_EQ(nt, complete ? 11 : 3);
+        EXPECT_EQ(nt, complete ? 9 : 3);
         expectOwedMoved(CarryMechanism::Eq34Shift, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
@@ -718,7 +716,7 @@ TEST(CarrySites, DeclaredHandoverCompleteMovesTheOwedSites) {
         // biases, and every coupling term.
         EXPECT_EQ(a, 1);
         EXPECT_EQ(b, 1);
-        EXPECT_EQ(t, complete ? 11 : 1);
+        EXPECT_EQ(t, complete ? 9 : 1);
         expectOwedMoved(CarryMechanism::DeclaredHandover, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);

@@ -88,11 +88,9 @@ enum class CarrySite : int {
     AmbiguityValue,        ///< @c local_carry value_abs: the ambiguity, in its phase bias's frame
     AmbiguityCoupling,     ///< @c local_carry coupling: the ambiguity's regression on the border
     ZwdCoupling,           ///< @c zwd_carry coupling
-    IonoCoupling,          ///< @c iono_carry coupling (empty by construction)
     IonoBlockCoupling,     ///< @c iono_blk_carry coupling
     HoldAmbiguityValue,    ///< @c gl_hold_amb value_abs: the gross screen's held ambiguity
     HoldAmbiguityCoupling, ///< @c gl_hold_amb coupling (cleared at the declaration)
-    HoldIonoCoupling,      ///< @c gl_hold_iono coupling (cleared at the declaration)
     HoldIonoBlockCoupling, ///< @c gl_hold_iono_blk coupling (cleared at the declaration)
     RxClockValue,          ///< @c rx_clk_carry value_abs: the receiver clock, in the clock datum's frame
     RxClockCoupling,       ///< @c rx_clk_carry coupling
@@ -104,7 +102,7 @@ enum class CarrySite : int {
 };
 
 /// Number of @ref CarrySite values (array sizing).
-inline constexpr int kCarrySites = 26;
+inline constexpr int kCarrySites = 24;
 
 /// The reference role of a site (see @ref CarrySite).
 enum class CarryRefRole : int {

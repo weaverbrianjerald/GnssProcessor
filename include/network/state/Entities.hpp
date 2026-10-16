@@ -751,14 +751,6 @@ struct LosState {
     /// LOS as a first sighting and re-vets it, the conservative direction.  Was
     /// @c NetworkCarryState::si_arc.  ColdStart.
     std::optional<SignalIntegrityArc> si_arc;
-    /// Per-LOS slant-iono carry of the retired diagonal vehicle (QUEUE 8b,
-    /// network.carry_iono, no loader key).  Empty on every run: its only writer is the
-    /// gross-LOS re-apply from @ref gl_hold_iono, whose only source is this carry.  Decision
-    /// D9 (step N4g): kept declared, because deleting it retires the carry sites
-    /// iono_coupling and hold_iono_coupling, rows of the run-end site table and of the
-    /// manifest's param_sites record (an output move, outside the step's byte-identity bar).
-    /// Was @c NetworkCarryState::iono_carry.  ColdStart.
-    std::optional<LocalCarry> iono;
     /// I-in-block per-LOS slant-iono carry (network.carry_iono_in_block): the absolute slant
     /// delay in metres at L1 (x_lin + x_r), with the F3 bookkeeping (blk / blk_idx /
     /// coupling / birth_s), folded as a column of the station's whitened block like a carried
@@ -779,11 +771,7 @@ struct LosState {
     /// rate limit).  Was @c NetworkCarryState::bb_event_last ("station\x1fsat", the station
     /// by NAME, O3; step N4e2, re-placed from the satellite rows).  ColdStart.
     std::optional<long long> bb_event_last;
-    /// The held per-LOS iono carry (RF-3b B2), same lifecycle as the held ambiguity levels.
-    /// Empty on every run, as @ref iono (its only source); kept declared with it (D9).
-    /// Was @c NetworkCarryState::gl_hold_iono.  ColdStart.
-    std::optional<LocalCarry> gl_hold_iono;
-    /// The held in-block per-LOS iono carry, the twin of @ref iono_blk (RF-3b B2).  Was
+    /// The held in-block per-LOS iono carry, the held twin of @ref iono_blk (RF-3b B2).  Was
     /// @c NetworkCarryState::gl_hold_iono_blk.  ColdStart.
     std::optional<LocalCarry> gl_hold_iono_blk;
     /// The CS-GF level-authority recursion of the line of sight
