@@ -6189,6 +6189,27 @@ namespace GnssProcessor {
         bool networkN3cCanonicalPairTraits() const { return network_n3c_canonical_pair_traits_; }
 
         /**
+         * @brief The slip tracker names a band by the roster's Modelled signal only
+         *        (@c network.n3c_band_signal).
+         *
+         * Armed, the arc-level slip tracker takes each band's signal from the roster's
+         * Modelled role (the station's latch where the roster has no role yet), and a
+         * band whose Modelled phase is not reported with its code this epoch is left
+         * out of the tracker's pair for that epoch. Lexical order never names a band
+         * that has a Modelled signal. A satellite whose lowest band is left out has no
+         * tracker row that epoch; one whose second band is left out has a single-band
+         * row. Bands with no Modelled signal anywhere keep the lexical pick, because
+         * no role exists to read. Acts only where the tracker names bands by the
+         * lookup (@c network.cycle_slip.tracker_modeled_first or
+         * @c network.roster_tracker).
+         *
+         * Solve-affecting when armed (the slip detectors see fewer rows), so it is
+         * graded as a behaviour change and it is fingerprinted (armed-only append).
+         * Network mode only.
+         */
+        bool networkN3cBandSignal() const { return network_n3c_band_signal_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8403,6 +8424,7 @@ namespace GnssProcessor {
         bool   network_n3c_bia_pin_pair_{false};                   ///< The code-bias datum pins the BIA clock-reference signal pair (GPS C1W with C2W) on a satellite that registers both, instead of the lexically first pair (network.n3c_bia_pin_pair). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_channel_family_{false};                 ///< The datum graph census groups bias keys by "X against the rest" (NetworkSbasis::channelFamilyOf) instead of the attribute letter (network.n3c_channel_family). Measure-only: nothing in the solve reads the census. Not fingerprinted. Network mode only.
         bool   network_n3c_canonical_pair_traits_{false};          ///< The canonical-pair admission reads each constellation's pair as the first two bands of its traits (GPS 1 and 2, Galileo 1 and 5) instead of the digits 1 and 2 (network.n3c_canonical_pair_traits). Inert without network.canonical_pair_admission. Solve-affecting when armed with it. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_band_signal_{false};                    ///< The slip tracker names a band by the roster's Modelled signal only: a band whose Modelled phase is not reported with its code this epoch is left out of the tracker pair, never replaced by the lexical pick (network.n3c_band_signal). Acts only under tracker_modeled_first or roster_tracker. Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.

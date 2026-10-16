@@ -6158,6 +6158,12 @@ namespace GnssProcessor {
         network_n3c_canonical_pair_traits_ =
             jval<bool>(json, "network.n3c_canonical_pair_traits",
                        "network_n3c_canonical_pair_traits", false);
+        // The slip tracker's band signal is the roster's Modelled role and lexical order
+        // never decides.  Default off; armed, a band whose Modelled phase is not reported
+        // with its code leaves the tracker pair that epoch, so the detectors see fewer
+        // rows: a behavior change, graded as one and fingerprinted.
+        network_n3c_band_signal_ =
+            jval<bool>(json, "network.n3c_band_signal", "network_n3c_band_signal", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest

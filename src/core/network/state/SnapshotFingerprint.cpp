@@ -254,6 +254,9 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // the admission requires (Galileo becomes screened), so a snapshot written on the
         // other side holds carries the screen never saw.  Appended only when armed.
         if (config_.networkN3cCanonicalPairTraits()) add("n3c:canonical_pair_traits");
+        // The tracker pair without the lexical substitute changes which satellites the slip
+        // detectors see and what their history holds.  Appended only when armed.
+        if (config_.networkN3cBandSignal()) add("n3c:band_signal");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

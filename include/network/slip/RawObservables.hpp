@@ -1057,6 +1057,14 @@ struct SlipQcChannel {
  *                     even with the knob armed, so an off run whose counter reads 0
  *                     on a mixed-signal network points to a lookup that was never
  *                     bound (standing invariant #4).
+ * @param band_role_only
+ *                     With @p tracker_modeled_first, a band for which @p latch names a
+ *                     signal that is not reported with its code this epoch leaves the
+ *                     pair, instead of taking the lexical pick
+ *                     (@c network.n3c_band_signal).  A satellite whose lowest band
+ *                     leaves has no row; one whose second band leaves has a single-band
+ *                     row.  A band the lookup does not name keeps the lexical pick.
+ *                     Default false: byte-identical.
  */
 void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>& modeled,
                                   const std::vector<bool>& present,
@@ -1066,7 +1074,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                                   bool per_signal = false,
                                   bool tracker_modeled_first = false,
                                   SlipQcCounters* cnt = nullptr,
-                                  const TrackerLatchLookup* latch = nullptr);
+                                  const TrackerLatchLookup* latch = nullptr,
+                                  bool band_role_only = false);
 
 /**
  * @brief Adjudicate this epoch's raw steps, update the per-station empirical

@@ -7,10 +7,17 @@
 
 #include "filter/StateKeySchema.hpp"
 #include "network/solve/DatumGraph.hpp"
+#include "common/Constants.hpp"
+#include "common/PppObservation.hpp"
+#include "common/PppUtils.hpp"
+#include "logging/LogManager.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp"
+#include "network/slip/RawObservables.hpp"
 #include "network/solve/Sbasis.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <map>
 #include <set>
 #include <string>
 #include <utility>
@@ -106,6 +113,64 @@ TEST(N3cSwitchesTest, CanonicalPairSlotsFollowTheTraitsWhenTheSwitchIsOn) {
     EXPECT_EQ(canonicalPairSlot(System::Galileo, '1', true), 1);
     EXPECT_EQ(canonicalPairSlot(System::Galileo, '5', true), 2);
     EXPECT_EQ(canonicalPairSlot(System::Galileo, '7', true), 0);
+}
+
+// ---- D4: the tracker's band signal is the Modelled role; lexical order never decides ----
+
+/// One GPS satellite's tracker row for the given phase signals, each reported with its code
+/// unless it appears in @p phase_only, under a lookup that names @p latch per band digit.
+const RawSlipObs* trackerRow(RawSlipEpoch& epoch, PppUtils& utils,
+                             const std::vector<std::string>& phases,
+                             const std::vector<std::string>& phase_only,
+                             const std::map<char, std::string>& latch, bool role_only) {
+    PppObservation obs{};
+    obs.satellite = "G05";
+    obs.system    = System::GPS;
+    obs.elevation = 45.0;
+    for (const std::string& ph : phases) {
+        obs.raw_observed[ph] = 115000000.5;
+        if (std::find(phase_only.begin(), phase_only.end(), ph) == phase_only.end())
+            obs.raw_observed["C" + ph.substr(1)] = 22000000.0;
+    }
+    const std::vector<std::vector<PppObservation>> modeled{ { obs } };
+    epoch.reset(1);
+    const TrackerLatchLookup lookup =
+        [&latch](int, const std::string&, char band) -> std::string {
+            const auto it = latch.find(band);
+            return it == latch.end() ? std::string{} : it->second;
+        };
+    networkComputeRawObservables(modeled, { true }, 1, utils, epoch, false, true, nullptr,
+                                 &lookup, role_only);
+    return epoch.rows.at(0).empty() ? nullptr : &epoch.rows.at(0).front();
+}
+
+TEST(N3cSwitchesTest, TrackerLeavesAnUnusableModelledBandOutInsteadOfTheLexicalPick) {
+    LogManager log_manager;
+    PppUtils utils{ log_manager };
+    RawSlipEpoch epoch;
+    // Band 1 is modelled as L1W, which is reported without its code; L1C is complete.
+    const std::vector<std::string> phases{ "L1C", "L1W", "L2W" };
+    const std::map<char, std::string> latch{ { '1', "L1W" }, { '2', "L2W" } };
+    // Default: the lexical pick (L1C) stands in for the unusable L1W.
+    const RawSlipObs* off = trackerRow(epoch, utils, phases, { "L1W" }, latch, false);
+    ASSERT_NE(off, nullptr);
+    EXPECT_EQ(off->sig1, "L1C");
+    EXPECT_EQ(off->sig2, "L2W");
+    // Switch on: the lowest band has no tracker signal, so the satellite has no row.
+    EXPECT_EQ(trackerRow(epoch, utils, phases, { "L1W" }, latch, true), nullptr);
+    // The second band unusable: a single-band row on the first band's Modelled signal.
+    const std::map<char, std::string> latch2{ { '1', "L1C" }, { '2', "L2X" } };
+    const RawSlipObs* two = trackerRow(epoch, utils, { "L1C", "L2W", "L2X" }, { "L2X" },
+                                       latch2, true);
+    ASSERT_NE(two, nullptr);
+    EXPECT_EQ(two->sig1, "L1C");
+    EXPECT_TRUE(two->sig2.empty());
+    EXPECT_FALSE(two->dual);
+    // A band the lookup does not name keeps the lexical pick under the switch.
+    const RawSlipObs* kept = trackerRow(epoch, utils, phases, { "L1W" }, { { '2', "L2W" } },
+                                        true);
+    ASSERT_NE(kept, nullptr);
+    EXPECT_EQ(kept->sig1, "L1C");
 }
 
 }  // namespace
