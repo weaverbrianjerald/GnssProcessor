@@ -256,9 +256,9 @@ long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& en
                               char constellation, double c0,
                               double var_q, CarrySiteCounts* counts = nullptr);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
 /**
  * @brief The handover's S-transform before the coupling rows (card PRM phase 2,
@@ -290,10 +290,10 @@ struct EpochEvents;             // app/NetworkEpoch.hpp
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log),
  *            run.setup.sat_health (sat_health), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
  *           ep.columns.registered_clock_sats (registered_clock_sats).
  *
  * The former parameters, by binding:
@@ -364,7 +364,7 @@ struct NetworkRunEndView;
  *   - networkSatHealthRunEnd: broadcast satellite health (HLT).
  *   - networkPivotHandoverRunEnd: clock-pivot handovers and their S-transform.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkHandoverStransformRunEnd(const NetworkRunEndView& v);

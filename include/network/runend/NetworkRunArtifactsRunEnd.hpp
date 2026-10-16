@@ -4,7 +4,7 @@
  * @brief Run-end reports of the run's artifacts: the trace streams' close, the run manifest's complete record, the flag-rate and run-summary CSVs.
  *
  * The run-end reports defined in NetworkRunArtifactsRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -23,7 +23,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints always.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkTraceCloseRunEnd(const NetworkRunEndView& v);
@@ -36,7 +36,7 @@ int networkTraceCloseRunEnd(const NetworkRunEndView& v);
  *
  * Gate: prints always.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkRunManifestCompleteRunEnd(const NetworkRunEndView& v);
@@ -51,7 +51,7 @@ int networkRunManifestCompleteRunEnd(const NetworkRunEndView& v);
  *
  * Gate: prints always.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkRunSummaryRunEnd(const NetworkRunEndView& v);

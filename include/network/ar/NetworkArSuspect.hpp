@@ -9,7 +9,7 @@
  *
  * ## The defect it closes
  *
- * The producer AR search (filter/NetworkProducerAr.hpp) reads the post-fit floats and
+ * The producer AR search (network/ar/NetworkProducerAr.hpp) reads the post-fit floats and
  * their covariance and nothing else.  A slip that no pre-solve detector caught (ladder
  * rung S8, a (4,5) slip: one wide-lane cycle, an IF step of 5 cm, a geometry-free step
  * the free slant ionosphere absorbs) leaves the float formal sigma, the bootstrap rate
@@ -377,7 +377,7 @@ std::string arSuspectCauseSummary(const std::array<long long, kArSuspectCauseCou
  * Gate: @c network.ambiguity_resolution.enable with @c suspect_epochs > 0 (returns 0 at
  * once otherwise).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkArSuspectRunEnd(const NetworkRunEndView& v);

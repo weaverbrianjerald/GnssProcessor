@@ -30,7 +30,7 @@
  * row that owns it (O4).  No loop is fused across members (O7).
  *
  * **Persistence.**  Every moved field has one @ref FieldDecl row in its entity's field table
- * (@ref kStationFields and its siblings, src/core/app/NetworkEntities.cpp): its name, the
+ * (@ref kStationFields and its siblings, src/core/network/state/NetworkEntities.cpp): its name, the
  * @c NetworkCarryState member it was, how it survives a restart (@ref Persist) and, for a
  * snapshot record, the two functions that fill the record from the table and the table
  * from the record.  The snapshot writer and reader call those functions where the old copy
@@ -99,7 +99,7 @@ enum class Persist : std::uint8_t {
     Pending,          ///< A hand-off consumed within a few epochs of being set.
     RunConst,         ///< Set once at setup and read for the run.
     WriterTelemetry,  ///< The snapshot writer's own counters.
-    Epoch,            ///< A per-epoch value: a member of EpochEvents (app/NetworkEpoch.hpp), built with the epoch.
+    Epoch,            ///< A per-epoch value: a member of EpochEvents (network/driver/NetworkEpoch.hpp), built with the epoch.
     Latch,            ///< Set at one epoch and consumed at the next.
     ResumeHandoff,    ///< Set by the warm resume, consumed at the first leg epoch (step N4g).
     EngineEpoch,      ///< Rebuilt every epoch by its owner but kept in the run: the run end or a held pointer reads it.
@@ -250,7 +250,7 @@ struct ConstellationState {
     /// @c NetworkCarryState::sd_ewl_r0.  ColdStart.
     std::optional<std::string> sd_ewl_r0;
     /// The producer AR search's cycle-basis memory (card AGT, step AGT-5,
-    /// filter/NetworkArCycleBasis.hpp): per family of the constellation, keyed by its bands
+    /// network/ar/NetworkArCycleBasis.hpp): per family of the constellation, keyed by its bands
     /// (O4: a family spans several channels), the last search's links, basis, arc life
     /// tracks and DD identities, which the next search keeps its links from and maps its
     /// basis against.  Written and read at SB_NETAR only.  Empty and untouched unless
@@ -837,7 +837,7 @@ struct ArcState {
     Lifecycle seen;
     /// The arc's lifecycle record (card SID phase 1): its raw and admitted states, gap
     /// lengths, generations and reason masks, advanced once per epoch by the ledger's
-    /// machine (@c ctx.arc_ledger, filter/ArcLedger.hpp) and read by the roster's audit,
+    /// machine (@c ctx.arc_ledger, network/state/ArcLedger.hpp) and read by the roster's audit,
     /// the re-entry response, the anchor hygiene and @c arcLifeStamp.  Present from the
     /// first sighting until the forget window resets it.  Was the record map of
     /// @c ArcLedger (not a @c NetworkCarryState member).  ColdStart: not snapshotted.
@@ -1770,7 +1770,7 @@ extern const std::vector<FieldDecl> kLosFields;            ///< Step N4c.
 extern const std::vector<FieldDecl> kArcFields;            ///< Steps N4f1, N4f2.
 
 /**
- * @brief The run remainder's declarations (step N4g, src/core/app/NetworkRunFields.cpp): one
+ * @brief The run remainder's declarations (step N4g, src/core/network/state/NetworkRunFields.cpp): one
  *        row per member of @c NetworkCarryState left in the run state (per member of its
  *        @c ResumeHandoff group), and one per member step N4g moved to
  *        @c NetworkServiceCounters (decision D6).  @c name is the path from the run context

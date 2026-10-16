@@ -4,7 +4,7 @@
  *        per-arc test, the PASS-A drain that answers its flags, and its run-end report.
  *
  * The design (what the test is, why its reference is the last clean step, what a flag
- * frees) is in the header's file banner, include/slip/NetworkGfArcJump.hpp.
+ * frees) is in the header's file banner, include/network/slip/NetworkGfArcJump.hpp.
  */
 
 #include "network/slip/NetworkGfArcJump.hpp"

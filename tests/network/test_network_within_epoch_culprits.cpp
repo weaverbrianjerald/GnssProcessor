@@ -1,7 +1,7 @@
 /**
  * @file test_network_within_epoch_culprits.cpp
  * @brief Unit gates of the within-epoch culprit hand-off (card WCF;
- *        filter/NetworkWithinEpochCulprits.hpp).
+ *        network/qc/NetworkWithinEpochCulprits.hpp).
  *
  * Suite @c WithinEpochCulprits (the set the T2 block writes and the DD-carry rebuild reads):
  *  - a whole-satellite culprit names that satellite at every station, and no other;

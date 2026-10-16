@@ -62,8 +62,8 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief The five SB_SOLPREP locals that SB_EMITSTORE and the heartbeat consume.
@@ -82,9 +82,9 @@ struct NetworkSolPrepResult {
                                                     ///< (replay) + heartbeat.
 };
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
 /**
  * @brief Prepare + stamp this epoch's emitted solution and land the emit-only
@@ -95,10 +95,10 @@ struct EpochEvents;             // app/NetworkEpoch.hpp
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup (setup). Read: run.config (config_), run.log
  *            (log), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.x_emit()
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.x_emit()
  *           (x_s), ep.solve.plan (plan), ep.clock.pl_now_s (pl_now_s), ep.solve.datum_changed
  *           (datum_changed), ep.solve.changed_consts (changed_consts), ep.solve.sigma0_adapt
  *           (sigma0_adapt), ep.solve.perconst_active (perconst_active),
@@ -143,7 +143,7 @@ struct NetworkRunEndView;
  *   - networkClockRunawayRunEnd: the clock-runaway quarantine (RT0-5).
  *   - networkPerConstellationRunEnd: the per-constellation sigma0 carve-out (RTA-10).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkSolPrepRunEnd(const NetworkRunEndView& v);

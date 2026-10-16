@@ -831,7 +831,7 @@ double phaseBiasShiftOf(const std::map<std::pair<std::string, std::string>, doub
  *
  * Gate: `carry_cpl_cond`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkCouplingCarryRunEnd(const NetworkRunEndView& v) {
@@ -864,7 +864,7 @@ static int networkCouplingCarryRunEnd(const NetworkRunEndView& v) {
  * Gate: each section under its own condition, as in the teardown: `carry_cpl_cond &&
  * ctx.knobs.carry_cpl_reinit`; `carry_cpl_cond && ctx.knobs.carry_cpl_gauge`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
@@ -934,7 +934,7 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkCoupling.hpp).
+// declared in network/carry/NetworkCoupling.hpp).
 int networkCouplingRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkCouplingCarryRunEnd,

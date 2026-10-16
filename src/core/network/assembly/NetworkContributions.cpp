@@ -2,7 +2,7 @@
  * @file NetworkContributions.cpp
  * @brief The contribution declarations, the row tags' helpers and checks, the tallies and
  *        the "contributions as armed" table (card NOM step N2a).  See
- *        filter/NetworkContributions.hpp.
+ *        network/assembly/NetworkContributions.hpp.
  */
 
 #include "network/assembly/NetworkContributions.hpp"

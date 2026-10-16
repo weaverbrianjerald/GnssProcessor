@@ -1,7 +1,7 @@
 /**
  * @file test_network_fixed_cycles.cpp
  * @brief Tests of the fixed-cycle fold's pure steps and of its fold with acceptance (card FCF,
- *        step FCF-2; filter/NetworkFixedCycles.hpp).
+ *        step FCF-2; network/ar/NetworkFixedCycles.hpp).
  *
  * Suite @c NetworkFixedCycles:
  *  - the chi-square quantile against tabulated values and the closed form at 2 dof, and its

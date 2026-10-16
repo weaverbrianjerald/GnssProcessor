@@ -4,7 +4,7 @@
  * @brief Run-end report of the warm resume and the state snapshot (cards RTB-7, RS-2 to RS-9, section 18.12).
  *
  * The run-end report defined in NetworkResumeRunEnd.cpp, one row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -22,7 +22,7 @@ struct NetworkRunEndView;
  *   - networkResumeRestoreRunEnd: warm-resume restores: frame, coupling regressors, dense border.
  *   - networkResumeSnapshotRunEnd: resume and snapshot: RTB-7, RS-2 to RS-9, the coupling capture.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkResumeRunEnd(const NetworkRunEndView& v);

@@ -12,7 +12,7 @@
  *
  * This is the phase counterpart of card SCC.  The decisions below are pure
  * functions of their inputs and are unit-tested directly
- * (tests/test_second_phase_channel.cpp):
+ * (tests/network/test_second_phase_channel.cpp):
  *
  *  - @ref secondPhaseAllowEntryValid: what the loader accepts in
  *    `network.second_phase_signals` (a 3-character phase type on band 1; band 2
@@ -125,8 +125,8 @@ void secondPhaseCellEdges(const std::set<std::string>& prev,
  */
 double secondPhaseWitness(double latched_cyc, double second_cyc);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Epoch tail of the second phase channel: the slip census by tier and the
@@ -143,9 +143,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.config (config_), run.setup.stations (stations).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only.
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only.
  *
  * The former parameters, by binding:
  *   - @p ctx = run.ctx: The run context (the carry, the counters, the cells).
@@ -168,7 +168,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `config_.networkSecondPhaseRowsActive()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v);

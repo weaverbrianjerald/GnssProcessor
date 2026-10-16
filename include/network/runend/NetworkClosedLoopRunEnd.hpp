@@ -4,7 +4,7 @@
  * @brief Run-end report of the closed-loop integer-recovery harness (the held-out consumer).
  *
  * The run-end reports defined in NetworkClosedLoopRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -23,7 +23,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `closed_loop_on && consumer`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkClosedLoopRunEnd(const NetworkRunEndView& v);

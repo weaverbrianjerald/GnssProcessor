@@ -79,7 +79,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
     // Coupling observability (Card 1/1d), serial and post-produce: fold the
     // per-station coupling-term counts into the run totals, plus the one-shot Card-1d
     // debug dump of the first few assembled coupling rows (see
-    // filter/NetworkCoupling.hpp).  Free-epoch skips (SPEC_slip_relevel_walk): fold
+    // network/carry/NetworkCoupling.hpp).  Free-epoch skips (SPEC_slip_relevel_walk): fold
     // the per-station counts (serial, post-produce, the same discipline as the
     // coupling fold below).
     if (relevel_free_on)

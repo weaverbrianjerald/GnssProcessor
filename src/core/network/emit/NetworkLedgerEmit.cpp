@@ -454,7 +454,7 @@ int networkLedgerEmitRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // Ledger-driven emission run-end (SID phase 5a, filter/NetworkLedgerEmit.cpp): the
+    // Ledger-driven emission run-end (SID phase 5a, network/emit/NetworkLedgerEmit.cpp): the
     // emitter's bookkeeping against the ledger, both generation classes with their
     // denominators, the first-sighting split, and the declared roster's wire census.
     // Silent when the knob is disarmed; read here for the reason the clauses above give.

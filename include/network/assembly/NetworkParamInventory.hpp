@@ -9,7 +9,7 @@
  *
  * ### What it answers
  *
- * Card PRM's registry (filter/NetworkParamRegistry.hpp) declares each parameter KIND
+ * Card PRM's registry (network/assembly/NetworkParamRegistry.hpp) declares each parameter KIND
  * once.  It cannot say what happened to each INSTANCE: whether the receiver's band-5
  * code delay of one station is a column of its local block, held at its seed outside
  * the solve, or not observed this epoch.  Card L5R needed a residual census to find
@@ -557,7 +557,7 @@ namespace GnssProcessor {
      *        telemetry of standing invariants #4 and #7, and the edge state the split and
      *        the harvest need.
      *
-     * A member of @c NetStation (filter/NetworkRunTypes.hpp), written inside the parallel
+     * A member of @c NetStation (network/driver/NetworkRunTypes.hpp), written inside the parallel
      * produce phase by the station's own split and inject, as @c eb_rows_deweighted is,
      * and by the serial harvest; summed by @ref networkRxExtraBandDelayRunEnd.  Untouched
      * unless @ref RxIfbRule::estimated_by_knob.  The split's dispositions of the governed
@@ -884,8 +884,8 @@ namespace GnssProcessor {
         SatIdentityCensus   sat_ids;                     ///< The satellite ids of no modelled constellation, and of SBAS.
     };
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief Count this epoch's satellite ids into @c inv.sat_ids (serial, once per
@@ -896,9 +896,9 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings:
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings:
      *            run.ctx.param_inventory (inv).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
      *
      * The former parameters, by binding:
      *   - @p inv = run.ctx.param_inventory: The inventory.
@@ -941,9 +941,9 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.log (log), run.nc (nc).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.emitted (emitted).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.emitted (emitted).
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context (@c ctx.param_inventory read and marked).
@@ -982,7 +982,7 @@ namespace GnssProcessor {
      *   - networkRxExtraBandDelayRunEnd: the receiver extra-band code delay (card L5B).
      *   - networkParamInventoryTableRunEnd: parameters as armed (NOM N1).
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0, or the last non-zero verdict of its sections.
      */
     int networkParamInventoryRunEnd(const NetworkRunEndView& v);

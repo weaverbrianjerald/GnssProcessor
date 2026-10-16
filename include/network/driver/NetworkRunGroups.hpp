@@ -4,7 +4,7 @@
  * @brief @internal The driver-owned groups of run objects that the network seams share,
  *        and @ref NetworkRunEndInputs, the run-end bundle of them (card NOM step TD1a).
  *
- * The run (app/NetworkRun.hpp, card NOM3 step EP1) owns one of each group for the whole
+ * The run (network/driver/NetworkRun.hpp, card NOM3 step EP1) owns one of each group for the whole
  * run, and a seam reads the group it needs instead of one parameter per member:
  *   - @ref NetworkRunEngines: the run's estimation engines, owned since card NOM3 step EP1
  *     (built in place inside NetworkRun from a @ref NetworkEngineSpec);
@@ -46,7 +46,7 @@ class NetworkPriorResidual;
 struct SlipQcChannel;
 
 /// The constructor arguments of the run's engines and groups (card NOM3 step EP1), computed
-/// once by networkEngineSpec (app/NetworkRun.hpp) from the configuration and the knobs.  A
+/// once by networkEngineSpec (network/driver/NetworkRun.hpp) from the configuration and the knobs.  A
 /// field is either the setup local it replaced, with that local's name and type, or one
 /// engine constructor argument the setup computed inline.
 struct NetworkEngineSpec {

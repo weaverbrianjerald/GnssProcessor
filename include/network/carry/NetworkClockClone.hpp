@@ -63,9 +63,9 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp defines it as a struct
 
 /// A cloned clock's walk must exceed this fraction of its stashed variance: below it the
 /// walk factor's information (1/Q) would dwarf every real pivot of the shared normals, and

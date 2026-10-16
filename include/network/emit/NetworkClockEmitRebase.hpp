@@ -78,7 +78,7 @@
  * the on-disk write (the transform is baked into the product; replay never re-runs it),
  * routes @c marked entries to @c markSatDiscontinuity and the R-record set, and routes
  * @c reanchored constellations to @c markDatumChange.  It changes outputs only: the
- * solve is byte-identical even when armed.  @c tests/test_clock_emit_rebase.cpp drives
+ * solve is byte-identical even when armed.  @c tests/network/test_clock_emit_rebase.cpp drives
  * it directly with synthetic streams of known truth.
  */
 
@@ -254,7 +254,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.clk_frame_hold || ctx.knobs.clk_jump_test`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkClockEmitRebaseRunEnd(const NetworkRunEndView& v);

@@ -7,7 +7,7 @@
  *
  * ## What it does
  *
- * The producer AR search (filter/NetworkProducerAr.cpp, on card AGT's cycle basis) fixes about
+ * The producer AR search (network/ar/NetworkProducerAr.cpp, on card AGT's cycle basis) fixes about
  * half the between-station double differences (DDs) of the settled float, and the float stays
  * float.  This seam folds those integers into a SECOND solve of the shared parameters (clocks,
  * phase biases, code biases), made from a copy of the float solve's own reduced normals
@@ -45,7 +45,7 @@
  *
  * ## One epoch, source lattice (step FCF-3, the hold under Observe)
  *
- * The units are the L1/L2 pairs the ledger of fixed cycles (filter/NetworkArLattice.hpp)
+ * The units are the L1/L2 pairs the ledger of fixed cycles (network/ar/NetworkArLattice.hpp)
  * implies.  The seam steps the ledger and the fold together, in this order:
  *
  *  1. **The ledger opens** (@ref arLatticeBegin): a skipped epoch releases everything; the
@@ -73,7 +73,7 @@
  *     flag on an arc of a unit folded at t is read through the life stamp at t + 1).
  *
  * Every verdict on a cycle releases its arcs, never the rows behind it alone
- * (filter/NetworkArLattice.hpp): other rows can hold one of its arcs and would otherwise keep that
+ * (network/ar/NetworkArLattice.hpp): other rows can hold one of its arcs and would otherwise keep that
  * arc's old integer (card FCFC section 8).
  *
  * ## What the tests cannot see
@@ -95,10 +95,10 @@
  * Its tallies (@c ctx.counters.fixed_cycles) and its run state (@c ctx.carry.fixed_cycles, the
  * folded runs), and under @c fixed_cycles.trace the files of logs/ (@ref kFixedCyclesHeader,
  * @ref kFixedCycleShiftHeader, and under source lattice @ref kFixedCycleEventsHeader, in
- * logging/NetworkRunTraces.hpp) and the run-end report @ref networkFixedCyclesRunEnd.  Nothing
+ * network/diag/NetworkRunTraces.hpp) and the run-end report @ref networkFixedCyclesRunEnd.  Nothing
  * the solve reads.  Not snapshotted and not fingerprinted; the loader refuses
  * @c network.state_snapshot_path under Emit, so an Emit leg neither writes nor resumes a
- * snapshot.  The ledger's own files are written by filter/NetworkArLattice.cpp.
+ * snapshot.  The ledger's own files are written by network/ar/NetworkArLattice.cpp.
  */
 
 #include "common/GnssIdentity.hpp"          // ArcId, SignalId
@@ -122,12 +122,12 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetStation;           // filter/NetworkRunTypes.hpp
-struct NetworkRunContext;    // app/NetworkRunContext.hpp
-struct NetworkRunEndView;    // filter/NetworkRunEnd.hpp
-struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp
+struct NetStation;           // network/driver/NetworkRunTypes.hpp
+struct NetworkRunContext;    // network/state/NetworkRunContext.hpp
+struct NetworkRunEndView;    // network/runend/NetworkRunEnd.hpp
+struct NetworkRunTraces;     // network/diag/NetworkRunTraces.hpp
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp
-struct WithinEpochCulprits;  // filter/NetworkWithinEpochCulprits.hpp
+struct WithinEpochCulprits;  // network/qc/NetworkWithinEpochCulprits.hpp
 
 namespace fcyc {
 
@@ -464,8 +464,8 @@ struct FixedCycleEmission {
     Eigen::VectorXd x_held;       ///< The held shared estimate (empty unless @c emit).
 };
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief The fixed-cycle fold and the ledger of fixed cycles at this epoch (SB_SOLPREP, right
@@ -483,10 +483,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log), run.engines.est
  *            (est), run.setup.stations (stations).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.solve.plan.shared_datum (datum), ep.ar_fixes (fixes), ep.solve.we_landed
  *           (we).
  *
@@ -525,7 +525,7 @@ FixedCycleEmission networkFixedCycles(NetworkRun& run, const NetworkEpoch& ep);
  *
  * Gate: returns 0 at once unless the fold is armed.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkFixedCyclesRunEnd(const NetworkRunEndView& v);

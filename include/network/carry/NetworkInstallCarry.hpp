@@ -42,9 +42,9 @@ class GnssConfig;
 struct NetworkRunContext;
 struct NetworkRunTraces;
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
 /**
  * @brief Install the accepted DD posterior for this epoch.
@@ -53,12 +53,12 @@ struct EpochEvents;             // app/NetworkEpoch.hpp
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.engines.carry_driver (carry_driver), run.engines.slip_qc
  *            (slip_qc). Read: run.config (config_), run.log (log), run.engines.est (est),
  *            run.setup.stations (stations), run.setup.carry_par (carry_par),
  *            run.setup.n_threads (n_threads), run.setup.seam_threads (seam_threads).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s),
  *           ep.solve.plan (plan), ep.se (se), ep.dd_build.carry_arc_amb_key
  *           (carry_arc_amb_key).
  *

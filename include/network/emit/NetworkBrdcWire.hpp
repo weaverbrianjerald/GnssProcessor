@@ -67,7 +67,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.nbp_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkBrdcWireRunEnd(const NetworkRunEndView& v);

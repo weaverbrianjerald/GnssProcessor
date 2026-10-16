@@ -5,7 +5,7 @@
  *
  * The covariance→σ math behind the wire tokens @c sigc / @c sigcc / @c rho, kept
  * out of the producer's per-epoch emit path so that production (@c ApplicationNetwork)
- * and the unit test (@c tests/test_network_combined_sigma.cpp, which uses a
+ * and the unit test (@c tests/network/test_network_combined_sigma.cpp, which uses a
  * hand-built covariance with known cross-terms) run the same code.
  *
  * The estimated satellite-side correction that a PPP-RTK user applies to one

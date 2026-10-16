@@ -2,7 +2,7 @@
  * @file test_rhs_attrib_local.cpp
  * @brief Card L5B: the attribution's station-local readout (`LOC:<station>:<key>` labels in
  *        @c network.rhs_attrib_columns, @c networkRhsAttribLocalShares and the `loc_<tow>.csv`
- *        writer in filter/NetworkRhsAttrib.hpp) and the kernel's
+ *        writer in network/qc/NetworkRhsAttrib.hpp) and the kernel's
  *        @c NetworkNormalEquations::reconstructStationParts.
  *
  * The fixture is a small two-band network solved by the estimator itself: two satellites

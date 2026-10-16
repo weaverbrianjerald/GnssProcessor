@@ -1047,7 +1047,7 @@ void networkParamInventoryRunEnd(const NetworkRunContext& ctx, const std::shared
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
 static int networkParamInventoryTableRunEnd(const NetworkRunEndView& v) {
@@ -1219,7 +1219,7 @@ std::vector<RxIfbReportLine> rxExtraBandDelayReport(
      * Gate: @c network.estimate_rx_extra_band_code_delay armed; prints nothing otherwise,
      * so an unarmed run's log is unchanged.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
 static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
@@ -1243,7 +1243,7 @@ static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkParamInventory.hpp).
+// declared in network/assembly/NetworkParamInventory.hpp).
 int networkParamInventoryRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRxExtraBandDelayRunEnd,

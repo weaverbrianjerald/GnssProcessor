@@ -2,7 +2,7 @@
  * @file test_network_rx_extra_band_delay.cpp
  * @brief Card L5B: @c network.estimate_rx_extra_band_code_delay, the knob that turns the
  *        receiver IFB drop of the declared rule @c RxIfbRule off
- *        (filter/NetworkParamInventory.hpp).
+ *        (network/assembly/NetworkParamInventory.hpp).
  *
  * Seven contracts:
  *  - the loader: default off, and parsed when set;

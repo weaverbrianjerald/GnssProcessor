@@ -1,7 +1,7 @@
 /**
  * @file test_oracle_pin.cpp
  * @brief The sim-only oracle ambiguity pin (`network.inject.events[] kind
- *        "oracle_pin"`, include/filter/NetworkOraclePin.hpp).
+ *        "oracle_pin"`, include/network/slip/NetworkOraclePin.hpp).
  *
  * Four suites, all structural (this file does not validate estimation accuracy):
  *
@@ -24,7 +24,7 @@
  * η = Λ(value − x_lin)" is a caller-side property certified by the same-build
  * byte-identity A/B and the run-end closure counters
  * (`offered == rows + gauge_pinned_skipped + no_column`), not by a unit test; the
- * same division tests/test_slip_oracle.cpp draws.
+ * same division tests/network/test_slip_oracle.cpp draws.
  */
 #include <gtest/gtest.h>
 

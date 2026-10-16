@@ -516,7 +516,7 @@ int networkCongruenceRunEnd(const NetworkRunEndView& v) {
     // silence (invariant #4), so the denominators come first.  Then comes the MDB
     // table, a service deliverable rather than a diagnostic: the smallest coordinate
     // fault this network can detect, per station and per direction.  The body is in
-    // filter/NetworkCongruence.cpp, next to the sweep that produces the numbers.
+    // network/qc/NetworkCongruence.cpp, next to the sweep that produces the numbers.
     if (ctx.knobs.cg_on)
         networkCongruenceRunEnd(ctx, log, setup.stations);
     return 0;

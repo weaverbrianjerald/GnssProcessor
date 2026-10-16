@@ -57,7 +57,7 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
     class GnssConfig;
     struct NetworkRunContext;
@@ -329,8 +329,8 @@ struct EpochEvents;   // app/NetworkEpoch.hpp
         long long week, double tow,
         std::set<std::pair<std::string, std::string>>& handled_out);
 
-    struct NetworkRun;      // app/NetworkRun.hpp
-    struct NetworkEpoch;    // app/NetworkEpoch.hpp
+    struct NetworkRun;      // network/driver/NetworkRun.hpp
+    struct NetworkEpoch;    // network/driver/NetworkEpoch.hpp
 
     /**
      * @brief The epoch form of the bounded drop (card NOM3 step EP2): builds this epoch's LOS
@@ -366,7 +366,7 @@ struct EpochEvents;   // app/NetworkEpoch.hpp
      * `ctx.knobs.amb_float_kf && ctx.knobs.amb_float_declared_handover`;
      * `ctx.knobs.pl_blk_from_vehicle`.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 1 when the joint-block PD-fallback bar fails (under the float vehicle's joint
      * block, `ctx.knobs.pl_blk_from_vehicle`: zero blocks attempted, or a fallback rate
      * above 1 %); 0 otherwise.

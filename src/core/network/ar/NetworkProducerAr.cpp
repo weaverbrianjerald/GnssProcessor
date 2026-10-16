@@ -467,7 +467,7 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
     return n_const_signal;
 }
 
-// ---- Card AGT, step AGT-5: the cycle basis (filter/NetworkArCycleBasis.hpp) ----------------------
+// ---- Card AGT, step AGT-5: the cycle basis (network/ar/NetworkArCycleBasis.hpp) ----------------------
 
 /// One family's build at this search, held until it becomes the family's memory after the search.
 struct ArCycleFamilyEpoch {
@@ -623,7 +623,7 @@ ArCycleEpochFigures arCycleEpochFiguresOf(const ArCycleBasisCounters& c) {
 }
 
 /// The cycle basis's search rows for every family of every constellation in the pools (card AGT,
-/// step AGT-5; filter/NetworkArCycleBasis.hpp).  Per family: the rows with their life readings,
+/// step AGT-5; network/ar/NetworkArCycleBasis.hpp).  Per family: the rows with their life readings,
 /// the forest and the basis, the map against the stored basis, the tallies and the search rows.
 /// Each family's build is kept in @p epoch for the memory store after the search, and @p clause
 /// receives the epoch's log clause; every band-arc's life reading goes to @p readings unless it
@@ -788,7 +788,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   fold_armed    = netar.cycle_basis && netar.fixed_cycle_fold != FixedCycleFold::Off;
     const bool   handover      = lattice_armed || fold_armed;
 
-    // --- Card ARL: the suspect-corner mask's per-epoch fold (filter/NetworkArSuspect.hpp).
+    // --- Card ARL: the suspect-corner mask's per-epoch fold (network/ar/NetworkArSuspect.hpp).
     //     It runs ahead of the search gate, so the ledger's clock and stamps stay current
     //     through the epochs before min_epochs.  Window 0 (off): every arSuspect* call
     //     below is a no-op, nothing is read or written, and the search runs as before. --
@@ -1386,7 +1386,7 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
                   "is structurally empty (standing invariant #4); this run is evidence "
                   "about NOTHING in the card.", nc.ambiguity_resolution.min_epochs);
     }
-    // Card AGT: the cycle basis's clause (filter/NetworkArCycleBasis.hpp), armed only.
+    // Card AGT: the cycle basis's clause (network/ar/NetworkArCycleBasis.hpp), armed only.
     if (nc.ambiguity_resolution.cycle_basis)
         arCycleBasisRunEndClause(c.netar_cycle, nc.ambiguity_resolution.cycle_basis_sticky, log);
     return 0;

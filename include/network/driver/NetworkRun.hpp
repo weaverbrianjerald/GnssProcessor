@@ -9,14 +9,14 @@
  *   - seven references to objects runNetwork declares before it and keeps alive to the run
  *     end: the run context, the configuration and its network block, the main logger, the
  *     trace owner, the setup result and the log directory;
- *   - the four driver-owned groups of filter/NetworkRunGroups.hpp, by value: the estimation
+ *   - the four driver-owned groups of network/driver/NetworkRunGroups.hpp, by value: the estimation
  *     engines (NetworkRunEngines, the owner since EP1), the emit engines, the run timing and
  *     the closed-loop tally.
  *
  * Passed as NetworkRun&, never const: C++ does not carry const through a reference member,
  * so a const run would still hand out a writable context, traces and setup, and most seams
  * write run state by design (counters, carry, traces, engines).  What a seam may not write
- * is stated by the epoch (app/NetworkEpoch.hpp) and by each seam's preamble, whose lines keep
+ * is stated by the epoch (network/driver/NetworkEpoch.hpp) and by each seam's preamble, whose lines keep
  * the frozen declarators (`const NetworkEstimator& est = run.engines.est;`).
  *
  * Neither copyable nor movable: two corroborators that runNetwork installs (the
@@ -64,7 +64,7 @@ struct NetworkRun {
     NetworkRunTraces&                      traces;   ///< Every trace stream and the run manifest.
     NetworkSetupResult&                    setup;    ///< Stations, sync, emitter, product writer, consumer; one address for the run.
     const std::filesystem::path&           log_dir;  ///< Application::log_dir_ (the producer AR's export root).
-    // --- The groups the run owns (filter/NetworkRunGroups.hpp) ---------------------------
+    // --- The groups the run owns (network/driver/NetworkRunGroups.hpp) ---------------------------
     NetworkRunEngines  engines;      ///< The estimation engines (est, carry_driver, carry_vce, prires, slip_qc).
     NetworkEmitEngines emit;         ///< Emit re-base, clock emission re-base.
     NetworkRunTiming   timing;       ///< Loop start, D0b totals, the bracket scratch, the assembly wall.
@@ -81,7 +81,7 @@ static_assert(!std::is_copy_assignable_v<NetworkRun> && !std::is_move_assignable
 /// The engines' constructor arguments, a pure function of the configuration and the knobs
 /// (no log line, no trace, no setup read).  Its body is the setup statements that built
 /// them, cut character-exact from runNetwork (card NOM3 step EP1); step EP4 splits it into
-/// its concerns' builders.  Defined in src/core/app/NetworkRun.cpp.
+/// its concerns' builders.  Defined in src/core/network/driver/NetworkRun.cpp.
 NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConfig& nc,
                                     const NetworkRunContext& ctx);
 

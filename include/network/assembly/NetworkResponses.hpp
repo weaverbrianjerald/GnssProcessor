@@ -41,12 +41,12 @@
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 class  GnssConfig;               // config/GnssConfig.hpp
-struct NetworkKnobs;             // app/NetworkRunContext.hpp
-struct NetworkServiceCounters;   // app/NetworkRunContext.hpp
-struct NetworkRunContext;        // app/NetworkRunContext.hpp
+struct NetworkKnobs;             // network/state/NetworkRunContext.hpp
+struct NetworkServiceCounters;   // network/state/NetworkRunContext.hpp
+struct NetworkRunContext;        // network/state/NetworkRunContext.hpp
 
 /**
  * @brief Every site at which a carried instance responds to an event, one row per
@@ -366,7 +366,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints always (a block).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkResponsesRunEnd(const NetworkRunEndView& v);

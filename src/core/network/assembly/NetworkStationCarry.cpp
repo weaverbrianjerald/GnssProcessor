@@ -167,7 +167,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     // armed).  opin_on is false when no oracle pin is armed (null table
     // pointer), so the gate is byte-identical there.
     if (!(legacy_local_inject || rx_cb_on || rx_cb_datum || opin_on)) return StationStep::Next;
-    // The frame (filter/NetworkStationBuild.hpp): the values the carry steps hand
+    // The frame (network/assembly/NetworkStationBuild.hpp): the values the carry steps hand
     // each other (card NOM3 step PB1b; do_amb_carry is the frozen P12 predicate).
     StationCarryFrame carry{build, legacy_local_inject,
                             (phase_datum_prioritized || !st.is_pivot) && !carry_invariant,
@@ -186,7 +186,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     // Conditional coupling (Card 1, network.carry_conditional_coupling): each
     // carried local column becomes one pseudo-observation row coupling it to
     // the free shared border (Odijk S-conditional carry) instead of an
-    // independent diagonal prior; see filter/NetworkCoupling.hpp.  The scratch
+    // independent diagonal prior; see network/carry/NetworkCoupling.hpp.  The scratch
     // state and helpers are CouplingRowBuilder members, built fresh per
     // station (no shared write, safe in the parallel produce phase); the rows
     // are appended after the carry loops.

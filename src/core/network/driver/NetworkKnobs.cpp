@@ -4,13 +4,13 @@
  *        const knob table of the network run context.
  *
  * One function, called by the NetworkRunContext constructor
- * (include/app/NetworkRunContext.hpp) and directly by unit tests.  Many assignments
+ * (include/network/state/NetworkRunContext.hpp) and directly by unit tests.  Many assignments
  * combine knobs assigned above them, so the order of the lines matters.
  *
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"

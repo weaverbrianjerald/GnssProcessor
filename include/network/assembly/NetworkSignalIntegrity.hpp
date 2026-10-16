@@ -94,7 +94,7 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct; the tag
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp defines it as a struct; the tag
                             // must match, or MSVC mangles the same free function two ways
                             // depending on which header a translation unit saw first
 class NetworkRunTraces;
@@ -277,10 +277,10 @@ struct NetworkSignalIntegrityTallies {
     long long vet_completions = 0;        ///< LOS re-vets completed (a LOS returned to full phase weight).
 };
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochPassA;              // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochPassA;              // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkSlipFunnel;       // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Classify this epoch's lines of sight, publish the INC-2 demotion, and run
@@ -290,11 +290,11 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup.stations (stations). Read: run.config (config_),
  *            run.log (log), run.engines.slip_qc.epoch_idx (epoch_idx),
  *            run.ctx.knobs.carry_invariant (carry_invariant).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
  *           ep.pass_a.present (present), ep.clock.carry_warm (carry_warm).
  *
  * The former parameters, by binding:
@@ -339,7 +339,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.sig_integrity_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSignalIntegrityRunEnd(const NetworkRunEndView& v);

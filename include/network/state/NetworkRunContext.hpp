@@ -15,15 +15,15 @@
  *
  * Three-place rule: a NetworkCarryState field marked snapshot-member must be
  * added to the fingerprint, the restore and the snapshot write, in
- * src/core/app/NetworkSnapshotFingerprint.cpp, NetworkWarmResume.cpp and
+ * src/core/network/state/NetworkSnapshotFingerprint.cpp, NetworkWarmResume.cpp and
  * NetworkStateSnapshotWrite.cpp.  A new cross-epoch field goes into
  * NetworkCarryState under that rule unless it is explicitly exempted; the
  * per-field "not snapshotted" notes below are the exemption record.
  * Kept out of this header on purpose: the engine objects (NetworkEstimator,
  * NetworkInvariantCarryDriver, NetworkCarryVce, NetworkPriorResidual,
  * NetworkEmitRebase), the D0/D0b section-timer instrumentation, and the closed-loop
- * consumer metrics.  The run owns them (app/NetworkRun.hpp, card NOM3 step EP1; they
- * were locals of the run TU before) in the groups of filter/NetworkRunGroups.hpp
+ * consumer metrics.  The run owns them (network/driver/NetworkRun.hpp, card NOM3 step EP1; they
+ * were locals of the run TU before) in the groups of network/driver/NetworkRunGroups.hpp
  * (engines, emit engines, run timing, closed-loop tally); a per-epoch seam in its epoch
  * form receives the run, NetworkRun&.
  */
@@ -99,7 +99,7 @@ namespace GnssProcessor {
     class NetworkProductEmitter;
     class NetworkInvariantCarryDriver;
     class NetworkCarryVce;
-    class NetworkPriorResidual;   ///< filter/NetworkPriorResidual.hpp; an engine the run owns (run.engines.prires), like NetworkCarryVce.
+    class NetworkPriorResidual;   ///< network/qc/NetworkPriorResidual.hpp; an engine the run owns (run.engines.prires), like NetworkCarryVce.
     class SphericalHarmonicIonosphere;
     struct GnssTime;
 
@@ -226,7 +226,7 @@ namespace GnssProcessor {
         /// two rows of a station, added in the whitened local block.
         bool carry_cpl_exact_cross{};
         /// network.clock_pivot_frame_q (card PFQ): the carried clocks' process noise in the
-        /// pivot frame (filter/NetworkPivotFrameQ.hpp).
+        /// pivot frame (network/carry/NetworkPivotFrameQ.hpp).
         bool pfq_on{};
         /// network.carry_coupling_clock_clone (card SCL): the previous epoch's satellite
         /// clocks as one-epoch clone columns in the shared border (filter/NetworkClockClone).
@@ -544,8 +544,8 @@ namespace GnssProcessor {
         bool raim_ci_on{};
         /// The carried-phase RAIM pools admit observation phase rows only, each to the
         /// pool of the ambiguity column its tag names (@c network.raim_pool_data_rows_only,
-        /// card RPA).  Read by both pool walks (the post-fit pass in filter/NetworkRaim.cpp
-        /// and the within-epoch assess in filter/NetworkSolveGlue.cpp) through
+        /// card RPA).  Read by both pool walks (the post-fit pass in network/qc/NetworkRaim.cpp
+        /// and the within-epoch assess in network/solve/NetworkSolveGlue.cpp) through
         /// @c raimPoolAdmitsRow, and by the run-end admission lines.  The loader guarantees
         /// @c network.raim.  Off = today's declared rule (byte-identical).  Not
         /// fingerprinted (a QC knob).
@@ -733,7 +733,7 @@ namespace GnssProcessor {
         /// @c network.ambiguity_resolution.suspect_epochs, resolved against
         /// @c ambiguity_resolution.enable (0 when the search is off): the window, in
         /// searches, of the search's suspect-corner mask (card ARL,
-        /// filter/NetworkArSuspect.hpp).  0 = off: no site writes the ledger and the search
+        /// network/ar/NetworkArSuspect.hpp).  0 = off: no site writes the ledger and the search
         /// is byte-identical.  Not fingerprinted: the ledger is never serialized and the
         /// search it feeds is log-only (its time-only release makes it field-blocking as
         /// the guard of a solve-affecting search).
@@ -1005,7 +1005,7 @@ namespace GnssProcessor {
 
         /// One-shot factory: the knob-snapshot statements, in the original read order
         /// (parameter names match the former use sites).
-        /// Defined in src/core/app/NetworkKnobs.cpp.
+        /// Defined in src/core/network/driver/NetworkKnobs.cpp.
         static NetworkKnobs snapshot(const GnssConfig& config_, const NetworkConfig& nc);
     };
 
@@ -1064,7 +1064,7 @@ namespace GnssProcessor {
         /// The warm resume's hand-offs to the first leg epoch (card NOM step N4g).
         ResumeHandoff resume;
         std::vector<CarryPrior> prev_carry;                 // the D2 stash from the last solve
-        // nbp_prev_iode: moved to net::SatelliteState::nbp_prev_iode (card NOM step N4e2, app/NetworkEntities.hpp).
+        // nbp_prev_iode: moved to net::SatelliteState::nbp_prev_iode (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // Per-satellite guarded temporal clock anchor.  Empty and untouched unless
         // network.clock_temporal_anchor.  Not snapshotted by default: a warm resume is an
         // invariant-#1 event, so every satellite re-earns the anchor from the loose state
@@ -1078,9 +1078,9 @@ namespace GnssProcessor {
         // in an emitted product.  Drained by networkSolPrep with the same present/pending
         // split that every other forced-bump queue uses (mark == land), so a replay
         // reproduces the marks from the serialized R records.
-        // clk_anchor_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::ClockAnchor) (card NOM step N4e2, app/NetworkEntities.hpp).
-        // prev_clock_refloat_sats: moved to net::SatelliteState::prev_clock_refloat (card NOM step N4e2, app/NetworkEntities.hpp).
-        // tu_reinit_hist: moved to net::SatSignalState::tu_reinit (card NOM step N4d, app/NetworkEntities.hpp).
+        // clk_anchor_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::ClockAnchor) (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // prev_clock_refloat_sats: moved to net::SatelliteState::prev_clock_refloat (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // tu_reinit_hist: moved to net::SatSignalState::tu_reinit (card NOM step N4d, network/state/NetworkEntities.hpp).
         SharedCarryCov prev_carry_cov;                      // dense covariance side-car of prev_carry, empty when off (C1)
         // Card CTU (network.carry_coupling_exact_update).  The stash records when the dense
         // block was taken and which clock the datum pinned then; PASS B's serial preamble
@@ -1090,21 +1090,21 @@ namespace GnssProcessor {
         // the card 1d route for that one epoch (counted).  Empty and unread when off.
         double cxu_stash_s{0.0};                            ///< continuous-GPS s of the stash prev_carry_cov belongs to
         bool   cxu_stash_valid{false};                      ///< the stash was taken this run with the dense block present
-        // cxu_pivot, pfq_pivot: moved to net::ConstellationState (card NOM step N4b, app/NetworkEntities.hpp).
+        // cxu_pivot, pfq_pivot: moved to net::ConstellationState (card NOM step N4b, network/state/NetworkEntities.hpp).
         CouplingExactEpoch cxu_epoch;                       ///< this epoch's inputs; ok = false when off or unbuilt
         ClockCloneEpoch    ccl;                             ///< card SCL: this epoch's clock clones and the rows' copy of cxu_epoch (filter/NetworkClockClone); rebuilt every armed epoch, empty off
         SharedHistoryState shx;                             ///< card SCL2 X2: the held compression and this epoch's history columns (filter/NetworkSharedHistory); not snapshotted, empty off
-        // clm_info: moved to net::SatelliteState::clm_info (card NOM step N4e1, app/NetworkEntities.hpp).
-        // clm_n: moved to net::SatelliteState::clm_n (card NOM step N4e1, app/NetworkEntities.hpp).
-        // clm_info_c: moved to net::SatelliteState::clm_info_c (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_info: moved to net::SatelliteState::clm_info (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // clm_n: moved to net::SatelliteState::clm_n (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // clm_info_c: moved to net::SatelliteState::clm_info_c (card NOM step N4e1, network/state/NetworkEntities.hpp).
         std::map<std::string, double> clm_seam_q;           ///< card CTU G5: satellite -> level process noise of this epoch's time update (m^2), set at a switch-on resume, cleared after the fold
         // clm_restore_raise_pending: moved to NetworkCarryState::resume.clm_raise (ResumeHandoff, card NOM step N4g).
         // Level innovation instrument (card CTU section 14), measure-only.
-        // clm_prev_clk: moved to net::SatelliteState::clm_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_prev_clk: moved to net::SatelliteState::clm_prev_clk (card NOM step N4e1, network/state/NetworkEntities.hpp).
         Eigen::MatrixXd               clm_prev_pclk;        ///< previous stash's clock-clock block (m^2), the innovation's prior variance
-        // clm_prev_pidx: moved to net::SatelliteState::clm_prev_pidx (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_prev_pidx: moved to net::SatelliteState::clm_prev_pidx (card NOM step N4e1, network/state/NetworkEntities.hpp).
         double                        clm_prev_s{-1.0};     ///< continuous GPS seconds of the previous monitored epoch
-        // clm_win: moved to net::SatelliteState::clm_win (card NOM step N4e1, app/NetworkEntities.hpp).
+        // clm_win: moved to net::SatelliteState::clm_win (card NOM step N4e1, network/state/NetworkEntities.hpp).
         // clm_win_ep: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         // pv_win_ep, pv_win_nis_sum, pv_win_nis_n, pv_win_e2_sum, pv_win_su_sum: moved to
         // NetworkServiceCounters (card NOM step N4g, decision D6).
@@ -1115,14 +1115,14 @@ namespace GnssProcessor {
         // restart empty.  All empty or zero, and unread, when both knobs are off.
         double readmit_now_s{0.0};          ///< continuous-GPS s of the current epoch, stamped at the D2 install (the stash has no clock of its own)
         double readmit_prev_stash_s{0.0};   ///< continuous-GPS s of the previous kept stash: the park stamp a departing entry receives
-        // readmit_last_seen_ep: moved to net::SatelliteState::readmit_last_seen_ep (card NOM step N4e1, app/NetworkEntities.hpp).
-        // readmit_marg: moved to net::SatelliteState::readmit_marg (card NOM step N4e1, app/NetworkEntities.hpp).
-        // readmit_seeded_s: moved to net::SatelliteState::readmit_seeded_s (card NOM step N4e1, app/NetworkEntities.hpp).
-        // readmit_seed_check: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
-        // ddfrac_ref_age, ddfrac_ref_prev: moved to net::ChannelState (card NOM step N4b, app/NetworkEntities.hpp).
-        // prev_pivot: moved to net::ConstellationState::prev_pivot (card NOM step N4b, app/NetworkEntities.hpp).
-        // c1_zoh_active: moved to net::SatelliteState::c1_zoh_active (card NOM step N4e1, app/NetworkEntities.hpp).
-        // last_pivot: moved to net::ConstellationState::last_pivot (card NOM step N4b, app/NetworkEntities.hpp).
+        // readmit_last_seen_ep: moved to net::SatelliteState::readmit_last_seen_ep (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // readmit_marg: moved to net::SatelliteState::readmit_marg (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // readmit_seeded_s: moved to net::SatelliteState::readmit_seeded_s (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // readmit_seed_check: moved to EpochEvents::Solve (network/driver/NetworkEpoch.hpp).
+        // ddfrac_ref_age, ddfrac_ref_prev: moved to net::ChannelState (card NOM step N4b, network/state/NetworkEntities.hpp).
+        // prev_pivot: moved to net::ConstellationState::prev_pivot (card NOM step N4b, network/state/NetworkEntities.hpp).
+        // c1_zoh_active: moved to net::SatelliteState::c1_zoh_active (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // last_pivot: moved to net::ConstellationState::last_pivot (card NOM step N4b, network/state/NetworkEntities.hpp).
         // Deterministic IF-pin selection discontinuity.  The pin is re-derived from every
         // epoch's coverage; the deterministic NetworkSbasis::selectIfPinPair makes it a
         // pure function of the registered signal set, so a change between emitted products
@@ -1139,16 +1139,16 @@ namespace GnssProcessor {
         // Both are populated only under emit_clock_disc, so the output is byte-identical
         // otherwise.  Not snapshotted: a warm resume has no prior for its first emit, so
         // it must not fabricate a disc it cannot verify.
-        // this_epoch_if_pin_sel: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // last_if_pin_sel: moved to net::SatelliteState::last_if_pin_sel (card NOM step N4e2, app/NetworkEntities.hpp).
-        // this_epoch_if_pin_changes: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // this_epoch_if_pin_holds: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // last_if_pin_holds: moved to net::SatelliteState::last_if_pin_hold (card NOM step N4e2, app/NetworkEntities.hpp).
+        // this_epoch_if_pin_sel: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // last_if_pin_sel: moved to net::SatelliteState::last_if_pin_sel (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // this_epoch_if_pin_changes: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // this_epoch_if_pin_holds: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // last_if_pin_holds: moved to net::SatelliteState::last_if_pin_hold (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // if_pin_holds_resume_pending: moved to NetworkCarryState::resume.if_pin_holds (ResumeHandoff, card NOM step N4g).
-        // this_epoch_cb_family_rows: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // this_epoch_cb_family_births: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // this_epoch_cb_family_birth_skips: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
-        // last_cb_family_partner: moved to net::ChannelState::last_cb_family_partner (card NOM step N4e2, app/NetworkEntities.hpp).
+        // this_epoch_cb_family_rows: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // this_epoch_cb_family_births: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // this_epoch_cb_family_birth_skips: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
+        // last_cb_family_partner: moved to net::ChannelState::last_cb_family_partner (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // S-contract §1.5 declaration scratch: the realized code-bias datum pair per
         // satellite, recorded unconditionally (the only guard is a real dual-frequency pin,
         // f1, f2 > 0) and read only by the cbpin= fill in NetworkSolPrep.  It is kept apart
@@ -1160,7 +1160,7 @@ namespace GnssProcessor {
         // (after card GFC's pair hold, when armed), so the declaration tracks the datum the
         // run realized.  Cleared each epoch; declaration-only, so the solve and every
         // emitted numeric value are untouched.
-        // this_epoch_if_pin_real: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_if_pin_real: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
         /// This epoch's per-(satellite, companion signal) inter-signal-correction verdicts,
         /// keyed `"sat|signal"` (RF-0f).  A key in @ref this_epoch_isc_obs means some
         /// present station tracked both that companion and the T_GD pin's band-2 signal on
@@ -1172,7 +1172,7 @@ namespace GnssProcessor {
         /// empty unless `network.sat_isc_state` is armed.
         std::set<std::string> this_epoch_isc_obs;
         std::set<std::string> this_epoch_isc_pinned;
-        // this_epoch_extra_band_held: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_extra_band_held: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
         // Prioritized phase-bias anchor (network.phase_datum_prioritized).  All three maps
         // are keyed by the "sat_signal" ambiguity form and are empty and unread on the
         // legacy path:
@@ -1187,9 +1187,9 @@ namespace GnssProcessor {
         // anchor_incumbent is written to the snapshot under
         // network.state_snapshot_frame_capture and restored under
         // network.resume_frame_restore.
-        // anchor_incumbent: moved to net::SatSignalState::anchor_incumbent (card NOM step N4d, app/NetworkEntities.hpp).
-        // this_epoch_anchor: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
-        // anchor_pin_target: moved to net::SatSignalState::anchor_pin_target (card NOM step N4d, app/NetworkEntities.hpp).
+        // anchor_incumbent: moved to net::SatSignalState::anchor_incumbent (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // this_epoch_anchor: moved to EpochEvents::PhaseDatum (network/driver/NetworkEpoch.hpp).
+        // anchor_pin_target: moved to net::SatSignalState::anchor_pin_target (card NOM step N4d, network/state/NetworkEntities.hpp).
         /// Two-edge continuous handover ledger: each anchor-candidate station's absolute
         /// ambiguity estimate from the previous epoch's solve, so a handover can re-pin the
         /// successor in the outgoing frame instead of re-zeroing it.  Rebuilt wholesale by
@@ -1200,7 +1200,7 @@ namespace GnssProcessor {
         /// under network.resume_frame_restore the resume primes the ledger from the
         /// restored leveling carries for the first live epoch instead.
         AnchorHandoverLedger handover;
-        // emitted_anchor: moved to net::SatSignalState::emitted_anchor (card NOM step N4e2, app/NetworkEntities.hpp).
+        // emitted_anchor: moved to net::SatSignalState::emitted_anchor (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // eq34 reattach hygiene, warm conditioning (spec addendum): the continuous-GPS
         // second at which each key's datum was last realized and emitted, i.e. the age of
         // the warm memory a cold pin would have to fight.  Advanced at the same emit site
@@ -1211,7 +1211,7 @@ namespace GnssProcessor {
         // extending its own phase-bias outage by min_arc_ep epochs.  Empty and unread
         // unless the card is armed; not snapshotted (a resumed leg re-earns its baselines
         // on the first emitted epoch).
-        // emitted_anchor_s: moved to net::SatSignalState::emitted_anchor_s (card NOM step N4e2, app/NetworkEntities.hpp).
+        // emitted_anchor_s: moved to net::SatSignalState::emitted_anchor_s (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // Chain election of card 3 (network.phase_datum_eq34); all empty and unread
         // otherwise:
         //  - eq34_datum_rx: the sticky datum receiver r1 station name per (constellation |
@@ -1233,10 +1233,10 @@ namespace GnssProcessor {
         //    "sat_signal".  A root change (r1 handover, component migration) shifts the
         //    whole component frame by a common fractional part plus per-sat integers, so it
         //    re-references every satellite even where all tree edges survived.
-        // eq34_datum_rx: moved to net::ChannelState::datum_rx (card NOM step N4b, app/NetworkEntities.hpp).
-        // eq34_rx_parent: moved to net::StationSignalState::eq34_rx_parent (card NOM step N4a, app/NetworkEntities.hpp).
-        // eq34_sat_root: moved to net::SatSignalState::eq34_sat_root (card NOM step N4e2, app/NetworkEntities.hpp).
-        // eq34_prev_el: moved to net::LosState::eq34_prev_el (card NOM step N4c, app/NetworkEntities.hpp).
+        // eq34_datum_rx: moved to net::ChannelState::datum_rx (card NOM step N4b, network/state/NetworkEntities.hpp).
+        // eq34_rx_parent: moved to net::StationSignalState::eq34_rx_parent (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // eq34_sat_root: moved to net::SatSignalState::eq34_sat_root (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // eq34_prev_el: moved to net::LosState::eq34_prev_el (card NOM step N4c, network/state/NetworkEntities.hpp).
         // The datum receiver r1 (pdr=) of the last emitted contract, so a root handover
         // triggers an S-line re-broadcast (advanced only at emit, like the pivot
         // baselines).  Empty on every non-eq34 run.
@@ -1254,13 +1254,13 @@ namespace GnssProcessor {
         // After PASS B's serial consume they are compared against the pins that landed
         // (folded by foldAmb/foldRpb and on a station that est.addStation accepted), which
         // covers the two silent loss paths that standing invariant #4 warns about.
-        // eq34_epoch_declared: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
-        // eq34_epoch_bridged: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
+        // eq34_epoch_declared: moved to EpochEvents::PhaseDatum (network/driver/NetworkEpoch.hpp).
+        // eq34_epoch_bridged: moved to EpochEvents::PhaseDatum (network/driver/NetworkEpoch.hpp).
         // Tree edges retained across the current gap because their local_carry is still
         // alive: {receiver index, "sat_signal"}.  Rebuilt at each election's sticky-map
         // update; read at the next election's recordEdge to count a gap re-pin.  Empty
         // unless network.phase_datum_eq34_extend_only.
-        // eq34_retained_edges: moved to net::ArcState::eq34_retained_edge (card NOM step N4f1, app/NetworkEntities.hpp).
+        // eq34_retained_edges: moved to net::ArcState::eq34_retained_edge (card NOM step N4f1, network/state/NetworkEntities.hpp).
         // Last epoch's pin target per (station index, "sat_signal") for card 3: the exact
         // same-station pinmove baseline for the shift walk.  It must be keyed per station:
         // an interior satellite carries several pins (its parent edge and one per
@@ -1268,14 +1268,14 @@ namespace GnssProcessor {
         // amb-only key collides, and the resulting wrong pinmoves feed back through the
         // carry shifts into the next epoch's rounded targets, which then diverge.
         // Replaced wholesale each election.
-        // eq34_prev_target: moved to net::ArcState::eq34_prev_target (card NOM step N4f1, app/NetworkEntities.hpp).
+        // eq34_prev_target: moved to net::ArcState::eq34_prev_target (card NOM step N4f1, network/state/NetworkEntities.hpp).
         // Per-epoch re-reference set (sat, signal) of card 3: cleared and rebuilt at each
         // eq34 election, and read (1) by the local-carry erase right after the election and
         // (2) by the D2/C1 shared-carry consume, which must marginalize the re-referenced
         // PB keys for that epoch.  Their carried priors belong to the retired frame, and
         // folding them pulls the new frame by up to the full re-level with no signal on the
         // wire.  Always empty when eq34 is off.
-        // eq34_reref: moved to EpochEvents::PhaseDatum (app/NetworkEpoch.hpp).
+        // eq34_reref: moved to EpochEvents::PhaseDatum (network/driver/NetworkEpoch.hpp).
         // PHASE_ANCHOR carry re-reference (queue item 1(d);
         // docs/SPEC_pivot_visibility_gauge_defect.md §5.07.5 R1).  Per-epoch (sat, signal)
         // set of the anchor election's handovers: cleared and rebuilt at each anchor
@@ -1303,7 +1303,7 @@ namespace GnssProcessor {
         // absent arc drops out, so absence resets the age, the conservative direction), and
         // erased on a slip-funnel hit or a pending-reseed flag for the arc, so a refloated
         // ambiguity never presents itself as a mature host (standing invariant #1).
-        // anchor_arc_age: moved to net::ArcState::anchor_arc_age (card NOM step N4f1, app/NetworkEntities.hpp).
+        // anchor_arc_age: moved to net::ArcState::anchor_arc_age (card NOM step N4f1, network/state/NetworkEntities.hpp).
         // Warm-resume seeding latch (spec §2 INC-1, "warm-resume rule").  Consumed by the
         // first hygiene pass of a resumed run, which seeds every present arc at
         // eq34_anchor_min_arc_ep instead of 1; otherwise a resumed leg would block every
@@ -1311,9 +1311,9 @@ namespace GnssProcessor {
         // keys on purpose: stacks that run with phase_leveling off have an empty
         // local_carry, so a carry-keyed seed would seed nothing.
         bool anchor_age_resume_seed = false;
-        // pb_level_prev: moved to net::SatSignalState::pb_level_prev (card NOM step N4d, app/NetworkEntities.hpp).
-        // PinBridge: moved to net::PinBridge (card NOM step N4d, app/NetworkEntities.hpp).
-        // pin_bridge: moved to net::SatSignalState::pin_bridge (card NOM step N4d, app/NetworkEntities.hpp).
+        // pb_level_prev: moved to net::SatSignalState::pb_level_prev (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // PinBridge: moved to net::PinBridge (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // pin_bridge: moved to net::SatSignalState::pin_bridge (card NOM step N4d, network/state/NetworkEntities.hpp).
         // Engage/release identity of the S-basis completion (SBC, network.sbasis_complete):
         // the satellites participating (|eigenvector component| >=
         // NetworkSbasis::kSbasisAttrSpan) in a direction constrained last epoch.  Under
@@ -1324,7 +1324,7 @@ namespace GnssProcessor {
         // satellite rather than per direction on purpose: the eigenvectors of two weak
         // satellites of the same scale mix, so a direction-shaped identity would flicker
         // with the rotation while the participating-satellite set stays stable.
-        // sbc_active_sats: moved to net::SatelliteState::sbc_active (card NOM step N4e2, app/NetworkEntities.hpp).
+        // sbc_active_sats: moved to net::SatelliteState::sbc_active (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // Declared datum directions currently breached (R >= 1: some pre-gate fold is
         // pinning a direction the datum owns), for invariant #7.  Persistent across epochs
         // only so the breach and clear edges can be emitted: a direction that frees itself
@@ -1343,7 +1343,7 @@ namespace GnssProcessor {
         // stays in usable_keys), so the hold clears itself after at most
         // eq34_anchor_min_arc_ep epochs of continuous presence.
         std::set<std::string> anchor_blocked;
-        // si_arc: moved to net::LosState::si_arc (card NOM step N4c, app/NetworkEntities.hpp).
+        // si_arc: moved to net::LosState::si_arc (card NOM step N4c, network/state/NetworkEntities.hpp).
         // Resume warm-up countdown (spec addendum).  Set to `sig_revet_ep` by a successful
         // warm resume and decremented by each classifier pass; while it is positive, every
         // present line of sight is demoted regardless of its own band state.  A resume
@@ -1371,16 +1371,16 @@ namespace GnssProcessor {
         // unknown, which is the case @c resume.adm labels: the arc's state was
         // restored (possibly carrying the corrupt seed) while this observer's memory was
         // not.
-        // adm_arc: moved to net::StationState::adm_arc (card NOM step N4f1, app/NetworkEntities.hpp).
+        // adm_arc: moved to net::StationState::adm_arc (card NOM step N4f1, network/state/NetworkEntities.hpp).
         // adm_resume_pending: moved to NetworkCarryState::resume.adm (ResumeHandoff, card NOM step N4g).
-        // adm_resume_seen: moved to net::StationState::adm_resume_seen (card NOM step N4a, app/NetworkEntities.hpp).
-        // adm_event_last: moved to net::StationState::adm_event_last (card NOM step N4f1, app/NetworkEntities.hpp).
+        // adm_resume_seen: moved to net::StationState::adm_resume_seen (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // adm_event_last: moved to net::StationState::adm_event_last (card NOM step N4f1, network/state/NetworkEntities.hpp).
         // Per-epoch L1 scalars (INC-3).  @c adm_ep_tow is the stamp the epoch-status writer
         // compares against, so an epoch the screen did not run on leaves the columns blank
         // instead of repeating stale numbers (the redun_ep_tow pattern).
-        // adm_ep_tow: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
-        // ep_adm_sta_worst_z: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
-        // ep_adm_net_worst_z: moved to EpochEvents::Admission (app/NetworkEpoch.hpp).
+        // adm_ep_tow: moved to EpochEvents::Admission (network/driver/NetworkEpoch.hpp).
+        // ep_adm_sta_worst_z: moved to EpochEvents::Admission (network/driver/NetworkEpoch.hpp).
+        // ep_adm_net_worst_z: moved to EpochEvents::Admission (network/driver/NetworkEpoch.hpp).
 
         // Whether the last processed epoch moved the clock datum.  A clock-pivot handover
         // re-references every satellite phase bias by the pivot's clock (the phase
@@ -1388,10 +1388,10 @@ namespace GnssProcessor {
         // retired frame.  Written where datum_changed is computed (solve glue), read by the
         // next epoch's hygiene pass (bridge drop, reason=datum).
         bool last_datum_changed = false;
-        // sts_consts: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
-        // sts_c0: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
-        // sts_dense: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
-        // sts_pre: moved to EpochEvents::Handover (app/NetworkEpoch.hpp).
+        // sts_consts: moved to EpochEvents::Handover (network/driver/NetworkEpoch.hpp).
+        // sts_c0: moved to EpochEvents::Handover (network/driver/NetworkEpoch.hpp).
+        // sts_dense: moved to EpochEvents::Handover (network/driver/NetworkEpoch.hpp).
+        // sts_pre: moved to EpochEvents::Handover (network/driver/NetworkEpoch.hpp).
         /// Card PRM phase 2: per constellation, the transform the preview applied to the
         /// carry (the incoming pivot, c0, var_q), held until the next stash, which re-expresses
         /// the carry in the solve's datum and clears the record.  A skipped epoch leaves it set:
@@ -1407,8 +1407,8 @@ namespace GnssProcessor {
         };
         std::map<char, StsCarryDatum> sts_carry_pivot;
 
-        // prev_clk: moved to net::SatelliteState::prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
-        // clock_osc: moved to net::SatelliteState::clock_osc (card NOM step N4e1, app/NetworkEntities.hpp).
+        // prev_clk: moved to net::SatelliteState::prev_clk (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // clock_osc: moved to net::SatelliteState::clock_osc (card NOM step N4e1, network/state/NetworkEntities.hpp).
         // The broadcast-ephemeris IODE to which each satellite's carried clock state
         // (clock_osc.x0, the D2 clock carry, the clock-monitor jump baseline) is currently
         // referenced.  Advanced at the eph-cutover re-level (before the solve), not
@@ -1418,15 +1418,15 @@ namespace GnssProcessor {
         // advance would re-detect the same roll next epoch and shift twice.  Empty and
         // inert unless brdc_rts.  Named for the reference rather than the emit because it
         // also advances on withheld epochs.
-        // relevel_iode: moved to net::SatelliteState::relevel_iode (card NOM step N4e2, app/NetworkEntities.hpp).
+        // relevel_iode: moved to net::SatelliteState::relevel_iode (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // Sats whose ephemeris rolled but whose prior version was already evicted from the
         // store, so Δ_eph cannot be computed: a forced per-sat discontinuity is queued and
         // lands at the satellite's next actual emit (present/pending split, like
         // ura_retro_sats).  Unreachable in steady state (per-epoch checking makes two rolls
         // between consecutive checks impossible); a defensive path for a snapshot gap or a
         // two-roll corner case.
-        // eph_cutover_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::EphCutover) (card NOM step N4e2, app/NetworkEntities.hpp).
-        // code_bias_prev_: moved to net::ChannelState::code_bias_prev (card NOM step N4b, app/NetworkEntities.hpp).
+        // eph_cutover_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::EphCutover) (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // code_bias_prev_: moved to net::ChannelState::code_bias_prev (card NOM step N4b, network/state/NetworkEntities.hpp).
         // The IF-pin reference pair (sat -> {sig1, sig2}) that produced the values in
         // code_bias_prev_, with the same kept-epoch lifecycle (rebuilt at the D2 harvest
         // from the scratch below).  A pair change between kept epochs re-references the
@@ -1434,12 +1434,12 @@ namespace GnssProcessor {
         // C1C↔C1W flip), so the IF-pin RHS re-seeds and the disc bumps even when both of
         // the new pair's signals have previous values.  Snapshotted and restored with
         // code_bias_prev_ (RS-3 datum capture and restore only).
-        // code_bias_ifpin_pair_: moved to net::SatelliteState::code_bias_ifpin_pair (card NOM step N4e2, app/NetworkEntities.hpp).
+        // code_bias_ifpin_pair_: moved to net::SatelliteState::code_bias_ifpin_pair (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // This epoch's selected IF-pin pair per satellite (valid pairs only), captured in
         // the main pass and copied into code_bias_ifpin_pair_ at the harvest (kept epochs
         // only, as for code_bias_prev_, so a pair recorded on a withheld epoch never
         // advances the comparison baseline).  Cleared each epoch.
-        // this_epoch_cb_ifpin: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_cb_ifpin: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
         // Satellites that re-seed this epoch (IF-pin split or a cold sum-to-zero channel).
         // A per-epoch scratch (cleared each epoch), populated in the main pass and merged
         // into cb_reseed_disc_pending only at the emit site, which every whole-epoch
@@ -1449,18 +1449,18 @@ namespace GnssProcessor {
         // emit-only discipline of this_epoch_if_pin_sel / last_if_pin_sel), and no erase is
         // needed that would destroy a bump legitimately deferred for a satellite re-seeded
         // while pruned from the emission.
-        // this_epoch_cb_reseed: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_cb_reseed: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
         // The channels ("<constellation letter>|<signal>") whose sum-to-zero row re-seeded
         // this epoch (CodeBiasDatumRows::reseed_channels), cleared with
         // this_epoch_cb_reseed.  Read only by the harvest of card L5B
         // (network.estimate_rx_extra_band_code_delay), which erases the receiver IFB carry
         // entries of a re-seeded family.
-        // this_epoch_cb_reseed_channels: moved to EpochEvents::CodeDatum (app/NetworkEpoch.hpp).
+        // this_epoch_cb_reseed_channels: moved to EpochEvents::CodeDatum (network/driver/NetworkEpoch.hpp).
         // Satellites whose code-bias split has ever been harvested: a later re-seed of one
         // of these is a return (disc bump), not a first appearance (seeded silently).
         // Accumulates for the whole process.  Snapshotted and restored with
         // code_bias_prev_ (RS-3 datum capture and restore only).
-        // code_bias_sat_seen_: moved to net::SatelliteState::code_bias_seen (card NOM step N4e2, app/NetworkEntities.hpp).
+        // code_bias_sat_seen_: moved to net::SatelliteState::code_bias_seen (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // A warm resume without the RS-3 datum restore starts code_bias_prev_ and the seen
         // set empty, but the pre-snapshot product was emitted, so every first post-resume
         // re-seed is a re-reference the consumer must be told about.  The resume block sets
@@ -1476,13 +1476,13 @@ namespace GnssProcessor {
         // with the same present/pending split as eph_cutover_disc_pending, so the bump
         // lands with the satellite present (emit-only, replay-faithful).  Populated only
         // under code_datum_time_linked, so it is empty (a byte-identical no-op) otherwise.
-        // cb_reseed_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::CbReseed) (card NOM step N4e2, app/NetworkEntities.hpp).
+        // cb_reseed_disc_pending: moved to net::SatelliteState::disc_pending (net::Disc::CbReseed) (card NOM step N4e2, network/state/NetworkEntities.hpp).
         double start_anchor_s = -1.0;                        // first-epoch time anchor for network.start_offset_hours
         // Phase-leveling per-station ambiguity carry (increment 1): persistent across
         // epochs, keyed by (station index, sat, signal).  Ordered, so the inject order
         // (which feeds rank-1 LDLᵀ updates) is byte-identical serial and parallel.  Inert
         // unless network.phase_leveling.
-        // local_carry: moved to net::ArcState::amb (card NOM step N4f1, app/NetworkEntities.hpp).
+        // local_carry: moved to net::ArcState::amb (card NOM step N4f1, network/state/NetworkEntities.hpp).
         /// Continuous-GPS-seconds stamp of the previous harvest, i.e. the value
         /// @c LocalCarry::last_seen_s carries for an entry stashed one processed epoch
         /// ago.  Written at the end of every harvest; -1 before the first.  Readers
@@ -1506,10 +1506,10 @@ namespace GnssProcessor {
         /// (the datum block).  Cleared by the drain, so an epoch that never reaches it
         /// cannot leak rows into the next one.  Empty on every unarmed run.
         std::vector<AmbStateRow> amb_state_rows;
-        // phase_basis: moved to net::SatSignalState::phase_basis (card NOM step N4d, app/NetworkEntities.hpp).
-        // amb_flag_ep: moved to net::StationState::amb_flag_ep (card NOM step N4f1, app/NetworkEntities.hpp).
+        // phase_basis: moved to net::SatSignalState::phase_basis (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // amb_flag_ep: moved to net::StationState::amb_flag_ep (card NOM step N4f1, network/state/NetworkEntities.hpp).
         /// Sim-only oracle slip response (network.cycle_slip.oracle_relevel,
-        /// include/slip/NetworkSlipOracle.hpp): the run-scope truth table, the per-arc
+        /// include/network/slip/NetworkSlipOracle.hpp): the run-scope truth table, the per-arc
         /// application ledger and the run-end counters.  Null on every run where the knob
         /// is off: the four detector actuation sites take a `NetworkSlipOracle*` and never
         /// reach a call, so the off path is structurally byte-identical (standing invariant
@@ -1518,7 +1518,7 @@ namespace GnssProcessor {
         /// diagnostic, and a resumed leg re-reads the fixture anyway.
         std::unique_ptr<NetworkSlipOracle> slip_oracle;
         /// Sim-only oracle ambiguity pin (`network.inject.events[] kind
-        /// "oracle_pin"`, include/filter/NetworkOraclePin.hpp): the run-scope truth table,
+        /// "oracle_pin"`, include/network/slip/NetworkOraclePin.hpp): the run-scope truth table,
         /// the parsed scopes, this epoch's gauge-consistent pin table and the run-end
         /// counters.  Null on every run where no `oracle_pin` event is armed; the one
         /// serial call site and the PASS-B row both test the pointer first, so the off
@@ -1527,7 +1527,7 @@ namespace GnssProcessor {
         /// satellite, signal).  Not snapshotted: a diagnostic, and a resumed leg re-reads
         /// the fixture anyway.
         std::unique_ptr<NetworkOraclePin> oracle_pin;
-        // zwd_carry: moved to net::StationState::zwd (card NOM step N4a, app/NetworkEntities.hpp).
+        // zwd_carry: moved to net::StationState::zwd (card NOM step N4a, network/state/NetworkEntities.hpp).
         /// Seam-scoped ZWD re-seed window (network.zwd_seam_reseed): emitted epochs
         /// remaining in the post-resume inject window.  Armed by networkTryWarmResume when
         /// the knob is on and the snapshot restored >= 1 Z row; decremented once per
@@ -1560,8 +1560,8 @@ namespace GnssProcessor {
         /// being overwritten.  Never serialized: each resume is its own seam.
         bool resume_datum_first_ep{false};
         // resume_pb_seam_pending: moved to NetworkCarryState::resume.pb_seam (ResumeHandoff, card NOM step N4g).
-        // PbHoldKey: moved to net::PbHoldKey (card NOM step N4d, app/NetworkEntities.hpp).
-        // pb_hold: moved to net::SatSignalState::pb_hold (card NOM step N4d, app/NetworkEntities.hpp).
+        // PbHoldKey: moved to net::PbHoldKey (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // pb_hold: moved to net::SatSignalState::pb_hold (card NOM step N4d, network/state/NetworkEntities.hpp).
         /// |estimate - held| (m) over every held emission (card PBH): the cost of the
         /// decoupling edge, measured rather than asserted (invariant #7).  Read at run end
         /// for p50 / p90 / max; empty on an off run.
@@ -1571,48 +1571,48 @@ namespace GnssProcessor {
         /// one move the hold does not transfer, on purpose, so its size is the measured
         /// cost of the identity-passing contract; empty on an off run.
         std::vector<double> pb_hold_coupled_step_m;
-        // pb_hold_prev_clock_m: moved to net::SatelliteState::pb_hold_prev_clock_m (card NOM step N4e1, app/NetworkEntities.hpp).
-        // pb_hold_frz_M: moved to net::ConstellationState::pb_hold_frz_M (card NOM step N4b, app/NetworkEntities.hpp).
-        // pb_hold_frz_prev_clk: moved to net::SatelliteState::pb_hold_frz_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
+        // pb_hold_prev_clock_m: moved to net::SatelliteState::pb_hold_prev_clock_m (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // pb_hold_frz_M: moved to net::ConstellationState::pb_hold_frz_M (card NOM step N4b, network/state/NetworkEntities.hpp).
+        // pb_hold_frz_prev_clk: moved to net::SatelliteState::pb_hold_frz_prev_clk (card NOM step N4e1, network/state/NetworkEntities.hpp).
         /// Card LAH: |transfer step| (m) per held emission, the per-epoch move the mode
         /// writes on top of the held value (invariant #7, the decoupling edge's rate).
         std::vector<double> pb_hold_frz_step_abs_m;
         /// Card LAH: |transfer| (m) per held emission, the accumulated move since the
         /// generation start.
         std::vector<double> pb_hold_frz_total_abs_m;
-        // smh_clone: moved to net::SatSignalState::smh_clone (card NOM step N4d, app/NetworkEntities.hpp).
-        // smh_pending: moved to net::SatSignalState::smh_pending (card NOM step N4d, app/NetworkEntities.hpp).
+        // smh_clone: moved to net::SatSignalState::smh_clone (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // smh_pending: moved to net::SatSignalState::smh_pending (card NOM step N4d, network/state/NetworkEntities.hpp).
         /// Card SMH: continuous GPS seconds of the first held emission (the hour basis).
         double smh_t_first_s{-1.0};
-        // smh_block: moved to net::SatSignalState::smh_block (card NOM step N4d, app/NetworkEntities.hpp).
-        // smh_block_pending: moved to net::SatSignalState::smh_block_pending (card NOM step N4d, app/NetworkEntities.hpp).
-        // iono_carry: moved to net::LosState::iono (card NOM step N4c, app/NetworkEntities.hpp).
-        // iono_blk_carry: moved to net::LosState::iono_blk (card NOM step N4c, app/NetworkEntities.hpp).
-        // gl_state: moved to net::LosState::gross_los (card NOM step N4c, app/NetworkEntities.hpp).
-        // gl2_sat_down: moved to net::SatelliteState::gl2_down (card NOM step N4e2, app/NetworkEntities.hpp).
-        // gl2_sat_since: moved to net::SatelliteState::gl2_since (card NOM step N4e2, app/NetworkEntities.hpp).
-        // gl2_wire_pending: moved to net::SatelliteState::wire_prune_pending (card NOM step N4e2, app/NetworkEntities.hpp).
-        // gl_event_last: moved to net::LosState::gl_event_last (card NOM step N4c, app/NetworkEntities.hpp).
+        // smh_block: moved to net::SatSignalState::smh_block (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // smh_block_pending: moved to net::SatSignalState::smh_block_pending (card NOM step N4d, network/state/NetworkEntities.hpp).
+        // iono_carry: moved to net::LosState::iono (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // iono_blk_carry: moved to net::LosState::iono_blk (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // gl_state: moved to net::LosState::gross_los (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // gl2_sat_down: moved to net::SatelliteState::gl2_down (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // gl2_sat_since: moved to net::SatelliteState::gl2_since (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // gl2_wire_pending: moved to net::SatelliteState::wire_prune_pending (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // gl_event_last: moved to net::LosState::gl_event_last (card NOM step N4c, network/state/NetworkEntities.hpp).
         // gl_seq: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
-        // gl_hold_amb: moved to net::ArcState::gl_hold_amb (card NOM step N4f1, app/NetworkEntities.hpp).
-        // gl_hold_iono: moved to net::LosState::gl_hold_iono (card NOM step N4c, app/NetworkEntities.hpp).
-        // gl_hold_iono_blk: moved to net::LosState::gl_hold_iono_blk (card NOM step N4c, app/NetworkEntities.hpp).
-        // gl_sta_state: moved to net::StationState::gross_los (card NOM step N4a, app/NetworkEntities.hpp).
-        // gl_emit_withhold: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // gl_emit_disc: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // gl_act_declare: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // gl_act_release: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // gl_act_station: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // gl_act_cold_refloat: moved to EpochEvents::Gross (app/NetworkEpoch.hpp).
-        // rx_clk_carry: moved to net::StationSignalState::rx_clk (card NOM step N4a, app/NetworkEntities.hpp).
-        // rx_clk_rate: moved to net::StationSignalState::rx_clk_rate (card NOM step N4a, app/NetworkEntities.hpp).
-        // iono_cs: moved to net::LosState::iono_cs (card NOM step N4c, app/NetworkEntities.hpp).
-        // rpb_carry: moved to net::StationSignalState::rpb (card NOM step N4a, app/NetworkEntities.hpp).
-        // rx_cb_carry: moved to net::StationSignalState::rx_cb (card NOM step N4a, app/NetworkEntities.hpp).
-        // pc_carry: moved to net::LosState::pc (card NOM step N4c, app/NetworkEntities.hpp).
-        // pc_trace_rows: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
-        // amb_if_rows: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
-        // rxcb_lin_restore: moved to net::StationState::rxcb_lin_restore (card NOM step N4a, app/NetworkEntities.hpp).
+        // gl_hold_amb: moved to net::ArcState::gl_hold_amb (card NOM step N4f1, network/state/NetworkEntities.hpp).
+        // gl_hold_iono: moved to net::LosState::gl_hold_iono (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // gl_hold_iono_blk: moved to net::LosState::gl_hold_iono_blk (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // gl_sta_state: moved to net::StationState::gross_los (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // gl_emit_withhold: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // gl_emit_disc: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // gl_act_declare: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // gl_act_release: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // gl_act_station: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // gl_act_cold_refloat: moved to EpochEvents::Gross (network/driver/NetworkEpoch.hpp).
+        // rx_clk_carry: moved to net::StationSignalState::rx_clk (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // rx_clk_rate: moved to net::StationSignalState::rx_clk_rate (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // iono_cs: moved to net::LosState::iono_cs (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // rpb_carry: moved to net::StationSignalState::rpb (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // rx_cb_carry: moved to net::StationSignalState::rx_cb (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // pc_carry: moved to net::LosState::pc (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // pc_trace_rows: moved to EpochEvents::Harvest (network/driver/NetworkEpoch.hpp).
+        // amb_if_rows: moved to EpochEvents::Harvest (network/driver/NetworkEpoch.hpp).
+        // rxcb_lin_restore: moved to net::StationState::rxcb_lin_restore (card NOM step N4a, network/state/NetworkEntities.hpp).
         /// Per-station out-slots for the two RS-9 override tallies, sized once by
         /// @c networkApplyRxCbLinRestore and never resized: each station's
         /// @c StateInitializer holds a raw pointer to its own element, so the counting is
@@ -1621,10 +1621,10 @@ namespace GnssProcessor {
         std::vector<std::pair<long long, long long>> rxcb_lin_sta_counts;
         // URA quality channel carried state, B1 (inert unless network.emit_ura).
         double                       ura_sigma0_ewma = 1.0;   ///< network-wide σ̂0 EWMA scaling the emitted URA (one-epoch lag).
-        // ura_refloat_horizon: moved to net::SatelliteState::ura_refloat_horizon (card NOM step N4e1, app/NetworkEntities.hpp).
-        // arc_spike_streak: moved to net::LosState::arc_spike_streak (card NOM step N4c, app/NetworkEntities.hpp).
-        // ura_retro_sats: moved to net::SatelliteState::ura_retro_sats (card NOM step N4e1, app/NetworkEntities.hpp).
-        // retro_active: moved to net::SatelliteState::retro_active (card NOM step N4e1, app/NetworkEntities.hpp).
+        // ura_refloat_horizon: moved to net::SatelliteState::ura_refloat_horizon (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // arc_spike_streak: moved to net::LosState::arc_spike_streak (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // ura_retro_sats: moved to net::SatelliteState::ura_retro_sats (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // retro_active: moved to net::SatelliteState::retro_active (card NOM step N4e1, network/state/NetworkEntities.hpp).
         // Satellites whose reference-path arc was reset by IF-TD slip QC this epoch,
         // queued for a per-satellite discontinuity mark at the sat's next actual emit
         // (Edge-1 piece 2, network.mark_refsat_reset_disc; off by default, and then this
@@ -1654,11 +1654,11 @@ namespace GnssProcessor {
         // application) with run-end counters.  Not serialized into the snapshot: the same
         // transient class as refsat_mark_sats; a warm resume across a pending re-reference
         // drops it, and the slip then surfaces to post-fit RAIM instead.
-        // datum_reref_pb_sats: moved to net::SatelliteState::datum_reref_pb (card NOM step N4e2, app/NetworkEntities.hpp).
-        // datum_reref_amb_sats: moved to net::SatelliteState::datum_reref_amb (card NOM step N4e2, app/NetworkEntities.hpp).
-        // relevel: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
+        // datum_reref_pb_sats: moved to net::SatelliteState::datum_reref_pb (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // datum_reref_amb_sats: moved to net::SatelliteState::datum_reref_amb (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // relevel: moved to EpochEvents::Slip (network/driver/NetworkEpoch.hpp).
         /// The producer AR search's suspect-corner ledger (card ARL,
-        /// filter/NetworkArSuspect.hpp): per (station, satellite), the stamp of each slip
+        /// network/ar/NetworkArSuspect.hpp): per (station, satellite), the stamp of each slip
         /// cause's last event (the loop epoch of the first search that can act on it), and
         /// the corners awaiting their release back into the search.  Written in PASS A (MW
         /// unknown drops, GF jump flags), at SB_NETAR (the free-epoch latch and the carry
@@ -1667,21 +1667,21 @@ namespace GnssProcessor {
         /// knobs.ar_suspect_epochs > 0.  Not snapshotted (a resumed leg starts with every
         /// corner clean).
         ArSuspectLedger              ar_suspect;
-        // ar_basis: moved to net::ConstellationState::ar_basis (card NOM step N4b, app/NetworkEntities.hpp).
+        // ar_basis: moved to net::ConstellationState::ar_basis (card NOM step N4b, network/state/NetworkEntities.hpp).
         /// The ledger of fixed cycles (card AGT step AGT-6, card FCF step FCF-3,
-        /// filter/NetworkArLattice.hpp): the lattice of fixed cycles, the streaks of fixes
+        /// network/ar/NetworkArLattice.hpp): the lattice of fixed cycles, the streaks of fixes
         /// waiting to enter it and its last step, stepped once per search epoch by the
         /// fixed-cycle seam at SB_SOLPREP.  Empty and untouched unless
         /// network.ambiguity_resolution.trace_lattice or a fixed-cycle fold with source
         /// lattice.  Not snapshotted and not fingerprinted (measure-only): a resumed leg starts
         /// with an empty ledger.
         ArLatticeState               ar_lattice;
-        /// The fixed-cycle fold's run state (card FCF step FCF-3, filter/NetworkFixedCycles.hpp):
+        /// The fixed-cycle fold's run state (card FCF step FCF-3, network/ar/NetworkFixedCycles.hpp):
         /// the units folded at the last step, for the fold's edges.  Empty and untouched unless
         /// the fold runs with source lattice.  Not snapshotted.
         FixedCycleState              fixed_cycles;
-        // relevel_pend: moved to net::LosState::relevel_pend (card NOM step N4f1, app/NetworkEntities.hpp).
-        // sid_reentry_outcome: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
+        // relevel_pend: moved to net::LosState::relevel_pend (card NOM step N4f1, network/state/NetworkEntities.hpp).
+        // sid_reentry_outcome: moved to EpochEvents::Slip (network/driver/NetworkEpoch.hpp).
         /// The anchor election's own datum history per (satellite, signal) family (card SID
         /// phase 4, S2 / B1): what each coverage-gate drop edge left behind (the incumbent,
         /// the epoch, the per-station admitted generations) and the last epoch the family
@@ -1691,7 +1691,7 @@ namespace GnssProcessor {
         /// is a real first sighting (the same exemption the roster and the ledger take).
         /// Untouched unless network.ledger_screens.
         AnchorReentryState           sid_anchor_reentry;
-        // sid_carry_prune_deaths: moved to EpochEvents::Harvest (app/NetworkEpoch.hpp).
+        // sid_carry_prune_deaths: moved to EpochEvents::Harvest (network/driver/NetworkEpoch.hpp).
         // Startup quality-ramp state (RTB-7(b/c)).  The degraded URA floor
         // (nc.warmup_ura_floor_m) applies until ramp_lifted; the lift rule is
         // networkWarmupRampLifted (emitted-epoch horizon and σ̂0-EWMA update count, the
@@ -1706,8 +1706,8 @@ namespace GnssProcessor {
 
         // --- Invariant-carry graph identities (decomposition INC-4: plain-data tier-1
         // entities) ---
-        // carry_sat_vertex: moved to net::SatelliteState::carry_vertex (card NOM step N4e2, app/NetworkEntities.hpp).
-        // carry_group_id: moved to net::ChannelState::group_id (card NOM step N4b, app/NetworkEntities.hpp).
+        // carry_sat_vertex: moved to net::SatelliteState::carry_vertex (card NOM step N4e2, network/state/NetworkEntities.hpp).
+        // carry_group_id: moved to net::ChannelState::group_id (card NOM step N4b, network/state/NetworkEntities.hpp).
         // carry_glonass_warned: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         double carry_prev_tow = std::numeric_limits<double>::quiet_NaN();
         // carry_epochs, carry_born_total, carry_marg_total, carry_merges_total, carry_splits_total,
@@ -1730,7 +1730,7 @@ namespace GnssProcessor {
         // The drained view the DD-prior build reads this epoch: a member of this set that
         // is not also in the epoch's raw funnel subset keeps its carried DD instead of
         // being refloated.  Rebuilt (cleared and filled) at the head of every epoch.
-        // carry_innov_flat_now: moved to EpochEvents::Slip (app/NetworkEpoch.hpp).
+        // carry_innov_flat_now: moved to EpochEvents::Slip (network/driver/NetworkEpoch.hpp).
         // carry_innov_kill_suppressed: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
         // --- Per-epoch carry churn (SPEC_day129_frame_guards P1-1) ---
@@ -1748,10 +1748,10 @@ namespace GnssProcessor {
         // epoch-status row.  Trace only: nothing reads them back.
         long long carry_prev_born = 0, carry_prev_slipkills = 0,
                   carry_prev_innov_flags = 0, carry_prev_innov_retaps = 0;
-        // ep_chord_births: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
-        // ep_slip_refloats: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
-        // ep_d5_flags: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
-        // ep_d5_retaps: moved to EpochEvents::Install (app/NetworkEpoch.hpp).
+        // ep_chord_births: moved to EpochEvents::Install (network/driver/NetworkEpoch.hpp).
+        // ep_slip_refloats: moved to EpochEvents::Install (network/driver/NetworkEpoch.hpp).
+        // ep_d5_flags: moved to EpochEvents::Install (network/driver/NetworkEpoch.hpp).
+        // ep_d5_retaps: moved to EpochEvents::Install (network/driver/NetworkEpoch.hpp).
         // Per-epoch observability of the within-epoch RAIM tier (R0), parked here between
         // the solve glue (writer) and the epoch-status emit (reader).  It puts a null
         // sample of σ̂₀_first on disk (a trip event's detail span carries it only on
@@ -1760,10 +1760,10 @@ namespace GnssProcessor {
         // row, where es.n_refloat_sats counts only the clock-couple set, which is empty
         // unless clock_monitor_couple_raim.  Sentinels: < 0 = the tier did not assess this
         // epoch, and the columns stay blank ("unavailable is not 0").
-        // ep_sigma0_first: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
-        // ep_we_refloat_sats: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
-        // ep_we_clk_move_max: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
-        // ep_we_clk_move_sat: moved to EpochEvents::Solve (app/NetworkEpoch.hpp).
+        // ep_sigma0_first: moved to EpochEvents::Solve (network/driver/NetworkEpoch.hpp).
+        // ep_we_refloat_sats: moved to EpochEvents::Solve (network/driver/NetworkEpoch.hpp).
+        // ep_we_clk_move_max: moved to EpochEvents::Solve (network/driver/NetworkEpoch.hpp).
+        // ep_we_clk_move_sat: moved to EpochEvents::Solve (network/driver/NetworkEpoch.hpp).
 
         // --- Withhold-era continuity (A4).  Advanced only at epochs that reach the A4
         // decision; continuity uses the census freshness idiom
@@ -1776,9 +1776,9 @@ namespace GnssProcessor {
         int       wh_era_len      = 0;  ///< consecutive A4-withheld decides (0 = no era)
         long long wh_last_loop_ep = -1; ///< n_loop_epochs at the last withheld decide
 
-        // staf_ewma: moved to net::StationState::staf_ewma (card NOM step N4a, app/NetworkEntities.hpp).
-        // staf_updates: moved to net::StationState::staf_updates (card NOM step N4a, app/NetworkEntities.hpp).
-        // staf_departed: moved to net::StationState::staf_departed (card NOM step N4a, app/NetworkEntities.hpp).
+        // staf_ewma: moved to net::StationState::staf_ewma (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // staf_updates: moved to net::StationState::staf_updates (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // staf_departed: moved to net::StationState::staf_departed (card NOM step N4a, network/state/NetworkEntities.hpp).
         double                   staf_prev_tow = -1.0; ///< dt source for the EWMA alpha
 
         // --- Cross-epoch state of the PD-safe DD fold (INC-0).
@@ -1832,11 +1832,11 @@ namespace GnssProcessor {
         // NetRowClass (obs_code, obs_phase, obs_other, iono_sh_row), which is also the
         // trace column order.  Nothing reads them back: the census is a tripwire, not an
         // input.
-        // ep_pc_max_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_pc_p99_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_pc_n_gt_10: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_pc_n_gt_1000: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_pc_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // ep_pc_max_s: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_pc_p99_s: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_pc_n_gt_10: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_pc_n_gt_1000: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_pc_rows: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
         /// H-rider (edge-queue §1.6 item 3a): this epoch's pooled robust prefit σ̂₀ for the
         /// H heartbeat (networkPrefitSigma0, computed pre-solve at the top of
         /// networkSolveGlue).  0.0 = unavailable (empty pool, or the knob is off), the
@@ -1862,13 +1862,13 @@ namespace GnssProcessor {
         // live without (the counter is silent by default).  cb_exc_prev_clk rebuilds from
         // the first post-resume epoch, which correctly suppresses a spurious trip on the
         // resume seam itself (no baseline, so no delta and no trip).
-        // cb_exc_prev_clk: moved to net::SatelliteState::cb_exc_prev_clk (card NOM step N4e1, app/NetworkEntities.hpp).
-        // cb_excursion_sats: moved to EpochEvents::Qc (app/NetworkEpoch.hpp).
-        // cb_excursion_pending_bump: moved to net::SatelliteState::disc_pending (net::Disc::CbExcursion) (card NOM step N4e2, app/NetworkEntities.hpp).
+        // cb_exc_prev_clk: moved to net::SatelliteState::cb_exc_prev_clk (card NOM step N4e1, network/state/NetworkEntities.hpp).
+        // cb_excursion_sats: moved to EpochEvents::Qc (network/driver/NetworkEpoch.hpp).
+        // cb_excursion_pending_bump: moved to net::SatelliteState::disc_pending (net::Disc::CbExcursion) (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // cb_exc_trips, cb_exc_reinits, cb_exc_bumps, cb_exc_nonpivot_would, cb_exc_max_median,
         // cb_exc_max_median_tow: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
-        // sh_dev_carry: moved to net::LosState::sh_dev (card NOM step N4c, app/NetworkEntities.hpp).
+        // sh_dev_carry: moved to net::LosState::sh_dev (card NOM step N4c, network/state/NetworkEntities.hpp).
         // shdev_warm_total, shdev_cold_total, shdev_slip_resets_total, shdev_nodata_total,
         // shdev_demean_epochs_total, shdev_demean_sta_total, shdev_demean_abs_g_sum, shdev_d5_keeps_total:
         // moved to NetworkServiceCounters (card NOM step N4g, decision D6).
@@ -1897,9 +1897,9 @@ namespace GnssProcessor {
         // Storing a decision here and reusing it instead of re-deriving it would be a
         // zero-q hold in disguise (increment 2c) and would pull 2c's slip-response rules
         // forward; see the invariant #1 discussion in NetworkSdEwlAr.hpp.
-        // sd_ewl_fix: moved to net::StationState::sd_ewl_fix (card NOM step N4a, app/NetworkEntities.hpp).
-        // sd_ewl_r0: moved to net::ConstellationState::sd_ewl_r0 (card NOM step N4b, app/NetworkEntities.hpp).
-        // sd_ewl_prev: moved to net::LosState::sd_ewl_prev (card NOM step N4c, app/NetworkEntities.hpp).
+        // sd_ewl_fix: moved to net::StationState::sd_ewl_fix (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // sd_ewl_r0: moved to net::ConstellationState::sd_ewl_r0 (card NOM step N4b, network/state/NetworkEntities.hpp).
+        // sd_ewl_prev: moved to net::LosState::sd_ewl_prev (card NOM step N4c, network/state/NetworkEntities.hpp).
 
         // --- State-snapshot channel, RTB-7(a) (path resolved at the run-TU site;
         // fingerprint, restore and write live in NetworkSnapshotFingerprint.cpp,
@@ -1914,7 +1914,7 @@ namespace GnssProcessor {
         // snap_cpl_dict_last, snap_cpl_rows_last, snap_cpl_zrows_last, snap_cpl_terms_last,
         // snap_cpl_rows_dropped, snap_datum_rows_last, snap_emit_rows_last, snap_station_rows_last,
         // snap_canon_rows_last: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
-        // resume_canon_rows: moved to net::StationState::resume_canon_rows (card NOM step N4a, app/NetworkEntities.hpp).
+        // resume_canon_rows: moved to net::StationState::resume_canon_rows (card NOM step N4a, network/state/NetworkEntities.hpp).
         // snap_rxcb_lin_rows_last: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         // resume_cpl_census_pending: moved to NetworkCarryState::resume.cpl_census (ResumeHandoff, card NOM step N4g).
         std::vector<double> resume_cpl_census_rel;    // per-row max|M − M_d| / max|M_d| at the first harvest (§18.12)
@@ -1930,16 +1930,16 @@ namespace GnssProcessor {
         // behaviour for a fresh observer.
         // redun_epochs: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         std::set<std::size_t> redun_escalate_pending;   ///< stations the free tier flagged this epoch, swept at the next one (one-epoch latch).
-        // redun_event_last: moved to net::LosState::events (LosEventState::redun_event_last) (card NOM step N4c, app/NetworkEntities.hpp).
-        // redun_unobs_active: moved to net::StationState::redun_unobs_active (card NOM step N4a, app/NetworkEntities.hpp).
+        // redun_event_last: moved to net::LosState::events (LosEventState::redun_event_last) (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // redun_unobs_active: moved to net::StationState::redun_unobs_active (card NOM step N4a, network/state/NetworkEntities.hpp).
         // Per-epoch L1 scalars.  redun_ep_tow is the stamp the epoch-status writer
         // compares against: a non-sweep epoch leaves the columns blank instead of
         // repeating a stale sweep's numbers (the "unavailable is not 0" convention).
-        // redun_ep_tow: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_redun_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_uncheckable_rows: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_uncheckable_max_s: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // ep_unobservable_local: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
+        // redun_ep_tow: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_redun_rows: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_uncheckable_rows: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_uncheckable_max_s: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // ep_unobservable_local: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
         // redun_cov_warned, redun_closure_warned: moved to NetworkServiceCounters (card NOM step N4g,
         // decision D6).
 
@@ -1957,7 +1957,7 @@ namespace GnssProcessor {
         // nothing.
         NetworkMdbEpoch mdb;                   ///< this epoch's per-(constellation x class) accumulation.
         // mdb_seq: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
-        // mdb_event_last: moved to net::LosState::events (LosEventState::mdb_event_last) (card NOM step N4c, app/NetworkEntities.hpp).
+        // mdb_event_last: moved to net::LosState::events (LosEventState::mdb_event_last) (card NOM step N4c, network/state/NetworkEntities.hpp).
         // mdb_join_warned: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
         // --- Carry LS-VCE monitor, the hourly trace flush (M2) ---
@@ -1997,20 +1997,20 @@ namespace GnssProcessor {
         // so per row (NetworkCarryVce::seedRobustFloor is the v2 path if that ever
         // matters).  Empty and unread unless ctx.knobs.prires_on, so an off run allocates
         // nothing.
-        // prires_event_last: moved to net::LosState::events (LosEventState::prires_event_last) (card NOM step N4c, app/NetworkEntities.hpp).
-        // prires_ep_tow: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_prires_rows: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_prires_resp: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_prires_frame: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_prires_reported: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_prires_max_t: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // prires_event_last: moved to net::LosState::events (LosEventState::prires_event_last) (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // prires_ep_tow: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_prires_rows: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_prires_resp: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_prires_frame: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_prires_reported: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_prires_max_t: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
         // prires_trunc_warned: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
         int       prires_last_flush_hour = -1; ///< content-hour bucket of the last ladder flush (durability: only health_trace flushes on its own).
-        // ep_s0g_formed: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_s0g_sigma0: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_s0g_tension_def: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_s0g_tension: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
-        // ep_s0g_flags: moved to EpochEvents::Status (app/NetworkEpoch.hpp).
+        // ep_s0g_formed: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_s0g_sigma0: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_s0g_tension_def: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_s0g_tension: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
+        // ep_s0g_flags: moved to EpochEvents::Status (network/driver/NetworkEpoch.hpp).
 
         // --- BlockFormal LOS block census ---
         // Snapshot: exempt; observer state of a measure-only, forward-only instrument, the
@@ -2028,8 +2028,8 @@ namespace GnssProcessor {
         // families, so enabled() is false and every entry point is a single bool test; an
         // unarmed run allocates nothing beyond the empty vectors.
         NetworkBlockBaarda bb{{}, 0.0};        ///< the run accumulator; re-seated from config once at run start.
-        // bb_hits: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // bb_event_last: moved to net::LosState::bb_event_last (card NOM step N4e2, app/NetworkEntities.hpp).
+        // bb_hits: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // bb_event_last: moved to net::LosState::bb_event_last (card NOM step N4e2, network/state/NetworkEntities.hpp).
         // This census adds no network_epoch_status.csv columns, unlike the three censuses
         // above.  Its own network_block_baarda.csv already carries n_blocks / n_reported /
         // max_t per (family x label) per epoch, more than three pooled scalars could say,
@@ -2053,8 +2053,8 @@ namespace GnssProcessor {
         // census).  Default-constructed unarmed, so enabled() is false and every entry
         // point is a single bool test.
         NetworkCongruence cg{false};           ///< the run accumulator; re-seated from config once at run start.
-        // cg_hits: moved to EpochEvents::Census (app/NetworkEpoch.hpp).
-        // cg_event_last: moved to net::StationState::cg_event_last (card NOM step N4e2, app/NetworkEntities.hpp).
+        // cg_hits: moved to EpochEvents::Census (network/driver/NetworkEpoch.hpp).
+        // cg_event_last: moved to net::StationState::cg_event_last (card NOM step N4e2, network/state/NetworkEntities.hpp).
 
         // s0g_approx_warned, s0g_nodata_warned: moved to NetworkServiceCounters (card NOM step N4g,
         // decision D6).
@@ -2070,19 +2070,19 @@ namespace GnssProcessor {
         //
         // Empty and unread unless ctx.knobs.pc_walk_on (or, for the event clock,
         // pc_fuse_sigma > 0), so an off run allocates nothing.
-        // prefit_event_last: moved to net::LosState::events (LosEventState::prefit_event_last) (card NOM step N4c, app/NetworkEntities.hpp).
-        // prefit_present_prev: moved to net::LosState::prefit_present_prev (card NOM step N4c, app/NetworkEntities.hpp).
+        // prefit_event_last: moved to net::LosState::events (LosEventState::prefit_event_last) (card NOM step N4c, network/state/NetworkEntities.hpp).
+        // prefit_present_prev: moved to net::LosState::prefit_present_prev (card NOM step N4c, network/state/NetworkEntities.hpp).
         bool prefit_walk_seeded = false;   ///< the presence map holds a real epoch; before that, every LOS would read as born (INC-3).
         // prefit_empty_logged: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
-        // prefit_code_flag: moved to net::LosState::prefit_code_flag (card NOM step N4c, app/NetworkEntities.hpp).
+        // prefit_code_flag: moved to net::LosState::prefit_code_flag (card NOM step N4c, network/state/NetworkEntities.hpp).
         /// The `n_loop_epochs` value at which @ref prefit_code_flag was last written (-1 =
         /// never).  The vet honours flags from the immediately preceding loop epoch only;
         /// anything older is stale and is counted as an absent consultation rather than
         /// believed.  The same staleness discipline as the `adm_ep_tow` / `redun_ep_tow`
         /// column stamps.
         long long prefit_code_flag_ep = -1;
-        // topo_prev_tie: moved to net::StationState::topo_prev_tie (card NOM step N4a, app/NetworkEntities.hpp).
-        // topo_prev_kind: moved to net::LosState::topo_prev_kind (card NOM step N4c, app/NetworkEntities.hpp).
+        // topo_prev_tie: moved to net::StationState::topo_prev_tie (card NOM step N4a, network/state/NetworkEntities.hpp).
+        // topo_prev_kind: moved to net::LosState::topo_prev_kind (card NOM step N4c, network/state/NetworkEntities.hpp).
         std::set<std::string> topo_prev_cols;  ///< last epoch's shared-column label set, for registry deltas (INC-4).
         bool topo_seeded = false;              ///< the baselines above hold a real epoch (INC-4).
 
@@ -2093,7 +2093,7 @@ namespace GnssProcessor {
         // site to the SB_FRAMEDIAG consumer (the A4 withhold path consumes its own, since
         // that epoch never reaches SB_FRAMEDIAG).
         std::set<std::string> rhs_trip_eras;   ///< QC eras currently active (latched, one trip each).
-        // rhs_trip_pending: moved to EpochEvents::Qc (app/NetworkEpoch.hpp).
+        // rhs_trip_pending: moved to EpochEvents::Qc (network/driver/NetworkEpoch.hpp).
         std::unique_ptr<NetworkAttribFrame> rhs_prev_frame;  ///< the retained previous epoch (null unless retention is on and sized in).
         // rhs_prev_oversize_logged: moved to NetworkServiceCounters (card NOM step N4g, decision D6).
 
@@ -2362,11 +2362,11 @@ namespace GnssProcessor {
         double    seed_round_rehost_max_step_m = 0.0;
         // Run tallies of eq34 reattach hygiene; every field is documented on the struct.
         // Bumped only when ctx.knobs.anchor_hygiene_on, and reported by
-        // networkAnchorHygieneRunEnd (filter/NetworkAnchorHygiene.cpp).
+        // networkAnchorHygieneRunEnd (network/solve/NetworkAnchorHygiene.cpp).
         NetworkAnchorTallies hyg;
         // Run tallies of flicker/gap signal integrity; every field is documented on the
         // struct.  Bumped only when ctx.knobs.sig_integrity_on, and reported by
-        // networkSignalIntegrityRunEnd (filter/NetworkSignalIntegrity.cpp).  `demoted_rows`
+        // networkSignalIntegrityRunEnd (network/assembly/NetworkSignalIntegrity.cpp).  `demoted_rows`
         // stays 0 here: the report sums the per-station NetStation::si_rows_demoted counters
         // into its own copy (the fold runs inside the parallel produce, so the row tally
         // cannot live here).
@@ -3031,7 +3031,7 @@ namespace GnssProcessor {
         long long cxu_fold_reexpressed_in_s = 0;   ///< keys in S folded on a variance a handover re-expressed after the rows
         long long cxu_fold_retired_in_s = 0;       ///< keys in S the fold retired at a handover (the rows carried them)
         long long cxu_pivot_missing = 0;       ///< built epochs with a clock constellation and no recorded pivot
-        PivotFrameCounters pfq{};              ///< card PFQ run totals (filter/NetworkPivotFrameQ.hpp)
+        PivotFrameCounters pfq{};              ///< card PFQ run totals (network/carry/NetworkPivotFrameQ.hpp)
         ClockCloneCounters ccl{};              ///< card SCL run totals (filter/NetworkClockClone)
         SharedHistoryCounters shx{};           ///< card SCL2 X2 run totals (filter/NetworkSharedHistory)
         // Card PRM phase 1b: the decided-once fold disposition (networkCarryDecide before
@@ -3052,7 +3052,7 @@ namespace GnssProcessor {
         CarryMovedTally prm_ref_moved{};
         long long prm_ref_calls[kCarryMechanisms]{};
         // Card PRM phase 3a: the responses of the carried instances, per site of the
-        // declared table (filter/NetworkResponses.hpp; the sites whose count source is
+        // declared table (network/assembly/NetworkResponses.hpp; the sites whose count source is
         // Increment), and the free-epoch latch per cause (keys latched with the bit set; of
         // those, keys with a carried entry at the response), the unique latched keys, the
         // keys with more than one cause, and the ambiguities the gap prune erased in the
@@ -3344,7 +3344,7 @@ namespace GnssProcessor {
         // which >=1 thin column was excluded, and the cumulative column-epoch count.
         size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
         // The coverage gate's drop edge (card EV7 §6, network.phase_datum_gate_drop_erase;
-        // the rule is filter/NetworkPhaseGateDrop.hpp).  Counted in both knob states, so an
+        // the rule is network/solve/NetworkPhaseGateDrop.hpp).  Counted in both knob states, so an
         // off run reports the size of the class and an armed run reports how much of it the
         // response reached (standing invariant #4: a counter that exists only on the armed
         // path cannot say whether arming would matter).
@@ -3614,7 +3614,7 @@ namespace GnssProcessor {
 
         /// Tallies of the prefit census, structural fuse, seed-birth tripwire, topology
         /// ledger and flight recorder.  Every field is documented on the struct; reported by
-        /// networkPrefitCensusRunEnd (filter/NetworkPrefitCensus.cpp).  Standing invariant #4 applies
+        /// networkPrefitCensusRunEnd (network/qc/NetworkPrefitCensus.cpp).  Standing invariant #4 applies
         /// directly: the census is a tripwire, and a tripwire that never fires looks like a
         /// tripwire that was never connected; only `epochs` / `rows` / `rec_consults`
         /// separate them.
@@ -3634,7 +3634,7 @@ namespace GnssProcessor {
         // goes indefinite can freeze most of the carried state for the rest of the run
         // while every downstream reading stays blind to the carry.
         //
-        // Reported by networkCarryDdFoldRunEnd (filter/NetworkInvariantCarryDriver.cpp).  The per-epoch
+        // Reported by networkCarryDdFoldRunEnd (network/carry/NetworkInvariantCarryDriver.cpp).  The per-epoch
         // halves are not parked here: both epoch-status writers read them directly from
         // @ref NetworkEstimator::ddFoldStats (see NetworkCarryState).
         long long ddfold_epochs        = 0;  ///< accepted installs whose fold reached a factorization (the denominator).
@@ -3674,23 +3674,23 @@ namespace GnssProcessor {
         std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
         std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
         std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles): the convergence gauge
-        /// The search's suspect-corner mask (card ARL, filter/NetworkArSuspect.hpp), both
+        /// The search's suspect-corner mask (card ARL, network/ar/NetworkArSuspect.hpp), both
         /// edges: events and stamps by cause, DDs masked, corners released and what their
         /// DDs got at the first search after the release.  All zero unless
         /// knobs.ar_suspect_epochs > 0.
         ArSuspectCounters   netar_suspect;
-        /// The search's cycle basis (card AGT, filter/NetworkArCycleBasis.hpp): coverage per
+        /// The search's cycle basis (card AGT, network/ar/NetworkArCycleBasis.hpp): coverage per
         /// band against the lattice dimension, rows by kind, links kept and re-seats, the map
         /// against the stored basis, the arc lives and the build cost.  All zero unless
         /// network.ambiguity_resolution.cycle_basis.
         ArCycleBasisCounters netar_cycle;
         /// The ledger of fixed cycles (card AGT step AGT-6, card FCF step FCF-3,
-        /// filter/NetworkArLattice.hpp): fixes by verdict and waiting, releases by cause with the
+        /// network/ar/NetworkArLattice.hpp): fixes by verdict and waiting, releases by cause with the
         /// rows they found and the dimensions lost, the units implied and failing, the lattice's
         /// size and row lengths, the cost.  All zero unless the ledger runs
         /// (network.ambiguity_resolution.trace_lattice, or the fold with source lattice).
         ArLatticeCounters    netar_lattice;
-        /// The fixed-cycle fold (card FCF, filter/NetworkFixedCycles.hpp): epochs with a
+        /// The fixed-cycle fold (card FCF, network/ar/NetworkFixedCycles.hpp): epochs with a
         /// determined pair and held solves, units by fate, blocks, the guards' refusals, the
         /// unit statistic, block acceptance against its stated mean, the float reproduction,
         /// the shift and the cost.  All zero unless network.ambiguity_resolution.fixed_cycles.
@@ -3721,7 +3721,7 @@ namespace GnssProcessor {
         // run-end counters, one-shot warn latches, the window sums of measure-only
         // instruments and the event-holdoff clocks of the censuses.  Nothing in the solve
         // reads them.  Each keeps its name and has its FieldDecl row in net::kRunFields
-        // (src/core/app/NetworkRunFields.cpp), the G1 trail of its former member.
+        // (src/core/network/state/NetworkRunFields.cpp), the G1 trail of its former member.
         // ==========================================================================
 
         // Level innovation instrument (card CTU section 14), measure-only.
@@ -3898,18 +3898,18 @@ namespace GnssProcessor {
         /// ("parameters as armed").
         NetworkParamInventory  param_inventory;
         /// The contributions to the normal equations, per declared kind (card NOM N2a,
-        /// filter/NetworkContributions.hpp): the station side drained at the end of PASS B,
+        /// network/assembly/NetworkContributions.hpp): the station side drained at the end of PASS B,
         /// the shared folds at the epoch tail.  Trace class: never read by the solve.
         /// Tabled after the first emitted epoch and at run end ("contributions as armed").
         NetworkContributionLedger contributions;
         NetworkCarryState      carry;
         /// The cross-epoch run state as entity tables (card NOM step N4,
-        /// app/NetworkEntities.hpp): each sub-step moves one entity's members out of
+        /// network/state/NetworkEntities.hpp): each sub-step moves one entity's members out of
         /// @ref carry into its table.
         net::NetworkEntities   entities;
         NetworkServiceCounters counters;
         NetworkBiasAdmission   admission;   // latched census result of CB-ADM (active=false: the legacy path)
-        /// Event-harness scripted-fault schedule and ledger (filter/NetworkInject.hpp).
+        /// Event-harness scripted-fault schedule and ledger (network/carry/NetworkInject.hpp).
         /// Kept outside the warm-resume fingerprint and the snapshot on purpose: a leg
         /// resumes a converged state and then applies its own schedule, and two legs off one
         /// snapshot are designed to differ only here.  armed == false (the default,
@@ -3968,7 +3968,7 @@ namespace GnssProcessor {
     //                                   and the exact coupling update's inputs
     //   NetworkLocalCarryHarvest.cpp    the station-local carries: harvest, stash, prune
     //                                   (since card NOM3 step HV1 declared in
-    //                                   app/NetworkLocalCarryHarvest.hpp and cut by
+    //                                   network/carry/NetworkLocalCarryHarvest.hpp and cut by
     //                                   carried kind; its two resume steps are in
     //                                   NetworkWarmResume.cpp)
     //   NetworkBorderStash.cpp          the epoch-tail border stash and the retro-URA flags
@@ -3976,12 +3976,12 @@ namespace GnssProcessor {
 
     /// @brief Form the run's configuration fingerprint (RTB-7), which a state snapshot
     ///        carries and a warm resume checks; a no-op without a snapshot path.
-    /// Defined in src/core/app/NetworkSnapshotFingerprint.cpp.
+    /// Defined in src/core/network/state/NetworkSnapshotFingerprint.cpp.
     void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config_,
                                     const std::vector<NetStation>& stations);
 
-    class NetworkClockEmitRebase;   // fwd: include/products/NetworkClockEmitRebase.hpp
-    class NetworkEmitRebase;        // fwd: include/products/NetworkEmitRebase.hpp
+    class NetworkClockEmitRebase;   // fwd: include/network/emit/NetworkClockEmitRebase.hpp
+    class NetworkEmitRebase;        // fwd: include/network/emit/NetworkEmitRebase.hpp
     // Resume frame restore: both seams take the CLK-R held-frame engine (a runNetwork
     // local), so its A_c and per-sat baselines travel with the snapshot.  nullptr: the
     // engine's frame is neither captured nor restored.
@@ -3992,7 +3992,7 @@ namespace GnssProcessor {
     // cold-starting at every seam.
     /// @brief Read the state snapshot, validate it against the run, restore the carried
     ///        layers, and stage the two that need the station roster (RTB-7).
-    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    /// Defined in src/core/network/state/NetworkWarmResume.cpp.
     void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                               const MultiRinexSync& sync, NetworkProductEmitter& emitter,
                               NetworkInvariantCarryDriver& carry_driver,
@@ -4014,7 +4014,7 @@ namespace GnssProcessor {
      * Unarmed, unresumed, or given a snapshot with no @c CN rows, it does nothing, except
      * that in the armed, row-less case it warns once (standing invariant #4).
      *
-     * Defined in src/core/app/NetworkWarmResume.cpp.
+     * Defined in src/core/network/state/NetworkWarmResume.cpp.
      *
      * @param ctx      Run context (reads the staged rows, writes the counters).
      * @param config_  Run configuration (the knob and the snapshot path).
@@ -4025,26 +4025,26 @@ namespace GnssProcessor {
                                         std::vector<NetStation>& stations,
                                         const std::shared_ptr<spdlog::logger>& log);
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-    struct EpochEvents;             // app/NetworkEpoch.hpp
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
     /**
      * @brief Write the periodic atomic state snapshot (RTB-7(a)): on the first call, then
      *        once per network.state_snapshot_interval_s of product time; a no-op without a
      *        snapshot path.
-     * Defined in src/core/app/NetworkStateSnapshotWrite.cpp.
+     * Defined in src/core/network/state/NetworkStateSnapshotWrite.cpp.
      *
      * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            *run.setup.emitter (emitter), run.setup.consumer.get() (consumer). Read:
      *            run.config (config_), run.engines.carry_driver (carry_driver), run.setup.stations
      *            (stations), run.log (log), &run.emit.clk_rebase (clk_rebase), &run.emit.rebase
      *            (emit_rebase).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
      *           ep.clock.pl_now_s (pl_now_s).
      *
      * The former parameters, by binding:
@@ -4086,14 +4086,14 @@ namespace GnssProcessor {
     /// The applied / uncovered halves are read back at the run-end readout directly from
     /// @c ctx.carry.rxcb_lin_sta_counts (the run-end report needs no station roster:
     /// the tallies are indexed, not named).
-    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    /// Defined in src/core/network/state/NetworkWarmResume.cpp.
     void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config_,
                                     std::vector<NetStation>& stations,
                                     const std::shared_ptr<spdlog::logger>& log);
 
     /// @brief Fold the SH-VTEC prior (Kaula bound and temporal random walk) on the SH
     ///        coefficient columns, before the null-space rank gate.
-    /// Defined in src/core/app/NetworkBorderPrior.cpp.
+    /// Defined in src/core/network/state/NetworkBorderPrior.cpp.
     void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                   const GnssConfig& config_, NetworkEstimator& est,
                                   const SphericalHarmonicIonosphere* sh_model,
@@ -4118,7 +4118,7 @@ namespace GnssProcessor {
      * the next election) biases nothing measurably.  The K2-style margin of the row
      * information over the rank-gate cutoff is measured once and logged.
      *
-     * Defined in src/core/app/NetworkBorderPrior.cpp.
+     * Defined in src/core/network/state/NetworkBorderPrior.cpp.
      *
      * @param within_epoch_armed  append to @c ws.cap_priors so the within-epoch RAIM
      *                            re-solve replays the identical shared system.
@@ -4130,7 +4130,7 @@ namespace GnssProcessor {
     /// @brief Fold the border carry stashed last epoch (the D2 diagonal or the C1 dense
     ///        fold), after the null-space rank gate.
     /// @param events The epoch's events; reads handover and phase_datum, writes solve (the re-admission seeds).
-    /// Defined in src/core/app/NetworkBorderPrior.cpp.
+    /// Defined in src/core/network/state/NetworkBorderPrior.cpp.
     void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                    NetworkRunTraces& traces, const GnssTime& t,
                                    NetworkEstimator& est, bool datum_changed,
@@ -4156,15 +4156,15 @@ namespace GnssProcessor {
      * when no dense block was stashed, or when the stash stamp is not valid (the epoch
      * after a warm resume).
      *
-     * Defined in src/core/app/NetworkBorderPrior.cpp.
+     * Defined in src/core/network/state/NetworkBorderPrior.cpp.
      *
      * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
      *            Read: run.engines.est (est), run.log (log).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t), ep.clock.dt
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t), ep.clock.dt
      *           (dt).
      *
      * The former parameters, by binding:
@@ -4178,7 +4178,7 @@ namespace GnssProcessor {
 
     /// @brief Fold the two-state clock-model prior (network.clock_model) on the satellite
     ///        clocks, after the null-space rank gate.
-    /// Defined in src/core/app/NetworkBorderPrior.cpp.
+    /// Defined in src/core/network/state/NetworkBorderPrior.cpp.
     void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                     NetworkRunTraces& traces, const GnssTime& t,
                                     NetworkEstimator& est,
@@ -4195,19 +4195,19 @@ namespace GnssProcessor {
     /// @param run      The run (its context's counters and census samples).
     /// @param restored The restored carry entry (the L or Z row read from the snapshot).
     /// @param coupling This epoch's freshly derived regression of the same row.
-    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    /// Defined in src/core/network/state/NetworkWarmResume.cpp.
     void networkResumeCouplingCensusRow(NetworkRun& run, const LocalCarry& restored,
                                         const std::vector<CoupledShared>& coupling);
 
     /// @brief Card P9a: the first post-resume fold's CTA trip count, then the first-warm-epoch
     ///        latch (resume.cpl_census) retired.  Last step of the harvest.
     /// @param run The run (its context's carry and counters).
-    /// Defined in src/core/app/NetworkWarmResume.cpp.
+    /// Defined in src/core/network/state/NetworkWarmResume.cpp.
     void networkResumeFirstEpochRetire(NetworkRun& run);
 
     /// @brief Record the satellites the QC tiers flagged, for the next emit's retro-bump
     ///        and the post-refloat URA inflation horizon.
-    /// Defined in src/core/app/NetworkBorderStash.cpp.
+    /// Defined in src/core/network/state/NetworkBorderStash.cpp.
     void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                     const std::set<std::string>& clock_refloat_sats,
                                     const std::set<std::string>& retro_flag_sats,
@@ -4216,7 +4216,7 @@ namespace GnssProcessor {
     /// @brief Stash the border carry (prev_carry, prev_carry_cov) for the next epoch's D2
     ///        fold, with the READMIT continuity bookkeeping.
     /// @param events The epoch's events, read: the IF-pin pairs, the re-admission seeds, the code-bias excursion marks.
-    /// Defined in src/core/app/NetworkBorderStash.cpp.
+    /// Defined in src/core/network/state/NetworkBorderStash.cpp.
     void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                            NetworkRunTraces& traces, const GnssTime& t,
                            const NetworkEstimator& est, const Eigen::VectorXd& x_s,

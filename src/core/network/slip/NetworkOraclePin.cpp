@@ -742,7 +742,7 @@ int networkOraclePinRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // ---- Sim-only oracle ambiguity pin (include/filter/NetworkOraclePin.hpp) ----
+    // ---- Sim-only oracle ambiguity pin (include/network/slip/NetworkOraclePin.hpp) ----
     // The injected-row count is the only way to tell a working pin from dead wiring
     // (invariant #4).  A run reporting 0 has not measured a ceiling on what integer
     // information buys; it has measured an unpinned run, and the line says so in the

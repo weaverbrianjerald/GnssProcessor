@@ -1,7 +1,7 @@
 /**
  * @file test_network_bias_admission.cpp
  * @brief Unit tests for the CB-ADM W6 code-bias admission census
- *        (filter/NetworkBiasAdmission.hpp).
+ *        (network/assembly/NetworkBiasAdmission.hpp).
  *
  * The census is a pure scan over a synthetic std::vector<SyncedEpoch>: it
  * classifies each (satellite, signal) raw-code pair as admitted (shared column)

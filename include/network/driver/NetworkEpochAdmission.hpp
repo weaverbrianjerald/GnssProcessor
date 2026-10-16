@@ -39,7 +39,7 @@ enum class EpochAdmission {
  * Anchors on the first synced epoch and skips every epoch until the elapsed data span reaches
  * the offset; the solve then cold-starts.  Writes NetworkCarryState::start_anchor_s once.
  *
- * @param run    The run (app/NetworkRun.hpp): reads ctx.knobs.start_offset_s, writes
+ * @param run    The run (network/driver/NetworkRun.hpp): reads ctx.knobs.start_offset_s, writes
  *               ctx.carry.start_anchor_s.
  * @param se_raw The source's epoch, before the injector (only its time tag is read).
  * @return Skip while inside the offset, else Process (always Process with the knob unset).

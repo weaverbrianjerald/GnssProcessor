@@ -306,7 +306,7 @@ TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
 // ===========================================================================
 
 /// One oracle wired to a hand-built carry (same construction as
-/// tests/test_slip_oracle.cpp's Harness, reduced to what these cases need).
+/// tests/network/test_slip_oracle.cpp's Harness, reduced to what these cases need).
 struct OracleHarness {
     LogManager        log_manager;
     NetworkSlipOracle oracle;

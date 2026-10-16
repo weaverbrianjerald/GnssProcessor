@@ -135,8 +135,8 @@ namespace GnssProcessor {
         const std::map<char, std::string>& canon_phase,
         const std::vector<std::string>* allowed);
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief Fold one epoch into the census.  No-op unless the widening or a second
@@ -151,9 +151,9 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
      *            Read: run.config (config_), run.setup.stations (stations).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.pass_a.modeled
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.pass_a.modeled
      *           (modeled), ep.pass_a.present (present).
      *
      * The former parameters, by binding:
@@ -192,7 +192,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkChannelAllRunEnd(const NetworkRunEndView& v);

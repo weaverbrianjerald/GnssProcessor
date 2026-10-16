@@ -1,5 +1,5 @@
 // Unit tests for the conditional coupling-row seam of cards 1/1d
-// (filter/NetworkCoupling.hpp, split out of Application::networkPassB_ at INC-7b).
+// (network/carry/NetworkCoupling.hpp, split out of Application::networkPassB_ at INC-7b).
 // They exercise branches the 50-station byte-gate arms do not reach even with
 // coupling live: the CouplingRowBuilder scalar / departed / kappa-shrink branches over
 // a real registered estimator.  The builder takes explicit references, so it is

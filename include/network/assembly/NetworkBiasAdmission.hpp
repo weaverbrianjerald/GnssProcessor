@@ -161,7 +161,7 @@ struct NetworkRunEndView;
  * Gate: each section under its own condition, as in the teardown:
  * `config_.networkCbKaulaPrior()`; `config_.networkCbAdmission()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkBiasAdmissionRunEnd(const NetworkRunEndView& v);
@@ -172,7 +172,7 @@ int networkBiasAdmissionRunEnd(const NetworkRunEndView& v);
 
 struct NetworkRun;
 struct NetworkEpoch;
-struct EpochWorkspace;   // filter/NetworkRunTypes.hpp
+struct EpochWorkspace;   // network/driver/NetworkRunTypes.hpp
 
 /**
  * @brief The card KP physical-bound prior on the admitted OSB columns: folded after the W6 gauge

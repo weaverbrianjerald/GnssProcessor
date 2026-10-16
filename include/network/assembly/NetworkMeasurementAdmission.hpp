@@ -358,11 +358,11 @@ struct NetworkMeasurementAdmissionTallies {
     long long over_bound = 0;         ///< channel-epochs with |z| over adm_bound_m, whether or not the response is armed: the measure-only census's headline.
 };
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
-struct EpochPassA;              // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
+struct EpochPassA;              // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkSlipFunnel;       // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Screen this epoch's code observables against the products, withhold the
@@ -373,11 +373,11 @@ struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup.stations (stations). Read: run.config (config_),
  *            run.log (log), run.engines.slip_qc.epoch_idx (epoch_idx),
  *            run.ctx.knobs.carry_invariant (carry_invariant).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
  *           ep.pass_a.present (present), ep.clock.carry_warm (carry_warm).
  *
  * The former parameters, by binding:
@@ -433,7 +433,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.adm_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkMeasurementAdmissionRunEnd(const NetworkRunEndView& v);

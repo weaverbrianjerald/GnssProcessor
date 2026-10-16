@@ -2,7 +2,7 @@
  * @file test_rhs_attrib_columns.cpp
  * @brief Card ICF instrument A': the attribution's solution shares at named columns
  *        (@c network.rhs_attrib_columns, @c networkRhsAttribColumnShares in
- *        filter/NetworkRhsAttrib.hpp) and the contribution kind in the row dump.
+ *        network/qc/NetworkRhsAttrib.hpp) and the contribution kind in the row dump.
  *
  * The fixture is a small network solved by the estimator itself: two satellites with a
  * clock and an L1C phase bias each on the border, three stations with code and phase

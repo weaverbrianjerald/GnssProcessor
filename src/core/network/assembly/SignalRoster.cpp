@@ -1321,7 +1321,7 @@ namespace GnssProcessor {
         if (!rs.active) return;
         auto& ctr = ctx.counters.sid;
         Stopwatch watch(ctr.audit_ms);
-        // The N3b site census (app/SignalRosterSites.cpp): the rule sites of card NOM
+        // The N3b site census (network/assembly/SignalRosterSites.cpp): the rule sites of card NOM
         // section 18 against this epoch's roster, after the IF pin wrote its datum role.
         signalRosterSiteCensus(rs, ctr.n3b);
         // The epoch's continuous-GPS seconds, the unit every carry horizon is in.
@@ -2385,7 +2385,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     static int networkSignalRosterPlanRunEnd(const NetworkRunEndView& v) {
@@ -2411,14 +2411,14 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     static int networkSignalRosterLedgerRunEnd(const NetworkRunEndView& v) {
         const NetworkRunContext& ctx = v.ctx;
         const std::shared_ptr<spdlog::logger>& log = v.log;
 
-        // Signal-roster run-end (SID phase 1, app/SignalRoster.cpp): the roster's build
+        // Signal-roster run-end (SID phase 1, network/assembly/SignalRoster.cpp): the roster's build
         // census with its bar-0 self-check, every disagreement class with its denominator,
         // and the arc ledger's transitions, horizon and cost.  Written on every network run
         // (card NOM step N3a; its "signals as planned" table is written above, beside the
@@ -2430,7 +2430,7 @@ namespace GnssProcessor {
     }
 
     // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-    // declared in app/SignalRoster.hpp).
+    // declared in network/assembly/SignalRoster.hpp).
     int networkSignalRosterRunEnd(const NetworkRunEndView& v) {
         return networkRunEndSections(v, {
             networkSignalRosterPlanRunEnd,

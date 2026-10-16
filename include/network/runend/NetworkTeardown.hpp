@@ -6,7 +6,7 @@
  *
  * Application::runNetwork ends with `return networkTeardown(...);`.  The function measures
  * the epoch-loop wall once, builds the @ref NetworkRunEndView every report reads, calls each
- * row of @ref kNetworkRunEndReports in order (filter/NetworkRunEnd.hpp: the table, how to
+ * row of @ref kNetworkRunEndReports in order (network/runend/NetworkRunEnd.hpp: the table, how to
  * add a report, the order constraints), and returns the exit code.  Each report lives in the
  * file of the subsystem it reports (card NOM step TD1b); a new run-end line goes in its
  * subsystem's report, and a new report is one row of the table.
@@ -37,7 +37,7 @@ struct NetworkRunEndInputs;
  * @param traces  The run's trace streams, closed by the first report; the run manifest's
  *                run-end records are appended through it.
  * @param setup   The setup handoff; the product writer is closed by the contract round trip.
- * @param run     The driver-owned run groups the reports read (filter/NetworkRunGroups.hpp).
+ * @param run     The driver-owned run groups the reports read (network/driver/NetworkRunGroups.hpp).
  * @return 1 when no epoch was emitted; otherwise the last non-zero verdict of the reports in
  *         table order: the injection verdict when it is non-zero, else the joint-block
  *         PD-fallback bar (0 or 1).

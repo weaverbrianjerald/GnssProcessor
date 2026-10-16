@@ -479,7 +479,7 @@ int networkMdbRunEnd(const NetworkRunEndView& v) {
     // --- Baarda reliability numbers / MDB run-end telemetry -------------------
     // (docs/SPEC_redundancy_census.md §11.4).  The aggregates have to distinguish
     // "ran, all rows checkable" from "never ran" (invariant #4); one line can report
-    // both only if the denominators come first.  The body is in filter/NetworkMdb.cpp,
+    // both only if the denominators come first.  The body is in network/qc/NetworkMdb.cpp,
     // next to the aggregation that produces the numbers.
     if (ctx.knobs.mdb_on)
         networkMdbRunEnd(ctx, config_, log);

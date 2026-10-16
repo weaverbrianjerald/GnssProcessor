@@ -26,16 +26,16 @@
  *     With `network.ambiguity_resolution.suspect_epochs` (card ARL) every DD with a
  *     (station, satellite) corner that the slip layer freed, dropped or flagged in the
  *     last few epochs stays in the basis and the trace but is kept out of the search
- *     (filter/NetworkArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
+ *     (network/ar/NetworkArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
  *     carries the DD's suspect cause bits and its re-entry flag, and the release back
  *     into the search is counted (@ref netar::reentryOutcome).  The basis is the star
  *     unless `tree_basis` (card ARL: a spanning tree of station baselines per
  *     (constellation, signal)) or `cycle_basis` (card AGT: a sticky, full-coverage cycle
- *     basis per family of a constellation's signals, filter/NetworkArCycleBasis.hpp,
+ *     basis per family of a constellation's signals, network/ar/NetworkArCycleBasis.hpp,
  *     searched one block per station, @ref netar::searchBlockKey) is armed.  Under
  *     `trace_lattice` (card AGT step AGT-6) the seam returns the epoch's determined DDs as
  *     cycles with every band-arc's life reading (@ref ArEpochFixes), which the measure-only
- *     lattice observatory (filter/NetworkArLattice.hpp) reads next in the same bracket.
+ *     lattice observatory (network/ar/NetworkArLattice.hpp) reads next in the same bracket.
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
  *     of the assembled arrowhead normal equations (border N_ss raw and reduced, with
  *     RHS; each station's N_sr / N_rr / u_r; shared and local column labels) as
@@ -67,12 +67,12 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
-struct NetworkRunContext;  // app/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;  // network/state/NetworkRunContext.hpp, included in the .cpp only
 
 /**
  * @brief Pure helpers for the Phase-2 ILS cap permutation (unit-tested in
- *        tests/test_producer_ar_trace.cpp).
+ *        tests/network/test_producer_ar_trace.cpp).
  *
  * They are separate from @ref networkProducerAr because the ILS receives a
  * capped, re-ordered copy of the DD basis: @c ils::IlsResult::kept indexes the
@@ -98,7 +98,7 @@ std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap);
 
 /**
  * @brief The search subset under the suspect-corner mask (card ARL,
- *        filter/NetworkArSuspect.hpp).
+ *        network/ar/NetworkArSuspect.hpp).
  *
  * With @p masked empty or all zero this is exactly @ref lowestSigmaOrder, so an unarmed
  * or quiet epoch searches the same subset in the same order.  Otherwise the masked DDs
@@ -239,7 +239,7 @@ std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
 
 /**
  * @brief What the DDs the suspect-corner mask released got at their first search (card
- *        ARL, the release edge of filter/NetworkArSuspect.hpp).
+ *        ARL, the release edge of network/ar/NetworkArSuspect.hpp).
  *
  * Counts the DDs flagged in @p reentry and those of them kept, and over the L1/L2 pairs
  * whose two DDs both re-entered (each pair once): both singles kept, or else the wide lane
@@ -273,8 +273,8 @@ std::string searchBlockKey(const std::string& cons, const std::string& sta_r, co
 
 } // namespace netar
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Run the log-only producer-AR and NEQ-export tail for this epoch.
@@ -283,10 +283,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log), run.engines.est
  *            (est), run.setup.stations (stations), run.log_dir (log_dir_).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.assembly.est_index_of (est_index_of), ep.assembly.asm_res (asm_res),
  *           ep.solve.plan (plan).
  *
@@ -294,7 +294,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *   - @p ctx = run.ctx: [in,out] run context: reads `counters.n_emitted` (the min_epochs and
  *     NEQ-export gates) and `knobs.carry_aware_covariance`, and adds to the `counters.netar_*`
  *     run-end tallies. With `knobs.ar_suspect_epochs` > 0 (card ARL, the suspect-corner mask,
- *     filter/NetworkArSuspect.hpp) it also folds this epoch's `carry.relevel` latch and
+ *     network/ar/NetworkArSuspect.hpp) it also folds this epoch's `carry.relevel` latch and
  *     `entities.arcs` stamps into `carry.ar_suspect` at loop epoch
  *     `counters.n_loop_epochs`, keeps every DD with a suspect corner out of the search, counts
  *     the corners it releases back into the search and what their DDs get there
@@ -302,7 +302,7 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  *     `network.ambiguity_resolution.cycle_basis` (card AGT) it reads each family's memory in
  *     `carry.ar_basis` (the last search's links, basis and arc lives), the arc ledger,
  *     `entities.arcs`, `the station table's amb_flag_ep` and `carry.relevel.free_ambs` (the arc life
- *     stamps, filter/NetworkArcLife.hpp), stores the memory back after the search and adds to
+ *     stamps, network/ar/NetworkArcLife.hpp), stores the memory back after the search and adds to
  *     `counters.netar_cycle`. Under `trace_lattice` it also reads `carry.relevel.free_cause`
  *     (each freed arc's cause bits, for the observatory's attribution). Taken whole for
  *     seam-family uniformity.
@@ -346,7 +346,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `nc.ambiguity_resolution.enable`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkProducerArRunEnd(const NetworkRunEndView& v);

@@ -1161,7 +1161,7 @@ void NetworkInvariantCarryDriver::installPosterior(
  *
  * Gate: prints under `ctx.knobs.carry_invariant && ctx.counters.ddfold_epochs > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
@@ -1264,7 +1264,7 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
  *
  * Gate: prints under `carry_invariant`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkInvariantCarryRunEnd(const NetworkRunEndView& v) {
@@ -1306,7 +1306,7 @@ static int networkInvariantCarryRunEnd(const NetworkRunEndView& v) {
  * `carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly()`; `carry_innov_gate
  * && config_.networkCarryInvariantInnovCalibrate()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkD5GateRunEnd(const NetworkRunEndView& v) {
@@ -1469,7 +1469,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
  *
  * Gate: prints under `carry_innov_gate && carry_innov_map_miss > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkD5MapMissRunEnd(const NetworkRunEndView& v) {
@@ -1485,7 +1485,7 @@ static int networkD5MapMissRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkInvariantCarryDriver.hpp).
+// declared in network/carry/NetworkInvariantCarryDriver.hpp).
 int networkInvariantCarryDriverRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkCarryDdFoldRunEnd,

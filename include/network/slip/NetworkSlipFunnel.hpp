@@ -5,7 +5,7 @@
  *        ambiguity key) the epoch treats as slipped, its producers, its readers, and the
  *        standing invariants it serves (card NOM3 step EP2).
  *
- * The funnel is an epoch group (NetworkEpoch::funnel, app/NetworkEpoch.hpp): empty at the
+ * The funnel is an epoch group (NetworkEpoch::funnel, network/driver/NetworkEpoch.hpp): empty at the
  * epoch's construction, filled before the phase datum, read from the phase datum on, and gone
  * at the epoch's end.  A flag that must reach the next epoch is run state
  * (NetworkCarryState::carry_innov_pending, carry_innov_pending_flat), never a funnel entry.
@@ -14,7 +14,7 @@
  *   1. networkSlipFunnelOpen: the previous epoch's innovation-gate flags (card 4 D5), consumed
  *      one-shot, and the retap-only drain beside them (carry_innov_flat_now).
  *   2. Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp): the PASS-A slip
- *      detectors' drains (slip/NetworkSlipQc.cpp), into the raw subset only.
+ *      detectors' drains (network/slip/NetworkSlipQc.cpp), into the raw subset only.
  *   3. networkSlipFunnelUnionRaw: the raw subset joins the funnel.
  *   4. networkSignalIntegrity (flicker regain refloats) and networkMeasurementAdmission (onset,
  *      heal and station-guard refloats): into both sets.
@@ -52,7 +52,7 @@ namespace GnssProcessor {
 
 struct NetworkRun;
 struct NetworkEpoch;
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
 /// The slip funnel (card C3c).  See the file comment for its producers, readers and invariants.
 struct NetworkSlipFunnel {

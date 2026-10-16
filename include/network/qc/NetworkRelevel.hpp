@@ -36,8 +36,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Re-base one satellite's carried clock references by -@p d through the traversal

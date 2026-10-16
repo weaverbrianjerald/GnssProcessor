@@ -4,7 +4,7 @@
  * @brief Run-end report of the receiver code-bias carry family (rx-CB carry, H-rider).
  *
  * The run-end reports defined in NetworkRxCodeBiasCarryRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -22,7 +22,7 @@ struct NetworkRunEndView;
  * Gate: each section under its own condition, as in the teardown:
  * `config_.networkCarryRxCodeBias()`; `config_.networkHSigma0PrefitCensus()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkRxCodeBiasCarryRunEnd(const NetworkRunEndView& v);

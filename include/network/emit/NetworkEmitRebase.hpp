@@ -189,7 +189,7 @@ using EmitRebaseArcs =
  *        graph: the @ref NetworkEmitRebase::Entry::component the re-base groups by.
  *
  * Per group the arcs are united on the shared union-find (@c arcgraph::Dsu,
- * filter/NetworkArcGraph.hpp, card AGT): station index i is vertex i, the satellite of
+ * network/ar/NetworkArcGraph.hpp, card AGT): station index i is vertex i, the satellite of
  * lexical rank k is the vertex after every station's plus k, and each arc links the
  * station under the satellite, in arc order.  Ids are 1-based and global across groups:
  * groups in key order, and within a group the components numbered in the order of
@@ -213,7 +213,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `emit_rebase_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkEmitRebaseRunEnd(const NetworkRunEndView& v);

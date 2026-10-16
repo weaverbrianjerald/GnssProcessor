@@ -381,7 +381,7 @@ struct RawSlipEpoch {
     /// The lines of sight the arc GF jump trigger flagged this epoch, whatever its
     /// action (refloat, coincident, cb_kept, no_arc, diagnostic, pivot).  Filled by
     /// @c networkSlipDrainGfArcJump; read by the producer AR search's suspect-corner
-    /// stamp (card ARL, filter/NetworkArSuspect.hpp).  Empty while the trigger is off.
+    /// stamp (card ARL, network/ar/NetworkArSuspect.hpp).  Empty while the trigger is off.
     std::set<LosId> gf_jump_flagged;
     /// True once @ref networkComputeRawObservables has run this epoch (the
     /// consumers' "is there evidence at all" guard).
@@ -436,7 +436,7 @@ struct SlipQcParams {
     /// records, so this knob arms the resumption collection independently of
     /// @ref gap_instrument: the response does not require the diagnostic, and
     /// turning the diagnostic off does not leave the response inert.  The drain is
-    /// `networkSlipDrainGapReentry` (slip/NetworkSlipQc.cpp).
+    /// `networkSlipDrainGapReentry` (network/slip/NetworkSlipQc.cpp).
     bool   gap_reentry{false};
     /// Sub-gate: a resumption whose return epoch asserts RINEX LLI on either band
     /// of the primary pair counts as slipped even when the raw MW/GF level did not

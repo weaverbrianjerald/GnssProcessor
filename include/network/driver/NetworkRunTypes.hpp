@@ -228,7 +228,7 @@ struct NetStation {
     long long eb_rows_no_pin{ 0 };
     /// The receiver IFB columns network.estimate_rx_extra_band_code_delay estimates at
     /// this station (card L5B): the counts and edge state of
-    /// filter/NetworkParamInventory.hpp, written by the station's own split and inject
+    /// network/assembly/NetworkParamInventory.hpp, written by the station's own split and inject
     /// inside the parallel produce phase and by the serial harvest, summed by the run-end
     /// report.  Untouched unless the knob is effective.
     RxIfbStationState l5b;
@@ -937,7 +937,7 @@ struct RelevelEpochState {
         kCauseT4Consens = 16,  ///< RAIM per-satellite consensus erase (T3).
         kCauseWindup    = 32,  ///< Wind-up accumulator restart response (§10.4).
         kCauseGap       = 64,  ///< Gap re-entry response (card G, §G3-W1): the arc came back across a tracking break that, by the raw level or the receiver's LLI, it did not survive.
-        kCauseGfJump    = 128, ///< Arc-scoped geometry-free jump trigger (card ARL; slip/NetworkGfArcJump.hpp): the arc's GF step departed from its last clean step.
+        kCauseGfJump    = 128, ///< Arc-scoped geometry-free jump trigger (card ARL; network/slip/NetworkGfArcJump.hpp): the arc's GF step departed from its last clean step.
     };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch.  The
     /// inject site skips these, which gives each marked arc its free epoch.
@@ -1180,7 +1180,7 @@ struct StationAssembly {
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
     /// One contribution tag per row of @c A_s / @c A_r, in row order (card NOM N2a,
-    /// filter/NetworkContributions.hpp): every site that appends rows appends their tags in
+    /// network/assembly/NetworkContributions.hpp): every site that appends rows appends their tags in
     /// lockstep, so the row's kind, satellite and signal travel with it.  Every reader that
     /// asks what a row is reads its tag (card NOM step N2b, filter/NetworkRowClassify).
     std::vector<RowTag> row_tags;
@@ -1281,7 +1281,7 @@ struct StationAssembly {
     /// Accumulated per station in the parallel produce phase and folded into the run
     /// counters serially afterwards, like @c relevel_free_skips.
     long long                 inject_stale_skips{0};
-    /// Card PRM phase 3a (filter/NetworkResponses.hpp): the carried-instance responses
+    /// Card PRM phase 3a (network/assembly/NetworkResponses.hpp): the carried-instance responses
     /// taken in the parallel produce phase, one per @c ResponseSite, accumulated per
     /// station and folded into @c NetworkServiceCounters::prm_resp serially afterwards,
     /// like @c relevel_free_skips.  Count-only: no decision reads them.
@@ -1295,7 +1295,7 @@ struct StationAssembly {
     long long                 prm_rxclk_gap_skip{0};          ///< RxclkGapSkip: carried receiver clocks (and ISBs) past @c rxclk_max_gap_s refused by the RX-CLK-in-block walk (the instances of @c pl_blk_rxclk_gap_drop).
     long long                 prm_zwd_gap_skip{0};            ///< ZwdGapSkip: a carried wet delay past @c phase_leveling_max_gap_s not folded, counted once at the diagonal B9 gate, which an in-block (B9-in-block) gap refusal always reaches with the same entry and the same test.
     long long                 prm_rpb_gap_skip{0};            ///< RpbGapSkip: carried eq34 receiver phase biases past @c phase_leveling_max_gap_s whose local time-linking prior was not built (a negative gap is not counted).
-    /// Sim-only oracle ambiguity pin (filter/NetworkOraclePin.hpp): this station-epoch's
+    /// Sim-only oracle ambiguity pin (network/slip/NetworkOraclePin.hpp): this station-epoch's
     /// pin accounting, accumulated in the parallel produce phase and folded into the run
     /// counters serially afterwards, like @c relevel_free_skips.  All four are 0 on every
     /// run with no `oracle_pin` event armed (the table pointer is null and the block is
@@ -2066,7 +2066,7 @@ struct EpochWorkspace {
     /// diagnostic after the solve (B7, P1-4).
     std::map<std::string, double> clk_prior_info;
     /// The within-epoch RAIM tier's culprit sets (card WCF; the hand-off is described in
-    /// filter/NetworkWithinEpochCulprits.hpp).  Written only by the T2 block of
+    /// network/qc/NetworkWithinEpochCulprits.hpp).  Written only by the T2 block of
     /// networkSolveGlue, which clears it when it starts and when it ends; read by the
     /// DD-carry rebuild of each of the block's re-solves (the driver's rebuild callback
     /// reads this member of the same workspace).  Empty at every other time, so the
@@ -2098,7 +2098,7 @@ inline void networkCapturePriors(std::vector<NetworkEstimator::SharedPrior>& cap
 
 /// Epoch-scratch candidate census consumed by every prioritized phase-bias datum
 /// realization (eq34 chain, anchor election).  Built once per epoch by
-/// @ref networkBuildPhaseDatumCandidates (filter/NetworkPhaseDatum.hpp) and passed
+/// @ref networkBuildPhaseDatumCandidates (network/solve/NetworkPhaseDatum.hpp) and passed
 /// by const reference to whichever election the mode dispatch picks; nothing
 /// downstream of the election reads it.
 ///
@@ -2125,7 +2125,7 @@ struct PhaseDatumCandidates {
     std::map<std::string, std::string>              union_keys;
     /// The "sat_signal" keys that the coverage gate excluded this epoch, i.e. exactly
     /// what was erased from @ref union_keys above (card EV7 §6).  Kept because the drop
-    /// edge (filter/NetworkPhaseGateDrop.hpp) is the difference between this set and
+    /// edge (network/solve/NetworkPhaseGateDrop.hpp) is the difference between this set and
     /// the previous epoch's anchor incumbents.  Empty when the gate is off
     /// (network.phase_datum_min_stations = 1) and whenever it excluded nothing.  No
     /// election decision reads it; only the drop-edge step at the end of the anchor

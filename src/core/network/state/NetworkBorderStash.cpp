@@ -5,11 +5,11 @@
  *
  *   networkRetroUraBookkeeping    the retro-bump flags and the URA inflation horizon of the
  *                                 satellites the QC tiers flagged, called by
- *                                 networkClockQc (filter/NetworkClockQc.cpp) after its
+ *                                 networkClockQc (network/qc/NetworkClockQc.cpp) after its
  *                                 clock monitor;
  *   networkStashCarry             the border stash (prev_carry, prev_carry_cov) and the
  *                                 READMIT continuity bookkeeping, called by
- *                                 networkStashStatus (filter/NetworkStashStatus.cpp) and
+ *                                 networkStashStatus (network/diag/NetworkStashStatus.cpp) and
  *                                 directly by unit tests.
  * The fold that reads the stash is networkInjectD2CarryPrior (NetworkBorderPrior.cpp).
  *
@@ -20,7 +20,7 @@
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"

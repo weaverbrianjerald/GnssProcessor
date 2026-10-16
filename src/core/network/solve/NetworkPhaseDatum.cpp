@@ -1237,7 +1237,7 @@ int networkApplyPhaseAnchorCarryReref(
  *
  * Gate: returns 0 at once unless `ctx.knobs.pd_held_basis`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
@@ -1296,7 +1296,7 @@ static int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
  * Gate: each section under its own condition, as in the teardown: `n_healed_epochs > 0`;
  * `ctx.counters.n_heal_attempt_epochs > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkDropHealRunEnd(const NetworkRunEndView& v) {
@@ -1343,7 +1343,7 @@ static int networkDropHealRunEnd(const NetworkRunEndView& v) {
  * Gate: each section under its own condition, as in the teardown: `n_gated_epochs > 0`;
  * `ctx.counters.n_pd_gate_drop_edges > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
@@ -1384,7 +1384,7 @@ static int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkPhaseDatum.hpp).
+// declared in network/solve/NetworkPhaseDatum.hpp).
 int networkPhaseDatumRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkHeldSbasisRunEnd,

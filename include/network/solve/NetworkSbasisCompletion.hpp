@@ -18,7 +18,7 @@ struct NetworkRunContext;
 struct NetworkRun;
 struct NetworkEpoch;
 struct NetworkRunEndView;
-struct SolveDatum;   // filter/NetworkSolveGlue.hpp
+struct SolveDatum;   // network/solve/NetworkSolveGlue.hpp
 
 /**
  * @brief Stage 7: S-basis completion.  Derives the realized near-null dimension from the
@@ -54,7 +54,7 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
  *
  * Gate: returns 0 at once unless `ctx.knobs.sbasis_complete_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSbasisCompletionRunEnd(const NetworkRunEndView& v);

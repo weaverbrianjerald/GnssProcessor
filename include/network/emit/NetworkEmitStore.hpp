@@ -56,11 +56,11 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp (included in the .cpp only)
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cpp only)
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp (included in the .cpp only)
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp (included in the .cpp only)
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Emit, store, write and closed-loop-consume this epoch's solution.  See the
@@ -76,10 +76,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup (setup), run.emit (emit_engines), run.closed_loop
  *            (cl_tally). Read: run.config (config_), run.log (log), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.x_emit()
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.x_emit()
  *           (x_s), ep.clock.pl_now_s (pl_now_s), ep.solve.datum_changed (datum_changed),
  *           ep.solve.sigma0_adapt (sigma0_adapt), ep.prep.epoch_withheld_consts
  *           (epoch_withheld_consts), ep.prep.global_bump (global_bump),
@@ -133,7 +133,7 @@ struct NetworkRunEndView;
  *   - networkDeferredHeartbeatsRunEnd: heartbeats of a deferred product writer that never opened.
  *   - networkProductContractRunEnd: the product contract round trip (B6).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkEmitStoreRunEnd(const NetworkRunEndView& v);

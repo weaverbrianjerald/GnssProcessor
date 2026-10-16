@@ -1151,7 +1151,7 @@ EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, con
         // the de-weight / exclude tool, the right one for a bad measurement.
         //
         // The sets are the epoch workspace's (ws.we_culprits, card WCF; the hand-off is
-        // described in filter/NetworkWithinEpochCulprits.hpp): the DD-carry rebuild of every
+        // described in network/qc/NetworkWithinEpochCulprits.hpp): the DD-carry rebuild of every
         // re-solve (buildCarryDdPriors, via resolve_dropping) reads that member and treats a
         // culprit satellite's or arc's carried ambiguities as slipped, so their stale carry is
         // not folded again (C3c §3, H13 plus culprit withhold: refold from the unchanged

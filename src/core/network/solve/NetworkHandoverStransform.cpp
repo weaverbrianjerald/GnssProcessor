@@ -615,7 +615,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
  *
  * Gate: returns 0 at once unless `ctx.knobs.sat_health != 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkSatHealthRunEnd(const NetworkRunEndView& v) {
@@ -657,7 +657,7 @@ static int networkSatHealthRunEnd(const NetworkRunEndView& v) {
  * Gate: returns 0 at once unless `!ctx.counters.pivot_handovers.empty() ||
  * ctx.knobs.handover_stransform`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
@@ -749,7 +749,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkHandoverStransform.hpp).
+// declared in network/solve/NetworkHandoverStransform.hpp).
 int networkHandoverStransformRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkSatHealthRunEnd,

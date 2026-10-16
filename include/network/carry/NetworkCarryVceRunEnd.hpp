@@ -4,7 +4,7 @@
  * @brief Run-end report of the LS-VCE carry-variance monitor (M2) and its variance-factor application.
  *
  * The run-end reports defined in NetworkCarryVceRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -22,7 +22,7 @@ struct NetworkRunEndView;
  * Gate: each section under its own condition, as in the teardown: `carry_vce`;
  * `ctx.knobs.vce_apply_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkCarryVceRunEnd(const NetworkRunEndView& v);

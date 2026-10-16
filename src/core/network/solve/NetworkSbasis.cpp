@@ -2213,7 +2213,7 @@ void networkCodeDatumFamilyKeptEpoch(
  * `config_.getNetworkConfig().sat_gf_extra_band_free`;
  * `config_.networkRxCodeBiasDatum()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
@@ -2648,7 +2648,7 @@ void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig
  * `config_.networkCodeDatumFamilyDifference()` or
  * `config_.networkCodeFamilyBirthPriorSigmaM() > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkCodeDatumFamilyRunEnd(const NetworkRunEndView& v) {
@@ -2657,7 +2657,7 @@ static int networkCodeDatumFamilyRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkSbasis.hpp).
+// declared in network/solve/NetworkSbasis.hpp).
 int networkSbasisRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkSbasisDatumRunEnd,

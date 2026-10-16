@@ -875,7 +875,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
  *
  * Gate: prints always.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkEmitOutcomeRunEnd(const NetworkRunEndView& v) {
@@ -901,7 +901,7 @@ static int networkEmitOutcomeRunEnd(const NetworkRunEndView& v) {
  *
  * Gate: prints under `!setup.pending_h_pre_open.empty()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkDeferredHeartbeatsRunEnd(const NetworkRunEndView& v) {
@@ -932,7 +932,7 @@ static int networkDeferredHeartbeatsRunEnd(const NetworkRunEndView& v) {
  * Gate: each section under its own condition, as in the teardown: `contract_pending &&
  * !prod_path.empty()`; `product_writer && !prod_path.empty()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkProductContractRunEnd(const NetworkRunEndView& v) {
@@ -1077,7 +1077,7 @@ static int networkProductContractRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkEmitStore.hpp).
+// declared in network/emit/NetworkEmitStore.hpp).
 int networkEmitStoreRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkEmitOutcomeRunEnd,

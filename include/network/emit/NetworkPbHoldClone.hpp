@@ -68,9 +68,9 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct
-struct EpochWorkspace;      // filter/NetworkRunTypes.hpp
-struct SharedHistoryState;  // filter/NetworkSharedHistory.hpp (card SCL2 X2)
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp defines it as a struct
+struct EpochWorkspace;      // network/driver/NetworkRunTypes.hpp
+struct SharedHistoryState;  // network/carry/NetworkSharedHistory.hpp (card SCL2 X2)
 
 /// One term of a clone row: the coupling-row convention of @c CoupledShared.
 struct PbHoldCloneTerm {
@@ -459,8 +459,8 @@ std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
     const std::map<std::string, double>& pinned,
     const std::function<std::pair<double, double>(Eigen::Index)>& fallback);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Card SMH, before emit: advance every live clone over this epoch.
@@ -500,9 +500,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.log (log), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s), ep.ws
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s), ep.ws
  *           (ws), ep.solve.plan.shared_datum (datum).
  *
  * The former parameters, by binding:
@@ -534,9 +534,9 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& ep);
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s),
  *           TimeUtils::continuousGpsSeconds(ep.se.time) (now_s).
  *
  * The former parameters, by binding:

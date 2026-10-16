@@ -3,7 +3,7 @@
  * @brief The run-end table, kNetworkRunEndReports: every run-end report of the network
  *        producer in print order, with what it reports and its home file (card NOM step
  *        TD1b), one row per subsystem (card NOM2 step TD2), and the walk's two helpers.
- *        filter/NetworkRunEnd.hpp states how to add a row and the order constraints.
+ *        network/runend/NetworkRunEnd.hpp states how to add a row and the order constraints.
  *
  * The rows were written by scripts/nom_td_cut.py (TD1b) and regrouped by subsystem by
  * scripts/nom_td2_cut.py (TD2, proved by scripts/nom_td2_verify.py); since TD2 the table is

@@ -2,7 +2,7 @@
  * @file NetworkEpochObservers.cpp
  * @brief The observer table, kNetworkEpochObservers: every measure-only per-epoch instrument
  *        of the network producer in spine order, with its slot, what it measures and its home
- *        file (card NOM3 step EP3).  filter/NetworkEpochObservers.hpp states how to add a row,
+ *        file (card NOM3 step EP3).  network/driver/NetworkEpochObservers.hpp states how to add a row,
  *        the slots and the order constraints.
  *
  * Each row's seam is declared in the header of its home file and gates itself on its first

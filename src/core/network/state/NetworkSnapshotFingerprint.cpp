@@ -3,13 +3,13 @@
  * @brief @internal networkSnapshotFingerprint: the configuration fingerprint (RTB-7) that a
  *        state snapshot carries and a warm resume checks.
  *
- * One function, called once by the driver (app/ApplicationNetwork.cpp) before the warm
+ * One function, called once by the driver (network/driver/ApplicationNetwork.cpp) before the warm
  * resume, and directly by unit tests.  With a snapshot path it sets
  * ctx.carry.live_fingerprint and, under network.ctu_switch_on_resume, the card-CTU twin
  * ctx.carry.live_fingerprint_ctu_off; without one it does nothing.  The comments in the
  * body record why each knob is or is not a term.
  *
- * Three-place rule (include/app/NetworkRunContext.hpp): a snapshotted field is added to
+ * Three-place rule (include/network/state/NetworkRunContext.hpp): a snapshotted field is added to
  * the fingerprint here, to the restore in NetworkWarmResume.cpp and to the write in
  * NetworkStateSnapshotWrite.cpp.
  *
@@ -19,7 +19,7 @@
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"

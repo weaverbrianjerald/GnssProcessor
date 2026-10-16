@@ -3,14 +3,14 @@
  * @brief @internal The priors folded on the shared (border) columns of the solve, and the
  *        inputs of the exact coupling update, which shares the D2 fold's per-key decision.
  *
- * Folded by networkSolveGlue (filter/NetworkSolveGlue.cpp) before the null-space rank gate:
+ * Folded by networkSolveGlue (network/solve/NetworkSolveGlue.cpp) before the null-space rank gate:
  *   networkInjectShVtecPrior      the SH-VTEC prior (Kaula bound and temporal random walk);
  *   networkInjectPinBridgePrior   the eq34 pin-bridge rows.
  * Folded by networkSolveGlue after the gate:
  *   networkInjectD2CarryPrior     the border carry fold (D2 diagonal or C1 dense), with
  *                                 its file-local READMIT helper readmitNoteSeed;
  *   networkInjectClockOscPrior    the two-state clock-model prior.
- * Called by the driver (app/ApplicationNetwork.cpp) before PASS B:
+ * Called by the driver (network/driver/ApplicationNetwork.cpp) before PASS B:
  *   networkCouplingExactPrepare   card CTU: the exact coupling update's inputs, built from
  *                                 the stash the D2 fold reads and the fold's own per-key
  *                                 decision.
@@ -26,7 +26,7 @@
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"

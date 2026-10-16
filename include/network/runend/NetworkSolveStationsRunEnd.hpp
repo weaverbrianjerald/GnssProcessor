@@ -4,7 +4,7 @@
  * @brief Run-end report of the stations in the solve (cards RF-PD-fix and RF-PD).
  *
  * The run-end reports defined in NetworkSolveStationsRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -24,7 +24,7 @@ struct NetworkRunEndView;
  * Gate: each section under its own condition, as in the teardown: always (a block);
  * `config_.getNetworkConfig().trace_station_pd_null`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSolveStationsRunEnd(const NetworkRunEndView& v);

@@ -124,7 +124,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // allocation below (it is the sole writer of shared_phase_keys on this
             // path, and D3c derives its need_rpb set from that) and therefore ahead
             // of est.beginEpoch and PASS B.  The full ordering contract is in
-            // filter/NetworkChainDatum.hpp.
+            // network/solve/NetworkChainDatum.hpp.
             networkElectChainDatum(ctx, config_, log, stations,
                                    present, cnd, hyg, carry_slipped_ambs,
                                    shared_phase_keys, events);

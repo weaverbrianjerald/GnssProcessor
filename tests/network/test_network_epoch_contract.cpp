@@ -18,7 +18,7 @@
  * from the moment step EP1 landed.  A seam that starts writing the epoch, or a new spine
  * seam, changes its line below in the same commit as its signature (the cast then fails to
  * compile until both agree), and the commit runs `python scripts/nom_epoch_lint.py`, which
- * checks the spine against the writer banner of app/NetworkEpoch.hpp.
+ * checks the spine against the writer banner of network/driver/NetworkEpoch.hpp.
  */
 
 #include "app/Application.hpp"

@@ -2,9 +2,9 @@
 /**
  * @file NetworkEpochObservers.hpp
  * @brief The network producer's measure-only per-epoch instruments as a declared table
- *        (card NOM3 step EP3), the epoch's companion of filter/NetworkRunEnd.hpp.
+ *        (card NOM3 step EP3), the epoch's companion of network/runend/NetworkRunEnd.hpp.
  *
- * An observer is a seam of the observer form (app/NetworkEpoch.hpp):
+ * An observer is a seam of the observer form (network/driver/NetworkEpoch.hpp):
  *
  *     void networkXxx(NetworkRun& run, const NetworkEpoch& ep);
  *
@@ -16,7 +16,7 @@
  * networkStashStatus writes out (see the FrameDiag note below).
  *
  * A recorder is an observer that also writes the census group of the epoch's events
- * (EpochEvents::Census, app/NetworkEpoch.hpp), and has the recorder form
+ * (EpochEvents::Census, network/driver/NetworkEpoch.hpp), and has the recorder form
  *
  *     void networkXxx(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
  *
@@ -24,10 +24,10 @@
  * networkRedundancyCensus.  Every observer gates itself on the knob that
  * arms it, on its first line after its bindings, so an unarmed observer returns at once.
  *
- * The spine (Application::networkProcessEpoch_, app/ApplicationNetworkEpoch.cpp) calls
+ * The spine (Application::networkProcessEpoch_, network/driver/ApplicationNetworkEpoch.cpp) calls
  * @ref networkObserveEpoch at each spine point, a @ref NetworkObserverSlot, and that walks
  * the rows of @ref kNetworkEpochObservers in that slot in table order.  The table in
- * filter/NetworkEpochObservers.cpp lists every row with what it measures and its home file,
+ * network/driver/NetworkEpochObservers.cpp lists every row with what it measures and its home file,
  * in spine order, so it reads as the epoch's table of instruments.
  *
  * Adding an observer:
@@ -36,8 +36,8 @@
  *   2. Add one row to kNetworkEpochObservers in the slot where its inputs are final (below),
  *      at the position within the slot its order constraints allow, and raise
  *      kNetworkEpochObserverCount by one.
- *   3. Add its line to tests/test_network_epoch_observers.cpp (which pins every row) and
- *      its observer-form line to tests/test_network_epoch_contract.cpp.
+ *   3. Add its line to tests/network/test_network_epoch_observers.cpp (which pins every row) and
+ *      its observer-form line to tests/network/test_network_epoch_contract.cpp.
  * A seam that writes the epoch, or anything a later non-observer stage reads, is not an
  * observer: it is an explicit spine call.  Not rows (step EP2's observer-form seams, kept as
  * explicit spine calls): networkGapResumeCensus, networkBufferedTraceDrains.
@@ -130,7 +130,7 @@ struct NetworkEpochObserverRow {
 /// The number of rows of @ref kNetworkEpochObservers.
 inline constexpr std::size_t kNetworkEpochObserverCount = 22;
 
-/// The observers in spine order (defined in filter/NetworkEpochObservers.cpp).
+/// The observers in spine order (defined in network/driver/NetworkEpochObservers.cpp).
 extern const std::array<NetworkEpochObserverRow, kNetworkEpochObserverCount> kNetworkEpochObservers;
 
 /**

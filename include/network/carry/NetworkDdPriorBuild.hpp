@@ -35,9 +35,9 @@ namespace GnssProcessor {
 class GnssConfig;
 struct NetworkRunContext;
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochDdBuild;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and install them
@@ -48,10 +48,10 @@ struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.engines.carry_driver (carry_driver), run.engines.est (est). Read: run.config
  *            (config_), run.log (log), run.setup.stations (stations).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.assembly.asm_res
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.assembly.asm_res
  *           (asm_res), ep.assembly.est_index_of (est_index_of), ep.pass_a.shared_phase_keys
  *           (shared_phase_keys), ep.funnel.carry_slipped_ambs (carry_slipped_ambs),
  *           ep.funnel.carry_slipped_raw (carry_slipped_raw), ep.ws.we_culprits (we_culprits).

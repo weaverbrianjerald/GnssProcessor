@@ -13,7 +13,7 @@
  *
  * Suite name @c CarryAwareCovarianceTest is owned solely by this file (suite-hygiene rule:
  * one suite, one file).  The config-knob default-off gate lives with the other network
- * config cases in tests/test_codebias_network_config.cpp for the same reason.
+ * config cases in tests/network/test_codebias_network_config.cpp for the same reason.
  *
  * The oracle throughout is an independent dense augmented solve (build the full bordered
  * normal matrix, add @f$C^\top (P^z)^{-1} C@f$, invert, and read the block wanted), the same

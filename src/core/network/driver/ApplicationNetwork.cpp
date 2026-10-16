@@ -14,11 +14,11 @@
  * single-concern seams, which hold the bodies relocated verbatim from the former
  * monolith.  New network code goes in the matching seam, not here; CLAUDE.md
  * carries the placement decision tree:
- *   Setup / run end     app/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
+ *   Setup / run end     network/driver/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
  *                       run-end table, filter/NetworkRunEnd)
  *   Setup builders      one per concern, in that concern's file, called in order from
  *                       runNetwork (card NOM3 step EP4)
- *   Assembly (PASS A/B) app/ApplicationNetworkAssembly.cpp
+ *   Assembly (PASS A/B) network/driver/ApplicationNetworkAssembly.cpp
  *   Datum / solve       filter/NetworkSbasis · NetworkChainDatum · NetworkPhaseDatum ·
  *                       NetworkSolveGlue · NetworkInstallCarry · NetworkDdPriorBuild ·
  *                       NetworkProducerAr
@@ -266,7 +266,7 @@ int Application::runNetwork() {
     // per-epoch writers live in the seams, which receive `traces`; the reference
     // below keeps the former local name for the use left in this file.
     NetworkRunTraces traces(log_dir_);
-    // The run (app/NetworkRun.hpp, card NOM3 step EP1): the references every epoch reads
+    // The run (network/driver/NetworkRun.hpp, card NOM3 step EP1): the references every epoch reads
     // and the engines and groups the run owns, each built here in place from the engines'
     // constructor arguments (networkEngineSpec, a pure function of the configuration and
     // the knobs).  The builders below configure the owned engines through references.
@@ -305,7 +305,7 @@ int Application::runNetwork() {
     // cache load and per-station RINEX parse).  It isolates the per-epoch compute that
     // scales with station count, which is the scaling metric, and counts only epochs
     // that entered processing (past the max-duration cutoff).  The run's timing record
-    // (filter/NetworkRunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
+    // (network/driver/NetworkRunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
     // count and the D0b sub-block totals below; the run end reports all of them.
     NetworkRunTiming& timing = run.timing;
     timing.loop_begin = std::chrono::steady_clock::now();

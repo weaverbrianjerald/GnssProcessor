@@ -111,7 +111,7 @@ inline constexpr std::size_t kParamEvents = 5;
  *        to a carried instance.
  *
  * Phase 3a declares which of these each kind uses on the run and counts every response at
- * its site (@c filter/NetworkResponses.hpp); phase 3b gives each one implementation.
+ * its site (@c network/assembly/NetworkResponses.hpp); phase 3b gives each one implementation.
  */
 enum class ResponsePolicy : int {
     Drop = 0,          ///< Variance back to birth strength, border regression and block row cleared, value kept (the float vehicle).
@@ -173,7 +173,7 @@ struct ParamSpec {
     /// The gap horizon of a carried instance of the kind (s): the time unseen past which
     /// it is no longer folded and is pruned (card PRM phase 3b; the test is
     /// @c carryPastHorizon, the prune @c carryGapPrune, both in
-    /// @c filter/NetworkResponses.hpp).  The double the kind's gap sites read, set from
+    /// @c network/assembly/NetworkResponses.hpp).  The double the kind's gap sites read, set from
     /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
     /// site reads it in place of the knob: network.phase_leveling_max_gap_s for the
     /// ambiguity, the wet delay and the receiver phase bias;
@@ -191,7 +191,7 @@ struct ParamSpec {
     /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
     /// arming condition holds on the knob snapshot, and Stransform where an armed datum
     /// mechanism moves a carried value of the kind (card PRM phase 3a,
-    /// @c filter/NetworkResponses.hpp; with @c network.carry_rebase_complete its owed value
+    /// @c network/assembly/NetworkResponses.hpp; with @c network.carry_rebase_complete its owed value
     /// sites count too, card PRM phase 3b).  Zero for an event the kind does not respond to.
     std::array<std::uint32_t, kParamEvents> on{};
 };
@@ -301,7 +301,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints always.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkParamModelRunEnd(const NetworkRunEndView& v);

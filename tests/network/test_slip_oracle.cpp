@@ -1,7 +1,7 @@
 /**
  * @file test_slip_oracle.cpp
  * @brief Simulation-only oracle slip response (`network.cycle_slip.oracle_relevel`,
- *        include/slip/NetworkSlipOracle.hpp): the ceiling for a level-preserving
+ *        include/network/slip/NetworkSlipOracle.hpp): the ceiling for a level-preserving
  *        re-level.
  *
  * ## Scope
@@ -11,7 +11,7 @@
  * @c LocalCarry::value_abs by the true sum d*lambda and tells the caller to skip
  * every freeing action, or it declines.  Every case here drives that layer
  * directly on a fabricated carry, so the four detector sites that call it
- * (slip/NetworkSlipQc.cpp) are out of scope.  Their population logic is covered in
+ * (network/slip/NetworkSlipQc.cpp) are out of scope.  Their population logic is covered in
  * tests/test_network_slip_qc.cpp, and the hook's contract ("true ⇒ the caller
  * frees nothing") is a caller-side property certified by a same-build
  * byte-identity A/B, not by a unit test.

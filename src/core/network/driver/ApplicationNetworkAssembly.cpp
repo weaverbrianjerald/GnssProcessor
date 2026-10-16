@@ -229,7 +229,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // adjacent indices race), so threads record into a per-index char buffer that
     // is folded into present[] serially afterwards.
     // PASS-A slip-scan seam (INC-6): the per-station buffers that the parallel loop
-    // below fills and the serial slip-QC drains (slip/NetworkSlipQc.cpp) consume.
+    // below fills and the serial slip-QC drains (network/slip/NetworkSlipQc.cpp) consume.
     PassABuffers pa(stations.size());
     auto& a_ok           = pa.a_ok;
     auto& a_err          = pa.a_err;
@@ -918,7 +918,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         ctx.counters.n_mw_drop_unknown         += ac.drop_unknown;
         ctx.counters.n_mw_pair_scope_skipped   += ac.scope_skipped;   // pair scope (card L5P)
         // The producer AR search's suspect-corner mask (card ARL,
-        // filter/NetworkArSuspect.hpp): an MW verdict refused for want of an integer still
+        // network/ar/NetworkArSuspect.hpp): an MW verdict refused for want of an integer still
         // says the arc's wide lane moved, so its corner is stamped (PASS A runs before the
         // search: this epoch's stamp).
         if (ar_suspect_armed)
@@ -928,7 +928,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                               kArSuspectMwUnknown, &ctx.counters.netar_suspect);
     }
 
-    // Serial slip-QC drains (INC-6), implemented in slip/NetworkSlipQc.cpp: the
+    // Serial slip-QC drains (INC-6), implemented in network/slip/NetworkSlipQc.cpp: the
     // phase-leveling T0 repair drain, the MW-detect / LLI refloat and the IF-phase
     // TD driver, in that order.
     networkSlipDrainT0Repairs(pa, config_, stations, present, i_lo, n_sta_total,
@@ -1065,7 +1065,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                           &ctx.counters.n_iftd_pair);
 
     // ---- Arc-scoped GF jump trigger (card ARL) ---------------------------------
-    // (include/slip/NetworkGfArcJump.hpp.)  The pre-solve witness of the slips the MW
+    // (include/network/slip/NetworkGfArcJump.hpp.)  The pre-solve witness of the slips the MW
     // drain and the IF-TD driver above both miss: the equal count (1,1), the 60/77
     // family, and a slip repeated in the epoch after an IF-TD flag.  Sited after the
     // IF-TD driver, so a band that driver already freed takes only the cause bit (its
@@ -1079,7 +1079,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                               relevel_ptr ? &relevel_pend : nullptr,
                               common_band_ptr);
     // The producer AR search's suspect-corner mask (card ARL,
-    // filter/NetworkArSuspect.hpp): every GF flag stamps its corner, whatever the drain
+    // network/ar/NetworkArSuspect.hpp): every GF flag stamps its corner, whatever the drain
     // did with it (a cold, pinned or common-band-kept flag still names a doubtful arc).
     if (ar_suspect_armed)
         for (const LosId& los : qc.epoch.gf_jump_flagged)
@@ -1228,7 +1228,7 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
     // first-signal phase-minus-code (all in m), plus the per-band RINEX LLI.  Absolute
     // values: the slip signature comes from differencing adjacent epochs offline.
     //
-    // The arithmetic lives in slip/NetworkRawObservables.cpp (slip-QC hardening, spec
+    // The arithmetic lives in network/slip/NetworkRawObservables.cpp (slip-QC hardening, spec
     // §1): Cards L and G need the same numbers as evidence, and a single definition of
     // "the raw step" keeps the three consumers from diverging.  This site is a pure
     // consumer walking qc.epoch.rows in the same order, so its rows are byte-unchanged
@@ -1471,7 +1471,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     // it re-registers when coverage returns (the anti-flap property).  A
     // quarantined pair is never pruned (station_keep always holds it), so it
     // survives as a station-local sponge (Schur-eliminated station-side, never
-    // registered, never datumed).  See filter/NetworkBiasAdmission.hpp.
+    // registered, never datumed).  See network/assembly/NetworkBiasAdmission.hpp.
     if (config_.estimateNetworkSatCodeBias()) {
         std::set<std::string> cb_seen;
         NetworkBiasAdmission& adm = ctx.admission;
@@ -1668,7 +1668,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& ep, 
     networkCouplingReinitHistory(run, ep);
 
     // The parallel produce: one station's block per OpenMP iteration, the station steps of
-    // kStationBuildSteps (filter/NetworkStationBuild.hpp, card NOM3 step PB1b).
+    // kStationBuildSteps (network/assembly/NetworkStationBuild.hpp, card NOM3 step PB1b).
     networkAssemblyProduce(run, ep, gim_, assembly);
 
     // The serial stages after the parallel produce (card NOM3 step PB1a).

@@ -3,7 +3,7 @@
  * @brief @internal The warm resume (RTB-7): read a state snapshot, validate it against
  *        the run, and restore the carried state one record layer at a time.
  *
- * Three functions, called by the driver (app/ApplicationNetwork.cpp) in this order before
+ * Three functions, called by the driver (network/driver/ApplicationNetwork.cpp) in this order before
  * the first epoch:
  *   networkTryWarmResume            reads and validates the snapshot, restores the layers
  *                                   held by the run context, the product emitter, the
@@ -24,7 +24,7 @@
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"

@@ -117,7 +117,7 @@
  *
  * Pure numeric leaf class over @ref NetworkCarryVce, with no @c ApplicationNetwork
  * coupling and no state it does not own.  Tested directly in
- * @c tests/test_carry_vce_apply.cpp against a monitor fed synthetic rows of known
+ * @c tests/network/test_carry_vce_apply.cpp against a monitor fed synthetic rows of known
  * truth, following the standalone-class pattern of @c test_network_carry_vce.
  */
 

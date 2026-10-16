@@ -622,7 +622,7 @@ namespace GnssProcessor {
                       "SOLVE-AFFECTING through the detections and the response; the "
                       "gap_tracker_key_mismatch and gap_reentry_unreachable counters are "
                       "reported at run end in BOTH knob states.");
-        // Arc-scoped GF jump trigger interlock (card ARL; include/slip/NetworkGfArcJump.hpp),
+        // Arc-scoped GF jump trigger interlock (card ARL; include/network/slip/NetworkGfArcJump.hpp),
         // placed here for the load-order reason above.  It warns and does not disarm, as
         // the card-G checks do: without the free-epoch latch the trigger still marks
         // pending-reseed, and its run-end flag closure states what it did.
@@ -647,7 +647,7 @@ namespace GnssProcessor {
                       sq.gf_arc_jump_min_count);
         }
         // Interlocks for the sim-only oracle slip response
-        // (include/slip/NetworkSlipOracle.hpp), placed here for the same load-order
+        // (include/network/slip/NetworkSlipOracle.hpp), placed here for the same load-order
         // reason as the blocks above: carry_invariant and phase_leveling are both
         // parsed well after the cycle_slip block.
         //
@@ -717,7 +717,7 @@ namespace GnssProcessor {
         // raw MW/GF step verdicts, which are filled by the slip-QC qualify pass.  That
         // pass runs only when a decision card is armed: SlipQcState::cardsArmed() =
         // lli_corroborate || gap_instrument || bridge_gf || iono_cs
-        // (include/slip/NetworkRawObservables.hpp; the gate is the qc.cardsArmed() test
+        // (include/network/slip/NetworkRawObservables.hpp; the gate is the qc.cardsArmed() test
         // in ApplicationNetworkAssembly.cpp).  `network_config_.trace_slip_raw` does not
         // supply the verdicts: it arms only the compute pass
         // (SlipQcParams::anyConsumer).
@@ -1263,7 +1263,7 @@ namespace GnssProcessor {
                                        "network_ar_tree_basis", false);
             ar.block_search = jval<bool>(json, "network.ambiguity_resolution.block_search",
                                          "network_ar_block_search", false);
-            // Card ARL: the suspect-corner mask (filter/NetworkArSuspect.hpp), in loop
+            // Card ARL: the suspect-corner mask (network/ar/NetworkArSuspect.hpp), in loop
             // epochs; 0 = off.  A negative window is named and replaced by off.
             ar.suspect_epochs = jval<int>(json, "network.ambiguity_resolution.suspect_epochs",
                                           "network_ar_suspect_epochs", 0);
@@ -1284,7 +1284,7 @@ namespace GnssProcessor {
                           "suspect_bits and reentry columns).  The release is time-only.  "
                           "Log-only: the products do not change.", ar.suspect_epochs);
             // Card AGT (step AGT-5): the sticky full-coverage cycle basis
-            // (filter/NetworkArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
+            // (network/ar/NetworkArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
             // keeps decorrelated_partial's search and block_search's blocks, so it needs all
             // three; otherwise it is named and forced off.
             ar.cycle_basis = jval<bool>(json, "network.ambiguity_resolution.cycle_basis",
@@ -1316,7 +1316,7 @@ namespace GnssProcessor {
                 log->warn("Network producer AR: ambiguity_resolution.cycle_basis_sticky is false "
                           "but cycle_basis is OFF; the setting is INERT.");
             // Card AGT (step AGT-6): the measure-only lattice observatory
-            // (filter/NetworkArLattice.hpp).  Its offers are the cycle basis's determined DDs and
+            // (network/ar/NetworkArLattice.hpp).  Its offers are the cycle basis's determined DDs and
             // its releases the cycle basis's arc life readings, so it needs the cycle basis;
             // otherwise it is named and forced off.
             ar.trace_lattice = jval<bool>(json, "network.ambiguity_resolution.trace_lattice",
@@ -1364,7 +1364,7 @@ namespace GnssProcessor {
                 // the record's text, on its condition, unchanged.
                 log->warn("{}", fixedCycleEmitWarning(ar));
             } else if (ar.enable) {
-                // networkProducerAr() (src/core/filter/NetworkProducerAr.cpp, INC-9b), the
+                // networkProducerAr() (src/core/network/ar/NetworkProducerAr.cpp, INC-9b), the
                 // Phase-2 DD-fixability diagnostic, consumes these gates: min_epochs and
                 // ils_max_dim directly, and min_success_rate / ratio_threshold /
                 // ratio_upper_bound / nl_max_per_pair_frac / enable_partial_ar through
@@ -3261,7 +3261,7 @@ namespace GnssProcessor {
                        "sat_gf_extra_band_free", false);
         // The receiver-side counterpart (card L5B): estimate the receiver's extra-band
         // code delay instead of holding it at its seed (RxIfbRule,
-        // filter/NetworkParamInventory.hpp).  Its interlocks need the resolved carry and
+        // network/assembly/NetworkParamInventory.hpp).  Its interlocks need the resolved carry and
         // datum knobs, so they are logged by logNetworkRxExtraBandDelay_ after the carry
         // posture is validated.
         network_config_.estimate_rx_extra_band_code_delay =
@@ -4125,7 +4125,7 @@ namespace GnssProcessor {
         // what the knob changes and falls back to the default "level" rather than
         // ending the run.  "float_kf" changes the solve (the joint block of
         // CouplingRowBuilder::buildLocalBlock, the floored birth prior and bounded drop of
-        // filter/NetworkAmbFloat.hpp) and reaches the driver as
+        // network/ar/NetworkAmbFloat.hpp) and reaches the driver as
         // NetworkKnobs::amb_float_kf.  The cross-section interlocks (float_kf requires
         // phase_leveling and !carry_invariant; F3 is refused under it) live in
         // validateNetworkCarryPosture_, the first point where network_carry_invariant_ is
@@ -5734,7 +5734,7 @@ namespace GnssProcessor {
                               "a flag is evaluated and a slip repeated there is seen.  "
                               "SOLVE-AFFECTING through those evaluations; not fingerprinted.");
             }
-            // Sim-only oracle slip response (include/slip/NetworkSlipOracle.hpp): shifts
+            // Sim-only oracle slip response (include/network/slip/NetworkSlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
             // measure the ceiling of a level-preserving re-level.  Changes the solve;
             // default off ⇒ byte-identical.  The truth-root existence check below keeps
@@ -11497,7 +11497,7 @@ namespace GnssProcessor {
      *
      * Warnings only, never a refusal (standing invariant #4: an armed knob that changes
      * nothing says so).  Whether the knob acts is decided by @c rxExtraBandDelayEffective
-     * (filter/NetworkParamInventory.hpp), the predicate the rule, the snapshot fingerprint
+     * (network/assembly/NetworkParamInventory.hpp), the predicate the rule, the snapshot fingerprint
      * and the run-end report read too.  Runs after @c validateNetworkCarryPosture_, so the
      * carry and datum knobs it names are final.  Prints nothing unless the knob is armed.
      *
@@ -12261,7 +12261,7 @@ namespace GnssProcessor {
                                   && ev.delta_cycles == std::round(ev.delta_cycles),
                               "a non-zero integer delta_cycles")) return false;
                 } else if (ev.kind == "oracle_pin") {
-                    // Sim-only diagnostic (include/filter/NetworkOraclePin.hpp).  Both
+                    // Sim-only diagnostic (include/network/slip/NetworkOraclePin.hpp).  Both
                     // fields are validated, and a failure names the field: a scope
                     // that silently widened, or a sigma that silently became the
                     // default, would be graded as though it were the one the operator

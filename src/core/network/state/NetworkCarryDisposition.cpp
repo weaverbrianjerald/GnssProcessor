@@ -240,7 +240,7 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
  *
  * Gate: returns 0 at once unless `ctx.knobs.pfq_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
@@ -274,7 +274,7 @@ static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
  * Gate: each section under its own condition, as in the teardown: always;
  * `C.prm_undecided_at_fold > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkCarryDispositionTableRunEnd(const NetworkRunEndView& v) {
@@ -330,7 +330,7 @@ static int networkCarryDispositionTableRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkCarryDisposition.hpp).
+// declared in network/state/NetworkCarryDisposition.hpp).
 int networkCarryDispositionRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkPivotFrameQRunEnd,

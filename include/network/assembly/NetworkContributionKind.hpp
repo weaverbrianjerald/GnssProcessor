@@ -9,7 +9,7 @@
  * The small half of the contribution vocabulary: @c NetworkEstimator records the kind of
  * every shared fold and needs nothing else, so the estimator includes this header only.
  * The declaration of each kind (channel, stage, subject, unit, parameter kinds, weight
- * source, builder) and the row tags are in filter/NetworkContributions.hpp.
+ * source, builder) and the row tags are in network/assembly/NetworkContributions.hpp.
  */
 
 #include <cstddef>
@@ -20,7 +20,7 @@ namespace GnssProcessor {
 
     /**
      * @brief One value per family of contribution to the normal equations, in the order of
-     *        the declaration table (@c contributionSpecs in filter/NetworkContributions.hpp).
+     *        the declaration table (@c contributionSpecs in network/assembly/NetworkContributions.hpp).
      *
      * The families are the inventory of card NOM sections 3.4 and 17, split wherever a
      * reader has to tell two cases apart (for example the whitened local block, one kind
@@ -111,7 +111,7 @@ namespace GnssProcessor {
         static_cast<std::size_t>(ContributionKind::Unset);
 
     /// A set of contribution kinds, one bit per kind (card NOM3 step PB1b: the kinds a station
-    /// step can create, filter/NetworkStationBuild.hpp).
+    /// step can create, network/assembly/NetworkStationBuild.hpp).
     using ContributionKindSet = std::uint64_t;
     static_assert(kContributionKinds <= 64, "ContributionKindSet holds one bit per kind");
 

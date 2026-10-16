@@ -4,7 +4,7 @@
  * @brief Run-end report of the re-admission continuity (E2 seed-first re-admission and the block re-coupling edge).
  *
  * The run-end reports defined in NetworkReadmitRunEnd.cpp; each is a row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -22,7 +22,7 @@ struct NetworkRunEndView;
  * Gate: prints under `config_.networkReadmitSeedHorizonS() > 0.0 ||
  * config_.networkReadmitCouplingMargEp() > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkReadmitRunEnd(const NetworkRunEndView& v);

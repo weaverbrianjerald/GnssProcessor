@@ -90,10 +90,10 @@ namespace GnssProcessor {
 class GnssConfig;
 struct NetworkRunContext;
 struct NetworkRunTraces;
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
-struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
+struct EpochDdBuild;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /// What the post-fit tiers hand the epoch stash: seeded by the solve (the within-epoch tier's
 /// refloats), extended by networkPostFitRaim and networkClockQc, read by networkStashStatus.

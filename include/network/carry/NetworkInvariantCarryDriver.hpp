@@ -48,7 +48,7 @@
  *     and a split re-partitions one old block across the new components; both follow
  *     from the vertex-overlap contributor gather with no special case.
  *
- * The gate `tests/test_network_invariant_carry_driver.cpp` cross-checks this projection
+ * The gate `tests/network/test_network_invariant_carry_driver.cpp` cross-checks this projection
  * against a hand-sequenced `NetworkZStore` lifecycle (the validated phase-B oracle) and
  * against from-scratch cycle-matrix truth, and runs the production-seam
  * **DatumFreedom** falsifier (two different per-epoch tree realizations of the same
@@ -889,7 +889,7 @@ struct NetworkRunEndView;
  *   - networkD5GateRunEnd: the D5 fine-slip innovation gate and its variants.
  *   - networkD5MapMissRunEnd: D5 flags missing from the carry map.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkInvariantCarryDriverRunEnd(const NetworkRunEndView& v);

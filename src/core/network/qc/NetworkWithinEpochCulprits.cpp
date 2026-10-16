@@ -3,10 +3,10 @@
  * @brief The culprit hand-off's verdict and its run-end report (card WCF).
  *
  * What the culprit sets are, who writes and reads them and which defect the counters
- * expose are in the header's file banner, include/filter/NetworkWithinEpochCulprits.hpp.
+ * expose are in the header's file banner, include/network/qc/NetworkWithinEpochCulprits.hpp.
  * The writer's count is taken in the T2 block of networkSolveGlue
- * (filter/NetworkSolveGlue.cpp), the reader's in networkBuildCarryDdPriors
- * (filter/NetworkDdPriorBuild.cpp).
+ * (network/solve/NetworkSolveGlue.cpp), the reader's in networkBuildCarryDdPriors
+ * (network/carry/NetworkDdPriorBuild.cpp).
  */
 
 #include "network/qc/NetworkWithinEpochCulprits.hpp"

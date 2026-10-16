@@ -1656,7 +1656,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.carry_invariant`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v);

@@ -3,7 +3,7 @@
  * @brief @internal networkWriteStateSnapshot: the periodic atomic state snapshot
  *        (RTB-7(a)), written one record layer at a time as the mirror of the warm resume.
  *
- * One function, called by the driver (app/ApplicationNetwork.cpp) at the end of every
+ * One function, called by the driver (network/driver/ApplicationNetwork.cpp) at the end of every
  * kept epoch: an epoch the driver skips returns before the call.  With a snapshot path it
  * writes on its first call and then once per network.state_snapshot_interval_s of product time;
  * without one it does nothing.  The restore of each layer is in NetworkWarmResume.cpp,
@@ -15,7 +15,7 @@
  * One of the seven files that define the network run context's functions: card NOM3 step
  * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
- * in include/app/NetworkRunContext.hpp.
+ * in include/network/state/NetworkRunContext.hpp.
  */
 
 #include "network/state/NetworkRunContext.hpp"
@@ -199,7 +199,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         //
         // The value pair is part of the dictionary key, not only the payload, because
         // networkHarvestColumn assigns cs.s_prev = x_s(j) and cs.p_prev = cov_df(j,j) from the
-        // shared column alone (app/NetworkLocalCarryHarvest.cpp): rows of
+        // shared column alone (network/carry/NetworkLocalCarryHarvest.cpp): rows of
         // one harvest epoch agree, but a station whose harvest failed hits `continue`
         // before the stash and keeps an older coupling, so a file can hold L rows with an
         // older last_seen_s.  An identity-only hoist would restore those rows against the

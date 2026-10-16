@@ -716,7 +716,7 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
 // A slipped arc in the spanning tree invalidates every fundamental cycle that closes
 // through it, so the whole dependent chord set refloats at once; a slipped chord costs
 // exactly one DD (its cycle support is 1, GATE 8 in
-// tests/test_network_invariant_carry_driver.cpp).  The election is the only place that
+// tests/network/test_network_invariant_carry_driver.cpp).  The election is the only place that
 // decides which of the two a slipped arc becomes, and without the knob it decides before
 // the slip is known: the sticky-tree seed re-seats every live incumbent unconditionally,
 // and the incumbent queue drains ahead of the new-edge walk, so a slipped incumbent

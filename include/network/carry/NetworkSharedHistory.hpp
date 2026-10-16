@@ -59,7 +59,7 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp defines it as a struct
 
 /// The largest @c network.carry_coupling_shared_history_rank the loader accepts.
 inline constexpr int kSharedHistoryRankMax = 8;

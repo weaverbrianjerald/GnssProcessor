@@ -17,7 +17,7 @@
  * slipped and re-taps the chord, instead of folding the stale carried value again.
  *
  * The sets travel through the epoch: one @ref WithinEpochCulprits lives in the epoch's
- * workspace (@c EpochWorkspace::we_culprits, filter/NetworkRunTypes.hpp), the T2 block is
+ * workspace (@c EpochWorkspace::we_culprits, network/driver/NetworkRunTypes.hpp), the T2 block is
  * its only writer, and the driver's rebuild callback reads that member of the same
  * workspace.  The block clears the sets when it starts and when it ends (after copying the
  * landed state to @c NetworkSolveGlueResult::we_landed for the fixed-cycle ledger), so the
@@ -214,7 +214,7 @@ std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long
  * @c network.raim_within_epoch; returns 0 at once when it is false.  The row follows the
  * within-epoch RAIM report in the run-end table.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v);

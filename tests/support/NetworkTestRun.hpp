@@ -6,7 +6,7 @@
  *        step HV1 builds on it).
  *
  * Card NOM3 step EP1 gave every per-epoch seam of the network producer one form over the run
- * (app/NetworkRun.hpp) and the epoch (app/NetworkEpoch.hpp).  A unit test that drives a seam
+ * (network/driver/NetworkRun.hpp) and the epoch (network/driver/NetworkEpoch.hpp).  A unit test that drives a seam
  * builds both here instead of keeping an explicit-parameter overload alive for it:
  *
  *   - the configuration is the test's own (copied in), and the run context is built from it, so

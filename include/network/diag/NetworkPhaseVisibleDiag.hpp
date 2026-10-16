@@ -42,8 +42,8 @@ struct SyncedEpoch;
 /// @return false when @f$S^- - S^+@f$ is not positive or an input is not finite.
 bool phaseVisibleNis(double e_hat, double s_m, double s_p, double& nis);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Run the phase-visible instrument on one kept epoch (card PVN).
@@ -62,9 +62,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.ws (ws).
  *
  * The former parameters, by binding:
@@ -88,7 +88,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.pv_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkPhaseVisibleRunEnd(const NetworkRunEndView& v);

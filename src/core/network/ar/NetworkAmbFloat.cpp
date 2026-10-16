@@ -2,7 +2,7 @@
  * @file NetworkAmbFloat.cpp
  * @brief Float ambiguity vehicle: the floored birth prior, the bounded drop, and the
  *        declared anchor S-transform (RF-1 steps 4 and 5).
- *        @see include/filter/NetworkAmbFloat.hpp
+ *        @see include/network/ar/NetworkAmbFloat.hpp
  */
 #include "network/ar/NetworkAmbFloat.hpp"
 #include "network/driver/NetworkEpoch.hpp"          // NetworkEpoch (card NOM3 step EP2)

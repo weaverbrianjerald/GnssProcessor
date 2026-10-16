@@ -367,7 +367,7 @@ namespace GnssProcessor {
         const NetworkRunContext& ctx = v.ctx;
         const std::shared_ptr<spdlog::logger>& log = v.log;
 
-        // Event harness run-end (filter/NetworkInject.cpp): the clause, and the hard error
+        // Event harness run-end (network/carry/NetworkInject.cpp): the clause, and the hard error
         // for a schedule that never fired.  Read before the zero-emit guard so an armed but
         // silent schedule is reported even on a run that also produced nothing.
         const int inject_rc = networkInjectRunEnd(ctx, log);

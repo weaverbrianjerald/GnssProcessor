@@ -179,7 +179,7 @@ std::map<ArcKey, int> fundamentalCycle(const IntTree& tree, const ArcKey& arc);
  * The fragments are those of @p tree_edges; each promoted chord joins two of them, so the result
  * is still a forest.  The chords that stay keep their order.  No production caller remains since
  * the WL-3 lane carry was retired; the function is kept as tested library code (its oracle is in
- * tests/test_network_arc_graph_oracles.cpp).
+ * tests/network/test_network_arc_graph_oracles.cpp).
  *
  * @param tree_edges [in/out] The partial tree; promoted chords are appended.
  * @param chords     [in/out] The candidate chords; promoted ones are removed.

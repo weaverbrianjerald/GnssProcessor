@@ -46,8 +46,8 @@
  *    (the test is not vacuous); and an untouched neighbour chord is identical
  *    everywhere, so the flag is not a global mute.
  *
- * Out of scope: the estimator-side fold itself (tests/test_network_invariant_carry_driver.cpp
- * and tests/test_pd_safe_fold.cpp cover it), and the end-to-end resume, which is a
+ * Out of scope: the estimator-side fold itself (tests/network/test_network_invariant_carry_driver.cpp
+ * and tests/network/test_pd_safe_fold.cpp cover it), and the end-to-end resume, which is a
  * harness leg pair: the P1/P2/P3 gates of §21.4 and the window legs of §21.6.
  */
 

@@ -5,9 +5,9 @@
  *        edges, and the run-end report.
  *
  * What the mask is, who writes the ledger, what a stamp means and why the release is
- * time-only are in the header's file banner, include/filter/NetworkArSuspect.hpp.  The
+ * time-only are in the header's file banner, include/network/ar/NetworkArSuspect.hpp.  The
  * search seam that calls the per-search functions is networkProducerAr
- * (filter/NetworkProducerAr.cpp).
+ * (network/ar/NetworkProducerAr.cpp).
  */
 
 #include "network/ar/NetworkArSuspect.hpp"

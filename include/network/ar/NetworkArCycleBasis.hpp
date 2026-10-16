@@ -21,7 +21,7 @@
  *     is a one-band family.
  *  2. **Rows** (built by the seam): one arc per (station, satellite) with a present bit per
  *     band, a slipped bit per band (@ref ArcLifeStep::slipped: this epoch's free-epoch latch,
- *     or a change of the arc's life stamp, filter/NetworkArcLife.hpp) and a durability (the
+ *     or a change of the arc's life stamp, network/ar/NetworkArcLife.hpp) and a durability (the
  *     epochs since the weaker band's life began).
  *  3. **Forest** (@ref arCycleBuild): per component of the arcs present in every band,
  *     @ref arcgraph::growBaselineForest under @ref arCycleForestRules (two common satellites,
@@ -41,7 +41,7 @@
  *     integer combination of stored cycles, fresh through an invalidated arc, or fresh outside
  *     the stored span (a new arc, or no stored basis).
  *
- * The seam (networkProducerAr, filter/NetworkProducerAr.cpp) turns each PartnerDd and
+ * The seam (networkProducerAr, network/ar/NetworkProducerAr.cpp) turns each PartnerDd and
  * BorrowedDd cycle into one search row, searches one block per station
  * (@ref netar::searchBlockKey), and stores the family's memory after the search.
  *
@@ -55,11 +55,11 @@
  *
  * @ref ArEpochFixes: whether the cycle basis was built, the single-signal DDs the search
  * determined (each as its cycle, with its integer and identity), and every band-arc's life
- * reading of this search (@ref ArArcReading).  The observatory (filter/NetworkArLattice.hpp)
+ * reading of this search (@ref ArArcReading).  The observatory (network/ar/NetworkArLattice.hpp)
  * releases a lattice arc on that reading, so the search and the observatory share one rule of
  * what ends a life (@ref arcLifeStep, its echo rule included) and keep no second record of it.
  * Filled only under @c network.ambiguity_resolution.trace_lattice or an armed fixed-cycle fold
- * (card FCF, filter/NetworkFixedCycles.hpp), which also receives every searched DD's float and
+ * (card FCF, network/ar/NetworkFixedCycles.hpp), which also receives every searched DD's float and
  * covariance with its L1/L2 twin (@ref SearchedCycle) and every pooled arc's live column
  * (@ref ArcColumn).
  */

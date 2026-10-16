@@ -4,7 +4,7 @@
  * @brief The station-local carries' post-solve harvest: its table of contents and the
  *        machinery its kinds share (card NOM3 step HV1).
  *
- * After the epoch's solve, networkLeveling (filter/NetworkLeveling.cpp) calls
+ * After the epoch's solve, networkLeveling (network/diag/NetworkLeveling.cpp) calls
  * networkHarvestLocalCarries, which reads each station's posterior out of the solved normal
  * equations and refreshes the carried maps that the next epoch's PASS B folds as priors.
  * The orchestrator is a list of calls, one per carried kind, in a fixed order; each kind's
@@ -62,7 +62,7 @@
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 struct NetworkRun;
 struct NetworkEpoch;
@@ -80,7 +80,7 @@ struct HarvestBorder {
 
 /// The segments of a station's F3 harvest block, in the order their columns are appended.
 /// The ZWD is last, so its row is the block's last (the B9-in-block invariant).  PASS B's
-/// block build (the carry steps of filter/NetworkStationBuild.hpp, card NOM3 step PB1b) must
+/// block build (the carry steps of network/assembly/NetworkStationBuild.hpp, card NOM3 step PB1b) must
 /// open a block on the same station-epochs; it pairs entries by block identity and row
 /// index, not by this order.
 enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, PhaseColour, Zwd };
@@ -91,7 +91,7 @@ struct BlockSpan { Eigen::Index row0{0}; Eigen::Index n{0}; };
 
 /**
  * @brief The segment spans of one station's block, from the station layout's row offsets
- *        (the one place the layout arithmetic lives; tests/test_network_harvest_layout.cpp).
+ *        (the one place the layout arithmetic lives; tests/network/test_network_harvest_layout.cpp).
  * @param iono_row0   First row of the ionosphere segment (= the ambiguity count).
  * @param rxclk_row0  First row of the receiver-clock segment.
  * @param rxcb_row0   First row of the receiver code-bias segment.

@@ -20,7 +20,7 @@
  *
  * ### The vocabulary
  *
- *  - @ref ContributionKind (filter/NetworkContributionKind.hpp, the half the estimator
+ *  - @ref ContributionKind (network/assembly/NetworkContributionKind.hpp, the half the estimator
  *    includes): one value per family, and @c Unset, the default of every tag.
  *    @ref contributionSpec gives each family its @ref ContributionSpec.
  *  - @ref RowTag: the plain tag of one row of a station block (kind, satellite, signal).
@@ -81,8 +81,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-    // filter/NetworkParamRegistry.hpp declares it; that header includes the estimator,
-    // which includes filter/NetworkContributionKind.hpp, so the scoped enum is declared
+    // network/assembly/NetworkParamRegistry.hpp declares it; that header includes the estimator,
+    // which includes network/assembly/NetworkContributionKind.hpp, so the scoped enum is declared
     // opaquely here (its fixed underlying type makes it complete).
     enum class NetworkParamKind : int;
 
@@ -505,8 +505,8 @@ namespace GnssProcessor {
                                           const std::vector<int>& est_index_of,
                                           int week, double tow);
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief The epoch tail: the shared folds of the epoch's primary build, merged with the
@@ -517,9 +517,9 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.engines.est (est), run.log (log), run.nc (nc).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.emitted (emitted).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.emitted (emitted).
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context (@c ctx.contributions).
@@ -579,7 +579,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkContributionsRunEnd(const NetworkRunEndView& v);

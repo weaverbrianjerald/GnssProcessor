@@ -3,7 +3,7 @@
  * @file NetworkRunEnd.hpp
  * @brief The network producer's run end as a declared table of reports (card NOM step TD1b).
  *
- * When the epoch loop has ended, networkTeardown (filter/NetworkTeardown.cpp) measures the
+ * When the epoch loop has ended, networkTeardown (network/runend/NetworkTeardown.cpp) measures the
  * epoch-loop wall, builds one @ref NetworkRunEndView and calls every row of
  * @ref kNetworkRunEndReports in order.  A row is one report:
  *
@@ -12,7 +12,7 @@
  * A report lives in the file of the subsystem whose state it reports, declares at its top
  * the few names it reads from the view, gates itself on the knob that arms its subsystem
  * (returning 0 at once when that subsystem is off), prints its lines, and returns 0, or a
- * verdict for the process exit code.  The table in filter/NetworkRunEnd.cpp lists every
+ * verdict for the process exit code.  The table in network/runend/NetworkRunEnd.cpp lists every
  * row with what it reports and its home file, so it reads as the run end's table of
  * contents.
  *
@@ -27,9 +27,9 @@
  * beside the subsystem's code.  Adding a report (a subsystem with no row yet):
  *   1. Write the function in the subsystem's .cpp and declare it, with its Doxygen (what it
  *      reports, the knob that gates it, what it returns), in the subsystem's header.  When
- *      the subsystem's state lives in one of the large files (app/NetworkLocalCarryHarvest.cpp,
- *      app/ApplicationNetworkAssembly.cpp, app/ApplicationNetwork.cpp,
- *      filter/NetworkSolveGlue.cpp) or has no file of its own, the report goes in a
+ *      the subsystem's state lives in one of the large files (network/carry/NetworkLocalCarryHarvest.cpp,
+ *      network/driver/ApplicationNetworkAssembly.cpp, network/driver/ApplicationNetwork.cpp,
+ *      network/solve/NetworkSolveGlue.cpp) or has no file of its own, the report goes in a
  *      <Subsystem>RunEnd.cpp beside it, added to CMakeLists.txt.
  *   2. Add one row to kNetworkRunEndReports where its lines belong in the run end, and
  *      raise kNetworkRunEndReportCount by one.
@@ -106,7 +106,7 @@ struct NetworkRunEndRow {
 /// The number of rows of @ref kNetworkRunEndReports.
 inline constexpr std::size_t kNetworkRunEndReportCount = 83;
 
-/// The run-end reports in print order (defined in filter/NetworkRunEnd.cpp).
+/// The run-end reports in print order (defined in network/runend/NetworkRunEnd.cpp).
 extern const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndReports;
 
 /**

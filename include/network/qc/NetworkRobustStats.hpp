@@ -8,7 +8,7 @@
  * anonymous namespace (decomposition INC-2; see
  * docs/network_decomposition_plan.md).  Header-only: the pure
  * helpers are @c inline / templates with no state, so they are independently
- * unit-testable (tests/test_network_robust_stats.cpp).
+ * unit-testable (tests/network/test_network_robust_stats.cpp).
  */
 
 #include <algorithm>

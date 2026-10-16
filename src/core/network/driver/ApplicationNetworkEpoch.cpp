@@ -6,9 +6,9 @@
  * The body is runNetwork's former per-epoch lambda (processSyncedEpoch), moved four columns
  * left by scripts/nom_ep1_cut.py and checked line for line by scripts/nom_ep1_verify.py
  * (check V1a).  What the move changes, each a declared transform of the EP1 specification
- * (section 5.3): the epoch's locals live in a NetworkEpoch (app/NetworkEpoch.hpp) built right
+ * (section 5.3): the epoch's locals live in a NetworkEpoch (network/driver/NetworkEpoch.hpp) built right
  * after the admission; the run's objects are reached through a NetworkRun
- * (app/NetworkRun.hpp); the D0b brackets are networkSubBegin / networkSubEnd; a converted
+ * (network/driver/NetworkRun.hpp); the D0b brackets are networkSubBegin / networkSubEnd; a converted
  * seam takes (run, ep[, kept...][, outputs...]) and binds its former parameters in its own
  * preamble.
  *
@@ -18,11 +18,11 @@
  * gap-resume census, the float drop, the DD-carry predict, the section-timer frame) and the
  * driver-side gates to their seams' first lines.  Step EP3 replaced the calls of the 21
  * measure-only instruments by six networkObserveEpoch slot calls; the rows, their slots and
- * their order constraints are filter/NetworkEpochObservers.hpp.  It is maintained by hand; nothing
+ * their order constraints are network/driver/NetworkEpochObservers.hpp.  It is maintained by hand; nothing
  * regenerates it.  Two checks guard every change: `python scripts/nom_epoch_lint.py` (the
  * epoch function's reading, the post-solve write discipline, each group read only after its
- * first writer, the writer banner of app/NetworkEpoch.hpp), run before any commit that touches
- * this file, a seam signature or CMakeLists.txt; and tests/test_network_epoch_contract.cpp,
+ * first writer, the writer banner of network/driver/NetworkEpoch.hpp), run before any commit that touches
+ * this file, a seam signature or CMakeLists.txt; and tests/network/test_network_epoch_contract.cpp,
  * whose casts pin every spine seam's epoch form at compile time.  Do not add code here;
  * CLAUDE.md's decision tree names the seam each concern belongs in.
  */
@@ -146,7 +146,7 @@
 namespace GnssProcessor {
 
 // === One synced epoch through the full producer (RTF-3 carve-out) =========
-// The per-epoch body, a member function over the run (app/NetworkRun.hpp), which holds
+// The per-epoch body, a member function over the run (network/driver/NetworkRun.hpp), which holds
 // the loop-invariant setup and the ctx-carried run state, and the synced epoch.  Until
 // card NOM3 step EP1 it was runNetwork's lambda processSyncedEpoch, a callable over `se`
 // that captured every other name by reference.  Loop control maps one to one (a
@@ -183,7 +183,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     NetworkRunTiming& timing = run.timing;
     // ---- End of the run's names ----
 
-    // The start-offset fast-forward (app/NetworkEpochAdmission.cpp): before the injector, so
+    // The start-offset fast-forward (network/driver/NetworkEpochAdmission.cpp): before the injector, so
     // a fast-forwarded epoch cannot consume an event.
     if (networkFastForward(run, se_raw) == EpochAdmission::Skip) return LoopSignal::Next;
     // The log prefix is bound before the injector runs, so the injector's own
@@ -191,7 +191,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // se_raw.time always (the injector never touches the time tag), so the
     // position of this call affects log text only.
     LogManager::setCurrentEpochTime(se_raw.time);
-    // Event-harness seam (filter/NetworkInject.cpp), the single observation
+    // Event-harness seam (network/carry/NetworkInject.cpp), the single observation
     // injection site.  It is upstream of computeModels, every T0 detector,
     // networkComputeRawObservables and assembly, so a one-scalar write
     // on the RinexObservation (phase in cycles) moves the metre-valued design row
@@ -202,7 +202,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     SyncedEpoch se_inject_scratch;
     const SyncedEpoch& se_admit = networkInjectEpoch(ctx, log, traces, se_raw,
                                                      se_inject_scratch);
-    // Canonical-pair admission seam (filter/NetworkCanonicalPairAdmission.cpp,
+    // Canonical-pair admission seam (network/assembly/NetworkCanonicalPairAdmission.cpp,
     // card CPA).  It sits immediately after the injector, on the same contract,
     // because this is the only site upstream of everything the withhold must be
     // absent from: computeModels, the T0 detectors, networkComputeRawObservables,
@@ -215,10 +215,10 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     SyncedEpoch se_cpa_scratch;
     const SyncedEpoch& se = networkCanonicalPairAdmission(ctx, log, traces, stations,
                                                           se_admit, se_cpa_scratch);
-    // The epoch: everything the stages below hand each other (app/NetworkEpoch.hpp).
+    // The epoch: everything the stages below hand each other (network/driver/NetworkEpoch.hpp).
     NetworkEpoch ep(se);
 
-    // Signal-roster seam (app/SignalRoster.cpp, card SID phase 1).  It sits
+    // Signal-roster seam (network/assembly/SignalRoster.cpp, card SID phase 1).  It sits
     // immediately after the canonical-pair admission returns the epoch, for the
     // reason given above: this site is upstream of computeModels, the T0
     // detectors, networkComputeRawObservables, assembly, the RAIM pools and the
@@ -233,16 +233,16 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkBuildSignalRoster(run, ep);
     networkSubEnd(run, SB_ROSTER);
 
-    // The admission (app/NetworkEpochAdmission.cpp): the one-epoch clears and the broadcast
+    // The admission (network/driver/NetworkEpochAdmission.cpp): the one-epoch clears and the broadcast
     // feeds, which run on every synced epoch, then the max-duration stop, the decimation skip
     // and the processed-epoch count.  After the roster, which advances on every synced epoch.
     const EpochAdmission admission = networkAdmitEpoch(run, ep);
     if (admission == EpochAdmission::Stop) return LoopSignal::Stop;
     if (admission == EpochAdmission::Skip) return LoopSignal::Next;
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::Admitted, ep.events);
 
-    // Per-epoch section-timer baseline (D0, app/NetworkRun.cpp); inert when the toggle is off.
+    // Per-epoch section-timer baseline (D0, network/driver/NetworkRun.cpp); inert when the toggle is off.
     const EpochSectionTimers sec = networkSectionTimersBegin(run);
 
     // Rotation of the unbounded service CSVs (P1); the body is in NetworkRunTraces
@@ -268,7 +268,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     const bool   carry_warm = pl_on && (static_cast<int>(n_emitted) >= pl_warmup);
     ep.clock = EpochClock{ dt, pl_now_s, carry_warm };
 
-    // The slip funnel opens (filter/NetworkSlipFunnel.hpp): the previous epoch's deferred
+    // The slip funnel opens (network/slip/NetworkSlipFunnel.hpp): the previous epoch's deferred
     // innovation-gate flags, and the retap-only drain in lockstep.
     networkSlipFunnelOpen(run, ep, ep.funnel, ep.events);
 
@@ -336,7 +336,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // leave the ≥ 2-station code-bias coverage gate counting a station that feeds it
     // nothing.  No-op unless network.adm_screen or network.adm_trace.
     networkMeasurementAdmission(run, ep, ep.pass_a, ep.funnel, ep.events);
-    // The phase datum (filter/NetworkPhaseAnchorEpoch.cpp): the final shared phase-bias set
+    // The phase datum (network/solve/NetworkPhaseAnchorEpoch.cpp): the final shared phase-bias set
     // and the station that anchors each (sat,signal).  After the admission screen, whose
     // withholds prune the states an election could otherwise pin.
     networkPhaseAnchorEpoch(run, ep, ep.pass_a, ep.events);
@@ -348,7 +348,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // outputs are fresh per epoch; the empty-system skip keeps its bookkeeping inside
     // (SkipEpoch return), and the Next return below bypasses networkSubEnd(SB_PREASM).
     // est.beginEpoch() runs inside on Proceed.
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::BeforeColumns, ep.events);
 
     if (networkAssemblyRegisterColumns_(run, ep, ep.columns)
@@ -381,7 +381,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // is byte-identical.
     networkOraclePinEpoch(run, ep);
 
-    // The bounded drop (RF-1 step 4, filter/NetworkAmbFloat.cpp): serially, after PASS A's
+    // The bounded drop (RF-1 step 4, network/ar/NetworkAmbFloat.cpp): serially, after PASS A's
     // slip scans latched relevel.free_ambs and before the parallel PASS-B inject reads the carry.
     networkAmbFloatDropEpoch(run, ep, ep.events);
     // --- Exact coupling time update, per-epoch inputs (card CTU) ---------------
@@ -491,8 +491,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // slot would change the section-timing artifact for every run, armed or not (as
     // for networkSdEwlAr).  Unreachable unless network.gross_los_emit_exclude.
     networkGrossLosScreen(run, ep, GrossLosPhase::Decide, ep.events);
-    // The fixed-cycle fold (card FCF, filter/NetworkFixedCycles.hpp) and the ledger of
-    // fixed cycles it steps (filter/NetworkArLattice.hpp, card AGT's lattice, moved here
+    // The fixed-cycle fold (card FCF, network/ar/NetworkFixedCycles.hpp) and the ledger of
+    // fixed cycles it steps (network/ar/NetworkArLattice.hpp, card AGT's lattice, moved here
     // from SB_NETAR at step FCF-3): the search's fixed L1/L2 pairs, or the pairs the ledger
     // implies, folded into a held solve beside the float one.  After the gross-LOS Decide,
     // so its declarations release this epoch, and inside this bracket for the reason given
@@ -560,9 +560,9 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubBegin(run, SB_CLOCKUPD); // block 8: two-state clock update + fault QC + retro-flag feed (D0b)
     networkClockQc(run, ep, ep.solve.handoff, ep.events);
     networkSubEnd(run, SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::AfterClockQc, ep.events);
-    // Roster disagreement pass (app/SignalRoster.cpp, card SID phase 1).  It sits here
+    // Roster disagreement pass (network/assembly/SignalRoster.cpp, card SID phase 1).  It sits here
     // because this is the first point at which every input of P4 exists in one scope:
     // the arc-level tracker's rows were built in PASS A, local_carry is post-harvest
     // (networkLeveling), the ambiguity states are post-assembly, the anchor
@@ -576,7 +576,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // second lifecycle.  They are in the same scope as every other input of the pass,
     // which is why the pass runs here and not at the build seam.
     networkSignalRosterAudit(run, ep);
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::RosterTail, ep.events);
     networkSubEnd(run, SB_ROSTER);
     // The frame diagnostics (SPEC_day129_frame_guards P1-3/P1-4) and the censuses run
@@ -594,7 +594,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the previous epoch is frozen before the census's rider feeds this epoch's
     // stations, so a station cannot standardize its own coordinate fault away.
     networkCongruencePredict(run, ep);
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::FrameDiag, ep.events);
     networkSubEnd(run, SB_FRAMEDIAG);
     networkSubBegin(run, SB_STASH_STATUS); // D2/C1/SH carry re-stash + VCE fold + epoch-status QC (D0b)
@@ -607,12 +607,12 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // fold.  It runs only on a kept epoch, which is every epoch that reaches here.
     // No-op off.
     networkClockLevelMonitor(run, ep);
-    // The measure-only instruments of this spine point (filter/NetworkEpochObservers.hpp).
+    // The measure-only instruments of this spine point (network/driver/NetworkEpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::StashTail, ep.events);
     networkBufferedTraceDrains(run, ep);   // cards LGM and AIL: the buffered trace rows
     networkSubEnd(run, SB_STASH_STATUS);   // close the stash and epoch-status tail, before the readout (D0b)
 
-    // Per-epoch section-timer readout, emitted-epoch path (D0 and D0b, app/NetworkRun.cpp).
+    // Per-epoch section-timer readout, emitted-epoch path (D0 and D0b, network/driver/NetworkRun.cpp).
     networkSectionTimersReadout(run, ep, sec);
 
     // Periodic atomic snapshot (RTB-7(a)); the body is in NetworkStateSnapshotWrite.cpp

@@ -15,7 +15,7 @@ namespace GnssProcessor {
 struct NetworkRun;
 struct NetworkEpoch;
 struct NetworkRunEndView;
-struct SolveDatum;   // filter/NetworkSolveGlue.hpp
+struct SolveDatum;   // network/solve/NetworkSolveGlue.hpp
 
 /**
  * @brief Stage 5: the budgeted spectrum of the reduced system the gate is about to judge
@@ -55,7 +55,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
  * ctx.counters.ddi_dirs == 0`; `ctx.counters.ddi_epochs > 0 && ctx.counters.ddi_dirs >
  * 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkRankGateRunEnd(const NetworkRunEndView& v);

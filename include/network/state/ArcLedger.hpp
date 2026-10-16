@@ -35,7 +35,7 @@
  * ### Where the records live (card NOM step N4f2)
  *
  * The ledger is the machine; the records are the arc table's.  Each record is the
- * @c ledger field of its arc's row (@c net::ArcState, app/NetworkEntities.hpp), beside
+ * @c ledger field of its arc's row (@c net::ArcState, network/state/NetworkEntities.hpp), beside
  * the arc's leveling carry and its other carried fields, so a reader that needs an
  * arc's lifecycle and its carry reads one row.  The ledger is bound to the run's
  * entities at construction and keys its calls by the (station index, satellite,
@@ -86,8 +86,8 @@
 
 namespace GnssProcessor {
     namespace net {
-        struct NetworkEntities;   // app/NetworkEntities.hpp: the run's tables
-        struct ArcState;          // app/NetworkEntities.hpp: an arc's row (its ledger field)
+        struct NetworkEntities;   // network/state/NetworkEntities.hpp: the run's tables
+        struct ArcState;          // network/state/NetworkEntities.hpp: an arc's row (its ledger field)
     }
 
     /**

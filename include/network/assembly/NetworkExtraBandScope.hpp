@@ -16,7 +16,7 @@
  * for the clock-ref band lock.  Reading it here keeps one definition of "the pin
  * pair's bands" across the producer.
  *
- * Two knobs consume it, both in `app/ApplicationNetworkAssembly.cpp`:
+ * Two knobs consume it, both in `network/driver/ApplicationNetworkAssembly.cpp`:
  *
  *  - `network.cycle_slip.mw_detect_pairs` (L5P knob A) scopes which Melbourne-
  *    Wubbena pairs the network forms, in the PASS-A slip scan;
@@ -24,7 +24,7 @@
  *    an extra-band signal, where the row weights are formed in
  *    @c Application::networkSplitStation_.
  *
- * @ref networkPinBandsFor is also read by filter/NetworkClockLevel.cpp.
+ * @ref networkPinBandsFor is also read by network/solve/NetworkClockLevel.cpp.
  *
  * The predicates are pure and are unit-tested directly
  * (tests/test_network_extra_band_scope.cpp); only @ref networkPinBandsFor
@@ -117,7 +117,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `config_.networkExtraBandCodeSigmaScale() > 1.0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkExtraBandScopeRunEnd(const NetworkRunEndView& v);

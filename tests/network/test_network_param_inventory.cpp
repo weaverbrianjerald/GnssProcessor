@@ -1,6 +1,6 @@
 /**
  * @file test_network_param_inventory.cpp
- * @brief Card NOM step N1: the parameter inventory of filter/NetworkParamInventory.hpp.
+ * @brief Card NOM step N1: the parameter inventory of network/assembly/NetworkParamInventory.hpp.
  *
  * Five contracts: the one classifier reads every key family a station's state manager
  * can hold (each key built by its @c StateKeySchema maker and read back); the receiver

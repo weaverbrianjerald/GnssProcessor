@@ -190,7 +190,7 @@ namespace GnssProcessor {
 
     /**
      * @brief A staged @c fixed_cycle_plant directive (card FCF, step FCF-3), consumed by the
-     *        fixed-cycle seam (filter/NetworkFixedCycles.hpp).
+     *        fixed-cycle seam (network/ar/NetworkFixedCycles.hpp).
      *
      * Staged at every epoch from its @c tow until it fires: it fires at the first epoch at which
      * the ledger of fixed cycles holds the arc, where every row's integer is shifted by
@@ -327,7 +327,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return the injection verdict: non-zero when an armed schedule never fired, else 0.
      */
     int networkInjectRunEnd(const NetworkRunEndView& v);

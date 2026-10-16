@@ -417,7 +417,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // (a BDS toc is native BDT and is shifted to the GPS scale, as
     // LiveEphemerisStore does for toe).  The staging sort here and the epoch-loop
     // feed both call navAvailabilityGpsSeconds, one inline function in
-    // app/NetworkSetupResult.hpp, so their orders cannot drift apart.
+    // network/driver/NetworkSetupResult.hpp, so their orders cannot drift apart.
     // (Card 8, replay parity; INC-5)
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
@@ -1761,7 +1761,7 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in app/NetworkSetupResult.hpp.
+// Setup builder (card NOM3 step EP4); documented at its declaration in network/driver/NetworkSetupResult.hpp.
 void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
     // ---- End of the bindings ----
     // The marker → ARP roster census is measured in networkSetup_, which runs

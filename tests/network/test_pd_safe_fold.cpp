@@ -13,7 +13,7 @@
  *
  * Suite name @c PdSafeFoldTest is owned solely by this file (suite-hygiene rule: one
  * suite, one file).  The config-knob default-off gate lives with the other network config
- * cases in tests/test_codebias_network_config.cpp for the same reason.
+ * cases in tests/network/test_codebias_network_config.cpp for the same reason.
  *
  * The gates, in SPEC §6 order:
  *  1. @c ProductFormEqualsSubtractionWellConditioned: the product form (a) is the same

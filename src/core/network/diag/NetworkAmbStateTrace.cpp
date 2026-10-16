@@ -1,7 +1,7 @@
 /**
  * @file NetworkAmbStateTrace.cpp
  * @brief Row formatting and the serial drain for @c network_amb_state.csv
- *        (RF-1 §7.4).  @see include/filter/NetworkAmbStateTrace.hpp
+ *        (RF-1 §7.4).  @see include/network/diag/NetworkAmbStateTrace.hpp
  */
 #include "network/diag/NetworkAmbStateTrace.hpp"
 

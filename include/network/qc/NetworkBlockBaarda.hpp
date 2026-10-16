@@ -102,9 +102,9 @@
  *
  * A pure numeric leaf, like @ref NetworkCarryVce and @ref NetworkPriorResidual:
  * header-only, with no ApplicationNetwork coupling, no StateManager and no I/O.
- * It takes @ref Input blocks and returns ladders; @c tests/test_block_baarda.cpp
+ * It takes @ref Input blocks and returns ladders; @c tests/network/test_block_baarda.cpp
  * drives it directly with synthetic blocks of known truth.  The per-epoch trace,
- * event and aggregate emission is in @c filter/NetworkBlockBaarda.cpp, the only
+ * event and aggregate emission is in @c network/qc/NetworkBlockBaarda.cpp, the only
  * translation unit of this card that touches traces.
  */
 
@@ -559,7 +559,7 @@ private:
 };
 
 // ===========================================================================
-//  Sweep and emission (filter/NetworkBlockBaarda.cpp)
+//  Sweep and emission (network/qc/NetworkBlockBaarda.cpp)
 // ===========================================================================
 
 /// One reportable block, held until the emission seam writes its event row.  The
@@ -606,8 +606,8 @@ struct NetworkBlockBaardaTallies {
     std::string max_id;            ///< its identity, "#STATION_INDEX/SAT b=… @tow …" (roster index, not name).
 };
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Sweep one station's (station, satellite) blocks: the costly tier of INC-1.
@@ -677,8 +677,8 @@ bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
 /// round-off in the direction the data does not constrain.
 inline constexpr double kBlockCofactorRcondEps = 1e-10;
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Per-epoch emission: trace rows, event rows, epoch-status scalars.
@@ -691,10 +691,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces). Read: run.config (config_), run.log (log),
  *            run.setup.stations (stations).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
  *
  * The former parameters, by binding:
  *   - @p ctx = run.ctx.
@@ -737,7 +737,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints under `ctx.knobs.bb_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkBlockBaardaRunEnd(const NetworkRunEndView& v);

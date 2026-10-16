@@ -14,7 +14,7 @@
  * At an armed target epoch the solve's reduced shared RHS
  * @f$\tilde u_s = u_s - \sum_r N_{sr} N_{rr}^{-1} u_r\ (+\ \text{DD folds})@f$
  * is decomposed exactly by class (card NOM step N2b: every class is read from a
- * contribution tag or kind, filter/NetworkContributions.hpp):
+ * contribution tag or kind, network/assembly/NetworkContributions.hpp):
  *
  *  - a station's rows by their tags' row class (@ref classifyRow, @ref rowClassName):
  *    @c obs_code, @c obs_phase, @c iono_sh_row, @c pivot_pin, @c local_pin_row,
@@ -119,8 +119,8 @@
 
 namespace GnssProcessor {
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Everything one epoch's reduced-RHS decomposition reads, detached from
@@ -736,15 +736,15 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
                           const std::vector<std::string>& columns = {},
                           std::set<std::string>* warned = nullptr);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Post-solve reduced-RHS class attribution at the armed target epochs.
  *
  * Call after the epoch's solve (the kernel's reduced system and the station
  * LDLᵀ blocks must be current) and after the postfit sweep, from the FrameDiag
- * slot of the observer table (filter/NetworkEpochObservers.hpp).  No-op unless the
+ * slot of the observer table (network/driver/NetworkEpochObservers.hpp).  No-op unless the
  * estimator's attribution capture is armed (@c est.attribArmed(), the driver's gate
  * until card NOM3 step EP3), @c network.rhs_attrib_tow ≥ 0 and this epoch's TOW lies
  * in the armed window.
@@ -753,10 +753,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx). Read:
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx). Read:
  *            run.config (config_), run.log (log), run.traces (traces), run.setup.stations
  *            (stations), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
  *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
  *           ep.assembly.est_index_of (est_index_of), &ep.solve.x_s (x_s).
  *
@@ -826,10 +826,10 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
  *        scripts/nom_ep1_cut.py): one call forwarding to networkRhsAttribTripAt with the
  *        epoch's datum, map and solution (card NOM3 step SG3).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.config (config_), run.log (log), run.traces (traces),
  *            run.setup.stations (stations), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
  *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
  *           ep.assembly.est_index_of (est_index_of), &ep.solve.x_s (x_s).
  *

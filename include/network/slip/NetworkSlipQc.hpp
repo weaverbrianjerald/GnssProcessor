@@ -49,7 +49,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct SyncedEpoch;
-struct RosterN3bCensus;   // app/SignalRoster.hpp (card NOM step N3b)
+struct RosterN3bCensus;   // network/assembly/SignalRoster.hpp (card NOM step N3b)
 
 /// Elevation mapping for the IF-phase slip stochastic model: the multiplicative
 /// factor by which between-epoch double-differenced carrier-phase noise grows
@@ -296,7 +296,7 @@ struct PassABuffers {
         long long drop_unknown{ 0 };          ///< No usable integer, refused.
         /// The satellite of each @ref drop_unknown verdict, in detector order (one entry
         /// per refused pair).  The identity the producer AR search's suspect-corner mask
-        /// stamps (card ARL, filter/NetworkArSuspect.hpp); filled only while that mask is
+        /// stamps (card ARL, network/ar/NetworkArSuspect.hpp); filled only while that mask is
         /// armed, and read nowhere else.
         std::vector<std::string> drop_unknown_sats;
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob on).

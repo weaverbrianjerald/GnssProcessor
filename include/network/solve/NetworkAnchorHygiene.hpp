@@ -89,7 +89,7 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct; the tag
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp defines it as a struct; the tag
                             // must match, or MSVC mangles the same free function two ways
                             // depending on which header a translation unit saw first
 class NetworkRunTraces;
@@ -274,7 +274,7 @@ struct NetworkRunEndView;
  * `ctx.knobs.pd_handover_continuous`; `ctx.knobs.pd_candidacy_usable`;
  * `ctx.knobs.pa_carry_reref`; `ctx.knobs.anchor_hygiene_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkAnchorHygieneRunEnd(const NetworkRunEndView& v);

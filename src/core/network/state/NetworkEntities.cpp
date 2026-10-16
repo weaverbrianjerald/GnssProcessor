@@ -3,7 +3,7 @@
  * @brief The entity field tables, the snapshot record functions of the moved fields, the
  *        station-name converter and the reach table (card NOM step N4).
  *
- * include/app/NetworkEntities.hpp states the model.  Each entity's field table lists its
+ * include/network/state/NetworkEntities.hpp states the model.  Each entity's field table lists its
  * moved fields in the order of the row struct; a Record row's two fill functions sit
  * above its table.
  */

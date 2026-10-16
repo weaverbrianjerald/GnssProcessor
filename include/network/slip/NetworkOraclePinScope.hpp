@@ -4,14 +4,14 @@
  * @brief The `oracle_pin` scope grammar: which arcs a sim-only oracle ambiguity
  *        pin holds at truth.
  *
- * A leaf header (no project includes), split out of filter/NetworkOraclePin.hpp
+ * A leaf header (no project includes), split out of network/slip/NetworkOraclePin.hpp
  * on purpose.  The JSON loader (src/core/config/GnssConfigLoadNetwork.cpp) refuses
  * a bad scope by name at load time, and does so through the same parser the
  * run-scope seam uses, so the grammar exists in one place.  The seam's own header
- * includes filter/NetworkRunTypes.hpp (StateManager, NetworkEstimator, PppModel,
+ * includes network/driver/NetworkRunTypes.hpp (StateManager, NetworkEstimator, PppModel,
  * MeasurementModel), which the config TU should not depend on.
  *
- * The oracle-pin card is described in include/filter/NetworkOraclePin.hpp.
+ * The oracle-pin card is described in include/network/slip/NetworkOraclePin.hpp.
  */
 
 #include <set>
@@ -32,7 +32,7 @@ namespace GnssProcessor {
  *   - `arc:<station>/<sat>/<sig>`: one exact arc.
  *
  * Under every scope, a family's anchor arc is never pinned (its datum pin defines
- * the family's gauge); src/core/filter/NetworkOraclePin.cpp applies that exclusion
+ * the family's gauge); src/core/network/slip/NetworkOraclePin.cpp applies that exclusion
  * after covers().
  */
 struct OraclePinScope {

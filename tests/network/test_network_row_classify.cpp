@@ -1,7 +1,7 @@
 /**
  * @file test_network_row_classify.cpp
  * @brief Card NOM step N2b: every reader of "what is this row" reads the row's
- *        contribution tag (filter/NetworkRowClassify.hpp).
+ *        contribution tag (network/assembly/NetworkRowClassify.hpp).
  *
  * The contracts:
  *  - one map from contribution kind to row class covers every kind: the observation

@@ -1,7 +1,7 @@
 /**
  * @file test_network_run_end.cpp
  * @brief The run-end table (card NOM step TD1b): every row is filled and appears once, and
- *        the order constraints filter/NetworkRunEnd.hpp states hold; one row per subsystem
+ *        the order constraints network/runend/NetworkRunEnd.hpp states hold; one row per subsystem
  *        and the heading line of the walk (card NOM2 step TD2).
  *
  * The table is the run end's order, so these are the constraints a reordered or added row

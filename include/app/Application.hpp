@@ -38,30 +38,30 @@
 
 namespace GnssProcessor {
 
-struct NetworkSetupResult;   // app/NetworkSetupResult.hpp (decomposition INC-5)
-struct NetworkRunContext;    // app/NetworkRunContext.hpp (decomposition INC-4; INC-7 signatures)
-struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp (decomposition INC-3; INC-7 signatures)
-struct SdEwlFix;             // filter/NetworkRunTypes.hpp (SD EWL integer, increment 2a)
-struct NetStation;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
-struct StationAssembly;      // filter/NetworkRunTypes.hpp (decomposition INC-7)
-enum class ParamDisposition : std::uint8_t;  // filter/NetworkParamInventory.hpp (card NOM N1)
-struct RxIfbRule;            // filter/NetworkParamInventory.hpp (card NOM N1)
-struct RowTag;               // filter/NetworkContributions.hpp (card NOM N2a)
-enum class GimRowsOutcome : std::uint8_t;  // filter/NetworkContributions.hpp (card NOM N2a)
-struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
+struct NetworkSetupResult;   // network/driver/NetworkSetupResult.hpp (decomposition INC-5)
+struct NetworkRunContext;    // network/state/NetworkRunContext.hpp (decomposition INC-4; INC-7 signatures)
+struct NetworkRunTraces;     // network/diag/NetworkRunTraces.hpp (decomposition INC-3; INC-7 signatures)
+struct SdEwlFix;             // network/driver/NetworkRunTypes.hpp (SD EWL integer, increment 2a)
+struct NetStation;           // network/driver/NetworkRunTypes.hpp (decomposition INC-7)
+struct StationAssembly;      // network/driver/NetworkRunTypes.hpp (decomposition INC-7)
+enum class ParamDisposition : std::uint8_t;  // network/assembly/NetworkParamInventory.hpp (card NOM N1)
+struct RxIfbRule;            // network/assembly/NetworkParamInventory.hpp (card NOM N1)
+struct RowTag;               // network/assembly/NetworkContributions.hpp (card NOM N2a)
+enum class GimRowsOutcome : std::uint8_t;  // network/assembly/NetworkContributions.hpp (card NOM N2a)
+struct ShDevCarry;           // network/driver/NetworkRunTypes.hpp (decomposition INC-7)
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp, namespace scope (decomposition INC-7)
-class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
+class  NetworkEstimator;     // network/solve/NetworkEstimator.hpp (decomposition INC-7)
 class  SphericalHarmonicIonosphere;  // atmosphere/SphericalHarmonicIonosphere.hpp (decomposition INC-7)
 class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
-struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening)
-enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declaration (decomposition INC-7)
-struct NetworkRun;           // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
-struct EpochPassA;           // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;    // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochColumns;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochAssembly;        // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct SlipQcChannel;        // network/slip/NetworkRawObservables.hpp (slip-QC hardening)
+enum class EpochAction;      // network/driver/NetworkRunTypes.hpp, opaque enum declaration (decomposition INC-7)
+struct NetworkRun;           // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;         // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
+struct EpochPassA;           // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkSlipFunnel;    // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochColumns;         // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochAssembly;        // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share
 struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read
@@ -1143,7 +1143,7 @@ private:
      */
     LoopSignal networkProcessEpoch_(NetworkRun& run, const SyncedEpoch& se_raw);
 
-    friend struct NetworkEpochContractProbe;   // tests/test_network_epoch_contract.cpp reads the five private seam types
+    friend struct NetworkEpochContractProbe;   // tests/network/test_network_epoch_contract.cpp reads the five private seam types
 
     /**
      * @brief Consumer-only replay (Q5): drive the held-out PPP-RTK consumer from
@@ -1209,9 +1209,9 @@ private:
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.setup (setup), run.traces (traces).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
      * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
      *     pass_a.present (present), pass_a.shared_phase_keys (shared_phase_keys).
      *
@@ -1234,7 +1234,7 @@ private:
      *        (computeModels / ensureNetworkSharedStates) in an OpenMP loop that
      *        also runs the T0 / MW / IF-TD slip detection into PassABuffers slots,
      *        the serial fold of present[], the raw slip observables into @p qc, and
-     *        the serial slip-QC drains declared in slip/NetworkSlipQc.hpp: T0
+     *        the serial slip-QC drains declared in network/slip/NetworkSlipQc.hpp: T0
      *        repair, MW / LLI refloat, IF-TD driver, wind-up restart, gap re-entry
      *        and injected-arc free (decomposition INC-7).
      *
@@ -1251,9 +1251,9 @@ private:
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.setup (setup), run.traces (traces), run.engines.slip_qc (qc).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.clock.dt
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.clock.dt
      *           (dt), ep.clock.pl_now_s (pl_now_s), ep.clock.carry_warm (carry_warm),
      *           ep.pass_a.shared_phase_keys (shared_phase_keys).
      * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
@@ -1291,9 +1291,9 @@ private:
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.setup (setup), run.traces (traces). Read: run.engines.slip_qc (qc).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
      *           ep.pass_a.present (present).
      * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
      *     pass_a.n_dropped_sats (n_dropped_sats).
@@ -1327,9 +1327,9 @@ private:
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.setup (setup), run.traces (traces), run.engines.est (est).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
      *           ep.pass_a.present (present), ep.pass_a.shared_phase_keys (shared_phase_keys).
      * @param columns [in/out] The shared columns (ep.columns), written:
      *     columns.registered_clock_sats (registered_clock_sats), columns.registered_code_keys
@@ -1378,10 +1378,10 @@ private:
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.setup (setup), run.traces (traces), run.engines.est (est),
      *            run.timing.asm_wall_ms (sec_asm_wall_ms).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
      *           ep.funnel.carry_slipped_ambs (carry_slipped_ambs), ep.funnel.carry_slipped_raw
      *           (carry_slipped_raw), ep.clock.carry_warm (carry_warm), ep.clock.pl_now_s
      *           (pl_now_s), ep.pass_a.shared_phase_keys (shared_phase_keys),

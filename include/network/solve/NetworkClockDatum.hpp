@@ -15,7 +15,7 @@ class GnssConfig;
 struct NetworkRunContext;
 struct NetworkRun;
 struct NetworkEpoch;
-struct SolveDatum;   // filter/NetworkSolveGlue.hpp
+struct SolveDatum;   // network/solve/NetworkSolveGlue.hpp
 
 /**
  * @brief The clock datum's declaration the epoch's election reads

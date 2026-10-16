@@ -59,8 +59,8 @@
 
 namespace GnssProcessor {
 
-struct NetworkCarryState;   // app/NetworkRunContext.hpp, included in the .cpp only
-namespace net { struct NetworkEntities; }   // app/NetworkEntities.hpp (card NOM step N4)
+struct NetworkCarryState;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+namespace net { struct NetworkEntities; }   // network/state/NetworkEntities.hpp (card NOM step N4)
 
 /**
  * @brief One container (and reference role) of @c NetworkCarryState that holds a
@@ -321,7 +321,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints always (a block).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkCarrySitesRunEnd(const NetworkRunEndView& v);

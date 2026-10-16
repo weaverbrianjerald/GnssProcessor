@@ -1,7 +1,7 @@
 /**
  * @file test_network_ar_suspect.cpp
  * @brief Unit tests of the producer AR search's suspect-corner mask (card ARL, slip-ladder
- *        defect 3; include/filter/NetworkArSuspect.hpp).
+ *        defect 3; include/network/ar/NetworkArSuspect.hpp).
  *
  * Five suites:
  *  - @c NetworkArSuspectLedger: the ledger kernel (stamp, window, age-out, the fold's

@@ -314,7 +314,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
     }
 
     // Card PRM phase 3a: the responses armed per kind and event.  A declared response site
-    // (filter/NetworkResponses.hpp) whose own gate holds on this snapshot contributes its
+    // (network/assembly/NetworkResponses.hpp) whose own gate holds on this snapshot contributes its
     // policy to its kind's event; an armed datum mechanism of card PRM phase 2 contributes
     // Stransform to the handover of every kind whose carried value it moves (a border kind
     // through prev_carry, a station-local kind through its value site, the owed value sites

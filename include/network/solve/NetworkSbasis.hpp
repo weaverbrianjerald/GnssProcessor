@@ -82,7 +82,7 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 /**
  * @brief The wind-up / yaw-attitude model this binary implements.
@@ -530,7 +530,7 @@ public:
 
     /// How this epoch's D2 carry folds one satellite code-bias column, as the first-sighting
     /// family prior reads it (card GFC step 2).  Decided once per epoch before PASS B by
-    /// @c networkCarryDecide (filter/NetworkCarryDisposition.hpp), ahead of the builder;
+    /// @c networkCarryDecide (network/state/NetworkCarryDisposition.hpp), ahead of the builder;
     /// collected for it by @ref networkCodeBiasCarryMap.
     enum class CodeBiasCarry : std::uint8_t {
         Carried,   ///< Folded at its process noise over the step (@c CarryDisposition::Folded): the column continues from the last kept epoch.
@@ -1761,7 +1761,7 @@ class GnssConfig;
  *   - networkSbasisDatumRunEnd: the S-basis datum arms.
  *   - networkCodeDatumFamilyRunEnd: card GFC's code-datum arms.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkSbasisRunEnd(const NetworkRunEndView& v);

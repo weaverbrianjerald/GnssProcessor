@@ -4,7 +4,7 @@
  *        their re-validation, the placement, the fold with its acceptance passes, the fold's
  *        releases and edges, the seam that steps the ledger and the fold and writes their
  *        traces, and its run-end report.  What it does and why the estimator stays float are in
- *        the header's file banner, include/filter/NetworkFixedCycles.hpp.
+ *        the header's file banner, include/network/ar/NetworkFixedCycles.hpp.
  */
 
 #include "network/ar/NetworkFixedCycles.hpp"

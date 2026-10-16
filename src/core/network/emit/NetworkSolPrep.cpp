@@ -1041,7 +1041,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                 // of error), so the step is an arbitrary re-level of the whole
                 // component (the DOY-129 19:25:30 event).  The guard against it sits in
                 // the election, not here: docs/SPEC_eq34_reattach_hygiene.md,
-                // filter/NetworkAnchorHygiene.hpp (network.eq34_anchor_min_arc_ep).
+                // network/solve/NetworkAnchorHygiene.hpp (network.eq34_anchor_min_arc_ep).
                 // With the guard armed this event fires only for a host whose arc has
                 // passed the age threshold; a refused host is traced as
                 // PHASE_DATUM/reattach_blocked_cold instead.
@@ -1055,7 +1055,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor) = sta;
             // eq34 reattach hygiene, warm conditioning: stamp the time this key's datum
             // was last realized and emitted.  The eligibility block applies only while
-            // that memory is fresh (see filter/NetworkAnchorHygiene.hpp).  The stamp
+            // that memory is fresh (see network/solve/NetworkAnchorHygiene.hpp).  The stamp
             // follows the emit-only discipline of the baseline above: a withheld epoch
             // must not refresh it, or a long withhold would look warm indefinitely.
             if (anchor_hygiene_on)
@@ -1348,7 +1348,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
  *
  * Gate: prints under `clk_runaway_on && n_runaway_epochs > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkClockRunawayRunEnd(const NetworkRunEndView& v) {
@@ -1373,7 +1373,7 @@ static int networkClockRunawayRunEnd(const NetworkRunEndView& v) {
  * Gate: prints under `perconst_on && (n_perconst_partial_epochs > 0 ||
  * n_perconst_diffuse_published > 0)`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkPerConstellationRunEnd(const NetworkRunEndView& v) {
@@ -1391,7 +1391,7 @@ static int networkPerConstellationRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkSolPrep.hpp).
+// declared in network/emit/NetworkSolPrep.hpp).
 int networkSolPrepRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkClockRunawayRunEnd,

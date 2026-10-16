@@ -633,7 +633,7 @@ namespace GnssProcessor {
         // --- Arc-scoped geometry-free jump trigger (card ARL) ---------------
         /**
          * @brief Master arm (@c network.cycle_slip.gf_arc_jump) for the arc-scoped GF
-         *        jump trigger (include/slip/NetworkGfArcJump.hpp; card ARL, slip-ladder
+         *        jump trigger (include/network/slip/NetworkGfArcJump.hpp; card ARL, slip-ladder
          *        defect 1).
          *
          * A pre-solve slip test per (station, satellite) dual-frequency arc on the
@@ -692,7 +692,7 @@ namespace GnssProcessor {
         // --- Oracle slip response, simulation only (the level-preserving ceiling) ---
         /**
          * @brief Master arm (@c network.cycle_slip.oracle_relevel) for the
-         *        truth-fed oracle slip response (include/slip/NetworkSlipOracle.hpp).
+         *        truth-fed oracle slip response (include/network/slip/NetworkSlipOracle.hpp).
          *
          * When a detector actuates a refloat on a carried arc, the oracle looks up
          * the true integer jump(s) in the fixture's `truth_slips.csv` and shifts the
@@ -891,7 +891,7 @@ namespace GnssProcessor {
      *
      * The fold is a second solve of the shared parameters, beside the float solve of the
      * same epoch, built from a copy of the float solve's reduced normals with the fixed
-     * L1/L2 pairs held (filter/NetworkFixedCycles.hpp).  The estimator, the carry, the
+     * L1/L2 pairs held (network/ar/NetworkFixedCycles.hpp).  The estimator, the carry, the
      * search, the DD trace and post-fit QC stay float in every mode.
      */
     enum class FixedCycleFold {
@@ -907,7 +907,7 @@ namespace GnssProcessor {
     enum class FixedCycleSource {
         Unset,    ///< Not named: refused whenever the fold is not off (the source is always named).
         Epoch,    ///< This epoch's determined L1/L2 pairs only: no memory, nothing to release (the FCF-2 probe).
-        Lattice   ///< The L1/L2 pairs the ledger of fixed cycles implies (the hold, step FCF-3; filter/NetworkArLattice.hpp), re-validated every epoch against the search's float.  Observe only: Emit with it is refused (decision D1 failed, and the author's ruling is not quoted).
+        Lattice   ///< The L1/L2 pairs the ledger of fixed cycles implies (the hold, step FCF-3; network/ar/NetworkArLattice.hpp), re-validated every epoch against the search's float.  Observe only: Emit with it is refused (decision D1 failed, and the author's ruling is not quoted).
     };
 
     /**
@@ -951,7 +951,7 @@ namespace GnssProcessor {
         /// corner (station, satellite) that was freed (the free-epoch latch, any cause),
         /// re-levelled or dropped (the LocalCarry @c relevel_s / @c dropped_ep stamps),
         /// dropped or erased by RAIM T4 / T3, had an MW verdict dropped as an unknown
-        /// integer, or was flagged by the arc GF jump trigger (filter/NetworkArSuspect.hpp).
+        /// integer, or was flagged by the arc GF jump trigger (network/ar/NetworkArSuspect.hpp).
         /// Each such event masks exactly @c suspect_epochs searches, starting with the first
         /// search that can act on it (a post-search RAIM event starts at the next epoch's).
         /// The DD stays in the basis and the trace (in_subset 0, with the armed-only columns
@@ -964,7 +964,7 @@ namespace GnssProcessor {
         /// byte-identical either way.  0 (default) = off.
         int    suspect_epochs{ 0 };
         /// Card AGT (step AGT-5): search a sticky, L1/L2-consistent, full-coverage short-cycle
-        /// basis (filter/NetworkArCycleBasis.hpp) instead of the per-signal tree_basis.  Per
+        /// basis (network/ar/NetworkArCycleBasis.hpp) instead of the per-signal tree_basis.  Per
         /// constellation the two signals with the most arcs share one graph (each further
         /// signal its own); a baseline forest kept from search to search (the incumbent links)
         /// is closed into one double difference per chord of every band, against the link
@@ -981,7 +981,7 @@ namespace GnssProcessor {
         /// without @ref cycle_basis.
         bool   cycle_basis_sticky{ true };
         /// Card AGT (step AGT-6), re-scoped by card FCF (step FCF-3): the ledger of fixed cycles
-        /// (filter/NetworkArLattice.hpp), stepped in the fixed-cycle seam at SB_SOLPREP.  Each
+        /// (network/ar/NetworkArLattice.hpp), stepped in the fixed-cycle seam at SB_SOLPREP.  Each
         /// search epoch it releases what ended (a skipped epoch; arcs vanished, first seen,
         /// freed, with a stamp change, or named by the landed within-epoch replay or the gross-LOS
         /// Decide; a fix that contradicts it), then offers the fixes that persisted
@@ -992,7 +992,7 @@ namespace GnssProcessor {
         /// the solve reads is written.  Off (default).
         bool   trace_lattice{ false };
         /// Card FCF (@c fixed_cycles.fold): fold the search's fixed L1/L2 pairs into a detached
-        /// held solve of the shared parameters (filter/NetworkFixedCycles.hpp).  Off (default)
+        /// held solve of the shared parameters (network/ar/NetworkFixedCycles.hpp).  Off (default)
         /// is byte-identical; Observe traces and counts the held solve; Emit hands it to
         /// solution prep and the emitter only.  The loader refuses a fold that is not off
         /// unless .enable and @ref cycle_basis are on, @c network.ambiguity_vehicle is
@@ -1380,7 +1380,7 @@ namespace GnssProcessor {
      * @brief The network process-noise class table.
      *
      * Every @c fallback below equals the loader's default for the legacy key beside
-     * it (enforced by tests/test_network_process_noise_config.cpp).  That equality
+     * it (enforced by tests/network/test_network_process_noise_config.cpp).  That equality
      * lets the table be always on without changing any result: with no
      * @c network.process_noise block present, every class resolves to the value the
      * run would have used anyway, so a stock config is byte-identical and every
@@ -1581,7 +1581,7 @@ namespace GnssProcessor {
         /// co-erase) | "erase_no_reseed" (the production erase minus the reseed mark) |
         /// "erase_keep_iono" and "erase_no_funnel" (both now act as "erase": the
         /// diagonal iono carry the first kept and the C3c queue the second withheld
-        /// belonged to retired mechanisms; see filter/NetworkInject.hpp).
+        /// belonged to retired mechanisms; see network/carry/NetworkInject.hpp).
         /// Harness only: it changes what the injected event does, never what a real
         /// attribution does.
         std::string mode;
@@ -1591,7 +1591,7 @@ namespace GnssProcessor {
         /// exact dual.  In both cases the step persists from @ref tow on.
         double      step_m{ 0.0 };
         /// @c oracle_pin only: which arcs are held at the fixture's true integers
-        /// (include/filter/NetworkOraclePin.hpp, docs/SPEC_oracle_pin.md).  One of
+        /// (include/network/slip/NetworkOraclePin.hpp, docs/SPEC_oracle_pin.md).  One of
         ///   - @c all                        : every carried non-anchor arc;
         ///   - @c band:<sig>[+<sig>…]        : e.g. `band:L1C+L2W`;
         ///   - @c station:<name>             : one roster station;
@@ -1854,7 +1854,7 @@ namespace GnssProcessor {
         ///
         /// Why: with @c network.estimate_sat_code_bias armed, the station split leaves
         /// every such column out of the local block under the declared rule
-        /// @c RxIfbRule (filter/NetworkParamInventory.hpp).  The rule rests on a premise
+        /// @c RxIfbRule (network/assembly/NetworkParamInventory.hpp).  The rule rests on a premise
         /// (the GIM ionosphere weighting leaves each station's ionosphere level free to
         /// absorb the delay) that the goldens do not satisfy: @c w6_iono_constraint none
         /// turns the weighting off.  The held value is then a constant in every
@@ -1889,7 +1889,7 @@ namespace GnssProcessor {
         /// with @c network.estimate_sat_code_bias (otherwise nothing is dropped) and when
         /// some active CDMA constellation has more than two bands under
         /// @c processing.frequency_mode (on dual no constellation does), the one
-        /// predicate @c rxExtraBandDelayEffective (filter/NetworkParamInventory.hpp);
+        /// predicate @c rxExtraBandDelayEffective (network/assembly/NetworkParamInventory.hpp);
         /// armed where it is not effective, the rule, the fingerprint and the outputs are
         /// the unarmed ones and the loader warns.  It also warns when
         /// @c network.rx_code_bias_datum or @c network.station_prior_before_pd is off.

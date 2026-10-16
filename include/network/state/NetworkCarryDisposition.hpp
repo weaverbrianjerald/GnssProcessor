@@ -28,10 +28,10 @@
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct ClockAnchorFold;     // filter/NetworkClockAnchor.hpp
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct ClockAnchorFold;     // network/solve/NetworkClockAnchor.hpp
 class  NetworkEstimator;
 struct GnssTime;
 
@@ -103,8 +103,8 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
                        const CarryFoldDecision& d, double var, bool dense,
                        ClockAnchorFold* anchor = nullptr);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Decide every carried border entry for this epoch (@ref carryFoldDecide), and
@@ -120,9 +120,9 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * retired in card NOM3 step EP2 (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t), ep.clock.dt
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t), ep.clock.dt
  *           (dt).
  *
  * The former parameters, by binding:
@@ -140,7 +140,7 @@ void networkCarryDecide(NetworkRun& run, const NetworkEpoch& ep);
  * A carried clock is the pivot-frame quantity @f$c_j - c_p@f$ (the clock datum pins one
  * satellite per constellation), so its state equation carries the pivot's walk over its
  * own interval, @f$r_p\,\Delta t_j@f$, and two such clocks share @f$r_p
- * \min(\Delta t_j, \Delta t_k)@f$ (filter/NetworkPivotFrameQ.hpp).  This pass adds the
+ * \min(\Delta t_j, \Delta t_k)@f$ (network/carry/NetworkPivotFrameQ.hpp).  This pass adds the
  * diagonal half to @c q_applied_m2 and records @f$r_p@f$ on the decision
  * (@c pfq_rate_m2ps); the dense fold and the exact coupling update add the pairwise half.
  * The pivot is the one the stashed posterior was pinned on (@c carry.pfq_pivot).  The
@@ -166,7 +166,7 @@ struct NetworkRunEndView;
  *   - networkPivotFrameQRunEnd: the pivot-frame clock noise (PFQ).
  *   - networkCarryDispositionTableRunEnd: the fold's dispositions of the carried border (PRM 1b).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkCarryDispositionRunEnd(const NetworkRunEndView& v);

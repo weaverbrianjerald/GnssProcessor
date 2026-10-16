@@ -1,7 +1,7 @@
 /**
  * @file test_network_gf_arc_jump.cpp
  * @brief Card ARL slip-ladder defect 1: the arc-scoped geometry-free jump trigger
- *        (include/slip/NetworkGfArcJump.hpp), its per-arc test and its PASS-A drain.
+ *        (include/network/slip/NetworkGfArcJump.hpp), its per-arc test and its PASS-A drain.
  *
  * ## What is under test
  *

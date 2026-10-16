@@ -1,7 +1,7 @@
 /**
  * @file NetworkCodeBiasDatum.cpp
  * @brief Stage 2 of the network solve (card NOM3 step SG): the W6 satellite code-bias datum.
- *        The declarations and their Doxygen are in filter/NetworkCodeBiasDatum.hpp.
+ *        The declarations and their Doxygen are in network/solve/NetworkCodeBiasDatum.hpp.
  */
 
 #include "network/solve/NetworkCodeBiasDatum.hpp"

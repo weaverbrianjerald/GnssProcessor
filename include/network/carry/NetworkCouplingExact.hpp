@@ -37,7 +37,7 @@
  * S-basis completion, so the producer does not use it.
  *
  * The functions here are pure (no run context), so the unit gate
- * (tests/test_coupling_exact_update.cpp) drives the same code as the producer.
+ * (tests/network/test_coupling_exact_update.cpp) drives the same code as the producer.
  */
 
 #include <Eigen/Dense>
@@ -234,7 +234,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.carry_cpl_exact`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkCouplingExactRunEnd(const NetworkRunEndView& v);

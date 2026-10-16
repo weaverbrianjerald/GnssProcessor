@@ -3,7 +3,7 @@
  * @brief The ledger of fixed integer cycles (cards AGT and FCF): the cause table, the evidence,
  *        the one release function, the epoch's steps, the record of its two files, and its
  *        run-end report.  What it holds, its order and why it keeps no stamp of its own are in
- *        the header's file banner, include/filter/NetworkArLattice.hpp.
+ *        the header's file banner, include/network/ar/NetworkArLattice.hpp.
  */
 
 #include "network/ar/NetworkArLattice.hpp"

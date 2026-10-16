@@ -310,7 +310,7 @@ namespace GnssProcessor {
         const std::shared_ptr<spdlog::logger>& log = v.log;
 
         // Canonical-pair admission run-end (card CPA,
-        // filter/NetworkCanonicalPairAdmission.cpp): the withheld census and both edges, in
+        // network/assembly/NetworkCanonicalPairAdmission.cpp): the withheld census and both edges, in
         // one line.  Silent when the rule is disarmed; the ARMED AND INERT clause covers an
         // armed run whose counters never moved (invariant #4).  Read before the zero-emit
         // guard for the same reason as the injector's clause: a rule that withheld the whole

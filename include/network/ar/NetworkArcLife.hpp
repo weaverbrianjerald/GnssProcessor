@@ -23,14 +23,14 @@
  *
  * Equal stamps mean the integer is continuous as far as these owners know.  The stamp is
  * read, never stored here: a caller that compares lives keeps the earlier stamp (the
- * cycle-basis search keeps one per arc in its family memory, filter/NetworkArCycleBasis.hpp).
+ * cycle-basis search keeps one per arc in its family memory, network/ar/NetworkArCycleBasis.hpp).
  * It is live at the defaults: the ledger is built on every network run, and the carry fields
  * exist whenever the leveling carry does.
  *
  * ## One reader of the carry stamps
  *
  * Card AGT section 3 binds the life stamp and the search's suspect-corner mask
- * (filter/NetworkArSuspect.hpp) to one reader of the @c LocalCarry life fields, so that
+ * (network/ar/NetworkArSuspect.hpp) to one reader of the @c LocalCarry life fields, so that
  * neither keeps a second record of an arc's life.  That reader is @ref carryLifeOf: the
  * stamp reads it here, and the mask's per-epoch fold reads it for its drop and re-level
  * causes.
@@ -60,9 +60,9 @@
 
 namespace GnssProcessor {
 
-struct ArcRecord;           // filter/ArcLedger.hpp
-struct LocalCarry;          // filter/NetworkRunTypes.hpp
-struct NetworkRunContext;   // app/NetworkRunContext.hpp
+struct ArcRecord;           // network/state/ArcLedger.hpp
+struct LocalCarry;          // network/driver/NetworkRunTypes.hpp
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp
 
 /// The life fields of one @c LocalCarry entry (the one reader of them; file banner).
 struct CarryLife {

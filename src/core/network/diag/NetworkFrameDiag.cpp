@@ -510,7 +510,7 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
  * `config_.getNetworkConfig().trace_postfit_sigma0`;
  * `config_.getNetworkConfig().trace_postfit_rows`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkPostfitRunEnd(const NetworkRunEndView& v) {
@@ -562,7 +562,7 @@ static int networkPostfitRunEnd(const NetworkRunEndView& v) {
  *
  * Gate: prints under `config_.getNetworkConfig().trace_sh_spectrum`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkShSpectrumRunEnd(const NetworkRunEndView& v) {
@@ -579,7 +579,7 @@ static int networkShSpectrumRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkFrameDiag.hpp).
+// declared in network/diag/NetworkFrameDiag.hpp).
 int networkFrameDiagRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkPostfitRunEnd,

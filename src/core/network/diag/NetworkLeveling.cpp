@@ -48,7 +48,7 @@ void networkLeveling(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& event
     const std::set<std::pair<std::string, std::string>>& eq34_reref = ep.events.phase_datum.eq34_reref;
     // ---- End of the bindings ----
     // The station-local carries' harvest, stash and prune, kind by kind
-    // (app/NetworkLocalCarryHarvest.hpp, card NOM3 step HV1).
+    // (network/carry/NetworkLocalCarryHarvest.hpp, card NOM3 step HV1).
     networkHarvestLocalCarries(run, ep, events);
 
     // --- eq34 (sat,σ) re-reference attribution rows (SPEC_lane_slip_response §7.7)

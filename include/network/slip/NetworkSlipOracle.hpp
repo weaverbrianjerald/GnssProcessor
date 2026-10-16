@@ -38,14 +38,14 @@
  * ## Where it actuates, and where it does not
  *
  * One helper (@ref networkSlipOracleHandle) serves the detector refloat
- * actuation sites in slip/NetworkSlipQc.cpp, which cover the four detector tiers:
+ * actuation sites in network/slip/NetworkSlipQc.cpp, which cover the four detector tiers:
  *   - `refloat_signal` (both the MW confident-wide-lane drain and the RINEX-LLI
  *     drain go through it),
  *   - `refloat_pair`   (the IF-phase triple-difference driver, both bands),
  *   - `networkSlipDrainWindupRestart` (whole satellite, every signal).
  * `networkSlipDrainGapReentry` is a different response (a break the detectors
  * cannot cover) and is left alone, as is the T4 RAIM-attribution erase path in
- * filter/NetworkRaim.cpp: the census question is what a perfect detector
+ * network/qc/NetworkRaim.cpp: the census question is what a perfect detector
  * response would buy with every other mechanism held fixed.
  *
  * When the helper returns true the caller skips every freeing action for that
@@ -332,7 +332,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.carry.slip_oracle`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSlipOracleRunEnd(const NetworkRunEndView& v);

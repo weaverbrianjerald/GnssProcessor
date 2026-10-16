@@ -47,11 +47,11 @@ namespace GnssProcessor {
     class SphericalHarmonicIonosphere;
     struct NetStation;
     struct GnssTime;
-    struct EpochStatusRow;          // filter/NetworkRunTypes.hpp (INC-4 hoist)
-    struct NetworkKnobs;            // app/NetworkRunContext.hpp (INC-4)
-    struct NetworkServiceCounters;  // app/NetworkRunContext.hpp (INC-4)
+    struct EpochStatusRow;          // network/driver/NetworkRunTypes.hpp (INC-4 hoist)
+    struct NetworkKnobs;            // network/state/NetworkRunContext.hpp (INC-4)
+    struct NetworkServiceCounters;  // network/state/NetworkRunContext.hpp (INC-4)
     struct ConsumerSatRow;          // realtime/ConsumerSatTrace.hpp (card CST)
-    class  NetworkCarryVceApply;    // filter/NetworkCarryVceApply.hpp (M2 v2)
+    class  NetworkCarryVceApply;    // network/carry/NetworkCarryVceApply.hpp (M2 v2)
 
     /// Flag-rate tally for one QC tier (B8): {opportunities, flags}.  Summarized at the
     /// end of the run as the realized rate against the two-sided Gaussian
@@ -176,7 +176,7 @@ namespace GnssProcessor {
     /// its integer when `kept` = 1 and 0 otherwise, so read it through `kept`.
     /// `fix.kept` indexes the capped, σ-permuted search vector, not the basis; the
     /// mapping back is @ref netar::mapFixToBasis, unit-tested in
-    /// tests/test_producer_ar_trace.cpp because an error there would mislabel which
+    /// tests/network/test_producer_ar_trace.cpp because an error there would mislabel which
     /// satellite was fixed without any other symptom.
     ///
     /// `ratio` / `p_succ` / `n_dd` / `n_search` / `n_fixed` are epoch scalars repeated
@@ -208,7 +208,7 @@ namespace GnssProcessor {
         "wl_float_sigma_cyc,wl_cond_cyc,wl_cond_sigma_cyc,nl_cond_sigma_cyc\n";
     /// The two columns appended to either header above (before its newline) when
     /// network.ambiguity_resolution.suspect_epochs is armed (card ARL,
-    /// filter/NetworkArSuspect.hpp).  suspect_bits is the OR of the DD's four corners'
+    /// network/ar/NetworkArSuspect.hpp).  suspect_bits is the OR of the DD's four corners'
     /// ArSuspectCause bits (1 free, 2 relevel, 4 drop, 8 raim, 16 mw_unknown, 32 gf_jump):
     /// non-zero means the mask kept the DD out of the search, which tells a masked DD from
     /// one the ils_max_dim cap left out.  reentry is 1 on a searched DD one of whose corners
@@ -216,7 +216,7 @@ namespace GnssProcessor {
     inline constexpr const char* kProducerArSuspectColumns = ",suspect_bits,reentry";
     /// The four columns appended after those (before the header's newline) when
     /// network.ambiguity_resolution.cycle_basis is armed (card AGT, step AGT-5,
-    /// filter/NetworkArCycleBasis.hpp).  cycle_kind is how the DD closes its chord: partner
+    /// network/ar/NetworkArCycleBasis.hpp).  cycle_kind is how the DD closes its chord: partner
     /// (against the station's link parent and link reference) or borrowed (against an earlier
     /// station sharing the most satellites); a chord no DD closes is a fundamental fallback,
     /// counted at the run end and never a row.  band_only is 1 when the chord exists in this
@@ -228,7 +228,7 @@ namespace GnssProcessor {
     /// or no stored basis).
     inline constexpr const char* kProducerArCycleBasisColumns = ",cycle_kind,band_only,basis_age_ep,map_state";
     /// network_ar_lattice.csv header (card AGT, step AGT-6, widened by card FCF step FCF-3;
-    /// filter/NetworkArLattice.hpp; network.ambiguity_resolution.trace_lattice).  One row per
+    /// network/ar/NetworkArLattice.hpp; network.ambiguity_resolution.trace_lattice).  One row per
     /// ledger step (an epoch the search built the cycle basis), after the seam gap, the evidence
     /// releases, the contradictions, the fold's re-validation, the admission and the fold's own
     /// releases, in that order.
@@ -275,7 +275,7 @@ namespace GnssProcessor {
     inline constexpr const char* kArLatticeEventsHeader =
         "week,tow,event,cons,signal,sat_j,ref_sat,sta_r,ref_sta,value,implied,len,cause,"
         "rows_touched,rows_dropped,change_bits,free_cause\n";
-    /// network_fixed_cycles.csv header (card FCF, filter/NetworkFixedCycles.hpp;
+    /// network_fixed_cycles.csv header (card FCF, network/ar/NetworkFixedCycles.hpp;
     /// network.ambiguity_resolution.fixed_cycles.trace).  One row per unit-epoch: a DD
     /// identity (cons, sat_j, ref_sat, sta_r, ref_sta) the search determined in both bands
     /// (sig1 the shorter wavelength), with its integers n1 / n2, its floats y1_cyc / y2_cyc,
@@ -574,7 +574,7 @@ namespace GnssProcessor {
         /// (network.ambiguity_resolution.trace with network.ambiguity_resolution.enable):
         /// the searched DD basis with its identities, float value, formal σ, subset
         /// membership and the integer the ILS returned.  Written by
-        /// filter/NetworkProducerAr.cpp; graded against truth_ambiguities.csv by
+        /// network/ar/NetworkProducerAr.cpp; graded against truth_ambiguities.csv by
         /// scripts/simnet_producer_ar_grade.py.  Columns: @ref kProducerArHeader.
         /// Diagnostic only: the emitted product is byte-identical with it on or off.
         std::ofstream producer_ar_trace;
@@ -582,7 +582,7 @@ namespace GnssProcessor {
         /// The producer AR search's lattice observatory (card AGT, step AGT-6;
         /// network.ambiguity_resolution.trace_lattice with .enable): one row per search epoch
         /// (@ref kArLatticeHeader) and one per release or non-confirming offer
-        /// (@ref kArLatticeEventsHeader).  Written by filter/NetworkArLattice.cpp.
+        /// (@ref kArLatticeEventsHeader).  Written by network/ar/NetworkArLattice.cpp.
         /// Measure-only: the emitted product is byte-identical with it on or off.
         std::ofstream ar_lattice_trace;
         const std::filesystem::path ar_lattice_trace_path;
@@ -591,7 +591,7 @@ namespace GnssProcessor {
         /// The fixed-cycle fold (card FCF; network.ambiguity_resolution.fixed_cycles.trace
         /// with the fold armed): one row per unit-epoch (@ref kFixedCyclesHeader) and the held
         /// minus float of every emitted quantity on an accepted epoch
-        /// (@ref kFixedCycleShiftHeader).  Written by filter/NetworkFixedCycles.cpp.
+        /// (@ref kFixedCycleShiftHeader).  Written by network/ar/NetworkFixedCycles.cpp.
         std::ofstream fixed_cycles_trace;
         const std::filesystem::path fixed_cycles_trace_path;
         std::ofstream fixed_cycle_shift_trace;

@@ -5,7 +5,7 @@
  *
  * The table is the epoch's instrument order, and a reordered or re-slotted row changes the
  * interleaving of trace rows, events and log lines without any unit test noticing; the order
- * constraints of filter/NetworkEpochObservers.hpp are checked by name below, and the whole
+ * constraints of network/driver/NetworkEpochObservers.hpp are checked by name below, and the whole
  * table is pinned so a change to it is a deliberate edit here.
  */
 

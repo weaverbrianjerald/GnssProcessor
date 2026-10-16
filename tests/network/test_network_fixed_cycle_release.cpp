@@ -1,7 +1,7 @@
 /**
  * @file test_network_fixed_cycle_release.cpp
  * @brief Unit gates of the fixed-cycle hold's one release seam (card FCF, step FCF-3;
- *        filter/NetworkArLattice.hpp and filter/NetworkFixedCycles.hpp).
+ *        network/ar/NetworkArLattice.hpp and network/ar/NetworkFixedCycles.hpp).
  *
  * Suite @c NetworkFixedCycleRelease (the gates of card FCF section 6, FCF-3):
  *  - each evidence cause releases exactly its arcs, with its detail bits (vanished, first seen,

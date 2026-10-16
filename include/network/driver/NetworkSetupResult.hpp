@@ -203,7 +203,7 @@ struct NetworkRunEndView;
  * Gate: returns 0 at once unless `ctx.counters.n_marker_arp_ecc > 0 ||
  * ctx.counters.n_marker_arp_no_record > 0`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkMarkerArpRunEnd(const NetworkRunEndView& v);

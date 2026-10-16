@@ -60,7 +60,7 @@
  * @f$\sqrt{(p+v)/(\varepsilon p)}@f$, about 3.2e6 for a 1e-4 m² carry against a
  * 1 m² refloat.  Every RESPONDED row would then land in the top ladder bin by
  * construction, and the positive-control gate would pass without measuring
- * anything.  Test 10 of @c tests/test_prior_residual_census.cpp keeps this case
+ * anything.  Test 10 of @c tests/network/test_prior_residual_census.cpp keeps this case
  * as a negative example.
  *
  * ## The critical value is empirical, not tabular (the D5 precedent)
@@ -152,9 +152,9 @@
  *
  * Pure numeric leaf class in the @ref NetworkCarryVce / @c NeqAccumulator mould:
  * header-only, no @c ApplicationNetwork coupling, no @c StateManager, no I/O.
- * It takes @ref Input rows and returns ladders; @c tests/test_prior_residual_census.cpp
+ * It takes @ref Input rows and returns ladders; @c tests/network/test_prior_residual_census.cpp
  * drives it directly with synthetic rows of known truth.  The per-epoch trace,
- * event and aggregate emission lives in @c filter/NetworkPriorResidual.cpp, the
+ * event and aggregate emission lives in @c network/qc/NetworkPriorResidual.cpp, the
  * only translation unit that knows about traces.
  */
 
@@ -308,9 +308,9 @@ inline PriorResidualCorrob priorResidualOrVerdict(const PriorResidualEvidence& e
  * @brief Per-row prior-residual census over the carried stiff priors (v1).
  *
  * One instance per producer run, with the same lifetime and ownership as
- * @ref NetworkCarryVce: an engine the run owns (run.engines.prires, app/NetworkRun.hpp;
+ * @ref NetworkCarryVce: an engine the run owns (run.engines.prires, network/driver/NetworkRun.hpp;
  * a run-TU local passed by reference until card NOM3 step EP1; see the note on engine
- * objects in the @c app/NetworkRunContext.hpp banner).
+ * objects in the @c network/state/NetworkRunContext.hpp banner).
  */
 class NetworkPriorResidual {
 public:
@@ -1256,15 +1256,15 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-//  The emission seam (filter/NetworkPriorResidual.cpp)
+//  The emission seam (network/qc/NetworkPriorResidual.cpp)
 // ---------------------------------------------------------------------------
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp    (included in the .cpp only)
-struct EpochEvents;         // app/NetworkEpoch.hpp
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp (included in the .cpp only)
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp    (included in the .cpp only)
+struct EpochEvents;         // network/driver/NetworkEpoch.hpp
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp (included in the .cpp only)
 struct SyncedEpoch;         // rinex/MultiRinexSync.hpp     (included in the .cpp only)
-struct NetStation;          // filter/NetworkRunTypes.hpp   (included in the .cpp only)
+struct NetStation;          // network/driver/NetworkRunTypes.hpp   (included in the .cpp only)
 
 /**
  * @brief Drain this epoch's census into the traces, the events and the counters.
@@ -1323,7 +1323,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints under `ctx.knobs.prires_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkPriorResidualRunEnd(const NetworkRunEndView& v);

@@ -516,7 +516,7 @@ struct NetworkRunEndView;
  *
  * Gate: prints always (a block).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkCommonBandScopeRunEnd(const NetworkRunEndView& v);

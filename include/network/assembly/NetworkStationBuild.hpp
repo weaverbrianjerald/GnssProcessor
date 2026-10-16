@@ -24,16 +24,16 @@
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochPassA;              // app/NetworkEpoch.hpp
-struct EpochAssembly;           // app/NetworkEpoch.hpp
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochPassA;              // network/driver/NetworkEpoch.hpp
+struct EpochAssembly;           // network/driver/NetworkEpoch.hpp
 
-struct NetworkRunContext;       // app/NetworkRunContext.hpp
-struct NetworkSetupResult;      // app/NetworkSetupResult.hpp
-struct EpochClock;              // app/NetworkEpoch.hpp
+struct NetworkRunContext;       // network/state/NetworkRunContext.hpp
+struct NetworkSetupResult;      // network/driver/NetworkSetupResult.hpp
+struct EpochClock;              // network/driver/NetworkEpoch.hpp
 struct SyncedEpoch;             // rinex/MultiRinexSync.hpp
 class GnssConfig;
 class NetworkEstimator;
@@ -55,9 +55,9 @@ class GlobalIonosphereMap;
  * bindings is the frozen text; a piece wholly inside one `if` returns early instead
  * (scripts/nom_pb1/declared.py).
  *
- * @param run The run (app/NetworkRun.hpp). Bindings: run.ctx (ctx), run.config (config_),
+ * @param run The run (network/driver/NetworkRun.hpp). Bindings: run.ctx (ctx), run.config (config_),
  *            run.log (log), run.setup (setup), run.traces (traces), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
  *           ep.clock.pl_now_s (pl_now_s), ep.pass_a.present (present),
  *           ep.pass_a.shared_phase_keys (shared_phase_keys), ep.columns.registered_clock_sats
  *           (registered_clock_sats).
@@ -99,7 +99,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
 //     route (no block); or, when the station's block fails to factor, the phase-colour
 //     fallback rows and then the ambiguity fallback rows (both built by local_block, in that
 //     order); then the wet-delay row.
-// tests/test_network_station_build.cpp pins the table orders.
+// tests/network/test_network_station_build.cpp pins the table orders.
 //
 // Adding a station contribution: a new step (or an existing family's step) in the family's
 // own file, one row of the table with the kinds it creates, its kinds' builder column in
@@ -144,7 +144,7 @@ struct StationBuildStep {
     StationBuildFn      build;   ///< Gates itself at its first line.
 };
 inline constexpr std::size_t kStationBuildStepCount = 12;
-/// The station build, in walk order (src/core/filter/NetworkStationBuild.cpp).
+/// The station build, in walk order (src/core/network/assembly/NetworkStationBuild.cpp).
 extern const std::array<StationBuildStep, kStationBuildStepCount> kStationBuildSteps;
 
 /// An ambiguity column waiting for the station's local block (or its per-column fallback):
@@ -204,12 +204,12 @@ bool networkStationBuild(StationBuild& build);
  *        kStationBuildSteps (networkStationBuild).
  *
  * An epoch writer in EP1's form (run, ep, kept, outputs), a row of
- * tests/test_network_epoch_contract.cpp; called by Application::networkPassB_ (card NOM3 step
+ * tests/network/test_network_epoch_contract.cpp; called by Application::networkPassB_ (card NOM3 step
  * PB1b).  Reads the run (ctx, config, setup, the estimator's layout) and the epoch (se, clock,
  * pass_a) and hands each step a const view of them (StationBuild).
  *
- * @param run      The run (app/NetworkRun.hpp).
- * @param ep       The epoch (app/NetworkEpoch.hpp), read only: se, clock, pass_a.
+ * @param run      The run (network/driver/NetworkRun.hpp).
+ * @param ep       The epoch (network/driver/NetworkEpoch.hpp), read only: se, clock, pass_a.
  * @param gim      Kept: Application::gim_ (the GIM rows), the one input NetworkRun does not
  *                 hold (decision 4).
  * @param assembly [in/out] asm_res: each iteration writes its own station's slot.

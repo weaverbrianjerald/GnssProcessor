@@ -1,7 +1,7 @@
 /**
  * @file NetworkSlipFunnel.cpp
  * @brief The slip funnel's two driver-side drains: its opening and the raw subset's union
- *        (card NOM3 step EP2; the type and its producers and readers: filter/NetworkSlipFunnel.hpp).
+ *        (card NOM3 step EP2; the type and its producers and readers: network/slip/NetworkSlipFunnel.hpp).
  *
  * Every statement below a "From ..." preamble is the frozen text of
  * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked
@@ -31,7 +31,7 @@ void networkSlipFunnelOpen(NetworkRun& run, const NetworkEpoch& ep, NetworkSlipF
     // ---- End of the bindings ----
     // This epoch's slip event feed for the DD invariant carry: the (app station index,
     // ambiguity key) pairs the PASS-A slip detectors flagged.  It is filled at the
-    // detection site (the slip/NetworkSlipQc.cpp drains) rather than read from
+    // detection site (the network/slip/NetworkSlipQc.cpp drains) rather than read from
     // pending-reseed at fold time, because PASS-B MeasurementModel::compute re-seeds
     // and clears the pending-reseed flag before buildCarryDdPriors runs (the flag is a
     // one-shot the assembly consumes).  It is recorded regardless of carry_warm (the

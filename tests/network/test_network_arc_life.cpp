@@ -1,7 +1,7 @@
 /**
  * @file test_network_arc_life.cpp
  * @brief Unit tests of the arc life stamp and the search's track of a life (card AGT, step
- *        AGT-5; include/filter/NetworkArcLife.hpp).
+ *        AGT-5; include/network/ar/NetworkArcLife.hpp).
  *
  * Suite @c NetworkArcLife:
  *  - the stamp read from its three sources (the arc ledger's admitted side, the leveling carry,

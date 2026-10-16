@@ -87,12 +87,12 @@ namespace GnssProcessor {
 
     class GnssConfig;
     class NetworkRunTraces;
-    struct NetStation;               // filter/NetworkRunTypes.hpp
+    struct NetStation;               // network/driver/NetworkRunTypes.hpp
     struct NetworkRunContext;
     struct PppObservation;           // common/PppObservation.hpp
     struct SyncedEpoch;              // rinex/MultiRinexSync.hpp
     struct GnssTime;                 // common/GnssTypes.hpp
-    struct RawSlipEpoch;             // slip/NetworkRawObservables.hpp
+    struct RawSlipEpoch;             // network/slip/NetworkRawObservables.hpp
     struct NetworkSolutionEpoch;     // products/NetworkProductEmitter.hpp
 
     /**
@@ -290,7 +290,7 @@ namespace GnssProcessor {
                                            const RosterSiteCounts& start);
 
     // =====================================================================
-    // The site census of card NOM step N3b (app/SignalRosterSites.cpp)
+    // The site census of card NOM step N3b (network/assembly/SignalRosterSites.cpp)
     // =====================================================================
 
     /**
@@ -897,7 +897,7 @@ namespace GnssProcessor {
 
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
-        /// The site census of card NOM step N3b (app/SignalRosterSites.cpp).
+        /// The site census of card NOM step N3b (network/assembly/SignalRosterSites.cpp).
         RosterN3bCensus n3b{};
     };
 
@@ -949,8 +949,8 @@ namespace GnssProcessor {
                                 const std::shared_ptr<spdlog::logger>& log,
                                 const std::vector<NetStation>& stations);
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief Build this epoch's roster and advance the arc ledger (the single call
@@ -964,10 +964,10 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.config (config_), run.log (log),
      *            run.setup.stations (stations).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context (the roster, the ledger and the counters).
@@ -1137,11 +1137,11 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.config (config_), run.log (log),
      *            run.setup.stations (stations), run.engines.slip_qc.epoch.computed ?
      *            &run.engines.slip_qc.epoch : nullptr (raw).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
      *           ep.pass_a.modeled (modeled), ep.pass_a.present (present),
      *           ep.funnel.carry_slipped_ambs (freed), ep.prep.sol (sol), ep.emitted (emitted).
      *
@@ -1246,19 +1246,19 @@ namespace GnssProcessor {
      *   - networkSignalRosterPlanRunEnd: signals as planned (NOM N3a).
      *   - networkSignalRosterLedgerRunEnd: the signal roster and the arc ledger (SID phase 1).
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0, or the last non-zero verdict of its sections.
      */
     int networkSignalRosterRunEnd(const NetworkRunEndView& v);
 
     /**
-     * @brief Run-end report: the N3b site census (app/SignalRosterSites.cpp).
+     * @brief Run-end report: the N3b site census (network/assembly/SignalRosterSites.cpp).
      *
      * One header line and one line per @ref RosterN3bSite: the site's compared and
      * disagreeing counts over the run, its fallback reads, and its most frequent
      * disagreements.  Trace class (no trace file, product or manifest record).
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkSignalRosterSitesRunEnd(const NetworkRunEndView& v);
@@ -1266,7 +1266,7 @@ namespace GnssProcessor {
     // ---- End of the run-end reports ----
 
     // =====================================================================
-    // The N3b site census and the roster reads (app/SignalRosterSites.cpp)
+    // The N3b site census and the roster reads (network/assembly/SignalRosterSites.cpp)
     // =====================================================================
 
     /**

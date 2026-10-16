@@ -20,7 +20,7 @@ namespace GnssProcessor {
 
 struct NetworkRun;
 struct NetworkEpoch;
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 struct EpochPassA;
 
 /**

@@ -3,7 +3,7 @@
  * @file NetworkOraclePinSetup.hpp
  * @brief Setup builder of the oracle ambiguity pin (card NOM3 step EP4).
  *
- * The builder is called once from Application::runNetwork (src/core/app/ApplicationNetwork.cpp).
+ * The builder is called once from Application::runNetwork (src/core/network/driver/ApplicationNetwork.cpp).
  */
 
 namespace GnssProcessor {

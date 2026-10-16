@@ -14,7 +14,7 @@
  *
  * ## One ledger epoch, in order
  *
- * The step runs inside the fixed-cycle seam (filter/NetworkFixedCycles.hpp, SB_SOLPREP after
+ * The step runs inside the fixed-cycle seam (network/ar/NetworkFixedCycles.hpp, SB_SOLPREP after
  * the gross-LOS Decide), whenever @c trace_lattice is armed or the fold reads the lattice
  * (@c fixed_cycles.source lattice):
  *
@@ -27,7 +27,7 @@
  *     when this epoch's landed within-epoch replay or gross-LOS Decide named its line of sight.
  *  3. **Contradictions.**  A fix of this epoch whose cycle the lattice implies at another
  *     integer releases the arcs of that cycle at once.
- *  4. **Re-validation** (the fold's, between steps 3 and 5: filter/NetworkFixedCycles.hpp).
+ *  4. **Re-validation** (the fold's, between steps 3 and 5: network/ar/NetworkFixedCycles.hpp).
  *     Every L1/L2 unit the lattice implies is tested against the search's float; failures are
  *     released through @ref arLatticeRelease.
  *  5. **Admission** (@ref arLatticeAdmit).  A fix enters only after @c persist_ep consecutive
@@ -55,7 +55,7 @@
  * ## One reading of a life
  *
  * The ledger keeps no stamp of its own.  Card AGT section 3 binds the readers of an arc's life
- * to one record, and the search's reading (@ref arcLifeStep, filter/NetworkArcLife.hpp) is that
+ * to one record, and the search's reading (@ref arcLifeStep, network/ar/NetworkArcLife.hpp) is that
  * record, with its echo rule.  Post-fit QC at epoch t (RAIM T3 / T4, the gross-LOS Act) acts
  * after the emission; its stamp is read at t + 1 (counted as late by the fold).
  *
@@ -98,15 +98,15 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 class GnssConfig;
-struct NetStation;           // filter/NetworkRunTypes.hpp
-struct NetworkRunContext;    // app/NetworkRunContext.hpp
-struct NetworkRunEndView;    // filter/NetworkRunEnd.hpp
-struct NetworkRunTraces;     // logging/NetworkRunTraces.hpp
+struct NetStation;           // network/driver/NetworkRunTypes.hpp
+struct NetworkRunContext;    // network/state/NetworkRunContext.hpp
+struct NetworkRunEndView;    // network/runend/NetworkRunEnd.hpp
+struct NetworkRunTraces;     // network/diag/NetworkRunTraces.hpp
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp
-struct WithinEpochCulprits;  // filter/NetworkWithinEpochCulprits.hpp
+struct WithinEpochCulprits;  // network/qc/NetworkWithinEpochCulprits.hpp
 
 /// Why the ledger released lattice content (the file banner's steps; one row each of
 /// @ref arLatticeReleaseSpec).
@@ -425,7 +425,7 @@ bool arLatticeArmed(const GnssConfig& config_);
  *
  * Gate: returns 0 at once unless @ref arLatticeArmed.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkArLatticeRunEnd(const NetworkRunEndView& v);

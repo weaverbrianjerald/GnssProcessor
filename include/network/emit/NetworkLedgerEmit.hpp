@@ -64,7 +64,7 @@ namespace GnssProcessor {
     class GnssConfig;
     class NetworkProductEmitter;
     class NetworkRunTraces;
-    struct NetStation;               // filter/NetworkRunTypes.hpp
+    struct NetStation;               // network/driver/NetworkRunTypes.hpp
     struct NetworkRunContext;
     struct NetworkSolutionEpoch;
     struct SyncedEpoch;
@@ -206,8 +206,8 @@ namespace GnssProcessor {
                                   const NetworkProductEmitter& emitter,
                                   const NetworkSolutionEpoch& sol);
 
-    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief Fold half (E1): compare the capture with the ledger, count, write events.
@@ -220,9 +220,9 @@ namespace GnssProcessor {
      * retired in card NOM3 step EP2 (the unit tests call this form through
      * tests/support/NetworkTestRun.hpp).
      *
-     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces).
-     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context.
@@ -284,7 +284,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkLedgerEmitRunEnd(const NetworkRunEndView& v);

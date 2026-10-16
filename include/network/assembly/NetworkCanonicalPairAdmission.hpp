@@ -89,7 +89,7 @@ namespace GnssProcessor {
 
     class GnssConfig;
     class NetworkRunTraces;
-    struct NetStation;             // filter/NetworkRunTypes.hpp
+    struct NetStation;             // network/driver/NetworkRunTypes.hpp
     struct NetworkRunContext;
     struct SyncedEpoch;            // rinex/MultiRinexSync.hpp, namespace-level
 
@@ -274,7 +274,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkCanonicalPairRunEnd(const NetworkRunEndView& v);

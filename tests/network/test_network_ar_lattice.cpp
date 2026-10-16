@@ -1,7 +1,7 @@
 /**
  * @file test_network_ar_lattice.cpp
  * @brief Unit gates of the producer AR search's lattice observatory (card AGT, step AGT-6;
- *        filter/NetworkArLattice.hpp).
+ *        network/ar/NetworkArLattice.hpp).
  *
  * Suite @c NetworkArLattice (the ledger's steps, pure; card AGT step AGT-6 as re-scoped by card
  * FCF step FCF-3, run here with @c persist_ep 1, the observatory's immediate offers):
@@ -19,7 +19,7 @@
  *  - the run tallies count stamp fields and free causes on the arc releases that held rows only.
  * Card FCF's release seam (the evidence, the cycle releases, the seam gap, the admission
  * streak, the re-validation) is suite @c NetworkFixedCycleRelease
- * (tests/test_network_fixed_cycle_release.cpp).
+ * (tests/network/test_network_fixed_cycle_release.cpp).
  *
  * Suite @c NetworkArLatticeConfig (the loader): the knob defaults off, arms with the cycle basis
  * and is forced off without it; the two files' headers.

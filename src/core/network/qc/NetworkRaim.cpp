@@ -1227,7 +1227,7 @@ std::string RaimPoolAdmissionTally::ownColumnText() const {
  * Gate: each section under its own condition, as in the teardown: always (a block);
  * `ctx.knobs.raim_ci_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
@@ -1331,7 +1331,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
  * config_.networkRaimWithholdFreeErase()`; `config_.networkRaimStationFactor()`;
  * `config_.networkRaimRateHygiene()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkRaimWithholdRunEnd(const NetworkRunEndView& v) {
@@ -1387,7 +1387,7 @@ static int networkRaimWithholdRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkRaim.hpp).
+// declared in network/qc/NetworkRaim.hpp).
 int networkRaimRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRaimPoolRunEnd,

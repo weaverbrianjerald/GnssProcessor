@@ -7,7 +7,7 @@
  *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
  *
  * `classifyRow` and the shared-column family/label pass live here so that the
- * attribution (`src/core/filter/NetworkRhsAttrib.cpp`), the prefit census
+ * attribution (`src/core/network/qc/NetworkRhsAttrib.cpp`), the prefit census
  * (INC-1), the structural fuse (INC-2), the seed-birth tripwire (INC-3), the
  * topology ledger (INC-4), the redundancy census and its riders all use one verdict
  * about what a row is.
@@ -15,7 +15,7 @@
  * ## Where a row's class comes from (card NOM step N2b)
  *
  * Every row of a station block carries a @ref RowTag, appended by the site that built
- * the row (card NOM step N2a, filter/NetworkContributions.hpp).  The class is a function
+ * the row (card NOM step N2a, network/assembly/NetworkContributions.hpp).  The class is a function
  * of the tag's kind (@ref rowClassOfKind), read in one place.  Before this step the
  * class was inferred: phase from a satellite phase-bias partial or a touch above 0.5 on
  * an ambiguity column listed in @c R.pl_amb, code from a satellite code-bias partial,
@@ -57,7 +57,7 @@
  * SD-EWL constraint rows.
  * That is today's population stated as a rule (card NOM section 16, suspect 1): the
  * prior rows are in it on purpose until the science card RPA decides otherwise.  Every
- * admission is counted per kind (@c RaimPoolAdmissionTally, filter/NetworkRaim.hpp), and a
+ * admission is counted per kind (@c RaimPoolAdmissionTally, network/qc/NetworkRaim.hpp), and a
  * row of any other kind that clears 0.5 is counted as refused (expected 0).
  *
  * Card RPA's knob (@c network.raim_pool_data_rows_only, default off) replaces the rule in

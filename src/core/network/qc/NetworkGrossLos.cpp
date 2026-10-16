@@ -5,7 +5,7 @@
  *        rationale and the contract.
  *
  * The row walk below uses the same walk and the same family classification as
- * @c networkPostfitSigma0 (`filter/NetworkFrameDiag.cpp`), the pass that measures
+ * @c networkPostfitSigma0 (`network/diag/NetworkFrameDiag.cpp`), the pass that measures
  * the residuals this screen acts on.  If the two disagreed about which rows are
  * code, the grade (`network_pf_rows.csv`) and the response would describe
  * different populations.  The differences are that this walk is not gated on a
@@ -46,7 +46,7 @@
 namespace GnssProcessor {
 
 // ---------------------------------------------------------------------------
-// Pure rules (unit-tested in tests/test_network_gross_los.cpp)
+// Pure rules (unit-tested in tests/network/test_network_gross_los.cpp)
 // ---------------------------------------------------------------------------
 
 double networkGrossLosUndoDeweight(double r_folded, double scale) {
@@ -1190,7 +1190,7 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
  * `ctx.knobs.amb_float_kf`; always (a block); `g.declared > 0 && g.rows_deweighted ==
  * 0`; `g.los_screened > 0`; `ctx.knobs.gl2_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
@@ -1428,7 +1428,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
  * Gate: none of its own: the row calls the report above on every run, as the teardown
  * did, and that report applies its own.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 static int networkGrossLosColdBoundRunEnd(const NetworkRunEndView& v) {
@@ -1441,7 +1441,7 @@ static int networkGrossLosColdBoundRunEnd(const NetworkRunEndView& v) {
 }
 
 // Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
-// declared in filter/NetworkGrossLos.hpp).
+// declared in network/qc/NetworkGrossLos.hpp).
 int networkGrossLosRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkGrossLosScreenRunEnd,

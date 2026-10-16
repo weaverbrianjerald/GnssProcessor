@@ -32,14 +32,14 @@ namespace spdlog { class logger; }
 namespace GnssProcessor {
 
 class GnssConfig;
-class NetworkCarryVce;      // full type in filter/NetworkCarryVce.hpp, included in the .cpp only
-class NetworkPriorResidual; // full type in filter/NetworkPriorResidual.hpp; passed by reference only
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+class NetworkCarryVce;      // full type in network/carry/NetworkCarryVce.hpp, included in the .cpp only
+class NetworkPriorResidual; // full type in network/qc/NetworkPriorResidual.hpp; passed by reference only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
-struct EpochEvents;             // app/NetworkEpoch.hpp
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // network/driver/NetworkEpoch.hpp
 
 /**
  * @brief Harvest this epoch's phase-leveling carry from the post-fit solution, stash the
@@ -52,11 +52,11 @@ struct EpochEvents;             // app/NetworkEpoch.hpp
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup (setup), run.engines.carry_vce (carry_vce_est),
  *            run.engines.prires (prires_est). Read: run.config (config_), run.log (log),
  *            run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.solve.plan (plan), ep.assembly.asm_res (asm_res),
  *           ep.assembly.est_index_of (est_index_of), ep.clock.carry_warm (carry_warm),
  *           ep.clock.pl_now_s (pl_now_s), ep.columns.registered_clock_sats

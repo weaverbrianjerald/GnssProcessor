@@ -4,7 +4,7 @@
  * @brief Run-end reports of slip QC: detections, the re-level responses, wind-up, MW scope, the gap instrument and the reference gate.
  *
  * The run-end report defined in NetworkSlipQcRunEnd.cpp, one row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -31,7 +31,7 @@ struct NetworkRunEndView;
  *     gate.
  *   - networkSlipGapCoresumedShareRunEnd: the co-resumed share of the per-signal gap re-entry tier.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkSlipQcRunEnd(const NetworkRunEndView& v);

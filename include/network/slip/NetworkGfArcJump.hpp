@@ -236,7 +236,7 @@ void networkSlipDrainGfArcJump(SlipQcChannel& qc,
  *
  * Gate: @c network.cycle_slip.gf_arc_jump (returns 0 at once when off).
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkGfArcJumpRunEnd(const NetworkRunEndView& v);

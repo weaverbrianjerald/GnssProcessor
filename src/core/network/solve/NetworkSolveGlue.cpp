@@ -379,7 +379,7 @@ static void networkWithheldHeartbeat(NetworkRun& run, const NetworkEpoch& ep,
 
 // The five exits, as frozen (finding 3 of the SG design: DatumFailed, SolveFailed and
 // WeRestoreFailed write no H line and no trace row; kept, and pinned by
-// tests/test_network_solve_skip.cpp until a card of its own changes them).
+// tests/network/test_network_solve_skip.cpp until a card of its own changes them).
 const std::array<SolveSkipRow, 5> kSolveSkips{{
     //  skip                        disposition          site
     //  datum_changed  T2 sigma0  T2 meters  trace flag  H line  H state                                     tail

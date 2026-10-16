@@ -8,7 +8,7 @@
  *
  * Every other post-fit tier of the producer screens carried-ambiguity phase rows
  * only.  The admission rule of @c networkPostFitRaim (NetworkRaim.cpp) is the declared
- * one of filter/NetworkRowClassify.hpp (card NOM step N2b): a row enters the pool of an
+ * one of network/assembly/NetworkRowClassify.hpp (card NOM step N2b): a row enters the pool of an
  * ambiguity column when its coefficient on the column exceeds 0.5 and its kind is one
  * @c raimPoolAdmitsKind admits (the observation phase rows, the coupling and block
  * carried-prior rows, and the SD-EWL constraint rows).  No code kind is admitted.
@@ -155,11 +155,11 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 class GnssConfig;
-struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
-struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cpp only
+struct NetworkRunContext;   // network/state/NetworkRunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/NetworkRunTraces.hpp, included in the .cpp only
 
 /**
  * @brief Run-end telemetry for the gross-LOS screen (standing invariant #4).
@@ -513,8 +513,8 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                         std::vector<NetStation>& stations,
                         const std::vector<StationAssembly>& asm_res, EpochEvents& events);
 
-struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
  * @brief Run the gross-LOS screen for this epoch (the seam).
@@ -541,10 +541,10 @@ struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
- * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
  *            run.traces (traces), run.setup.stations (stations). Read: run.config (config_),
  *            run.log (log), run.engines.est (est).
- * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
+ * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.solve.x_s
  *           (x_s), ep.assembly.asm_res (asm_res), ep.assembly.est_index_of (est_index_of),
  *           ep.clock.pl_now_s (now_s).
  * @param phase RF-3b B3: which half to run. @c Full runs both in one call. (Kept explicit: its
@@ -606,7 +606,7 @@ struct NetworkRunEndView;
  *   - networkGrossLosScreenRunEnd: the gross line-of-sight screen.
  *   - networkGrossLosColdBoundRunEnd: the gross line-of-sight screen's cold-start bound.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkGrossLosRunEnd(const NetworkRunEndView& v);

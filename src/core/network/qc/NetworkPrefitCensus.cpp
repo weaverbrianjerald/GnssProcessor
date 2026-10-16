@@ -56,7 +56,7 @@ constexpr int kTopoColEventCap = 64;
 
 /// One classified row: its class and the satellite its contribution tag names (card NOM
 /// step N2b).  (Named apart from the declared contribution tag, RowTag of
-/// filter/NetworkContributions.hpp, card NOM N2a.)
+/// network/assembly/NetworkContributions.hpp, card NOM N2a.)
 struct ClassifiedRow {
     NetRowClass cls{NetRowClass::ObsOther};
     std::string sat;

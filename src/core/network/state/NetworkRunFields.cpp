@@ -190,7 +190,7 @@ const std::vector<FieldDecl> kRunFields = {
     {"counters.s0g_nodata_warned", "s0g_nodata_warned", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"counters.prefit_empty_logged", "prefit_empty_logged", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
     {"counters.rhs_prev_oversize_logged", "rhs_prev_oversize_logged", Persist::ColdStart, "", "", nullptr, nullptr, nullptr},
-    // The per-epoch values: members of EpochEvents (app/NetworkEpoch.hpp), built with the
+    // The per-epoch values: members of EpochEvents (network/driver/NetworkEpoch.hpp), built with the
     // epoch, so none is cleared by hand.  name is the path from the epoch.
     {"events.slip.carry_innov_flat_now", "carry_innov_flat_now", Persist::Epoch, "", "", nullptr, nullptr, nullptr},
     {"events.slip.relevel", "relevel", Persist::Epoch, "", "", nullptr, nullptr, nullptr},

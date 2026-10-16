@@ -66,7 +66,7 @@
  * `NetworkNormalEquations` coupling (following the standalone classes
  * `NetworkCarryVce` / `NeqAccumulator`).  It owns the z-store data structure, the
  * fundamental-cycle algebra, the lifecycle transforms, and a small Kalman
- * predict/update on z.  `tests/test_network_zstore.cpp` drives it directly with
+ * predict/update on z.  `tests/network/test_network_zstore.cpp` drives it directly with
  * synthetic components of known truth (unit gates 1–3: CycleBasisUnimodular,
  * ChordLifecycle, FilterEqualsBatch).  Not in this file:
  *   - phase C: wiring the store to the producer solve, i.e. the joint rank-K
@@ -89,9 +89,9 @@
  * `NetworkInvariantCarryDriver` takes its trees and fundamental cycles from
  * filter/NetworkArcGraph (`arcgraph::singleTreeOf`, `arcgraph::fundamentalCycle`).
  * @ref ZComponent stays here as the phase-B test oracle: of the z-store gates
- * (tests/test_network_zstore.cpp), of the driver's gate, and of the arc-graph
+ * (tests/network/test_network_zstore.cpp), of the driver's gate, and of the arc-graph
  * oracles that prove those two functions equal to its constructor and its
- * @ref ZComponent::fundamentalCycle (tests/test_network_arc_graph_oracles.cpp).
+ * @ref ZComponent::fundamentalCycle (tests/network/test_network_arc_graph_oracles.cpp).
  * Two tree-path implementations therefore coexist until the retired lineage that
  * runs the carry is deleted.
  */

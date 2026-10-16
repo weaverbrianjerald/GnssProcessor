@@ -6,7 +6,7 @@
  *        harvests in card NOM2 step TD2).
  *
  * The run-end report defined in NetworkLevelingCarryRunEnd.cpp, one row of kNetworkRunEndReports
- * (filter/NetworkRunEnd.hpp).
+ * (network/runend/NetworkRunEnd.hpp).
  */
 
 namespace GnssProcessor {
@@ -25,7 +25,7 @@ struct NetworkRunEndView;
  *     gate.
  *   - networkLevelingResponseRunEnd: leveling-carry retirement census [C], [D] and the response.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0, or the last non-zero verdict of its sections.
  */
 int networkLevelingCarryRunEnd(const NetworkRunEndView& v);

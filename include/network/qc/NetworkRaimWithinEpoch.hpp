@@ -20,18 +20,18 @@
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 struct NetworkRun;
 struct NetworkEpoch;
 struct NetworkRunEndView;
-struct EpochDdBuild;            // app/NetworkEpoch.hpp
-struct NetworkPostFitHandoff;   // filter/NetworkSolveGlue.hpp
-struct SolveDatum;              // filter/NetworkSolveGlue.hpp
-struct WithinEpochOutcome;      // filter/NetworkSolveGlue.hpp
-struct Sigma0CeilingDecision;   // filter/NetworkSolveGlue.hpp
-struct SolveSkipFacts;          // filter/NetworkSolveGlue.hpp
-struct WithinEpochCulprits;     // filter/NetworkWithinEpochCulprits.hpp
+struct EpochDdBuild;            // network/driver/NetworkEpoch.hpp
+struct NetworkPostFitHandoff;   // network/solve/NetworkSolveGlue.hpp
+struct SolveDatum;              // network/solve/NetworkSolveGlue.hpp
+struct WithinEpochOutcome;      // network/solve/NetworkSolveGlue.hpp
+struct Sigma0CeilingDecision;   // network/solve/NetworkSolveGlue.hpp
+struct SolveSkipFacts;          // network/solve/NetworkSolveGlue.hpp
+struct WithinEpochCulprits;     // network/qc/NetworkWithinEpochCulprits.hpp
 
 /**
  * @brief Stage 13, T2: when the robust sigma0 shows the joint solve contaminated, drop the most
@@ -123,7 +123,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
  * Gate: each section under its own condition, as in the teardown:
  * `config_.networkRaimWeCodeIono()`; `config_.networkRaimWithinEpoch()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkWithinEpochRaimRunEnd(const NetworkRunEndView& v);

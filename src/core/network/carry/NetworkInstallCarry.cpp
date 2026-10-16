@@ -392,7 +392,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             // After a real slip the refloat completes the reset; suppressing it leaves
             // 0.48 cyc of error, because the in-epoch reset moves only by the post-fit
             // innovation v, which the fold's −GᵀΣG border term has already shrunk
-            // (tests/test_network_invariant_carry_driver.cpp, GATE 10b).  Membership here
+            // (tests/network/test_network_invariant_carry_driver.cpp, GATE 10b).  Membership here
             // therefore requires positive evidence of continuity, as v3 does:
             //   stepped           ⇒ absent  ⇒ refloats (a real discontinuity)
             //   measured and flat ⇒ present ⇒ keeps its carry (nothing to complete)

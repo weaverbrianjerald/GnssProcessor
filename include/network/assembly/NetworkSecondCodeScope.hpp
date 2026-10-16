@@ -10,7 +10,7 @@
  * every allow-listed band-1 code it reports besides its latched canonical one.
  *
  * Three decisions in that mechanism are pure functions of their inputs, so they
- * are kept here and unit-tested directly (tests/test_network_second_code_scope.cpp):
+ * are kept here and unit-tested directly (tests/network/test_network_second_code_scope.cpp):
  *
  *  - @ref secondCodeAllowEntryValid: what the loader accepts in
  *    `network.second_code_signals` (a 3-character code type on band 1; band 2 is
@@ -111,7 +111,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `config_.networkSecondCodeRowsActive()`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkSecondCodeScopeRunEnd(const NetworkRunEndView& v);

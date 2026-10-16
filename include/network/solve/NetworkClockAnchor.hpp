@@ -116,7 +116,7 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
-struct EpochEvents;   // app/NetworkEpoch.hpp
+struct EpochEvents;   // network/driver/NetworkEpoch.hpp
 
 class GnssConfig;
 struct GnssTime;
@@ -364,7 +364,7 @@ struct NetworkRunEndView;
  *
  * Gate: returns 0 at once unless `ctx.knobs.cta_on`.
  *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).
  */
 int networkClockAnchorRunEnd(const NetworkRunEndView& v);
@@ -375,8 +375,8 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v);
 
 struct NetworkRun;
 struct NetworkEpoch;
-struct NetworkPostFitHandoff;   // filter/NetworkSolveGlue.hpp
-struct SolveDatum;              // filter/NetworkSolveGlue.hpp
+struct NetworkPostFitHandoff;   // network/solve/NetworkSolveGlue.hpp
+struct SolveDatum;              // network/solve/NetworkSolveGlue.hpp
 
 /**
  * @brief The cold-start a-priori satellite-clock Tikhonov anchor (the last post-gate fold of

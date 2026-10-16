@@ -1,4 +1,4 @@
-// Unit gates for the DD cycle-basis z-store (include/filter/NetworkZStore.hpp), the
+// Unit gates for the DD cycle-basis z-store (include/network/ar/NetworkZStore.hpp), the
 // S-system-invariant carry that the generalized-LS network filter time-links
 // (Card 4 (M1) phase B).  Each gate drives the standalone ZComponent /
 // NetworkZStore directly with a synthetic bipartite component of known raw

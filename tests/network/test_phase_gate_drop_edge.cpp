@@ -2,7 +2,7 @@
  * @file test_phase_gate_drop_edge.cpp
  * @brief Coverage-gate drop-edge predicate
  *        (@ref GnssProcessor::networkPhaseGateDropEdges,
- *        filter/NetworkPhaseGateDrop.hpp) and the knob that gates its response
+ *        network/solve/NetworkPhaseGateDrop.hpp) and the knob that gates its response
  *        (@c network.phase_datum_gate_drop_erase).  Card EV7 §6, requirement F3.
  *
  * The defect produces no signal at the site where it happens
@@ -66,7 +66,7 @@ std::map<std::string, std::string> incumbents() {
 
 /// A minimal but loadable ppp-rtk-network config; @p extra is spliced into the
 /// `network` object ahead of the station roster (the established pattern of
-/// tests/test_amb_float_vehicle.cpp).
+/// tests/network/test_amb_float_vehicle.cpp).
 std::string networkConfig(const std::string& extra) {
     return std::string("{\n")
         + "  \"processing\": {\n"

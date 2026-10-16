@@ -1,5 +1,5 @@
 // Unit tests for the standalone NetworkCarryVce accumulator
-// (include/filter/NetworkCarryVce.hpp), the residual-form variance-component
+// (include/network/carry/NetworkCarryVce.hpp), the residual-form variance-component
 // estimator into which the network producer feeds carry-row innovations (M2, the
 // LS-VCE carry-q monitor).  The tests drive the class directly with synthetic
 // carry rows of known truth, as test_neq_accumulator and the M4 combined-sigma
