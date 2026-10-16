@@ -218,7 +218,7 @@ TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
 // A file written before the datum restore (v1/v2/v3) is still legal input: the restore finds no
 // rows, both halves report inert, and the resume behaves as it did before the restore existed.
 // This test parses a v1 file.
-TEST(ResumeDatumRestore, PreCardFileParsesWithEmptyDatumMaps) {
+TEST(ResumeDatumRestore, PreRestoreFileParsesWithEmptyDatumMaps) {
     const std::string v1 =
         "# gnss_network_state_snapshot v1\n"
         "M,2313,277290,2026-09-12T16:56:14Z,7,545b8bdd2b638231\n"

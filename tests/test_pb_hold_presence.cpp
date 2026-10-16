@@ -163,7 +163,7 @@ TEST_F(PbHoldPresenceTest, KnobOffAnswersNeitherEdge) {
     build(/*presence_flip=*/false);
     for (int i = 0; i < 3; ++i) step(false);   // L1W used without a bias
     step(true);                                // the held bias appears: a 92 m step
-    EXPECT_NEAR(var("L1W"), 0.01, 1e-12) << "the card-PBH dispatch leaves the edge unanswered";
+    EXPECT_NEAR(var("L1W"), 0.01, 1e-12) << "the phase-bias hold dispatch leaves the edge unanswered";
     for (int i = 0; i < 2; ++i) step(true);
     step(false);                               // and leaves
     EXPECT_NEAR(var("L1W"), 0.01, 1e-12);

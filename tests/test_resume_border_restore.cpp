@@ -29,7 +29,7 @@
  *     @c carry_conditional_coupling nor 1f.
  * If a later edit put the new knob under the old interlock, the field lineage
  * would lose its border again with only a run-end counter to show it; hence
- * @ref ResumeBorderRestore.RestoreDoesNotRequireCard1f.
+ * @ref ResumeBorderRestore.RestoreDoesNotRequireCouplingGaugeProject.
  *
  * Tested here: the default; the @c resume_frame_restore prerequisite (the border
  * is expressed in the realization frame, the RS-6 argument); the warn-and-disarm
@@ -260,7 +260,7 @@ TEST(ResumeBorderRestore, RestoreWithoutFullCovWarnsAndDisarms) {
 /// regression and no gauge identity, so the border restore loads without 1f.
 /// That makes it reachable on the carry_invariant field lineage, where 1f is out
 /// of regime and resume_coupling_restore is refused.
-TEST(ResumeBorderRestore, RestoreDoesNotRequireCard1f) {
+TEST(ResumeBorderRestore, RestoreDoesNotRequireCouplingGaugeProject) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("no1f",
         networkConfig(std::string(kBorderBase)

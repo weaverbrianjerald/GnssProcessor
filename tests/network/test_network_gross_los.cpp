@@ -424,7 +424,7 @@ TEST(NetworkGrossLosGl2, TheTriggerIsTheOverBarCountNotTheDeclaredCount) {
 // The config gate: off changes nothing
 // ---------------------------------------------------------------------------
 
-TEST(NetworkGrossLosConfig, DefaultsAreOffAndPreCard) {
+TEST(NetworkGrossLosConfig, DefaultsAreOffAndChangeNothing) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, log, "off"));
     const auto& nc = cfg.getNetworkConfig();

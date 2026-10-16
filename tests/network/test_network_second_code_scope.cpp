@@ -116,7 +116,7 @@ TEST(NetworkSecondCodeScope, AdmitsABandOneCodeType) {
     EXPECT_TRUE(secondCodeAllowEntryValid("C1P", nullptr));  // the out-param is optional
 }
 
-TEST(NetworkSecondCodeScope, RefusesAPhaseTypeBecauseThatIsADifferentCard) {
+TEST(NetworkSecondCodeScope, RefusesAPhaseTypeBecauseThatBelongsToTheSecondPhaseChannel) {
     std::string why;
     EXPECT_FALSE(secondCodeAllowEntryValid("L1C", &why));
     EXPECT_FALSE(why.empty());
@@ -371,7 +371,7 @@ TEST(NetworkSecondCodeScope, DropsARefusedAllowListEntryAndKeepsTheRest) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-TEST(NetworkSecondCodeScope, AListWithFewerThanTwoAdmittedCodesDisarmsTheCard) {
+TEST(NetworkSecondCodeScope, AListWithFewerThanTwoAdmittedCodesDisarmsTheChannel) {
     // A "second" code needs at least two band-1 codes in the list to ever be one;
     // arming on a one-entry list would only ever fold the fallback path.
     LogManager log;

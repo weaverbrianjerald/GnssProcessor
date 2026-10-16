@@ -713,9 +713,9 @@ namespace GnssProcessor {
         // Evidence interlock for the D5 v3/v4 consumers, placed here for
         // the load-order reason above.  The D5 consumers read per-(station, satellite)
         // raw MW/GF step verdicts, which are filled by the slip-QC qualify pass.  That
-        // pass runs only when a decision consumer is armed: SlipQcState::cardsArmed() =
+        // pass runs only when a decision consumer is armed: SlipQcState::decisionInstrumentArmed() =
         // lli_corroborate || gap_instrument || bridge_gf || iono_cs
-        // (include/network/slip/RawObservables.hpp; the gate is the qc.cardsArmed() test
+        // (include/network/slip/RawObservables.hpp; the gate is the qc.decisionInstrumentArmed() test
         // in ApplicationNetworkAssembly.cpp).  `network_config_.trace_slip_raw` does not
         // supply the verdicts: it arms only the compute pass
         // (SlipQcParams::anyConsumer).
@@ -748,11 +748,11 @@ namespace GnssProcessor {
         if (network_carry_invariant_innov_corroborate_
             || network_carry_invariant_innov_retap_only_) {
             const bool iono_cs_armed = network_level_authority_csgf_;
-            const bool cards_armed = network_config_.slip_qc.lli_corroborate
+            const bool decision_instrument_armed = network_config_.slip_qc.lli_corroborate
                                      || network_config_.slip_qc.gap_instrument
                                      || network_cycle_slip_relevel_bridge_gf_
                                      || iono_cs_armed;
-            if (!cards_armed) {
+            if (!decision_instrument_armed) {
                 network_config_.slip_qc.gap_instrument = true;
                 log->info("Network (D5 {}): auto-arming "
                           "network.cycle_slip.gap_instrument — the raw MW/GF step verdicts "
@@ -7731,7 +7731,7 @@ namespace GnssProcessor {
             } else {
                 // Same arming gap as v3, closed the same way: the consumer that makes the
                 // qualify pass run is auto-armed from the settled-state interlock at the
-                // end of loadNetworkSection_, where all four of cardsArmed()'s inputs are
+                // end of loadNetworkSection_, where all four of decisionInstrumentArmed()'s inputs are
                 // final.  @see the "Evidence interlock for the D5 v3/v4 consumers" block.
                 log->info("Network (D5 v4): D5 re-tap-ONLY ON — a flagged chord whose arc "
                           "the raw observables MEASURED as continuous is reset in-epoch and its "

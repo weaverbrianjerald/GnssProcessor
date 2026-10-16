@@ -250,7 +250,7 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
             // The helper the trace's V comes from is that variance, and the
             // smoother never raises it (the freeze's "rise" cause is not the smoother's).
             const double v_rev = pbHoldCloneRowValueVar(st.terms, st.var, P);
-            EXPECT_TRUE(nearRel(v_rev, Pa(5, 5), 1e-8)) << "epoch " << t << ": card REV's V";
+            EXPECT_TRUE(nearRel(v_rev, Pa(5, 5), 1e-8)) << "epoch " << t << ": the clone row variance V";
             EXPECT_LE(v_rev, v_prev * (1.0 + 1e-10)) << "epoch " << t << ": V non-increasing";
             v_prev = v_rev;
             // The increment D(t) - D(t0) = (g + m)'x + const.
@@ -467,7 +467,7 @@ TEST(PbHoldBlockTest, ABlockRetiresAtAReReferenceOrANewTenureOfItsPair) {
     EXPECT_TRUE(pend.at("G32|L1W").rebirth);
     EXPECT_TRUE(pend.at("G32|L1W").block);
     EXPECT_EQ(pend.at("G12|L1W").queued_ep, 7);
-    EXPECT_TRUE((net::present(ctx->entities.sat_signals, &net::SatSignalState::smh_clone) == 0)) << "card SMH's clock clones are untouched";
+    EXPECT_TRUE((net::present(ctx->entities.sat_signals, &net::SatSignalState::smh_clone) == 0)) << "the smoothed hold's clock clones are untouched";
 }
 
 TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
@@ -516,7 +516,7 @@ TEST(PbHoldBlockTest, ABlockIsBornWithItsPairFromTheStash) {
     ASSERT_EQ(c.pv_pair.sig.size(), 2u);
     EXPECT_EQ(c.pv_pair.sig[0], "L1W");
     EXPECT_EQ(c.pv_pair.sig[1], "L2W");
-    EXPECT_DOUBLE_EQ(c.value, 3.0) << "the clock row, card SMH's birth";
+    EXPECT_DOUBLE_EQ(c.value, 3.0) << "the clock row, the smoothed hold's birth";
     EXPECT_NEAR(c.pv_value, 3.0 - c.pv_pair.w[0] * 2.0 - c.pv_pair.w[1] * 0.5, 1e-12);
     ASSERT_EQ(c.pv_terms.size(), 3u);
     EXPECT_DOUBLE_EQ(c.pv_terms[0].coeff, -1.0);
@@ -590,7 +590,7 @@ TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
     net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).pv_step_d = 0.003;
     auto e2 = smdEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}, {"G05", 30.0, 3.5}});
     step(e2, 2);
-    EXPECT_NEAR(pbOf(e2, "G32"), 0.98, 1e-12) << "card SMH's Phi writes";
+    EXPECT_NEAR(pbOf(e2, "G32"), 0.98, 1e-12) << "the smoothed hold's Phi writes";
     ASSERT_EQ(ctx->counters.smh_pv_lvl_abs.size(), 1u);
     EXPECT_NEAR(ctx->counters.smh_pv_lvl_abs[0], 0.05, 1e-12) << "the level part Phi_c - Phi_D";
     EXPECT_EQ(ctx->counters.smh_pv_steps_unmarked, 0);
@@ -695,7 +695,7 @@ TEST(PbHoldBlockTest, TheClockMemberIgnoresTheBlockOnTheWire) {
     net::putSig(ctx->entities, "G32|L1W", &net::SatSignalState::smh_block).phi    = -0.02;
     auto e2 = smdEpoch(130.0, {{"G32", 10.0, 1.5}, {"G12", 20.0, 2.5}});
     step(e2, 2);
-    EXPECT_NEAR(pbOf(e2, "G32"), 1.02, 1e-12) << "card SMH's Phi writes; the block is an instrument";
+    EXPECT_NEAR(pbOf(e2, "G32"), 1.02, 1e-12) << "the smoothed hold's Phi writes; the block is an instrument";
     ASSERT_EQ(ctx->counters.smh_pv_phi_abs.size(), 1u);
     EXPECT_NEAR(ctx->counters.smh_pv_phi_abs[0], 0.07, 1e-12);
 }

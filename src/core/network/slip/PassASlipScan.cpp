@@ -729,7 +729,7 @@ void passARawObservables(const PassAView& v) {
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a decision mechanism; with only the trace armed the
         // observables are pure output and nothing is adjudicated.
-        if (qc.cardsArmed())
+        if (qc.decisionInstrumentArmed())
             networkQualifyRawObservables(modeled, present, n_sta_total, qc.epoch_idx,
                                          qc.params, qc.hist, qc.epoch, qc.counters);
         passAIonoCsAdvance(v);

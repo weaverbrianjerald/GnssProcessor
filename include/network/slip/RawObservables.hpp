@@ -408,7 +408,7 @@ struct RawSlipEpoch {
  * All defaults are inert.  Every master arm defaults off, and the two sub-gates
  * that default on (@ref gap_reentry_lli, @ref gap_reentry_per_signal_unmeasurable)
  * act only under their master arm.  The qualification pass is cheap and runs only
- * when a decision instrument is armed (@ref SlipQcChannel::cardsArmed); with every instrument
+ * when a decision instrument is armed (@ref SlipQcChannel::decisionInstrumentArmed); with every instrument
  * off, nothing is adjudicated.
  */
 struct SlipQcParams {
@@ -538,7 +538,7 @@ struct SlipQcParams {
 
     /// The arc-scoped GF jump trigger (@c network.cycle_slip.gf_arc_jump*).
     /// It reads the raw rows only (its own per-arc state forms the steps), so it arms
-    /// @ref anyConsumer and not @ref SlipQcChannel::cardsArmed.
+    /// @ref anyConsumer and not @ref SlipQcChannel::decisionInstrumentArmed.
     GfArcJumpParams gf_jump;
 
     /// True when any consumer needs the raw observables computed this run.
@@ -1010,7 +1010,7 @@ struct SlipQcChannel {
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
     /// True when a decision instrument (not only the trace) is armed.
-    bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.gap_reentry || params.gap_reentry_per_signal; }
+    bool decisionInstrumentArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.gap_reentry || params.gap_reentry_per_signal; }
 };
 
 /**

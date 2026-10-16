@@ -333,7 +333,7 @@ TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
 // Pinned eval (D7): a stamped clock_iode selects which retained broadcast
 // version the baseline evaluates (the previous version across a cutover), and
 // the gate drops the clock only when the pinned version is no longer held.
-TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
+TEST(SsrConsumerSeamTest, PinnedBaselineEvaluatesStampedEphVersion) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
 
@@ -367,7 +367,7 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
     // The baseline selection, restated locally: this test pins the
     // store's pinned-retention contract (computeSatelliteClock honors the pin
     // across a demotion); the production selection expression itself is pinned
-    // end-to-end by SsrStoreInjectionTest.Card7PinnedEvalUsesStampedVersion,
+    // end-to-end by SsrStoreInjectionTest.PinnedEvalUsesStampedVersion,
     // whose fixture geometry makes a revert flip its assertions.
     const int ssr_iode = (q->clock_iode >= 0) ? q->clock_iode : q->iode;
     EXPECT_EQ(ssr_iode, 10);
@@ -396,7 +396,7 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
 
 // classifyOrbitEcho truth table: not-stamped short-circuit, missing applied
 // orbit, IOD-SSR identity, and the budget-gated content-epoch skew clause.
-TEST(Card7ConsumerTest, OrbitEchoClassifyMatrix) {
+TEST(SsrConsumerSeamTest, OrbitEchoClassifyMatrix) {
     using V = SsrCorrectionStore::OrbitEchoVerdict;
     const GnssTime t{2300, 100.0};
 
@@ -441,7 +441,7 @@ TEST(Card7ConsumerTest, OrbitEchoClassifyMatrix) {
 
 // checkOrbitEcho tallies per-(sat|reason) on the store; Match never counts;
 // clear() resets the tallies but the armed budget (configuration) survives.
-TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
+TEST(SsrConsumerSeamTest, OrbitEchoCheckCountsAndClear) {
     using V = SsrCorrectionStore::OrbitEchoVerdict;
     const GnssTime t{2300, 100.0};
 
@@ -486,7 +486,7 @@ TEST(Card7ConsumerTest, OrbitEchoCheckCountsAndClear) {
 
 // The merge also carries the applied orbit's own IOD-SSR for a standalone orbit
 // record (the split-store consumer's orbit-side lookup).
-TEST(Card7ConsumerTest, StandaloneOrbitCarriesOwnIodSsr) {
+TEST(SsrConsumerSeamTest, StandaloneOrbitCarriesOwnIodSsr) {
     SsrCorrectionStore store;   // owned: plays the orbit store
     SsrOrbitCorrection o;
     o.sat           = "G07";

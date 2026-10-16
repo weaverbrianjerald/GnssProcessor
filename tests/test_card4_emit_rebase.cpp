@@ -71,7 +71,7 @@ NetworkSolutionEpoch makeEpoch(const GnssTime& t,
 
 // --- 1. The re-base arithmetic: integer×λ + common fractional zero the step ------
 
-TEST(Card4EmitRebase, IntegerAndCommonFractionalZeroTheStep) {
+TEST(EmitRebaseIntegerGate, IntegerAndCommonFractionalZeroTheStep) {
     NetworkEmitRebase rb;
     const double b1 = -0.70, b2 = 0.25;
 
@@ -103,7 +103,7 @@ TEST(Card4EmitRebase, IntegerAndCommonFractionalZeroTheStep) {
 
 // --- 2. Re-base ON keeps the emitter disc silent across datum churn --------------
 
-TEST(Card4EmitRebase, RebaseKeepsDiscSilentAcrossDatumChurn) {
+TEST(EmitRebaseIntegerGate, RebaseKeepsDiscSilentAcrossDatumChurn) {
     SsrCorrectionStore store;
     NetworkProductEmitter em;                 // default 0.05 m threshold
     NetworkEmitRebase rb;
@@ -137,7 +137,7 @@ TEST(Card4EmitRebase, RebaseKeepsDiscSilentAcrossDatumChurn) {
 
 // --- 3. Negative control: without the re-base the integer-class step fires disc ---
 
-TEST(Card4EmitRebase, NoRebaseIntegerStepFiresDisc) {
+TEST(EmitRebaseIntegerGate, NoRebaseIntegerStepFiresDisc) {
     SsrCorrectionStore store;
     NetworkProductEmitter em;
     const double b1 = -0.70, b2 = 0.25;
@@ -155,7 +155,7 @@ TEST(Card4EmitRebase, NoRebaseIntegerStepFiresDisc) {
 
 // --- 4. Genuine event: a reference-path slip survives + fires disc ----------------
 
-TEST(Card4EmitRebase, ReferencePathSlipSurvivesAndFiresDisc) {
+TEST(EmitRebaseIntegerGate, ReferencePathSlipSurvivesAndFiresDisc) {
     SsrCorrectionStore store;
     NetworkProductEmitter em;
     NetworkEmitRebase rb;
@@ -195,7 +195,7 @@ TEST(Card4EmitRebase, ReferencePathSlipSurvivesAndFiresDisc) {
 
 // --- 5. Independent components carry independent δ (no cross-leak) ----------------
 
-TEST(Card4EmitRebase, IndependentComponentsDoNotLeakDelta) {
+TEST(EmitRebaseIntegerGate, IndependentComponentsDoNotLeakDelta) {
     NetworkEmitRebase rb;
     // Two components (ids 1 and 2), two sats each.  Seed the frame.
     std::vector<NetworkEmitRebase::Entry> e0 = {
@@ -220,7 +220,7 @@ TEST(Card4EmitRebase, IndependentComponentsDoNotLeakDelta) {
 
 // --- 6. A first sighting is a genuine event: passed through, disc silent once -----
 
-TEST(Card4EmitRebase, FirstSightingIsPassedThroughAndFirstSightSilent) {
+TEST(EmitRebaseIntegerGate, FirstSightingIsPassedThroughAndFirstSightSilent) {
     SsrCorrectionStore store;
     NetworkProductEmitter em;
     NetworkEmitRebase rb;

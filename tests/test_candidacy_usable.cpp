@@ -656,7 +656,7 @@ TEST(CandidacyUsableConfig, SatelliteClauseDefaultsOnAndParses) {
     Loaded d("satdef", "");
     ASSERT_TRUE(d.ok);
     EXPECT_TRUE(d.cfg.networkPhaseDatumCandidacySatellite())
-        << "the shipped form of the card is the corrected one; OFF is the "
+        << "the shipped form is the corrected one; OFF is the "
            "iteration-1 A/B, not the default";
     Loaded off("satoff", "    \"phase_datum_candidacy_satellite\": false,\n");
     ASSERT_TRUE(off.ok);
