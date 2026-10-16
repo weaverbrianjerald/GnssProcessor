@@ -28,6 +28,7 @@
 #include "common/SignalBand.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
+#include "measurement/StateInitializer.hpp"
 
 #include <algorithm>
 #include <map>
@@ -350,6 +351,67 @@ TEST(GnssIdentityTest, BandOfDigitReadsTheTraitsTable) {
     // needs the attribute, which SignalId::band reads.
     EXPECT_EQ(bandOfDigit(System::BeiDou, '1'), FrequencyBand::BdsB1C);
     EXPECT_EQ(SignalId::fromObsCode(System::BeiDou, "C1I")->band(), FrequencyBand::BdsB1I);
+}
+
+// ---------------------------------------------------------------------------
+// Declared roles: the time reference and BeiDou digit 1
+// ---------------------------------------------------------------------------
+
+TEST(GnssIdentityTest, GpsIsTheDeclaredTimeAndInterSystemBiasReference) {
+    static_assert(timeReferenceSystem() == System::GPS, "the traits table names GPS the reference");
+    static_assert(isTimeReference(System::GPS), "GPS is the reference");
+    static_assert(!isTimeReference(System::Galileo), "Galileo is not");
+    EXPECT_EQ(timeReferenceSystem(), System::GPS);
+
+    // Exactly one row declares the role, and the reads agree with it for every value.
+    int declared = 0;
+    for (System s : kSystems) {
+        if (traitsOf(s).time_reference) ++declared;
+        EXPECT_EQ(isTimeReference(s), s == System::GPS) << traitsOf(s).name;
+    }
+    EXPECT_EQ(declared, 1);
+    EXPECT_FALSE(isTimeReference(System::Unknown));
+    EXPECT_FALSE(traitsOf(System::Unknown).time_reference);
+
+    // The state key of the reference is its name, and the reference holds no ISB state,
+    // as the hard-coded comparison answered before the declaration.
+    EXPECT_STREQ(systemName(timeReferenceSystem()), "GPS");
+    EXPECT_EQ(StateInitializer::systemToIsbName(System::GPS), "");
+    EXPECT_EQ(StateInitializer::systemToIsbName(System::Unknown), "");
+    EXPECT_EQ(StateInitializer::systemToIsbName(System::Galileo), "Galileo");
+    EXPECT_EQ(StateInitializer::systemToIsbName(System::BeiDou), "BeiDou");
+}
+
+TEST(GnssIdentityTest, BeiDouDigitOneIsB1CAndDigitTwoIsB1I) {
+    // RINEX 3.04: digit 1 is B1C (1575.42 MHz), digit 2 is B1I (1561.098 MHz); digit 1 is
+    // never aliased to B1I.
+    EXPECT_EQ(bandOfDigit(System::BeiDou, '1'), FrequencyBand::BdsB1C);
+    EXPECT_EQ(bandOfDigit(System::BeiDou, '2'), FrequencyBand::BdsB1I);
+    EXPECT_DOUBLE_EQ(nominalCarrierFrequencyOfDigitHz(System::BeiDou, '1'), 1575.42e6);
+    EXPECT_DOUBLE_EQ(nominalCarrierFrequencyOfDigitHz(System::BeiDou, '2'), 1561.098e6);
+    EXPECT_NE(nominalCarrierFrequencyOfDigitHz(System::BeiDou, '1'),
+              nominalCarrierFrequencyOfDigitHz(System::BeiDou, '2'));
+    EXPECT_DOUBLE_EQ(nominalWavelengthOfDigitM(System::BeiDou, '1'),
+                     Constants::SPEED_OF_LIGHT / 1575.42e6);
+    EXPECT_DOUBLE_EQ(nominalWavelengthOfDigitM(System::BeiDou, '2'),
+                     Constants::SPEED_OF_LIGHT / 1561.098e6);
+    // The attribute, not the digit, resolves the RINEX 3.02 spelling of B1I.
+    EXPECT_EQ(SignalId::fromObsCode(System::BeiDou, "C1I")->band(), FrequencyBand::BdsB1I);
+    // A digit the constellation does not use has no frequency.
+    EXPECT_EQ(nominalCarrierFrequencyOfDigitHz(System::BeiDou, '9'), 0.0);
+    EXPECT_EQ(nominalWavelengthOfDigitM(System::GPS, '7'), 0.0);
+    EXPECT_EQ(nominalWavelengthOfDigitM(System::Unknown, '1'), 0.0);
+
+    // For every constellation and digit the reads are the expression the rounding site
+    // wrote before the declaration, bit for bit.
+    for (System s : kSystems)
+        for (char d = '0'; d <= '9'; ++d) {
+            EXPECT_EQ(nominalWavelengthOfDigitM(s, d), wavelengthM(bandOfDigit(s, d), /*glo_slot=*/0))
+                << traitsOf(s).name << " " << d;
+            EXPECT_EQ(nominalCarrierFrequencyOfDigitHz(s, d),
+                      nominalCarrierFrequencyHz(bandOfDigit(s, d)))
+                << traitsOf(s).name << " " << d;
+        }
 }
 
 // ---------------------------------------------------------------------------
