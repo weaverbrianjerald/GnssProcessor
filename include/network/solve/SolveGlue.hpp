@@ -254,7 +254,7 @@ void networkPostGatePriors(NetworkRun& run, const NetworkEpoch& ep, const SolveD
                            bool clk_model_warm, EpochWorkspace& ws, EpochEvents& events);
 
 /**
- * @brief Stage 11: the shared solve and the card-1d checksum.
+ * @brief Stage 11: the shared solve and the coupling checksum.
  * @param run   The run: the estimator solves; n_cpl_solve_dump is written.
  * @param ep    The epoch, read: se.
  * @param datum The clock datum (read: plan).

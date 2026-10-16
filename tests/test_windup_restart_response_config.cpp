@@ -124,7 +124,7 @@ TEST(WindupRestartResponseConfig, DisarmsWithoutPhaseLeveling) {
 
 TEST(WindupRestartResponseConfig, ResponseDoesNotDragAccumulation) {
     // The knob must never arm accumulation as a side effect - the accumulate
-    // flip is its own migration card (fingerprint semantics).
+    // flip is its own migration (fingerprint semantics).
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nodrag", networkConfig("", kNetArmed), cfg));
     EXPECT_FALSE(cfg.accumulatePhaseWindUp());

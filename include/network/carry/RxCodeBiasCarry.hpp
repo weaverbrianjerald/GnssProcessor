@@ -25,7 +25,7 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
 /**
- * @brief Card L5B: the re-coupling edge of an estimated receiver IFB (invariant 7).
+ * @brief The re-coupling edge of an estimated receiver IFB (invariant 7).
  *
  * Step `rx_ifb_recouple` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * none (it records only). It returns at once unless
@@ -43,8 +43,7 @@ StationStep networkRxIfbRecoupleEdge(StationBuild& build);
  * Step `rx_cb_block` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds: none
  * (it records only). It returns at once unless the frozen enclosing conditions
  * legacy_local_inject && do_amb_carry. Records: pl_rxcb_restored_skip, prm_rxcb_gap_skip;
- * rxcb_bc, rxcb_ifb. The frozen text of networkPassB_'s produce loop below its bindings (card
- * NOM3 step PB1b).
+ * rxcb_bc, rxcb_ifb. The frozen text of networkPassB_'s produce loop below its bindings.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).
  */

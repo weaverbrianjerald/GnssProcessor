@@ -109,8 +109,7 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
             // Datum-as-known shared covariance, built once per epoch: the
             // pinned and ensemble-gauge columns are exactly zero there, so the
             // regression row's gauge-direction terms cancel.  Pinned
-            // coefficients therefore stay in the row and are not removed
-            // (Card-1e).
+            // coefficients therefore stay in the row and are not removed.
             const Eigen::MatrixXd Sfree =
                 est.datumFrameSharedCov(plan.shared_datum);
             const double now_s = se.time.week * 604800.0 + se.time.tow;

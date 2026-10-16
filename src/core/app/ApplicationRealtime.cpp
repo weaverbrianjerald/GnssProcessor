@@ -379,7 +379,7 @@ int Application::runRealTime() {
             network_store->setCodeBiasBandFallback(true);
         // Opt-in: arm the orbit/clock coherence skew budget on the owned store.
         // The network clock records this store serves carry the producer's orbit
-        // echo, so the withhold policy is applied here.  (Card 7)
+        // echo, so the withhold policy is applied here.
         if (const double skew = ncc.orbit_clock_max_skew_s; skew > 0.0)
             network_store->setOrbitEchoMaxSkew(skew);
         // Start-of-file join: replaying the whole file so far reconstructs every

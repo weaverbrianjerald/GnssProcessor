@@ -1,7 +1,7 @@
 /**
  * @file test_rinex_nav_parser.cpp
- * @brief Tests for the RINEX 3/4 navigation-message parser (RTF-1 Card 2), plus
- *        LiveEphemerisStore::ephCutoverShiftMetres (RTF-2 Card 6).
+ * @brief Tests for the RINEX 3/4 navigation-message parser (RTF-1), plus
+ *        LiveEphemerisStore::ephCutoverShiftMetres (RTF-2).
  *
  * Two layers:
  *   (1) Self-contained unit tests on programmatically formatted RINEX records
@@ -472,7 +472,7 @@ TEST(RinexNavParserFixture, ParsesBundledBrdcAndMatchesPreciseProducts) {
 }
 
 // =============================================================================
-// ephCutoverShiftMetres: the re-level delta at an ephemeris cutover (RTF-2 Card 6).
+// ephCutoverShiftMetres: the re-level delta at an ephemeris cutover (RTF-2).
 // =============================================================================
 
 namespace {

@@ -42,9 +42,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -121,7 +121,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     // Live predicate for RX-CLK-in-block (network.carry_rx_clock_in_block): the
     // station's receiver clock column (and its ISBs) join the F3 whitened block.
-    // Conjoined with pl_blk_on, load-bearing for the same reason as the iono card's:
+    // Conjoined with pl_blk_on, load-bearing for the same reason as the iono carry's:
     // there is no diagonal fallback row (a diagonal prior on the most station-common
     // direction is the n_LOS over-count that falsified the diagonal ZWD carry), so
     // off the block path there is nothing to do.  The loader already refuses the arm
@@ -187,7 +187,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     std::vector<LocalCarry>& rxclk_pred = carry.rxclk_pred;
     if (rxclk_blk_on) {
         // q is per epoch, so the gap needs an epoch length, taken from the
-        // run itself exactly as in the iono card.
+        // run itself exactly as in the iono carry.
         double dt_ep = pl_now_s - ctx.carry.pl_prev_now_s;
         if (!std::isfinite(dt_ep) || dt_ep <= 0.0 || dt_ep > pl_max_gap_s)
             dt_ep = 0.0;   // first epoch / implausible spacing ⇒ gap_ep = 1
@@ -332,7 +332,7 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
         Eigen::VectorXd xr, vard;
         try {
             xr = est.reconstructStation(est_idx, x_s);
-            if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
+            if (!carry_cpl_cond)   // the coupling carry uses the pure conditional (N_rr⁻¹)_cc
                 vard = est.conditionalLocalVarianceDiag(est_idx, rcols,
                                                         plan.shared_datum);
         } catch (...) { continue; }

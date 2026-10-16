@@ -74,8 +74,8 @@ struct NetworkEpoch;
 struct HarvestBorder {
     std::map<Eigen::Index, CoupledShared> col2desc;  ///< Shared column -> its identity (clock, phase bias, code bias, SH coefficient).
     Eigen::MatrixXd      cov_df;  ///< The shared covariance in the datum frame: datum-pinned and ensemble-gauge columns zeroed.
-    ClockCloneHarvest    ccl_h;   ///< Card SCL: the clones' posterior regression on the rest of the border.
-    SharedHistoryHarvest shx_h;   ///< Card SCL2 X2: where each harvested row's entry was written.
+    ClockCloneHarvest    ccl_h;   ///< Clock clones: the clones' posterior regression on the rest of the border.
+    SharedHistoryHarvest shx_h;   ///< Shared history: where each harvested row's entry was written.
 };
 
 /// The segments of a station's F3 harvest block, in the order their columns are appended.
@@ -140,7 +140,7 @@ void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep, EpochEv
 
 /**
  * @brief The warm epoch's shared border: column identities, the datum-frame covariance and
- *        the clone and shared-history begin (inert pieces stay empty when their cards are off).
+ *        the clone and shared-history begin (inert pieces stay empty when their knobs are off).
  * @param run The run (the estimator, the context).
  * @param ep  This epoch (the plan's datum, the registered shared columns).
  * @return The border every carried column of this epoch regresses on.
@@ -178,7 +178,7 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
 
 /**
  * @brief Close the border: the clones' within-station covariance into the F3 blocks, then the
- *        shared-history compression (both no-ops when their cards are off).
+ *        shared-history compression (both no-ops when their knobs are off).
  * @param run    The run (the context).
  * @param ep     This epoch (read by no statement; the seam form).
  * @param border This harvest's border, after the last carried row.

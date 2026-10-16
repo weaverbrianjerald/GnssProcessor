@@ -575,7 +575,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep,
 /**
  * @brief Republish each station's code-row σ scale from the declared set.
  *
- * The deweight actuator is the code counterpart of the signal-integrity card's
+ * The deweight actuator is the code counterpart of the phase deweight
  * @c NetStation::phase_sigma_scale, and it follows the same thread-safety
  * contract: this function runs serially, before the parallel PASS-B produce, and
  * the assembly only find-reads the map.  An empty map is the off path: the

@@ -194,7 +194,7 @@ namespace GnssProcessor {
          * appear in @ref getBiases, so consumers of the satellite vector are
          * unaffected.  Populated by @ref parseBia (appended per call, never cleared);
          * empty before the first call, and a satellite-only file adds nothing.  No production
-         * code consumes these yet; estimating receiver biases is a separate card.
+         * code consumes these yet; estimating receiver biases is separate work.
          */
         const std::vector<ReceiverBiasData>& getReceiverBiases() const { return receiver_biases_; }
 

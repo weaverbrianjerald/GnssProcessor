@@ -42,9 +42,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -120,7 +120,7 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
         networkAmbStateNote(carry, sat, signal, var_eff, route);
     };
     // The alias lines of networkPassB_ this function reads, verbatim.
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows (Card 1); requires fullcov_on (enforced at load)
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
     // ---- End of the bindings ----
 
     if (!(var_eff > 0.0)) return;
@@ -232,7 +232,7 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
     // Read-only parallel consult of the latched free-epoch set
     // (SPEC_slip_relevel_walk; filled serially in PASS-A, const for the whole produce).
     const bool   relevel_free_on = ctx.knobs.relevel_free_on;
-    // Live predicate for F3: the block's rows are Card-1 coupling rows (A_s/A_r) (the
+    // Live predicate for F3: the block's rows are conditional coupling rows (A_s/A_r) (the
     // loader warns that the knob is inert without them).  A single const bool, so the
     // off path never reaches a block branch.
     const bool   pl_blk_on = ctx.knobs.pl_blk_on;
@@ -247,7 +247,7 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
     // there is redundant (isGaugePinned).  Inject and harvest partition on
     // the same predicate, so a pinned amb never gets a spurious carry that
     // fights its pin.  B9 (P1-4) keeps the ZWD carry below out of any
-    // pivot/anchor exclusion.  Under carry_invariant (Card 4) the DD carry is
+    // pivot/anchor exclusion.  Under carry_invariant the DD carry is
     // the ambiguity time-link and replaces the phase-leveling ambiguity carry
     // as a solve input, so the inject is skipped to avoid double counting;
     // its harvest still feeds the VCE monitor and the sticky tree.
@@ -545,7 +545,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             auto hc = networkHarvestColumn(run, ep, border, est_idx, pa.col, hblk ? &cols : nullptr,
                                                             hblk ? &cross : nullptr);
             var = hc.first; coupling = std::move(hc.second);
-            // Coupling observability (cards 1 and 1d): a failed harvest drops the
+            // Coupling observability: a failed harvest drops the
             // carry entirely; an empty regression degrades the row to a plain
             // diagonal, which only this counter shows.
             if (!(var > 0.0) || !std::isfinite(var)) ++n_cpl_harvest_fail;
@@ -793,7 +793,7 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
     // (carried prior − freshly solved) into the monitor before the stash
     // overwrites the prior.  Only rows that carried a prior this epoch
     // qualify, mirroring the inject predicate: a live prior within max-gap,
-    // not a slip or refloat (pending reseed), and not a card-3 re-referenced
+    // not a slip or refloat (pending reseed), and not an eq34 re-referenced
     // arc (a frame step, not noise).
     // Prior-residual census: the same (prior − solved, gap, post_var,
     // fold_var) tuple the VCE monitor folds, but without its two exclusions,
@@ -837,7 +837,7 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
                         // Under F3 (phase_leveling_local_block) a column carried
                         // in a whitened block folded with the block's joint Σ,
                         // whose diagonal for this column is this hand value
-                        // (plus the card-1d / departed terms neither path
+                        // (plus the kappa-shrink / departed terms neither path
                         // mirrors), so the mirror reports Σ's diagonal, the
                         // column's marginal prior variance.  This is
                         // deliberate: the census standardizes e by the marginal
@@ -858,8 +858,8 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
                 const double fold_var =
                     fold_var_hand * ctx.carry.vce_apply.factor(
                                         NetworkCarryVceApply::kPl, pa.sat);
-                // Open issue (a separate card): the census numerator.  `innov`
-                // is the raw carried-minus-solved difference.  Under the card-1
+                // Open issue (separate work): the census numerator.  `innov`
+                // is the raw carried-minus-solved difference.  Under the
                 // conditional coupling the carried prior's RHS is not
                 // `value_abs` alone: the coupling rows add Σ M_rj·ŝ_prev,j to
                 // it (the `rhs += cs.coeff * cs.s_prev` accumulation in

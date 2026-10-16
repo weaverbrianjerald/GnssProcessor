@@ -128,8 +128,8 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     int& cl_first_fix_week = cl_tally.first_fix_week;
     std::deque<double>& cl_recent_err3d = cl_tally.recent_err3d;
 
-    // Emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10 §1; Card 4 (M1)
-    // phase D).  Under carry_invariant the eq34 datum is re-realized freely, so the raw
+    // Emit-layer frame re-base (docs/SPEC_card4_invariant_carry.md §10 §1)
+    // Under carry_invariant the eq34 datum is re-realized freely, so the raw
     // emitted per-(sat,σ) phase bias changes every epoch by a gauge element (a common
     // per-component fractional + a per-sat integer×λ).  That element leaves user DDs
     // invariant but would trip the emitter's 0.05 m jump test and send the consumer
@@ -358,7 +358,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5).
     // It is the last writer of the emitted phase bias; only read-only
     // steps (the SID capture and declaration build) follow it before emitToStore.
-    // That position has three consequences: it holds what the card-4 emission re-base
+    // That position has three consequences: it holds what the emission re-base
     // produced instead of being overwritten by it; it
     // runs before the emitter's phase-bias value-jump test, so the declared population
     // screens the value the consumer receives; and every marking site of the epoch has
@@ -460,7 +460,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
         // A datum-receiver (root) handover re-references the whole component's
         // biases by a common fractional + per-sat integers.  That is a smaller event
         // than a clock-pivot handover but still a datum break on which the consumer
-        // re-syncs the contract (Card 3, D4).
+        // re-syncs the contract (D4).
         const std::string* first_dr =
             net::first(cons_rows, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
         const std::string cur_pdr = (phase_datum_eq34 && first_dr != nullptr)

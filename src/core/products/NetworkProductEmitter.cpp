@@ -118,7 +118,7 @@ void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& sa
 unsigned NetworkProductEmitter::pendingMarkChannels(const std::string& sat) const {
     // Read-only twin of emitToStore's constForced/satForced pair: the same two
     // sources with the same precedence.  It is a separate copy, not a
-    // shared helper, because those lambdas update the card-MS tally and the
+    // shared helper, because those lambdas update the MS tally and the
     // MarkScopeEvent census as side effects; callers run this probe before the
     // emit, so counting here would double-count there.
     unsigned mask = 0u;
@@ -141,8 +141,8 @@ NetworkProductEmitter::pbSeamCensus(const NetworkSolutionEpoch& sol) const {
     // Read-only twin of the phase jump test in emitToStore, kept as a separate copy
     // so that it cannot change any emitted byte: it reproduces the test's population,
     // threshold and key spelling and nothing else.  The OFF run does not call it; the
-    // ON run calls it before emitToStore.  The tallied step is the raw ΔPB: the card
-    // CLV level-step removal is not applied here.  A change to the jump test's
+    // ON run calls it before emitToStore.  The tallied step is the raw ΔPB: the
+    // declared level-step removal is not applied here.  A change to the jump test's
     // population or threshold belongs here too.
     std::map<char, PbSeamConstTally> out;
     const double epoch_s = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
@@ -227,7 +227,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
     // store field stays absent and the consumer never reacts (byte-identical).
     if (sol.generation_id != 0) store.setGenerationId(sol.generation_id);
 
-    // Card CLV2: the declared code-level steps (the C and B records' lvl= tokens),
+    // The declared code-level steps (the C and B records' lvl= tokens),
     // accumulated per satellite for a consumer that answers them.  Absent on an unarmed
     // wire, so the store is untouched.
     for (const auto& s : sol.sats)
@@ -374,11 +374,11 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
             rec.iod_ssr       = sol.iod_ssr;
             // Carry the per-sat broadcast-anchor IODE and the RTS-orbit echo values
             // from the solution into the wire struct, so the live closed loop and
-            // file replay stamp the store identically (RTF-2, Card 4 plumbing).  In
+            // file replay stamp the store identically (RTF-2 plumbing).  In
             // sp3 mode all three hold the "unstamped" sentinel (-1 / -1 / {0,0});
-            // Card 5 populates them in brdc_rts.  getOrbitClock's clock gate is
+            // brdc_rts mode populates them.  getOrbitClock's clock gate is
             // therefore byte-identical in sp3 mode (a standalone clock's clock_iode
-            // inherits the paired orbit anchor, Card 3).
+            // inherits the paired orbit anchor).
             rec.iode          = s.clock_iode;
             rec.orbit_iod_ssr = s.orbit_iod_ssr;
             rec.orbit_epoch   = s.orbit_epoch;
@@ -466,9 +466,9 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 // separation, which the structural triggers cannot see (they detect
                 // gauge re-references, not the estimate drifting).  A stale baseline
                 // suppresses it, as on the phase side.
-                // Card CLV return plan R-A: a free column's declared follow step (the
+                // Return plan R-A: a free column's declared follow step (the
                 // B-record lvl= token) is removed first, as the C-record step is for the
-                // phase biases.  Absent on an unarmed wire, so the test is the pre-card
+                // phase biases.  Absent on an unarmed wire, so the test is the earlier
                 // difference bit for bit.
                 bool value_jump = false;
                 if (code_bias_jump_test_ && have_baseline) {
@@ -531,7 +531,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                     // The satellite's declared level step (the C-record lvl= token) is
                     // removed first: the clock record moved by the same amount, so the
                     // phase side did not step.  It is 0 on an unarmed wire,
-                    // so the difference is then bit-identical to the pre-card one.
+                    // so the difference is then bit-identical to the earlier one.
                     const double raw_d = (npb.bias_m - last_it->second) - s.level_step_m;
                     const double bar   = discThresholdM(s.sat, signal);
                     const bool   raw_over = std::abs(raw_d) > bar;
@@ -555,7 +555,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 entry.combined_sigma_m      = npb.sigc_m;     // combined phase-correction σ (clock + phase bias); 0 unless emit_combined_sigma populated it (M4)
                 // Hold generation, passed through from the emitted epoch.
                 // 0 unless networkPbHold held this key; with the knob off every entry
-                // reads 0 and the consumer takes its pre-card path (byte-identical).
+                // reads 0 and the consumer takes its earlier path (byte-identical).
                 // The hold runs before this function, so the value-jump test above
                 // has screened the held value, which is what the consumer receives:
                 // the declaration and the payload agree.

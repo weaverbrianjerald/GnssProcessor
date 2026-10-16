@@ -138,7 +138,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             if (cp.t_park_s > 0.0) continue;                  // parked: not an ordinary carry (a readmit seed included)
             if (cp.kind == SharedParamKind::PhaseBias) {
                 if (!vce_wants_pb) continue;
-                if (eq34_reref.count({cp.sat, cp.signal})) continue;         // marginalized (card 3 D4)
+                if (eq34_reref.count({cp.sat, cp.signal})) continue;         // marginalized (eq34 D4)
                 if (pa_reref.count({cp.sat, cp.signal})) continue;           // marginalized (queue 1(d))
             } else if (cp.kind == SharedParamKind::CodeBias) {
                 if (!vce_wants_cb) continue;
@@ -477,7 +477,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     // One LASER 5-95 factor iteration per epoch (docs/SPEC_carry_vce_apply.md §2,
     // M2 v2).  It must run here: after the last feed into the monitor (SB_LEVELING's
     // pl harvest, then the pb/cb feed above) and before any fold of the next epoch.
-    // That placement makes the card's contract hold:
+    // That placement makes the contract hold:
     //
     //     the fold of epoch N is scaled by α² estimated from every clean carry row
     //     through epoch N−1

@@ -1,6 +1,6 @@
 /**
  * @file test_eq34_consumer_integer.cpp
- * @brief Eq-34 acceptance harness (card 3): a synthetic product with known integers,
+ * @brief Eq-34 acceptance harness: a synthetic product with known integers,
  *        driven through the production consumer chain, shows that an
  *        integer-consistent satellite phase-bias frame lets a held-out PPP-RTK user
  *        recover integer double-difference ambiguities and that MLAMBDA executes
@@ -17,7 +17,7 @@
  *
  * Chain exercised (every stage is production code, not a reimplementation):
  *   1. @c NetworkProductWriter: v2 product file with the S-basis contract declaring
- *      @c AmbDatum::SingleReceiverChain (card 3, D5), plus E/C/B/P records carrying
+ *      @c AmbDatum::SingleReceiverChain (D5), plus E/C/B/P records carrying
  *      the synthetic integer frame.
  *   2. @c NetworkProductReader::read: the production parse, contract included.
  *   3. @c NetworkProductReader::makeReplayEmitter + @c replay: the consumer
@@ -217,7 +217,7 @@ int knownDdInteger(const SignalFrame& sf, std::size_t i, std::size_t ref) {
     return (sf.z_user[i] - sf.k_frame[i]) - (sf.z_user[ref] - sf.k_frame[ref]);
 }
 
-/// The S-basis contract a chain-datum producer stamps (card 3, D5): amb_datum =
+/// The S-basis contract a chain-datum producer stamps (D5): amb_datum =
 /// SingleReceiverChain in the existing int field (no format bump), plus the
 /// diagnostic pdr= datum-receiver token.
 SbasisContract makeEq34Contract() {
@@ -233,7 +233,7 @@ SbasisContract makeEq34Contract() {
     return c;
 }
 
-/// Write the synthetic product: v2 header (card 3 contract) plus two identical
+/// Write the synthetic product: v2 header (chain-datum contract) plus two identical
 /// 30 s epochs.  Constant biases give zero discontinuity bumps on replay; the second
 /// epoch exercises the store's overwrite path as well as first sight.
 /// @p poisoned adds +poison_cycles·λ to the control pair's bias; that is the only
@@ -394,7 +394,7 @@ AmbiguityResolverConfig makeArConfig() {
 }
 
 // ===========================================================================
-// 1. Product round-trip: the card 3 contract and the integer frame survive the
+// 1. Product round-trip: the chain-datum contract and the integer frame survive the
 //    writer → reader → replay → store pipeline byte-exactly.
 // ===========================================================================
 TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
@@ -410,7 +410,7 @@ TEST(Eq34ConsumerIntegerTest, SynthProductRoundTripsContractAndFrame) {
     SbasisContract     contract;
     ASSERT_NO_FATAL_FAILURE(replayIntoStore(path, store, contract));
 
-    // Contract round-trip (card 3): the SingleReceiverChain enumerator travels in the
+    // Contract round-trip: the SingleReceiverChain enumerator travels in the
     // existing S-line int field (no format bump) and the pdr= diagnostic token
     // carries the datum receiver.
     ASSERT_TRUE(contract.present);
@@ -688,7 +688,7 @@ TEST(Eq34ConsumerIntegerTest, ContractFlagsAmbDatumForLegacyConsumer) {
 
     // Legacy consumer (PivotReceiverZeroAmbiguity expectation): incompatible,
     // with the amb_datum mismatch named.  This is the designed refusal path for a
-    // consumer predating card 3 that meets a chain-datum product.
+    // consumer predating the chain datum that meets a chain-datum product.
     {
         SbasisContract expected = makeEq34Contract();
         expected.decl.amb_datum = SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity;

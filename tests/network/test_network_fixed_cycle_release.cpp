@@ -361,7 +361,7 @@ TEST(NetworkFixedCycleRelease, TwoFailingUnitsSharingAnArcEliminateItAndALoneFai
 }
 
 TEST(NetworkFixedCycleRelease, ALoneFailureReleasesItsArcsSoTheOldIntegerCannotComeBack) {
-    // Card FCFC section 8 (the review of FCF-3, finding 1).  The failing unit (1, 2; G03, G04)
+    // Review section 8 (the review of FCF-3, finding 1).  The failing unit (1, 2; G03, G04)
     // holds the arc (2, G04), which a second row, (0, 2; G05, G04), also holds as a non-pivot
     // term.  Dropping only the rows behind the failing cycles kept that row with the arc's old
     // integer, and two later fixes on DDs that miss (2, G04) completed the span again, so the

@@ -400,7 +400,7 @@ TEST(CarryAwareCovarianceTest, OverSubtractionIsRefusedAndCounted) {
 }
 
 // ---------------------------------------------------------------------------------------
-// Gate 5 (SPEC §7.5): a degenerate block folded inertly (M = 0, the parent card's INC-0)
+// Gate 5 (SPEC §7.5): a degenerate block folded inertly (M = 0, the parent design's INC-0)
 // contributes nothing to the correction, with no special case in the readback.  The
 // inert-fold semantics (posterior == the untouched prior) carry through unchanged.
 // ---------------------------------------------------------------------------------------
@@ -444,7 +444,7 @@ TEST(CarryAwareCovarianceTest, DegenerateBlockContributesNothing) {
 // Gate 6 (SPEC §7.6): invariant #6 and the defect statement, in one assertion.  The blind
 // readback does not depend on the fold at all: with or without the DD priors folded, each
 // of the four returns bit-for-bit the same matrix.  That is both (a) the structural
-// off-path guarantee the card needs and (b) the plainest statement of what "carry-blind"
+// off-path guarantee the feature needs and (b) the plainest statement of what "carry-blind"
 // means: the covariance cannot see the carry even in principle.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, BlindPathIsIdenticalFoldOrNot) {

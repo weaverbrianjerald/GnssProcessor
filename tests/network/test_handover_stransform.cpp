@@ -5,7 +5,7 @@
  *        docs/SPEC_event_harness.md §19): the structural direction, the rank-1
  *        kernel, its exactness, and the loader interlocks.
  *
- * The card rests on the claim that a clock-pivot handover moves a gauge, not the
+ * The mechanism rests on the claim that a clock-pivot handover moves a gauge, not the
  * information: the carried shared state is valid but expressed in the datum that
  * just retired, so it is re-expressed rather than dropped for an epoch.  The
  * claim holds only if three properties hold exactly, and a failure of any of them

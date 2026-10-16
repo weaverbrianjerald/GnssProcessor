@@ -10,7 +10,7 @@
  * ProducerAr.hpp.
  *
  * Three additive departures from the relocated text, all outside the arithmetic (the
- * trace card; docs/network_ambiguity_resolution_
+ * trace additions; docs/network_ambiguity_resolution_
  * design.md, 2026-09-10 note §4.1, "a fix count is not a grade"):
  *   1. `DDrow` carries the six identity strings a truth join needs;
  *   2. the cap's `order` comes from @ref netar::lowestSigmaOrder so the trace can

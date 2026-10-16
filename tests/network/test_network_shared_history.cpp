@@ -589,7 +589,7 @@ double coefOn(const PendCplRow& r, Eigen::Index col) {
 
 // The row builder: on the exact route a row emits its history coefficients on the registered
 // columns, with the same right-hand side and weight as without them; a stale generation, a
-// column not registered and card 1d's route marginalize them (variance += their squares);
+// column not registered and the scalar-kappa route marginalize them (variance += their squares);
 // a re-stash without history terms (stale stamp) ignores them.
 TEST(NetworkSharedHistoryTest, RowBuilderEmitsHistoryTermsAndAStaleGenerationMarginalizes) {
     const double m2 = 0.004 * 0.004 + 0.003 * 0.003;
@@ -630,7 +630,7 @@ TEST(NetworkSharedHistoryTest, RowBuilderEmitsHistoryTermsAndAStaleGenerationMar
         EXPECT_EQ(coefOn(r1, f.h1), 0.0);
         EXPECT_NEAR(1.0 / r1.w, 1.0 / r0.w + 0.003 * 0.003, 1e-15);
     }
-    {   // Card 1d's route (the row was harvested before the stash).
+    {   // The scalar-kappa route (the row was harvested before the stash).
         RowFixture f;
         const LocalCarry lc = rowCarry(kStash - 30.0);
         const PendCplRow r0 = f.row(lc, false);

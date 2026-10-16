@@ -52,7 +52,7 @@
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
@@ -62,7 +62,7 @@
 #include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
 #include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
-#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
+#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
 #include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (§24.18)
@@ -404,7 +404,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
 
     // --- PASS B (in ApplicationNetworkAssembly.cpp): networkPassB_ owns the D0
     // assembly wall (a raw chrono pair; the sinks are passed by reference), the T5
-    // sh-dev aging, the card-1d reinit history, the parallel produce loop (including
+    // sh-dev aging, the reinit history, the parallel produce loop (including
     // the coupling-injection cluster, whose row builder is filter/NetworkCoupling
     // since INC-7b), and the serial consume.  The failed / empty-epoch skip keeps its
     // bookkeeping inside (SkipEpoch return).
@@ -464,7 +464,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // adapts that member while it runs and clears it when it ends, so the
     // primary build here reads it empty.
     { CarryEigenScope es(carry_par, n_threads); networkBuildCarryDdPriors(run, ep, ep.dd_build); }  // parallel_carry: thread W·Pᶻ·Wᵀ
-    networkSubEnd(run, SB_DDBUILD);      // close networkBuildCarryDdPriors, the card-4 DD-cov projection (D0b)
+    networkSubEnd(run, SB_DDBUILD);      // close networkBuildCarryDdPriors, the DD-cov projection (D0b)
     networkSubBegin(run, SB_SOLVEGLUE);  // pre-solve prep + clock predict + solve + within-epoch re-solve (D0b)
     ep.solve = networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.events);
     if (ep.solve.action == EpochAction::SkipEpoch) return LoopSignal::Next;
@@ -478,7 +478,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // epoch, not only RAIM-armed ones.  A failure resets the carry (a safe cold
     // start).  No-op when off.
     networkInstallCarry(run, ep, ep.events);
-    networkSubEnd(run, SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
+    networkSubEnd(run, SB_INSTALL);     // close installPosterior, the posterior readback (D0b)
     networkSubBegin(run, SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
     ep.ar_fixes = networkProducerAr(run, ep);
     networkSubEnd(run, SB_NETAR);      // close producer AR / pre-emit tail (D0b)
@@ -533,7 +533,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubEnd(run, SB_LEVELING);   // close block 5, leveling (D0b)
     networkSubBegin(run, SB_RAIM);     // block 2: post-fit network RAIM + median-polish attribution (D0b)
     // RAIM pool re-host: `carry_warm` requires network.phase_leveling, so gating on
-    // it alone would leave post-fit RAIM unreachable on every card-4 lineage that
+    // it alone would leave post-fit RAIM unreachable on every carry_invariant lineage that
     // leaves leveling off (armed at load, never executed).  ctx.knobs.raim_ci_on is
     // the re-hosted arming condition (already ANDed with raim_on and the resolved
     // carry_invariant).

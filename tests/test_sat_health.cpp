@@ -1,6 +1,6 @@
 /**
  * @file test_sat_health.cpp
- * @brief Card HLT: broadcast satellite health on the network path (network.sat_health).
+ * @brief Broadcast satellite health on the network path (network.sat_health).
  *
  * The health series (a record takes force at its clock epoch; each Galileo message source
  * keeps its own record in force; the health word is masked to the processed bands), the

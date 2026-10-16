@@ -390,7 +390,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         }
                     }
                     // Feed the DD invariant carry from epoch 1, independent of the
-                    // legacy carry's warm gate (Card 4 C3c).  The DD carry is live
+                    // legacy carry's warm gate (C3c).  The DD carry is live
                     // throughout, and pending-reseed cannot serve it: the PASS-B
                     // MeasurementModel consumes and clears the mark before the fold.
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
@@ -786,7 +786,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
 
                 if (datum_active && i == 0) {
                     // Datum station: a qualified LLI assertion takes the network
-                    // re-reference path.  The Card-L suppression above applies here
+                    // re-reference path.  The LLI-corroboration suppression above applies here
                     // too, so a chattering pivot receiver cannot re-reference the
                     // network repeatedly.
                     datum_slip_detect(obs.satellite,
@@ -1008,7 +1008,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             continue;
                         }
                     }
-                    // Feed the DD carry from epoch 1 (Card 4 C3c; see refloat_signal).
+                    // Feed the DD carry from epoch 1 (C3c; see refloat_signal).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     if (carry_warm) {
                         pact.freed = true;
@@ -1589,7 +1589,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                     }
                 }
                 // The DD invariant carry owns its own funnel and is live from
-                // epoch 1 (Card 4 C3c; see refloat_signal).
+                // epoch 1 (C3c; see refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                 if (carry_warm) {
                     orc_freed = true;
@@ -1697,7 +1697,7 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                 if (!d.coversSignal(parts->signal)) continue;   // band scope
                 ++matched;
                 // The DD invariant carry owns its own funnel and is live from
-                // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
+                // epoch 1 (C3c; the same contract as refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({ i, amb_key });
                 if (carry_warm) {
                     sm.markAmbiguityPendingReseed(amb_key);
@@ -1804,7 +1804,7 @@ struct GapArcOutcome {
  * @param satellite          Satellite id.
  * @param sig                The one signal this call responds on (band-scoped).
  * @param sm                 That station's state manager, mutated (pending-reseed mark).
- * @param carry_invariant    The Card-4 DD invariant carry vehicle is armed.
+ * @param carry_invariant    The DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
  * @param arcs        The leveling carry (the arc table), read-only; it answers "is
@@ -1852,7 +1852,7 @@ GapArcOutcome gapReentryRespondArc(
     // model set, so its ambiguity column was pruned with the gap, and PASS B's
     // measurement pre-pass (MeasurementModel::ensureRequiredStates) re-creates
     // it only after this drain, so a walk would match and free nothing.  This is
-    // the key format the PASS-B inject site reads and the one the Card-G arc
+    // the key format the PASS-B inject site reads and the one the gap-reentry arc
     // classification synthesizes, so a freed arc reads `shifted_fresh` there by
     // construction.
     const std::string amb_key = StateKeys::makeAmbiguityKey(satellite, sig);
@@ -1860,7 +1860,7 @@ GapArcOutcome gapReentryRespondArc(
     // "Is there anything to protect?" is a question about the carry.  A
     // LocalCarry entry still inside the max-gap window is what the PASS-B
     // inject would fold across the break.  This is the `pl_bridged` predicate
-    // the Card-G classification applies, so the instrument and the response
+    // the gap-reentry classification applies, so the instrument and the response
     // agree on the population.
     {
         const auto cit = net::getArc(arcs, std::make_tuple(i, satellite, sig), &net::ArcState::amb);
@@ -1936,7 +1936,7 @@ GapArcOutcome gapReentryRespondArc(
     if (!out.state_live) ++led.state_absent;
 
     // The DD invariant carry owns its own funnel and is live from
-    // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
+    // epoch 1 (C3c; the same contract as refloat_signal).
     if (carry_invariant) {
         carry_slipped_ambs.insert({i, amb_key});
         ++led.dd_marked;
@@ -2260,7 +2260,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     int n_resp = 0;
     std::string detail_log;
     // This tier's counters are accumulated here and folded into the historical
-    // flat fields at the end (the run-end Card-G line and the unit suite name
+    // flat fields at the end (the run-end gap-reentry line and the unit suite name
     // them individually); the shared responder speaks the ledger shape.
     GapReentryLedger led;
     // The resumption list is built station-ordered by the qualify pass, and this
@@ -2580,7 +2580,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
     }
     // Fold this tier's ledger into the historical flat fields.  They are the
-    // names the run-end Card-G line and the unit suite read, so the ledger is
+    // names the run-end gap-reentry line and the unit suite read, so the ledger is
     // an internal shape only: no counter changes meaning here.
     qc_cnt.gap_reentry_verdicts      += led.verdicts;
     qc_cnt.gap_reentry_pivot_skipped += led.pivot_skipped;

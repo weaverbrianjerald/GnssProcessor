@@ -52,7 +52,7 @@
  *
  * A flag with a warm carry frees the pair's two bands as the IF-TD pair refloat does:
  * the pending-reseed mark, the free-epoch latch (@c RelevelEpochState::free_ambs with
- * the cause bit @c kCauseGfJump), the Card-4 funnel insert under carry_invariant, and
+ * the cause bit @c kCauseGfJump), the invariant-carry funnel insert under carry_invariant, and
  * the void of any outstanding bridge pend of that (station, satellite).  A band the
  * common-band verdict refuses stays pinned (the same predicate every drain consults).
  * A band an earlier drain already freed this epoch takes only the cause bit, so the
@@ -205,9 +205,9 @@ struct GfArcJumpCounters {
  * @param present            Per-station PASS-A presence.
  * @param i_lo               First locally refloatable station index (1 on the legacy pivot datum).
  * @param n_sta_total        Station count.
- * @param carry_invariant    The Card-4 DD vehicle is on: feed its funnel.
+ * @param carry_invariant    The invariant DD carry vehicle is on: feed its funnel.
  * @param carry_warm         The leveling carry is warm: a flag acts (otherwise diagnostic).
- * @param carry_slipped_ambs The Card-4 funnel (inserted into under @p carry_invariant).
+ * @param carry_slipped_ambs The invariant-carry funnel (inserted into under @p carry_invariant).
  * @param se                 This epoch (time).
  * @param traces             The trace bundle (event rows).
  * @param log                The main_log logger.

@@ -801,8 +801,8 @@ namespace GnssProcessor {
                                     const RequiredStates& need);
 
         /**
-         * @brief Phase colour (network only: network.phase_colour_state, card
-         *        LGM): born for each satellite with an uncombined phase row;
+         * @brief Phase colour (network only: network.phase_colour_state):
+         *        born for each satellite with an uncombined phase row;
          *        seeded 0 with variance phase_colour_sigma_zen_m squared; pruned
          *        to the keep set.
          * @param need The working value.

@@ -20,12 +20,12 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume (RTB-7)
-#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
-#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
+#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (RTF-1)
+#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (RTF-1)
 #include "network/solve/Estimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
@@ -34,9 +34,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -206,7 +206,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     const bool carry_invariant         = ctx.knobs.carry_invariant;
     const bool trace_flag_rates = ctx.knobs.trace_flag_rates;
-    // Card ARL: the producer AR search's suspect-corner mask is armed (the MW admission
+    // The producer AR search's suspect-corner mask is armed (the MW admission
     // records its unknown-integer identities only then).
     const bool ar_suspect_armed = ctx.knobs.ar_suspect_epochs > 0;
     net::ArcTable& arc_rows = ctx.entities.arcs;   // the leveling carry
@@ -466,7 +466,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // its canonical code beside it), and both route through the same receiver
     // state.  (2) Count the cells, both cell edges, the receiver inter-signal states
     // alive and their reseeds, and the (satellite, signal) columns that reached the
-    // two-station registration bar only through companions (the card's thesis as a
+    // two-station registration bar only through companions (the mechanism's thesis as a
     // number).
     //
     // Off: the whole block is skipped, every set stays empty and nothing is emitted,
@@ -561,7 +561,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // receiver state to key on.  (2) Count the cells, both cell edges, the arcs born,
     // the live peak, the contributing stations, and the (satellite, signal) columns
     // that reached the two-station registration bar only through second phases (the
-    // card's thesis as a number).  (3) Count the fallback occurrences: an
+    // mechanism's thesis as a number).  (3) Count the fallback occurrences: an
     // allow-listed band-1 phase reported for a satellite whose band has no latched
     // phase this epoch, which R1 does not add, by design.  (4) Advance the
     // between-channel witness (R8), observatory only.
@@ -600,7 +600,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                     const System sys = systemOfSat(ob.satellite);
                     const std::string cons = systemName(sys);
                     // Band scope.  Under the phase-6a knob the
-                    // card's own allow-list is band 1 by construction.  Under the
+                    // allow-list is band 1 by construction.  Under the
                     // all-channel widening there is no allow-list, and every selected
                     // band has a latched phase and possibly several others, so both the
                     // fallback count and the witness walk every observed band digit (a
@@ -726,12 +726,12 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     }
 
     // Shared raw slip observables (docs/SPEC_slip_qc_hardening.md §1), computed once
-    // per epoch, here: after present[] is final and before both the drains (Card L
+    // per epoch, here: after present[] is final and before both the drains (the LLI corroboration
     // needs the evidence) and the observability pre-filter (a satellite about to be
     // pruned must still be measured, which is the trace writer's contract).  Nothing
     // between this point and the trace writer mutates `modeled`, so the relocated
     // rows are byte-identical.  Skipped entirely when no consumer asked for them
-    // (qc.utils null: every card inert).
+    // (qc.utils null: every consumer inert).
     qc.epoch.reset(stations.size());
     if (qc.armed()) {
         // The per-station canonical phase latch, bound over the station
@@ -739,7 +739,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         // the run and lives on each station's own PppModel.  A station whose model
         // is absent returns empty, which the tracker reads as "change nothing".
         //
-        // Card NOM step N3b: the lookup reads the roster's Modelled role, which is the
+        // The lookup reads the roster's Modelled role, which is the
         // latch the roster copies, and the latch answers only where the roster has no
         // role yet (a constellation's first epoch; the fallback the roster read below
         // states).  Every read is compared with the latch (census site
@@ -794,17 +794,17 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
             };
         networkComputeRawObservables(modeled, present, n_sta_total, *qc.utils, qc.epoch,
                                      qc.params.gap_reentry_per_signal,
-                                     // The tracker's band signal from the latch (card
-                                     // GRK), with the mismatch cell counted in both
+                                     // The tracker's band signal from the latch,
+                                     // with the mismatch cell counted in both
                                      // knob states (which is why the counters sink is
-                                     // passed unconditionally).  The roster read (card
-                                     // SID phase 2) arms the same selection, from the
+                                     // passed unconditionally).  The roster read
+                                     // arms the same selection, from the
                                      // roster's own answer.
                                      qc.params.tracker_modeled_first || roster_tracker,
                                      &qc.counters,
                                      roster_tracker ? &roster_lu : &latch);
         // The qualification pass (empirical step gates, LLI credibility, arc
-        // resumptions) runs only for a decision card; with only the trace armed the
+        // resumptions) runs only for a decision mechanism; with only the trace armed the
         // observables are pure output and nothing is adjudicated.
         if (qc.cardsArmed())
             networkQualifyRawObservables(modeled, present, n_sta_total, qc.epoch_idx,
@@ -908,7 +908,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // MW admission census reduce: the per-station slots are filled index-addressed
     // in the parallel region (and, for station 0, by the serial datum scan just
     // above), so the fold is serial and station-ordered, hence deterministic.  Runs
-    // unconditionally: these counters are the card's knob-independent telemetry.
+    // unconditionally: these counters are the mechanism's knob-independent telemetry.
     for (int i = 0; i < n_sta_total; ++i) {
         const auto& ac = pa.sta_mw_admit[static_cast<std::size_t>(i)];
         ctx.counters.n_mw_admit_legacy         += ac.legacy_admitted;
@@ -967,7 +967,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // satellite) for this epoch, formed here, before either drain, so the MW
     // refloat, the LLI free and the IF-TD pair refloat all follow the same decision
     // and their per-epoch union is exactly `implicated` (Study 3's per-epoch
-    // invariant, §Z.2).  Runs armed or not: the census sizes the card before it is
+    // invariant, §Z.2).  Runs armed or not: the census sizes the mechanism before it is
     // armed (invariant #4).  Only the armed run passes a non-null pointer into the
     // drains, so off is byte-identical.
     CommonBandEpoch common_band;
@@ -1002,7 +1002,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     }
     const CommonBandEpoch* common_band_ptr = common_band.armed ? &common_band : nullptr;
 
-    // Card PRM phase 3a: the datum-station slip re-reference's carry erases, read off the
+    // The datum-station slip re-reference's carry erases, read off the
     // drain's own counter around the call (serial: between the two parallel regions).
     const long long dse0 = qc.counters.datum_slip_carry_erases;
     // The datum re-reference queues as the drain takes them: copied in
@@ -1229,7 +1229,7 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
     // values: the slip signature comes from differencing adjacent epochs offline.
     //
     // The arithmetic lives in network/slip/RawObservables.cpp (slip-QC hardening, spec
-    // §1): Cards L and G need the same numbers as evidence, and a single definition of
+    // §1): the LLI-corroboration and gap-coincident consumers need the same numbers as evidence, and a single definition of
     // "the raw step" keeps the three consumers from diverging.  This site is a pure
     // consumer walking qc.epoch.rows in the same order, so its rows are byte-unchanged
     // when the trace is the only consumer.
@@ -1278,8 +1278,8 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
         if (!dropped_sats.empty()) {
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
-                // The cross-station observability gate is a coverage gate too (card
-                // SID phase 4a, S1): the same rule as the phase-bias gate one level
+                // The cross-station observability gate is a coverage gate too:
+                // the same rule as the phase-bias gate one level
                 // up, applied to the satellite clock.  It is the one that removes
                 // rows, so it opens admitted gaps where the phase-bias gate opens
                 // none.  Both share the `gate` bit; the drop-edge counters keep them
@@ -1378,7 +1378,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     //    column" invariant that eq34 / carry / snapshot rely on (a registration-site
     //    co-gate crashes the on path).  Allocating no phase-bias state at all keeps
     //    shared_phase_keys consistent everywhere by construction.
-    //  - Granularity (Card H2, a deliberate ruling): the co-gate stays at census
+    //  - Granularity (a deliberate ruling): the co-gate stays at census
     //    granularity.  Following per-epoch code coverage would churn phase-state
     //    allocation every epoch, which the anti-flap design exists to prevent, and
     //    thrash eq34/carry/snapshot.  The accepted residue is a transient orphan
@@ -1554,11 +1554,11 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
                 est.registerVtecCoeff(c.n, c.m, c.trig, lay.layer);
     }
 
-    // Card SCL (network.carry_coupling_clock_clone): the one-epoch clock clones, after every
+    // Clock clones (network.carry_coupling_clock_clone): the one-epoch clock clones, after every
     // other registration so that no existing column index moves (the clones are the last
     // columns), and before the label map and beginEpoch.  No-op off.
     networkClockCloneRegister(ctx, est, registered_clock_sats, events);
-    // Card SCL2 X2 (network.carry_coupling_shared_history): the shared-history columns, after
+    // Shared history (network.carry_coupling_shared_history): the shared-history columns, after
     // the clones (filter/NetworkSharedHistory).  No-op off.
     networkSharedHistoryRegister(ctx, est);
 
@@ -1686,7 +1686,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& ep, 
         sec_asm_wall_ms += sec_asm_ms_epoch;
     }
 
-    // Card NOM N2a: the station side of "contributions as armed" (the rows and diagonal
+    // The station side of "contributions as armed" (the rows and diagonal
     // entries of the stations the estimator took, per kind), and every assembled station's
     // tags checked against its rows.  Serial, trace class; the epoch tail adds the shared
     // folds and writes the table.

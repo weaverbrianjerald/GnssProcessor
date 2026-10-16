@@ -1471,7 +1471,7 @@ std::vector<std::string> activeFrequencyBands(
         //
         // Why band 1 only: a band-2 companion would make the network.sat_isc_state
         // bridging roster non-empty for the first time; the loader refuses a band-2
-        // allow-list entry and the card defers it (§4).  The allow-list is validated
+        // allow-list entry and the spec defers it (§4).  The allow-list is validated
         // at load, so membership here already implies a 3-character code type on
         // band 1.
         //
@@ -1497,7 +1497,7 @@ std::vector<std::string> activeFrequencyBands(
                 const auto band_it = freq_band_to_signal.find(band);
                 if (band_it == freq_band_to_signal.end()) continue;
                 const std::string& best_code = band_it->second.first;
-                // Band 1 is the card's scope, tested on the signal's own RINEX band
+                // Band 1 is the supported scope, tested on the signal's own RINEX band
                 // digit: the band name is constellation-specific ("L1" on GPS, "E1" on
                 // Galileo, "B1C" on BeiDou), while the allow-list and the receiver-side
                 // latch test both use the digit.

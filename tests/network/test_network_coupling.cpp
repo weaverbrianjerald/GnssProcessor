@@ -1,4 +1,4 @@
-// Unit tests for the conditional coupling-row seam of cards 1/1d
+// Unit tests for the conditional coupling-row seam
 // (network/carry/Coupling.hpp, split out of Application::networkPassB_ at INC-7b).
 // They exercise branches the 50-station byte-gate arms do not reach even with
 // coupling live: the CouplingRowBuilder scalar / departed / kappa-shrink branches over
@@ -39,7 +39,7 @@ struct BuilderFixture {
     Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1}, clk2_col{-1};
 
     /// @param second_clock register a second G-constellation clock (G02) before
-    ///        beginEpoch().  The card-1f cases need a present same-constellation
+    ///        beginEpoch().  The gauge-repair cases need a present same-constellation
     ///        recipient for the truncated column's coefficient; the layout is frozen at
     ///        beginEpoch(), so it cannot be added afterwards.  The default (false)
     ///        leaves the layout of every other case unchanged.
@@ -56,8 +56,8 @@ struct BuilderFixture {
     }
 
     // `gauge` / `reinit` default to false, so every case that does not set them runs the
-    // card 1f/1g code paths with those cards off.  Those cases, left unmodified, are the
-    // proof that the cards change nothing when off.
+    // gauge-repair and reinit code paths with those knobs off.  Those cases, left unmodified, are the
+    // proof that the knobs change nothing when off.
     CouplingRowBuilder builder(bool tu, bool gauge = false, bool reinit = false) {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
                                   tu, gauge, reinit, tu_reinit_hist, R};
@@ -112,7 +112,7 @@ TEST(NetworkCouplingTest, BuildScalarDepartedColumnMarginalizesIntoVariance) {
     EXPECT_EQ(f.R.cpl_terms_present, 0);
 }
 
-// Border time update (card 1d): a present column is kappa-shrunk (coeff * P/(P+q*dt))
+// Border time update: a present column is kappa-shrunk (coeff * P/(P+q*dt))
 // and the row variance inflated; the shrink is counted.
 TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     BuilderFixture f;
@@ -136,7 +136,7 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
     EXPECT_GT(cb.crows[0].shared[0].second, kap);          // restored above the raw kappa-shrink
 }
 
-// --- Truncated-row gauge defect and its repair (card 1f) ---------------------
+// --- Truncated-row gauge defect and its repair ---------------------
 //
 // A harvested coupling row is gauge-invariant through Mᵀg_s = −g_r(c): its
 // per-(constellation,kind) coefficient sum is whatever the harvest regression made it,
@@ -148,7 +148,7 @@ TEST(NetworkCouplingTest, BuildScalarTimeUpdateShrinksPresentColumn) {
 // value, not set to zero (§13.2: a Galileo ambiguity row measures Σ_E = −1 exactly, so
 // zeroing the sum would itself inject a gauge observation).
 
-// The defect itself, with the card off: the surviving coefficients sum to the harvest
+// The defect itself, with the knob off: the surviving coefficients sum to the harvest
 // sum minus the departed coefficient.  This is the pre-registered "before" measurement.
 TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
     BuilderFixture f(/*second_clock=*/true);   // a present recipient exists
@@ -167,7 +167,7 @@ TEST(NetworkCouplingTest, GaugeProjectOffLeavesTruncatedFamilySumShort) {
     double sum = 0.0;
     for (const auto& sc : cb.crows[0].shared) sum += sc.second;
     EXPECT_NEAR(sum, 0.8, 1e-12);          // harvest sum 1.0 minus the departed 0.2
-    EXPECT_EQ(f.R.cpl_gauge_held, 0);      // with the card off: no repair, no counter movement
+    EXPECT_EQ(f.R.cpl_gauge_held, 0);      // with the knob off: no repair, no counter movement
     EXPECT_EQ(f.R.cpl_gauge_orphan, 0);
 }
 
@@ -225,7 +225,7 @@ TEST(NetworkCouplingTest, GaugeProjectCountsOrphanWhenWholeFamilyDeparted) {
     EXPECT_EQ(f.R.cpl_gauge_orphan, 1);
 }
 
-// The card is a strict generalization of card 1d: with nothing truncated, the armed row
+// The gauge repair is a strict generalization of the kappa shrink: with nothing truncated, the armed row
 // is bit-identical to the unarmed one (the deficit map is seeded with nothing).
 TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
     BuilderFixture f(/*second_clock=*/true);
@@ -254,12 +254,12 @@ TEST(NetworkCouplingTest, GaugeProjectIsIdenticalWhenNothingTruncated) {
     EXPECT_EQ(g.R.cpl_gauge_held, 0);
 }
 
-// --- Reinit route independent of the kappa knob (card 1g) --------------------
+// --- Reinit route independent of the kappa knob --------------------
 //
 // A column re-realized since this row's harvest carries an unknown frame step in its
-// stashed ŝ_prev.  With card 1g on, such a column takes the departed route whether or
-// not carry_coupling_time_update is on.  With card 1g and the time update both off, the
-// retired-frame value folds at full weight on the plain card-1 path (the legacy case).
+// stashed ŝ_prev.  With the reinit-sources route on, such a column takes the departed route whether or
+// not carry_coupling_time_update is on.  With the reinit-sources route and the time update both off, the
+// retired-frame value folds at full weight on the plain conditional-coupling path (the legacy case).
 TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     BuilderFixture f;
     // A (kind,sat,signal) mark, as the phase-anchor / eq34 re-reference feeds write it.
@@ -270,14 +270,14 @@ TEST(NetworkCouplingTest, ReinitSourcesRouteToDepartedWithTimeUpdateOff) {
     lc.coupling = { CoupledShared{SharedParamKind::PhaseBias, "G01", "L1C", 0, 0, 'C', 0,
                                   /*coeff=*/0.7, /*s_prev=*/9.0, /*p_prev=*/0.25} };
 
-    // kappa off, card 1g off: the stale column folds as a full-weight present term.
+    // kappa off, reinit-sources off: the stale column folds as a full-weight present term.
     auto legacy = f.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/false);
     legacy.buildCplRow(0, 0.0, lc, 0.01, 30.0);
     ASSERT_EQ(legacy.crows.size(), 1u);
     EXPECT_EQ(legacy.crows[0].shared.size(), 1u);
     EXPECT_EQ(f.R.cpl_terms_present, 1);
 
-    // kappa still off, card 1g on: it takes the departed route (kappa = 0).
+    // kappa still off, reinit-sources on: it takes the departed route (kappa = 0).
     BuilderFixture g;
     net::put(g.tu_reinit_hist, *net::satSignalKey("G01", "L1C"), &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = 100.0;
     auto fixed = g.builder(/*tu=*/false, /*gauge=*/false, /*reinit=*/true);

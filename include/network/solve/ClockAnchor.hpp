@@ -220,7 +220,7 @@ struct ClockAnchorFold {
     /// caller's, @ref clockAnchorFoldAt).
     double inc_m2{0.0};
     /// The interval @c inc_m2 covers (s) and its rate (m^2/s), so that
-    /// @c inc_m2 = @c rate_m2ps · @c dt_s.  Card PFQ reads them: a carried clock's
+    /// @c inc_m2 = @c rate_m2ps · @c dt_s.  The pivot-frame process noise reads them: a carried clock's
     /// pivot-frame term is the pivot's rate over this clock's own interval.
     double dt_s{0.0};
     double rate_m2ps{0.0};

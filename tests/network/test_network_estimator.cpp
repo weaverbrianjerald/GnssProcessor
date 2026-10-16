@@ -295,7 +295,6 @@ TEST(NetworkEstimatorTest, SumZeroPhaseDatumRecoversEnsembleSTransform) {
 // datums (pin sat0, then sat1); the reconstructed ambiguities and the DD posterior
 // agree (the receiver-clock column shifts with the datum, as expected).  Exercises
 // setDdPriors → solve → reconstruct → ddPriorPosteriorMean end to end.
-// (Card 4 (M1) phase C)
 TEST(NetworkEstimatorTest, DdPriorDatumFreedomThroughEstimator) {
     Truth t = makeTruth(/*seed=*/321, /*R=*/4, /*S=*/4);
     for (auto& mrow : t.M) for (auto& v : mrow) v = std::round(v);   // integer ambiguities
@@ -533,7 +532,7 @@ TEST(NetworkEstimatorTest, Eq34UserIntegerRecovery_CCRIntegerEnsembleFractional)
 }
 
 // ===========================================================================
-// Eq-34 / de Jonge single-receiver-chain phase-bias datum (Card 3).
+// Eq-34 / de Jonge single-receiver-chain phase-bias datum.
 //
 // Unlike the fixtures above (which lump the receiver fractional bias into the
 // ambiguity M_{r,s}), the eq34 model gives the receiver fractional phase bias
@@ -916,7 +915,7 @@ TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
 }
 
 // ===========================================================================
-// Shift-walk (carry S-transformation) unit tests (Card 3 / I1).
+// Shift-walk (carry S-transformation) unit tests (I1).
 //
 // The experimental `phase_datum_eq34_carry_shift` walk transforms the carried
 // quantities into the new emission frame, instead of erasing them, when the chain
@@ -1474,7 +1473,7 @@ TEST(NetworkEstimatorTest, Eq34ExtendOnlyGapRerouteFlagsReref) {
     // b_3 steps by an exact non-zero integer (the chain-path difference; here −20
     // cycles).  There is no carry at R2 to pin-to-round against, so the step is real
     // ⇒ the peer stations' leveling carries for S3 go stale by that integer ⇒ the
-    // erase/reref is correct.  (This is also the Card-3 integer-user-DD property in
+    // erase/reref is correct.  (This is also the integer-user-DD property in
     // miniature: the fractional never leaks, so a re-reference is always integer.)
     const double step = sB.b[3] - sA.b[3];
     auto fracDist = [](double v) { return std::abs(v - std::round(v)); };
@@ -1952,7 +1951,7 @@ TEST(NetworkEstimatorTest, RefoldDenseDroppingClocksEqualsMarginalizedFold) {
     est.addSharedPriorDense(kept, kept_cov);
     const Eigen::VectorXd x_ref = est.solve(datum);
 
-    // The card's path: fold the full block, solve, then re-fold it marginalized.
+    // The path under test: fold the full block, solve, then re-fold it marginalized.
     addStations();
     est.addSharedPriorDense(keys, cov);
     const Eigen::VectorXd x_full = est.solve(datum);
@@ -2048,7 +2047,7 @@ void addDataNoise(Eigen::VectorXd& y, int S, unsigned seed) {
 // common).  The information-form KF is exact recursive least squares, and the
 // identical-value datum pins telescope through the Dirichlet elimination.  The
 // legacy diagonal carry discards the off-diagonal information and deviates
-// measurably.  This property is the motivation for the C1 card.
+// measurably.  This property is the motivation for the dense carry.
 TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
     const Truth t1 = makeTruth(/*seed=*/2024, /*R=*/4, /*S=*/5);
     Truth t2 = t1;   // same shared truth (c_s, b_s); new receiver clocks and arcs
@@ -2148,7 +2147,7 @@ TEST(NetworkEstimatorTest, DenseCarryRecursiveEqualsBatch) {
         << "the dense carry should be orders of magnitude closer to batch";
 }
 
-// The conditional local carry (Card 1, network.carry_conditional_coupling).  The
+// The conditional local carry (network.carry_conditional_coupling).  The
 // sequential recursion with a dense border carry plus per-column conditional
 // coupling rows reproduces the batch solve for the shared border and for the
 // carried local ambiguities; the legacy diagonal (marginal) carry does not.  The
@@ -2379,9 +2378,9 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
            "discrimination (double-counting the shared border via the marginal variance)";
 }
 
-// ── Card 1c ──────────────────────────────────────────────────────────────────
-// Numerical trace of the between-epoch conditional-coupling carry (Card 1,
-// network.carry_conditional_coupling) over an 8-epoch surviving arc.  In the field
+// ── Coupling contraction trace ──────────────────────────────────────────────────────────────────
+// Numerical trace of the between-epoch conditional-coupling carry
+// (network.carry_conditional_coupling) over an 8-epoch surviving arc.  In the field
 // (project note project_network_ddfrac_rootcause_shvtec) arcs survive many epochs
 // with dep_var≈0 (clock_model off ⇒ no departed shared column),
 // yet the DD formal σ stays flat instead of contracting ~1/√k.  This test drives the
@@ -2397,7 +2396,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
 // ambiguities stay free and carried, and the DD N_{1,1}−N_{0,1} cancels the shared
 // clk1/pb1 exactly (the field dd_sigma contrast).  The free carried border the arc
 // regresses onto is {clk_1 (q_clk, the looser carry), pb_1 (q_pb, the tighter
-// carry)}: the card's "1 clock-like + 1 bias-like column".  Two σ's are traced: the
+// carry)}: the design's "1 clock-like + 1 bias-like column".  Two σ's are traced: the
 // single-ambiguity conditional σ (includes the shared-border propagation) and the
 // border-cancelling DD σ.  Per station per sat: a phase row (σ 0.002 m; amb + iono
 // + clock + bias) and a code row (σ 0.3 m; iono + clock).  Zero ambiguity process
@@ -2405,7 +2404,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryRecursiveEqualsBatch) {
 // both stations' ionos to one carried SH-like shared column with a
 // representativeness σ: the correlated per-epoch iono error hypothesised to be the
 // field floor.  The unfixed arms are diagnostics and assert only that the harvest
-// stays finite and positive; the Card 1d arms (`fixed`) carry the consistency and
+// stays finite and positive; the kappa-shrink arms (`fixed`) carry the consistency and
 // contraction assertions at the end of the test.
 TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
@@ -2422,7 +2421,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     const double pb_true[2]   = { 0.37, -0.52 };
     const double N_true[2][2] = { {0.0, 0.0}, {2.3, -4.1} };  // gauge: pivot r0 ambiguities = 0
 
-    // Card 1d: `fixed` arms inject each coupling row with the border time update
+    // Kappa shrink: `fixed` arms inject each coupling row with the border time update
     // (per-column κ shrink + M²κq inflation, q ladder = the border carry's own
     // {q_clk, q_pb, q_sh}), the fix in docs/SPEC_card1_coupling_carry.md.
     struct Trace { std::vector<double> single_sig, dd_sig, err_ratio; };
@@ -2445,7 +2444,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         std::mt19937 gen(90210u + (correlated_iono ? 7u : 0u));
         std::normal_distribution<double> ndph(0.0, sig_ph), ndcd(0.0, sig_cd);
         std::normal_distribution<double> ndI(0.0, 5.0), nd1(0.0, 1.0), ndrep(0.0, 0.1);
-        // Model-consistent truths (following the Card-1c falsifier convention,
+        // Model-consistent truths (following the contraction falsifier convention,
         // card1c_falsify.py): clk0 ≡ 0 (the datum), clk1 = a random walk RW(q_clk)
         // seeded N(0,1) (the border carry's own model), pb constant.  The SH truth
         // stays white N(0,25) against the border's RW q_sh=5.  That probe mismatch
@@ -2458,7 +2457,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         struct Cpl { Eigen::Index col; double value; double cond_var; Eigen::VectorXd Mr; };
         std::vector<std::vector<Cpl>> carry(2);          // per-station coupling rows (empty at ep0)
         Eigen::VectorXd prev_xs;                         // last epoch's shared solution (ŝ_prev RHS)
-        Eigen::VectorXd prev_pdiag;                      // Card 1d: last epoch's posterior border variances (κ inputs)
+        Eigen::VectorXd prev_pdiag;                      // Kappa shrink: last epoch's posterior border variances (κ inputs)
 
         // Gauge: the datum pins clk0 (reference clock); station 0 pins pb0=0 (reference bias)
         // with a tight row.  Both stations' sat-1 ambiguities stay free and carried, so the DD
@@ -2549,7 +2548,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
                     b.w.conservativeResize(m0 + 1); b.y.conservativeResize(m0 + 1);
                     b.A_r(m0, cr.col) = 1.0;
                     double yv = cr.value;                               // (r̂_prev − r_lin), r_lin = 0
-                    double tu = 0.0;                                    // Card 1d: Σ M²·κ·q inflation
+                    double tu = 0.0;                                    // Kappa shrink: Σ M²·κ·q inflation
                     for (Eigen::Index j = 0; j < nshared; ++j) {
                         if (j == clk0 || j == pb0) continue;            // free-column restriction (both pinned)
                         const double mj = cr.Mr(j);
@@ -2615,7 +2614,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
                 Pk(a, a) += (bcol[a] == clk1) ? q_clk : (bcol[a] == shc ? 5.0 : q_pb);
             carry = std::move(next);
             prev_xs = xs;
-            prev_pdiag = P.diagonal();   // Card 1d: κ inputs for the next inject
+            prev_pdiag = P.diagonal();   // Kappa shrink: κ inputs for the next inject
 
             const double mr_sh = (shc >= 0) ? Mr_11(shc) : 0.0;
             std::printf("  %d | %.3e %.4e | %+7.3f %+6.3f %+6.3f | %11.4e | %11.4e | %+9.4f\n",
@@ -2643,7 +2642,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     const Trace corr_fix  = run_trace(true,  true);
     (void)plain;
 
-    // ── Card 1d assertions (the unfixed arms above stay pure diagnostics) ──────
+    // ── Kappa-shrink assertions (the unfixed arms above stay pure diagnostics) ──────
     auto maxr = [](const std::vector<double>& v) {
         double m = 0.0; for (double x : v) m = std::max(m, x); return m;
     };
@@ -2668,12 +2667,12 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         << "Card 1d: fixed correlated-iono arm DD sigma should still contract";
 }
 
-// ── Card 1d ──────────────────────────────────────────────────────────────────
+// ── Kappa shrink ──────────────────────────────────────────────────────────────────
 // Border time update of the coupling rows (network.carry_coupling_time_update).
 // ConditionalCarryRecursiveEqualsBatch above passes only because its shared
 // border is static between epochs (zero process noise), which is the test gap
-// that let the Card-1c defect through.  Here the border moves: c_{s,2} = c_{s,1} + w,
-// w ~ N(0, q) with the card-spec large q (1e4 m², a free-running clock), and the
+// that let the contraction defect through.  Here the border moves: c_{s,2} = c_{s,1} + w,
+// w ~ N(0, q) with the specified large q (1e4 m², a free-running clock), and the
 // recursion equals batch only when each injected coupling row is made independent
 // again of the moved border: per-column shrink κ_j = P_prev/(P_prev + q) applied
 // to the coefficient and to its ŝ_prev RHS term, plus the row-variance inflation
@@ -2684,16 +2683,16 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
 // border posterior is diagonal across the coupled columns and each row has a single
 // coupled column.  The batch reference is hand-built per satellite over
 // (c₁, c₂, M₀, M₁) with an explicit link row c₂−c₁ ~ N(0,q).  The raw (unfixed
-// Card-1) recursion fails against the moving border; that failing arm is the
-// Card-1c defect.
+// conditional-coupling) recursion fails against the moving border; that failing arm is the
+// contraction defect.
 namespace card1d {
 
 struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
 
 // Coupling-row construction mode for epoch 2.
 enum class Mode {
-    Raw,       ///< unfixed Card 1: full-strength harvested row, σ² = cond_var
-    Fixed,     ///< Card 1d: κ-shrunk coefficients + M²κq inflation
+    Raw,       ///< unfixed: full-strength harvested row, σ² = cond_var
+    Fixed,     ///< κ-shrunk coefficients + M²κq inflation
     Departed   ///< full marginalization: coupled terms dropped, σ² += M²·P_prev
 };
 
@@ -2924,8 +2923,8 @@ inline Batch runBatch(const Fixture& fx, int s) {
 }  // namespace card1d
 
 // With the large-q moving clock border, the κ-fixed recursion equals the
-// hand-built batch (values and formal variances) while the raw Card-1 recursion
-// fails grossly; a moderate q exercises κ away from both limits (Card 1d gate).
+// hand-built batch (values and formal variances) while the raw recursion
+// fails grossly; a moderate q exercises κ away from both limits (kappa-shrink gate).
 // See docs/SPEC_card1_coupling_carry.md.
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     using namespace card1d;
@@ -2957,7 +2956,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
     }
 }
 
-// The fix's two analytic limits (Card 1d): q = 0 reproduces the raw (unfixed)
+// The fix's two analytic limits: q = 0 reproduces the raw (unfixed)
 // rows (κ = 1, zero inflation; guards the behavior closest to off), and q → ∞
 // reproduces the departed-column marginalization (κ = 0, σ² += M²·P_prev).
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
@@ -3323,7 +3322,7 @@ TEST(NetworkSbasisTest, SelectIfPinPairIsDeterministicInSignalSet) {
               (Pair{ std::string{}, std::string{} }));
 }
 
-// The pure time-linked sum-to-zero target (Card 2, network.code_datum_time_linked).
+// The pure time-linked sum-to-zero target (network.code_datum_time_linked).
 // Veterans (present satellites with a previous solved value) span the row and are
 // referenced to themselves (RHS Σ b̂_prev), so a membership change never moves the
 // target.  A channel with no veteran falls back to the legacy all-present Σ = 0 seed
@@ -3358,14 +3357,14 @@ TEST(NetworkSbasisTest, CodeS2zTimeLinkVeteranReferenceAndReseed) {
     }
 }
 
-// Set-change continuity of the sum-to-zero code-bias datum (Card 2), solved through
+// Set-change continuity of the sum-to-zero code-bias datum, solved through
 // the real estimator.  A channel of satellite code biases is observable only up to a common
 // level: each observation is (d_r + b_s), and the receiver code bias d_r absorbs the
 // level, so the sum-to-zero row is the gauge that fixes it.  When a satellite leaves
 // between epochs, the legacy zero target (Σ b = 0 over the current set) steps every
 // surviving bias by the departed bias / (m−1) (a common-mode shift); the time-linked
 // veteran target (Σ_vet b = Σ b̂_prev) reproduces the previous epoch exactly.  This is
-// the falsifiable core of the card, with the same layout either way (rank unchanged).
+// the falsifiable core of the feature, with the same layout either way (rank unchanged).
 TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
     const std::string sig = "C1W";
     const std::vector<std::string> sats = { "G01", "G02", "G03", "G04" };
@@ -3427,7 +3426,7 @@ TEST(NetworkEstimatorTest, CodeDatumTimeLinkedSetChangeContinuity) {
         EXPECT_NEAR(b2_new.at(s), b1.at(s), 1e-6)
             << "time-linked datum must hold " << s << " continuous across the set change";
     }
-    // Legacy: a visible, uniform (common-mode) step, the wander the card removes.
+    // Legacy: a visible, uniform (common-mode) step, the wander the time-linked datum removes.
     EXPECT_GT(std::abs(step_min), 1e-3) << "legacy zero-target datum should step the survivors";
     EXPECT_NEAR(step_min, step_max, 1e-9) << "the legacy step is a pure common-mode shift";
 }
@@ -3950,7 +3949,7 @@ struct CbDatumRowsHarness {
     // knobs
     bool cb_time_linked{false};
     bool emit_clock_disc{false};
-    // Card-2 carry (const in)
+    // Time-linked datum carry (const in)
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
     std::set<std::string>                                code_bias_sat_seen;
@@ -4057,7 +4056,7 @@ TEST(NetworkSbasisTest, BuildCodeBiasDatumRowsDegenerateSingleFreq) {
     EXPECT_DOUBLE_EQ(out.H.row(0).cwiseAbs().sum(), 2.0);
 }
 
-// Time-linked code datum (Card 2, network.code_datum_time_linked): both row
+// Time-linked code datum (network.code_datum_time_linked): both row
 // families pin the change of the datum.  With the stored pair intact and both signals veteran, the IF row's
 // RHS is the previous solved IF combination and each s2z row's RHS the veteran
 // sum; a stored-pair flip re-seeds the IF target to 0 and records the satellite

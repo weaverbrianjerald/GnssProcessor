@@ -77,7 +77,7 @@ constexpr int    kNoCap      = std::numeric_limits<int>::max();
 const double     kAlpha[2]   = {1.0, 1.6469444444444444};
 
 /// Gate U2's selection: the history columns kept per cloned clock.  The
-/// fixture grid of 2026-10-06 passed every k from 1 up; the decision is recorded in the card.
+/// fixture grid of 2026-10-06 passed every k from 1 up; the decision is recorded in the design note.
 constexpr int kSelectedHistoryPerClock = 1;
 
 Eigen::MatrixXd spdInverse(const Eigen::MatrixXd& A) {
@@ -707,8 +707,8 @@ struct HoldTarget {
 };
 
 /**
- * @brief Mode 6 (X2) at a cap, with two hold rows: the per-row form (production X2 with card
- *        SMH before amendment A1: the row's Y coefficients regressed onto the border, its
+ * @brief Mode 6 (X2) at a cap, with two hold rows: the per-row form (production X2 with
+ *        the smoothed hold before amendment A1: the row's Y coefficients regressed onto the border, its
  *        conditional term marginalized onto its own variance, no history kept) and form p (the
  *        row's F_T = Cov(T, Y | s) Sigma_Y|s^(-1/2) projected onto the carried rows' kept
  *        directions V_kt, its history coefficients F_T V_kt revised with the history columns

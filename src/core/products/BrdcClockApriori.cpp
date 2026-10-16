@@ -1,6 +1,6 @@
 /**
  * @file BrdcClockApriori.cpp
- * @brief Card NBP's native broadcast-clock a priori: selector, offset table, store feed
+ * @brief The native broadcast-clock a priori: selector, offset table, store feed
  *        and wire stamp.  See @c BrdcClockApriori.hpp for the design.
  */
 

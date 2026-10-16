@@ -73,7 +73,7 @@ inline constexpr std::string_view kDcbInfix = "DCB";
 /// Receiver phase-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
 /// @c makeIfbKey / @c makeDcbKey cannot produce "_RPB_" (the infix with its
 /// surrounding underscores), so the receiver phase-bias keys stay disjoint
-/// from the receiver code-bias keys (Card 3, §4c).
+/// from the receiver code-bias keys.
 inline constexpr std::string_view kRpbInfix = "RPB";
 
 /// Receiver inter-signal code-bias infix ("GPS_ISC_C1W").
@@ -551,8 +551,8 @@ inline std::optional<std::string> parseDcbKey(std::string_view key) {
 //            embedded '_').
 //
 // The per-(receiver, system, signal) satellite-phase-bias split state
-// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum (Card 3,
-// network.phase_datum_eq34).  With its own estimable state, the receiver
+// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum
+// (network.phase_datum_eq34).  With its own estimable state, the receiver
 // fractional phase bias does not lump into the emitted satellite phase bias,
 // so the emitted between-satellite reference stays integer-consistent across
 // all satellites (each chain hop contributes only an integer).  These are
