@@ -2,7 +2,7 @@
  * @file test_network_rank_gate.cpp
  * @brief Unit tests for the shared-border null-space rank-gate tolerance as a
  *        per-config calibration parameter
- *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol) (card DG).
+ *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol).
  *
  * The gate decides whether a whole epoch is emitted or withheld.  This file pins
  * the three properties the card relies on (docs/SPEC_beidou_w6_datum.md §2):
@@ -78,11 +78,11 @@ constexpr int kStormDeclaredDim = 2;
 ///  - @p weak_w == 0 : PB(G02,L1) gets no rows at all (its only anchor station
 ///    has dropped).  It is structurally null, so its eigenvalue is exactly 0 and
 ///    below any positive cutoff.  No tolerance can reclassify it; only the
-///    drop-and-heal (card PA) resolves it.  Mirrors test_network_phase_datum.cpp's
+///    drop-and-heal resolves it.  Mirrors test_network_phase_datum.cpp's
 ///    HealFixture.
 ///  - @p weak_w > 0  : PB(G02,L1) gets one phase row at that weight plus its own
 ///    pinned ambiguity, so it is separable but weakly: the BeiDou-family shape
-///    the gate miscounts at 1e-9 and the calibration reclassifies (card DG).
+///    the gate miscounts at 1e-9 and the calibration reclassifies.
 ///
 /// The clock gauge is folded as a tight constraint before the gate, so the
 /// declared datum dimension is 0 and the only candidate null direction is the
@@ -290,8 +290,8 @@ TEST(NetworkRankGateTest, DumpReportsTheGatesOwnCutoffAndCount) {
 // null at every tolerance, so no gate calibration can clear it.  A structurally
 // absent column (no rows) has eigenvalue exactly 0, which is below any positive
 // cutoff by construction.  The four-class decomposition therefore assigns the
-// deep orphans to the heal (card PA) and only the weak but real families to the
-// calibration (card DG), and calibrating until the epoch emits cannot clear an
+// deep orphans to the heal and only the weak but real families to the
+// calibration, and calibrating until the epoch emits cannot clear an
 // orphan.
 // ---------------------------------------------------------------------------
 TEST(NetworkRankGateTest, GenuinelyNullDirectionSurvivesEveryTolerance) {
@@ -416,7 +416,7 @@ TEST(NetworkRankGateTest, HealAttributionChannelIsObservational) {
 
 // ---------------------------------------------------------------------------
 // The phase-to-code companion key transform behind the orphan-window counter
-// (card H2).  A field run cannot check it: the counter reads 0 at both 305- and
+//.  A field run cannot check it: the counter reads 0 at both 305- and
 // 50-station density, and 0 is also what a miswired counter reports.  Comparing
 // the phase key's signal ("L2X") against the census's code keys ("C2X") without
 // the transform leaves the counter at zero forever, which reads as "no orphans"
@@ -454,7 +454,7 @@ TEST(NetworkRankGateTest, PhaseToCodeCompanionKeyTransformMatchesTheCoGate) {
 }
 
 // ---------------------------------------------------------------------------
-// The loose physical-bound prior on admitted OSB columns (card KP, K1/K2/K3).
+// The loose physical-bound prior on admitted OSB columns.
 // It targets the residual below-cutoff population seen on the armed 305-station
 // arm: 3 declared clock gauges plus one CB+CLK direction with zero phase weight,
 // which the drop-and-heal structurally cannot reach.

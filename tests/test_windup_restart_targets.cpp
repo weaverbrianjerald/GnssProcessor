@@ -15,7 +15,7 @@
  * the synthesised key the inject reads.
  *
  * The drain itself needs a model whose wind-up ledger holds a restart, so it is
- * graded end to end on the field arm's run-end counters (card WUP section 4); this
+ * graded end to end on the field arm's run-end counters; this
  * file pins the decision it was missing.
  */
 

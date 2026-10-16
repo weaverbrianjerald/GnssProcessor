@@ -344,7 +344,7 @@ namespace GnssProcessor {
             else { log->warn("Invalid channel_mode '{}', defaulting to single", raw); channel_mode_ = ChannelMode::Single; }
             log->info("Channel mode: {}{}", raw, explicit_channel ? "" : " (defaulted)");
         }
-        // ----- Canonical-signal rule (card CSL) -----
+        // ----- Canonical-signal rule -----
         // Which tracking attribute a station latches per band at its first
         // processed epoch.  "count" is the historical rule and the default, so an
         // absent key is byte-identical.  "priority" walks the priority list and
@@ -369,7 +369,7 @@ namespace GnssProcessor {
                 canonical_signal_min_coverage_ =
                     std::min(1.0, std::max(0.0, canonical_signal_min_coverage_));
             }
-            // ----- Whether the code follows the phase's attribute (card CSL-3) -----
+            // ----- Whether the code follows the phase's attribute -----
             // True is the CSL-1 clause, so an absent key is byte-identical.  False
             // decides the code by the same rule as the phase (first list entry that
             // clears the coverage floor), on the code's own list.  Under true, a
@@ -388,11 +388,11 @@ namespace GnssProcessor {
                           canonical_signal_code_follows_phase_
                               ? "follows the phase's tracking attribute"
                               : "is decided the same way on its own list, NOT following the "
-                                "phase's tracking attribute (card CSL-3)");
+                                "phase's tracking attribute");
             else
                 log->info("Canonical-signal rule: count (highest satellite count per band, "
                           "ties to priority order).");
-            // ----- Per-station scope of the rule (card CSL-2) -----
+            // ----- Per-station scope of the rule -----
             // Empty (the default) applies the rule to every station, so an absent key
             // is byte-identical.  A non-empty list scopes it: the listed stations
             // decide under Priority and every other station under Count, which
@@ -419,7 +419,7 @@ namespace GnssProcessor {
                 }
             }
             if (!canonical_signal_priority_stations_.empty())
-                log->info("Canonical-signal rule SCOPED (card CSL-2) to {} station(s): {} — those "
+                log->info("Canonical-signal rule SCOPED to {} station(s): {} — those "
                           "stations decide under 'priority', every other station under 'count'.",
                           canonical_signal_priority_stations_.size(),
                           joinStrings(canonical_signal_priority_stations_));
@@ -657,7 +657,7 @@ namespace GnssProcessor {
         ssr_phase_bias_disc_carry_ = jval<bool>(json,
             "processing.ssr_phase_bias_disc_carry", "ssr_phase_bias_disc_carry", false);
         if (ssr_phase_bias_disc_carry_)
-            log->info("SSR phase-bias declared-step CARRY ON (card CC): a disc-counter bump / "
+            log->info("SSR phase-bias declared-step CARRY ON: a disc-counter bump / "
                       "freshness flip translates the float ambiguity by -delta (value-only, "
                       "covariance kept) instead of resetting it; first sightings, an NL/WL "
                       "basis, a BSSD consumer and unknown keys still take the reset.");
@@ -677,7 +677,7 @@ namespace GnssProcessor {
             ssr_phase_bias_step_translate_eps_m_ = 0.005;
         }
         if (ssr_phase_bias_step_translate_) {
-            log->info("SSR phase-bias STEP TRANSLATION ON (card PBT): EVERY change in the "
+            log->info("SSR phase-bias STEP TRANSLATION ON: EVERY change in the "
                       "APPLIED satellite phase bias beyond {:.4f} m — declared by an R record "
                       "or not — translates that (sat, signal) float ambiguity by -delta "
                       "(value-only, covariance kept).  A change in the applied product carries "
@@ -695,14 +695,14 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
-        // Presence edges of a held phase bias (card PBF).  Default false keeps the card-PBH
+        // Presence edges of a held phase bias.  Default false keeps the card-PBH
         // dispatch, under which a held key skips every reaction, byte-identical.  The
         // closed-loop harness derives it from network.closed_loop.pb_hold_presence_flip
         // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
         ssr_pb_hold_presence_flip_ = jval<bool>(json,
             "processing.ssr_pb_hold_presence_flip", "ssr_pb_hold_presence_flip", false);
         if (ssr_pb_hold_presence_flip_) {
-            log->info("SSR phase-bias hold PRESENCE EDGES ON (card PBF): a held phase bias that "
+            log->info("SSR phase-bias hold PRESENCE EDGES ON: a held phase bias that "
                       "appears on a row the consumer already uses, or leaves it, takes the A5 "
                       "reaction of an unheld key (reset; carry under card CC; translate under "
                       "card PBT) instead of none.  The hold still owns the discontinuity counter "
@@ -726,7 +726,7 @@ namespace GnssProcessor {
             ssr_level_step_inflate_k_ = 1.0;
         }
         // Consumer ambiguity level re-validation: the re-coupling edge (invariant #7)
-        // of the declared-step carry and the step translation (card ALC).  Default
+        // of the declared-step carry and the step translation.  Default
         // false measures and writes nothing (byte-identical).  The closed-loop
         // harness derives it from network.closed_loop.amb_level_check
         // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
@@ -754,7 +754,7 @@ namespace GnssProcessor {
             amb_level_check_mode_ = "act";
         }
         if (amb_level_check_) {
-            log->info("Consumer AMBIGUITY LEVEL CHECK ON (card ALC, mode '{}'): every satellite "
+            log->info("Consumer AMBIGUITY LEVEL CHECK ON (mode '{}'): every satellite "
                       "tracked on two frequencies keeps a {}-epoch window of two code-derived "
                       "levels built from its OWN corrected observations — the Melbourne-Wubbena "
                       "wide-lane and the ionosphere-free combination of the PRE-fit innovations, "

@@ -1,7 +1,7 @@
 /**
  * @file test_canonical_signal_station_scope.cpp
  * @brief Contract tests for `processing.canonical_signal_priority_stations`
- *        (card CSL section 6, the four-station split).
+ *        (the four-station split).
  *
  * Per CSL section 4, four of the six stations that move to L1W carry the whole
  * consumer gain, and three of them have equal first-epoch margins, so a coverage

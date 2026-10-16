@@ -17,7 +17,7 @@
 #include "network/solve/PivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
 #include "network/diag/AmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
 #include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants (card SID phase 1)
-#include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader (card CST)
+#include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
 #include <fmt/format.h>
@@ -187,7 +187,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                           cls_path.string());
         }
         // The consumer's inter-system bias, opened only when a second constellation
-        // is active; a GPS-only consumer has no such state (card GAL).
+        // is active; a GPS-only consumer has no such state.
         if (networkMultiGnssActive(config_)) {
             const std::filesystem::path cli_path = log_dir_ / "closed_loop_isb.csv";
             cl_isb_trace.open(cli_path);
@@ -549,7 +549,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       pf_rows_trace_path.string());
     }
     if (config_.networkClockAnchorGuardSpace() != 0 && nc.trace_events) {
-        // The Q3 guard's clock and phase-space statistics (card CTU section 14).
+        // The Q3 guard's clock and phase-space statistics.
         anchor_guard_trace.open(anchor_guard_trace_path);
         if (anchor_guard_trace)
             anchor_guard_trace << "week,tow,sat,anchored,e_clk,sqrtS_clk,w_clk,e_phi,sqrtS_phi,"
@@ -563,7 +563,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else
             log->warn("Network: failed to open level-bound trace {}",
                       level_bound_trace_path.string());
-        // The level innovation instrument (card CTU section 14); the header documents
+        // The level innovation instrument; the header documents
         // the columns.
         level_innov_trace.open(level_innov_trace_path);
         if (level_innov_trace)
@@ -574,7 +574,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                      "pbar_m2,T\n";
     }
     if (config_.networkPhaseVisibleMonitor()) {
-        // The phase-visible consistency instrument (card PVN); the header documents the
+        // The phase-visible consistency instrument; the header documents the
         // columns.
         phase_visible_trace.open(phase_visible_trace_path);
         if (phase_visible_trace)
@@ -584,7 +584,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       phase_visible_trace_path.string());
     }
     if (config_.networkAprioriBrdcClock()) {
-        // The native broadcast clock a priori's wire stamp (card NBP); the header
+        // The native broadcast clock a priori's wire stamp; the header
         // documents the columns.
         brdc_offset_trace.open(brdc_offset_trace_path);
         if (brdc_offset_trace)
@@ -594,7 +594,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       brdc_offset_trace_path.string());
     }
     if (nc.emit_pb_hold && nc.emit_pb_hold_smoothed) {
-        // The smoothed hold's clock clones (card SMH); the header documents the columns.
+        // The smoothed hold's clock clones; the header documents the columns.
         pb_hold_clone_trace.open(pb_hold_clone_trace_path);
         if (pb_hold_clone_trace)
             pb_hold_clone_trace << "week,tow,sat,sig,gen,age_s,xfer_m,xfer_lah_m,phi_m,w_m2,"
@@ -1112,7 +1112,7 @@ void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
 std::size_t NetworkRunTraces::writeConsumerSatRows(const GnssTime& t,
                                                    const std::vector<ConsumerSatRow>& rows) {
     // The stream exists only when the harness and network.trace_consumer_sat are both
-    // armed (card CST), so an unarmed run never reaches the loop, and an armed run with
+    // armed, so an unarmed run never reaches the loop, and an armed run with
     // a deferred consumer epoch writes nothing: the engine hands back an empty buffer,
     // so invariant #4's "0 rows" is a real reading, not a missing file.
     if (!cl_sat_trace.is_open()) return 0;
@@ -1698,15 +1698,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
-               // Station-PD null-direction read (card RF-PD): same armed-only rule, so
+               // Station-PD null-direction read: same armed-only rule, so
                // an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_pd_null
                        ? std::string("\"trace_station_pd_null\":true,") : std::string())
-               // Per-satellite consumer readout (card CST): same armed-only rule, so an
+               // Per-satellite consumer readout: same armed-only rule, so an
                // unarmed run's manifest bytes are unchanged.
                << (nc.trace_consumer_sat
                        ? std::string("\"trace_consumer_sat\":true,") : std::string())
-               // station_prior_before_pd (card RF-PD-fix) affects the solve: it decides
+               // station_prior_before_pd affects the solve: it decides
                // which stations are in the network, so an archived logs/ folder has to be
                // able to say which side of it produced the products.  Emitted only when
                // armed (the trace_station_block / young-inflate rule), so an unarmed
@@ -1738,7 +1738,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.sat_gf_extra_band_free
                        ? std::string("\"sat_gf_extra_band_free\":true,") : std::string())
-               // Its receiver-side counterpart (card L5B): whether the receiver extra-band
+               // Its receiver-side counterpart: whether the receiver extra-band
                // code delay was estimated or held at its seed is part of the same frame (the
                // receiver delay and the satellite extra-band code biases share one null
                // direction).  Emitted only when armed, so an unarmed run's manifest bytes
@@ -1760,7 +1760,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"code_family_birth_prior_sigma_m\":{:g},",
                                      config_.networkCodeFamilyBirthPriorSigmaM())
                        : std::string())
-               // Both knobs affect the solve when armed (card L5P): the pair scope
+               // Both knobs affect the solve when armed: the pair scope
                // changes which arcs refloat and the sigma scale changes the normal
                // equations, so an archived logs/ folder has to be able to say which
                // side of them produced the products.  Emitted only when armed (as for
@@ -2077,7 +2077,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"resume_d5_warmup_ep\":{},",
                                      config_.networkResumeD5WarmupEp())
                        : std::string())
-               // The gap re-entry response (card G; docs/SPEC_slip_qc_hardening.md
+               // The gap re-entry response (docs/SPEC_slip_qc_hardening.md
                // §G3/W1) affects the solve, so an archived logs/ folder has to be able
                // to say which side of the response its products came from.  Emitted
                // only when armed (as for adm_screen and mdb), so an unarmed run's
@@ -2091,7 +2091,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.slip_qc.gap_reentry_lli ? "true" : "false",
                                      nc.slip_qc.gap_reentry_unmeasurable ? "true" : "false")
                        : std::string())
-               // The arc-level tracker's per-band signal source (card GRK).  This
+               // The arc-level tracker's per-band signal source.  This
                // block lists knobs, not counters (the two GRK counters are read
                // from the run-end card-G readout), so the knob is what is
                // recorded here.  It affects the solve through the detections and
@@ -2190,7 +2190,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"raim_redundancy_normalize\":" << (raim_redun ? "true" : "false") << ','
                << "\"raim_attribution\":" << (config_.networkRaimAttribution() ? "true" : "false") << ','
                << "\"raim_within_epoch\":" << (config_.networkRaimWithinEpoch() ? "true" : "false") << ','
-               // The RAIM pools restricted to observation phase rows (card RPA): it moves
+               // The RAIM pools restricted to observation phase rows: it moves
                // refloat decisions, so a grader must be able to tell the arms apart.
                // Emitted only when armed, so an unarmed run's manifest bytes are unchanged.
                << (config_.networkRaimPoolDataRowsOnly()
@@ -2298,7 +2298,7 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"n_sigma0_withheld\":" << n_sigma0_withheld << ','
                << "\"n_perconst_partial_epochs\":" << n_perconst_partial_epochs << ','
                << "\"n_perconst_diffuse_published\":" << n_perconst_diffuse_published << ','
-               // The setup-phase marker → ARP roster census (card UPO), written in
+               // The setup-phase marker → ARP roster census, written in
                // both knob states so a manifest states which frame the roster was
                // held in and how large the eccentricity population was.
                << "\"marker_to_arp\":{"
@@ -2312,7 +2312,7 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                // The roster's own end-of-run census (card SID phase 2), so an
                // archived logs/ folder carries the new classes without the run-end
                // log text.  Written on every network run; the roster is built on every
-               // run (card NOM step N3a), so a field reads 0 only when nothing it
+               // run, so a field reads 0 only when nothing it
                // counts happened, and "epochs" 0 means the build seam never ran.
                << "\"signal_roster\":{"
                << "\"epochs\":" << counters.sid.epochs << ','
@@ -2347,7 +2347,7 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"carry_gap_2_30\":" << counters.sid.carry_gap_2_30 << ','
                << "\"carry_gap_2_30_answered\":" << counters.sid.carry_gap_2_30_answered
                << "},"
-               // The inter-system bias census (card GAL), present only when a second
+               // The inter-system bias census, present only when a second
                // constellation is active (an empty member writes nothing).
                << (extra_member.empty() ? std::string() : extra_member + ",")
                << fmt::format("\"loop_ms\":{:.1f}", loop_ms)
@@ -2437,7 +2437,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
         const std::filesystem::path rs_csv_path = log_dir_ / "network_run_summary.csv";
         std::ofstream rs_csv(rs_csv_path);
         if (rs_csv) {
-            // Four appended columns (card RF-PD-fix); the first ten keep their order and
+            // Four appended columns; the first ten keep their order and
             // meaning, so a positional reader of the old schema is unaffected and a
             // header-keyed one picks these up.  `n_stations` is the roster size; these
             // columns say how many of its stations actually entered the arrowhead, which
@@ -2476,8 +2476,8 @@ void NetworkRunTraces::closeAll() {
     if (iono_trace.is_open()) iono_trace.close();
     if (vtec_sh_trace.is_open()) vtec_sh_trace.close();
     if (cl_trace) cl_trace.close();
-    if (cl_sat_trace.is_open()) cl_sat_trace.close();   // per-satellite consumer trace (card CST)
-    if (cl_isb_trace.is_open()) cl_isb_trace.close();   // consumer inter-system bias (card GAL)
+    if (cl_sat_trace.is_open()) cl_sat_trace.close();   // per-satellite consumer trace
+    if (cl_isb_trace.is_open()) cl_isb_trace.close();   // consumer inter-system bias
     if (if_slip_trace.is_open()) if_slip_trace.close();
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
@@ -2502,7 +2502,7 @@ void NetworkRunTraces::closeAll() {
     // and because this file is the only place the per-station MDB table's inputs exist:
     // an unflushed tail would lose the deliverable the card was armed for.
     if (congruence_trace.is_open()) congruence_trace.close();
-    if (estimability_trace.is_open()) estimability_trace.close();   // estimability dump (card DG5)
+    if (estimability_trace.is_open()) estimability_trace.close();   // estimability dump
     // Added after INC-4; the relocation did not leave it to the destructor, so the rule
     // above does not cover it.  It is closed here so its tail is flushed at teardown
     // rather than at scope exit: the MDB distribution is the graded artifact of a
@@ -2531,9 +2531,9 @@ void NetworkRunTraces::closeAll() {
     if (amb_if_trace.is_open()) amb_if_trace.close();               // card AIL
 }
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/diag/RunTraces.hpp.
+// Setup builder; documented at its declaration in network/diag/RunTraces.hpp.
 void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& config_path_) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     NetworkRunContext& ctx = run.ctx;
     const GnssConfig& config_ = run.config;

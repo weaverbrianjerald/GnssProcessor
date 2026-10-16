@@ -389,7 +389,7 @@ TEST(StateManagerTest, ReinflateCodeBiasVariancePreservesValueBreaksCovariance) 
     Eigen::VectorXd x = sm.getStateVector();
     Eigen::MatrixXd P = sm.getCovariance();
     x(idx_a)            = 0.42;
-    P(idx_a, idx_a)     = 0.04;   // below the request: the raise path (card OWD: a larger
+    P(idx_a, idx_a)     = 0.04;   // below the request: the raise path (a larger
                                   // variance is kept, test_reinflate_never_shrinks.cpp)
     P(idx_b, idx_b)     = 9.0;
     P(idx_a, idx_b)     = 0.3;    // |0.3| < sqrt(0.04 * 9): a valid covariance
@@ -452,7 +452,7 @@ TEST(StateManagerTest, ReinflateSystemTimeOffsetPreservesValueAndSetsDiag) {
     Eigen::VectorXd x = sm.getStateVector();
     Eigen::MatrixXd P = sm.getCovariance();
     x(gi)     = 1.7;    // converged ISB value (m)
-    P(gi, gi) = 0.04;   // below the request: the raise path (card OWD)
+    P(gi, gi) = 0.04;   // below the request: the raise path
     P(ri, ri) = 9.0;
     P(gi, ri) = 0.3;    // cross-covariance that must be severed
     P(ri, gi) = 0.3;

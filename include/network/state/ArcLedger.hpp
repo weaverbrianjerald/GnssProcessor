@@ -16,7 +16,7 @@
  * `runs/_msc/sid_audit_report_2026-09-22.md`, Part B.
  *
  * This ledger is one state machine those containers can read.  It is built on
- * every network run (card NOM step N3a); the solve reads it only through a card SID
+ * every network run; the solve reads it only through a card SID
  * reader armed by its own knob, so with none armed it counts and traces and the
  * solve is unchanged.
  *
@@ -32,7 +32,7 @@
  *   Dead ------ forget  ----> record reset (the arc's row stays)
  * @endverbatim
  *
- * ### Where the records live (card NOM step N4f2)
+ * ### Where the records live
  *
  * The ledger is the machine; the records are the arc table's.  Each record is the
  * @c ledger field of its arc's row (@c net::ArcState, network/state/Entities.hpp), beside

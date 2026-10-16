@@ -1,6 +1,6 @@
 /**
  * @file ArLattice.cpp
- * @brief The ledger of fixed integer cycles (cards AGT and FCF): the cause table, the evidence,
+ * @brief The ledger of fixed integer cycles: the cause table, the evidence,
  *        the one release function, the epoch's steps, the record of its two files, and its
  *        run-end report.  What it holds, its order and why it keeps no stamp of its own are in
  *        the header's file banner, include/network/ar/ArLattice.hpp.
@@ -493,7 +493,7 @@ void networkArLatticeRecord(NetworkRunContext& ctx, const std::shared_ptr<spdlog
         writeEventRows(traces.ar_lattice_events_trace, se, stations, fixes, e);
     const int n_contra = e.verdicts[verdictIndex(LatticeVerdict::Contradicted)];
     if (n_contra > 0)
-        log->warn("Network AR lattice (cards AGT, FCF): TOW {:.1f}: {} fix(es) CONTRADICTED the "
+        log->warn("Network AR lattice: TOW {:.1f}: {} fix(es) CONTRADICTED the "
                   "lattice of fixed cycles, and the arcs of each cycle were released: a wrong fix, "
                   "or a release the evidence missed (network_ar_lattice_events.csv names each; "
                   "scripts/simnet_ar_lattice_grade.py grades them against truth).",
@@ -507,9 +507,9 @@ bool arLatticeArmed(const GnssConfig& config_) {
             || (ar.fixed_cycle_fold != FixedCycleFold::Off && ar.fixed_cycle_source == FixedCycleSource::Lattice));
 }
 
-// ---- Run-end reports (card NOM step TD1b) ----
+// ---- Run-end reports ----
 
-// Run-end report: the ledger of fixed cycles (cards AGT and FCF).
+// Run-end report: the ledger of fixed cycles.
 int networkArLatticeRunEnd(const NetworkRunEndView& v) {
     if (!arLatticeArmed(v.config)) return 0;
     const auto& ar = v.config.getNetworkConfig().ambiguity_resolution;

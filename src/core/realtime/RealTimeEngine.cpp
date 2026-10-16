@@ -370,11 +370,11 @@ void RealTimeEngine::flush() {
     logPbDiscCarrySummary_("end of run");
     // The every-step translation counters (card PBT (A)).
     logPbStepTranslateSummary_("end of run");
-    // The hold reaction, silent unless a held entry was seen (card PBH).
+    // The hold reaction, silent unless a held entry was seen.
     logPbHoldSummary_("end of run");
-    // Its presence edges, silent unless armed (card PBF).
+    // Its presence edges, silent unless armed.
     logPbHoldPresenceSummary("end of run");
-    // The ambiguity level-check counters (card ALC).
+    // The ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
     // The declared-roster census, silent unless a declaration was seen or the
     // 5b knob is armed (card SID phase 5).  The closed-loop harness and the
@@ -412,7 +412,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // Clear the previous epoch's per-satellite readout here, before any gate can
     // end the epoch, so an epoch the admission gates defer leaves the buffer
     // empty (that epoch produced no consumer solution) instead of handing the
-    // harness a stale repeat.  No-op unarmed.  (card CST)
+    // harness a stale repeat.  No-op unarmed.
     if (consumer_sat_trace_) {
         consumer_sat_rows_.clear();
         consumer_sat_events_.clear();
@@ -420,7 +420,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // The same contract for the level check's per-epoch transport: a deferred
     // epoch hands the harness an empty event list and a zero check count, never
-    // the previous epoch's.  No-op unarmed.  (card ALC)
+    // the previous epoch's.  No-op unarmed.
     if (config_.ambLevelCheck()) {
         amb_level_events_.clear();
         amb_level_epoch_checks_ = 0;
@@ -565,7 +565,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // Re-validate this epoch's float ambiguities against their own windowed code
     // level and refloat the ones the code rejects: invariant #7's re-coupling
-    // edge for the card-CC carry and the card-PBT translation (card ALC).  It
+    // edge for the card-CC carry and the card-PBT translation.  It
     // sits after the update, constraints and AR (it reads the epoch's committed
     // pre-fit innovations) and before the CST harvest (so the row reports the
     // refloat_level event and the re-inflated amb_var).  The epoch's own
@@ -576,7 +576,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // Harvest the per-satellite readout last (after the update, the
     // pseudo-observation constraints and AR), so the ambiguity / slant-iono
-    // values and variances it reports are the epoch's committed ones (card CST).
+    // values and variances it reports are the epoch's committed ones.
     // Measure-only; no-op unless network.trace_consumer_sat armed the engine.
     traceConsumerSat_(ctx);
 

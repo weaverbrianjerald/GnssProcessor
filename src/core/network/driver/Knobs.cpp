@@ -220,12 +220,12 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.perconst_on = config_.networkPerConstWithhold();
     k.perconst_min_rows = config_.networkPerConstWithholdMinRows();
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
-    // Clock emission re-base knobs (card CLK-R).  The engine lives in NetworkCarryState,
+    // Clock emission re-base knobs.  The engine lives in NetworkCarryState,
     // because its per-satellite baselines and frame accumulators outlive the epoch, and
     // the driver configures it next to the emit re-base setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
-    // Emit-side phase-bias hold (card PBH).  The held values and generations live in
+    // Emit-side phase-bias hold.  The held values and generations live in
     // NetworkCarryState because they outlive the epoch; these are the knobs the
     // NetworkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
@@ -307,7 +307,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // carry_invariant_pd_safe and carry_aware_covariance resolve, and it stays correct if
     // that requirement is relaxed.
     k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
-    // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18).  Resolved
+    // Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18).  Resolved
     // once here so the driver, the assembly, the seam and the teardown read one bool.  It
     // has no interlock: the screen owns its residual walk and its state, so it runs with no
     // other tier armed, which matters because every other post-fit tier is phase-only.
@@ -426,11 +426,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.sig_resume_warmup   = si.census && si.resume_warmup_vet
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
-    // The SH-deviation carry (card T5, Iono-2): live when a co-estimated SH field
+    // The SH-deviation carry: live when a co-estimated SH field
     // (network.estimate_iono_sh) has a positive correlation time.  The epoch driver
     // tested the SH model (setup.sh_model) where this reads the flag: setup builds
     // the model exactly when the flag is set, and a run whose setup fails never reaches the
-    // epoch loop or the run end (card NOM3 step EP0).
+    // epoch loop or the run end.
     {
         const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
         k.sh_dev_tau     = config_.estimateNetworkIonoSh() ? shc.rep_error_tau_s : 0.0;
@@ -475,7 +475,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
                 else if (f == "rxcb") k.prires_rxcb = true;
-                else if (f == "clk")  k.prires_clk  = true;   // clock anchor (card Q3, INC-0)
+                else if (f == "clk")  k.prires_clk  = true;   // clock anchor
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
                        || k.prires_zwd || k.prires_rxcb || k.prires_clk;
@@ -592,7 +592,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                              ? nc.adm_revet_bound_scale : 0.2;
         k.adm_revet_bound_m = k.adm_bound_m * s;
     }
-    // --- Invariant-carry gate and emit layers (card NOM step TD1a) ---
+    // --- Invariant-carry gate and emit layers ---
     // Moved from runNetwork with their conjunctions unchanged.
     {
         // Estimation-side fine-slip innovation gate: the invariant-carry-native replacement
@@ -603,7 +603,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // armed (spec D7).
         k.emit_rebase_on = k.carry_invariant && config_.networkCarryInvariantEmitRebase();
     }
-    // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
+    // --- The epoch driver's configuration-derived values ---
     // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
     // resolved above).  The rest is read from `nc`, which is the driver's own
     // configuration in a run.

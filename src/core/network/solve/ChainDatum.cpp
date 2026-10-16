@@ -5,7 +5,7 @@
  * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
  * alias preamble below reproduces the run TU's local names for the entries this body
  * references: `auto& X = ctx.carry.X;` references (eq34_cpl_sprev_total serves the §14
- * coupling re-base), the entity tables of the station carries (card NOM step N4a: the
+ * coupling re-base), the entity tables of the station carries (the
  * receiver phase-bias carry and the receiver-side eq34 parents) and 7 `ctx.knobs` values.
  */
 
@@ -13,7 +13,7 @@
 
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest (card AGT)
+#include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
 #include "filter/StateKeySchema.hpp"
@@ -27,25 +27,25 @@
 #include <tuple>
 #include <utility>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
 #include "network/driver/SetupResult.hpp"
 #include "network/solve/Estimator.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <fmt/format.h>
-#include "network/carry/LocalCarryHarvest.hpp"   // HarvestBorder, StationHarvestBlock (card NOM3 step HV1)
+#include "network/carry/LocalCarryHarvest.hpp"   // HarvestBorder, StationHarvestBlock
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "network/diag/AmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
 #include "network/ar/AmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
 #include "network/carry/CarryVce.hpp"
-#include "network/assembly/ParamInventory.hpp" // rxIfbFamilyReseeded (card L5B)
+#include "network/assembly/ParamInventory.hpp" // rxIfbFamilyReseeded
 #include "network/qc/PriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/NormalEquations.hpp"
 #include "network/solve/Sbasis.hpp"          // NetworkSbasis::Plan
@@ -124,7 +124,7 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys, EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-// The incumbent anchors as the old "sat_signal"-keyed map (card NOM step N4d): read-only
+// The incumbent anchors as the old "sat_signal"-keyed map: read-only
 // until the wholesale replacement at the end of the election, which writes the table.
 const std::map<std::string, std::string> anchor_incumbent =
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
@@ -139,7 +139,7 @@ auto& eq34_shift_total = ctx.counters.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
-// The arcs' retained edges and pin targets (card NOM step N4f1): copied in, written back at
+// The arcs' retained edges and pin targets: copied in, written back at
 // the end of the election.
 std::set<std::pair<int, std::string>> eq34_retained_edges =
     net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
@@ -305,7 +305,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // slipped set, so that if the graph leaves no alternative the completion
             // picks the most durable slipped arc.  The score is read once per arc and
             // epoch, as the arc's durability in the group graph below, so the counter
-            // counts each slipped arc once per epoch (card AGT step AGT-4; it counted
+            // counts each slipped arc once per epoch (it counted
             // the sort's comparator calls before).
             const double life = el + (rising ? 90.0 : 0.0);
             if (arcSlipped(ri, sat, grp_sig)) {
@@ -315,7 +315,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             return life;
         };
 
-        // The group's observation graph (card AGT step AGT-4, filter/NetworkArcGraph).
+        // The group's observation graph (filter/NetworkArcGraph).
         // Station slots follow the roster index (ascending) and satellite slots the
         // group's string order, the vertex order of the string graph this replaced; the
         // arcs follow usable_keys, the order the components are united in.  Each arc
@@ -1060,7 +1060,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     }
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
 int networkChainDatumRunEnd(const NetworkRunEndView& v) {
@@ -1225,11 +1225,11 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B serial stages (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py) ----
+// ---- PASS B serial stages (generated by scripts/nom_pb1_cut.py) ----
 
 void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAssembly& assembly,
                          bool epoch_ok) {
-    // ---- From the run and the epoch (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_pb1_cut.py,
     //      each line checked by scripts/nom_pb1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
@@ -1238,7 +1238,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     const std::vector<int>& est_index_of = assembly.est_index_of;
     const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
     // ---- End of the bindings ----
-    // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
+    // The alias lines of networkPassB_ this stage reads, verbatim.
     auto& stations = setup.stations;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
 
@@ -1293,12 +1293,12 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     }
 }
 
-// ---- End of the PASS B serial stages (card NOM3 step PB1a) ----
+// ---- End of the PASS B serial stages ----
 
-// ---- Harvest half (card NOM3 step HV1; generated by scripts/nom_hv1_cut.py) ----
+// ---- Harvest half (generated by scripts/nom_hv1_cut.py) ----
 
 void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run, the epoch and the harvest (card NOM3 step HV1; generated by
+    // ---- From the run, the epoch and the harvest (generated by
     //      scripts/nom_hv1_cut.py, each line checked by scripts/nom_hv1_verify.py). ----
     NetworkRunContext& ctx = run.ctx;
     const NetworkEstimator& est = run.engines.est;
@@ -1308,7 +1308,7 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     double pl_now_s = ep.clock.pl_now_s;
-    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     // ---- End of the bindings ----
     // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------

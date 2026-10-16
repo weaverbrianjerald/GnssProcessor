@@ -72,7 +72,7 @@ struct NetworkRunContext;   // network/state/RunContext.hpp defines it as a stru
 /// the per-row form is exact anyway (no walk, no dropped term).
 inline constexpr double kClockCloneMinQRel = 1e-9;
 
-/// One clock moved onto its clone in the rows' epoch this epoch (card SCL).
+/// One clock moved onto its clone in the rows' epoch this epoch.
 struct ClockCloneActive {
     int          p{-1};      ///< the clock's row of the stashed dense block
     int          s{-1};      ///< its S index in card CTU's epoch
@@ -234,7 +234,7 @@ struct ClockCloneCounters {
 };
 
 /**
- * @brief Register this epoch's clock clones (card SCL), after every other column.
+ * @brief Register this epoch's clock clones, after every other column.
  *
  * Armed and with a valid stash stamp: one clone per registered satellite clock that has a
  * carried entry, a row @c "sat|CLK" in the stashed dense block and no reinit mark.  The
@@ -251,7 +251,7 @@ void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
 
 /**
  * @brief Build the rows' epoch: card CTU's epoch with each cloned clock on its clone
- *        (card SCL).
+ *.
  *
  * Called at the end of @c networkCouplingExactPrepare once card CTU's epoch is built.  A
  * clock in S whose walk @f$Q_s@f$ is positive (and above @ref kClockCloneMinQRel of its
@@ -272,7 +272,7 @@ void networkClockClonePrepare(NetworkRunContext& ctx,
 
 /**
  * @brief The border the rank gate, the S-basis completion and the datum-direction ratio
- *        judge when clones are registered (card SCL).
+ *        judge when clones are registered.
  *
  * The reduced shared normals over the non-clone columns (the first
  * @c numShared - numClockClones, whose indices are those of the full layout), with every
@@ -298,7 +298,7 @@ Eigen::MatrixXd networkClockClonePadRows(const Eigen::MatrixXd& H, Eigen::Index 
 
 /**
  * @brief Record which clones carry row information, at the entry of the D2 fold
- *        (card SCL).
+ *.
  *
  * At that point only the coupling rows have written to a clone column (no data row and
  * no pre-gate prior touches one), so a clone column of the reduced normals that is not
@@ -307,7 +307,7 @@ Eigen::MatrixXd networkClockClonePadRows(const Eigen::MatrixXd& H, Eigen::Index 
 void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est);
 
 /**
- * @brief The joint fold over the stand-ins and the walk factors (card SCL), in place of
+ * @brief The joint fold over the stand-ins and the walk factors, in place of
  *        card CTU's dense fold when at least one clone stands in.
  *
  * For each dense key that is an active clone's clock: when its decision folds it on the
@@ -366,7 +366,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
 void networkClockCloneNoteFallback(NetworkRunContext& ctx);
 
 /**
- * @brief The end of the D2 fold (card SCL): every registered clone that did not stand in
+ * @brief The end of the D2 fold: every registered clone that did not stand in
  *        is either referenced (left free: the rows determine it, and their information
  *        on the previous level is marginalized) or idle, and an idle clone gets an
  *        isolated prior at its stashed variance (it couples to nothing, so the prior is a
@@ -378,7 +378,7 @@ void networkClockCloneFoldEnd(NetworkRunContext& ctx, EpochWorkspace& ws,
                               NetworkEstimator& est, bool within_epoch_armed);
 
 /**
- * @brief Re-fold the clone fold on the within-epoch replay's fresh arrowhead (card SCL).
+ * @brief Re-fold the clone fold on the within-epoch replay's fresh arrowhead.
  * Folds the idle clones' isolated priors, and, when the joint fold was captured, the
  * stand-in block and the walk factors.
  * @return true when the joint fold was replayed (the caller then skips
@@ -388,7 +388,7 @@ bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorksp
                                  NetworkEstimator& est);
 
 /**
- * @brief Card Q3's in-epoch refloat on a clone epoch (card SCL): withdraw (or, with
+ * @brief Card Q3's in-epoch refloat on a clone epoch: withdraw (or, with
  *        @p restore, re-fold) the walk factors of the dropped satellites and marginalize
  *        any other dropped clock out of the stand-in block.  The clones stay: the rows
  *        still reference them, and the refloat frees the clock, not its previous value.
@@ -398,11 +398,11 @@ bool networkClockCloneReplayFold(const NetworkRunContext& ctx, const EpochWorksp
 bool networkClockCloneRefloat(NetworkRunContext& ctx, EpochWorkspace& ws, NetworkEstimator& est,
                               const std::set<std::string>& drop_sats, bool restore);
 
-/// Keep the joint fold's capture in step with a successful refloat (card SCL): remove the
+/// Keep the joint fold's capture in step with a successful refloat: remove the
 /// dropped satellites' walk factors and marginalize their stand-in-block keys.
 void networkClockCloneRefloatTrim(EpochWorkspace& ws, const std::set<std::string>& drop_sats);
 
-/// The harvest's clone marginalization for one epoch (card SCL; see
+/// The harvest's clone marginalization for one epoch (see
 /// @ref networkClockCloneHarvestBegin).
 struct ClockCloneHarvest {
     bool on{false};            ///< the regression is available: rows are marginalized
@@ -426,7 +426,7 @@ struct ClockCloneHarvest {
 };
 
 /**
- * @brief Prepare the harvest's clone marginalization (card SCL): the posterior regression
+ * @brief Prepare the harvest's clone marginalization: the posterior regression
  *        of the clones on the rest of the border, @f$K@f$ and @f$B'@f$
  *        (@c NetworkEstimator::cloneConditional), once per epoch, and the clock
  *        constellations the gauge restore needs.  Records the stand-in clones' posterior
@@ -441,7 +441,7 @@ ClockCloneHarvest networkClockCloneHarvestBegin(NetworkRunContext& ctx,
                                                 const std::map<Eigen::Index, CoupledShared>& col2desc);
 
 /**
- * @brief Marginalize the clones out of one carried row's regression (card SCL, mode 5 of
+ * @brief Marginalize the clones out of one carried row's regression (mode 5 of
  *        the unit network): with @f$r_C@f$ the row's clone coefficients,
  *        @f$r_{S'} \mathrel{+}= K^\top r_C@f$, @f$\mathrm{cond\_var} \mathrel{+}=
  *        r_C^\top B' r_C@f$, @f$r_C := 0@f$.  Then, per constellation, the clock-family
@@ -463,14 +463,14 @@ void networkClockCloneHarvestRow(ClockCloneHarvest& h, NetworkRunContext& ctx,
                                  std::size_t est_idx, Eigen::Index local_col,
                                  Eigen::VectorXd& row, double& cond_var);
 
-/// Register a station's F3 harvest block for the within-station term (card SCL).  No-op
+/// Register a station's F3 harvest block for the within-station term.  No-op
 /// when @p h is inert or @p blk is null.
 void networkClockCloneHarvestBlock(ClockCloneHarvest& h, std::size_t est_idx,
                                    const std::shared_ptr<PlHarvestBlock>& blk,
                                    const std::vector<Eigen::Index>& cols);
 
 /// Add the within-station half of the clones' conditional covariance to each registered
-/// F3 block (card SCL): @f$C(a,b) \mathrel{+}= r_{C,a}^\top B' r_{C,b}@f$ over the pairs
+/// F3 block: @f$C(a,b) \mathrel{+}= r_{C,a}^\top B' r_{C,b}@f$ over the pairs
 /// whose rows both had clone terms (the diagonal is the stashed variance, already raised
 /// by @ref networkClockCloneHarvestRow).  No-op when @p h is inert, and under card SCL2 X2
 /// (@c h.shx), whose compression adds the remainder's within-station term instead.

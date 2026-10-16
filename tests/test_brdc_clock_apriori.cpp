@@ -433,7 +433,7 @@ TEST_F(NbpBrdcWire, Doy129ReconstructionAndHeld) {
 }
 
 // ===========================================================================
-// Loader refusals and the fingerprint (card NBP section 3, knobs)
+// Loader refusals and the fingerprint
 // ===========================================================================
 
 namespace {

@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file OraclePinSetup.hpp
- * @brief Setup builder of the oracle ambiguity pin (card NOM3 step EP4).
+ * @brief Setup builder of the oracle ambiguity pin.
  *
  * The builder is called once from Application::runNetwork (src/core/network/driver/ApplicationNetwork.cpp).
  */

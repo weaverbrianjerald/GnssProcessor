@@ -2,7 +2,7 @@
 /**
  * @file NetworkTestRun.hpp
  * @brief A network run and one epoch for unit tests: everything a per-epoch seam's epoch form
- *        `(NetworkRun&, const NetworkEpoch&[, kept...][, outputs...])` reads (card NOM3 step EP2;
+ *        `(NetworkRun&, const NetworkEpoch&[, kept...][, outputs...])` reads (
  *        step HV1 builds on it).
  *
  * Card NOM3 step EP1 gave every per-epoch seam of the network producer one form over the run

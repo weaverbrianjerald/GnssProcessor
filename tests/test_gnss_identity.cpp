@@ -169,7 +169,7 @@ TEST(GnssIdentityTest, LosAndArcOrderMatchTheTupleKeysTheyReplace) {
 }
 
 TEST(GnssIdentityTest, SatSignalIdOrderMatchesTheCompositeKeysItReplaces) {
-    // SatSignalId (card NOM step N4.0) replaces the "sat|code" and "sat_code" strings and
+    // SatSignalId replaces the "sat|code" and "sat_code" strings and
     // the (sat, code) pairs; every key of one container carries codes of one type.
     std::vector<SatSignalId> ids;
     std::vector<std::pair<std::string, std::string>> pairs;

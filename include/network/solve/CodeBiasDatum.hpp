@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file CodeBiasDatum.hpp
- * @brief Stage 2 of the network solve (card NOM3 step SG): the W6 satellite code-bias datum.
+ * @brief Stage 2 of the network solve: the W6 satellite code-bias datum.
  *        The per-epoch clears of the datum scratch, the two data rosters (RF-0f, B5D), the rows
  *        NetworkSbasis::buildCodeBiasDatumRows builds, their fold, telemetry and replay capture,
  *        the card GFC first-sighting family prior, the card KP prior and the first-N summary.

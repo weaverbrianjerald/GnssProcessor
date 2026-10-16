@@ -72,7 +72,7 @@ namespace {
 struct RxClkBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 
@@ -666,7 +666,7 @@ TEST(CarryRxClockInBlockTest, PredictionBandGrowsWithTheGapSoAGapIsNotReadAsAJum
 // prune addresses the whole family per station.
 TEST(CarryRxClockInBlockTest, CarryKeyAddressesTheClockAndEachIsbSeparately) {
     NetworkCarryState carry;
-    net::NetworkEntities ent;   // the station carries (card NOM step N4a)
+    net::NetworkEntities ent;   // the station carries
     auto stash = [&](int sta, const std::string& kind, double v) {
         net::put(ent.stations, StationId{sta}, &net::StationState::signals, kind,
                  &net::StationSignalState::rx_clk) = LocalCarry{v, 1e-4, 100.0};

@@ -411,7 +411,7 @@ public:
     ///         (0 when none folded since the last @ref reduce or @ref reset; a skipped
     ///         degenerate gauge is not counted).  Read by
     ///         @ref NetworkEstimator::solveHeldDetached, which refuses a folded system
-    ///         (card FCF).
+    ///.
     std::size_t numSumZeroGauges() const { return sumzero_gauges_.size(); }
 
     /// The rank-K double-difference prior of one connected (const,signal)
@@ -619,7 +619,7 @@ public:
     ///         @ref foldReducedDdPriors; degenerate/chordless blocks are inert slots).
     std::size_t numDdPriorBlocks() const { return dd_priors_.size(); }
 
-    // --- Detached fold of fixed integer cycles (card FCF) ----------------------
+    // --- Detached fold of fixed integer cycles ----------------------
     //
     // The second DD-fold path of this class, beside the Card-4 dense fold above
     // (@ref foldReducedDdPriors, which stays unchanged and is this path's unit
@@ -632,7 +632,7 @@ public:
 
     /**
      * @brief One fixed integer cycle as a soft constraint on local ambiguity
-     *        columns, in the increment frame (card FCF).
+     *        columns, in the increment frame.
      *
      * The constraint reads
      * @f$\sum_t c_t\,x_{r_t}[\mathrm{col}_t] \sim N(\hat z, P^z)@f$: the signed sum
@@ -654,7 +654,7 @@ public:
     struct DetachedFoldFactor;
 
     /**
-     * @brief The fold operands of one block of cycle rows (card FCF).
+     * @brief The fold operands of one block of cycle rows.
      *
      * A block's stations are touched by no other block, so the per-block Woodbury
      * corrections add exactly (no block-Jacobi truncation).  With @f$K@f$ rows and
@@ -691,7 +691,7 @@ public:
         Eigen::VectorXd du;           ///< This block's increment @f$G A^{-1}(z_{\mathrm{free}}-\hat z)@f$ (n_shared); empty unless the block folds.
     };
 
-    /// Every block's operands and the shared-system increments of their fold (card FCF).
+    /// Every block's operands and the shared-system increments of their fold.
     struct DetachedFold {
         std::vector<DetachedFoldBlock> blocks;  ///< One per input block, input order.
         Eigen::MatrixXd dN;                     ///< @f$\sum_b G_bA_b^{-1}G_b^\top@f$ over the blocks that fold (n_shared × n_shared, symmetric); the sum of the blocks' @c dN in input order.
@@ -700,7 +700,7 @@ public:
 
     /**
      * @brief The @ref foldReducedDdPriors algebra for blocks of fixed cycles, from the
-     *        cached per-station factors, without modifying this object (card FCF).
+     *        cached per-station factors, without modifying this object.
      *
      * Adding @c dN and @c du to a copy of @ref reducedSharedNormals and
      * @ref reducedSharedRhs gives the reduced system of the float data plus every
@@ -741,7 +741,7 @@ public:
 
     /**
      * @brief @f$A_b^{-1}r@f$ through a block's equilibrated factor:
-     *        @f$D\,(DAD)^{-1}D\,r@f$ (card FCF).
+     *        @f$D\,(DAD)^{-1}D\,r@f$.
      * @param b A block from @ref foldCycleRowsDetached with a factor.
      * @param r A vector of the block's row count.
      * @return @f$A_b^{-1}r@f$.
@@ -981,7 +981,7 @@ public:
                                        const Eigen::VectorXd& x_s) const;
 
     /**
-     * @brief The terms of @ref reconstructStation, held apart (card L5B: the station-local
+     * @brief The terms of @ref reconstructStation, held apart (the station-local
      *        attribution of filter/NetworkRhsAttrib reads them).
      *
      * @f$x_r = N_{rr}^{-1}u_r - N_{rr}^{-1}N_{rs}x_s + c_{\text{sumzero}} + c_{\text{dd}}@f$,
@@ -1188,7 +1188,7 @@ public:
         const Eigen::MatrixXd& cov_free_xs, bool carry_aware = false) const;
 
     /**
-     * @brief The blocks of @ref jointConditionalCovariance only (card ARL, block search).
+     * @brief The blocks of @ref jointConditionalCovariance only (block search).
      *
      * Same expression as the uncorrected (@c carry_aware false) joint covariance,
      * @f$m_a^\top \mathrm{Cov}_{free} m_b + [s_a = s_b](N_{rr}^{-1})_{c_a c_b}@f$, but
@@ -1425,7 +1425,7 @@ public:
 
     /// Put back accumulators read earlier from @ref sectionTimers, discarding whatever was
     /// timed since.  For a caller whose solves are not the float path's own: the detached
-    /// held solve (card FCF, @ref NetworkEstimator::solveHeldDetached) restores them on exit,
+    /// held solve (@ref NetworkEstimator::solveHeldDetached) restores them on exit,
     /// so the D0 run-end line and the driver's per-bracket accounting count the float solves
     /// alone, and the held solves' cost is read from the fixed-cycle seam's own timer.
     /// @param saved Accumulators previously returned by @ref sectionTimers.
@@ -1473,7 +1473,7 @@ public:
     /**
      * @brief Spectral read of the last positive-definiteness rejection in
      *        @ref addStation: the null direction that the pivot test reports only
-     *        as a number (card RF-PD).
+     *        as a number.
      *
      * The rejection message gives a pivot magnitude, not a column.  LDLᵀ pivots are
      * permuted (@c transpositionsP), so a pivot index is not a column index and must

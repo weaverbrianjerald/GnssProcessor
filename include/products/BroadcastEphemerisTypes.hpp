@@ -138,7 +138,7 @@ struct BroadcastEphemeris {
  *
  * week x 604800 + seconds of week; a BeiDou toc (native BDT) is shifted by 1356 weeks plus
  * 14 s.  The single definition behind the network's broadcast staging
- * (@c navAvailabilityGpsSeconds) and its group-delay latch (card OWD).
+ * (@c navAvailabilityGpsSeconds) and its group-delay latch.
  *
  * @param e A GPS / Galileo / BeiDou / QZSS record.
  * @return Its toc in continuous GPS seconds.

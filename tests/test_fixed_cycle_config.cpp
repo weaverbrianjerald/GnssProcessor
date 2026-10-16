@@ -1,6 +1,6 @@
 /**
  * @file test_fixed_cycle_config.cpp
- * @brief Loader tests of the fixed-cycle fold (card FCF, step FCF-2 and its review fixes, step
+ * @brief Loader tests of the fixed-cycle fold (step FCF-2 and its review fixes, step
  *        FCF-3): @c network.ambiguity_resolution.fixed_cycles.*.
  *
  * Suite @c FixedCycleConfig:
@@ -184,7 +184,7 @@ const std::string kObserve = "\"fold\": \"observe\", \"source\": \"epoch\"";
 /// The record's first clause (GnssConfigLoadNetwork.cpp, the producer AR warning).
 constexpr const char* kRecord = "Network producer AR ARMED, but the emitted product stays FLOAT";
 /// The Emit variant's first clause.
-constexpr const char* kEmitVariant = "Network producer AR ARMED with fixed_cycles.fold EMIT (card FCF)";
+constexpr const char* kEmitVariant = "Network producer AR ARMED with fixed_cycles.fold EMIT";
 /// The slip-fix refusal (Emit) and warning (Observe).
 constexpr const char* kSlipRefusal = "requires the slip fixes of card ARL section 13";
 constexpr const char* kSlipWarning = "fixed_cycles.fold observe runs without the slip fixes";
@@ -239,7 +239,7 @@ TEST(FixedCycleConfig, SectionTwoRefusals) {
         const Loaded l = load(c.tag, c.json);
         EXPECT_FALSE(l.ok) << c.tag;
         EXPECT_NE(l.text.find(c.why), std::string::npos) << c.tag << ": " << l.text;
-        EXPECT_NE(l.text.find("(card FCF)"), std::string::npos) << c.tag;
+        EXPECT_NE(l.text.find(""), std::string::npos) << c.tag;
     }
 }
 

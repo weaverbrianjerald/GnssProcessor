@@ -48,7 +48,7 @@ constexpr double kStash = 1000.0;
 struct WsxFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     CouplingExactEpoch ep;
     std::vector<std::string> keys;

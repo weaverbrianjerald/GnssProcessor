@@ -1120,7 +1120,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Shared re-inflation rule and its counters (card OWD, O2)
+    // Shared re-inflation rule and its counters
     // =================================================================
 
     double StateManager::reinflateDiag_(Eigen::Index idx, double current_diag,
@@ -1361,7 +1361,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
-        long long n_kept = 0;   // states whose larger variance was kept (card OWD)
+        long long n_kept = 0;   // states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);
@@ -1517,7 +1517,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
-        long long n_kept = 0;   // states whose larger variance was kept (card OWD)
+        long long n_kept = 0;   // states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_phase_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);

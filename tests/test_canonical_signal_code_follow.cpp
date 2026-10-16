@@ -1,7 +1,7 @@
 /**
  * @file test_canonical_signal_code_follow.cpp
  * @brief Contract tests for `processing.canonical_signal_code_follows_phase`
- *        (card CSL section 7, the code half of the priority rule).
+ *        (the code half of the priority rule).
  *
  * Under @c CanonicalSignalRule::Priority the CSL-1 rule moves each band's code
  * pick onto the tracking attribute its phase latched.  On the multi-site census,

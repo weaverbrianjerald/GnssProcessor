@@ -54,7 +54,7 @@
 
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
-namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
+namespace net = GnssProcessor::net;   // the arc table
 using GnssProcessor::localCarryYoung;
 using GnssProcessor::LogManager;
 using GnssProcessor::NetworkAmbiguityVehicle;

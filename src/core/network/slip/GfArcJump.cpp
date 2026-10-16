@@ -1,6 +1,6 @@
 /**
  * @file GfArcJump.cpp
- * @brief The arc-scoped geometry-free jump trigger (card ARL, slip-ladder defect 1): the
+ * @brief The arc-scoped geometry-free jump trigger (slip-ladder defect 1): the
  *        per-arc test, the PASS-A drain that answers its flags, and its run-end report.
  *
  * The design (what the test is, why its reference is the last clean step, what a flag

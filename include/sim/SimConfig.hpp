@@ -179,7 +179,7 @@ struct SimConfig {
         std::uint64_t seed{ 20240315ULL ^ 0xA17EC0DEull }; ///< RNG seed for the multipath+slip stream (must be >= 0).
     } multipath;
 
-    /// Coloured carrier-phase error (card SFR,
+    /// Coloured carrier-phase error (
     /// docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2): one
     /// unit-variance first-order Gauss-Markov process per line of sight, scaled by
     /// @c sigma_zen_m and the white phase noise's elevation factor
@@ -630,7 +630,7 @@ struct SimConfig {
         /// producer's `filter.process_noise.sat_clock_q`, so injected truth and the
         /// estimator's stochastic model are directly comparable.  The measured physical
         /// value is q_phys ~ 3e-8 (about 0.9 mm per 30 s epoch); the armed carry q sits
-        /// far above it (card Q3).
+        /// far above it.
         double rw_q_m2ps{ 0.0 };
         std::uint64_t seed{ 20240315ULL ^ 0x5A7C10CBull }; ///< Dedicated stream (must be >= 0).
         /// Deterministic hand-authored clock steps layered on top (G-B events).

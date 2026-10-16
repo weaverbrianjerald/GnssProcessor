@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file FixedCycles.hpp
- * @brief The fixed-cycle fold (card FCF, @c network.ambiguity_resolution.fixed_cycles): the
+ * @brief The fixed-cycle fold (@c network.ambiguity_resolution.fixed_cycles): the
  *        integer L1/L2 pairs the producer AR search fixed, folded into a detached held solve of
  *        the shared parameters that only the emission reads.
  *
@@ -13,10 +13,10 @@
  * phase biases, code biases), made from a copy of the float solve's own reduced normals
  * (@ref NetworkEstimator::solveHeldDetached), beside the float solve of the same epoch.  The
  * estimator, the carried ambiguities, the search, the DD trace and post-fit QC keep the float
- * (card FCF section 2: with zero-q ambiguities the float at an epoch already holds the whole
+ * (with zero-q ambiguities the float at an epoch already holds the whole
  * history, so a hold fed back into the filter would add only cross terms and would let the hold
  * confirm itself).  Under @c fold: emit, solution prep and the emitter read the held vector;
- * every other reader keeps the float (card FCF section 5).
+ * every other reader keeps the float.
  *
  * ## One epoch, source epoch (step FCF-2, the same-epoch probe)
  *
@@ -27,7 +27,7 @@
  *  2. **The per-unit test** (@ref fcyc::scoreUnits).  T = v' Sigma_pair^-1 v, v = y - N in
  *     cycles, Sigma_pair the pair's float covariance from the search's own two-by-two readback:
  *     chi-square with 2 degrees of freedom under right integers, exactly.  A unit above
- *     chi2_2(1 - @c unit_alpha) is not placed (card FCFB section 3: the overall block test
+ *     chi2_2(1 - @c unit_alpha) is not placed (the overall block test
  *     cannot see one wrong (1, 1) pair among the rows of a network-sized block).
  *  3. **Placement** (@ref fcyc::placeUnits).  Each unit becomes two @ref
  *     NetworkNormalEquations::CycleRow (one per band) on the live ambiguity columns of its four
@@ -74,13 +74,13 @@
  *
  * Every verdict on a cycle releases its arcs, never the rows behind it alone
  * (network/ar/ArLattice.hpp): other rows can hold one of its arcs and would otherwise keep that
- * arc's old integer (card FCFC section 8).
+ * arc's old integer.
  *
  * ## What the tests cannot see
  *
  * Steps 2 and 6 see a wrong integer only where the float disagrees with it.  A slip no detector
  * flags leaves the zero-q float carry on the wrong integer, so v is small and both tests pass it.
- * On the S8 twin without the slip fixes (card FCFC section 5) the stale pair is held 64 epochs and
+ * On the S8 twin without the slip fixes the stale pair is held 64 epochs and
  * folded at 63, its T at most 8.6 against a bar of 27.6: the search fixes the stale integer for
  * 30 epochs, and the ledger holds it for 34 more after the search stops, with no guard firing,
  * until its arc leaves the pool one epoch before the run ends.  The lapse (step 5) bounds the
@@ -88,7 +88,7 @@
  * loader requires under Emit and names when missing under Observe.  Block acceptance and an
  * isolated failure blame the unit of largest T, and a stale unit's T stays small, so where the
  * zero-q carry has warped a station they can release innocent units there and keep the stale one
- * (card FCFC section 8).
+ *.
  *
  * ## What it writes
  *
@@ -191,7 +191,7 @@ void scoreUnits(std::vector<Unit>& units, const ArEpochFixes& fixes, double alph
 std::vector<Unit> impliedUnits(const arcgraph::CycleLattice& L, const ArEpochFixes& fixes, long long ep);
 
 /**
- * @brief The re-validation's releases (card FCF section 3; file banner, step 3).
+ * @brief The re-validation's releases (file banner, step 3).
  *
  * Over the failing units: each band-arc found in two or more of them is eliminated (cause
  * Revalidation, ascending ArcId); each failing unit with no such arc releases the arcs of both
@@ -349,7 +349,7 @@ struct UnitFate {
     BlockFigures fig;         ///< Its block's figures at that pass (zero when never placed or the block degenerate).
 };
 
-/// The knobs of one fold (card FCF section 4), read once per epoch from the configuration.
+/// The knobs of one fold, read once per epoch from the configuration.
 struct FoldKnobs {
     double sigma_cyc{0.003};    ///< Hold sigma (cycles).
     double gate_alpha{1e-4};    ///< Block acceptance probability.
@@ -464,8 +464,8 @@ struct FixedCycleEmission {
     Eigen::VectorXd x_held;       ///< The held shared estimate (empty unless @c emit).
 };
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief The fixed-cycle fold and the ledger of fixed cycles at this epoch (SB_SOLPREP, right
@@ -479,7 +479,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  * returns the held vector only under Emit with an accepted held solve.  The estimator is not
  * modified.
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -513,7 +513,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
 FixedCycleEmission networkFixedCycles(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
- * @brief Run-end report: the fixed-cycle fold (card FCF).
+ * @brief Run-end report: the fixed-cycle fold.
  *
  * The epochs with a pair and the held solves, the units by fate, the blocks, the refusals, the
  * unit statistic's quantiles and exceedance, block acceptance against the stated mean, the

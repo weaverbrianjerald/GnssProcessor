@@ -229,7 +229,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
         EXPECT_TRUE(containers.count((*it)[1].str()))
             << "the local carry map " << (*it)[1].str() << " has no site in NetworkCarrySites";
     }
-    // The station carries moved to the entity tables (card NOM step N4a): each LocalCarry
+    // The station carries moved to the entity tables: each LocalCarry
     // field of an entity row is a site under the member it was (its FieldDecl row's `was`).
     const std::string ent_h = readFile(root / "include" / "network" / "state" / "Entities.hpp");
     ASSERT_FALSE(ent_h.empty());
@@ -244,7 +244,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
             << "the entity field " << (*it)[1].str() << " (was " << was
             << ") has no site in NetworkCarrySites";
     }
-    EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02 (card PRM section 16)";
+    EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02";
     // A carried container of LocalCarry by any other shape (a vector, a pointer) is a site
     // the scan above cannot see.
     EXPECT_EQ(body.find("std::vector<LocalCarry>"), std::string::npos);

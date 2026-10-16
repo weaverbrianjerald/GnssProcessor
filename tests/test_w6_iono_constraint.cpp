@@ -1,6 +1,6 @@
 /**
  * @file test_w6_iono_constraint.cpp
- * @brief @c network.w6_iono_constraint, the self-contained W6 posture (card RF-0b), and
+ * @brief @c network.w6_iono_constraint, the self-contained W6 posture, and
  *        the datum cards built on it (RF-0c, RF-0d, RF-0e, RF-0f).
  *
  * Card: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
@@ -433,7 +433,7 @@ TEST(W6IonoConstraintTest, UnequalChannelSupportClosesASecondDirection) {
 }
 
 // ===========================================================================
-// The hard per-satellite geometry-free datum, network.sat_gf_datum (card RF-0c).
+// The hard per-satellite geometry-free datum, network.sat_gf_datum.
 // ===========================================================================
 
 // Standing invariant #6: the default builds no row at all, so an unarmed run folds
@@ -502,7 +502,7 @@ TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
 }
 
 // ===========================================================================
-// The per-signal extension of the geometry-free datum (card RF-0d).
+// The per-signal extension of the geometry-free datum.
 // ===========================================================================
 
 // The card's bar.  Four registered channels, the prior off.  RF-0c's pair pin already
@@ -707,7 +707,7 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
 }
 
 // ===========================================================================
-// The S-line declaration `sat_gf_datum=<mode>` (card RF-0d item 2).
+// The S-line declaration `sat_gf_datum=<mode>`.
 // ===========================================================================
 
 // A separate field, not an overload of gfpin=.  That token's payload is its presence
@@ -797,7 +797,7 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
 }
 
 // ===========================================================================
-// The level datum (card RF-0e), arm e2: time-linked geometry-free rows.  (Arm e1, an
+// The level datum, arm e2: time-linked geometry-free rows.  (Arm e1, an
 // absolute per-constellation ionosphere-free sum-to-zero row, is retired.)
 // ===========================================================================
 
@@ -853,7 +853,7 @@ TEST(W6IonoConstraintTest, SatGfTimeLinkUnarmedKeepsTheAbsoluteTarget) {
 }
 
 // ===========================================================================
-// The band-2 ISC: estimated where a station bridges, pinned where none does (card RF-0f).
+// The band-2 ISC: estimated where a station bridges, pinned where none does.
 // ===========================================================================
 
 // The card's first bar: estimable with one dual-tracking station.  The companion column

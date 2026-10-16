@@ -1,4 +1,4 @@
-// Frozen oracles for filter/NetworkArcGraph (card AGT, AGT-1 to AGT-4): suite NetworkArcGraphOracle.
+// Frozen oracles for filter/NetworkArcGraph (AGT-1 to AGT-4): suite NetworkArcGraphOracle.
 //
 // The module replaces five pieces of legacy graph code.  Before any caller moves (AGT-2 to
 // AGT-4), each replacement is proven decision-identical against a frozen verbatim copy of the
@@ -2143,7 +2143,7 @@ struct FrozenStationMaps {
 };
 
 // The frozen election compiles against the real run context: nothing in it is stood in but the
-// station maps of FrozenStationMaps (card NOM step N4a).
+// station maps of FrozenStationMaps.
 namespace frozen_eq34 {
 // ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
 void networkElectChainDatum(NetworkRunContext& ctx,
@@ -3402,7 +3402,7 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
 }
 
 /// The arcs of this epoch's chain graphs that are slipped: the new eq34_slip_demoted per epoch under
-/// the longevity and slip-aware elections (card AGT section 5).
+/// the longevity and slip-aware elections.
 long long slippedGraphArcs(const ChainEpoch& e) {
     long long n = 0;
     for (std::size_t i = 0; i < e.present.size(); ++i) {
@@ -3492,7 +3492,7 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
             networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l, ev_l);
             ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, ev_f, ev_l, st_f, st_l, sh_f, sh_l), "")
                 << "lineage " << lineage << " epoch " << ep;
-            // The declared move (card AGT section 5): one count per slipped graph arc and epoch.
+            // The declared move: one count per slipped graph arc and epoch.
             const long long want_demoted = (kn.longevity && kn.slip_aware) ? slippedGraphArcs(e) : 0;
             ASSERT_EQ(ctx_l.counters.eq34_slip_demoted - demoted_l, want_demoted) << "lineage " << lineage << " epoch " << ep;
             n_frozen_demoted += ctx_f.counters.eq34_slip_demoted - demoted_f;

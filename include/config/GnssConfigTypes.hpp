@@ -163,7 +163,7 @@ namespace GnssProcessor {
         bool          consumer_undifferenced{ false };   ///< Consumer user model.  false: BSSD (the between-satellite single-difference S-transform in the filter).  true: the undifferenced, uncombined PPP-RTK user (the target model): no observation-space differencing; the network satellite phase biases are applied directly to the raw float, and per-band ambiguities are fixed individually through the resolver's internal-SD LAMBDA (no WL/NL cascade, no pivot-handover machinery).  Dropping the MW WL removes the conflict between the network bias frame and the .BIA frame.
         /**
          * @brief Carry the consumer's float ambiguity across a declared phase-bias
-         *        step instead of resetting it (card CC, part A).
+         *        step instead of resetting it (part A).
          *
          * Key @c network.closed_loop.pb_disc_carry, default false (byte-identical).
          * @c deriveClosedLoopConsumerConfig copies it into the consumer engine's
@@ -175,13 +175,13 @@ namespace GnssProcessor {
          */
         bool          pb_disc_carry{ false };
         /**
-         * @brief Answer a presence edge of a held phase bias (card PBF).
+         * @brief Answer a presence edge of a held phase bias.
          *
          * Key @c network.closed_loop.pb_hold_presence_flip, default false
          * (byte-identical).  @c deriveClosedLoopConsumerConfig copies it into the
          * consumer engine's config as @c processing.ssr_pb_hold_presence_flip
          * (@c GnssConfig::ssrPbHoldPresenceFlip); a standalone real-time consumer sets
-         * that @c processing key directly.  Under the producer's hold (card PBH) a held
+         * that @c processing key directly.  Under the producer's hold a held
          * bias that appears on, or leaves, a phase row the consumer already uses steps
          * the applied correction by the whole bias, and the card-PBH dispatch answers
          * neither edge.  Armed, both edges take the A5 reaction of an unheld key.  It
@@ -191,7 +191,7 @@ namespace GnssProcessor {
         /**
          * @brief Channel mode of the consumer itself
          *        (@c network.closed_loop.channel_mode, "single" (default) or "all")
-         *        (card SID, phase 6b).
+         *        (phase 6b).
          *
          * The producer's `processing.channel_mode` acts on the producer: it sets how
          * many rows each network station contributes and therefore what the wire
@@ -209,7 +209,7 @@ namespace GnssProcessor {
          * @brief The consumer's band latch and its freshness response follow the
          *        producer's declared roster
          *        (@c network.closed_loop.roster_latch, default false, inert)
-         *        (card SID, phase 5b).
+         *        (phase 5b).
          *
          * @c deriveClosedLoopConsumerConfig copies it into the consumer engine's
          * config as @c GnssConfig::consumerRosterLatch.  When armed, the consumer
@@ -225,7 +225,7 @@ namespace GnssProcessor {
         bool          roster_latch{ false };
         /**
          * @brief The consumer translates every phase-bias product step into its own
-         *        ambiguities, declared or not (card PBT, part A).
+         *        ambiguities, declared or not (part A).
          *
          * Key @c network.closed_loop.pb_step_translate, default false (byte-identical).
          * @c deriveClosedLoopConsumerConfig copies it into the consumer engine's
@@ -241,7 +241,7 @@ namespace GnssProcessor {
         /**
          * @brief Dead band of @ref pb_step_translate in metres
          *        (@c network.closed_loop.pb_step_translate_eps_m, default 0.005)
-         *        (card PBT, part A).
+         *        (part A).
          *
          * At or below it nothing is written to the ambiguity state and the filter
          * absorbs the move as noise.  For the same reason an empty declaration (a
@@ -268,7 +268,7 @@ namespace GnssProcessor {
         double        level_step_inflate_k{ 1.0 };
         /**
          * @brief The consumer re-validates each float ambiguity against its own code
-         *        level and refloats the ones the code rejects (card ALC).
+         *        level and refloats the ones the code rejects.
          *
          * Key @c network.closed_loop.amb_level_check, default false (byte-identical).
          * This is the re-coupling edge (invariant #7) for cards CC and PBT: a carried
@@ -281,10 +281,10 @@ namespace GnssProcessor {
          */
         bool          amb_level_check{ false };
         /// Samples per satellite before the test may run
-        /// (@c amb_level_check_window_ep, default 20 = 10 min at 30 s) (card ALC).
+        /// (@c amb_level_check_window_ep, default 20 = 10 min at 30 s).
         int           amb_level_check_window_ep{ 20 };
         /// Trip threshold: |state − level| > k · σ_level
-        /// (@c amb_level_check_k, default 4.0) (card ALC).
+        /// (@c amb_level_check_k, default 4.0).
         double        amb_level_check_k{ 4.0 };
         /// Action on a trip: @c "act" (refloat both bands through the existing reset
         /// path) or @c "observe" (count only, no state written) (card ALC).
@@ -292,7 +292,7 @@ namespace GnssProcessor {
         /**
          * @brief Warm start of the closed-loop consumer in the event harness
          *        (@c network.closed_loop.state_snapshot, default false; false is
-         *        byte-identical and writes no file) (card CC, part B).
+         *        byte-identical and writes no file) (part B).
          *
          * When true and the producer writes a network history snapshot copy
          * (@c state_snapshot_keep_history: @c <state_snapshot_path>.epNNNN), the
@@ -409,20 +409,20 @@ namespace GnssProcessor {
      * from the stochastic model (rule 4).  All keys live under
      * @c network.cycle_slip.*, beside the detector arms they harden.
      *
-     *  - The IF-TD reference-satellite slip gate (card R, @c if_phase_td_ref_*)
+     *  - The IF-TD reference-satellite slip gate (@c if_phase_td_ref_*)
      *    becomes scale-aware, coherence-discriminated, widened on thin families
      *    and persistence-capped.  See IfPhaseSlipDetector::RefGateParams.
-     *  - LLI corroboration (card L, @c mw_lli_*): at a station whose LLI behaviour
+     *  - LLI corroboration (@c mw_lli_*): at a station whose LLI behaviour
      *    is demonstrably not credible, an LLI assertion must be corroborated by an
      *    empirical MW/GF step; elsewhere LLI stays decisive.
-     *  - Gap instrumentation (card G, @c gap_instrument), counters only: arcs that
+     *  - Gap instrumentation (@c gap_instrument), counters only: arcs that
      *    resume across a tracking break with a shifted raw level, and whether they
      *    re-entered with bridged carry state.
      *
      * With all three masters off, the producer is byte-identical.
      */
     struct SlipQcConfig {
-        // --- Hardened IF-TD reference-satellite gate (card R) --------------
+        // --- Hardened IF-TD reference-satellite gate --------------
         bool   ref_gate{ false };            ///< Master arm (network.cycle_slip.if_phase_td_ref_gate).
         /// Run the reference arm on the additional gradient chains of
         /// `if_phase_td_pairs = all` as well
@@ -469,7 +469,7 @@ namespace GnssProcessor {
         bool   ref_elev_norm{ false };
         double ref_elev_clamp_deg{ 5.0 };    ///< Elevation clamp for @ref ref_elev_norm (matches the pool arm's).
 
-        // --- LLI corroboration in the MW drain (card L) --------------------
+        // --- LLI corroboration in the MW drain --------------------
         bool   lli_corroborate{ false };     ///< Master arm (network.cycle_slip.mw_lli_corroborate).
         double lli_chatter_frac_hi{ 0.6 };   ///< LLI-set-fraction EWMA above which a station is demoted to corroboration-required.
         double lli_chatter_frac_lo{ 0.3 };   ///< …and below which it is promoted back (hysteresis band).
@@ -481,10 +481,10 @@ namespace GnssProcessor {
         double lli_gf_floor_m{ 0.04 };       ///< Physical GF floor in metres (the audit's support test).
         double lli_step_alpha{ 0.15 };       ///< EWMA weight for the per-station raw-step scales.
 
-        // --- Gap-coincident slip instrumentation (card G) ------------------
+        // --- Gap-coincident slip instrumentation ------------------
         bool   gap_instrument{ false };      ///< Master arm (network.cycle_slip.gap_instrument).  Counters and trace rows only.
 
-        // --- Gap re-entry response: mark a slipped re-entry at the re-entry (card G) ---
+        // --- Gap re-entry response: mark a slipped re-entry at the re-entry ---
         /**
          * @brief Master arm (@c network.cycle_slip.gap_reentry_relevel) for the gap
          *        re-entry slip response (docs/SPEC_slip_qc_hardening.md §G3/W1, the
@@ -525,7 +525,7 @@ namespace GnssProcessor {
         /// unmeasurable bridged population measured 24 arcs, against 88 shifted).
         bool   gap_reentry_unmeasurable{ false };
 
-        // --- Re-entry keyed on the signal (card GRS) -----------------------
+        // --- Re-entry keyed on the signal -----------------------
         /**
          * @brief Per-signal rider (@c network.cycle_slip.gap_reentry_per_signal) of
          *        @ref gap_reentry (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
@@ -595,7 +595,7 @@ namespace GnssProcessor {
          */
         bool   gap_reentry_coresumed_share{ false };
 
-        // --- The tracker's signal per band, keyed on the model (card GRK) --
+        // --- The tracker's signal per band, keyed on the model --
         /**
          * @brief Arm (@c network.cycle_slip.tracker_modeled_first) for the
          *        arc-level tracker's per-band signal choice
@@ -630,7 +630,7 @@ namespace GnssProcessor {
          */
         bool   tracker_modeled_first{ false };
 
-        // --- Arc-scoped geometry-free jump trigger (card ARL) ---------------
+        // --- Arc-scoped geometry-free jump trigger ---------------
         /**
          * @brief Master arm (@c network.cycle_slip.gf_arc_jump) for the arc-scoped GF
          *        jump trigger (include/network/slip/GfArcJump.hpp; card ARL, slip-ladder
@@ -667,11 +667,11 @@ namespace GnssProcessor {
         /// (@c network.cycle_slip.gf_arc_jump_min_count); clamped to the window.
         int    gf_arc_jump_min_count{ 10 };
 
-        // --- IF-TD post-flag re-seed (card ARL) ------------------------------
+        // --- IF-TD post-flag re-seed ------------------------------
         /**
          * @brief Arm (@c network.cycle_slip.if_phase_td_reseed_on_flag) for keeping
          *        a flagged satellite's IF-TD gradient instead of restarting its chain
-         *        (card ARL, slip-ladder defect 2).
+         *        (slip-ladder defect 2).
          *
          * Unarmed, a pooled IF-TD flag erases the satellite's stored gradient
          * (IfPhaseSlipDetector::resetSatellite), so the epoch after the flag has no
@@ -886,7 +886,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Where the producer AR search's fixed integer cycles go (card FCF,
+     * @brief Where the producer AR search's fixed integer cycles go (
      *        @c network.ambiguity_resolution.fixed_cycles.fold).
      *
      * The fold is a second solve of the shared parameters, beside the float solve of the
@@ -897,11 +897,11 @@ namespace GnssProcessor {
     enum class FixedCycleFold {
         Off,      ///< (default) Nothing runs; byte-identical.
         Observe,  ///< The held solve runs beside the float one, traced and counted; nothing is emitted from it and nothing is carried.
-        Emit      ///< As Observe, and solution prep and the emitter read the held shared estimate; every other reader keeps the float (card FCF section 5).
+        Emit      ///< As Observe, and solution prep and the emitter read the held shared estimate; every other reader keeps the float.
     };
 
     /**
-     * @brief Which fixed integer cycles the fold holds (card FCF,
+     * @brief Which fixed integer cycles the fold holds (
      *        @c network.ambiguity_resolution.fixed_cycles.source).
      */
     enum class FixedCycleSource {
@@ -1012,7 +1012,7 @@ namespace GnssProcessor {
         FixedCycleSource fixed_cycle_source{ FixedCycleSource::Unset };
         /// Card FCF (@c fixed_cycles.sigma_cyc): hold sigma per folded row, in cycles of its
         /// band; the row's variance is @f$P^z=(\sigma\lambda)^2>0@f$, so @f$P^z+B@f$ is positive
-        /// definite.  Default 0.003 (card FCFB section 3).
+        /// definite.  Default 0.003.
         double fixed_cycle_sigma_cyc{ 0.003 };
         /// Card FCF (@c fixed_cycles.unit_alpha): false-refusal probability per unit-epoch of the
         /// per-unit test, T = v' Sigma_pair^-1 v against chi-square with 2 degrees of freedom.
@@ -1041,7 +1041,7 @@ namespace GnssProcessor {
         /// logs/network_fixed_cycle_events.csv (the fold's edges).  Requires the fold.
         bool   fixed_cycle_trace{ false };
         /// Card FCF (@c fixed_cycles.emit_measurement_only): the acknowledgement that a
-        /// @c fold: emit run is a sim measurement arm of decision D1 (card FCF section 2).  Its
+        /// @c fold: emit run is a sim measurement arm of decision D1.  Its
         /// only effect is to let the loader accept Emit before the author's ruling; the loader
         /// checks it (every station's RINEX file lies in a sim fixture) rather than trusting it.
         bool   fixed_cycle_emit_measurement_only{ false };
@@ -1144,7 +1144,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Hard per-satellite geometry-free code-bias datum
-     *        (@c network.sat_gf_datum) (card RF-0c,
+     *        (@c network.sat_gf_datum) (
      *        docs/refound/RF-0b_dcb_datum_2026-09-15.md, last section).
      *
      * RF-0b measured the gap this closes.  Under @ref NetworkW6IonoConstraint::None each
@@ -1191,7 +1191,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Ionosphere constraint of the W6 satellite code-bias slice
-     *        (@c network.w6_iono_constraint) (card RF-0b,
+     *        (@c network.w6_iono_constraint) (
      *        docs/refound/RF-0_baseline_2026-09-14.md).
      *
      * The satellite DCB (the geometry-free part of the satellite code bias) is collinear
@@ -1304,7 +1304,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Which Melbourne-Wubbena pairs the network's wide-lane detector forms
-     *        (`network.cycle_slip.mw_detect_pairs`) (card L5P).
+     *        (`network.cycle_slip.mw_detect_pairs`).
      *
      * On a two-band lineage there is one pair and the knob is inert.  On the
      * three-band lineage of card B5D the detector forms three pairs per satellite,
@@ -1558,7 +1558,7 @@ namespace GnssProcessor {
      */
     struct NetworkInjectEvent {
         /// @c slip | @c outage | @c anchor_handover | @c arc_erase | @c sat_clock_step
-        /// | @c rx_clock_step | @c oracle_pin | @c fixed_cycle_plant (card FCF: at the first
+        /// | @c rx_clock_step | @c oracle_pin | @c fixed_cycle_plant (at the first
         /// epoch from @ref tow at which the ledger of fixed cycles holds the arc (@ref station,
         /// @ref sat, @ref signal), every row's integer is shifted by @ref delta_cycles times
         /// the row's coefficient on that arc, a planted wrong integer for the re-validation).
@@ -1814,7 +1814,7 @@ namespace GnssProcessor {
         bool sat_isc_state{ false };
         /// Leave an extra-band satellite code-bias column free where the data determine
         /// it, and let its (constellation, signal) channel carry the level with its
-        /// sum-to-zero row (card B5D, docs/refound/B5D_band5_code_datum_2026-09-20.md).
+        /// sum-to-zero row (docs/refound/B5D_band5_code_datum_2026-09-20.md).
         ///
         /// Why: RF-0d pins every registered code column beyond the ionosphere-free pair
         /// through its geometry-free combination `(d_k - d_ref)/(mu_k - 1) = c*T_GD`, an
@@ -1849,7 +1849,7 @@ namespace GnssProcessor {
         /// Estimate the receiver's extra-band code delay (the receiver IFB of a band
         /// outside the constellation's clock-reference pair, state key
         /// "<system>_IFB<band>", e.g. "GPS_IFB5") as a column of the station's local
-        /// block, instead of holding it at its first-epoch seed (card L5B, step R-1b of
+        /// block, instead of holding it at its first-epoch seed (step R-1b of
         /// the L5 return plan; card L5R section 4).
         ///
         /// Why: with @c network.estimate_sat_code_bias armed, the station split leaves
@@ -1897,14 +1897,14 @@ namespace GnssProcessor {
         bool estimate_rx_extra_band_code_delay{ false };
         /// A network station contributes, as code-only rows, every allow-listed band-1
         /// code it reports for a satellite besides the code its canonical latch selected
-        /// (card SCC, docs/refound/SCC_second_code_channel_2026-09-21.md, R1).
+        /// (docs/refound/SCC_second_code_channel_2026-09-21.md, R1).
         ///
         /// Why: with one canonical code per station and band, a satellite's C1W code
         /// bias is supported only by the stations that latched C1W (under the
         /// `priority` latch, about a third of the roster), so the wire carries a C1W
         /// bias for fewer satellites per epoch than C1C and many satellite-epochs lack
         /// it (card CSL §9).  A consumer whose code bias vanishes departs by tens of
-        /// metres (card MSC).  The two families do not compete for information but for
+        /// metres.  The two families do not compete for information but for
         /// the same stations; letting a station report both makes them share the
         /// stations.
         ///
@@ -1923,14 +1923,14 @@ namespace GnssProcessor {
         /// only when armed.
         bool second_code_channel{ false };
         /// Explicit allow-list of band-1 code signals a station may contribute under
-        /// @ref second_code_channel (card SCC).  The loader refuses an entry that is not
+        /// @ref second_code_channel.  The loader refuses an entry that is not
         /// a 3-character code type starting with 'C', and any entry whose band digit is
         /// not '1' (band 2 is left to a follow-up card: it would make the
         /// @ref sat_isc_state bridging roster non-empty for the first time).  C1X and
         /// C1L are admitted only if listed, never by default, and are unvalidated.
         std::vector<std::string> second_code_signals{ "C1C", "C1W" };
         /// Multiplier on the code sigma of the rows that R2 routes through the receiver
-        /// inter-signal state: the companion rows and any fallback code (card SCC, R5).
+        /// inter-signal state: the companion rows and any fallback code.
         /// Under `processing.channel_mode: all` it applies to every non-canonical code
         /// row.  At least 1; the default 1.0 is never applied (byte-identical).  Values
         /// below 1 are refused rather than clamped, as for
@@ -2052,20 +2052,20 @@ namespace GnssProcessor {
         /// handover does not persist as a state.  Solve-affecting when armed; default
         /// @c false is byte-identical.  Acts only under @c FloatKf.
         bool amb_float_declared_handover{ false };
-        /// The per-line-of-sight phase nuisance state (card LGM,
+        /// The per-line-of-sight phase nuisance state (
         /// docs/refound/LGM_los_phase_nuisance_2026-10-01.md section 4.1): one band-common,
         /// phase-only Gauss-Markov state per (station, satellite), +1 on every phase row
         /// of the line of sight and nothing on code rows, carried in the station's
         /// whitened local block with transition phi = exp(-gap / tau), born at
         /// N(0, sigma(e)^2) by a pseudo-observation row.  It models the stations'
-        /// time-correlated phase error (card SFR) that the network otherwise states as
+        /// time-correlated phase error that the network otherwise states as
         /// white.  Requires the float vehicle, phase_leveling and the conditional
         /// coupling; refuses carry_invariant.  Default false is
         /// byte-identical.
         bool phase_colour_state{ false };
         /// Zenith sigma of the state's stationary prior (m); the elevation law is
         /// sigma(e) = sigma_zen / sin(max(e, phase_colour_elev_floor_deg)), the sim
-        /// fixture's (card SFR section 4.2).  Must be > 0.
+        /// fixture's.  Must be > 0.
         double phase_colour_sigma_zen_m{ 0.005 };
         /// Time constant tau (s) of the Gauss-Markov transition.  Must be > 0.
         double phase_colour_tau_s{ 300.0 };
@@ -2116,7 +2116,7 @@ namespace GnssProcessor {
         /// other detection-shaping knob.  Inert without
         /// @c network.cycle_slip.if_phase_td.
         NetworkIfPhaseTdPairs cycle_slip_if_phase_td_pairs{ NetworkIfPhaseTdPairs::First };
-        /// Which MW pairs the network forms (@ref NetworkMwDetectPairs) (card L5P).
+        /// Which MW pairs the network forms (@ref NetworkMwDetectPairs).
         /// Default @c All is the original path, byte-identical.  Detection-shaping
         /// when armed (a pair that is not formed cannot flag, refloat or feed the
         /// common-band scope); inert on a two-band lineage and without
@@ -2124,7 +2124,7 @@ namespace GnssProcessor {
         NetworkMwDetectPairs cycle_slip_mw_detect_pairs{ NetworkMwDetectPairs::All };
         /// Multiplier on the code sigma of an extra-band signal (one whose band is
         /// neither band of the constellation's ionosphere-free pin pair) in the
-        /// network solve (card L5P).  The default 1.0 is byte-identical: the scale is
+        /// network solve.  The default 1.0 is byte-identical: the scale is
         /// never applied at 1, so the row weight keeps the exact 1/sigma^2 value.
         /// Values below 1 are refused at load.  The closed-loop consumer is pinned to
         /// 1 in @c deriveClosedLoopConsumerConfig: this is a producer-side lever, and
@@ -2454,7 +2454,7 @@ namespace GnssProcessor {
         /// like the screen's other knobs (it changes which rows are trusted, not what a
         /// carried state means).
         double gross_los_cold_bound_m{ 0.0 };
-        /// Test-only (card ARL, the integer-ambiguity ladder): when > 0, PASS B appends
+        /// Test-only (the integer-ambiguity ladder): when > 0, PASS B appends
         /// one row per slant-ionosphere column tying it to absolute zero with this sigma
         /// (metres), so the estimator matches a fixture simulated without ionosphere
         /// (gnss_simulator: iono.background_source analytic, quiet_vtec_tecu 0,
@@ -2800,7 +2800,7 @@ namespace GnssProcessor {
         /**
          * @brief Name the null local column behind every @c addStation PD rejection
          *        (@c network.trace_station_pd_null), as @c TOPOLOGY /
-         *        @c sta_pd_dropped rows in @c network_events.csv (card RF-PD).
+         *        @c sta_pd_dropped rows in @c network_events.csv.
          *
          * @c NetworkNormalEquations::addStation rejects a station whose local block
          * @f$N_{rr}^r@f$ fails the relative PD test, and the driver drops it for the
@@ -2830,7 +2830,7 @@ namespace GnssProcessor {
         /**
          * @brief Per-satellite readout of the closed-loop consumer
          *        (@c network.trace_consumer_sat) to @c logs/closed_loop_sat_trace.csv
-         *        (card CST).
+         *.
          *
          * @c closed_loop_trace.csv carries week, tow, @c n_sats, the AR columns and the
          * position error, and nothing per satellite.  EV6
@@ -2863,7 +2863,7 @@ namespace GnssProcessor {
         /**
          * @brief Bump only the generation of the channel that moved
          *        (@c network.disc_mark_scope, @c "sat" (default) | @c "channel")
-         *        (card MS).
+         *.
          *
          * `NetworkProductEmitter::markSatDiscontinuity` drops a satellite into one
          * `forced_bump_sats_` set, and `satForced()` is read by the clock, code-bias and
@@ -2891,7 +2891,7 @@ namespace GnssProcessor {
         std::string disc_mark_scope{ "sat" };
         /**
          * @brief Hold the emitted phase bias of a (satellite, signal) at the first value
-         *        of its generation (@c network.emit_pb_hold) (card PBH).
+         *        of its generation (@c network.emit_pb_hold).
          *
          * PBH read 3 measured the wire's phase-bias movement against truth on both
          * beds: the within-arc RMS of the phase bias alone is 0.0227 m (sim) and
@@ -2920,7 +2920,7 @@ namespace GnssProcessor {
         bool emit_pb_hold{ false };
         /**
          * @brief Arc gap (s) beyond which a returning key starts a new hold generation
-         *        (@c network.emit_pb_hold_max_gap_s, default 300) (card PBH).
+         *        (@c network.emit_pb_hold_max_gap_s, default 300).
          *
          * A key not emitted for longer than this is a re-acquisition, not a
          * continuation: holding it at a value estimated before the gap would assert a
@@ -2934,7 +2934,7 @@ namespace GnssProcessor {
         double emit_pb_hold_max_gap_s{ 300.0 };
         /**
          * @brief Hold the phase-visible clock instead of the phase bias
-         *        (@c network.emit_pb_hold_phase_clock, default false) (card LAH).
+         *        (@c network.emit_pb_hold_phase_clock, default false).
          *
          * With @ref emit_pb_hold alone, a held phase bias is frozen while the emitted
          * clock moves, so a level move (clock and every phase bias of the satellite
@@ -2957,7 +2957,7 @@ namespace GnssProcessor {
         bool emit_pb_hold_phase_clock{ false };
         /**
          * @brief The smoothed hold (@c network.emit_pb_hold_smoothed, default false)
-         *        (card SMH).
+         *.
          *
          * The held key keeps @f$(C - P)(t) = (c - p)(t_0|t_0) + \Phi(t)@f$ with
          * @f$\Phi = c(t|t) - c(t_0|t)@f$: the phase side keeps the generation-start
@@ -2965,7 +2965,7 @@ namespace GnssProcessor {
          * and a revision of @f$c(t_0)@f$ (the level) reaches the phase bias, so the code
          * side only.  It is written as the phase-clock transfer of
          * @ref emit_pb_hold_phase_clock minus @f$\Phi@f$ accumulated frame-free, so the
-         * members share one frame (card SMH section 10).  @f$c(t_0|t)@f$ is a clock clone
+         * members share one frame.  @f$c(t_0|t)@f$ is a clock clone
          * per hold key, a coupling row with no observation rows time-updated by card CTU's
          * exact rule (@ref PbHoldClone.hpp).  A clone lives while card Q3's anchor holds
          * its clock: it is born at the first stash at which the anchor holds, dies at the
@@ -2984,7 +2984,7 @@ namespace GnssProcessor {
         /**
          * @brief Fold the station's own datum rows into its local block before the
          *        @c addStation positive-definiteness test
-         *        (@c network.station_prior_before_pd) (card RF-PD-fix).
+         *        (@c network.station_prior_before_pd).
          *
          * `NetworkNormalEquations::addStation` judges a station on its observation rows
          * alone, and the driver drops a rejected station for the epoch
@@ -3266,7 +3266,7 @@ namespace GnssProcessor {
         /// O(stations x (1 + codes) x epochs); off by default, byte-identical when off.
         bool trace_rx_states{ false };
         bool trace_events{ false };       ///< Emit @c network_events.csv (L2): one structured long-format row per discrete QC action (tiers T1 IF-slip … T6 clock-monitor, plus GATE / SIGMA0 / PIVOT / RETRO), in place of scraping spdlog with regular expressions for which satellite, station or arc was acted on and when.  Pivot handover and retro-bump arming are logged nowhere else.  Rows are written even on epochs that are later withheld (they are part of the disposition record).  O(QC events); off by default, byte-identical when off (no new file).
-        /// Replay a product file that has no S contract line (card OWD, O1).  Such a
+        /// Replay a product file that has no S contract line.  Such a
         /// wire (from before card OWD) replays with the default emitter (no
         /// clock-discontinuity channel, the flat default phase-bias threshold), so it
         /// cannot reproduce the producer's declarations; the consumer replay refuses it
@@ -3735,7 +3735,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief How a station's canonical tracking attribute is chosen per band (card CSL).
+     * @brief How a station's canonical tracking attribute is chosen per band.
      *
      * @c ChannelMode::Single keeps one tracking attribute per band and observation
      * type; this enum selects the rule that decides which one, at the station's first
@@ -3762,7 +3762,7 @@ namespace GnssProcessor {
     /**
      * @brief What the ledger-driven gap re-entry response does with an arc that the
      *        raw slip tiers did not see this epoch (@c network.ledger_reentry_no_verdict)
-     *        (card SID, phase 3).
+     *        (phase 3).
      *
      * The population of the response is the ledger's admitted lifecycle, which differs
      * from the raw tiers' resumptions: an arc can be raw-Tracking and admitted-Gap at

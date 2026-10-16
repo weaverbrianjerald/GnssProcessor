@@ -1,6 +1,6 @@
 /**
  * @file test_group_delay_latch.cpp
- * @brief The broadcast group delay latched over the processing window (card OWD, O3).
+ * @brief The broadcast group delay latched over the processing window.
  *
  * Each satellite's group delay is latched for the run (replacing the RF-0c latch, which
  * took the first navigation record) as the low median of the group delays of its healthy

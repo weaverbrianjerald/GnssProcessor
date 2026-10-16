@@ -2,7 +2,7 @@
 /**
  * @file WithinEpochCulprits.hpp
  * @brief The within-epoch RAIM tier's culprit sets and their hand-off to the DD-carry
- *        rebuild (card C3c section 3; card WCF): the set type, the run counters of both
+ *        rebuild (card WCF): the set type, the run counters of both
  *        ends of the hand-off, the verdict that reads them, and the run-end report.
  *
  * ## The hand-off
@@ -111,7 +111,7 @@ struct WithinEpochCulprits {
 };
 
 /**
- * @brief Run counters of the culprit hand-off, one per end (card WCF; standing
+ * @brief Run counters of the culprit hand-off, one per end (standing
  *        invariant 4).  In @c NetworkServiceCounters::we_culprit_withhold.
  *
  * The writer's count is taken by the re-solve just before it calls the rebuild, the

@@ -32,7 +32,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
-#include "network/assembly/SecondCodeScope.hpp"   // secondCodeCompanions (card SCC, R1)
+#include "network/assembly/SecondCodeScope.hpp"   // secondCodeCompanions
 #include "network/assembly/SecondPhaseScope.hpp"  // secondPhaseCompanions (card SID phase 6a, R1)
 #include <algorithm>
 #include <cctype>
@@ -474,7 +474,7 @@ std::vector<std::string> activeFrequencyBands(
         // rule made from the code's own list above: the same
         // first-in-the-list-with-coverage decision the phase got, without reference
         // to the phase's attribute.  Nothing else in the rule changes, so a station
-        // whose two lists agree latches identically either way (card CSL-3).
+        // whose two lists agree latches identically either way.
         if (!code_follows_phase) return out;
 
         // The code follows the phase's tracking attribute where that code exists
@@ -556,7 +556,7 @@ std::vector<std::string> activeFrequencyBands(
 
             // Tally every admitted priority-list channel of this constellation at
             // this epoch, in priority order, and pass the ordered candidates to
-            // the pure rule (card CSL).  Under the default
+            // the pure rule.  Under the default
             // CanonicalSignalRule::Count that rule is the historical one: per
             // (band, obs_type) the highest observation count wins, and because
             // the list is walked once with strictly-greater replacement, the
@@ -589,7 +589,7 @@ std::vector<std::string> activeFrequencyBands(
                 candidates.push_back(CanonicalCandidate{ sig, band_name, obs_type, count });
             }
 
-            // The rule is scoped per station (card CSL-2).  With no station list
+            // The rule is scoped per station.  With no station list
             // configured this is config_.canonicalSignalRule() unchanged, so the
             // output is byte-identical to the unscoped rule; with a list, the listed
             // stations decide under 'priority' and the rest under 'count'.
@@ -598,7 +598,7 @@ std::vector<std::string> activeFrequencyBands(
                                         config_.canonicalSignalPriorityStations(),
                                         canonical_trace_label_);
             // The follow clause is the code half of the priority rule, so it is
-            // passed in the same call; true is the CSL-1 behaviour (card CSL-3).
+            // passed in the same call; true is the CSL-1 behaviour.
             const auto picks = decideCanonicalPicks(candidates, station_rule,
                                                     config_.canonicalSignalMinCoverage(),
                                                     config_.canonicalSignalCodeFollowsPhase());
@@ -715,7 +715,7 @@ std::vector<std::string> activeFrequencyBands(
             // One line per station and constellation naming the latch and its
             // runner-up with both counts, under either rule, so a run states which
             // tracking attribute each band carries and by what margin the
-            // alternative lost (card CSL).  Trace-class: nothing downstream reads
+            // alternative lost.  Trace-class: nothing downstream reads
             // it, and products and event ledgers are unaffected.
             std::string latch_detail;
             for (const auto& [key, pick] : picks) {
@@ -730,11 +730,11 @@ std::vector<std::string> activeFrequencyBands(
             // The rule named here is the one this station decided under, not the
             // global key, so a scoped run never reports 'priority' at a station
             // running 'count'.  With no scope the two are the same value, so an
-            // unscoped run's line is unchanged (card CSL-2).
+            // unscoped run's line is unchanged.
             // The follow setting is named only when it is off: the default line
             // stays byte-identical, and a run that turned the clause off says so on
             // the line that states the latch, which is where an arm of the code
-            // half is read (card CSL-3).
+            // half is read.
             log_manager_.getLogger("main_log")->info(
                 "Canonical latch for {} station '{}' (rule={}{}{}, min_coverage={:.2f}, "
                 "{} sats this epoch): {}",
@@ -982,7 +982,7 @@ std::vector<std::string> activeFrequencyBands(
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
-            // The companion codes (card SCC, R1) and second phases (card SID phase
+            // The companion codes and second phases (card SID phase
             // 6a, R1) this call adds, if any, are recorded on the observation so
             // downstream consumers can tell those rows from canonical ones (the
             // Melbourne-Wubbena guard, R4; the sigma scale, R5; the cell telemetry,
@@ -1455,7 +1455,7 @@ std::vector<std::string> activeFrequencyBands(
             }
         }
 
-        // --- Second code channel (card SCC) ----------------------------------
+        // --- Second code channel ----------------------------------
         // One canonical code per station and band means a satellite's C1W code bias
         // is supported only by the stations that latched C1W, so the C1C and C1W
         // satellite families compete for the same roster instead of sharing it.
@@ -1524,7 +1524,7 @@ std::vector<std::string> activeFrequencyBands(
                     if (companion_out) companion_out->insert(sig);
                     log_manager_.getLogger("ppp_model")->trace(
                         "Uncombined band {} for {} {}: companion code {} added beside "
-                        "the latched {} (card SCC)",
+                        "the latched {}",
                         band, obs.satellite, system_str, sig, best_code);
                 }
             }
@@ -1808,7 +1808,7 @@ std::vector<std::string> activeFrequencyBands(
      * @param is_iono_free Output; true when a dual or triple IF combination exists.
      * @param comb_type Output: "single", "dual", "triple" or "uncombined".
      * @param companion_out Optional; receives the companion codes the uncombined
-     *        selection adds (card SCC).  See selectUncombinedSignals.
+     *        selection adds.  See selectUncombinedSignals.
      * @param second_phase_out Optional; receives the second phases the uncombined
      *        selection adds (card SID phase 6a).  See selectUncombinedSignals.
      * @return true if useful signals were selected.

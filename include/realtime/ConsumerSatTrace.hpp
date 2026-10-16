@@ -2,7 +2,7 @@
 
 /**
  * @file ConsumerSatTrace.hpp
- * @brief Per-satellite readout of the closed-loop PPP-RTK consumer (card CST): one
+ * @brief Per-satellite readout of the closed-loop PPP-RTK consumer: one
  *        POD row per (satellite, raw phase signal) per consumer epoch, plus its CSV
  *        schema.
  *
@@ -30,7 +30,7 @@
 
 namespace GnssProcessor {
 
-/// CSV header of `logs/closed_loop_sat_trace.csv` (card CST).  Kept beside the
+/// CSV header of `logs/closed_loop_sat_trace.csv`.  Kept beside the
 /// row struct and the formatter so the three stay in step.
 ///
 /// Column groups, in order:

@@ -193,7 +193,7 @@ struct Net {
         return b;
     }
     /// The station whose ambiguities of satellite s hold the phase datum: station 0 for every
-    /// satellite (the original fixture), or station s % kR when gAnchorRotate (card SCL: each
+    /// satellite (the original fixture), or station s % kR when gAnchorRotate (each
     /// satellite its own anchor, as the producer's prioritized phase datum elects them).
     static int anchorOf(int s);
     /// Carried ambiguities: every (station other than the satellite's anchor, satellite,
@@ -478,7 +478,7 @@ RecOut runRecursion(const Net& n, int mode, const FpOpts* fp = nullptr) {
         const int nb = static_cast<int>(b.size());
         std::map<BKey, int> bcol;
         for (int i = 0; i < nb; ++i) bcol[b[i]] = i;
-        // Modes 4 and 5 (card SCL): every previous clock carried into this epoch gets a clone
+        // Modes 4 and 5: every previous clock carried into this epoch gets a clone
         // column, the previous epoch's clock, between the border and the ambiguities.
         std::map<int, int> clone_of_p;           // previous border row -> clone column
         if (have && mode >= 4)
@@ -1141,7 +1141,7 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
             }
             std::printf("\n");
         }
-        // Measured (card WSX section 6): both forms keep the level with the batch (variance
+        // Measured: both forms keep the level with the batch (variance
         // ratio 1.0000 / 1.0001); the shipped form states no border direction tighter than
         // the batch (eigenvalues 1.0000 to 1.163, the loosest the pivot satellite's
         // phase-visible clock against the others'); the within-station half alone states one
@@ -1150,7 +1150,7 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
         // smallest eigenvalue falls with the stations per satellite (the dropped cross-station
         // half): shipped form 0.885 / 0.661 / 0.336 and with the within-station half 0.693 /
         // 0.518 / 0.322 at 8 / 16 / 48 stations, always along a between-satellite
-        // phase-visible contrast, the level staying with the batch (card WSX section 6).
+        // phase-visible contrast, the level staying with the batch.
         EXPECT_GT(rmin, 0.5) << "mode " << mode;
         EXPECT_LT(rmax, 2.0) << "mode " << mode;
         EXPECT_LT(emax, 0.5) << "mode " << mode;
@@ -1200,7 +1200,7 @@ TEST(CouplingExactUpdateTest, BroadcastGradeWalkLocksThePerRowLevelWithRotatedAn
 // datum layouts.  Held to 1e-7 (border values, ambiguity values, and both covariances
 // relative) rather than the fixture's 1e-8: the clone adds two inversions per epoch (the
 // stand-in block and the posterior with the clone columns), and measured, two phase-bias
-// values miss 1e-8 by about 2e-9 (card SCL section 4.1).
+// values miss 1e-8 by about 2e-9.
 TEST(CouplingExactUpdateTest, CloneWithTheJointHarvestEqualsTheBatch) {
     for (const bool rotate : {false, true}) {
         const AnchorRotateScope rot(rotate);

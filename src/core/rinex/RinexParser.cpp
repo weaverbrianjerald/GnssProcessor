@@ -694,7 +694,7 @@ namespace GnssProcessor {
                             // The RINEX 2 path applies the same rule
                             // (extractSatsFromLine below).  There is no knob: dropping
                             // a valid satellite is never the wanted behavior
-                            // (card RXP).
+                            //.
                             std::string sat_id = line.substr(0, 3);
                             if (sat_id[1] == ' ') sat_id[1] = '0';
                             System system = sat_id[0] == 'G' ? System::GPS :

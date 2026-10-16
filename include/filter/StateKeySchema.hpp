@@ -929,7 +929,7 @@ inline std::string makePivotSeedKey(std::string_view cons,
 //   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
 //   layer: shell index.  Layer 0 keeps the "SH" prefix, so single-layer keys,
 //          snapshots and traces written before the second layer existed
-//          (card Iono-2) stay valid.  The dual-layer field's second shell uses
+// stay valid.  The dual-layer field's second shell uses
 //          the separate prefix "SH2": parseVtecShKey rejects extra pipe fields,
 //          so a 5-field layer-extended key would be unparseable by older
 //          readers, and a separate prefix is the backward-compatible extension.

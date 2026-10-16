@@ -1,7 +1,7 @@
 /**
  * @file test_network_gross_los.cpp
  * @brief The gross line-of-sight screen's two pure rules, its act half and its
- *        config gate (docs/SPEC_event_harness.md §24.18) (card GL).
+ *        config gate (docs/SPEC_event_harness.md §24.18).
  *
  * The screen exists because every post-fit tier of this producer pools
  * carried-ambiguity phase rows: networkPostFitRaim (Raim.cpp) admits a

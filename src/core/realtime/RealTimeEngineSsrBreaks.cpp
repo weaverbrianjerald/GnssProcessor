@@ -195,7 +195,7 @@ void RealTimeEngine::reactToGenerationChange(RtEpochContext& ctx) {
             for (const auto& k : keys) state_manager_->resetAmbiguity(k, reset_std);
             // Record the global reset per ambiguity key, so the per-satellite rows
             // of that epoch show it and a mass reset is not mistaken for an
-            // undeclared one.  No-op unarmed (card CST).
+            // undeclared one.  No-op unarmed.
             if (consumer_sat_trace_)
                 for (const auto& k : keys) {
                     const auto sep = k.find('_');
@@ -257,7 +257,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     // there lands in ctx.pb_hold_handled and is skipped by whichever of the three
     // reactions below runs, so each key is visited once per epoch (the same
     // guarantee the PBT-before-CC dispatch gives).  With an unheld product the set
-    // stays empty and all three bodies are unchanged (card PBH).
+    // stays empty and all three bodies are unchanged.
     reactToPbHold_(ctx);
     // With the step translation armed, it replaces the whole reaction for declared
     // and undeclared steps alike, so it is dispatched before the card-CC carry.
@@ -265,10 +265,10 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     // on: one seam reacts per epoch, it visits each (sat, signal) key once, and
     // PbStepTranslateLedger::react makes at most one shiftAmbiguity call per cell.
     // carryOnPhaseBiasDisc_ is then never entered, so a declared step cannot be
-    // translated twice (card PBT, A).
+    // translated twice.
     if (config_.ssrPhaseBiasStepTranslate()) { translatePhaseBiasStep_(ctx); return; }
     // With the declared-step carry armed, the whole reaction is the carry seam;
-    // everything below is the pre-card reset path, verbatim (card CC, A).
+    // everything below is the pre-card reset path, verbatim.
     if (config_.ssrPhaseBiasDiscCarry()) { carryOnPhaseBiasDisc_(ctx); return; }
 
     auto log = log_manager_.getLogger("rt_engine");
@@ -292,9 +292,9 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key = obs.satellite + "|" + code;
             // A key the hold seam claimed skips the discontinuity-counter reaction,
-            // which the hold owns (card PBH).  With processing.ssr_pb_hold_presence_flip
+            // which the hold owns.  With processing.ssr_pb_hold_presence_flip
             // off it skips the A5 edge below as well; armed, that edge runs as on an
-            // unheld key (card PBF).
+            // unheld key.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             if (!claimed) {
@@ -362,7 +362,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
 
 /**
  * @brief SSR phase-bias discontinuity / freshness flip -> ambiguity carry
- *        (amb -= Δ), the knob-on counterpart of resetOnPhaseBiasDisc (card CC, A).
+ *        (amb -= Δ), the knob-on counterpart of resetOnPhaseBiasDisc.
  *
  * New code, not a relocation.  The per-key sweep matches the reset reaction
  * (the raw phase signals of every modeled satellite, the same ungated read for
@@ -399,8 +399,8 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
-            // is carried here as an unheld key's is (card PBF).
+            // A claimed key: the hold owns its counter; armed, its A5 edge
+            // is carried here as an unheld key's is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
@@ -431,7 +431,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                                                 applied_now_m, basis_nlwl, bssd, reset_std);
             // Any action other than None wrote this key (a carry shifts the value, a
             // refusal resets it), so the level window for this satellite restarts
-            // (card ALC).
+            //.
             if (d.action != PbDiscCarryLedger::Action::None)
                 noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
             using A = PbDiscCarryLedger::Action;
@@ -451,7 +451,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                     break;
                 default:
                     // A refused carry took the reset; the event names the refusal so
-                    // the row differs from a plain declared reset (card CST).
+                    // the row differs from a plain declared reset.
                     noteConsumerSatEvent_(key, PbDiscCarryLedger::actionName(d.action));
                     log->info("{}SSR phase-bias {}: reset {} {} ({} — carry refused)",
                               epoch_prefix, bump ? "discontinuity" : "freshness flip",
@@ -468,7 +468,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
 
 /**
  * @brief Every phase-bias product step, declared or not -> ambiguity translation.
- *        Replaces resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_ (card PBT, A).
+ *        Replaces resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_.
  *
  * New code, not a relocation.  The per-key sweep matches the reset and carry
  * reactions (the raw phase signals of every modeled satellite, the same ungated
@@ -513,8 +513,8 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
-            // is translated here as an unheld key's step is (card PBF).
+            // A claimed key: the hold owns its counter; armed, its A5 edge
+            // is translated here as an unheld key's step is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
@@ -542,7 +542,7 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             // Under a hold the applied value is constant within a generation, and the
             // hold seam already re-floated a generation change, so for a claimed key
             // only the presence edge is translated; any other epoch is recorded only
-            // (card PBF).
+            //.
             if (claimed && !flip) {
                 pb_step_translate_.record(key, applied_now, applied_now_m);
                 if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
@@ -557,7 +557,7 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             // key (a translation shifts the value, a declared refusal resets it), so
             // the level window for this satellite restarts.  The three that write
             // nothing leave the window alone, so an empty declaration does not cost
-            // the check a whole window (card ALC).
+            // the check a whole window.
             if (d.action != PbStepTranslateLedger::Action::None
                 && d.action != PbStepTranslateLedger::Action::SkippedEps
                 && d.action != PbStepTranslateLedger::Action::RefusedUndeclared)
@@ -619,7 +619,7 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
 }
 
 /**
- * @brief Reaction to a held phase bias (card PBH).
+ * @brief Reaction to a held phase bias.
  *
  * New code, not a relocation.  Dispatched first inside @ref resetOnPhaseBiasDisc,
  * and keyed on the wire rather than on a knob: a consumer cannot know that the
@@ -772,7 +772,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                         reref_systems.insert(PppUtils::getSystemString(obs.system));
                         // The rx code-bias re-inflation is constellation-scoped, but
                         // the declaration that triggered it belongs to this (sat,
-                        // signal), so the event is recorded there (card CST; no-op
+                        // signal), so the event is recorded there (no-op
                         // unarmed).
                         noteConsumerSatEvent_(obs.satellite + "|" + code, "reinflate_disc");
                         log->info("{}SSR code-bias discontinuity: {} {} (datum re-reference)",
@@ -910,7 +910,7 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
                 // below is necessarily constellation-scoped (one receiver clock, one
                 // ISB per constellation; see the T3g note below), so the row records
                 // that the declaration arrived and that the consumer's only possible
-                // response fired (card CST).
+                // response fired.
                 noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb");
                 log->info("{}SSR clock discontinuity: {} (datum re-reference)",
                           epoch_prefix, obs.satellite);
@@ -949,7 +949,7 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
     // On a reference re-reference, every allocated non-reference ISB is re-inflated,
     // observed this epoch or not.  The ISB is a difference of two clock datums, and the
     // declaration is consumed once per satellite, so an ISB whose constellation is absent
-    // from the step epoch would otherwise return stale by the whole step (card OWD, O2).
+    // from the step epoch would otherwise return stale by the whole step.
     const std::set<std::string> isbs =
         isbReinflationSet(reference_stepped, reref_isb,
                           state_manager_->getSystemTimeOffsetStates());

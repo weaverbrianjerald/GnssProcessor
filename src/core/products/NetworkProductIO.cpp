@@ -5,7 +5,7 @@
 
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "math/TimeUtils.hpp"                // IGS long-name spans on the GPS time scale (card OWD)
+#include "math/TimeUtils.hpp"                // IGS long-name spans on the GPS time scale
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -210,7 +210,7 @@ struct LineAssembler {
                         s.sigcc_m = std::stod(f[k].substr(6));
                     } else if (f[k].rfind("rho=", 0) == 0) {     // code/phase correction correlation (M4)
                         s.rho = std::stod(f[k].substr(4));
-                    } else if (f[k].rfind("lvl=", 0) == 0) {     // declared level step (card CLV)
+                    } else if (f[k].rfind("lvl=", 0) == 0) {     // declared level step
                         s.level_step_m = std::stod(f[k].substr(4));
                     }
                     // Unknown key=value tokens are ignored (forward-compatible).
@@ -571,9 +571,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // means the file's contract and payload disagree, which checkContract reports.
     // Written only when armed, so a producer without it writes the S line
     // byte-for-byte.
-    // pbhold=2: the hold keeps the phase-visible clock instead (card LAH), so a held
+    // pbhold=2: the hold keeps the phase-visible clock instead, so a held
     // bias_m moves with the satellite's common-removed clock within a generation.
-    // pbhold=3: the smoothed hold (card SMH), a held bias_m follows the clock clone.
+    // pbhold=3: the smoothed hold, a held bias_m follows the clock clone.
     // (pbhold=4, the removed block member of card SMD, is no longer written.)
     if (contract.emit_pb_hold)
         out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"

@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file ClockDatum.hpp
- * @brief Stage 3 of the network solve (card NOM3 step SG): the clock datum.  The declaration
+ * @brief Stage 3 of the network solve: the clock datum.  The declaration
  *        the election reads, the HLT-aware sticky election (NetworkSbasis::buildSharedDatum),
  *        the constraint-realized clock rows and the pivot-handover verdict.
  */

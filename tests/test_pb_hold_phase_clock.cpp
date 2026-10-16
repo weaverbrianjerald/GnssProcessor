@@ -1,6 +1,6 @@
 /**
  * @file test_pb_hold_phase_clock.cpp
- * @brief `network.emit_pb_hold_phase_clock` (card LAH): a held (satellite, signal)
+ * @brief `network.emit_pb_hold_phase_clock`: a held (satellite, signal)
  *        keeps the satellite's phase-visible clock c - p instead of its phase bias.
  *
  * The held emission is p(t0) + [c~(t) - c~(t0)], with c~ = c - M and M the accumulated

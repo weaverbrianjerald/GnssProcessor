@@ -64,7 +64,7 @@ namespace GnssProcessor {
     struct SignalDeclarationBand {
         std::vector<std::string> phase;      ///< Phase signals the network models on this band.
         std::vector<std::string> code;       ///< Code signals the network models on this band.
-        std::vector<std::string> companion;  ///< Companion codes emitted beside the modelled code (card SCC).
+        std::vector<std::string> companion;  ///< Companion codes emitted beside the modelled code.
         std::string              datum_phase;///< The phase the S-basis pinned, or empty.
         std::string              datum_code; ///< The code the S-basis pinned, or empty.
 

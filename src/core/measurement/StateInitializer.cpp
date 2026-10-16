@@ -80,7 +80,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     if (sys_char == '\0') return result;
 
     // -----------------------------------------------------------------------
-    // Receiver inter-signal code bias of a second band-1 code (card SCC, R2;
+    // Receiver inter-signal code bias of a second band-1 code (
     // docs/refound/SCC_second_code_channel_2026-09-21.md).
     //
     // With `network.second_code_channel` a station contributes every allow-listed

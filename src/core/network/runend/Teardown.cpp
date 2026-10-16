@@ -21,7 +21,7 @@
 
 namespace GnssProcessor {
 
-// ---- Written by scripts/nom_td_cut.py (card NOM step TD1b); the row call edited by hand in step TD2 ----
+// ---- Written by scripts/nom_td_cut.py; the row call edited by hand in step TD2 ----
 
 int networkTeardown(const NetworkRunContext& ctx,
                     const GnssConfig& config_,

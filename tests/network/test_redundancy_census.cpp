@@ -491,7 +491,7 @@ TEST(RedundancyCensusTest, OffIsStructurallyInert) {
 
     // A fresh carry state allocates nothing for the census.
     NetworkCarryState carry;
-    EXPECT_EQ(NetworkServiceCounters{}.redun_epochs, 0);   // instrument state (card NOM step N4g)
+    EXPECT_EQ(NetworkServiceCounters{}.redun_epochs, 0);   // instrument state
     EXPECT_TRUE(carry.redun_escalate_pending.empty());
     EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::events,
                            &net::LosEventState::redun_event_last), 0u);

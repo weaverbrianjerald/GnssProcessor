@@ -48,7 +48,7 @@ namespace GnssProcessor {
         SatBias,            ///< Satellite code bias ("G01|C1W").
         SatPhaseBias,       ///< Satellite phase bias ("G01|L1C|PB"); network stations only.
         ReceiverPhaseBias,  ///< Receiver phase bias of the eq34 split ("GPS_RPB_L1C"); network only.
-        PhaseColour,        ///< Per-satellite phase colour state (card LGM); network only.
+        PhaseColour,        ///< Per-satellite phase colour state; network only.
         SatClock,           ///< Satellite clock ("G01|SC"); network stations only.
     };
 
@@ -56,7 +56,7 @@ namespace GnssProcessor {
     inline constexpr std::size_t kStateFamilyCount = 9;
 
     /**
-     * @brief The variance re-inflations, in the order of the run-end line (card OWD, O2).
+     * @brief The variance re-inflations, in the order of the run-end line.
      *
      * Six belong to a dynamic family (that family's @ref StateFamilySpec::reinflation);
      * the inter-system time offset is a core state.  `StateManager::Reinflation`
@@ -77,7 +77,7 @@ namespace GnssProcessor {
     inline constexpr Reinflation kNoReinflation = Reinflation::Count;
 
     /// The stable short names of the re-inflations in the run-end lines, indexed by
-    /// @ref Reinflation (card OWD, O2); the card's graders parse them.
+    /// @ref Reinflation; the card's graders parse them.
     inline constexpr std::array<const char*, static_cast<std::size_t>(Reinflation::Count)>
         kReinflationNames{{ "code_bias", "isb", "iono", "iono_rate", "sat_bias",
                             "sat_phase_bias", "sat_clock" }};

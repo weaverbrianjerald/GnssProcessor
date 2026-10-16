@@ -1,6 +1,6 @@
 /**
  * @file test_network_solve_skip.cpp
- * @brief The network solve's exit table (card NOM3 step SG): one row per SolveSkip enumerator in
+ * @brief The network solve's exit table: one row per SolveSkip enumerator in
  *        its order, the frozen disposition literals, the trace flags, the heartbeat states and
  *        the tail, and the facts the rows read.  The three silent exits (DatumFailed,
  *        SolveFailed, WeRestoreFailed: no H line, no trace row) are pinned here until a card of

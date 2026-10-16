@@ -91,7 +91,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
     cfg.multipath.elev_factor_cap_deg= jval(s, "multipath.elev_factor_cap_deg","", cfg.multipath.elev_factor_cap_deg);
     cfg.multipath.seed               = jseed("multipath.seed", cfg.multipath.seed);
 
-    // Coloured phase error (card SFR).  sigma_zen_m = 0 (the default) is OFF and draws
+    // Coloured phase error.  sigma_zen_m = 0 (the default) is OFF and draws
     // nothing, so a config without the block is byte-identical.  Each key is
     // type-checked here rather than left to jval, whose get<double>() would throw out
     // of the loader on a non-numeric value instead of returning a readable error.
@@ -809,7 +809,7 @@ bool loadSimConfig(const std::filesystem::path& path, SimConfig& cfg,
             if (const char* why = loadStationRxBias("rx_phase_bias", st.rx_phase_bias))
                 return fail(where + ".rx_phase_bias " + why);
 
-            // Per-station phase-colour override (card SFR): the per-class calibration is
+            // Per-station phase-colour override: the per-class calibration is
             // stated on the roster.  Absent keeps the NaN sentinel, so the child inherits
             // the network-level phase_colour block unchanged.
             if (el.contains("phase_colour_sigma_zen_m")) {
@@ -1005,7 +1005,7 @@ bool writeStationConfig(const std::filesystem::path& base_config,
         }
     }
 
-    // Per-station phase-colour override (card SFR), on the same rule as the scripted
+    // Per-station phase-colour override, on the same rule as the scripted
     // slips: a value the roster entry declares replaces the network-level knob for that
     // station, and an absent one leaves the base value in the child untouched.  The
     // values come from the loaded roster entry (validated there) rather than from a

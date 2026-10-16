@@ -1,7 +1,7 @@
 /**
  * @file test_resume_datum_restore.cpp
  * @brief Contract tests for the datum-continuity records of the network state snapshot
- *        (card RS-3, docs/SPEC_event_harness.md §21.7): the format-forward datum
+ *        (docs/SPEC_event_harness.md §21.7): the format-forward datum
  *        records (@c EQD / @c EQP / @c EQS / @c EQT / @c EQE / @c EQR for the eq34
  *        chain datum's last-epoch spanning tree; @c CBP / @c CBS / @c CBI for the
  *        time-linked code-bias datum memory and its IF-pin pairs), their backward

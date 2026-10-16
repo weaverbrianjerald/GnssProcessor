@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file SbasisCompletion.hpp
- * @brief Stage 7 of the network solve (card NOM3 step SG): S-basis completion (SBC,
+ * @brief Stage 7 of the network solve: S-basis completion (SBC,
  *        network.sbasis_complete).  Each separated extra near-null direction of the reduced
  *        system is constrained along its eigenvector at its carried level, with both edges
  *        evented (standing invariant 7).  The completion's run-end report sits beside it.

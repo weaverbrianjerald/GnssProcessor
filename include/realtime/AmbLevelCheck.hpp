@@ -2,7 +2,7 @@
  * @file AmbLevelCheck.hpp
  * @brief Consumer-side re-validation of float ambiguities against their own
  *        code level at the re-coupling edge of invariant #7: windowed levels,
- *        the two tests, the trip decision and its counters (card ALC).
+ *        the two tests, the trip decision and its counters.
  *
  * Cards CC and PBT establish that a preserved ambiguity is continuous; neither
  * establishes that it is correct.  On the RF-0hv field bed, mass resets
@@ -89,7 +89,7 @@
 
 namespace GnssProcessor {
 
-/// One AMB_LEVEL row for `network_events.csv`, at either edge of invariant #7 (card ALC).
+/// One AMB_LEVEL row for `network_events.csv`, at either edge of invariant #7.
 struct AmbLevelEvent {
     std::string sat;                  ///< Satellite the event is about.
     const char* kind{ "trip" };       ///< "trip" (the decoupling test fired) or "refloat" (the response).
@@ -100,7 +100,7 @@ struct AmbLevelEvent {
     std::string detail;               ///< Free-form identities (signals, k, the other test's value).
 };
 
-/// Windowed code levels, the two tests and the counters; pure arithmetic (card ALC).
+/// Windowed code levels, the two tests and the counters; pure arithmetic.
 class AmbLevelCheck {
 public:
     /// Action taken on a trip.

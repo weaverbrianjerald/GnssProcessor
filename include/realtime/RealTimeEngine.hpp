@@ -45,10 +45,10 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include "realtime/PbDiscCarryLedger.hpp"    // Declared-step ambiguity carry ledger, card CC (A)
-#include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation (card ALC)
+#include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation
 #include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger, card PBT (A)
-#include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger (card PBH)
-#include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row (card CST)
+#include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
+#include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
@@ -350,7 +350,7 @@ public:
      */
     void notifyProductsAdvanced() { drainHeldObs(); }
 
-    // --- Per-satellite consumer readout (card CST) ----------------------------
+    // --- Per-satellite consumer readout ----------------------------
     /**
      * @brief Arm the per-satellite readout of this engine's own epoch
      *        (@c network.trace_consumer_sat, set by the closed-loop harness and by
@@ -397,7 +397,7 @@ public:
     double getTroposphereZwd() const;
 
     /**
-     * @brief Receiver inter-system bias per non-GPS system (card GAL).
+     * @brief Receiver inter-system bias per non-GPS system.
      *
      * Reads the Kalman state and its variance (the consumer carries the bias as a
      * state with the @c filter.process_noise.system_time_offset_q random walk).
@@ -443,7 +443,7 @@ public:
         return pb_step_translate_.counters();
     }
 
-    // --- Consumer phase-bias hold reaction readout (card PBH) ----------------
+    // --- Consumer phase-bias hold reaction readout ----------------
     /// Run-end counters of the reaction to a held phase bias.  All zero on an
     /// unheld product, so a consumer can read back that the producer's hold was
     /// inert (invariant #4): @c cells == 0 on a clean wire means nothing was
@@ -452,7 +452,7 @@ public:
 
     /**
      * @struct PbHoldPresenceCounters
-     * @brief Presence edges of held phase-bias keys (card PBF), counted whether or
+     * @brief Presence edges of held phase-bias keys, counted whether or
      *        not @c processing.ssr_pb_hold_presence_flip is armed.
      *
      * A key is "held" here once the hold ledger has recorded it, so an edge that
@@ -467,11 +467,11 @@ public:
         std::size_t answered{ 0 };   ///< Edges that took the A5 reaction (knob armed).
         std::size_t suppressed{ 0 }; ///< Edges left alone by the declared-roster rule (card SID 5b).
     };
-    /// Run-end counters of the held-key presence edges (card PBF).
+    /// Run-end counters of the held-key presence edges.
     const PbHoldPresenceCounters& pbHoldPresenceCounters() const { return pb_hold_presence_; }
 
     /**
-     * @brief Log the held-key presence-edge counters (card PBF) on @c rt_engine.
+     * @brief Log the held-key presence-edge counters on @c rt_engine.
      *
      * Silent when no held entry was ever seen, so a consumer of an unheld product
      * keeps a byte-identical log.  Public so the consumer replay driver, which never
@@ -525,7 +525,7 @@ public:
     /// so a consumer of a wire without a declaration prints nothing.
     void logRosterConsumerSummary(const char* tag) const;
 
-    // --- Consumer ambiguity level check readout (card ALC) --------------------
+    // --- Consumer ambiguity level check readout --------------------
     /// True iff @c processing.amb_level_check is armed on this engine's config
     /// (the closed-loop harness derives it from
     /// @c network.closed_loop.amb_level_check).
@@ -600,7 +600,7 @@ public:
 
 private:
     friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
-    friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges (card PBF).
+    friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -688,7 +688,7 @@ private:
      *
      * The fields are the values that cross a seam boundary within one epoch:
      * the eleven locals that crossed a block boundary in the pre-cut driver,
-     * plus @c pb_hold_handled (card PBH).  A value that a single seam computes
+     * plus @c pb_hold_handled.  A value that a single seam computes
      * and consumes itself stays local to that seam and does not belong here.
      */
     struct RtEpochContext {
@@ -724,7 +724,7 @@ private:
         bool update_applied{ false };        ///< A float update committed; gates AR and the trace "have_applied" flag.
 
         /// The "sat|code" keys @ref RealTimeEngine::reactToPbHold_ already handled
-        /// this epoch (card PBH).  A held key is judged afresh every epoch, so the
+        /// this epoch.  A held key is judged afresh every epoch, so the
         /// set is per-epoch and belongs here, not in a member.  The three
         /// phase-bias reactions skip these keys, so exactly one seam reacts per
         /// (key, epoch).  Empty unless the producer armed @c network.emit_pb_hold,
@@ -761,12 +761,12 @@ private:
     void logSsrCoverage(RtEpochContext& ctx);    ///< Per-epoch SSR coverage summary line.
     void traceSsrConsumer(RtEpochContext& ctx);  ///< Consumer-side SSR-application CSV (L10).
     /// Harvest this epoch's per-(sat, raw phase signal) rows into
-    /// @ref consumer_sat_rows_ (card CST).  Runs at the processEpoch tail
+    /// @ref consumer_sat_rows_.  Runs at the processEpoch tail
     /// (post-update, post-AR) so the states and residuals it reads are the
     /// committed ones; no-op unless @ref consumer_sat_trace_.
     void traceConsumerSat_(RtEpochContext& ctx);
     /// Record what a reaction (an SSR datum-break reaction or the level check)
-    /// did to one key, for this epoch's rows (card CST).  @p key is
+    /// did to one key, for this epoch's rows.  @p key is
     /// "<sat>|<signal>" for the phase/code-bias reactions and "<sat>|CLK" for the
     /// clock one; repeated actions on one key in one epoch are joined with ';'.
     /// No-op unless armed.
@@ -782,9 +782,9 @@ private:
     /// No-op unless @c processing.amb_level_check.
     void checkAmbiguityLevel_(RtEpochContext& ctx);
     /// Restart @p sat's level window because a reaction wrote its ambiguity this
-    /// epoch (card ALC).  No-op unless the check is armed.
+    /// epoch.  No-op unless the check is armed.
     void noteAmbLevelDisturbed_(const std::string& sat);
-    /// One INFO line with the level-check counters; silent unless armed (card ALC).
+    /// One INFO line with the level-check counters; silent unless armed.
     void logAmbLevelCheckSummary_(const char* tag);
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
@@ -832,7 +832,7 @@ private:
     void translatePhaseBiasStep_(RtEpochContext& ctx);
     /// One INFO line with the translation counters; silent unless armed (card PBT (A)).
     void logPbStepTranslateSummary_(const char* tag);
-    /// Reaction to a held phase bias (card PBH), which resetOnPhaseBiasDisc runs
+    /// Reaction to a held phase bias, which resetOnPhaseBiasDisc runs
     /// ahead of all three reactions above.  It keys on the data, not on a
     /// consumer knob: a consumer cannot know the producer armed
     /// @c network.emit_pb_hold, it can only see
@@ -846,13 +846,13 @@ private:
     /// no held entries the set stays empty and all three are byte-identical.
     /// With @c processing.ssr_pb_hold_presence_flip armed, the downstream reaction
     /// skips only the claimed key's counter reaction and still answers its A5
-    /// presence edge (card PBF).
+    /// presence edge.
     void reactToPbHold_(RtEpochContext& ctx);
     /// One INFO line with the hold-reaction counters; silent unless a held entry
-    /// was ever seen (card PBH).
+    /// was ever seen.
     void logPbHoldSummary_(const char* tag);
     /**
-     * @brief Count one A5 presence edge if it belongs to a held key (card PBF).
+     * @brief Count one A5 presence edge if it belongs to a held key.
      *
      * Called by the three phase-bias reactions at an A5 edge.  Counts only with
      * @c processing.ssr_pb_hold_presence_flip armed (the off path never reaches a
@@ -1176,18 +1176,18 @@ private:
     /// a declared one takes the reset and an undeclared one is a no-op.
     PbStepTranslateLedger pb_step_translate_;
     /// Per-(sat|signal) hold-generation memory + the ignore-vs-refloat decision +
-    /// counters (card PBH).  Only touched by reactToPbHold_, and only for entries
+    /// counters.  Only touched by reactToPbHold_, and only for entries
     /// carrying a nonzero generation, so an unheld product never reaches it.  Not
     /// part of the RT snapshot, whose v1 format is unchanged: a restored
     /// consumer's first held entry per key is a first sighting, which re-seats the
     /// memory without a reset, and the producer's own hold state cold-starts on
     /// its own resume.
     PbHoldLedger pb_hold_;
-    /// Presence edges of held keys (card PBF).  Counted on every consumer of a held
+    /// Presence edges of held keys.  Counted on every consumer of a held
     /// product; the reaction to them is gated by processing.ssr_pb_hold_presence_flip.
     PbHoldPresenceCounters pb_hold_presence_;
 
-    // --- Consumer ambiguity level re-validation (card ALC) --------------------
+    // --- Consumer ambiguity level re-validation --------------------
     /// The windowed code levels + the two tests + the counters.  Configured once
     /// on the first armed epoch (@c amb_level_configured_); untouched, and never
     /// sampled, with @c processing.amb_level_check off.

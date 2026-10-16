@@ -61,7 +61,7 @@ using GnssProcessor::ambStateFormatRow;
 using GnssProcessor::ambStateRouteName;
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
-namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
+namespace net = GnssProcessor::net;   // the arc table
 using GnssProcessor::LogManager;
 using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
@@ -495,7 +495,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
 
     NetworkEstimator est;
     GnssProcessor::GlobalVtecShConfig shc{};
-    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history (card NOM step N4d)
+    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history
     const NetworkEstimator::Datum datum{};          // no shared border, nothing to pin
     const std::vector<Eigen::Index> carried{kColN1, kColN2};
 

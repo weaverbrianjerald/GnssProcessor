@@ -909,7 +909,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     //  4. A flagged arc has its detector gradient reset (a fresh arc next epoch,
     //     whatever the carry state); under if_phase_td_reseed_on_flag the gradient is
     //     kept instead as the next epoch's origin, so that epoch is still evaluated
-    //     (card ARL).  When the carry is warm, both band
+    //.  When the carry is warm, both band
     //     ambiguities are marked pending-reseed so PASS B refloats them (less any
     //     band the band scope or the common-band scope keeps).  Clean survivors
     //     then update the station-pair EWMA; slips are excluded, so the scale does
@@ -939,7 +939,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const bool iftd_all_pairs =
             config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
 
-        // Post-flag re-seed (card ARL, slip-ladder defect 2): a flag keeps the
+        // Post-flag re-seed (slip-ladder defect 2): a flag keeps the
         // satellite's flag-epoch gradient instead of restarting its chain, so the next
         // epoch has a double difference (see step 4 below).
         const bool reseed_on_flag =
@@ -1173,7 +1173,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     // (invariant #4).
                     IfTdPairTally* tally = pair_tally ? &(*pair_tally)[pair] : nullptr;
                     if (tally) { ++tally->evaluated; if (flagged) ++tally->flagged; }
-                    // The evaluation a re-seed restored (card ARL); never set with
+                    // The evaluation a re-seed restored; never set with
                     // the re-seed off.
                     if (tally && sp->after_reseed) {
                         ++tally->post_flag_evaluated;
@@ -1186,7 +1186,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         // on another's flag, which the per-pair-kind pools exist
                         // to prevent.  Under `first` there is one chain per system
                         // and the two calls do the same thing.  Under the re-seed
-                        // (card ARL) the chain keeps the flag epoch's gradient
+                        // the chain keeps the flag epoch's gradient
                         // instead, with the same scoping, so the next epoch is
                         // evaluated rather than left blind.
                         IfPhaseSlipDetector& det = *stations[sp->sta].if_slip;
@@ -1225,7 +1225,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   // pre-knob text.
                                   + (pact.cb_kept.empty() ? std::string{}
                                        : ";cb_kept=" + pact.cb_kept)
-                                  // A flag in the epoch after a re-seed (card ARL):
+                                  // A flag in the epoch after a re-seed:
                                   // a slip repeated there.  Absent with the re-seed
                                   // off, so those rows keep the pre-knob text.
                                   + (sp->after_reseed ? std::string{";post_flag"}
@@ -1451,7 +1451,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
             const std::string sig = net::signalKey(it->first.signal);
             targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
         }
-        // The arc identity from the arc ledger (card NOM step N3b): of the carry entries
+        // The arc identity from the arc ledger: of the carry entries
         // inside the horizon (the arcs with a value), in signal order, the ledger keeps
         // its admitted records that are not dead.  Where the ledger holds no admission
         // for a carried arc, the arc's admission predates the ledger (a warm resume
@@ -1549,7 +1549,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // usually left the model set: its ambiguity column was pruned with the
             // gap, and PASS B's pre-pass re-creates it only after this drain.  A walk
             // of the live ambiguity map alone then matches nothing while the PASS-B
-            // inject folds the leveling carry across the step (card WUP section 1:
+            // inject folds the leveling carry across the step (
             // on the 6 h field arm all 28 restarts inside the carry horizon matched
             // no live column).  The live columns stay the target when the arc kept
             // them; otherwise the target is the (station, satellite)'s leveling carry
@@ -2848,9 +2848,9 @@ void networkSlipDrainGapReentryPerSignal(
                   detail_log);
 }
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/slip/SlipQc.hpp.
+// Setup builder; documented at its declaration in network/slip/SlipQc.hpp.
 void networkSlipQcConfigure(NetworkRun& run) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     const GnssConfig& config_ = run.config;
     const NetworkConfig& nc = run.nc;
@@ -2878,11 +2878,11 @@ void networkSlipQcConfigure(NetworkRun& run) {
     // The gap re-entry response consumes the same GapResumption records as
     // the instrument, so it arms the resumption collection on its own: the
     // response works without the diagnostic armed, and turning the diagnostic
-    // off does not disarm it (card G, §G3/W1).
+    // off does not disarm it (§G3/W1).
     sp.gap_reentry             = sq.gap_reentry;
     sp.gap_reentry_lli         = sq.gap_reentry_lli;
     sp.gap_reentry_unmeasurable = sq.gap_reentry_unmeasurable;
-    // Per-signal rider of the same response (card GRS).  It also arms the
+    // Per-signal rider of the same response.  It also arms the
     // per-signal half of the compute and qualify passes, so a run with it off
     // never builds or reads a per-signal list.
     sp.gap_reentry_per_signal  = sq.gap_reentry_per_signal;
@@ -2893,7 +2893,7 @@ void networkSlipQcConfigure(NetworkRun& run) {
     sp.gap_reentry_coresumed_share = sq.gap_reentry_coresumed_share;
     // The arc-level tracker takes its per-band signal from the model, so the
     // tracker, the carried ambiguity key and the gap re-entry response's
-    // lookup name the same signal.  Read at the compute pass only (card GRK).
+    // lookup name the same signal.  Read at the compute pass only.
     sp.tracker_modeled_first   = sq.tracker_modeled_first;
     // With the ledger re-entry armed, the response's population is the arc
     // ledger's admitted lifecycle, and the raw tiers become the verdict source,
@@ -2910,7 +2910,7 @@ void networkSlipQcConfigure(NetworkRun& run) {
     // iono_cs flips cardsArmed(), so census A/B pairs must pin
     // cycle_slip.gap_instrument in both arms.
     sp.iono_cs             = config_.networkLevelAuthorityCsgf();
-    // The arc-scoped GF jump trigger (card ARL) reads the raw rows and keeps its own
+    // The arc-scoped GF jump trigger reads the raw rows and keeps its own
     // per-arc steps, so it arms the compute pass (anyConsumer) and not the qualify
     // pass.
     sp.gf_jump.armed       = sq.gf_arc_jump;
@@ -2921,9 +2921,9 @@ void networkSlipQcConfigure(NetworkRun& run) {
     slip_qc.hist.resize(stations.size());
 }
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/slip/SlipQc.hpp.
+// Setup builder; documented at its declaration in network/slip/SlipQc.hpp.
 void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager_) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     NetworkRunTraces& traces = run.traces;
     SlipQcChannel& slip_qc = run.engines.slip_qc;

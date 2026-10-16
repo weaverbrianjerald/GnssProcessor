@@ -1391,7 +1391,7 @@ namespace GnssProcessor {
         //
         // The per-station detectors of the network producer call these; the user
         // drivers (post-processing, real time, baseline) and the closed-loop
-        // consumer never do.  The phase bridge (cards WL-2, WL-3, UWL-1), the
+        // consumer never do.  The phase bridge, the
         // zero-differenced and cold arc reads (WL-1, WL-3, UWL-1), the per-epoch
         // pair status with its LLI shadow (SPEC_event_harness §14) and the
         // station label of the debug lines.  The bridge stays off and the label

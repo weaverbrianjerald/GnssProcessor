@@ -3,7 +3,7 @@
  * @file ArcGraph.hpp
  * @brief The network producer's observation graph (receivers x satellites joined by ambiguity
  *        arcs): components, two sticky spanning-forest rules, short cycle bases, the exact integer
- *        map between two bases, and a saturated lattice of fixed cycles (card AGT).
+ *        map between two bases, and a saturated lattice of fixed cycles.
  *
  * One owner serves every caller:
  *   - the chain datum: growChainForest;
@@ -79,7 +79,7 @@ namespace GnssProcessor {
  * signed cycle sum uses that convention (the physical DD sign matters only to the
  * phase-D emit re-basing, which uses the same convention on both sides).
  *
- * Moved verbatim from ZStore.hpp (card AGT, AGT-1), which includes this header.
+ * Moved verbatim from ZStore.hpp, which includes this header.
  */
 struct ArcKey {
     int u{0};  ///< lower-id endpoint (reference-orientation tail).
@@ -459,7 +459,7 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
  * the incumbent order, as soon as its parent is in the tree and the two stations share the
  * current round's threshold, before every new pick.  A station whose incumbent link still waits is
  * picked only when no other outside station reaches the threshold, so a re-seated station rejoins
- * before its former children, which then keep their links (card AGT, step AGT-5).  A link that is
+ * before its former children, which then keep their links (step AGT-5).  A link that is
  * not kept is counted by cause in SpanningForest::reseats.  Then each outside station joins the
  * in-tree station it shares the most satellites with (lowest slot on ties, for both the station
  * and its partner), through the first common satellite or, under
@@ -669,7 +669,7 @@ struct CycleLattice {
     std::vector<Cycle>     rows;       ///< Fixed lattice elements.
     std::vector<long long> values;     ///< Integer of each row (cycles).
     std::map<ArcId, int>   pivot_row;  ///< Pivot arc -> row.
-    /// Loop epoch each row entered (card FCF): the epoch passed to @ref latticeOffer; a row
+    /// Loop epoch each row entered: the epoch passed to @ref latticeOffer; a row
     /// reduced by another row takes the later of the two epochs.  0 for a row offered without
     /// an epoch (every caller before card FCF).
     std::vector<long long> entered_ep;
@@ -693,7 +693,7 @@ enum class LatticeVerdict : std::uint8_t {
  * @param L     The lattice.
  * @param c     The fixed cycle.
  * @param value Its integer.
- * @param epoch The loop epoch of the offer (card FCF; 0 for a caller that keeps no epochs).
+ * @param epoch The loop epoch of the offer (0 for a caller that keeps no epochs).
  * @return The verdict.
  */
 LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, long long epoch = 0);

@@ -2,7 +2,7 @@
 /**
  * @file Epoch.hpp
  * @brief One epoch of the network producer: everything the stages of
- *        Application::networkProcessEpoch_ hand each other (card NOM3 step EP1).
+ *        Application::networkProcessEpoch_ hand each other.
  *
  * Built once per processed epoch, right after the admission (the event injector and the
  * canonical-pair screen) fixes the observations the producer sees, and destroyed at the
@@ -54,7 +54,7 @@
  * After the solve the seams' outputs are solve.handoff, prep.sol and events (each writer its
  * own group of it); the driver's own writes are the four stores above (the lint checks the
  * driver, the compiler checks the seams).
- * Inside networkPassB_ (card NOM3 step PB1a) its outputs reach its own serial stages, not the
+ * Inside networkPassB_ its outputs reach its own serial stages, not the
  * spine: networkPrefitFuseEpoch writes the assembly, networkAssemblyConsume writes pass_a and
  * the assembly; the tally, the in-solve track and the eq34 audit take the assembly as a const
  * parameter, since a group the caller is still writing is not read through `ep`.
@@ -73,7 +73,7 @@
 #include "network/ar/ArCycleBasis.hpp"  // ArEpochFixes
 #include "network/ar/FixedCycles.hpp"   // FixedCycleEmission
 #include "network/ar/ZStore.hpp"        // ArcKey
-#include "network/slip/SlipFunnel.hpp"    // NetworkSlipFunnel (card NOM3 step EP2)
+#include "network/slip/SlipFunnel.hpp"    // NetworkSlipFunnel
 #include "network/state/ArcLedger.hpp"            // ArcReentryOutcomeMap, ArcLedger::Key
 #include "network/solve/Sbasis.hpp"        // the code-datum records
 #include "network/qc/BlockBaarda.hpp"   // BlockBaardaHit
@@ -335,7 +335,7 @@ struct NetworkEpoch {
     EpochColumns           columns;       ///< The shared columns.
     EpochAssembly          assembly;      ///< The station blocks.
     EpochDdBuild           dd_build;      ///< The DD build's reverse map.
-    EpochWorkspace         ws;            ///< The replay capture channel, the clock maps, the within-epoch culprit sets (card WCF).
+    EpochWorkspace         ws;            ///< The replay capture channel, the clock maps, the within-epoch culprit sets.
     NetworkSolveGlueResult solve;         ///< The shared solution and its datum; solve.handoff is the post-fit hand-off.
     ArEpochFixes           ar_fixes;      ///< The producer AR search's fixes.
     FixedCycleEmission     fixed_cycles;  ///< The fixed-cycle fold's held solve.
@@ -344,7 +344,7 @@ struct NetworkEpoch {
     EpochEvents            events;        ///< The epoch's events, one group per writing stage.
 
     /// The solution the wire carries: the held vector when the fixed-cycle fold emits, else
-    /// the float solve (card FCF).  Read by solution prep and the emitter; every other seam
+    /// the float solve.  Read by solution prep and the emitter; every other seam
     /// reads solve.x_s.
     const Eigen::VectorXd& x_emit() const { return fixed_cycles.emit ? fixed_cycles.x_held : solve.x_s; }
 };

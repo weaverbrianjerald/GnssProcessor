@@ -1,6 +1,6 @@
 /**
  * @file test_network_fixed_cycles.cpp
- * @brief Tests of the fixed-cycle fold's pure steps and of its fold with acceptance (card FCF,
+ * @brief Tests of the fixed-cycle fold's pure steps and of its fold with acceptance (
  *        step FCF-2; network/ar/FixedCycles.hpp).
  *
  * Suite @c NetworkFixedCycles:
@@ -122,7 +122,7 @@ TEST(NetworkFixedCycles, UnitsArePairsDeterminedInBothBands) {
 }
 
 TEST(NetworkFixedCycles, UnitTestPassesRightIntegersAndRefusesAOneOneError) {
-    // A settled pair: wide lane 0.06 cycle, ionosphere-free 0.04 narrow-lane cycle (card FCFB).
+    // A settled pair: wide lane 0.06 cycle, ionosphere-free 0.04 narrow-lane cycle.
     Eigen::Matrix2d M;
     M << 1.0, -1.0, kF1 / (kF1 - kF2), -kF2 / (kF1 - kF2);
     const Eigen::Matrix2d Minv = M.inverse();

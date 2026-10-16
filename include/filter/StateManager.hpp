@@ -429,7 +429,7 @@ namespace GnssProcessor {
         void reinflateSystemTimeOffsetVariance(const std::string& system_name,
                                                double new_variance);
 
-        /// The seven variance re-inflations, in the order of the run-end line (card OWD, O2).
+        /// The seven variance re-inflations, in the order of the run-end line.
         /// Declared with the family table (`filter/StateFamily.hpp`), where each dynamic
         /// family names its slot (@ref StateFamilySpec::reinflation) and the run-end names
         /// are @ref kReinflationNames.
@@ -438,22 +438,22 @@ namespace GnssProcessor {
         /// One re-inflation's counts: states whose diagonal became the request (the request
         /// was at least the current variance) and states that kept a larger current variance
         /// (where writing the request would have lowered it).  A refused (frozen) row counts
-        /// in neither (card OWD, O2).
+        /// in neither.
         struct ReinflateCounter {
             long long raised = 0;   ///< request >= current: the diagonal became the request
             long long kept   = 0;   ///< current > request: the diagonal kept its value
         };
 
-        /// The counters of the seven re-inflations, indexed by @ref Reinflation (card OWD, O2).
+        /// The counters of the seven re-inflations, indexed by @ref Reinflation.
         using ReinflateCounters =
             std::array<ReinflateCounter, static_cast<std::size_t>(Reinflation::Count)>;
 
-        /// This state manager's re-inflation counters since construction (card OWD, O2).
+        /// This state manager's re-inflation counters since construction.
         /// @return The counters, indexed by @ref Reinflation.
         const ReinflateCounters& reinflateCounters() const { return reinflate_counters_; }
 
         /**
-         * @brief Format re-inflation counters as the run-end summary (card OWD, O2).
+         * @brief Format re-inflation counters as the run-end summary.
          *
          * One format everywhere (the consumer, the PPP run), parsed by the card's graders:
          * "code_bias raised=N kept=M | isb raised=N kept=M | iono ... | iono_rate ... |
@@ -1157,7 +1157,7 @@ namespace GnssProcessor {
         /// @brief Re-inflate the variances of all phase-bias states for a
         ///        satellite (value preserved, since the phase hardware delay is
         ///        constant), skipping frozen-pivot rows.  Each diagonal is raised
-        ///        to @p new_variance, never lowered (card OWD).
+        ///        to @p new_variance, never lowered.
         /// @param satellite    Satellite identifier.
         /// @param new_variance Requested diagonal (m²), a floor per state; falls back
         ///                     to @c initial_std.sat_phase_bias² when non-positive.
@@ -1266,7 +1266,7 @@ namespace GnssProcessor {
 
         /// @brief Re-inflate the variance of a satellite's clock state, skipping
         ///        a frozen-pivot row.  Value is preserved.  The diagonal is raised to
-        ///        @p new_variance, never lowered (card OWD).
+        ///        @p new_variance, never lowered.
         /// @param satellite    Satellite identifier.
         /// @param new_variance Requested diagonal (m²), a floor; falls back to
         ///                     @c initial_std.sat_clock² when non-positive.
@@ -1554,8 +1554,8 @@ namespace GnssProcessor {
         std::map<std::string, SatBiasCacheEntry> sat_bias_cache_; //!< Pruned sat-bias snapshots awaiting potential re-acquisition.
         std::map<std::string, size_t> sat_phase_bias_indices_; //!< Map "satellite|signal|PB" -> state index (PPP_RTK_Network satellite phase bias).
         std::map<std::string, size_t> receiver_phase_bias_indices_; //!< Map "system_RPB_signal" -> state index (eq34 receiver phase-bias split δ_{r,σ}; local, re-estimated fresh each epoch; card 3).
-        std::map<std::string, size_t> phase_colour_indices_;  //!< Map satellite -> phase-colour state index (card LGM; network only).
-        std::map<std::string, double> phase_colour_elevations_; //!< Map satellite -> last elevation (deg) of its phase-colour state (card LGM).
+        std::map<std::string, size_t> phase_colour_indices_;  //!< Map satellite -> phase-colour state index (network only).
+        std::map<std::string, double> phase_colour_elevations_; //!< Map satellite -> last elevation (deg) of its phase-colour state.
         std::map<std::string, size_t> sat_clock_indices_;      //!< Map "satellite|SC" -> state index (PPP_RTK_Network satellite clock).
         std::map<std::string, size_t> ionosphere_indices_; //!< Map satellite ID -> per-satellite iono state index (uncombined processing).
         std::map<std::string, size_t> iono_rate_indices_; //!< Map satellite ID -> per-satellite iono-rate (Idot_s) state index; populated only when enableIonoRate() (constant-velocity model).
@@ -1571,10 +1571,10 @@ namespace GnssProcessor {
         const GnssConfig& config_;                  //!< Read-only configuration reference.
         bool is_baseline_{ false };                 //!< True when configured for baseline (DD) mode: no clock/tropo/iono/system-offset states.
         std::map<std::string, int> last_ssr_discontinuity_; //!< Last-seen SSR phase-bias discontinuity counter per "sat|signal" key.
-        ReinflateCounters reinflate_counters_{};    //!< Raised / kept counts per re-inflation (card OWD, O2).
+        ReinflateCounters reinflate_counters_{};    //!< Raised / kept counts per re-inflation.
 
         /**
-         * @brief The rule every re-inflation shares (card OWD, O2).
+         * @brief The rule every re-inflation shares.
          *
          * Zeroes row and column @p idx (the value is untouched) and writes the larger of
          * @p current_diag and @p requested on the diagonal, so a re-inflation never shrinks a

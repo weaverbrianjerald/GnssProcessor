@@ -118,7 +118,7 @@ namespace GnssProcessor {
         const std::vector<SyncedEpoch>& getSyncedEpochs() const { return synced_; }
 
         /**
-         * @brief Keep only the observations of the active systems (card OWD, O4).
+         * @brief Keep only the observations of the active systems.
          *
          * The network producer's single admission point for constellations.  The RINEX
          * parser keeps every system and the network admits an observation by its signal
@@ -139,7 +139,7 @@ namespace GnssProcessor {
         static std::map<std::string, std::size_t> retainSystems(
             std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active);
 
-        /// @ref retainSystems applied to this instance's synced epochs (card OWD, O4).
+        /// @ref retainSystems applied to this instance's synced epochs.
         /// @param active The active system names.
         /// @return The number of observations removed per system name.
         std::map<std::string, std::size_t> retainSystems(const std::vector<std::string>& active) {

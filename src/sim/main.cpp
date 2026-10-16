@@ -834,7 +834,7 @@ int runSppReference(const std::filesystem::path& truth_dir, const sim::SimConfig
     // Leg 2 corrects the observables with the same OSBs the synthesizer injected.
     // Without the .BIA the two leg-2 variants coincide with no other sign, so a
     // warning is printed.
-    // A phase-only scope (card ARL) injected no code OSB, so leg 2 removes none.
+    // A phase-only scope injected no code OSB, so leg 2 removes none.
     const bool want_osb = scfg.corrections.signal_bias && std::filesystem::exists(bia) &&
                           scfg.corrections.signal_bias_scope != "phase";
     if (scfg.corrections.signal_bias && !want_osb)
@@ -1627,7 +1627,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     // clock, would then be exactly degenerate with it, and no equality check would
     // detect that.
     std::mt19937_64 tropo_rng(saltSeed(atm.seed));
-    // Its own distribution as well as its own engine (card SFR section 2.1).  A
+    // Its own distribution as well as its own engine.  A
     // normal_distribution caches the second value of each pair it draws, so the
     // `gauss` object shared with the white-noise stream handed each wet-delay draw a
     // value left over from that stream and the reverse: the wet-delay series moved
@@ -1941,7 +1941,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     const double mp_phi = std::exp(-tcfg.interval_s / mp_tau_s);  // ~0.905 at 30 s
     const double mp_phase_amp = scfg.multipath.phase_amp_zen_m;   // zenith phase multipath (m)
 
-    // --- Coloured phase error (card SFR): per-line-of-sight Gauss-Markov. -------
+    // --- Coloured phase error: per-line-of-sight Gauss-Markov. -------
     // Band-common in metres, phase only.  Its own station-salted stream (the tropo_rng
     // precedent), so it cannot move any other draw; with sigma_zen_m == 0 (the default)
     // the generator is inactive, draws nothing, and every sample below is a literal 0.0.
@@ -2195,7 +2195,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
     }
     double max_abs_windup_cycles = 0.0;
 
-    // Coloured phase error truth (card SFR), written only when the block is active
+    // Coloured phase error truth, written only when the block is active
     // (an absent file states that the channel was not simulated).  One row per (epoch,
     // satellite): e_m is the band-common metres added to every band's carrier phase,
     // u the unit-variance Gauss-Markov value it was scaled from (e_m = sigma_zen_m *
@@ -2478,7 +2478,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                 const double sc = sigma_zen * el_factor;   // code sigma (m)
                 const double sp = sigma_phase * el_factor; // phase sigma (m)
 
-                // Coloured phase error (card SFR): one draw per (station, satellite,
+                // Coloured phase error: one draw per (station, satellite,
                 // epoch), outside the band loop, so the same metres reach every band's
                 // phase.  The time argument is seconds since the arc's first epoch; the
                 // generator advances each line of sight across the time since its own
@@ -2592,7 +2592,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                         // records the total, which is what the estimator must reproduce,
                         // with the split alongside so a grader can tell a product bias
                         // from an injected one without re-deriving either.
-                        // corrections.signal_bias_scope (card ARL) drops one side: the
+                        // corrections.signal_bias_scope drops one side: the
                         // excluded observable gets 0 and truth_bias.csv records 0 for it.
                         const bool osb_code  = scfg.corrections.signal_bias_scope != "phase";
                         const bool osb_phase = scfg.corrections.signal_bias_scope != "code";
@@ -2650,7 +2650,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
                     const double rxb_code  = rxBias(rx_code_bias_map,  band.code);
                     const double rxb_phase = rxBias(rx_phase_bias_map, band.phase);
                     row.values[band.code] = P + tropo + m7 + ant + bias_code + rxb_code + plan.isb_m + I_b + nc + mp_code;
-                    // pc_m (card SFR) is the band-common coloured phase error in metres,
+                    // pc_m is the band-common coloured phase error in metres,
                     // phase only; the literal 0.0 when the block is off, and x + 0.0 == x,
                     // so an off run is byte-identical.
                     row.values[band.phase] =
@@ -2807,7 +2807,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
         }
         if (scfg.corrections.phase_windup)
             sc << "windup_max_abs_cycles," << std::setprecision(6) << max_abs_windup_cycles << "\n";
-        // Coloured phase error (card SFR).  Emitted only when active, so an off run keeps
+        // Coloured phase error.  Emitted only when active, so an off run keeps
         // a byte-identical truth_scalars.csv; the next row sets its own precision.
         if (want_phase_colour) {
             sc << "phase_colour_sigma_zen_m," << std::setprecision(6) << phase_colour.sigmaZenM() << "\n";
@@ -2924,7 +2924,7 @@ int runSynth(const std::filesystem::path& outdir, bool kinematic, const sim::Sim
            << ", \"phase_amp_zenith_m\": " << std::setprecision(4) << mp_phase_amp
            << ", \"elev_factor_cap_deg\": " << std::setprecision(1) << scfg.multipath.elev_factor_cap_deg
            << ", \"peak_code_m\": " << std::setprecision(3) << max_mp_code << "},\n";
-        // Coloured phase error (card SFR).  Emitted only when active, so an off run's
+        // Coloured phase error.  Emitted only when active, so an off run's
         // summary is byte-identical; every number below sets its own precision and the
         // next object's numbers set theirs.  The seed is the configured (unsalted) value,
         // like the noise seed above; the station salt is applied on top of it.

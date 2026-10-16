@@ -1,6 +1,6 @@
 /**
  * @file test_active_system_admission.cpp
- * @brief The network admits observations by processing.active_systems (card OWD, O4).
+ * @brief The network admits observations by processing.active_systems.
  *
  * Admission and the inter-system bias allocation both follow
  * @c processing.active_systems: the synced epochs are stripped of every inactive system

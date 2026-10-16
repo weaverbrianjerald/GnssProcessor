@@ -7,7 +7,7 @@
  *        section-timer types (SubBlockTimer, the SubBlock enum and kSubBlockNames).  The
  *        definitions are field-for-field the former runNetwork() ones (INC-9b).
  *
- * The file name is historical: it also held the retired MW/WL lane types (cards WL-1,
+ * The file name is historical: it also held the retired MW/WL lane types (
  * WL-2, WL-3 and UWL-1), which were deleted with the lane layer.
  */
 
@@ -45,7 +45,7 @@ struct SubBlockTimer {
 /// (runNetwork's subBegin / subEnd closures until card NOM3 step EP1), which tile the loop body
 /// between the assembly wall and the emitted-epoch readout.  The value indexes
 /// NetworkRunTiming::sub_blocks and @ref kSubBlockNames.  Moved here from runNetwork with
-/// its names (card NOM step TD1a) so the driver's per-epoch line and the run-end ranking
+/// its names so the driver's per-epoch line and the run-end ranking
 /// read one table.
 enum SubBlock {
     SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly

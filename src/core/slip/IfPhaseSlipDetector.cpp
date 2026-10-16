@@ -7,7 +7,7 @@
  *  - Signal helpers
  *  - Statistics (median)
  *  - Observation grouping / reference selection
- *  - The hardened reference-satellite gate (card R)
+ *  - The hardened reference-satellite gate
  *  - Double-difference processing: processDoubleDifferences, a short driver
  *    over the steps D1 to D7 that share one ChainWork
  *    (slip/IfPhaseChainWork.hpp)
@@ -223,7 +223,7 @@ namespace GnssProcessor {
         // max_consecutive fires on this reference) sets ref_force_reselect, which
         // skips this retention test so the election below runs whatever the
         // incumbent's elevation.  Only evaluateRefGate sets the flag, so this is
-        // inert while the gate is disabled (card R).
+        // inert while the gate is disabled.
         bool ref_valid = false;
         if (!cs.ref_force_reselect) {
             for (const auto& sd : sat_vec)
@@ -244,7 +244,7 @@ namespace GnssProcessor {
             // The escalated reference is excluded from this election only, never
             // permanently (rule 5: qualify, never drop).  ref_exclude is empty
             // unless the gate escalated, so the legacy path never takes this
-            // branch (card R).
+            // branch.
             if (!cs.ref_exclude.empty() && sd.satellite == cs.ref_exclude) continue;
             if (sd.elevation > cs.ref_elevation) {
                 cs.ref_elevation = sd.elevation;
@@ -267,7 +267,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Hardened reference-satellite slip gate (card R)
+    // Hardened reference-satellite slip gate
     // =================================================================
 
     double IfPhaseSlipDetector::updateRefDispersion(ConstellationState& cs,
@@ -716,7 +716,7 @@ namespace GnssProcessor {
             // gate is armed it then decides (empirical scale, coherence, thin
             // family, persistence).  With the gate disabled the legacy
             // condition is the decision, and the output is byte-identical
-            // (card R).
+            //.
             RefGateVerdict verdict =
                 (std::abs(median_dd) > ref_gate_.floor_frac * lambda_if)
                     ? RefGateVerdict::FireRebase
@@ -811,7 +811,7 @@ namespace GnssProcessor {
         // in every non-reference DD of the chain and is attributed to arcs
         // that did not slip (§22.6).
         //
-        // Skipped for a FireNoRebase verdict (card R).  The rebase asserts
+        // Skipped for a FireNoRebase verdict.  The rebase asserts
         // that the reference slipped by median_dd, which holds only for a
         // coherent common step.  On an incoherent multi-satellite station
         // event the median is a mixture, and subtracting it from every other
@@ -876,7 +876,7 @@ namespace GnssProcessor {
         last_if_jumps_.clear();
         last_if_jumps_all_.clear();
         // Monotonic detect() index: the unit of the reference gate's persistence
-        // run length (card R).  Incremented on every call (inert while the gate
+        // run length.  Incremented on every call (inert while the gate
         // is disabled), so it does not depend on which constellations were
         // processed.
         ++epoch_counter_;
@@ -1062,7 +1062,7 @@ namespace GnssProcessor {
             // The chain this sample came from (§14.10), so a driver that flags
             // it can restart that chain alone.
             info.state_key    = sys_str;
-            // The post-flag evaluation of a re-seeded gradient (card ARL): the
+            // The post-flag evaluation of a re-seeded gradient: the
             // sample a reset would have left out.
             info.after_reseed = (cs.reseeded.count(sat) > 0);
             // The all-pairs cache is a superset and is always filled; the
@@ -1137,7 +1137,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // External re-seed (card ARL, slip-ladder defect 2)
+    // External re-seed (slip-ladder defect 2)
     // =================================================================
 
     bool IfPhaseSlipDetector::reseedInChain(const std::string& state_key,

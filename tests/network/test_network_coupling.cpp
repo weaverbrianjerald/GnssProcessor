@@ -34,7 +34,7 @@ namespace {
 struct BuilderFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1}, sh_col{-1}, clk2_col{-1};
 
@@ -428,7 +428,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     EXPECT_EQ(off_f.R.cpl_readmit_diverted, 0);
 
     // Inside the window: loop epoch 10 < expiry 12.
-    net::SatTable marg;   // readmit_marg (card NOM step N4e1)
+    net::SatTable marg;   // readmit_marg
     net::put(marg, *net::satIdKey("G01"), &net::SatelliteState::readmit_marg) = 12;
     BuilderFixture in_f;
     auto in = in_f.builder(/*tu=*/false);
@@ -456,7 +456,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     EXPECT_EQ(ex_f.R.cpl_readmit_diverted, 0);
 
     // Another satellite's window: untouched.
-    net::SatTable other;   // readmit_marg (card NOM step N4e1)
+    net::SatTable other;   // readmit_marg
     net::put(other, *net::satIdKey("G02"), &net::SatelliteState::readmit_marg) = 100;
     BuilderFixture ot_f;
     auto ot = ot_f.builder(/*tu=*/false);
@@ -473,7 +473,7 @@ TEST(NetworkCouplingTest, ReadmitWindowDivertsThePresentColumnAndExpires) {
     lsh.last_seen_s = 0.0;
     lsh.coupling = { CoupledShared{SharedParamKind::VtecSh, "", "", 1, 0, 'C', 0,
                                    /*coeff=*/0.3, /*s_prev=*/2.0, /*p_prev=*/0.05} };
-    net::SatTable empty_sat;   // readmit_marg (card NOM step N4e1)
+    net::SatTable empty_sat;   // readmit_marg
     net::put(empty_sat, *net::satIdKey(""), &net::SatelliteState::readmit_marg) = 100;
     BuilderFixture sh_f;
     auto sh = sh_f.builder(/*tu=*/false);

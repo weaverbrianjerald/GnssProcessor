@@ -2,7 +2,7 @@
 /**
  * @file EpochObservers.hpp
  * @brief The network producer's measure-only per-epoch instruments as a declared table
- *        (card NOM3 step EP3), the epoch's companion of network/runend/RunEnd.hpp.
+ *, the epoch's companion of network/runend/RunEnd.hpp.
  *
  * An observer is a seam of the observer form (network/driver/Epoch.hpp):
  *
@@ -51,7 +51,7 @@
  *     CS-GF advance, before the registration's SkipEpoch (an empty-system epoch still gets its
  *     census row) and upstream of every withhold decision (it measures through withhold eras).
  *   - AfterClockQc: after SB_CLOCKUPD closes, before SB_ROSTER opens.  The phase-visible
- *     instrument (card PVN) runs after the epoch's last re-solve, while the fold capture
+ *     instrument runs after the epoch's last re-solve, while the fold capture
  *     still holds the prior (the stash at SB_STASH_STATUS overwrites it).
  *   - RosterTail: inside SB_ROSTER, after networkSignalRosterAudit.  The ledger emit's fold
  *     half needs the ledger's admitted machine the audit has just advanced (an admitted arc

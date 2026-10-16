@@ -1,6 +1,6 @@
 /**
  * @file test_producer_ar_cycle_basis.cpp
- * @brief Unit tests of the producer AR search's cycle basis (card AGT, step AGT-5;
+ * @brief Unit tests of the producer AR search's cycle basis (step AGT-5;
  *        include/network/ar/ArCycleBasis.hpp).
  *
  * Suite @c ProducerArCycleBasis:
@@ -11,7 +11,7 @@
  *    cycle, and the two bands of a shared chord are adjacent copies of one shape with one search
  *    block (card AGT section 4: "L1 and L2 rows share shape and block key");
  *  - a slipped link reference re-seats the link, and the station's partner DDs map onto the
- *    stored basis instead of going fresh (card AGT section 4);
+ *    stored basis instead of going fresh;
  *  - stickiness: an unchanged graph keeps every link and every cycle; a changed one keeps the
  *    links that are still valid where a fresh forest would move them;
  *  - the map states and their causes, and the trace names.

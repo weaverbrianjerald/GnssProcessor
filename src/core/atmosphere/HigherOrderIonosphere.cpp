@@ -91,7 +91,7 @@ namespace GnssProcessor {
 
         // Propagation direction k̂: from satellite to receiver, unit vector.
         // Not the receiver-to-satellite line of sight, which flips the
-        // sign of I₂ (card I2S).
+        // sign of I₂.
         const Eigen::Vector3d path = rx_pos_ecef - sat_pos_ecef;
         const double path_norm = path.norm();
         if (path_norm < 1.0) return out;

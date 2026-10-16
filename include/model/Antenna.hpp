@@ -250,7 +250,7 @@ namespace GnssProcessor {
 
 		/**
 		 * @brief The route by which the receiver antenna correction of a signal
-		 *        resolves to an ATX frequency (card GAL, R6).
+		 *        resolves to an ATX frequency.
 		 *
 		 * Runs the same resolution @c getAntennaCorrection() runs for the receiver
 		 * PCO (the same matching, the same in-system frequency chain under

@@ -9,7 +9,7 @@
  */
 
 #include "realtime/RealTimeEngine.hpp"
-#include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey (card CST)
+#include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <algorithm>
@@ -134,7 +134,7 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-satellite readout of the closed-loop consumer's own epoch (card CST)
+// Per-satellite readout of the closed-loop consumer's own epoch
 // ---------------------------------------------------------------------------
 //
 // Added after the seam cut (not a relocation).  The two seams above run before

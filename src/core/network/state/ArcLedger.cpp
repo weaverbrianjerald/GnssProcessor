@@ -304,7 +304,7 @@ namespace GnssProcessor {
             // record of the sighting (the epoch index strictly increases from one
             // beginEpoch to the next).  It replaces a per-epoch set of the observed
             // keys that held the same fact at the cost of one tree insert per
-            // observation and one lookup per arc (card NOM step N3a, where the
+            // observation and one lookup per arc (where the
             // ledger became part of every run).
             if (a.ep_last_seen == epoch_idx_) return;
 

@@ -72,7 +72,7 @@ namespace {
 //    1 CB:G07:C1W   (a code row's code bias)
 //    2 PB:G07:L1C   (a phase row's phase bias)
 //    3 SH:C:0:0     (the SH<->slant tie)
-//  The class of a row is read from its tag (card NOM step N2b), which makeStation sets
+//  The class of a row is read from its tag, which makeStation sets
 //  from the recipe (tagOf); the columns give the rows their geometry.
 // ---------------------------------------------------------------------------
 constexpr int kCols = 4;
@@ -86,7 +86,7 @@ struct RowSpec {
     double w;
 };
 
-/// The contribution tag a row of the recipe carries (card NOM step N2b: the classifier
+/// The contribution tag a row of the recipe carries (the classifier
 /// reads the tag, not the columns): a code-bias row and a clock-only row are code
 /// observations, a phase-bias row a phase observation, an SH row a tie, a local-only row
 /// an ambiguity pin (its weight decides pivot or local), and a row at or past

@@ -151,7 +151,7 @@ TEST(SignalRosterTest, ABandTheModelDoesNotCarryIsTrackedOnly) {
 }
 
 // ---------------------------------------------------------------------------
-// Companions (card SCC)
+// Companions
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, CompanionCodesCarryTheCompanionRoleAndAreNotExclusions) {

@@ -231,7 +231,7 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
         for (std::size_t j = 0; j < n; ++j)
             if (sh.coef[j] != 0.0) ref[j] = 1;
     };
-    // The hold rows live in the satellite-signal table (card NOM step N4d), in key order.
+    // The hold rows live in the satellite-signal table, in key order.
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,
                  [&](const SatSignalId&, const PbHoldClone& c) { if (c.alive) holdRef(c.shx); });
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
@@ -585,7 +585,7 @@ void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                       "the per-row term).");
     }
     if (C.registered == 0 || X.terms_hist == 0)
-        log->warn("Network (card SCL2): network.carry_coupling_shared_history is ARMED but {}: "
+        log->warn("Network: network.carry_coupling_shared_history is ARMED but {}: "
                   "the build is INERT for this run.",
                   C.registered == 0 ? "no history column was registered"
                                     : "no row emitted a history term");

@@ -3,7 +3,7 @@
  * @brief Tests for the guarded temporal clock anchor: the fold-side variance
  *        decision, the per-satellite elapsed-time staleness guard, the
  *        LOOSE/ANCHORED state machine, the guard's in-epoch refloat and
- *        re-solve, the gauge-free fold, and the loader contract (card Q3,
+ *        re-solve, the gauge-free fold, and the loader contract (
  *        docs/SPEC_clock_temporal_anchor.md).
  *
  * Properties pinned here:
@@ -340,7 +340,7 @@ GuardRun guardedEpoch(NetworkRunContext& ctx, const GnssConfig& cfg,
         p.info  = 1.0 / f.var_eff;
         priors.push_back(p);
     }
-    // The injector's capture, mirrored, with its kinds (card NOM step N2b).
+    // The injector's capture, mirrored, with its kinds.
     networkCapturePriors(out.ws.cap_priors, out.ws.cap_prior_kinds, priors,
                          ContributionKind::BorderCarryDiagonal);
     out.x = solveEpoch(est, t, sat_clk, plan.shared_datum, &priors);
@@ -415,7 +415,7 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     // within-epoch re-solve cannot silently re-inject it.
     for (const auto& p : run.ws.cap_priors)
         EXPECT_NE(p.sat, std::string("G03"));
-    // The capture's kinds are erased in step (card NOM step N2b), so the replay still
+    // The capture's kinds are erased in step, so the replay still
     // names one kind per captured prior.
     EXPECT_EQ(run.ws.cap_priors.size(), 2u);
     EXPECT_EQ(run.ws.cap_prior_kinds.size(), run.ws.cap_priors.size());

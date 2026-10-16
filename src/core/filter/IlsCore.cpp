@@ -463,7 +463,7 @@ IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
 }
 
 // ===========================================================================
-// Partial fix in the decorrelated space (card ARL)
+// Partial fix in the decorrelated space
 // ===========================================================================
 
 IlsResult ilsFixDecorrelatedPartial(const Eigen::VectorXd& a_hat_cycles,

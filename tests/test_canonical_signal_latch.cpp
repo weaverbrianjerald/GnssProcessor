@@ -1,6 +1,6 @@
 /**
  * @file test_canonical_signal_latch.cpp
- * @brief Contract tests for the canonical-signal decision rule (card CSL,
+ * @brief Contract tests for the canonical-signal decision rule (
  *        docs/refound/CSL_canonical_signal_latch_2026-09-20.md).
  *
  * @c PppModel::decideCanonicalPicks is the pure rule behind each station's

@@ -204,7 +204,7 @@ bool decodeKeplerRecord(const std::string& epoch,
     const double omdot  = orb(3, 3);
     // Broadcast orbit 5: IDOT, codes/dataSrc, Week, flag
     const double idot   = orb(4, 0);
-    const double src_d  = orb(4, 1);   // Galileo data sources; GPS: codes on L2 (card OWD)
+    const double src_d  = orb(4, 1);   // Galileo data sources; GPS: codes on L2
     const double week_d = orb(4, 2);
     // Broadcast orbit 6: accuracy, health, TGD/BGD-a, TGD2/BGD-b
     const double health = orb(5, 1);
@@ -217,7 +217,7 @@ bool decodeKeplerRecord(const std::string& epoch,
     // Normalize the blank-padded identifier ("G 7" to "G07"), as the RINEX 3
     // observation path does.  An ephemeris keyed "G 7" matches no observation
     // and no product record, and the satellite would drop out of the solution
-    // with no warning (card RXP).
+    // with no warning.
     eph.satellite = epoch.substr(0, 3);
     if (eph.satellite[1] == ' ') eph.satellite[1] = '0';
     eph.system    = sys;

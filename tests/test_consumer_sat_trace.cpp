@@ -1,6 +1,6 @@
 /**
  * @file test_consumer_sat_trace.cpp
- * @brief Pins the schema of `logs/closed_loop_sat_trace.csv` (card CST).
+ * @brief Pins the schema of `logs/closed_loop_sat_trace.csv`.
  *
  * The row formatter is a pure function (no engine, no store, no file), so it is
  * the part of the trace that a unit test can exercise directly.  The tests guard

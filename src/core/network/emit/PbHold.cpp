@@ -96,13 +96,13 @@ void networkPbHold(NetworkRunContext& ctx,
     if (!ctx.knobs.emit_pb_hold) return;
     if (sol.sats.empty()) {
         // An emitted epoch with no satellite (every one pruned) is still an emission, so
-        // the phase-clock mode's next step is taken against it: nothing (card LAH).
+        // the phase-clock mode's next step is taken against it: nothing.
         if (ctx.knobs.emit_pb_hold_phase_clock || ctx.knobs.emit_pb_hold_smoothed)
             net::dropAll(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         return;
     }
 
-    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pb_hold and the clones (card NOM step N4d)
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pb_hold and the clones
     using SG = net::SatSignalState;
     const double max_gap_s = ctx.knobs.emit_pb_hold_max_gap_s;
     const double epoch_s   = sol.epoch_time.week * 604800.0 + sol.epoch_time.tow;
@@ -188,7 +188,7 @@ void networkPbHold(NetworkRunContext& ctx,
                 st.generation  = first ? 1u : (it->generation + 1u);
                 st.held_m      = npb.bias_m;
                 st.last_emit_s = epoch_s;
-                if (has_frz) {                // the phase-visible clock is held from here (card LAH)
+                if (has_frz) {                // the phase-visible clock is held from here
                     st.frz_ref = fcit->second;
                     st.frz_ok  = true;
                 }
@@ -354,7 +354,7 @@ void networkPbHold(NetworkRunContext& ctx,
                     // Leaving the clone: LAH's transfer continues with the passed motion
                     // the clone had reached folded into LAH's reference, so this epoch's
                     // clock step is transferred as LAH transfers it and C - P stays
-                    // continuous (card SMD section 7: re-referencing LAH on the last
+                    // continuous (re-referencing LAH on the last
                     // written transfer dropped that step, a step of C - P at every switch).
                     // Without an LAH reference yet, it is taken at the next emitted clock.
                     // A key already on the bridge is continuous as it stands.
@@ -396,7 +396,7 @@ void networkPbHold(NetworkRunContext& ctx,
                     else                 ++ctx.counters.smh_held_bridged;
                 }
                 if (st.smh_ref_pending && has_frz) {
-                    // Continue LAH's transfer from the clone's last one (card SMH).
+                    // Continue LAH's transfer from the clone's last one.
                     st.frz_ref         = fcit->second - st.frz_last;
                     st.smh_ref_pending = false;
                 }
@@ -455,7 +455,7 @@ void networkPbHold(NetworkRunContext& ctx,
 
     if (!logged_arm && log && ctx.counters.n_pbh_gen_first > 0) {
         logged_arm = true;
-        log->info("Network (card PBH): emit-side phase-bias HOLD armed — {} key(s) held at "
+        log->info("Network: emit-side phase-bias HOLD armed — {} key(s) held at "
                   "their first emitted value, max_gap_s {:.1f}.  The estimator keeps running "
                   "behind the hold; the solve, the C records and the B records are unchanged.",
                   ctx.counters.n_pbh_gen_first, max_gap_s);

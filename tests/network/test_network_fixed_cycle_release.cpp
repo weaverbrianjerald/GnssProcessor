@@ -1,6 +1,6 @@
 /**
  * @file test_network_fixed_cycle_release.cpp
- * @brief Unit gates of the fixed-cycle hold's one release seam (card FCF, step FCF-3;
+ * @brief Unit gates of the fixed-cycle hold's one release seam (step FCF-3;
  *        network/ar/ArLattice.hpp and network/ar/FixedCycles.hpp).
  *
  * Suite @c NetworkFixedCycleRelease (the gates of card FCF section 6, FCF-3):

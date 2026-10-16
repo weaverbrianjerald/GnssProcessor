@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file GfArcJump.hpp
- * @brief The arc-scoped geometry-free jump trigger (card ARL, slip-ladder defect 1): a
+ * @brief The arc-scoped geometry-free jump trigger (slip-ladder defect 1): a
  *        pre-solve slip test per (station, satellite) dual-frequency arc, drained in
  *        PASS A beside the IF-phase triple-difference driver.
  *

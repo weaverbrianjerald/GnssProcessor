@@ -92,7 +92,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // reduced from the monument to the antenna reference point, so every carried
         // quantity that references a station's geometry (the phase-leveling zero-q levels,
         // the carried ambiguities, the local blocks) refers to a different position across
-        // the flip (card UPO).  Appended only when armed, so the fingerprint of a snapshot
+        // the flip.  Appended only when armed, so the fingerprint of a snapshot
         // written with it off is unchanged.
         if (config_.networkStationMarkerToArp()) add("roster:arp");
         // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
@@ -188,7 +188,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryRxClockJumpK()));
             add(fmt::format("{}", config_.networkCarryRxClockIsb()));
         }
-        // Second code channel (card SCC, R6): adds a receiver inter-signal state per
+        // Second code channel: adds a receiver inter-signal state per
         // station and band-1 companion, carried by the receiver code-bias carry whose
         // stash is in the snapshot.  A resume across the flip would restore (or fail to
         // restore) receiver code-bias columns that the other side does not have, and the
@@ -251,7 +251,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
         add(fmt::format("{}", clk_model_q1));    add(fmt::format("{}", clk_model_q2));
         add(fmt::format("{}", clk_model_k));     add(fmt::format("{}", clk_model_max_gap));
-        // The retired network.emit_clock_rate (card C1) held this position, always false
+        // The retired network.emit_clock_rate held this position, always false
         // on a snapshot that can resume today; the constant keeps every stored
         // fingerprint written with the key off unchanged.
         add("false");
@@ -286,7 +286,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
-        // The receiver extra-band code delay estimated (card L5B): the receiver IFB columns
+        // The receiver extra-band code delay estimated: the receiver IFB columns
         // join the local block and the carried receiver code-bias set, so a snapshot written
         // with them held carries a different state set.  Appended only when the knob turned
         // the drop off (the rule's own flag), so a snapshot written without it keeps its
@@ -385,7 +385,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (config_.networkCodeBiasDiscJumpTest() || config_.networkClockDiscOnSetChange())
             add(fmt::format("emitchan:cbj={},cks={}", config_.networkCodeBiasDiscJumpTest(),
                             config_.networkClockDiscOnSetChange()));
-        // The per-channel mark scope (card MS) decides which channel's counters a
+        // The per-channel mark scope decides which channel's counters a
         // landed mark steps, those counters are snapshotted emitter state, and the
         // pending-mark section carries a channel mask.  Appended
         // only when armed, so a snapshot written with it off keeps its fingerprint.
@@ -447,7 +447,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // with it off keeps its fingerprint.
         if (carry_cpl_tu)
             add(fmt::format("carrycpltu={}", carry_cpl_tu));
-        // The exact update (card CTU) changes every injected row's coefficients and variance
+        // The exact update changes every injected row's coefficients and variance
         // again, on the same footing; appended only when armed.
         if (ctx.knobs.carry_cpl_exact)
             add(fmt::format("carrycplexact={}", ctx.knobs.carry_cpl_exact));
@@ -469,7 +469,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // tokens.
         if (ctx.knobs.carry_cpl_bclone) add("bcl:a");
         if (ctx.knobs.carry_cpl_dclone) add("bcl:d");
-        // The bound raise (card CTU) moves the carried border block; the monitor alone is
+        // The bound raise moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
             add(fmt::format("clmraise={}", ctx.knobs.clm_raise));
@@ -478,7 +478,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (ctx.knobs.rxcb_blk)
             add(fmt::format("rxcbblk={}", ctx.knobs.rxcb_blk));
         // A drop that decouples at birth strength changes the carried state; appended
-        // only when armed (card CTU section 14).
+        // only when armed.
         if (ctx.knobs.amb_drop_decouple_always)
             add("ambdropdecouple=true");
         // Gauge projection and source re-init (cards 1f and 1g) both change which
@@ -527,8 +527,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   carry hygiene           phase_anchor_carry_reref
         //   slip response           cycle_slip.{relevel_free_epoch,relevel_delta_bridge},
         //                           cycle_slip.gf_arc_jump{,_m,_k,_window,_min_count}
-        //                           (card ARL; its per-arc state is never serialized),
-        //                           cycle_slip.if_phase_td_reseed_on_flag (card ARL; the
+        //                           (its per-arc state is never serialized),
+        //                           cycle_slip.if_phase_td_reseed_on_flag (the
         //                           IF-TD gradient chains are never serialized)
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,

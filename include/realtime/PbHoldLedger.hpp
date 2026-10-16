@@ -1,7 +1,7 @@
 /**
  * @file PbHoldLedger.hpp
  * @brief Consumer reaction to a held satellite phase bias: the per-key generation
- *        memory, the ignore-or-refloat decision and its run-end counters (card PBH).
+ *        memory, the ignore-or-refloat decision and its run-end counters.
  *
  * A producer running @c network.emit_pb_hold freezes the emitted phase bias of
  * each (satellite, signal) at the first value of its generation and keeps
@@ -39,7 +39,7 @@
 
 namespace GnssProcessor {
 
-/// Hold-generation memory, the ignore-or-refloat decision and counters (card PBH).
+/// Hold-generation memory, the ignore-or-refloat decision and counters.
 class PbHoldLedger {
 public:
     /// What @ref react decided for one (key, epoch) cell.

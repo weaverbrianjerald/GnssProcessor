@@ -1,6 +1,6 @@
 /**
  * @file test_network_ar_lattice.cpp
- * @brief Unit gates of the producer AR search's lattice observatory (card AGT, step AGT-6;
+ * @brief Unit gates of the producer AR search's lattice observatory (step AGT-6;
  *        network/ar/ArLattice.hpp).
  *
  * Suite @c NetworkArLattice (the ledger's steps, pure; card AGT step AGT-6 as re-scoped by card
@@ -14,7 +14,7 @@
  *    still imply the DDs between their satellites; a satellite that vanishes at four stations
  *    costs one dimension per released arc that still holds rows (three), the last arc holding
  *    none;
- *  - a contradiction releases the arcs of its cycle (card FCF; AGT-6 left the lattice
+ *  - a contradiction releases the arcs of its cycle (AGT-6 left the lattice
  *    unchanged) and reports the implied integer;
  *  - the run tallies count stamp fields and free causes on the arc releases that held rows only.
  * Card FCF's release seam (the evidence, the cycle releases, the seam gap, the admission

@@ -534,7 +534,7 @@ public:
 
     /**
      * @brief Whether a consumer may replay a wire that carries this contract
-     *        (card OWD, O1).
+     *.
      *
      * The S contract line is part of every wire written since card OWD: it carries
      * the replay emitter's construction (@ref makeReplayEmitter), the
@@ -679,7 +679,7 @@ private:
 
 /**
  * @brief The a-priori orbit/clock identity of the S contract, naming the SP3 and CLK
- *        files in force during the run's processing window (card OWD, O1).
+ *        files in force during the run's processing window.
  *
  * The path resolver merges the previous, the observation and the next day's products,
  * so the first SP3 in the merged list is the previous day's file and cannot serve as

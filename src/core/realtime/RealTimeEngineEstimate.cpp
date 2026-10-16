@@ -343,7 +343,7 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 
 // ---------------------------------------------------------------------------
 // Consumer re-validation of float ambiguities against their own code level
-// (card ALC): the re-coupling edge of invariant #7 for cards CC and PBT.
+//: the re-coupling edge of invariant #7 for cards CC and PBT.
 // ---------------------------------------------------------------------------
 //
 // New code, not relocated from the pre-cut source.  Cards CC and PBT both
@@ -541,7 +541,7 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
 
         // Re-coupling edge: the response goes through the existing reset path,
         // StateManager::resetAmbiguity, with the same call and ambiguity_std as the
-        // reset_disc path (card CC).  Both bands are refloated, because the tests
+        // reset_disc path.  Both bands are refloated, because the tests
         // are two-frequency combinations and neither one identifies which band
         // carries the error.
         const bool r1 = state_manager_->resetAmbiguity(amb1, reset_std);

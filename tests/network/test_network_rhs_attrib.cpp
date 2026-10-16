@@ -240,7 +240,7 @@ TEST(NetworkRhsAttribClosureTest, SharedClassIsTheKindsName) {
 
 namespace {
 
-/// The replay's captured priors (card NOM step N2b): four kinds over three clocks of one
+/// The replay's captured priors: four kinds over three clocks of one
 /// constellation and a phase bias, two kinds on the same clock column, so the gauge-free
 /// downdate mixes the kinds within its group.
 std::vector<NetworkEstimator::SharedPrior> mixedCapture() {

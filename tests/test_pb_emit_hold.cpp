@@ -2,7 +2,7 @@
  * @file test_pb_emit_hold.cpp
  * @brief `network.emit_pb_hold`: the emitted phase bias of a (satellite, signal) is
  *        held at the first value of its generation, and a new generation is the
- *        declaration a consumer re-floats on (card PBH).
+ *        declaration a consumer re-floats on.
  *
  * Graded against truth on both beds, the within-arc phase-bias error (0.0227 m sim,
  * 0.0467 m field RMS) exceeds the clock's (0.0030 / 0.0274 m), the first differences

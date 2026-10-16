@@ -161,7 +161,7 @@ namespace GnssProcessor {
         // This mirrors the same preference logic the KF uses to populate
         // obs.observed in @c PppModel::buildFrequencyBandMap.
         // A companion code row is not KF-chosen for this detector's purposes
-        // (card SCC, R4).  With `network.second_code_channel` the KF estimates a
+        //.  With `network.second_code_channel` the KF estimates a
         // second band-1 code, so an unguarded `obs.observed` test would promote C1W
         // over C1C at every station that reports both, moving the detector's code for
         // the band and with it every MW arc, every threshold and every slip event the
@@ -206,7 +206,7 @@ namespace GnssProcessor {
             const char prefix = key[0];
             if (prefix != 'C' && prefix != 'L') continue;
             if (key.find('_') != std::string::npos) continue;
-            // Second half of the companion-code guard (card SCC, R4).  When `source`
+            // Second half of the companion-code guard.  When `source`
             // is obs.observed (mw_frequency_mode Mirror) a companion key would enter a
             // bucket that did not hold it without the knob; skip it, so Mirror sees the
             // same key set as unarmed.  When `source` is obs.raw_observed the key was

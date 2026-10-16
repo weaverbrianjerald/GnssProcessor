@@ -1,6 +1,6 @@
 /**
  * @file test_network_within_epoch_culprits.cpp
- * @brief Unit gates of the within-epoch culprit hand-off (card WCF;
+ * @brief Unit gates of the within-epoch culprit hand-off (
  *        network/qc/WithinEpochCulprits.hpp).
  *
  * Suite @c WithinEpochCulprits (the set the T2 block writes and the DD-carry rebuild reads):

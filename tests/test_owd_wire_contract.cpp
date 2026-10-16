@@ -1,6 +1,6 @@
 /**
  * @file test_owd_wire_contract.cpp
- * @brief The S contract line is part of every wire (card OWD, O1).
+ * @brief The S contract line is part of every wire.
  *
  * Two pure functions, tested without a producer run:
  *   - @c NetworkProductReader::admitsWire, the replay's refusal of a wire without an S

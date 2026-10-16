@@ -2,7 +2,7 @@
  * @file test_disc_mark_scope.cpp
  * @brief `network.disc_mark_scope` (`sat` | `channel`): with `channel`, a
  *        per-satellite discontinuity mark bumps only the generation of the channel
- *        that moved (card MS).
+ *        that moved.
  *
  * In the `sat` scope, `markSatDiscontinuity` puts a satellite into one
  * `forced_bump_sats_` set, and `satForced()` is read by the clock, code-bias and

@@ -11,7 +11,7 @@
  * and the cross-station half of that shared term is dropped.  One epoch's dropped piece is
  * small, but the exact recursion accumulates those pieces into a cross-station correlation of
  * the carried ambiguities, and the per-station form keeps none of it: at long horizons the
- * satellite clock level freezes while its statement keeps shrinking (card SCL2 section 3).
+ * satellite clock level freezes while its statement keeps shrinking.
  * The shared history keeps that term shared, in a bounded set of border columns:
  *
  * - The harvest (B1's row step, @c networkClockCloneHarvestRow): with

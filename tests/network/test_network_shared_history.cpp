@@ -507,7 +507,7 @@ namespace {
 struct RowFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     CouplingExactEpoch ep;
     SharedHistoryState shx;
@@ -697,7 +697,7 @@ TEST(NetworkSharedHistoryTest, SnapshotWriteStoresTheMarginal) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Gate U5 (card SCL2 section 11, amendment A1, build X2b): card SMH's clone rows in the history.
+// Gate U5 (amendment A1, build X2b): card SMH's clone rows in the history.
 // ---------------------------------------------------------------------------------------------
 
 namespace {
@@ -1104,7 +1104,7 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
 }
 
 // The clock gauge with the pivot a Dirichlet-pinned border column that receives the deficits
-// (card SCL2 section 11, reading 2; the guard of the attribution's T2 note, parts (a) to (c)).
+// (reading 2; the guard of the attribution's T2 note, parts (a) to (c)).
 // (a) After the harvest's row step and its end, each carried row's clock-family sum over the
 // clocks (the pinned pivot included) equals its sum over the clocks and the clones before,
 // with the history at weight 0, to 1e-12; the Y terms are gone and the conditional variance is

@@ -7,7 +7,7 @@
  * snapshot, the byte-identity contract), and its descriptors must state the goldens'
  * armed model: the satellite clock anchored at card Q3's rate and loose at the legacy
  * rate, the phase and code biases at their pinned rates, the float ambiguities in the
- * station's whitened local block, the receiver code bias carried in that block (card EXL),
+ * station's whitened local block, the receiver code bias carried in that block,
  * and the wet delay, slant ionosphere and receiver clock re-estimated every epoch.
  */
 #include <gtest/gtest.h>

@@ -16,13 +16,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>      // the held solve's NaN / infinity sentinels (card FCF)
+#include <limits>      // the held solve's NaN / infinity sentinels
 #include <stdexcept>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
@@ -431,7 +431,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
 
 void NetworkEstimator::applyDatumPins(Eigen::MatrixXd& N, Eigen::VectorXd& u,
                                       const Datum& datum) {
-    // Moved verbatim out of solve() (card FCF); the one change is the range bound,
+    // Moved verbatim out of solve(); the one change is the range bound,
     // N.rows() for numShared(), which are equal at every call (solve() pins the reduced
     // normals of the open epoch, which beginEpoch sized to numShared()).
     //
@@ -852,7 +852,7 @@ void NetworkEstimator::addSharedPrior(const std::vector<SharedPrior>& priors) {
     for (std::size_t j = 0; j < priors.size(); ++j) {
         const SharedPrior& p = priors[j];
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone, or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
@@ -895,10 +895,10 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
     col.reserve(keys.size());
     for (Eigen::Index i = 0; i < nk; ++i) {
         const SharedPrior& p = keys[static_cast<std::size_t>(i)];
-        // Q3 refloat.  A clock clone of the same satellite is kept (card SCL): the rows
+        // Q3 refloat.  A clock clone of the same satellite is kept: the rows
         // still reference it, and the refloat frees the clock, not its previous value.
         if (p.kind == SharedParamKind::Clock && !p.clone && skip.count(p.sat)) continue;
-        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone, or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // not in this epoch's layout → marginalized
         in_idx.push_back(i);
@@ -986,7 +986,7 @@ bool NetworkEstimator::denseFoldTerms_(const std::vector<SharedPrior>& keys,
         std::map<char, std::vector<Eigen::Index>> grp;   // constellation letter -> rows of Λ
         for (Eigen::Index a = 0; a < k; ++a) {
             const SharedPrior& p = keys[static_cast<std::size_t>(in_idx[static_cast<std::size_t>(a)])];
-            if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty())   // a clone is not a clock of the gauge (card SCL)
+            if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty())   // a clone is not a clock of the gauge
                 grp[letterOfSat(p.sat)].push_back(a);
         }
         std::vector<Eigen::Index> used;
@@ -1286,11 +1286,11 @@ std::size_t NetworkEstimator::addSharedPriorClockGaugeFree(
     for (std::size_t j = 0; j < priors.size(); ++j) {
         const SharedPrior& p = priors[j];
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone, or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
-        if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty()) {   // a clone folds plainly (card SCL)
+        if (p.kind == SharedParamKind::Clock && !p.clone && !p.sat.empty()) {   // a clone folds plainly
             grp[letterOfSat(p.sat)].push_back({c, p.info, p.value, j});
         } else {
             delta_info(c, c) += p.info;
@@ -1402,7 +1402,7 @@ void NetworkEstimator::withdrawSharedPrior(const std::vector<SharedPrior>& prior
     // be the arithmetic inverse of the fold, not an independent recomputation.
     for (const SharedPrior& p : priors) {
         if (!(p.info > 0.0)) continue;
-        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone (card SCL), or key_
+        const std::string pkey = priorKey_(p);   // VtecSh, a clock clone, or key_
         const auto it = index_.find(pkey);
         if (it == index_.end()) continue;   // parameter not in this epoch's layout
         const Eigen::Index c = it->second;
@@ -1536,7 +1536,7 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
         // The driver reads them from x_s via vtecCoeffColumn for the trace; their
         // product serialization (IGS-SSR VTEC) is a later stage.
         if (d.kind == SharedParamKind::VtecSh) continue;
-        // A clock clone (card SCL) is the previous epoch's clock carried inside the border
+        // A clock clone is the previous epoch's clock carried inside the border
         // for one epoch: never a product, and never the satellite's clock.
         if (d.clone) continue;
         if (d.hist) continue;   // card SCL2 X2: a shared-history column, the same
@@ -1660,7 +1660,7 @@ NetworkEstimator::EstimabilityDump NetworkEstimator::dumpEstimabilitySpectrum(
     return out;
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the carry-aware covariance mode.
 int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v) {
@@ -1719,9 +1719,9 @@ int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/solve/Estimator.hpp.
+// Setup builder; documented at its declaration in network/solve/Estimator.hpp.
 void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_spec) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     const GnssConfig& config_ = run.config;
     const int n_threads = run.setup.n_threads;
@@ -1759,7 +1759,7 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // compile-time constant.  The default is NetworkEstimator::kNullSpaceTol, so an unset
     // key sends the identical double through the identical arithmetic (byte-identical).
     est.setRankGateTol(config_.networkRankGateTol());
-    est.setDenseFoldKappa(config_.networkDenseFoldKappa());   // card CTU section 14; config default 1e-12 (card SMH section 9)
+    est.setDenseFoldKappa(config_.networkDenseFoldKappa());   // card CTU section 14; config default 1e-12
     // network.parallel_carry also un-pins Eigen's threading (RAII) around the two
     // GEMM-bound carry stages, buildDdPriors (W·Pᶻ·Wᵀ) and installPosterior
     // (posterior-covariance read-back), whose large dense products Eigen threads well.
@@ -1779,7 +1779,7 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // reference scale for the local-block rank test.  Without it, the prioritized
     // datum's in-block 1e10 anchor pins eject marginal stations every epoch.
     est.setStationPdMedianScale(config_.networkStationPdPinAware());
-    // Null-direction read (card RF-PD, network.trace_station_pd_null): an eigen-read of
+    // Null-direction read (network.trace_station_pd_null): an eigen-read of
     // the null direction of a block the PD test rejects, so the drop names a parameter
     // instead of a pivot magnitude.  Measure-only; it runs only on an already-rejected
     // block.

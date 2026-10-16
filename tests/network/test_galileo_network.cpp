@@ -410,7 +410,7 @@ TEST(GalileoNetworkTest, GpsExtraAnchorIsUnchanged) {
 
 // The network admits observations by processing.active_systems, so a Galileo signal list
 // without Galileo active loads, is ignored, and logs a warning; the warning text is
-// asserted in test_active_system_admission.cpp (card OWD, O4).
+// asserted in test_active_system_admission.cpp.
 TEST(GalileoNetworkTest, GalileoListWithoutGalileoActiveIsIgnored) {
     LogManager log;
     const fs::path p = writeTempConfig("ignored",

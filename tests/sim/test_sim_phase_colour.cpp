@@ -1,6 +1,6 @@
 /**
  * @file test_sim_phase_colour.cpp
- * @brief The simulator's coloured carrier-phase error (card SFR,
+ * @brief The simulator's coloured carrier-phase error (
  *        docs/refound/SFR_sim_fixture_coloured_phase_2026-10-01.md section 2).
  *
  * Product-free and processor-free, like the rest of `gnss_simulator_selftest`:

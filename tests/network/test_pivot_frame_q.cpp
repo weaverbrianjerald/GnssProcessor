@@ -12,7 +12,7 @@
 //       direction is optimistic (the true error variance of that filter, propagated
 //       deterministically, is 2.8 times the stated one here), while a contrast between two
 //       non-pivot clocks is unaffected.
-//   (c) The exact coupling update (card CTU) with the pairwise Q_S equals a brute-force
+//   (c) The exact coupling update with the pairwise Q_S equals a brute-force
 //       M'BM over the dense Q_S, for one row and for the cross term of two rows.
 
 #include "network/carry/CouplingExact.hpp"

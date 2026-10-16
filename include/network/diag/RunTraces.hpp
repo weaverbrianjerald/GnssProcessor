@@ -50,7 +50,7 @@ namespace GnssProcessor {
     struct EpochStatusRow;          // network/driver/RunTypes.hpp (INC-4 hoist)
     struct NetworkKnobs;            // network/state/RunContext.hpp (INC-4)
     struct NetworkServiceCounters;  // network/state/RunContext.hpp (INC-4)
-    struct ConsumerSatRow;          // realtime/ConsumerSatTrace.hpp (card CST)
+    struct ConsumerSatRow;          // realtime/ConsumerSatTrace.hpp
     class  NetworkCarryVceApply;    // network/carry/CarryVceApply.hpp (M2 v2)
 
     /// Flag-rate tally for one QC tier (B8): {opportunities, flags}.  Summarized at the
@@ -207,7 +207,7 @@ namespace GnssProcessor {
         "sigma_cyc,in_subset,fixed_int,kept,ratio,p_succ,n_dd,n_search,n_fixed,"
         "wl_float_sigma_cyc,wl_cond_cyc,wl_cond_sigma_cyc,nl_cond_sigma_cyc\n";
     /// The two columns appended to either header above (before its newline) when
-    /// network.ambiguity_resolution.suspect_epochs is armed (card ARL,
+    /// network.ambiguity_resolution.suspect_epochs is armed (
     /// network/ar/ArSuspect.hpp).  suspect_bits is the OR of the DD's four corners'
     /// ArSuspectCause bits (1 free, 2 relevel, 4 drop, 8 raim, 16 mw_unknown, 32 gf_jump):
     /// non-zero means the mask kept the DD out of the search, which tells a masked DD from
@@ -215,7 +215,7 @@ namespace GnssProcessor {
     /// the mask released at this search (the DD's first search after the release).
     inline constexpr const char* kProducerArSuspectColumns = ",suspect_bits,reentry";
     /// The four columns appended after those (before the header's newline) when
-    /// network.ambiguity_resolution.cycle_basis is armed (card AGT, step AGT-5,
+    /// network.ambiguity_resolution.cycle_basis is armed (step AGT-5,
     /// network/ar/ArCycleBasis.hpp).  cycle_kind is how the DD closes its chord: partner
     /// (against the station's link parent and link reference) or borrowed (against an earlier
     /// station sharing the most satellites); a chord no DD closes is a fundamental fallback,
@@ -227,7 +227,7 @@ namespace GnssProcessor {
     /// changed: freed this epoch or a new life stamp) or fresh_new (outside its span: a new arc,
     /// or no stored basis).
     inline constexpr const char* kProducerArCycleBasisColumns = ",cycle_kind,band_only,basis_age_ep,map_state";
-    /// network_ar_lattice.csv header (card AGT, step AGT-6, widened by card FCF step FCF-3;
+    /// network_ar_lattice.csv header (step AGT-6, widened by card FCF step FCF-3;
     /// network/ar/ArLattice.hpp; network.ambiguity_resolution.trace_lattice).  One row per
     /// ledger step (an epoch the search built the cycle basis), after the seam gap, the evidence
     /// releases, the contradictions, the fold's re-validation, the admission and the fold's own
@@ -255,7 +255,7 @@ namespace GnssProcessor {
         "released_touching,dims_lost,no_unit,rel_vanished,rel_first_seen,rel_freed,rel_stamp,"
         "max_len,mean_len,waiting,rel_replay,rel_gross,rel_contradiction,rel_revalidation,"
         "rel_acceptance,rel_degenerate,rel_seam_gap,units,units_failed\n";
-    /// network_ar_lattice_events.csv header (card AGT, step AGT-6; card FCF step FCF-3).  One row
+    /// network_ar_lattice_events.csv header (step AGT-6; card FCF step FCF-3).  One row
     /// per release, in application order, then one per offer that is neither a confirmation nor
     /// waiting (event `added`, `contradicted` or `not_primitive`); a kept DD of
     /// network_producer_ar.csv at the same epoch with no row here was confirmed or waiting.  An
@@ -275,7 +275,7 @@ namespace GnssProcessor {
     inline constexpr const char* kArLatticeEventsHeader =
         "week,tow,event,cons,signal,sat_j,ref_sat,sta_r,ref_sta,value,implied,len,cause,"
         "rows_touched,rows_dropped,change_bits,free_cause\n";
-    /// network_fixed_cycles.csv header (card FCF, network/ar/FixedCycles.hpp;
+    /// network_fixed_cycles.csv header (network/ar/FixedCycles.hpp;
     /// network.ambiguity_resolution.fixed_cycles.trace).  One row per unit-epoch: a DD
     /// identity (cons, sat_j, ref_sat, sta_r, ref_sta) the search determined in both bands
     /// (sig1 the shorter wavelength), with its integers n1 / n2, its floats y1_cyc / y2_cyc,
@@ -290,14 +290,14 @@ namespace GnssProcessor {
     inline constexpr const char* kFixedCyclesHeader =
         "week,tow,cons,sig1,sig2,sat_j,ref_sat,sta_r,ref_sta,n1,n2,y1_cyc,y2_cyc,sd1_cyc,sd2_cyc,"
         "rho,t_unit,block,block_k,block_chi2,block_chi2_expect,block_bar,pass,action\n";
-    /// network_fixed_cycle_shift.csv header (card FCF).  One row per emitted quantity of every
+    /// network_fixed_cycle_shift.csv header.  One row per emitted quantity of every
     /// epoch with an accepted held solve: kind clock (signal empty), code_bias, phase_bias or
     /// phase_visible (the phase bias minus the clock, the phase side a consumer applies), its
     /// value from the float shared estimate (float_m), from the held one (held_m) and their
     /// difference delta_m = held_m - float_m, in metres, before any emission filter or hold.
     inline constexpr const char* kFixedCycleShiftHeader =
         "week,tow,sat,kind,signal,float_m,held_m,delta_m\n";
-    /// network_fixed_cycle_events.csv header (card FCF step FCF-3, source lattice; written under
+    /// network_fixed_cycle_events.csv header (source lattice; written under
     /// fixed_cycles.trace).  One row per edge of a folded unit: `onset` (the unit folded at this
     /// epoch and not at the step before, or folded again with other integers), `offset` (folded
     /// at the step before and not now; `cause` is its fate now: a unit action such as
@@ -579,7 +579,7 @@ namespace GnssProcessor {
         /// Diagnostic only: the emitted product is byte-identical with it on or off.
         std::ofstream producer_ar_trace;
         const std::filesystem::path producer_ar_trace_path;
-        /// The producer AR search's lattice observatory (card AGT, step AGT-6;
+        /// The producer AR search's lattice observatory (step AGT-6;
         /// network.ambiguity_resolution.trace_lattice with .enable): one row per search epoch
         /// (@ref kArLatticeHeader) and one per release or non-confirming offer
         /// (@ref kArLatticeEventsHeader).  Written by network/ar/ArLattice.cpp.
@@ -588,7 +588,7 @@ namespace GnssProcessor {
         const std::filesystem::path ar_lattice_trace_path;
         std::ofstream ar_lattice_events_trace;
         const std::filesystem::path ar_lattice_events_trace_path;
-        /// The fixed-cycle fold (card FCF; network.ambiguity_resolution.fixed_cycles.trace
+        /// The fixed-cycle fold (network.ambiguity_resolution.fixed_cycles.trace
         /// with the fold armed): one row per unit-epoch (@ref kFixedCyclesHeader) and the held
         /// minus float of every emitted quantity on an accepted epoch
         /// (@ref kFixedCycleShiftHeader).  Written by network/ar/FixedCycles.cpp.
@@ -596,7 +596,7 @@ namespace GnssProcessor {
         const std::filesystem::path fixed_cycles_trace_path;
         std::ofstream fixed_cycle_shift_trace;
         const std::filesystem::path fixed_cycle_shift_trace_path;
-        /// The fold's edges under source lattice (card FCF step FCF-3,
+        /// The fold's edges under source lattice (
         /// @ref kFixedCycleEventsHeader).
         std::ofstream fixed_cycle_events_trace;
         const std::filesystem::path fixed_cycle_events_trace_path;
@@ -800,13 +800,13 @@ namespace GnssProcessor {
         /// (0 when none), @c n_code_ep the epochs of code information in I_L.
         std::ofstream level_bound_trace;
         const std::filesystem::path level_bound_trace_path;
-        /// The level innovation instrument of the monitor (card CTU section 14): one row per
+        /// The level innovation instrument of the monitor: one row per
         /// satellite per epoch.  @c z_m the post-fit two-way effect (constellation
         /// contrast), @c dclk_m the contrast of this epoch's clock update, @c nu_m their
         /// difference (the prefit innovation of the level), @c r_m2 the fit's variance of the
         /// effect, @c p_prior_m2 the prior clock contrast variance, @c s0sq the fit's unit
         /// variance, @c nis = nu^2 / (P + R).
-        /// The Q3 guard's two statistics side by side (card CTU section 14,
+        /// The Q3 guard's two statistics side by side (
         /// @c network.clock_anchor_guard_space not @c clock): one row per tested satellite
         /// per pass-0 epoch.
         std::ofstream anchor_guard_trace;
@@ -818,7 +818,7 @@ namespace GnssProcessor {
         /// variance and @c T = nubar^2 / var(nubar).
         std::ofstream level_innov_win_trace;
         const std::filesystem::path level_innov_win_trace_path;
-        /// The phase-visible consistency instrument (card PVN,
+        /// The phase-visible consistency instrument (
         /// @c network.phase_visible_monitor): one row per satellite per epoch.
         /// @c sigs the phase-bias signals the functional took (one per band; a change of
         /// signal changes the functional's definition, so a series breaks there),
@@ -828,7 +828,7 @@ namespace GnssProcessor {
         /// sqrt(S- - S+) (empty when not positive), @c nis = e^2 / (S- - S+).
         std::ofstream phase_visible_trace;
         const std::filesystem::path phase_visible_trace_path;
-        /// The native broadcast clock a priori's wire stamp (card NBP,
+        /// The native broadcast clock a priori's wire stamp (
         /// @c network.apriori_source @c sp3_brdc_clock): one row per clock record per
         /// emitted epoch.  @c iode the stamped record (-1: none selectable), @c c_est_m the
         /// estimate, @c offset_m the offset O of the stamped record, @c c_wire_m the value
@@ -838,7 +838,7 @@ namespace GnssProcessor {
         /// C - O (= c_est_m) or brdc_m + c_wire_m (= the a priori plus the estimate).
         std::ofstream brdc_offset_trace;
         const std::filesystem::path brdc_offset_trace_path;
-        /// The smoothed hold's clock clones (card SMH, @c network.emit_pb_hold_smoothed):
+        /// The smoothed hold's clock clones (@c network.emit_pb_hold_smoothed):
         /// one row per smoothed held emission.  @c age_s the clone's age, @c xfer_m the
         /// key's transfer (the phase-clock transfer minus phi, card SMH section 10),
         /// @c xfer_lah_m the phase-clock transfer computed in the same pass (empty on an
@@ -851,7 +851,7 @@ namespace GnssProcessor {
         /// empty on a pinned clock).  @c phi_m, @c w_m2, @c vpost_m2, @c var_m2 and @c r are the
         /// writing member's: @c member is always @c clk (card SMH's clock clone writes; the
         /// column stays for the trace format).  The @c b_* columns are the key's block clone
-        /// (card SMD) when it is live, on its own birth: its age, its clock row's Phi_c, Phi_D,
+        /// when it is live, on its own birth: its age, its clock row's Phi_c, Phi_D,
         /// the level part Phi_c - Phi_D, the fold inflation along D, the posterior variance of
         /// the D increment, r_D = Phi_D^2 / (W_D - V_D) and the band pair ("L1C+L2W").
         std::ofstream pb_hold_clone_trace;
@@ -885,7 +885,7 @@ namespace GnssProcessor {
         /// no rows: byte-identical).
         std::ofstream amb_state_trace;
         const std::filesystem::path amb_state_trace_path;
-        /// Per-line-of-sight phase-colour state trace (card LGM,
+        /// Per-line-of-sight phase-colour state trace (
         /// @c network.trace_phase_colour with @c network.phase_colour_state): one row per
         /// harvested (station, satellite) per epoch, `week,tow,station,sat,elev_deg,x_m,
         /// sd_m,carried`, where @c x_m is the posterior estimate, @c sd_m the square root
@@ -1068,7 +1068,7 @@ namespace GnssProcessor {
         /// L15 end-of-run manifest record (JSONL, appended, so a crashed run keeps
         /// the startup record).  No-op unless nc.write_run_manifest.
         /// @param extra_member Optional JSON member ("key":{...}) written before
-        ///        `loop_ms` (card GAL); empty (the default) writes nothing, so the
+        ///        `loop_ms`; empty (the default) writes nothing, so the
         ///        record of a caller that passes none is unchanged.
         void writeRunManifestComplete(const NetworkConfig& nc,
                                       const NetworkServiceCounters& counters,
@@ -1100,7 +1100,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Write one consumer epoch's per-satellite rows to @ref cl_sat_trace
-         *        (card CST; no-op when the stream is not open).
+         *        (no-op when the stream is not open).
          *
          * Called from the emit/store seam immediately after
          * @c consumer->processEpoch, with the engine's own harvested buffer
@@ -1170,7 +1170,7 @@ namespace GnssProcessor {
                                     const NetworkCarryVceApply& apply,
                                     int& hour_state);
 
-        /// The @c EPOCH record of one estimability dump (card DG5; no-op when the
+        /// The @c EPOCH record of one estimability dump (no-op when the
         /// trace is off).  Fed from @c NetworkEstimator::dumpEstimabilitySpectrum's
         /// return value, so the row and the WARN line carry the same numbers by
         /// construction.  Takes primitives rather than the nested
@@ -1180,14 +1180,14 @@ namespace GnssProcessor {
                                        int declared_dim, double ev_max, double cutoff,
                                        int n_below);
 
-        /// One @c DIR record (card DG5): a reported near-null direction's eigenvalue
+        /// One @c DIR record: a reported near-null direction's eigenvalue
         /// and its ≤5 heaviest spanning columns as (label, |component|) pairs, in the
         /// log line's order (no-op when the trace is off).
         void writeEstimabilityDirRow(const GnssTime& t, double ev,
                                      const std::vector<std::pair<std::string, double>>& top);
 
         /// The single trailing @c RUN record with the run-wide rank-gate telemetry
-        /// (card DG6; no-op when the trace is off).  Written once at teardown, before
+        /// (no-op when the trace is off).  Written once at teardown, before
         /// @ref closeAll.
         /// @param rank_gate_tol The resolved tolerance the run used
         ///                      (NetworkEstimator::rankGateTol); the calibration
@@ -1218,7 +1218,7 @@ struct NetworkRun;
 /**
  * @brief Writes the run manifest's startup record and logs the parameter model as armed.
  *
- * The parameter-model table also goes to the manifest (card PRM).  Setup builder (card NOM3
+ * The parameter-model table also goes to the manifest.  Setup builder (card NOM3
  * step EP4): called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *

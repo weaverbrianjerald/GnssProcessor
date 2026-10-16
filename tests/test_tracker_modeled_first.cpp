@@ -1,7 +1,7 @@
 /**
  * @file test_tracker_modeled_first.cpp
  * @brief The arc-level tracker's band signal taken from the station's canonical
- *        latch (card GRK,
+ *        latch (
  *        docs/refound/GRK_gap_reentry_key_mismatch_2026-09-22.md section 3).
  *
  * The case under test is a key mismatch, not a wrong number.  The arc-level

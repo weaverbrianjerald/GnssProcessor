@@ -55,7 +55,7 @@ namespace {
 struct ZwdBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 

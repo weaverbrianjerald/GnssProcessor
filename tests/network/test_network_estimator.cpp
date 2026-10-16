@@ -1853,7 +1853,7 @@ TEST(NetworkEstimatorTest, DensePriorWithDiagonalCovMatchesScalarPath) {
 }
 
 // ---------------------------------------------------------------------------
-// Post-solve refloat primitives (card Q3, docs/SPEC_clock_temporal_anchor.md §2.4).
+// Post-solve refloat primitives (docs/SPEC_clock_temporal_anchor.md §2.4).
 // Both let an epoch be re-solved with one carried prior withdrawn, which turns the
 // clock anchor's guard from an annotation into a correction (adapt-and-emit).
 // Their contract is exactness: after the withdrawal the system is in the state it

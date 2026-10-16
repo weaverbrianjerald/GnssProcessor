@@ -1,6 +1,6 @@
 /**
  * @file test_sat_gf_extra_band_free.cpp
- * @brief Tests for @c network.sat_gf_extra_band_free, the band-5 code datum (card B5D).
+ * @brief Tests for @c network.sat_gf_extra_band_free, the band-5 code datum.
  *
  * Card B5D: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
  * evidence: docs/refound/TBI_three_band_ignition_2026-09-20.md section 5.

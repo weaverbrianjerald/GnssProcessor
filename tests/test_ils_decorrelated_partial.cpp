@@ -1,6 +1,6 @@
 /**
  * @file test_ils_decorrelated_partial.cpp
- * @brief Unit tests for ils::ilsFixDecorrelatedPartial (card ARL).
+ * @brief Unit tests for ils::ilsFixDecorrelatedPartial.
  *
  * The motivating geometry is a free slant ionosphere on L1/L2: each single-signal
  * double difference carries an ionosphere-shaped error along

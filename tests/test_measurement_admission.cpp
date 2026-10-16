@@ -71,7 +71,7 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// The admission records of every station (card NOM step N4f1: StationState::adm_arc).
+/// The admission records of every station (StationState::adm_arc).
 std::size_t admArcs(const NetworkRunContext& ctx) {
     std::size_t n = 0;
     const net::StationTable& t = ctx.entities.stations;

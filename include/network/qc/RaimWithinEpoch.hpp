@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file RaimWithinEpoch.hpp
- * @brief Stages 13 and 14 of the network solve (card NOM3 step SG): the within-epoch RAIM tier
+ * @brief Stages 13 and 14 of the network solve: the within-epoch RAIM tier
  *        T2 (assess, drop the dominant culprit, replay and re-solve, undo a failed re-solve,
  *        settle) and the A4 sigma0 ceiling (the per-constellation carve-out, the flight-recorder
  *        edge, the withhold-era edges and the withhold decision), with the sigma0 exit's tail.
@@ -37,7 +37,7 @@ struct WithinEpochCulprits;     // network/qc/WithinEpochCulprits.hpp
  * @brief Stage 13, T2: when the robust sigma0 shows the joint solve contaminated, drop the most
  *        prominent culprit (an arc, a satellite or a station), replay the captured shared system
  *        over a fresh beginEpoch() and re-solve, up to the adaptation budget; a re-solve that
- *        fails is undone to the last landed state (card RPD section 7).  Then the reduce-once
+ *        fails is undone to the last landed state.  Then the reduce-once
  *        check.
  * @param run          The run: the estimator is rebuilt by each replay; ctx carry and counters
  *                     and the events are written.
@@ -57,7 +57,7 @@ EpochAction networkWithinEpochAdapt(NetworkRun& run, const NetworkEpoch& ep, con
                                     std::vector<int>& est_index_of, EpochDdBuild& dd_build,
                                     NetworkPostFitHandoff& handoff, WithinEpochOutcome& we, EpochEvents& events);
 
-/// The culprit the adaptation loop drops next (card NOM3 step SG2): its granularity and identity.
+/// The culprit the adaptation loop drops next: its granularity and identity.
 struct WeChoice {
     enum class Kind { None, Arc, Sat, Sta };
     Kind        kind{Kind::None};  ///< None when nothing clears the gate.

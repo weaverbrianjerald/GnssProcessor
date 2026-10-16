@@ -1,9 +1,9 @@
 #pragma once
 /**
  * @file SlipFunnel.hpp
- * @brief The slip funnel of one network epoch (card C3c): every (station roster index,
+ * @brief The slip funnel of one network epoch: every (station roster index,
  *        ambiguity key) the epoch treats as slipped, its producers, its readers, and the
- *        standing invariants it serves (card NOM3 step EP2).
+ *        standing invariants it serves.
  *
  * The funnel is an epoch group (NetworkEpoch::funnel, network/driver/Epoch.hpp): empty at the
  * epoch's construction, filled before the phase datum, read from the phase datum on, and gone
@@ -54,7 +54,7 @@ struct NetworkRun;
 struct NetworkEpoch;
 struct EpochEvents;             // network/driver/Epoch.hpp
 
-/// The slip funnel (card C3c).  See the file comment for its producers, readers and invariants.
+/// The slip funnel.  See the file comment for its producers, readers and invariants.
 struct NetworkSlipFunnel {
     std::set<std::pair<int, std::string>> carry_slipped_ambs; ///< The funnel: (station roster index, ambiguity key).
     std::set<std::pair<int, std::string>> carry_slipped_raw;  ///< Its raw-detector subset (Iono-2 v3k): the entries a raw observable saw step.

@@ -99,7 +99,7 @@ public:
     /// shell, keyed "SH2|n|m|t", so both shells coexist on the border.
     Eigen::Index registerVtecCoeff(int n, int m, char trig, int layer = 0);
     /**
-     * @brief Register the one-epoch clock clone column of @p sat (card SCL,
+     * @brief Register the one-epoch clock clone column of @p sat (
      *        @c network.carry_coupling_clock_clone); idempotent; returns its column.
      *
      * The clone is the satellite's previous-epoch clock @f$c_s(t-1)@f$ carried for one
@@ -119,7 +119,7 @@ public:
      */
     Eigen::Index registerClockClone(const std::string& sat);
     /**
-     * @brief Register the one-epoch clone of any satellite border key (card BCL,
+     * @brief Register the one-epoch clone of any satellite border key (
      *        docs/refound/BCL_previous_border_on_clones_2026-10-08.md); idempotent; returns
      *        its column.
      *
@@ -169,14 +169,14 @@ public:
     /// @return The SH-VTEC coefficient column for (n,m,trig) of @p layer.
     /// @throws if absent.
     Eigen::Index vtecCoeffColumn(int n, int m, char trig, int layer = 0) const;
-    /// @return The clock clone column of @p sat (card SCL, @ref registerClockClone).
+    /// @return The clock clone column of @p sat (@ref registerClockClone).
     /// @throws std::out_of_range if absent.
     Eigen::Index clockCloneColumn(const std::string& sat) const;
-    /// @return The clone column of (@p kind, @p sat, @p signal) (card BCL,
+    /// @return The clone column of (@p kind, @p sat, @p signal) (
     ///         @ref registerClone). @throws std::out_of_range if absent.
     Eigen::Index cloneColumn(SharedParamKind kind, const std::string& sat,
                              const std::string& signal) const;
-    /// @return Whether shared column @p col is a clone of any kind (card SCL, card BCL);
+    /// @return Whether shared column @p col is a clone of any kind (card BCL);
     ///         false when
     ///         @p col is out of range.
     bool isClockClone(Eigen::Index col) const;
@@ -187,7 +187,7 @@ public:
     ///         false when @p col is out of range.
     bool isHistoryColumn(Eigen::Index col) const;
     /**
-     * @brief The identity of a satellite shared column (card SCL): the reverse of
+     * @brief The identity of a satellite shared column: the reverse of
      *        @ref clockColumn / @ref phaseBiasColumn / @ref codeBiasColumn.
      *
      * Read by card SMH's clone marginalization, which spreads a row's clone coefficients
@@ -437,7 +437,7 @@ public:
     static void applyDatumPins(Eigen::MatrixXd& N, Eigen::VectorXd& u, const Datum& datum);
 
     /**
-     * @brief The held solve of one epoch, beside the float one (card FCF).
+     * @brief The held solve of one epoch, beside the float one.
      *
      * Filled by @ref solveHeldDetached.  Per-block vectors are in input block order;
      * a degenerate block has an empty @c kappa and a NaN @c chi2 and @c chi2_expect, an
@@ -472,7 +472,7 @@ public:
      * @f$K@f$.  Each statistic is an overall test: one wrong unit among @f$K@f$ rows
      * shifts its mean by that unit's non-centrality alone, while the bar grows with
      * @f$K@f$, so a single error that keeps the wide lane (a (1, 1) pair) is
-     * invisible to it at network size.  A test per unit is the caller's (card FCF,
+     * invisible to it at network size.  A test per unit is the caller's (
      * continuation FCFB).
      */
     struct HeldSolve {
@@ -493,7 +493,7 @@ public:
     };
 
     /// Bar on @ref HeldSolve::float_repro_rel above which the held solve is not @c ok:
-    /// the cached reduced system did not produce the float passed in (card FCF).  A
+    /// the cached reduced system did not produce the float passed in.  A
     /// backward-stable solve leaves a normwise backward error of order the dimension
     /// times the unit round-off; the bar leaves six orders of magnitude above that.
     static constexpr double kHeldFloatReproTol = 1e-8;
@@ -501,7 +501,7 @@ public:
     /**
      * @brief Fold blocks of fixed integer cycles onto a copy of the last solve's reduced
      *        normals, pin with @p datum and solve once; the estimator is not modified
-     *        (card FCF).
+     *.
      *
      * The steps: (1) copy the cached reduced normals and RHS, pin the unfolded copy with
      * @ref applyDatumPins and measure @c float_repro_rel from @p x_float; (2) form the
@@ -521,7 +521,7 @@ public:
      * @ref reconstructStation stay those of the float solve: nothing here writes to the
      * estimator or its kernel.  The kernel's section timers
      * (@ref NetworkNormalEquations::sectionTimers) are restored on every exit, so with the
-     * timers armed the held solves are neither timed nor counted there (card FCFB section 5);
+     * timers armed the held solves are neither timed nor counted there;
      * their cost is the caller's to time.
      *
      * @param datum   The datum passed to the float @ref solve.
@@ -618,7 +618,7 @@ public:
 
     /**
      * @brief Only the blocks of @ref jointConditionalCovariance (uncorrected form), in
-     *        the same datum-as-known frame (card ARL, block search).  See
+     *        the same datum-as-known frame (block search).  See
      *        @ref NetworkNormalEquations::blockConditionalCovariances.
      * @param requests (station, local column) pairs.
      * @param datum    The S-basis pins.
@@ -968,7 +968,7 @@ public:
                                     Eigen::VectorXd* lambda_diag = nullptr,
                                     bool clock_gauge_free = false);
 
-    /// One clone's walk factor (card SCL; card BCL for a bias): the pseudo-observation
+    /// One clone's walk factor (card BCL for a bias): the pseudo-observation
     /// @f$x(t) - x(t-1) = \text{mean}@f$ with variance @c q, between the key's own column
     /// and its clone column.  The defaults (@c kind Clock, empty @c signal) are a clock's.
     struct CloneWalk {
@@ -985,7 +985,7 @@ public:
     };
 
     /**
-     * @brief Fold (or withdraw) the walk factors of the clock clones (card SCL).
+     * @brief Fold (or withdraw) the walk factors of the clock clones.
      *
      * In information form: for each factor, @f$w=1/q@f$ is added to
      * @f$N_{cc}@f$ and @f$N_{kk}@f$ and subtracted from @f$N_{ck}@f$, @f$N_{kc}@f$ (clock
@@ -1034,7 +1034,7 @@ public:
 
     /**
      * @brief The posterior regression of the clock clones on the rest of the border
-     *        (card SCL), the ingredient of the harvest's clone marginalization.
+     *, the ingredient of the harvest's clone marginalization.
      *
      * Card SCL2 X2: with shared-history columns registered, the regressed set is
      * Y = [clones; history] (@ref numBorderNuisance rows, in column order), so @c K is
@@ -1415,7 +1415,7 @@ public:
      * whose site named none is recorded as @c ContributionKind::Unset and counted on the
      * table's integrity line rather than under a stale kind.  The same kind names the
      * fold's RHS capture (@ref attribArm), so the RHS attribution's class of a shared fold
-     * is the kind's name (card NOM step N2b; one name per fold site).
+     * is the kind's name (one name per fold site).
      *
      * @param k The kind of the next fold.
      */
@@ -1487,7 +1487,7 @@ public:
      * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
-     *         SH-VTEC columns are not mapped, nor are clock clone columns (card SCL:
+     *         SH-VTEC columns are not mapped, nor are clock clone columns (
      *         a border-internal state, never a product) or shared-history columns
      *         (card SCL2 X2: the same).
      */
@@ -1588,7 +1588,7 @@ private:
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
-    Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch (card SCL); cleared by reset()
+    Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch; cleared by reset()
     Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch (card SCL2 X2); cleared by reset()
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
@@ -1644,7 +1644,7 @@ private:
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
@@ -1671,7 +1671,7 @@ struct NetworkEngineSpec;
  *
  * Thread counts, rank-gate tolerance, dense-fold kappa, the station PD guard and its
  * null-direction trace, and the PD-safe DD fold; the estimator keeps them across its per-epoch
- * reset().  Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in
+ * reset().  Setup builder: called once from Application::runNetwork, in
  * the order scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.est.

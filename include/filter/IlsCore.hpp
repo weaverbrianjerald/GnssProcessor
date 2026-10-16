@@ -168,7 +168,7 @@ struct IlsResult {
     int    z_total = 0;             ///< Decorrelated components available (the input dimension).
     /// Floats conditioned on the fixed decorrelated components (cycles, input order),
     /// and their covariance (cycles²).  Empty unless @c z_fixed > 0.  A caller forms
-    /// any combination's conditional value and variance from them (card ARL: the
+    /// any combination's conditional value and variance from them (the
     /// wide lane and the narrow lane of an L1/L2 pair).
     Eigen::VectorXd a_cond;
     Eigen::MatrixXd Q_cond;

@@ -5,7 +5,7 @@
 
 #include "rinex/MultiRinexSync.hpp"
 #include "math/TimeUtils.hpp"
-#include "common/PppUtils.hpp"   // system names for retainSystems (card OWD)
+#include "common/PppUtils.hpp"   // system names for retainSystems
 #include <algorithm>
 #include <chrono>
 #include <cmath>

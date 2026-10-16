@@ -49,7 +49,7 @@ namespace GnssProcessor {
      *    observation equation) and the product coverage checks.
      *  - MeasurementModelVariance.cpp: rowVariance, the variance of one row.
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
-     *  - MeasurementModelNetwork.cpp: the network-only surface (card NOM).
+     *  - MeasurementModelNetwork.cpp: the network-only surface.
      */
     class MeasurementModel {
     public:
@@ -432,7 +432,7 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
-        // --- Network only (card NOM; MeasurementModelNetwork.cpp) ---------
+        // --- Network only (MeasurementModelNetwork.cpp) ---------
 
         /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
         /// system → admitted phase signals.  Empty (default) = allow every signal.

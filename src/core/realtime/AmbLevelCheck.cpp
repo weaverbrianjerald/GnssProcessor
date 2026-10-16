@@ -1,6 +1,6 @@
 /**
  * @file AmbLevelCheck.cpp
- * @brief Implementation of the windowed code-level re-validation (card ALC).
+ * @brief Implementation of the windowed code-level re-validation.
  *
  * See AmbLevelCheck.hpp for the statistic, the test and the restart contract.
  */

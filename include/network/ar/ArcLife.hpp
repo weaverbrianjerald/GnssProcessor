@@ -2,7 +2,7 @@
 /**
  * @file ArcLife.hpp
  * @brief The life stamp of one band-tagged arc: the interim identity of an arc's integer
- *        ambiguity until card NOM step N4 puts a generation on @ref ArcId (card AGT, step
+ *        ambiguity until card NOM step N4 puts a generation on @ref ArcId (step
  *        AGT-5).
  *
  * ## What a life is

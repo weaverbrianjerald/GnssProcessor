@@ -2,7 +2,7 @@
 /**
  * @file PivotFrameQ.hpp
  * @brief The carried satellite clocks' process noise expressed in the pivot frame
- *        (card PFQ, docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md,
+ *        (docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md,
  *        @c network.clock_pivot_frame_q).
  *
  * The clock datum pins one satellite clock per constellation every epoch

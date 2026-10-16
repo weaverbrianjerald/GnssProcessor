@@ -1,6 +1,6 @@
 /**
  * @file WithinEpochCulprits.cpp
- * @brief The culprit hand-off's verdict and its run-end report (card WCF).
+ * @brief The culprit hand-off's verdict and its run-end report.
  *
  * What the culprit sets are, who writes and reads them and which defect the counters
  * expose are in the header's file banner, include/network/qc/WithinEpochCulprits.hpp.
@@ -30,10 +30,10 @@ WithinEpochCulpritReading withinEpochCulpritVerdict(const WithinEpochCulpritTall
     if (t.rebuilds == 0)
         return {WithinEpochCulpritVerdict::InertWiring, true,
                 "INERT WIRING: re-solves had culprits and no rebuild read one, so the "
-                "culprits' stale carried DDs were folded again (card WCF)"};
+                "culprits' stale carried DDs were folded again"};
     return {WithinEpochCulpritVerdict::OutOfStep, true,
             "the two counts differ, so the culprit sets and the rebuilds are out of step "
-            "(card WCF)"};
+            ""};
 }
 
 bool withinEpochCulpritReportArmed(bool carry_invariant, bool raim_within_epoch) {

@@ -1,6 +1,6 @@
 /**
  * @file test_network_arc_life.cpp
- * @brief Unit tests of the arc life stamp and the search's track of a life (card AGT, step
+ * @brief Unit tests of the arc life stamp and the search's track of a life (step
  *        AGT-5; include/network/ar/ArcLife.hpp).
  *
  * Suite @c NetworkArcLife:

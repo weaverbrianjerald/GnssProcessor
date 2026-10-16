@@ -7,7 +7,7 @@
  * flags, the dump flags, emit_rebase_on, and the two PB emission-filter switches) out of
  * the driver and into NetworkKnobs::snapshot, so the driver, the DD-prior build, the
  * install, the emit store and the run end read one bool each.  The lane and dump flags
- * went with the retired MW/WL lane keys (cards WL-1, WL-2, WL-3, UWL-1), the two filter
+ * went with the retired MW/WL lane keys, the two filter
  * switches with the PB emission-continuity filter.  The conjunctions here are the
  * driver's, copied from ApplicationNetwork.cpp as it stood at main 3c44046; every posture
  * checks each knob against them, and each armed posture also checks that the switches it

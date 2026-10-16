@@ -19,7 +19,7 @@
  *   per-epoch observations          | MultiRinexSync over a one-station roster       (same class)
  *   per-epoch store fill            | NetworkProductReader::replay from the file     (vs emitter.emitToStore)
  *   trace                           | closed_loop_trace.csv, identical columns       (same schema)
- *   per-satellite trace (card CST)  | closed_loop_sat_trace.csv, same formatter      (network.trace_consumer_sat)
+ *   per-satellite trace  | closed_loop_sat_trace.csv, same formatter      (network.trace_consumer_sat)
  *
  * Because the store is filled through `NetworkProductReader::replay`, the
  * consumer sees the recorded stream's discontinuity counters reconstructed
@@ -224,7 +224,7 @@ int Application::runConsumerReplay() {
         }
     } else {
         // A wire without the S line is refused unless
-        // network.replay_allow_undeclared_wire is set (card OWD, item O1).  Without the
+        // network.replay_allow_undeclared_wire is set (item O1).  Without the
         // contract the replay emitter falls back to the defaults, which include no
         // clock-discontinuity channel, so the replay cannot reproduce the producer's
         // declarations and diverges from the in-process consumer (seen at every site of
@@ -259,7 +259,7 @@ int Application::runConsumerReplay() {
                                  [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
                   nav.end());
         if (nav.empty()) {
-            log->error("Consumer replay (card NBP): the product's S line declares a native "
+            log->error("Consumer replay: the product's S line declares a native "
                        "broadcast clock ('{}'), but no GPS broadcast record was read from the "
                        "navigation file '{}'.", file_contract.apriori_product_id, nav_path.string());
             return 1;
@@ -269,7 +269,7 @@ int Application::runConsumerReplay() {
         nbp_feed = std::make_unique<BrdcClockApriori>(std::move(nav),
                                                       BrdcClockApriori::dayOrigin(t_first),
                                                       t_last, BrdcSelectRule::Ttom);
-        log->info("Consumer replay (card NBP): native broadcast-clock wire '{}': {} selectable GPS "
+        log->info("Consumer replay: native broadcast-clock wire '{}': {} selectable GPS "
                   "records staged from '{}', fed to the store by transmission time.",
                   file_contract.apriori_product_id, nbp_feed->stats().n_staged,
                   nav_path.filename().string());
@@ -303,7 +303,7 @@ int Application::runConsumerReplay() {
         log->error("Consumer replay: failed to build the synced epoch schedule.");
         return 1;
     }
-    // The same admission door as the live harness (card OWD, item O4).  The harness
+    // The same admission door as the live harness (item O4).  The harness
     // strips the synced epochs of every system outside processing.active_systems right
     // after its sync (ApplicationNetworkSetup) and feeds the closed-loop consumer from
     // them.  Without this step the replay's observation vector would differ from the one
@@ -320,7 +320,7 @@ int Application::runConsumerReplay() {
             what += fmt::format("{}{} {}", what.empty() ? "" : ", ", sys, n);
             n_removed += n;
         }
-        log->info("Consumer replay (card OWD): admission by processing.active_systems [{}]: "
+        log->info("Consumer replay: admission by processing.active_systems [{}]: "
                   "{} observation(s) of inactive systems removed from the consumer's epochs{}{}.",
                   active, n_removed, what.empty() ? "" : ": ", what);
     }
@@ -348,14 +348,14 @@ int Application::runConsumerReplay() {
     }
     consumer.setArIgnoreMwWl(!consumer_config.getArWlOnly());
     if (nbp_wire && ProductCache::getInstance().getClockCount() > 0) {
-        log->error("Consumer replay (card NBP): the product's S line declares a native broadcast "
+        log->error("Consumer replay: the product's S line declares a native broadcast "
                    "clock ('{}'), but {} CLK sample(s) were loaded from the data root; a CLK "
                    "would shadow the broadcast clock the wire refers to.  Use the native data "
                    "root (no CLK files).", file_contract.apriori_product_id,
                    ProductCache::getInstance().getClockCount());
         return 1;
     }
-    // The per-satellite readout (card CST), armed before the product-routing branch as
+    // The per-satellite readout, armed before the product-routing branch as
     // the harness does (ApplicationNetworkSetup), so the baseline arm has it too.
     // Measure-only: the consumer's solve is unchanged with it armed.
     consumer.setConsumerSatTrace(nc.trace_consumer_sat);
@@ -643,8 +643,8 @@ int Application::runConsumerReplay() {
     // driver never calls RealTimeEngine::flush().  Silent on a wire that carries no
     // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
-    consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed (card PBF)
-    consumer.logReinflateSummary("end of replay");   // re-inflation summary (card OWD, O2)
+    consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed
+    consumer.logReinflateSummary("end of replay");   // re-inflation summary
 
     // Hourly level bands, the summary this series supports (handoff §4.1: a single
     // Theil-Sen slope over it is invalid).

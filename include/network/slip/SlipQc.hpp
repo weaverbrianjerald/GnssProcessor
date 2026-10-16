@@ -24,7 +24,7 @@
  */
 
 #include "common/Constants.hpp"
-#include "network/state/Entities.hpp"     // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
+#include "network/state/Entities.hpp"     // net::ArcTable: the arcs' leveling carry
 #include "network/driver/RunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
 #include "network/state/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap (card SID phase 3)
 #include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey (parseIfPairResetKey)
@@ -49,7 +49,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct SyncedEpoch;
-struct RosterN3bCensus;   // network/assembly/SignalRoster.hpp (card NOM step N3b)
+struct RosterN3bCensus;   // network/assembly/SignalRoster.hpp
 
 /// Elevation mapping for the IF-phase slip stochastic model: the multiplicative
 /// factor by which between-epoch double-differenced carrier-phase noise grows
@@ -296,7 +296,7 @@ struct PassABuffers {
         long long drop_unknown{ 0 };          ///< No usable integer, refused.
         /// The satellite of each @ref drop_unknown verdict, in detector order (one entry
         /// per refused pair).  The identity the producer AR search's suspect-corner mask
-        /// stamps (card ARL, network/ar/ArSuspect.hpp); filled only while that mask is
+        /// stamps (network/ar/ArSuspect.hpp); filled only while that mask is
         /// armed, and read nowhere else.
         std::vector<std::string> drop_unknown_sats;
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob on).
@@ -419,7 +419,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * funnel: every flagged (station, ambiguity) is inserted into
  * @p carry_slipped_ambs from epoch 1, independent of the legacy carry's warm gate.
  *
- * ### Detections are emitted when the carry is cold (card E)
+ * ### Detections are emitted when the carry is cold
  *
  * refloat_signal reports matched and refloated separately.  Event emission and
  * the n_mw / n_lli log counters key on the detection; refloat accounting is a
@@ -429,7 +429,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * markAmbiguityPendingReseed and the @p carry_slipped_ambs insert run under the
  * same conditions as before it.
  *
- * ### The LLI arm is qualified, not excluded (card L)
+ * ### The LLI arm is qualified, not excluded
  *
  * An LLI assertion acts when an empirical MW or GF step corroborates it
  * (decisive at any station, so a real multi-satellite re-lock is always acted
@@ -524,7 +524,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
 
 /**
  * @brief The arcs a wind-up accumulator restart of (station @p i, satellite
- *        @p sat) steps, as (ambiguity key, signal) pairs (card WUP).
+ *        @p sat) steps, as (ambiguity key, signal) pairs.
  *
  * The satellite's live ambiguity columns in @p sm, in the map's order, when it
  * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
@@ -541,7 +541,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  * @param via_carry     Set to true when the targets came from the carry (may be null).
  * @param arc_ledger    The run's arc ledger, or null.  Given, the carry targets are named
- *                      by the ledger (card NOM step N3b): the carry entries of the
+ *                      by the ledger: the carry entries of the
  *                      (station, satellite) inside the horizon, in signal order, whose
  *                      ledger record is admitted and not dead.  A carried arc the ledger
  *                      holds no admission for (one admitted before a warm resume, which
@@ -583,7 +583,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * disarms that knob without @c estimation.accumulate_phase_windup (the restart
  * verdict exists only in accumulated mode) and without @c network.phase_leveling.
  *
- * ## The re-entering arc (card WUP)
+ * ## The re-entering arc
  *
  * A restart is a return after a gap longer than the wind-up horizon, so the arc
  * has usually left the model set: its ambiguity column was pruned with the gap and
@@ -623,7 +623,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking
  *        break slipped, in the same epoch, so the PASS-B leveling inject sees a
  *        free arc instead of bridging a stale zero-q level across the break
- *        (card G, docs/SPEC_slip_qc_hardening.md §G3/W1).
+ *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
  *
  * ## Why
  *
@@ -1011,7 +1011,7 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  *
  * Gated inside on network.cycle_slip.if_phase_td; call it unconditionally.  The
  * five threshold knobs are read inside, and so is
- * network.cycle_slip.if_phase_td_reseed_on_flag (card ARL): armed, a flag keeps
+ * network.cycle_slip.if_phase_td_reseed_on_flag: armed, a flag keeps
  * the satellite's flag-epoch gradient (IfPhaseSlipDetector::reseedSatellite)
  * instead of restarting its chain, so the next epoch is evaluated too.  The algorithm description, the
  * refloat_pair lambda and the PairSample struct are in the driver body in the
@@ -1161,7 +1161,7 @@ struct NetworkRun;
  * The channel (run.engines.slip_qc) carries the knobs, the per-station cross-epoch state, the
  * epoch's raw evidence and the run-end counters into the PASS-A slip seam and the assembly
  * pre-filter; it is sized once so the per-station EWMAs survive the whole run.  Setup builder
- * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ *: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.slip_qc.params and run.engines.slip_qc.hist.
@@ -1174,7 +1174,7 @@ class LogManager;
  * @brief Builds the raw-slip path's wavelength provider when any of its consumers is armed.
  *
  * Called after NetworkRunTraces::openAll: the raw-slip trace it opens is one of the consumers.
- * Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * Setup builder: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.slip_qc.utils.

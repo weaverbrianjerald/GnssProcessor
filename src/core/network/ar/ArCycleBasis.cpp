@@ -1,7 +1,7 @@
 /**
  * @file ArCycleBasis.cpp
  * @brief The cycle-basis search's families, forest and basis, its map against the stored
- *        basis, its tallies and its run-end clause (card AGT, step AGT-5).  The design is in
+ *        basis, its tallies and its run-end clause (step AGT-5).  The design is in
  *        the header's file banner, include/network/ar/ArCycleBasis.hpp; the seam that reads
  *        the pool, emits the search rows and stores the memory is networkProducerAr
  *        (network/ar/ProducerAr.cpp).

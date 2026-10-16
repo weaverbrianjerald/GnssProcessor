@@ -530,7 +530,7 @@ namespace GnssProcessor {
 
         /**
          * @struct CanonicalCandidate
-         * @brief One channel offered to the canonical-signal decision (card CSL).
+         * @brief One channel offered to the canonical-signal decision.
          *
          * The caller supplies these in priority-list order, already filtered by
          * the network coverage allowlist and already resolved to a band name, so
@@ -545,7 +545,7 @@ namespace GnssProcessor {
 
         /**
          * @struct CanonicalPick
-         * @brief The latch and its runner-up for one (band, obs-type) (card CSL).
+         * @brief The latch and its runner-up for one (band, obs-type).
          */
         struct CanonicalPick {
             std::string signal;             /**< The latched RINEX code. */
@@ -555,7 +555,7 @@ namespace GnssProcessor {
         };
 
         /**
-         * @brief Decide the per-(band, obs-type) canonical signals (card CSL).
+         * @brief Decide the per-(band, obs-type) canonical signals.
          *
          * Pure (no member state, no logging, no I/O): the rule the network
          * producer's latch is built from, exposed so tests can pin it directly
@@ -586,7 +586,7 @@ namespace GnssProcessor {
          * @param code_follows_phase true (the default, and the CSL-1 behaviour)
          *                     runs the follow clause above; false leaves each code
          *                     row on the pick the priority rule made from the
-         *                     code's own list (card CSL-3).  Unread under
+         *                     code's own list.  Unread under
          *                     @c Count, which has no follow clause.
          * @return (band, obs-type) → pick, for every (band, obs-type) that had at
          *         least one candidate with a positive count.
@@ -598,12 +598,12 @@ namespace GnssProcessor {
                              bool code_follows_phase = true);
 
         /**
-         * @brief Scope the canonical-signal rule to a station list (card CSL-2).
+         * @brief Scope the canonical-signal rule to a station list.
          *
          * Pure: the per-station half of @ref decideCanonicalPicks' rule argument.
          * A coverage floor cannot separate stations whose first-epoch margins are
          * equal, so selecting the priority rule at some of them needs a
-         * per-station override (card CSL section 4).
+         * per-station override.
          *
          * An empty @p priority_stations is the default: @p rule applies at every
          * station.  A non-empty list is a scope and decides on its own: a listed
@@ -650,7 +650,7 @@ namespace GnssProcessor {
          * a second rule can be evaluated, so card SID's counter of what the count
          * rule would have latched needs them outside the class.
          *
-         * Retained on every network run (card NOM step N3a: the signal roster's
+         * Retained on every network run (the signal roster's
          * census is built on every network run, and it is the only reader); no
          * decision reads the stored candidates.  Filled at the constellation's
          * decision epoch and never revised, like the latch itself.
@@ -818,7 +818,7 @@ namespace GnssProcessor {
          * The network producer sets it to the station name at construction; the
          * single-receiver paths leave it empty and the rider prints "-".  The label
          * is also the station name @ref canonicalRuleForStation matches against the
-         * priority-station scope (card CSL-2), so it can change the rule the latch
+         * priority-station scope, so it can change the rule the latch
          * is decided under; an empty label is never in the scope.
          *
          * @param label Station / receiver label.
@@ -1077,7 +1077,7 @@ namespace GnssProcessor {
          * signal of that type is present this epoch; the two knob-driven additions
          * described below are then skipped.
          *
-         * @param companion_out Optional (card SCC, R1).  When non-null and
+         * @param companion_out Optional.  When non-null and
          *        `network.second_code_channel` is armed on the network path, receives
          *        the allow-listed band-1 code signals this call added besides the one
          *        the band map selected.  Those keys are also in @p selected_signals

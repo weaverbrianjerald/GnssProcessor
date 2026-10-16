@@ -1,7 +1,7 @@
 /**
  * @file test_network_detached_fold.cpp
  * @brief Unit gates of the detached fold of fixed integer cycles and the held solve
- *        (card FCF, step FCF-1): NetworkNormalEquations::foldCycleRowsDetached and
+ *        (step FCF-1): NetworkNormalEquations::foldCycleRowsDetached and
  *        NetworkEstimator::solveHeldDetached, with no production caller.
  *
  * Suite @c NetworkDetachedFold:
@@ -911,7 +911,7 @@ TEST(NetworkDetachedFold, PlantedWrongIntegerCalibrationAndPower) {
     // chi2/K within 3 % of 1 holds for a hold small against the float in every direction
     // (0.0001 cycle).  At the design's 0.01 cycle it does not: on this pair the hold
     // variance exceeds the float's along the ionosphere-free direction, and the mean drops
-    // to the expected value printed above (card FCFB section 2); a calibration is graded
+    // to the expected value printed above; a calibration is graded
     // against chi2_expect, not against K.
     EXPECT_NEAR(sum_h0[kHolds - 1] / trials, 1.0, 0.03);
 }

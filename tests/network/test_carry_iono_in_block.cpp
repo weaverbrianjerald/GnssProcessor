@@ -64,7 +64,7 @@ namespace {
 struct IonoBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 
@@ -530,7 +530,7 @@ TEST(CarryIonoInBlockTest, IonoWithoutAHarvestBlockZeroesItsPairsAndIsCountedSep
 // not per signal, so one erase clears the LOS once however many bands tripped, and
 // a sibling satellite (or the same satellite at another station) survives.
 TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
-    net::NetworkEntities ent;   // the line-of-sight table (card NOM step N4c)
+    net::NetworkEntities ent;   // the line-of-sight table
     auto put = [&](int sta, const std::string& sat, double v) {
         net::putLos(ent, sta, sat, &net::LosState::iono_blk) = LocalCarry{v, 0.0120, 100.0};
     };

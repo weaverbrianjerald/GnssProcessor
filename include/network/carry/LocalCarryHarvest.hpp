@@ -2,7 +2,7 @@
 /**
  * @file LocalCarryHarvest.hpp
  * @brief The station-local carries' post-solve harvest: its table of contents and the
- *        machinery its kinds share (card NOM3 step HV1).
+ *        machinery its kinds share.
  *
  * After the epoch's solve, networkLeveling (network/diag/Leveling.cpp) calls
  * networkHarvestLocalCarries, which reads each station's posterior out of the solved normal

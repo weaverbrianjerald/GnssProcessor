@@ -9,7 +9,7 @@
 
 #include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"            // letterOfSat, systemOfSat
-#include "network/state/CarryDisposition.hpp"   // carryColumnPresent (card BCL-d)
+#include "network/state/CarryDisposition.hpp"   // carryColumnPresent
 
 #include <Eigen/Eigenvalues>
 
@@ -1250,7 +1250,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                   "stood-in clone and a clock on its own column, lost.",
                   C.pfq_walk_epochs, C.pfq_walk_pairs, C.pfq_walk_notpd, C.pfq_pairs_lost);
         if (C.fold_epochs > 0 && C.pfq_walk_epochs == 0)
-            log->warn("Network (card PFQ): network.clock_pivot_frame_q is ARMED with the clone "
+            log->warn("Network: network.clock_pivot_frame_q is ARMED with the clone "
                       "but no joint walk factor formed: the term is INERT on the clone.");
     }
     if (ctx.knobs.carry_cpl_bclone || ctx.knobs.carry_cpl_dclone) {
@@ -1277,12 +1277,12 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                   C.bcl_d_prepare_retry, C.bcl_d_prior, C.bcl_d_fallen, C.bcl_d_bad_row,
                   C.bcl_d_fold_retry, C.bcl_free, C.bcl_isolated);
         if (ctx.knobs.carry_cpl_bclone && C.bcl_a_standin == 0)
-            log->warn("Network (card BCL-a): network.carry_coupling_bias_clone is ARMED but no "
+            log->warn("Network: network.carry_coupling_bias_clone is ARMED but no "
                       "bias clone stood in: the card is INERT for this run.");
         long long d_active = 0;
         for (int r = 0; r < kCouplingExactRoutes; ++r) d_active += C.bcl_d_active[r];
         if (ctx.knobs.carry_cpl_dclone && d_active == 0 && C.bcl_d_prior == 0)
-            log->warn("Network (card BCL-d): network.carry_coupling_departed_clone is ARMED but no "
+            log->warn("Network: network.carry_coupling_departed_clone is ARMED but no "
                       "re-attributed key was put on a clone: the card is INERT for this run.");
     }
     if (C.fold_dense_epochs > 0 || C.fold_dense_noref > 0)
@@ -1292,7 +1292,7 @@ void networkClockCloneRunEnd(const NetworkRunContext& ctx,
                   "constellation-epoch(s) whose clones could not stand in.",
                   C.fold_dense_epochs, C.fold_dense_standin, C.fold_dense_noref);
     if (X.terms_clone == 0)
-        log->warn("Network (card SCL): network.carry_coupling_clock_clone is ARMED but no row "
+        log->warn("Network: network.carry_coupling_clock_clone is ARMED but no row "
                   "referenced a clone: the card is INERT for this run.");
 }
 

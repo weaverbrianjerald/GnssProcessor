@@ -1,6 +1,6 @@
 /**
  * @file test_network_second_code_scope.cpp
- * @brief Contract tests for the second code channel (card SCC,
+ * @brief Contract tests for the second code channel (
  *        docs/refound/SCC_second_code_channel_2026-09-21.md).
  *
  * With `network.second_code_channel` a network station contributes, as code-only
@@ -127,7 +127,7 @@ TEST(NetworkSecondCodeScope, RefusesAPhaseTypeBecauseThatIsADifferentCard) {
 TEST(NetworkSecondCodeScope, RefusesAnyBandOtherThanOne) {
     // This card defers band 2; it is not unsupported in principle.  A band-2
     // entry would make the network.sat_isc_state bridging roster non-empty for
-    // the first time (card SCC section 4).
+    // the first time.
     std::string why;
     EXPECT_FALSE(secondCodeAllowEntryValid("C2W", &why));
     EXPECT_FALSE(why.empty());

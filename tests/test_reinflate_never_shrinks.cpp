@@ -1,7 +1,7 @@
 /**
  * @file test_reinflate_never_shrinks.cpp
  * @brief Every StateManager variance re-inflation raises the variance and never shrinks
- *        it (card OWD, O2).
+ *        it.
  *
  * The seven re-inflations (receiver code bias, inter-system bias, slant ionosphere and its
  * rate, satellite code bias, satellite phase bias, satellite clock) set the diagonal to

@@ -1,6 +1,6 @@
 /**
  * @file NormalEquationsDetached.cpp
- * @brief The detached fold of fixed integer cycles (card FCF): the
+ * @brief The detached fold of fixed integer cycles: the
  *        @ref NetworkNormalEquations::foldReducedDdPriors algebra for blocks of
  *        soft cycle constraints, returned as operands instead of written into the
  *        kernel.

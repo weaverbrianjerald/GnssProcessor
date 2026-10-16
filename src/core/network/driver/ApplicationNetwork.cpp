@@ -17,7 +17,7 @@
  *   Setup / run end     network/driver/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
  *                       run-end table, filter/NetworkRunEnd)
  *   Setup builders      one per concern, in that concern's file, called in order from
- *                       runNetwork (card NOM3 step EP4)
+ *                       runNetwork
  *   Assembly (PASS A/B) network/driver/ApplicationNetworkAssembly.cpp
  *   Datum / solve       filter/NetworkSbasis · NetworkChainDatum · NetworkPhaseDatum ·
  *                       NetworkSolveGlue · NetworkInstallCarry · NetworkDdPriorBuild ·
@@ -76,7 +76,7 @@
  */
 
 #include "app/Application.hpp"
-#include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec (card NOM3 step EP1)
+#include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
@@ -90,7 +90,7 @@
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
 #include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (card 5, RTF-1)
 #include "network/solve/Estimator.hpp"
-#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
+#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
@@ -111,11 +111,11 @@
 #include "network/solve/AnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
-#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
+#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (§24.18)
 #include "network/qc/Raim.hpp"        // post-fit network RAIM (INC-9)
 #include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
 #include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
-#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (card ZP, §24.10)
+#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (§24.10)
 #include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
 #include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
 #include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
@@ -124,13 +124,13 @@
 #include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
 #include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
 #include "network/runend/Teardown.hpp"
-#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
-#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
+#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument
+#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones
 #include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
 #include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
-#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
+#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads
 #include "network/carry/Inject.hpp"
-#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
+#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam
 #include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
 #include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail (card SID phase 6a)
 #include "network/assembly/ChannelAll.hpp"      // all-channel census (card SID phase 6b)
@@ -250,13 +250,13 @@ int Application::runNetwork() {
     // blocks below keep the downstream use-sites under their former local names
     // (the INC-3 migration mechanic).
     NetworkRunContext ctx(config_, nc);
-    // The station names the entity tables convert name keys through (card NOM step N4).
+    // The station names the entity tables convert name keys through.
     {
         std::vector<std::string> names;
         for (const auto& st : setup.stations) names.push_back(st.name);
         ctx.entities.names.assign(std::move(names));
     }
-    // The marker -> ARP census of networkSetup_, into the counters the run end reads (card UPO).
+    // The marker -> ARP census of networkSetup_, into the counters the run end reads.
     networkMarkerArpCensusCopy(ctx, config_, setup);
 
     // --- Trace ----------------------------------------------------------------
@@ -272,7 +272,7 @@ int Application::runNetwork() {
     // the knobs).  The builders below configure the owned engines through references.
     const NetworkEngineSpec engine_spec = networkEngineSpec(config_, nc, ctx);
     NetworkRun run(ctx, config_, nc, log, traces, setup, log_dir_, engine_spec);
-    // Setup builders (card NOM3 step EP4): each in its concern's file, filling the run member
+    // Setup builders: each in its concern's file, filling the run member
     // its name says, called in this order (scripts/nom3_designs/EP4_design.md section 2 states
     // the constraints).  The two simulation oracles throw on a bad fixture before any trace
     // file opens; the wavelength provider follows openAll, which opens one of its consumers.
@@ -349,7 +349,7 @@ int Application::runNetwork() {
 
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
-    // The run end reads the run's groups through one const bundle (card NOM step TD1a).
+    // The run end reads the run's groups through one const bundle.
     return networkTeardown(ctx, config_, log, traces, setup,
                            NetworkRunEndInputs{ run.engines, run.emit, run.timing, run.closed_loop });
 }

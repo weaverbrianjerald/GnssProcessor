@@ -1,6 +1,6 @@
 /**
  * @file ArSuspect.cpp
- * @brief The producer AR search's suspect-corner mask (card ARL, slip-ladder defect 3):
+ * @brief The producer AR search's suspect-corner mask (slip-ladder defect 3):
  *        the ledger's stamp, query and per-epoch fold, the per-search mask and its two
  *        edges, and the run-end report.
  *
@@ -148,7 +148,7 @@ void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int 
         else ++it;
     }
     // (3) The carry stamps (file banner, the ledger table), read through the one reader of
-    //     the carry's life fields that the arc life stamp shares (card AGT section 3).
+    //     the carry's life fields that the arc life stamp shares.
     net::forEach(arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
         const int sta = id.station.index;
         const std::string sat = net::satKey(id.sat);

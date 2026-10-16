@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file Entities.hpp
- * @brief The network producer's cross-epoch run state as entity tables (card NOM step N4).
+ * @brief The network producer's cross-epoch run state as entity tables.
  *
  * Read this header first.  An **entity** is one thing the network carries state about from
  * one epoch to the next: a constellation, a satellite, a satellite signal, a station, a line
@@ -89,7 +89,7 @@ namespace GnssProcessor::net {
 // ===========================================================================
 
 /**
- * @brief How a field survives a restart (card NOM section 3.5): the persistence column of
+ * @brief How a field survives a restart: the persistence column of
  *        scripts/nom3_designs/N4_fields.tsv.
  */
 enum class Persist : std::uint8_t {
@@ -249,7 +249,7 @@ struct ConstellationState {
     /// The sticky component reference station name of the SD EWL search (A2's r0).  Was
     /// @c NetworkCarryState::sd_ewl_r0.  ColdStart.
     std::optional<std::string> sd_ewl_r0;
-    /// The producer AR search's cycle-basis memory (card AGT, step AGT-5,
+    /// The producer AR search's cycle-basis memory (step AGT-5,
     /// network/ar/ArCycleBasis.hpp): per family of the constellation, keyed by its bands
     /// (O4: a family spans several channels), the last search's links, basis, arc life
     /// tracks and DD identities, which the next search keeps its links from and maps its
@@ -358,7 +358,7 @@ struct SatelliteState {
     /// only under emit_clock_disc; not snapshotted (a warm resume has no prior for its
     /// first emit).  Was @c NetworkCarryState::last_if_pin_sel.  ColdStart.
     std::optional<std::pair<std::string, std::string>> last_if_pin_sel;
-    /// The pin pair hold of the last kept epoch (card GFC), the baseline the begin and the
+    /// The pin pair hold of the last kept epoch, the baseline the begin and the
     /// end of a hold are declared against, advanced only on kept epochs.  Telemetry only,
     /// not snapshotted.  Was @c NetworkCarryState::last_if_pin_holds.  ColdStart.
     std::optional<NetworkSbasis::PinPairHold> last_if_pin_hold;
@@ -410,7 +410,7 @@ struct PinBridge {
     double opened_tow = 0.0; ///< TOW of the epoch it opened (trace only)
 };
 
-/// One (satellite, signal) key's emit-side phase-bias hold state (card PBH).
+/// One (satellite, signal) key's emit-side phase-bias hold state.
 struct PbHoldKey {
     double        held_m{0.0};       ///< The value every emission of this generation writes.
     std::uint32_t generation{0};     ///< 1-based; 0 never appears on a live entry.
@@ -436,7 +436,7 @@ struct PbHoldKey {
     /// without an emitted clock), so LAH's reference waits for the satellite's next
     /// emitted clock and starts from the last transfer (continuity of the transfer).
     /// With a reference, leaving a clone folds its passed motion into it instead
-    /// (card SMD section 7).
+    ///.
     bool          smh_ref_pending{false};
     /// Card SMH: the key's last held emission wrote its clone's transfer (so a
     /// clone that is not live now is a switch to the bridge).
@@ -765,13 +765,13 @@ struct LosState {
     /// ambiguity.  Not snapshotted: a warm resume cold-starts it.  Was
     /// @c NetworkCarryState::iono_blk_carry.  ColdStart.
     std::optional<LocalCarry> iono_blk;
-    /// The gross line-of-sight disposition (card GL, docs/SPEC_event_harness.md section
+    /// The gross line-of-sight disposition (docs/SPEC_event_harness.md section
     /// 24.18): the streaks of every screened line of sight and the declared subset, pruned on
     /// the absent-satellite edge (network.gross_los_max_gap_s).  Empty unless knobs.gl_on.
     /// Not snapshotted and not fingerprinted (two epochs of evidence, re-earned).  Was
     /// @c NetworkCarryState::gl_state.  ColdStart.
     std::optional<GrossLosState> gross_los;
-    /// Last gross-LOS event sequence, for network.gross_los_event_holdoff_ep (card GL).
+    /// Last gross-LOS event sequence, for network.gross_los_event_holdoff_ep.
     /// Empty at the default holdoff 0.  Was @c NetworkCarryState::gl_event_last
     /// ("station\x1fsat").  ColdStart.
     std::optional<long long> gl_event_last;
@@ -790,7 +790,7 @@ struct LosState {
     /// (network.level_authority_csgf, the LV-6 census).  Was @c NetworkCarryState::iono_cs.
     /// ColdStart.
     std::optional<IonoCsState> iono_cs;
-    /// The phase-colour carry (card LGM).  Was @c NetworkCarryState::pc_carry.  ColdStart.
+    /// The phase-colour carry.  Was @c NetworkCarryState::pc_carry.  ColdStart.
     std::optional<LocalCarry> pc;
     /// Consecutive post-fit RAIM spikes of the arc (network.raim_arc_persist_epochs > 1).
     /// Was @c NetworkCarryState::arc_spike_streak.  ColdStart.

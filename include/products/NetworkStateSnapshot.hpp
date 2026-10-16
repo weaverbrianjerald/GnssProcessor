@@ -314,7 +314,7 @@ struct NetworkStateSnapshot {
     /// incumbent anchor is realized at.  Absent ⇒ the 0-frame (a cold pin realizes
     /// the same frame as long as the incumbent is kept).
     std::map<std::string, double> anchor_pin_target;
-    /// Per-satellite state of the guarded temporal clock anchor (card Q3); mirrors the
+    /// Per-satellite state of the guarded temporal clock anchor; mirrors the
     /// driver's @c ClockAnchorSat.  With it restored, the first post-resume fold runs
     /// anchored over the true elapsed time instead of loose from a first sighting.  The
     /// stale test still runs on @c t_last, so a resume older than the anchor's own max

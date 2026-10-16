@@ -2,7 +2,7 @@
 /**
  * @file Run.hpp
  * @brief The network run as the epoch loop sees it: the run's references and the groups it
- *        owns (card NOM3 step EP1).
+ *        owns.
  *
  * Application::runNetwork builds one NetworkRun right after the trace owner, in place, and
  * passes it to Application::networkProcessEpoch_ for every epoch.  It holds:
@@ -80,7 +80,7 @@ static_assert(!std::is_copy_assignable_v<NetworkRun> && !std::is_move_assignable
 
 /// The engines' constructor arguments, a pure function of the configuration and the knobs
 /// (no log line, no trace, no setup read).  Its body is the setup statements that built
-/// them, cut character-exact from runNetwork (card NOM3 step EP1); step EP4 splits it into
+/// them, cut character-exact from runNetwork; step EP4 splits it into
 /// its concerns' builders.  Defined in src/core/network/driver/Run.cpp.
 NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConfig& nc,
                                     const NetworkRunContext& ctx);
@@ -98,7 +98,7 @@ struct NetworkEpoch;
 /// One epoch's section-timer baseline (D0): the estimator's run-cumulative accumulators and the
 /// wall clock at the epoch top.  Both members stay default (never read) when
 /// network.trace_section_timers is off.  Written by networkSectionTimersBegin, read by
-/// networkSectionTimersReadout; a value of one epoch (card NOM3 step EP2).
+/// networkSectionTimersReadout; a value of one epoch.
 struct EpochSectionTimers {
     NetworkNormalEquations::SectionTimers t0;        ///< est.sectionTimers() at the epoch top.
     std::chrono::steady_clock::time_point epoch_t0;  ///< The epoch wall's start.
@@ -109,7 +109,7 @@ struct EpochSectionTimers {
  *        wall clock and the D0b sub-block totals (timing.sec_sub_ep0).
  *
  * Inert (no clock read) unless network.trace_section_timers (NetworkKnobs::sec_timers_on).
- * The body is the frozen driver text (card NOM3 step EP2), plus the return of the two values.
+ * The body is the frozen driver text, plus the return of the two values.
  *
  * @param run The run: reads the estimator's section timers; writes timing.sec_sub_ep0.
  * @return The baseline the readout differences against.
@@ -137,7 +137,7 @@ void networkSectionTimersReadout(NetworkRun& run, const NetworkEpoch& ep,
  * @brief Arms the D0 per-epoch section timers of the estimator and the carry driver, and resets them.
  *
  * Off (network.trace_section_timers unset): no clock reads, and no log line.  Setup builder
- * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ *: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.est and run.engines.carry_driver (their timers).
@@ -151,7 +151,7 @@ class LogManager;
  *
  * In order: the snapshot path and fingerprint, the warm resume and its two restores (canonical
  * signals, code-bias linearization points), the event injector, canonical-pair admission, the
- * signal roster and the ledger emit.  Setup builder (card NOM3 step EP4): called once from
+ * signal roster and the ledger emit.  Setup builder: called once from
  * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.ctx (carry, injector, admission, roster and ledger state) and run.setup.stations.

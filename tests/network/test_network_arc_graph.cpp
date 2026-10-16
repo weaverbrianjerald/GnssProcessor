@@ -1,4 +1,4 @@
-// Unit gates for filter/NetworkArcGraph (card AGT, AGT-1): suite NetworkArcGraph.
+// Unit gates for filter/NetworkArcGraph: suite NetworkArcGraph.
 //
 // The module's own properties, on random and hand-built graphs; its identity with the legacy
 // code it replaces is the separate suite NetworkArcGraphOracle (test_network_arc_graph_oracles.cpp).

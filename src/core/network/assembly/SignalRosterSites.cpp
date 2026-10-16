@@ -219,7 +219,7 @@ namespace GnssProcessor {
         return roster;
     }
 
-    // ---- Run-end reports (card NOM step TD1b): one row of kNetworkRunEndReports ----
+    // ---- Run-end reports: one row of kNetworkRunEndReports ----
 
     int networkSignalRosterSitesRunEnd(const NetworkRunEndView& v) {
         const NetworkRunContext& ctx = v.ctx;

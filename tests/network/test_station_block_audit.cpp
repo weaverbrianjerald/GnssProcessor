@@ -1,4 +1,4 @@
-// Tests for the per-station local-block audit (card ZP, SPEC_event_harness §24.10).
+// Tests for the per-station local-block audit (SPEC_event_harness §24.10).
 //
 // §24.9 of SPEC_event_harness describes a station whose own post-fit code residuals
 // are 0.3-0.55 m while its reconstructed ZWD reads -18 +/- 4.5 m and 47 of its 130

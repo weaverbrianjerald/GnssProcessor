@@ -646,7 +646,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 // observable is a weight deep inside the parallel assembly).  It decays monotonically
 // to exactly 1 and never tightens a pin beyond the hard-pin weight.
 TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
-    net::ArcTable age;   // the arcs' anchor ages (card NOM step N4f1)
+    net::ArcTable age;   // the arcs' anchor ages
     AnchorHygiene hyg;
     hyg.active = true;
     hyg.min_arc_ep = 5;

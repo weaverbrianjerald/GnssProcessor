@@ -1,7 +1,7 @@
 /**
  * @file ArcLife.cpp
  * @brief The life stamp of one band-tagged arc, its change mask and the search's track of a
- *        life (card AGT, step AGT-5).  What each field records and why the next search reads
+ *        life (step AGT-5).  What each field records and why the next search reads
  *        an echo are in the header's file banner, include/network/ar/ArcLife.hpp.
  */
 

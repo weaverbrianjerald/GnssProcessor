@@ -578,7 +578,7 @@ namespace GnssProcessor {
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
         const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
         const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Non-owning orbit-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore; Card 7).
-        const BrdcClockApriori* brdc_apriori_{ nullptr }; ///< Non-owning native broadcast clock a priori (card NBP); nullptr -> the CLK / live-store path (see setBroadcastClockApriori).
+        const BrdcClockApriori* brdc_apriori_{ nullptr }; ///< Non-owning native broadcast clock a priori; nullptr -> the CLK / live-store path (see setBroadcastClockApriori).
 
         /// Resolve the active SSR store: the injected override when set, else the
         /// process-wide singleton.  Defined in the .cpp where the full type is visible.

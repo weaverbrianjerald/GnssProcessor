@@ -146,7 +146,7 @@
 #include <vector>
 #include "network/driver/SetupResult.hpp"
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include <spdlog/spdlog.h>
@@ -294,7 +294,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             what += fmt::format("{}{} {}", what.empty() ? "" : ", ", sys, n);
             n_removed += n;
         }
-        log->info("Network (card OWD): admission by processing.active_systems [{}] — {} "
+        log->info("Network: admission by processing.active_systems [{}] — {} "
                   "observation(s) of inactive systems removed from the synced epochs{}{}.",
                   active, n_removed, what.empty() ? "" : ": ", what);
     }
@@ -326,7 +326,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     if (config_.networkSatHealth() != 0) {
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
-            log->error("Network (card HLT): network.sat_health needs a broadcast navigation "
+            log->error("Network: network.sat_health needs a broadcast navigation "
                        "file, but files.navigation_path is empty.  Set it, let PathResolver "
                        "auto-resolve a BRDC / _MN.rnx file covering the day, or set "
                        "network.sat_health to off.");
@@ -339,7 +339,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         if (gal_mask == 0) gal_mask = 0x1FF;   // no Galileo band named: every signal's bits count
         setup.sat_health = NetworkSbasis::satHealthSeries(nav, gal_mask);
         if (setup.sat_health.sats.empty()) {
-            log->error("Network (card HLT): parsed 0 usable broadcast records from '{}', so "
+            log->error("Network: parsed 0 usable broadcast records from '{}', so "
                        "network.sat_health has no health to read.", nav_path.string());
             return 1;
         }
@@ -368,7 +368,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             flagged_sats.insert(sat);
             flagged += fmt::format("{}{} ({})", flagged.empty() ? "" : "; ", sat, spans);
         }
-        log->info("Network (card HLT): broadcast health from '{}' ({} record(s), {} unhealthy "
+        log->info("Network: broadcast health from '{}' ({} record(s), {} unhealthy "
                   "under the band mask, Galileo mask 0x{:03X}): {} satellite(s) flagged inside "
                   "the window [TOW {:.1f}, TOW {:.1f}){}{}; {} status change(s) inside it.  "
                   "Mode '{}'.",
@@ -379,7 +379,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   config_.networkSatHealth() == 1 ? "pivot" : "exclude");
         const std::string& declared = config_.getNetworkConfig().clock_datum_satellite;
         if (!declared.empty() && flagged_sats.count(declared))
-            log->warn("Network (card HLT): the declared clock pivot {} "
+            log->warn("Network: the declared clock pivot {} "
                       "(network.clock_datum_satellite) is flagged unhealthy inside the window; "
                       "the declaration is kept.", declared);
         if (config_.networkSatHealth() == 2) {
@@ -396,7 +396,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 in_window += k;
                 by_sat += fmt::format("{}{} {}", by_sat.empty() ? "" : ", ", sat, k);
             }
-            log->info("Network (card HLT): the health door removed {} observation(s) of flagged "
+            log->info("Network: the health door removed {} observation(s) of flagged "
                       "satellites from the synced epochs, {} inside the window{}{}.",
                       n_removed, in_window, by_sat.empty() ? "" : ": ", by_sat);
         }
@@ -523,7 +523,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the transmission-time rule alone would alternate between them.
     if (config_.networkAprioriBrdcClock()) {
         if (product_cache.getClockCount() > 0) {
-            log->error("Network (card NBP): {} CLK sample(s) are loaded under "
+            log->error("Network: {} CLK sample(s) are loaded under "
                        "network.apriori_source sp3_brdc_clock.  A CLK product would shadow the "
                        "broadcast clock (a silent clock frame split); use a data root without "
                        "CLK files (e.g. runs/_scl_data_nbp) or apriori_source sp3.",
@@ -532,14 +532,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         for (const std::string& sys : config_.getActiveSystems()) {
             if (sys != systemName(System::GPS)) {
-                log->error("Network (card NBP): network.apriori_source sp3_brdc_clock is GPS-only "
+                log->error("Network: network.apriori_source sp3_brdc_clock is GPS-only "
                            "(processing.active_systems names '{}').", sys);
                 return 1;
             }
         }
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
-            log->error("Network (card NBP): network.apriori_source sp3_brdc_clock requires a "
+            log->error("Network: network.apriori_source sp3_brdc_clock requires a "
                        "broadcast navigation file (files.navigation_path is empty).");
             return 1;
         }
@@ -548,7 +548,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                  [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
                   nav.end());
         if (nav.empty()) {
-            log->error("Network (card NBP): parsed 0 GPS broadcast records from '{}'.",
+            log->error("Network: parsed 0 GPS broadcast records from '{}'.",
                        nav_path.string());
             return 1;
         }
@@ -556,7 +556,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         setup.brdc_apriori = std::make_unique<BrdcClockApriori>(
             std::move(nav), origin_s, setup.window_t1_s, BrdcSelectRule::Ttom);
         const auto& bs = setup.brdc_apriori->stats();
-        log->info("Network (card NBP): native broadcast clock a priori from '{}' (rule ttom): "
+        log->info("Network: native broadcast clock a priori from '{}' (rule ttom): "
                   "{} GPS records, {} selectable (healthy, with a transmission time), {} "
                   "unhealthy, {} without a transmission time; {} satellites; offset table from "
                   "tow {:.0f} to {:.0f}: {} cut-overs, O range [{:.4f}, {:.4f}] m.",
@@ -565,7 +565,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   std::fmod(bs.end_s, 604800.0), bs.n_switches, bs.offset_min_m,
                   bs.offset_max_m);
         if (bs.n_staged == 0) {
-            log->error("Network (card NBP): no selectable GPS broadcast record in '{}'.",
+            log->error("Network: no selectable GPS broadcast record in '{}'.",
                        nav_path.string());
             return 1;
         }
@@ -868,7 +868,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // GPS is active, so a GPS-only setup log is unchanged.  (Card GAL, R6)
     const bool atx_src_on = networkMultiGnssActive(config_);
     std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
-    // --- Marker → ARP roster reduction (card UPO) ----------------------------
+    // --- Marker → ARP roster reduction ----------------------------
     // Marker → antenna-reference-point reduction of the roster's configured
     // coordinates (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4).  The
     // eccentricities are read in both knob states (standing invariant #4: a run
@@ -915,7 +915,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 // the station has stays in the run as a modelling error, whether or
                 // not the knob is armed.
                 no_ecc_record_stations.push_back(cfg.name);
-                log->warn("Network (card UPO): station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
+                log->warn("Network: station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
                           "in its RINEX header — its configured coordinate is used as given "
                           "(no marker -> ARP reduction possible). If that coordinate is a "
                           "monument coordinate the station is held below its antenna.",
@@ -932,7 +932,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     st.ecef = Coordinates::markerToArp(st.ecef, hen);
                     ++n_ecc_reduced;
                 }
-                log->info("Network (card UPO): station '{}' ANTENNA: DELTA H/E/N "
+                log->info("Network: station '{}' ANTENNA: DELTA H/E/N "
                           "({:.4f}, {:.4f}, {:.4f}) m — marker -> ARP reduction {} "
                           "(network.station_marker_to_arp).",
                           cfg.name, hen(0), hen(1), hen(2),
@@ -952,7 +952,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // empty in every run, so the labelled rider (RS-8, SPEC_event_harness §21.16)
         // is what shows a warm resume re-deciding a station's per-band channel.
         // The label is also the name matched against
-        // processing.canonical_signal_priority_stations (card CSL-2): with that list
+        // processing.canonical_signal_priority_stations: with that list
         // set it selects the station's canonical-signal rule; with the list empty it
         // changes log text only.
         st.model->setCanonicalTraceLabel(cfg.name);
@@ -1085,7 +1085,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 per_sys += fmt::format("{}{}: {}", per_sys.empty() ? "" : " | ", sys_name, band_txt);
             }
             if (any_not_exact)
-                log->warn("Network (card GAL, receiver ATX source): station '{}' antenna '{}' "
+                log->warn("Network (receiver ATX source): station '{}' antenna '{}' "
                           "does not resolve every band exactly: {}.  'cross_system' borrows "
                           "the nearest GPS band (model_corrections."
                           "enable_receiver_cross_system_atx_fallback); 'none' leaves the "
@@ -1251,7 +1251,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             if (n > 0 && std::string(route) != "exact")
                 t += " [" + joinNames(it->second) + "]";
         }
-        log->info("Network (card GAL, receiver ATX source, {}): per station, the route of "
+        log->info("Network (receiver ATX source, {}): per station, the route of "
                   "its worst band on the dual pair: {}.  (cross-system fallback {}.)",
                   sys_name, t,
                   config_.getModelCorrections().enable_receiver_cross_system_atx_fallback
@@ -1292,7 +1292,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     setup.marker_arp_max_h       = ecc_max_h;
     setup.marker_arp_max_h_station = ecc_max_h_station;
     if (marker_to_arp) {
-        log->info("Network (card UPO): marker -> ARP roster reduction ON — {} of {} loaded "
+        log->info("Network: marker -> ARP roster reduction ON — {} of {} loaded "
                   "station(s) carry an 'ANTENNA: DELTA H/E/N' eccentricity ({} above 0.01 m), "
                   "{} reduced to the antenna reference point; largest H {:+.4f} m at '{}'. "
                   "The roster is now in the SAME frame as the antenna model and as the "
@@ -1300,7 +1300,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   n_ecc_stations, stations.size(), n_ecc_over_1cm, n_ecc_reduced,
                   ecc_max_h, ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
     } else if (n_ecc_over_1cm > 0) {
-        log->warn("Network (card UPO): marker -> ARP roster reduction OFF — {} of {} loaded "
+        log->warn("Network: marker -> ARP roster reduction OFF — {} of {} loaded "
                   "station(s) carry an eccentricity above 0.01 m (largest component {:.4f} m; "
                   "largest H {:+.4f} m at '{}') and are held at their MONUMENT coordinate while "
                   "their observations refer to the antenna. Each such station misfits every "
@@ -1311,13 +1311,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   n_ecc_over_1cm, stations.size(), ecc_max_abs, ecc_max_h,
                   ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
     } else {
-        log->info("Network (card UPO): marker -> ARP roster reduction OFF — no loaded station "
+        log->info("Network: marker -> ARP roster reduction OFF — no loaded station "
                   "carries an eccentricity above 0.01 m ({} with any nonzero record), so the "
                   "roster's monument and antenna-reference-point frames coincide to within a "
                   "centimetre.", n_ecc_stations);
     }
     if (!no_ecc_record_stations.empty())
-        log->warn("Network (card UPO): {} of {} loaded station(s) carry NO 'ANTENNA: DELTA "
+        log->warn("Network: {} of {} loaded station(s) carry NO 'ANTENNA: DELTA "
                   "H/E/N' record and cannot be reduced in either knob state: {}",
                   no_ecc_record_stations.size(), stations.size(),
                   joinNames(no_ecc_record_stations));
@@ -1546,7 +1546,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
                 if (!in_force.empty()) apriori_id = in_force;
                 if (named_all)
-                    log->info("Network (card OWD): a product file name does not carry an IGS "
+                    log->info("Network: a product file name does not carry an IGS "
                               "long-name span (or none meets the processing window), so the S "
                               "contract's a-priori identity names every merged file of that "
                               "kind: '{}'.", apriori_id);
@@ -1720,7 +1720,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     return 0;
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the marker to ARP roster reduction (UPO).
 int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
@@ -1728,14 +1728,14 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // Marker to antenna-reference-point roster frame (card UPO), reported in both knob
+    // Marker to antenna-reference-point roster frame, reported in both knob
     // states (invariant #4).  With the knob off this line gives the size of the modelling
     // error the run carried, the number the fix is judged against; armed, it states that
     // the roster is held at the antenna reference points rather than the published
     // monument coordinates, which a reader of the products has to know.
     if (!(ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0)) return 0;
     if (config_.networkStationMarkerToArp())
-        log->info("Network (card UPO): marker -> ARP roster reduction ON — {} station(s) "
+        log->info("Network: marker -> ARP roster reduction ON — {} station(s) "
                   "carried an eccentricity ({} above 0.01 m) and {} were reduced to their "
                   "antenna reference point; largest H {:+.4f} m at '{}'; {} station(s) had "
                   "no header record and were left at their configured coordinate.",
@@ -1745,7 +1745,7 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
                       ? "<none>" : ctx.counters.marker_arp_max_h_station,
                   ctx.counters.n_marker_arp_no_record);
     else
-        log->info("Network (card UPO): marker -> ARP roster reduction OFF — {} station(s) "
+        log->info("Network: marker -> ARP roster reduction OFF — {} station(s) "
                   "carried an eccentricity ({} above 0.01 m; largest H {:+.4f} m at '{}') "
                   "and were held at their MONUMENT coordinate for the whole run, while "
                   "their observations refer to the antenna; {} station(s) had no header "
@@ -1761,13 +1761,13 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/driver/SetupResult.hpp.
+// Setup builder; documented at its declaration in network/driver/SetupResult.hpp.
 void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
     // ---- End of the bindings ----
     // The marker → ARP roster census is measured in networkSetup_, which runs
     // before this context exists.  It is copied into the counters because the
     // run-end readout and the run manifest read ctx.counters, and both report it
-    // in either knob state (card UPO).
+    // in either knob state.
     ctx.counters.marker_arp_armed         = config_.networkStationMarkerToArp();
     ctx.counters.n_marker_arp_ecc         = setup.n_marker_arp_ecc;
     ctx.counters.n_marker_arp_reduced     = setup.n_marker_arp_reduced;

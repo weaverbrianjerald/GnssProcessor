@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file RankGate.hpp
- * @brief Stages 5 and 8 of the network solve (card NOM3 step SG): the estimability dump of the
+ * @brief Stages 5 and 8 of the network solve: the estimability dump of the
  *        system the gate is about to judge, and the null-space rank gate with the prioritized
  *        drop-and-heal, the withhold accounting, the observed-count envelope, the datum-direction
  *        information ratio and the datum graph census's count-only fallback.  The gate's
@@ -44,7 +44,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
 /**
  * @brief Run-end report: the observability rank gate and the datum-direction ratio.
  *
- * The observability rank gate (card DG): its calibration line when the tolerance is not
+ * The observability rank gate: its calibration line when the tolerance is not
  * the default, the two causes of an over-specified withhold, and the invariant-#7
  * datum-direction information ratio that tells them apart (measured in
  * NetworkFrameDiag).

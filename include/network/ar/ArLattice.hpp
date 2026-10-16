@@ -48,7 +48,7 @@
  * later depends on their old integers.  Dropping only the rows behind the cycle (the rows whose
  * pivots it holds) is not enough: in reduced echelon form other rows can hold one of its arcs as
  * a non-pivot term, keep that arc's old integer, and imply the released cycle again once
- * unrelated fixes complete the span (card FCFC section 8: an injected (7, 9) slip, dropped by
+ * unrelated fixes complete the span (an injected (7, 9) slip, dropped by
  * acceptance, came back twice at its stale integer).  The cost is at most one dimension per arc
  * a unit row holds.
  *
@@ -71,7 +71,7 @@
  *
  * ## What it cannot show
  *
- * A contradiction count of zero is no evidence of a clean release (card AGTB section 5): a slip
+ * A contradiction count of zero is no evidence of a clean release: a slip
  * no detector flags leaves the zero-q float on the old integer, the search fixes it again, and
  * the lattice confirms it.  The ledger then keeps the stale integer after the search stops
  * fixing it too (the S8 twin without the slip fixes: 30 epochs confirmed by the search, 34 more
@@ -115,13 +115,13 @@ enum class ArLatticeRelease : std::uint8_t {
     FirstSeen,      ///< The last search did not read it (a gap between two searches).
     Freed,          ///< This epoch's free-epoch latch holds it (with the latch's cause bits).
     StampChange,    ///< Its life stamp changed, and not as an echo (with the changed fields).
-    ReplayCulprit,  ///< (card FCF) The landed within-epoch replay refloated or excluded its line of sight.
-    GrossLos,       ///< (card FCF) This epoch's gross-LOS Decide declared its line of sight or its station.
-    Contradiction,  ///< (card FCF) A fix of this epoch implies another integer: the cycle's arcs released.
-    Revalidation,   ///< (card FCF) Its unit failed the float test: the arc two failing units share, else both cycles' arcs, released.
-    Acceptance,     ///< (card FCF) Its unit was dropped from a held-solve block that failed acceptance: both cycles' arcs released.
-    Degenerate,     ///< (card FCF) Its unit's block was refused by the kernel's screens: both cycles' arcs released.
-    SeamGap,        ///< (card FCF) A loop epoch since the last step went without one: every row released.
+    ReplayCulprit,  ///< The landed within-epoch replay refloated or excluded its line of sight.
+    GrossLos,       ///< This epoch's gross-LOS Decide declared its line of sight or its station.
+    Contradiction,  ///< A fix of this epoch implies another integer: the cycle's arcs released.
+    Revalidation,   ///< Its unit failed the float test: the arc two failing units share, else both cycles' arcs, released.
+    Acceptance,     ///< Its unit was dropped from a held-solve block that failed acceptance: both cycles' arcs released.
+    Degenerate,     ///< Its unit's block was refused by the kernel's screens: both cycles' arcs released.
+    SeamGap,        ///< A loop epoch since the last step went without one: every row released.
     Count           ///< The number of causes.
 };
 
@@ -210,8 +210,8 @@ struct ArLatticeEpoch {
     int    released_touching{0};  ///< Releases that found rows.
     int    dims_lost{0};          ///< Rows dropped by the releases.
     int    no_unit{0};            ///< Arc eliminations (of an arc release or of a cycle release's arcs) that found rows through the arc but none holding it at +-1 (every row through it dropped).
-    int    units{0};              ///< (card FCF) Units the lattice implied this epoch (the fold's re-validation).
-    int    units_failed{0};       ///< (card FCF) ...of those, failing their float test.
+    int    units{0};              ///< Units the lattice implied this epoch (the fold's re-validation).
+    int    units_failed{0};       ///< ...of those, failing their float test.
     int    rows{0};               ///< Lattice dimension after the epoch.
     int    arcs{0};               ///< Distinct band-arcs the rows hold after the epoch.
     int    max_len{0};            ///< Longest row after the epoch (arcs).
@@ -229,8 +229,8 @@ struct ArFixStreak {
 /// search's reading, never a second record here.
 struct ArLatticeState {
     arcgraph::CycleLattice              lattice;          ///< Fixed cycles and their integers, reduced echelon form.
-    std::map<ArDdIdentity, ArFixStreak> streaks;          ///< (card FCF) Fixes waiting for @c persist_ep, by DD identity.
-    long long                           last_step_ep{-1}; ///< (card FCF) Loop epoch of the last step (-1: none yet).
+    std::map<ArDdIdentity, ArFixStreak> streaks;          ///< Fixes waiting for @c persist_ep, by DD identity.
+    long long                           last_step_ep{-1}; ///< Loop epoch of the last step (-1: none yet).
 };
 
 /// Lines of sight and their wider scopes, every signal of each (the replay's and the gross-LOS
@@ -249,14 +249,14 @@ struct ArLosScope {
     bool empty() const { return sats.empty() && stations.empty() && los.empty(); }
 };
 
-/// The epoch's release evidence from outside the search's life readings (card FCF), typed once.
+/// The epoch's release evidence from outside the search's life readings, typed once.
 struct ArLatticeEvidence {
     ArLosScope replay;  ///< The landed within-epoch replay's culprits: satellites refloated network-wide, lines of sight refloated, stations excluded.
     ArLosScope gross;   ///< This epoch's gross-LOS Decide: declared lines of sight, declared stations, cold re-floats.
 };
 
 /**
- * @brief The epoch's evidence (card FCF): the landed replay's culprits and this epoch's gross-LOS
+ * @brief The epoch's evidence: the landed replay's culprits and this epoch's gross-LOS
  *        Decide (@c ctx.carry.gl_act_declare, @c gl_act_station declared, @c gl_act_cold_refloat;
  *        empty unless @c network.gross_los_emit_exclude split the screen).
  * @param ctx The run context.
@@ -292,7 +292,7 @@ std::vector<ArLatticeReleaseEvent> arLatticeEvidenceReleases(const arcgraph::Cyc
 std::array<ArcId, 4> arDdArcs(const ArDdIdentity& id);
 
 /**
- * @brief THE release function (card FCF section 3): apply @p events in order and tally them.
+ * @brief THE release function: apply @p events in order and tally them.
  *
  * An arc release eliminates its arc (an arc already eliminated this epoch finds no row); a
  * cycle release eliminates each of its cycle's arcs (file banner); an all release drops every
@@ -372,8 +372,8 @@ struct ArLatticeCounters {
     long long released_touching{0};  ///< Releases that found rows.
     long long dims_lost{0};          ///< Rows dropped by releases.
     long long no_unit{0};            ///< Arc eliminations that found rows through the arc but no unit row.
-    long long units{0};              ///< (card FCF) Units implied, summed over epochs.
-    long long units_failed{0};       ///< (card FCF) ...failing their float test.
+    long long units{0};              ///< Units implied, summed over epochs.
+    long long units_failed{0};       ///< ...failing their float test.
     int       max_rows{0};           ///< Largest lattice dimension.
     int       max_len{0};            ///< Longest row of any epoch.
     std::vector<double> rows;        ///< Lattice dimension per epoch.
@@ -416,7 +416,7 @@ void networkArLatticeRecord(NetworkRunContext& ctx, const std::shared_ptr<spdlog
 bool arLatticeArmed(const GnssConfig& config_);
 
 /**
- * @brief Run-end report: the ledger of fixed cycles (cards AGT and FCF).
+ * @brief Run-end report: the ledger of fixed cycles.
  *
  * The epochs stepped and skipped; the fixes by verdict and waiting; the lattice dimension and
  * row lengths; the releases by cause, the rows they found and the dimensions lost, by stamp
