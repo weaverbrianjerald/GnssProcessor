@@ -1443,7 +1443,7 @@ namespace GnssProcessor {
         /**
          * @brief Read a (satellite, signal-pair) MW arc as a ZD-consistent Welford
          *        summary: the per-arc code-coherence accumulator that the wide-lane
-         *        layer double-differences over the Card-4 chord basis.
+         *        layer double-differences over the invariant-carry chord basis.
          *
          * The network per-station detector stores non-pivot arcs single-differenced
          * against a per-(constellation,signal-pair) MW pivot (mean = MW_bia(sat) -

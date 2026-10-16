@@ -27,7 +27,7 @@
  * nc.cb_excursion_median_m.
  *
  * Relocated from the SB_CLOCKUPD block of Application::runNetwork at decomposition
- * INC-10 (see docs/network_decomposition_plan.md §5, INC-10).  The Card-6 re-level,
+ * INC-10 (see docs/network_decomposition_plan.md §5, INC-10).  The ephemeris-cutover re-level,
  * a separate block in the emit region, is not part of this seam.  Owns no state:
  * every carry object is an explicit reference into the caller's NetworkRunContext.
  *

@@ -77,7 +77,7 @@ namespace GnssProcessor {
     inline constexpr Reinflation kNoReinflation = Reinflation::Count;
 
     /// The stable short names of the re-inflations in the run-end lines, indexed by
-    /// @ref Reinflation; the card's graders parse them.
+    /// @ref Reinflation; the grading scripts parse them.
     inline constexpr std::array<const char*, static_cast<std::size_t>(Reinflation::Count)>
         kReinflationNames{{ "code_bias", "isb", "iono", "iono_rate", "sat_bias",
                             "sat_phase_bias", "sat_clock" }};

@@ -146,13 +146,13 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
         // A combined message guarantees IOD coherence, so the clock shares the
         // orbit IOD, and the orbit echo is the record's own IOD-SSR and content
         // epoch (the consumer's echo check then agrees by construction).
-        // (RTF-2, Card 3)
+        // (RTF-2)
         out.clock_iode       = rec_copy.combined->iode;
         out.orbit_iod_ssr    = rec_copy.combined->iod_ssr;
         out.orbit_epoch      = rec_copy.combined->epoch_time;
         // Identity of the applied orbit.  For a combined record it equals the echo
         // above by construction (in-message coherence), so the consumer echo check
-        // returns Match without a second lookup.  (Card 7)
+        // returns Match without a second lookup.
         out.applied_orbit_iod_ssr = rec_copy.combined->iod_ssr;
         // Orbit and clock share one content epoch in a combined message.  The dt
         // base is the SSR content reference epoch, not received_time: the clock
@@ -169,7 +169,7 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             out.delta_rac_dot    = rec_copy.orbit->delta_rac_dot;
             out.iode             = rec_copy.orbit->iode;
             out.orbit_epoch_time = rec_copy.orbit->epoch_time;   // orbit dt base (content epoch)
-            out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // applied-orbit identity for the echo check (Card 7)
+            out.applied_orbit_iod_ssr = rec_copy.orbit->iod_ssr; // applied-orbit identity for the echo check
             out.has_orbit        = true;
             out.orbit_reference_point = rec_copy.orbit->reference_point;  // RTB-5(b)
         }
@@ -187,7 +187,7 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             // the -1 "unknown" default for a standalone clock: network and IGS-SSR
             // clock streams carry no orbit IODE (RT0-1).
             //
-            // The clock gate keys on a separate clock_iode (RTF-2, Card 3).  A
+            // The clock gate keys on a separate clock_iode (RTF-2).  A
             // standard SSR clock (iode == -1 on the wire) is referenced to the same
             // broadcast baseline as its paired orbit, so it inherits out.iode.  This
             // keeps the behaviour of the earlier single gate on out.iode: a standard
@@ -195,7 +195,7 @@ SsrCorrectionStore::getOrbitClock(const std::string& sat,
             // network clock stays permissive (-1).  The brdc_rts producer stamps
             // clock->iode >= 0 (its own C0 baseline), which takes precedence, so the
             // consumer gates that clock on the producer's baseline rather than the
-            // orbit's.  The orbit coherence echo travels on the clock record (Card 7).
+            // orbit's.  The orbit coherence echo travels on the clock record.
             out.clock_iode    = (rec_copy.clock->iode >= 0) ? rec_copy.clock->iode : out.iode;
             out.orbit_iod_ssr = rec_copy.clock->orbit_iod_ssr;
             out.orbit_epoch   = rec_copy.clock->orbit_epoch;
@@ -396,7 +396,7 @@ SsrCorrectionStore::biasAttributeMismatchCounts() const {
 }
 
 // ---------------------------------------------------------------------------
-// Orbit-coherence echo verification (Card 7, RTF-2)
+// Orbit-coherence echo verification (RTF-2)
 // ---------------------------------------------------------------------------
 
 SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::classifyOrbitEcho(
@@ -404,7 +404,7 @@ SsrCorrectionStore::OrbitEchoVerdict SsrCorrectionStore::classifyOrbitEcho(
     const std::optional<OrbitClockCorrection>& applied,
     double                                     max_skew_s) {
     // No echo on the clock record: nothing to verify.  Every standard SSR stream
-    // and every stream without the Card 7 echo returns here (orbit_iod_ssr
+    // and every stream without the orbit-coherence echo returns here (orbit_iod_ssr
     // defaults to -1), so the check costs nothing on those paths.
     if (!rec.has_clock || rec.orbit_iod_ssr < 0) return OrbitEchoVerdict::NotStamped;
     // The producer estimated its clock against an RTS orbit, but the consumer
@@ -646,10 +646,10 @@ void SsrCorrectionStore::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     by_sat_.clear();
     generation_id_ = 0;   // a cleared store carries no generation marker (RTA-3)
-    declared_level_steps_.clear();   // Card CLV2: the totals restart with the store
+    declared_level_steps_.clear();   // the totals restart with the store
     producer_status_.reset();      // a cleared store carries no producer heartbeat (RTA-10)
     bias_attr_mismatch_.clear();   // mismatch tallies are per-run diagnostics (RTA-13)
-    orbit_echo_mismatch_.clear();  // per-run diagnostics too; the armed skew budget is configuration and is kept (Card 7)
+    orbit_echo_mismatch_.clear();  // per-run diagnostics too; the armed skew budget is configuration and is kept
 }
 
 // ---------------------------------------------------------------------------

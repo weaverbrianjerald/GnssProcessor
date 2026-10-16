@@ -37,7 +37,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
 /**
  * @brief The completion's continuity targets: the carried shared state mapped into this
  *        epoch's columns (clock, code and phase biases, SH coefficients; the phase-bias level
- *        map; the card-2 kept-epoch code-bias map).  Zero on a datum re-reference.
+ *        map; the kept-epoch code-bias map).  Zero on a datum re-reference.
  * @param ctx           The run context (read: carry).
  * @param est           The estimator (read: the column maps).
  * @param datum_changed A clock-pivot handover was signalled this epoch.

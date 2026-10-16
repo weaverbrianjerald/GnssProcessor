@@ -158,7 +158,7 @@ public:
      *        held ephemeris and the version @p old_iode, evaluated at @p time:
      *        @c c·(bias_new − bias_old).
      *
-     * The network PPP-RTK producer (RTF-2 Card 6, @c network.apriori_source =
+     * The network PPP-RTK producer (RTF-2, @c network.apriori_source =
      * @c brdc_rts) estimates each satellite clock as Δδtˢ relative to the
      * broadcast a-priori clock of the ephemeris version its geometry currently
      * uses.  When that version rolls (old IODE → new IODE), the a-priori jumps by

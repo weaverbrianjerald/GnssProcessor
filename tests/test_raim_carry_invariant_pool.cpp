@@ -3,16 +3,16 @@
  * @brief Config-contract tests for the RAIM pool re-host
  *        (docs/SPEC_raim_pool_rehost.md).
  *
- * Without the re-host, post-fit network RAIM does nothing on a Card-4
+ * Without the re-host, post-fit network RAIM does nothing on an
  * invariant-carry lineage, for two independent reasons, neither of them a
  * tunable threshold:
  *
  *   1. The seam is not called.  Its call site reads `if (raim_on && carry_warm)`,
- *      and `carry_warm` requires network.phase_leveling, so a Card-4 config that
+ *      and `carry_warm` requires network.phase_leveling, so an invariant-carry config that
  *      leaves leveling off never executes networkPostFitRaim.
  *   2. With leveling on, the seam's residual pool is empty.  Every RAIM walk keys
  *      on StationAssembly::pl_amb, whose only fill site is nested inside
- *      `do_amb_carry = (…) && !carry_invariant`: Card 4's DD carry supersedes the
+ *      `do_amb_carry = (…) && !carry_invariant`: the invariant DD carry supersedes the
  *      phase-leveling ambiguity carry, so the record list RAIM reads is never
  *      built.
  *
@@ -70,7 +70,7 @@ std::string networkConfig(const std::string& network_extra) {
         "}\n";
 }
 
-/// The Card-4 lineage: carry_invariant takes effect only with phase_datum_eq34, which
+/// The invariant-carry lineage: carry_invariant takes effect only with phase_datum_eq34, which
 /// is why the runtime knob ANDs both.  Every "armed" posture below builds on this.
 constexpr const char* kCard4 =
     "    \"phase_datum_eq34\": true,\n"
@@ -94,7 +94,7 @@ TEST(RaimCarryInvariantPool, ScreenDefaultsOff) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-// The existing Card-4 + RAIM posture (the one about 70 _ft63_* configs ship) loads
+// The existing invariant-carry + RAIM posture (the one about 70 _ft63_* configs ship) loads
 // as before: RAIM nominally on, the re-host off, nothing re-hosted.  This guards
 // against the re-host changing any default behaviour.
 TEST(RaimCarryInvariantPool, LegacyCard4PostureUnchanged) {
@@ -127,7 +127,7 @@ TEST(RaimCarryInvariantPool, ArmsOnCard4Lineage) {
 // disabled at load, not discovered after a field run).
 // ---------------------------------------------------------------------------
 
-// Off the Card-4 lineage, pl_amb is already the correct pool and re-hosting would be
+// Off the invariant-carry lineage, pl_amb is already the correct pool and re-hosting would be
 // a no-op at best, so the loader disables the knob rather than carrying it silently.
 TEST(RaimCarryInvariantPool, ScreenDisabledWithoutCarryInvariant) {
     LogManager log;

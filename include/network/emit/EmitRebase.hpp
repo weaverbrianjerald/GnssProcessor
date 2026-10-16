@@ -2,7 +2,7 @@
 /**
  * @file EmitRebase.hpp
  * @brief Emit-layer frame re-basing of the network's per-(satellite,signal) phase
- *        biases onto the previous emission frame (Card 4 (M1) phase D).
+ *        biases onto the previous emission frame (M1 phase D).
  *
  * Under the invariant DD carry (`network.carry_invariant`,
  * docs/SPEC_card4_invariant_carry.md §D4 = its §6) the per-epoch eq34 datum is
@@ -209,7 +209,7 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the emit-layer frame re-base.
  *
- * The emit-layer frame re-base of the emitted phase biases (card 4/M1 phase D).
+ * The emit-layer frame re-base of the emitted phase biases (M1 phase D).
  *
  * Gate: returns 0 at once unless `emit_rebase_on`.
  *

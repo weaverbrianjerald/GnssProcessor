@@ -1,6 +1,6 @@
 /**
  * @file test_ctu_level_guard.cpp
- * @brief Card CTU section 14: the pure pieces of the level innovation instrument and of
+ * @brief The pure pieces of the level innovation instrument and of
  *        the phase-space anchor guard.
  *
  * - clockAnchorPhaseClockWeights: the minimum-norm weights of the ionosphere-free phase

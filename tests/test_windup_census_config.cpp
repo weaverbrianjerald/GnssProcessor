@@ -80,7 +80,7 @@ TEST(WindUpCensusConfig, DefaultsAreBehaviourPreserving) {
     ASSERT_TRUE(loadInto("defaults", pppConfig(), cfg));
     // 300.0 is the former hard-coded kMaxGapSeconds.  Changing the default moves
     // the restart population of every accumulated-mode lineage, so its products
-    // are no longer comparable to its own history; that requires a migration card.
+    // are no longer comparable to its own history; that requires a migration.
     EXPECT_DOUBLE_EQ(cfg.phaseWindUpMaxGapS(), 300.0);
     EXPECT_FALSE(cfg.traceWindUpCensus());
     // The posture the census characterises: absent key => fractional.

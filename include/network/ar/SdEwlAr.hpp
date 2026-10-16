@@ -367,7 +367,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @par Why pre-reduce
  * These rows enter the station block that reaches @c addStationObservations, so they
  * fold into @f$N_{rr}/N_{sr}/N_{ss}@f$ before @c reduce() and therefore compose
- * exactly with the post-reduce Card-4 DD fold.  Two post-reduce Woodbury folds over
+ * exactly with the post-reduce DD fold.  Two post-reduce Woodbury folds over
  * coupled local columns drop the cross term (see the warning on
  * @c NetworkNormalEquations::foldReducedDdPriors in NormalEquations.hpp).
  * @c addStationPrior cannot be used: it is diagonal-only

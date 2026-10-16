@@ -14,8 +14,7 @@ class LogManager;
 /**
  * @brief Loads the oracle ambiguity pin (simulation only) when an `oracle_pin` inject event is armed.
  *
- * Throws on a missing or mis-pointed fixture, before any trace file opens.  Setup builder (card
- * NOM3 step EP4): called once from Application::runNetwork, in the order
+ * Throws on a missing or mis-pointed fixture, before any trace file opens.  Setup builder: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.ctx.carry.oracle_pin.

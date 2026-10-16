@@ -166,11 +166,11 @@ void networkBufferedTraceDrains(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunTraces& traces = run.traces;
     const EpochEvents::Harvest& harvest_ev = ep.events.harvest;
     // ---- End of the bindings ----
-    // Card LGM: write the phase-colour trace rows buffered at the harvest.
+    // Write the phase-colour trace rows buffered at the harvest.
     if (traces.phase_colour_trace.is_open())
         for (const std::string& row : harvest_ev.pc_trace_rows)
             traces.phase_colour_trace << row;
-    // Card AIL: the same for the ambiguity information trace.
+    // The same for the ambiguity information trace.
     if (traces.amb_if_trace.is_open())
         for (const std::string& row : harvest_ev.amb_if_rows)
             traces.amb_if_trace << row;
@@ -222,7 +222,7 @@ void networkAmbIfTraceStation(NetworkRun& run, const NetworkEpoch& ep,
     const std::shared_ptr<PlHarvestBlock>& hblk = sb.blk;
     EpochEvents::Harvest& harvest_ev = events.harvest;   // written
     // ---- End of the bindings ----
-    // Card AIL (network.trace_amb_if, trace class): the ionosphere-free ambiguity's
+    // network.trace_amb_if (trace class): the ionosphere-free ambiguity's
     // variance before and after this epoch, per line of sight whose two bands are
     // both carried in the block.  Prior: the joint covariance the inject folded
     // (R.pl_blk.Sigma, rows keyed by local column); posterior: the harvest block

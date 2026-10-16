@@ -182,7 +182,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     "no live epochs to resume against (snapshot '" + snap_path.string() + "')");
             } else if (!NetworkStateSnapshotIO::warmResumeAllowed(
                            snap,
-                           // Card CTU G5: a snapshot written without the card's knobs is
+                           // CTU G5: a snapshot written without the CTU knobs is
                            // admitted under the stripped fingerprint (switch-on only).
                            (ctx.carry.live_fingerprint_ctu_off != 0
                             && snap.config_fingerprint == ctx.carry.live_fingerprint_ctu_off
@@ -356,7 +356,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 if (ca.anchored) ++ctx.counters.n_resume_frame_cta_anchored;
                             }
                             // Prime the two-edge handover ledger from the restored
-                            // leveling rows (the judge graft from card 3), so a family whose
+                            // leveling rows (the judge graft), so a family whose
                             // restored incumbent does not track the satellite at the first
                             // live epoch takes the continuous handover path (the
                             // PhaseDatum.cpp re-validate gate on the restored
@@ -582,7 +582,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // absent half reads as inert for that half alone.  The two sub-switches
                     // are diagnostic: they let one §21.13 attribution leg restore a single
                     // half, and a withheld half is logged as withheld, not as absent.
-                    // Card CTU G5: the level information of the writer's monitor, and
+                    // CTU G5: the level information of the writer's monitor, and
                     // the raise it arms for the first leg epoch.
                     if (ctx.knobs.clm_on && !snap.level_info.empty()) {
                         net::recordFromSnapshot("LB", snap, ctx);   // the satellites (N4e1)
@@ -934,7 +934,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // first fold too, or the diagonal asymmetry measured in §18.12 remains.
                     // Under resume_border_restore it stands alone: a covariance block carries
                     // no regression and no gauge identity, so it needs neither
-                    // carry_conditional_coupling nor card 1f, which makes it usable on a
+                    // carry_conditional_coupling nor the gauge projection, which makes it usable on a
                     // carry_invariant field lineage where the loader refuses
                     // resume_coupling_restore.  Keys with no restored D row are dropped (row
                     // and column) and counted; the fold still degrades per key as before.
@@ -986,11 +986,11 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                         }
                         if (nk > 0 && finite) {
                             ctx.carry.prev_carry_cov = std::move(cov);
-                            // Card CTU G5: the exact update's stash stamp is the snapshot's
+                            // CTU G5: the exact update's stash stamp is the snapshot's
                             // own epoch (the coupling rows restored with it were harvested
                             // there), and the clock pivot is the snapshot's (pinned at 0 in
                             // its datum).  Without this the first leg epoch has no valid
-                            // stash and every row takes card 1d's kappa.
+                            // stash and every row takes the time update's kappa.
                             if (ctx.knobs.carry_cpl_exact) {
                                 ctx.carry.cxu_stash_s =
                                     static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
@@ -1003,7 +1003,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                                  &net::ConstellationState::cxu_pivot) = {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
                             }
-                            // Card PFQ: the restored block's frame is the snapshot's pivots.
+                            // The restored block's frame is the snapshot's pivots.
                             if (ctx.knobs.pfq_on) {
                                 net::dropAll(ctx.entities.constellations,
                                              &net::ConstellationState::pfq_pivot);
@@ -1073,7 +1073,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // Restore the eph-cutover re-level baseline and any pending forced
                     // disc, so a warm resume does not re-level against a stale baseline (or
                     // lose a pending forced bump).  Both are empty in an sp3 snapshot or one
-                    // written before card 6, and the first brdc_rts epoch then re-seeds.
+                    // written before the ephemeris-cutover re-level, and the first brdc_rts epoch then re-seeds.
                     net::recordFromSnapshot("I", snap, ctx);   // the satellites (N4e2)
                     net::recordFromSnapshot("X", snap, ctx);   // the satellites (N4e2)
                     // Without the datum restore, the time-linked code-bias previous-value
@@ -1098,7 +1098,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // downstream branches on it, so the off path stays byte-identical (like
                     // anchor_age_resume_seed and resume.adm).
                     ctx.carry.resume_datum_first_ep = true;
-                    // Card GFC: the pin pair hold baseline is not snapshotted, so the first
+                    // The pin pair hold baseline is not snapshotted, so the first
                     // kept epoch's holds are declared as found at a resume, not as begun.
                     // Telemetry only (empty hold maps unless code_datum_pair_continuity).
                     ctx.carry.resume.if_pin_holds = true;
@@ -1133,7 +1133,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // to catch.  A restored corrupt arc is not a birth: it is evented as a
                     // restore and refloated (a birth has nothing to refloat; a restore has a
                     // stiff carried chord that would otherwise span the hole the withhold
-                    // opens, standing invariant #1).  The census card's INC-3 cannot see
+                    // opens, standing invariant #1).  The census's INC-3 cannot see
                     // this case by construction, which is why the spec names it.  Written
                     // unconditionally (inert unless ctx.knobs.adm_screen), so the off path
                     // stays byte-identical, as for anchor_age_resume_seed.

@@ -27,7 +27,7 @@
  *       (`network.closed_loop.channel_mode`, default single).
  *
  * The mechanism itself (which rows enter the solve, which families reach the wire,
- * what it costs) is graded on the arms by the card's own gates.
+ * what it costs) is graded on the arms by its own gates.
  */
 #include <gtest/gtest.h>
 
@@ -288,7 +288,7 @@ TEST(ChannelModeAllTest, ArmsOnTheFloatVehicleWithTheHeldBasis) {
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_TRUE(cfg.networkChannelModeAll());
-    // Both row predicates answer true through the subsumption, with neither card's
+    // Both row predicates answer true through the subsumption, with neither mechanism's
     // own knob set; that lets one predicate serve both mechanisms.
     EXPECT_TRUE(cfg.networkSecondCodeRowsActive());
     EXPECT_TRUE(cfg.networkSecondPhaseRowsActive());

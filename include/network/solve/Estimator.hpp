@@ -346,7 +346,7 @@ public:
      * decision, and the drop-and-heal soft-anchors only directions the gate itself
      * counts as null.  At a looser cutoff than the gate, it would put prior
      * information on weak but real parameters, the near-cutoff fragility that the
-     * CB-ADM card's rejected-alternatives list rules out.  One resolved member
+     * CB-ADM rejected-alternatives list rules out.  One resolved member
      * makes that agreement structural rather than a convention.
      *
      * @par Placement rule (binding for any non-default value)
@@ -514,7 +514,7 @@ public:
      * see @ref HeldSolve), their means under right targets, and the largest shift from
      * the float; (5) acceptance: @c ok, and @c x_s the held estimate only then.
      *
-     * Fold-then-pin is exactly what @ref solve does with Card-4 DD priors set
+     * Fold-then-pin is exactly what @ref solve does with DD priors set
      * (@ref setDdPriors), so for rows with a diagonal @f$P^z@f$ the held estimate and the
      * posterior cycles @f$\hat z+P^z\kappa@f$ equal that path's solve and
      * @ref ddPriorPosteriorMean.  The reduced normals, the shared covariance and every
@@ -532,7 +532,7 @@ public:
      *         @p blocks is empty, no block folds, the held estimate is not finite or the
      *         float is not reproduced.
      * @throws std::logic_error before a @ref solve, when the kernel's reduction is not
-     *         current, or when the kernel holds folded Card-4 DD priors or sum-to-zero
+     *         current, or when the kernel holds folded DD priors or sum-to-zero
      *         gauges (read from the kernel's state, not from the request lists, which
      *         may change after the solve); std::invalid_argument on an @p x_float size
      *         mismatch;
@@ -605,7 +605,7 @@ public:
      * @param datum    The same datum passed to @ref solve.
      * @param carry_aware Include the folded DD priors' rank-K term
      *                 (@ref NetworkNormalEquations::hasCarryCovCorrection).  @c false
-     *                 (the default) is the pre-card expression, unchanged.  With it
+     *                 (the default) is the earlier expression, unchanged.  With it
      *                 on, cross-station entries also carry the rank-K downdate, which
      *                 couples every column inside a DD block; a chord spans two
      *                 stations by construction.
@@ -670,7 +670,7 @@ public:
     /**
      * @brief Regression of one local column on the shared border and its pure
      *        conditional variance: the ingredients of the rigorous between-epoch
-     *        conditional carry (@c network.carry_conditional_coupling, Card 1).
+     *        conditional carry (@c network.carry_conditional_coupling).
      *
      * Thin forward to @ref NetworkNormalEquations::stationRegression: returns
      * @f$M_r=N_{sr}N_{rr}^{-1}e_r@f$ (the shared-border regression row) and
@@ -1252,7 +1252,7 @@ public:
     /**
      * @brief Set this epoch's rank-K double-difference priors from the z-store,
      *        folded onto the reduced system by
-     *        @ref NetworkNormalEquations::foldReducedDdPriors (the Card-4 (M1)
+     *        @ref NetworkNormalEquations::foldReducedDdPriors (the M1
      *        invariant carry).
      *
      * One @c DdPriorBlock per connected (const,signal) component: the z-store's
@@ -1262,7 +1262,7 @@ public:
      * ensemble gauges: both are post-reduce Woodbury folds reading the unmodified
      * per-station @f$N_{rr}@f$, and composing them over coupled columns drops the
      * cross term, so @ref solve throws std::logic_error if both are set.  The
-     * Card-4 phase datum is the pre-reduce tree pins (@ref addStationPrior), which
+     * phase datum is the pre-reduce tree pins (@ref addStationPrior), which
      * compose exactly with this fold.  Empty (the default) keeps the off path
      * byte-identical.  Cleared by @ref beginEpoch and by @ref reset, so the driver
      * sets them from the z-store after each @ref beginEpoch.
@@ -1284,7 +1284,7 @@ public:
 
     /**
      * @brief Posterior covariance of DD-prior block @p b: the @f$P^z@f$ the z-store
-     *        carries forward (Card 4 / M1 phase C3b).
+     *        carries forward (M1 phase C3b).
      *
      * Builds the datum-as-known shared covariance @c cov_free from the last solve's
      * @c shared_cov_ (@ref datumFrameSharedCov: the datum-pinned columns zeroed as
@@ -1298,7 +1298,7 @@ public:
     Eigen::MatrixXd ddPriorPosteriorCovariance(std::size_t b, const Datum& datum) const;
 
     /**
-     * @brief Innovation + its H0 covariance for DD-prior block @p b (Card-4 D5 gate).
+     * @brief Innovation + its H0 covariance for DD-prior block @p b (D5 gate).
      *
      * Builds the datum-as-known shared covariance @c cov_free from the last solve's
      * @c shared_cov_ (identical to @ref ddPriorPosteriorCovariance) and forwards to
@@ -1593,7 +1593,7 @@ private:
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
-    std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (Card 4 (M1); empty = off, byte-identical)
+    std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (M1; empty = off, byte-identical)
     /// Take the kind named by @ref contributionKind for this fold, and clear it:
     /// @c Unset when the site named none.
     ContributionKind takeContributionKind_() {

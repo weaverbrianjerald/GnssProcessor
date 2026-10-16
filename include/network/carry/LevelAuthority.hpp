@@ -9,7 +9,7 @@
  * not pruned and is never iterated) to one fleet level L_cs(t) in vertical TECU
  * through the two-tier robust reduction (`levelAuthorityReduce`), and traces it
  * beside the per-station means (the d_r,GF-class diagnostic).  Nothing is folded
- * into the solve; a fold would be a separate card, gated on this census's
+ * into the solve; a fold would be a separate change, gated on this census's
  * tracking verdict.  Arming the census also arms the CS-GF advance in PASS A.
  *
  * Placement: serial, after PASS A's CS-GF advance and before the SkipEpoch

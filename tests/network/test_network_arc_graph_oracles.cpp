@@ -11,7 +11,7 @@
 //     the incumbent seed 303-349);
 //   - the ARL Prim, ProducerAr.cpp 386 to 478 (the ar_pool loop head and the tree_basis
 //     branch) with the DDrow struct 379 to 385, ArRec 323 and reqOf 362 to 370;
-//   - the Card-4 driver's UnionFind (InvariantCarryDriver.cpp 73 to 90) and its pair-group
+//   - the invariant-carry driver's UnionFind (InvariantCarryDriver.cpp 73 to 90) and its pair-group
 //     tree completion (674 to 689);
 //   - added at AGT-3, when those owners move onto the shared Dsu: the datum-graph census's
 //     union-by-size UnionFind and its component reduction (DatumGraph.cpp 54 to 85 and
@@ -84,7 +84,7 @@ namespace {
 using namespace arcgraph;
 
 // =====================================================================================
-// The Card-4 driver's union-find and pair completion (frozen).
+// The invariant-carry driver's union-find and pair completion (frozen).
 // =====================================================================================
 
 // ---- BEGIN FROZEN src/core/filter/NetworkInvariantCarryDriver.cpp lines 73-90 @ b5592b6 (verbatim) ----

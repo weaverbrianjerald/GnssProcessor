@@ -17,7 +17,7 @@ struct NetworkRunEndView;
  * @brief Run-end report: the closed-loop integer-recovery harness.
  *
  * The closed-loop integer-recovery harness of the held-out consumer: the mode, the fix
- * rate, the position error and the verdict, the producer's per-card lines (CST, JT, PBH,
+ * rate, the position error and the verdict, the producer's per-mechanism lines (CST, JT, PBH,
  * LAH, SMH, SCL, SMD, MS) and the consumer's (CC, PBT, ALC, PBH), and the consumer's
  * three summaries, which go to the rt_engine logger.
  *

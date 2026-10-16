@@ -1,7 +1,7 @@
 /**
  * @file SlipOracle.cpp
  * @brief Implementation of the sim-only oracle slip response (the ceiling of a
- *        level-preserving re-level).  See the header banner for the card, the
+ *        level-preserving re-level).  See the header banner for the rationale, the
  *        window semantics and why it is field-inert.
  */
 
@@ -242,7 +242,7 @@ bool networkSlipOracleHandle(NetworkSlipOracle& oracle, int sta,
     ++oracle.seen;
     const auto key = std::make_tuple(sta, sat, signal);
 
-    // (1) Nothing to preserve.  The card concerns the carried level; an arc with
+    // (1) Nothing to preserve.  The response concerns the carried level; an arc with
     //     no leveling entry is re-estimated free either way, so the ordinary
     //     response is already the right one.
     if (!oracle.carry) { ++oracle.no_carry; return false; }

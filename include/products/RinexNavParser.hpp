@@ -9,12 +9,12 @@
  * stream produces, so a run can feed @c LiveEphemerisStore from a file in the
  * same way the real-time engine feeds it from the wire.  This serves the "frame
  * consistency from the shared code path" requirement of the brdc_rts network
- * producer (see @c docs/rt_service_conventions.md §1, @c docs/rt_service_conventions.md §7
- * Card 2): the producer and every consumer resolve satellite state through the
+ * producer (see @c docs/rt_service_conventions.md §1, @c docs/rt_service_conventions.md §7):
+ * the producer and every consumer resolve satellite state through the
  * same store, so replaying with a RINEX-nav-populated store is bit-consistent
  * with a live RTCM-nav-populated store.
  *
- * Scope (Card 2): the Keplerian constellations on their legacy navigation
+ * Scope: the Keplerian constellations on their legacy navigation
  * messages: GPS LNAV, Galileo I/NAV (and F/NAV, same record layout), BeiDou
  * D1/D2, QZSS LNAV.  GLONASS and SBAS records are skipped (GLONASS
  * ephemeris anchoring is deferred per @c docs/glonass_enablement_plan.md / plan D8);
@@ -32,7 +32,7 @@
  * Callers: the network producer setup (@c ApplicationNetworkSetup.cpp, which
  * stages the records into the store as the epoch loop advances and reads the
  * broadcast group delays) and the simulator (@c src/sim/main.cpp); the brdc_rts
- * producer core is plan Card 5.  This translation unit is parsing only.
+ * producer core is a separate component.  This translation unit is parsing only.
  */
 
 #include "products/BroadcastEphemerisTypes.hpp"
