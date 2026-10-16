@@ -546,9 +546,6 @@ TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
     EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 1, std::string("G01"), &net::LosState::iono_blk) != nullptr), 1u);  // other station
     // Idempotent across the per-signal loop: a second band's erase counts nothing.
     EXPECT_EQ(net::dropLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk), 0u);
-    // The retired diagonal vehicle's map is a separate map and stays empty: nothing
-    // writes it, and the in-block carry never shares its state.
-    EXPECT_TRUE((net::present(ent.los, &net::LosState::iono) == 0));
 }
 
 // =============================================================================

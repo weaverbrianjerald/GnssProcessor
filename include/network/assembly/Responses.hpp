@@ -75,7 +75,7 @@ enum class ResponseSite : int {
     AmbWithholdErase,      ///< a withheld epoch's free response erased a carried arc
     AmbAnchorRerefErase,   ///< a phase-anchor re-reference (handover, coverage drop) erased the family's arcs
     AmbEq34Erase,          ///< the eq34 chain's re-reference erased a carried arc
-    // --- Slant ionosphere (iono_carry, iono_blk_carry) ---------------------------------
+    // --- Slant ionosphere (iono_blk_carry) ---------------------------------
     IonoRaimErase,         ///< RAIM's attribution erased the line of sight's carried ionosphere
     IonoGrossErase,        ///< the gross line-of-sight screen erased the carried ionosphere
     IonoGrossHold,         ///< the gross line-of-sight screen held the carried ionosphere

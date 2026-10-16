@@ -881,7 +881,6 @@ const std::vector<FieldDecl> kLosFields = {
     {"eq34_prev_el", "eq34_prev_el", Persist::Record, "EQE", "",
      &eqeToSnapshot, &eqeFromSnapshot, &losRows<&L::eq34_prev_el>},
     {"si_arc", "si_arc", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::si_arc>},
-    {"iono", "iono_carry", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono>},
     {"iono_blk", "iono_blk_carry", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono_blk>},
     {"gross_los", "gl_state", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::gross_los>},
     {"gl_event_last", "gl_event_last", Persist::ColdStart, "", "", nullptr, nullptr,
@@ -890,8 +889,6 @@ const std::vector<FieldDecl> kLosFields = {
      &losRows<&L::bb_event_last>},   // step N4e2, re-placed from the satellite rows
     {"relevel_pend", "relevel_pend", Persist::ColdStart, "", "", nullptr, nullptr,
      &losCells<&L::relevel_pend>},   // step N4f1, re-placed from the arc rows
-    {"gl_hold_iono", "gl_hold_iono", Persist::ColdStart, "", "", nullptr, nullptr,
-     &losRows<&L::gl_hold_iono>},
     {"gl_hold_iono_blk", "gl_hold_iono_blk", Persist::ColdStart, "", "", nullptr, nullptr,
      &losRows<&L::gl_hold_iono_blk>},
     {"iono_cs", "iono_cs", Persist::ColdStart, "", "", nullptr, nullptr, &losRows<&L::iono_cs>},

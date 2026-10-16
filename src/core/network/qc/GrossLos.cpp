@@ -1011,14 +1011,6 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         // determined by the folded code row, which cannot do it.
         net::LosTable& los = ctx.entities.los;
         if (gl_bound) {
-            if (LocalCarry* it1 = net::getLos(los, si, sat, &net::LosState::iono)) {
-                const LocalCarry h = glFreeze(*it1);
-                net::putLos(entities, si, sat, &net::LosState::gl_hold_iono) = h;
-                *it1 = h;
-                ++tal.bound_iono_held;
-                prmRespond(ctx.counters.prm_resp,
-                           ResponseSite::IonoGrossHold);
-            }
             if (LocalCarry* it2 = net::getLos(los, si, sat, &net::LosState::iono_blk)) {
                 const LocalCarry h = glFreeze(*it2);
                 net::putLos(entities, si, sat, &net::LosState::gl_hold_iono_blk) = h;
@@ -1029,10 +1021,6 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             }
         } else {
             // Each erase that removed an entry is counted.
-            if (net::dropLos(los, si, sat, &net::LosState::iono)) {
-                ++tal.iono_erased;
-                prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
-            }
             if (net::dropLos(los, si, sat, &net::LosState::iono_blk)) {
                 ++tal.iono_erased;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
@@ -1079,7 +1067,6 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : gross_ev.gl_act_release) {
-        net::dropLos(entities.los, si, sat, &net::LosState::gl_hold_iono);
         net::dropLos(entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
         for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
              it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
@@ -1098,9 +1085,6 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             los_held.insert({id.station.index, net::satKey(id.sat)});
         });
         net::LosTable& los = ctx.entities.los;
-        net::forEach(los, &net::LosState::gl_hold_iono, [&](const LosId& id, const LocalCarry& h) {
-            net::put(los, id, &net::LosState::iono) = h;
-        });
         net::forEach(los, &net::LosState::gl_hold_iono_blk, [&](const LosId& id, const LocalCarry& h) {
             net::put(los, id, &net::LosState::iono_blk) = h;
         });
@@ -1111,8 +1095,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                    "{} carried level(s) and {} iono carr(ies) currently held.",
                    gross_ev.gl_act_declare.size(), gl_bound ? "HOLD" : "erase",
                    net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb),
-                   net::present(ctx.entities.los, &net::LosState::gl_hold_iono)
-                       + net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk));
+                   net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk));
 }
 
 // ---------------------------------------------------------------------------

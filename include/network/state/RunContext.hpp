@@ -1636,7 +1636,6 @@ namespace GnssProcessor {
         double smh_t_first_s{-1.0};
         // smh_block: moved to net::SatSignalState::smh_block (network/state/Entities.hpp).
         // smh_block_pending: moved to net::SatSignalState::smh_block_pending (network/state/Entities.hpp).
-        // iono_carry: moved to net::LosState::iono (network/state/Entities.hpp).
         // iono_blk_carry: moved to net::LosState::iono_blk (network/state/Entities.hpp).
         // gl_state: moved to net::LosState::gross_los (network/state/Entities.hpp).
         // gl2_sat_down: moved to net::SatelliteState::gl2_down (network/state/Entities.hpp).
@@ -1645,7 +1644,6 @@ namespace GnssProcessor {
         // gl_event_last: moved to net::LosState::gl_event_last (network/state/Entities.hpp).
         // gl_seq: moved to NetworkServiceCounters (decision D6).
         // gl_hold_amb: moved to net::ArcState::gl_hold_amb (network/state/Entities.hpp).
-        // gl_hold_iono: moved to net::LosState::gl_hold_iono (network/state/Entities.hpp).
         // gl_hold_iono_blk: moved to net::LosState::gl_hold_iono_blk (network/state/Entities.hpp).
         // gl_sta_state: moved to net::StationState::gross_los (network/state/Entities.hpp).
         // gl_emit_withhold: moved to EpochEvents::Gross (network/driver/Epoch.hpp).

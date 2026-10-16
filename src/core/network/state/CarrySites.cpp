@@ -80,9 +80,6 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
     {S::ZwdCoupling, "zwd_coupling", "zwd_carry", "station", R::Regression,
      "the wet delay's regression terms on the border", "s_prev moves with its column", "QZ",
      "state_snapshot_coupling_capture (QS dictionary)"},
-    {S::IonoCoupling, "iono_coupling", "iono_carry", "(station, sat)", R::Regression,
-     "the diagonal slant ionosphere carry's regression terms (none are harvested)",
-     "s_prev moves with its column", nullptr, "cold-started (station-local, not snapshotted)"},
     {S::IonoBlockCoupling, "iono_block_coupling", "iono_blk_carry", "(station, sat)",
      R::Regression, "the in-block slant ionosphere's regression terms",
      "s_prev moves with its column", nullptr, "cold-started (station-local, not snapshotted)"},
@@ -92,9 +89,6 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
     {S::HoldAmbiguityCoupling, "hold_ambiguity_coupling", "gl_hold_amb",
      "(station, sat, signal)", R::Regression,
      "the held ambiguity's regression terms (cleared at the declaration)",
-     "s_prev moves with its column", nullptr, "cold-started"},
-    {S::HoldIonoCoupling, "hold_iono_coupling", "gl_hold_iono", "(station, sat)",
-     R::Regression, "the held slant ionosphere's regression terms (cleared at the declaration)",
      "s_prev moves with its column", nullptr, "cold-started"},
     {S::HoldIonoBlockCoupling, "hold_iono_block_coupling", "gl_hold_iono_blk",
      "(station, sat)", R::Regression,
@@ -176,9 +170,9 @@ MechRow ephRelevelRow() {
             | bit(S::AmbiguityCoupling) | bit(S::ZwdCoupling);
     for (S s : {S::CxuPivot, S::CbExcPrevClk, S::PbHoldPrevClock})
         r.exempt[static_cast<int>(s)] = (s == S::CxuPivot) ? kOwed : kOwedClv64;
-    for (S s : {S::IonoCoupling, S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
-                S::HoldIonoCoupling, S::HoldIonoBlockCoupling, S::RxClockCoupling,
-                S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling, S::PhaseColourCoupling})
+    for (S s : {S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoBlockCoupling,
+                S::RxClockCoupling, S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling,
+                S::PhaseColourCoupling})
         r.exempt[static_cast<int>(s)] = kOwedClv64;
     return r;
 }
@@ -188,17 +182,16 @@ MechRow handoverRow(bool before_rows) {
     r.moves = bit(S::PrevCarry);
     if (before_rows)
         r.moves |= bit(S::CxuPivot) | bit(S::AmbiguityCoupling) | bit(S::ZwdCoupling)
-                 | bit(S::IonoCoupling) | bit(S::IonoBlockCoupling)
-                 | bit(S::HoldAmbiguityCoupling) | bit(S::HoldIonoCoupling)
+                 | bit(S::IonoBlockCoupling)
+                 | bit(S::HoldAmbiguityCoupling)
                  | bit(S::HoldIonoBlockCoupling) | bit(S::RxClockCoupling)
                  | bit(S::RxPhaseBiasCoupling) | bit(S::RxCodeBiasCoupling)
                  | bit(S::PhaseColourCoupling);
     else {
         r.exempt[static_cast<int>(S::CxuPivot)] = kStsCxuPivot;
-        for (S s : {S::AmbiguityCoupling, S::ZwdCoupling, S::IonoCoupling,
-                    S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
-                    S::HoldIonoBlockCoupling, S::RxClockCoupling, S::RxPhaseBiasCoupling,
-                    S::RxCodeBiasCoupling, S::PhaseColourCoupling})
+        for (S s : {S::AmbiguityCoupling, S::ZwdCoupling, S::IonoBlockCoupling,
+                    S::HoldAmbiguityCoupling, S::HoldIonoBlockCoupling, S::RxClockCoupling,
+                    S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling, S::PhaseColourCoupling})
             r.exempt[static_cast<int>(s)] = kStsRowsBefore;
     }
     r.exempt[static_cast<int>(S::ClockOsc)]        = kStsOsc;
@@ -213,10 +206,9 @@ MechRow eq34ShiftRow() {
     MechRow r{};
     r.moves = bit(S::PrevCarry) | bit(S::AmbiguityValue) | bit(S::RxPhaseBiasValue)
             | bit(S::AmbiguityCoupling) | bit(S::RxPhaseBiasCoupling) | bit(S::ZwdCoupling);
-    for (S s : {S::PbLevelPrev, S::HoldAmbiguityValue, S::IonoCoupling,
-                S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
-                S::HoldIonoBlockCoupling, S::RxClockCoupling, S::RxCodeBiasCoupling,
-                S::PhaseColourCoupling})
+    for (S s : {S::PbLevelPrev, S::HoldAmbiguityValue, S::IonoBlockCoupling,
+                S::HoldAmbiguityCoupling, S::HoldIonoBlockCoupling, S::RxClockCoupling,
+                S::RxCodeBiasCoupling, S::PhaseColourCoupling})
         r.exempt[static_cast<int>(s)] = kOwed;
     r.exempt[static_cast<int>(S::PbHold)]    = kPbHoldEmit;
     r.exempt[static_cast<int>(S::PinBridge)] = kD4BridgeRoot;
@@ -227,10 +219,9 @@ MechRow declaredHandoverRow() {
     MechRow r{};
     r.moves = bit(S::PrevCarry) | bit(S::AmbiguityValue) | bit(S::AmbiguityCoupling);
     for (S s : {S::PbLevelPrev, S::PinBridge, S::HoldAmbiguityValue,
-                S::ZwdCoupling, S::IonoCoupling, S::IonoBlockCoupling,
-                S::HoldAmbiguityCoupling, S::HoldIonoCoupling, S::HoldIonoBlockCoupling,
-                S::RxClockCoupling, S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling,
-                S::PhaseColourCoupling})
+                S::ZwdCoupling, S::IonoBlockCoupling, S::HoldAmbiguityCoupling,
+                S::HoldIonoBlockCoupling, S::RxClockCoupling, S::RxPhaseBiasCoupling,
+                S::RxCodeBiasCoupling, S::PhaseColourCoupling})
         r.exempt[static_cast<int>(s)] = kOwed;
     r.exempt[static_cast<int>(S::PbHold)] = kPbHoldEmit;
     return r;
@@ -400,9 +391,6 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
         net::forEach(entities.stations, &ES::zwd, [&](const StationId& id, LocalCarry& lc) {
             terms(S::ZwdCoupling, id.index, lc);
         });
-    if (on(S::IonoCoupling))
-        net::forEach(entities.los, &EL::iono,
-                     [&](const LosId& id, LocalCarry& lc) { terms(S::IonoCoupling, id.station.index, lc); });
     if (on(S::IonoBlockCoupling))
         net::forEach(entities.los, &EL::iono_blk, [&](const LosId& id, LocalCarry& lc) {
             terms(S::IonoBlockCoupling, id.station.index, lc);
@@ -416,10 +404,6 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
     if (on(S::HoldAmbiguityCoupling))
         net::forEach(entities.arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, LocalCarry& lc) {
             terms(S::HoldAmbiguityCoupling, id.station.index, lc);
-        });
-    if (on(S::HoldIonoCoupling))
-        net::forEach(entities.los, &EL::gl_hold_iono, [&](const LosId& id, LocalCarry& lc) {
-            terms(S::HoldIonoCoupling, id.station.index, lc);
         });
     if (on(S::HoldIonoBlockCoupling))
         net::forEach(entities.los, &EL::gl_hold_iono_blk, [&](const LosId& id, LocalCarry& lc) {
