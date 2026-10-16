@@ -108,8 +108,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   integers, every one correct (the entry-by-entry search fixes none). The pairs left float are limited by arc age;
   a Melbourne-Wubbena wide lane is no better than the float's own. Rung 3: troposphere neutral, phase colour cuts the
   pairs fixed from 42 % to 19 %, one big slip handled, no wrong fix; the star basis covers a fifth of the integers.
-- [NOM3](NOM3_network_giants_2026-10-09.md): open, 2026-10-09: pre-registered. The four giant network functions (the per-epoch
-- [NOM4](NOM4_network_object_model_finish_2026-10-15.md): open, 2026-10-15: the continuation of NOM3 (file at the 60 KB bar): PB1b, EP3, EP4 landed (wave 2, identical on 23 + 22 arms); HV1, N3b, TD2, N4, N5 to come.
+- [NOM3](NOM3_network_giants_2026-10-09.md): closed 2026-10-15 (every step landed; results continue in NOM4). Pre-registered 2026-10-09. The four giant network functions (the per-epoch
+- [NOM4](NOM4_network_object_model_finish_2026-10-15.md): closed 2026-10-15: NOM3's remaining steps and card NOM steps N3b, N4 and N5 landed, identical on every gate arm; cost field +0.7 %, sim +3.3 % (bar missed, owed); remainder in OPEN_ITEMS.
   driver, PASS B, the solve, the carry harvest) cut by the run-end method; card WCF first (the within-epoch culprit
   withhold, unreachable since 2026-07-24).
   (57 contribution kinds, a tag on every row and fold; every reader on the tags; RAIM pool admission declared; solve
