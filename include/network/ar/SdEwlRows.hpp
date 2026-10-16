@@ -16,6 +16,7 @@
 #include "network/state/Entities.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/GnssTypes.hpp"
+#include "slip/MwSlipDetector.hpp"   // MwSlipDetector::MwArcZdMean
 
 #include <Eigen/Core>
 
@@ -87,6 +88,23 @@ struct SdEwlArc {
 struct SdEwlRow { const SdEwlArc* s; double z; double var; };
 
 /**
+ * @brief The state of one satellite's phase-pair search: the winning pair and its arc, the
+ *        near-miss bookkeeping that attributes a skip to a cause, and the published integer.
+ *
+ * One per satellite, declared by @ref sdEwlResolveSat, filled by @ref sdEwlElectPair and read
+ * by the stages after it. The members are the search's former locals, unchanged.
+ */
+struct SdEwlPairSearch {
+    MwSlipDetector::MwArcZdMean zd;                 ///< the winner
+    std::string sig1, sig2;                         ///< the winning pair's phase signals (empty: none)
+    int col1 = -1, col2 = -1, sidx1 = -1, sidx2 = -1;   ///< their local columns and state indices
+    std::size_t n_cand = 0, best_n = 0;             ///< pairs searched; sample count of the best near-miss
+    bool any_exists = false, any_recon_fail = false;   ///< a pair existed; one could not be framed
+    std::string near_s1, near_s2;                   ///< the best near-miss pair
+    const SdEwlFix* my_fix = nullptr;               ///< the published integer, if usable
+};
+
+/**
  * @brief Handles on one station-epoch of the SD-EWL row builder that every stage reads.
  *
  * References and copies only; owns nothing. The members are the parameters of
@@ -132,15 +150,82 @@ void sdEwlFillCandidates(const SdEwlRowView& v, SdEwlCandidates& cand);
 
 /**
  * @brief Resolves every eligible satellite of the station into an arc, grouped by
- *        constellation: elects the phase pair, checks the wavelength and code channels,
- *        attaches the published integer, and linearizes against the station's x_lin. Each
- *        skip is counted and traced with its cause.
+ *        constellation: one call of @ref sdEwlResolveSat per observation, in order.
  */
 void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
                       const std::map<std::pair<std::string, std::string>, int>& pb_state,
                       const std::map<std::pair<std::string, std::string>, int>& cb_state,
                       const SdEwlCandidates& cand,
                       std::map<char, std::vector<SdEwlArc>>& by_const);
+
+/**
+ * @brief Resolves one satellite into an arc and appends it to its constellation's list.
+ *        Screens the satellite (band pair, ambiguity candidates), then runs the three
+ *        stages in order; every skip is counted and traced with its cause and ends the
+ *        satellite.
+ * @param v          Station-epoch handles.
+ * @param x_lin      The station's linearization point.
+ * @param pb_state   Phase-bias state indices by (satellite, signal).
+ * @param cb_state   Code-bias state indices by (satellite, signal).
+ * @param cand       Ambiguity candidates by (satellite, band).
+ * @param o          The satellite's observation.
+ * @param by_const   Resolved arcs by constellation letter (appended to).
+ */
+void sdEwlResolveSat(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
+                     const std::map<std::pair<std::string, std::string>, int>& pb_state,
+                     const std::map<std::pair<std::string, std::string>, int>& cb_state,
+                     const SdEwlCandidates& cand, const PppObservation& o,
+                     std::map<char, std::vector<SdEwlArc>>& by_const);
+
+/**
+ * @brief Looks up the published integer and elects the satellite's phase pair: the first
+ *        candidate pair, in ascending signal order, whose MW arc is mature. Without a
+ *        winner the skip is attributed to its cause (no arc, frame reconstruction, young).
+ * @param v      Station-epoch handles.
+ * @param o      The satellite's observation.
+ * @param cons   The satellite's constellation letter.
+ * @param c1it   Candidates of the lower band.
+ * @param c2it   Candidates of the upper band.
+ * @param ps     The pair-search state (filled).
+ * @return false when no pair was elected (the skip is already counted and traced).
+ */
+bool sdEwlElectPair(const SdEwlRowView& v, const PppObservation& o, char cons,
+                    SdEwlCandidates::const_iterator c1it,
+                    SdEwlCandidates::const_iterator c2it, SdEwlPairSearch& ps);
+
+/**
+ * @brief Checks the elected pair: the detector's wavelength against the tier's nominal one,
+ *        and that the arc carries the code channels the bias columns are keyed on.
+ * @param v    Station-epoch handles.
+ * @param o    The satellite's observation.
+ * @param f1   Lower band frequency, Hz.
+ * @param f2   Upper band frequency, Hz.
+ * @param ps   The pair-search state.
+ * @return false when a check failed (the skip is already counted and traced).
+ */
+bool sdEwlCheckPair(const SdEwlRowView& v, const PppObservation& o, double f1, double f2,
+                    const SdEwlPairSearch& ps);
+
+/**
+ * @brief Builds the arc of the elected pair: statistics and floors, the attached integer,
+ *        the four shared bias columns, and the arc's half of the linearization. A missing
+ *        shared column skips the satellite; otherwise the arc is appended to @p by_const.
+ * @param v          Station-epoch handles.
+ * @param x_lin      The station's linearization point.
+ * @param pb_state   Phase-bias state indices by (satellite, signal).
+ * @param cb_state   Code-bias state indices by (satellite, signal).
+ * @param o          The satellite's observation.
+ * @param cons       The satellite's constellation letter.
+ * @param f1         Lower band frequency, Hz.
+ * @param f2         Upper band frequency, Hz.
+ * @param ps         The pair-search state.
+ * @param by_const   Resolved arcs by constellation letter (appended to).
+ */
+void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
+                   const std::map<std::pair<std::string, std::string>, int>& pb_state,
+                   const std::map<std::pair<std::string, std::string>, int>& cb_state,
+                   const PppObservation& o, char cons, double f1, double f2,
+                   const SdEwlPairSearch& ps, std::map<char, std::vector<SdEwlArc>>& by_const);
 
 /**
  * @brief Builds one whitened group of rows against the group's pivot arc: gates each

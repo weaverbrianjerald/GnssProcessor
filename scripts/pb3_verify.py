@@ -26,6 +26,10 @@ Reads the frozen functions at BASE (git) and the working tree, and checks (exit 
                 of the composed text (counts printed).
   V6 view       the view-init statement names the view's members in declared order.
   V7 prose      the new headers carry no em dash and no card citation.
+  V8 chain      sdEwlResolveArcs was later cut into a per-satellite function and three stages
+                (scripts/sdewl_verify.py proves that cut against PER_SAT_BASE). The stage file is read
+                with that cut undone (the pre-cut definition spliced back), so V1 to V7 above still
+                see the cut of this step, and sdewl_verify must pass as well.
 
 --controls applies mutations to the candidate in memory; each must fail its named check.
 """
@@ -42,6 +46,9 @@ ROOT = HERE.parent
 BASE = "deef142"
 ASM = "src/core/network/driver/ApplicationNetworkAssembly.cpp"
 SDE = "src/core/network/ar/SdEwlAr.cpp"
+SDE_ROWS = "src/core/network/ar/SdEwlRows.cpp"
+PER_SAT_BASE = "1549ed3"   # the revision whose sdEwlResolveArcs scripts/sdewl_verify.py cuts
+PER_SAT_FNS = ("sdEwlResolveArcs", "sdEwlResolveSat", "sdEwlElectPair", "sdEwlCheckPair", "sdEwlBuildArc")
 
 CASES = [
     dict(name="slip", frozen=ASM, orch=ASM, fn=("Application", "networkPassASlipScan_"),
@@ -68,6 +75,20 @@ MUTATORS = {"push_back", "emplace_back", "emplace", "insert", "erase", "clear", 
 EVENT_HEADS = ({"log": "->"}, {"traces": "."}, {"trace": "<<"})
 
 
+def unfold_per_sat(text):
+    """The stage file with the per-satellite cut undone: the five contiguous definitions are replaced
+    by the pre-cut sdEwlResolveArcs of PER_SAT_BASE."""
+    T = nc.Tokens(text, SDE_ROWS)
+    idx = nc.FileIndex(T)
+    fs = [idx.find(n, None, True)[0] for n in PER_SAT_FNS]
+    for f, g in zip(fs, fs[1:]):
+        gap = text[T[f.body[1]].end:T[g.start].pos]
+        assert f.body[1] < g.start and not gap.strip(), f"{f.name} and {g.name} are not adjacent"
+    BT = nc.GitTree(PER_SAT_BASE).tokens(SDE_ROWS)
+    bf = nc.FileIndex(BT).find(PER_SAT_FNS[0], None, True)[0]
+    return text[:T[fs[0].start].pos] + BT.src(bf.start, bf.body[1] + 1) + text[T[fs[-1].body[1]].end:]
+
+
 class Tree:
     def __init__(self, over=None):
         self.over, self.cache = over or {}, {}
@@ -78,6 +99,8 @@ class Tree:
         if rel not in self.cache:
             p = ROOT / rel
             self.cache[rel] = p.read_bytes().decode("utf-8").replace("\r\n", "\n") if p.exists() else None
+            if rel == SDE_ROWS and self.cache[rel] and "sdEwlResolveSat" in self.cache[rel]:
+                self.cache[rel] = unfold_per_sat(self.cache[rel])
         return self.cache[rel]
 
 
@@ -633,6 +656,13 @@ def main(argv=None):
         for chk, msg in ck.fails:
             print(f"  FAIL {chk} [{case['name']}]: {msg}")
         ok = ok and not ck.fails
+    import sdewl_verify   # V8: the per-satellite cut of sdEwlResolveArcs
+    sv = sdewl_verify.run_case(sdewl_verify.Tree())
+    for n in sv.notes:
+        print("  ok  ", "V8 chain:", n)
+    for chk, msg in sv.fails:
+        print(f"  FAIL V8 [sdewl per-satellite cut] {chk}: {msg}")
+    ok = ok and not sv.fails
     if a.controls:
         print("negative controls (each must fail its named check):")
         ok = controls(a.verbose) and ok

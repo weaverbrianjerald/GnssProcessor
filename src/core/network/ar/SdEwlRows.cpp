@@ -4,6 +4,11 @@
  *
  * The bodies were cut verbatim from `networkAppendSdEwlRows`; only the bindings at the
  * head of each stage and the calls between stages are new.
+ *
+ * `sdEwlResolveArcs` calls `sdEwlResolveSat` once per satellite, which screens the satellite
+ * and runs `sdEwlElectPair`, `sdEwlCheckPair` and `sdEwlBuildArc` in order. A skip that was
+ * a `continue` of the satellite loop is a `return` there (`return false` in a stage that the
+ * satellite function stops on).
  */
 
 #include "network/ar/SdEwlRows.hpp"
@@ -78,14 +83,22 @@ void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
                       const std::map<std::pair<std::string, std::string>, int>& cb_state,
                       const SdEwlCandidates& cand,
                       std::map<char, std::vector<SdEwlArc>>& by_const) {
-    NetStation& st = v.st;
-    const NetworkEstimator& est = v.est;
     const std::vector<PppObservation>& sta_obs = v.sta_obs;
-    const net::StationTable* fix = v.fix;
-    std::size_t station_index = v.station_index;
-    const auto& cfg = v.cfg;
+
+    // --- Resolve every eligible arc, grouped by constellation (sorted: deterministic) --
+    // One satellite at a time. A satellite that cannot form an arc is counted and traced
+    // inside sdEwlResolveSat and does not stop the others.
+    for (const auto& o : sta_obs) {
+        sdEwlResolveSat(v, x_lin, pb_state, cb_state, cand, o, by_const);
+    }
+}
+
+void sdEwlResolveSat(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
+                     const std::map<std::pair<std::string, std::string>, int>& pb_state,
+                     const std::map<std::pair<std::string, std::string>, int>& cb_state,
+                     const SdEwlCandidates& cand, const PppObservation& o,
+                     std::map<char, std::vector<SdEwlArc>>& by_const) {
     auto& ctr = v.ctr;
-    const bool fix_on = v.fix_on;
     const auto& tr = v.tr;
 
     // --- Extra-wide-lane band pair per constellation -----------------------------------
@@ -97,6 +110,174 @@ void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
         return sdEwlBands(cons, b1, b2, f1, f2);
     };
 
+    if (o.satellite.empty()) return;
+    const char cons = letterOfSat(o.satellite);
+    char b1 = 0, b2 = 0;
+    double fb1 = 0.0, fb2 = 0.0;
+    if (!bandsFor(cons, b1, b2, fb1, fb2)) return;
+    ++ctr.sat_seen;
+
+    const auto c1it = cand.find({ o.satellite, b1 });
+    const auto c2it = cand.find({ o.satellite, b2 });
+    if (c1it == cand.end() || c2it == cand.end()) {
+        ++ctr.skip_missing_amb_col;
+        tr("NO_AMB_COL", o.satellite, {}, {}, {}, {}, {}, 0, 0, false,
+           0.0, 0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
+    SdEwlPairSearch ps;
+    if (!sdEwlElectPair(v, o, cons, c1it, c2it, ps)) return;
+
+    const double f1 = fb1, f2 = fb2;
+    if (!sdEwlCheckPair(v, o, f1, f2, ps)) return;
+
+    sdEwlBuildArc(v, x_lin, pb_state, cb_state, o, cons, f1, f2, ps, by_const);
+}
+
+bool sdEwlElectPair(const SdEwlRowView& v, const PppObservation& o, char cons,
+                    SdEwlCandidates::const_iterator c1it,
+                    SdEwlCandidates::const_iterator c2it, SdEwlPairSearch& ps) {
+    NetStation& st = v.st;
+    const net::StationTable* fix = v.fix;
+    std::size_t station_index = v.station_index;
+    const auto& cfg = v.cfg;
+    auto& ctr = v.ctr;
+    const bool fix_on = v.fix_on;
+    const auto& tr = v.tr;
+    MwSlipDetector::MwArcZdMean& zd = ps.zd;
+    std::string& sig1 = ps.sig1;
+    std::string& sig2 = ps.sig2;
+    int& col1 = ps.col1;
+    int& col2 = ps.col2;
+    int& sidx1 = ps.sidx1;
+    int& sidx2 = ps.sidx2;
+    std::size_t& n_cand = ps.n_cand;
+    std::size_t& best_n = ps.best_n;
+    bool& any_exists = ps.any_exists;
+    bool& any_recon_fail = ps.any_recon_fail;
+    std::string& near_s1 = ps.near_s1;
+    std::string& near_s2 = ps.near_s2;
+    const SdEwlFix*& my_fix = ps.my_fix;
+
+    // The published integer, if any, for this (station, satellite) (increment 2b).
+    // It is looked up but does not influence the channel search below.  Trying the
+    // decision's pair first would let the integer path change which pair the float
+    // path elects, and so change the solve even when no integer is folded (an
+    // `inert` A/B arm, fix armed with the FFR gate unreachable, would then differ
+    // from the float arm).  The row elects its pair exactly as increment 1 does, and
+    // the fix is used only if it was decided on that pair; otherwise
+    // `fix_pair_mismatch` counts it (measured at 0, because 2a searches the same
+    // candidates in the same ascending order).
+    if (fix_on) {
+        const auto* sta_fix = net::get(*fix, StationId{static_cast<int>(station_index)},
+                                       &net::StationState::sd_ewl_fix);
+        const auto git = sta_fix ? sta_fix->find(cons) : net::SdEwlFixes::const_iterator{};
+        if (sta_fix && git != sta_fix->end()) {
+            const auto sit = git->second.find(o.satellite);
+            if (sit != git->second.end() && sit->second.usable)
+                my_fix = &sit->second;
+        }
+    }
+
+// The MW arc key carries the two phase signal names, and the channel the detector
+// holds an arc on is the detector's choice (collectUncombinedPairs' KF-chosen /
+// attribute-priority pick), not this function's.  The candidate pairs are therefore
+// searched in ascending order and the first with a usable arc is taken, instead of
+// electing one channel and declaring the arc missing when the detector picked the
+// other.  A one-channel band (the common case) has one candidate, so the search
+// reduces to a direct lookup.
+    for (const auto& [s1, k1, i1] : c1it->second) {
+        for (const auto& [s2, k2, i2] : c2it->second) {
+            ++n_cand;
+            if (!sig1.empty()) continue;            // already decided; just count
+            const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
+            if (!q.exists) continue;                // this pair was never formed
+            any_exists = true;
+            // arcZdMean reports !valid for two different reasons: fewer than two
+            // lagged samples, and an SD arc whose group MW pivot arc is missing.
+            // Only the latter is a frame-reconstruction failure; conflating them
+            // would report a warm-up epoch as a datum defect.
+            if (!q.valid && q.count >= 2) any_recon_fail = true;
+            if (q.count > best_n) { best_n = q.count; near_s1 = s1; near_s2 = s2; }
+            if (q.valid && q.count >= static_cast<std::size_t>(cfg.min_arc_epochs)) {
+                zd = q; sig1 = s1; sig2 = s2;
+                col1 = k1; col2 = k2; sidx1 = i1; sidx2 = i2;
+            }
+        }
+    }
+    if (sig1.empty()) {
+        // Ordered from most to least specific: a pair that exists but cannot be
+        // framed is a different defect from one that is merely young, and both
+        // differ from a pair the detector never built.
+        const char* why = !any_exists      ? "NO_ARC"
+                        : any_recon_fail   ? "FRAME_RECON"
+                                           : "IMMATURE";
+        if (!any_exists)          ++ctr.skip_no_arc;
+        else if (any_recon_fail)  ++ctr.skip_frame_recon;
+        else                      ++ctr.skip_immature;
+        tr(why, o.satellite, {}, near_s1, near_s2, {}, {}, n_cand, best_n,
+           false, 0.0, 0.0, 0.0, 0.0, 0.0);
+        return false;
+    }
+    return true;
+}
+
+bool sdEwlCheckPair(const SdEwlRowView& v, const PppObservation& o, double f1, double f2,
+                    const SdEwlPairSearch& ps) {
+    auto& ctr = v.ctr;
+    const auto& tr = v.tr;
+    const MwSlipDetector::MwArcZdMean& zd = ps.zd;
+    const std::string& sig1 = ps.sig1;
+    const std::string& sig2 = ps.sig2;
+    const std::size_t& n_cand = ps.n_cand;
+
+    // λ cross-check: the detector's own λ_WL comes from the actual signal
+    // frequencies, so a disagreement with the tier's nominal c/(f1−f2) means the
+    // elected pair is not the tier this row's coefficients assume (a mis-tiered
+    // row would fold a wrong-wavelength constraint without any error).
+    const double lam_nom = Constants::SPEED_OF_LIGHT / (f1 - f2);
+    if (!(f1 > 0.0) || !(f2 > 0.0) || std::abs(f1 - f2) < 1.0
+        || !(zd.lambda_wl > 0.0) || !std::isfinite(zd.lambda_wl)
+        || std::abs(zd.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom)) {
+        ++ctr.skip_bad_lambda;
+        tr("BAD_LAMBDA", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+           zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+        return false;
+    }
+    // The satellite code-bias columns must be the ones the MW observable actually
+    // carries.  The arc reports its own code channels (matchChannel's same-attribute
+    // pick, with an in-band fallback), so nothing is guessed: without them the OSB
+    // attribution would be an assumption, and a wrong OSB column is undetectable
+    // downstream.
+    if (zd.code1.empty() || zd.code2.empty()) {
+        ++ctr.skip_missing_code;
+        tr("NO_CODE", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
+           zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
+        return false;
+    }
+    return true;
+}
+
+void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
+                   const std::map<std::pair<std::string, std::string>, int>& pb_state,
+                   const std::map<std::pair<std::string, std::string>, int>& cb_state,
+                   const PppObservation& o, char cons, double f1, double f2,
+                   const SdEwlPairSearch& ps, std::map<char, std::vector<SdEwlArc>>& by_const) {
+    const NetworkEstimator& est = v.est;
+    const auto& cfg = v.cfg;
+    auto& ctr = v.ctr;
+    const auto& tr = v.tr;
+    const MwSlipDetector::MwArcZdMean& zd = ps.zd;
+    const std::string& sig1 = ps.sig1;
+    const std::string& sig2 = ps.sig2;
+    const int& col1 = ps.col1;
+    const int& col2 = ps.col2;
+    const int& sidx1 = ps.sidx1;
+    const int& sidx2 = ps.sidx2;
+    const std::size_t& n_cand = ps.n_cand;
+    const SdEwlFix* my_fix = ps.my_fix;
+
     const auto xAt = [&x_lin](int idx) -> double {
         return (idx >= 0 && idx < static_cast<int>(x_lin.size())) ? x_lin(idx) : 0.0;
     };
@@ -107,196 +288,84 @@ void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
         return it == m.end() ? -1 : it->second;
     };
 
-    // --- Resolve every eligible arc, grouped by constellation (sorted: deterministic) --
-    // The MW arc key carries the two phase signal names, and the channel the detector
-    // holds an arc on is the detector's choice (collectUncombinedPairs' KF-chosen /
-    // attribute-priority pick), not this function's.  The candidate pairs are therefore
-    // searched in ascending order and the first with a usable arc is taken, instead of
-    // electing one channel and declaring the arc missing when the detector picked the
-    // other.  A one-channel band (the common case) has one candidate, so the search
-    // reduces to a direct lookup.
-    for (const auto& o : sta_obs) {
-        if (o.satellite.empty()) continue;
-        const char cons = letterOfSat(o.satellite);
-        char b1 = 0, b2 = 0;
-        double fb1 = 0.0, fb2 = 0.0;
-        if (!bandsFor(cons, b1, b2, fb1, fb2)) continue;
-        ++ctr.sat_seen;
-
-        const auto c1it = cand.find({ o.satellite, b1 });
-        const auto c2it = cand.find({ o.satellite, b2 });
-        if (c1it == cand.end() || c2it == cand.end()) {
-            ++ctr.skip_missing_amb_col;
-            tr("NO_AMB_COL", o.satellite, {}, {}, {}, {}, {}, 0, 0, false,
-               0.0, 0.0, 0.0, 0.0, 0.0);
-            continue;
+    SdEwlArc a;
+    a.sat = o.satellite;
+    a.mean_m = zd.mean_m;
+    // Attach the published integer only if the search settled on the pair the
+    // integer was decided on (increment 2b).  A mismatch is not an error (the
+    // decision runs before assembly and does not know which pairs will have local
+    // columns this epoch), but folding across it would put one bias frame's integer
+    // into another frame's row, so it is counted and the arc stays float.
+    if (my_fix) {
+        if (sig1 == my_fix->sig1 && sig2 == my_fix->sig2) {
+            a.has_fix = true;
+            a.n_fix_cyc = my_fix->n_cyc;
+            a.fix_measured = my_fix->measured;
+        } else {
+            ++ctr.fix_pair_mismatch;
         }
-        // The first candidate pair with a mature arc wins.  The best near-miss is
-        // remembered so that a skip is attributed to a cause (never formed / young /
-        // unreconstructable) rather than to one combined tally.
-        MwSlipDetector::MwArcZdMean zd;                 // the winner
-        std::string sig1, sig2;
-        int col1 = -1, col2 = -1, sidx1 = -1, sidx2 = -1;
-        std::size_t n_cand = 0, best_n = 0;
-        bool any_exists = false, any_recon_fail = false;
-        std::string near_s1, near_s2;
-        // The published integer, if any, for this (station, satellite) (increment 2b).
-        // It is looked up but does not influence the channel search below.  Trying the
-        // decision's pair first would let the integer path change which pair the float
-        // path elects, and so change the solve even when no integer is folded (an
-        // `inert` A/B arm, fix armed with the FFR gate unreachable, would then differ
-        // from the float arm).  The row elects its pair exactly as increment 1 does, and
-        // the fix is used only if it was decided on that pair; otherwise
-        // `fix_pair_mismatch` counts it (measured at 0, because 2a searches the same
-        // candidates in the same ascending order).
-        const SdEwlFix* my_fix = nullptr;
-        if (fix_on) {
-            const auto* sta_fix = net::get(*fix, StationId{static_cast<int>(station_index)},
-                                           &net::StationState::sd_ewl_fix);
-            const auto git = sta_fix ? sta_fix->find(cons) : net::SdEwlFixes::const_iterator{};
-            if (sta_fix && git != sta_fix->end()) {
-                const auto sit = git->second.find(o.satellite);
-                if (sit != git->second.end() && sit->second.usable)
-                    my_fix = &sit->second;
-            }
-        }
-        for (const auto& [s1, k1, i1] : c1it->second) {
-            for (const auto& [s2, k2, i2] : c2it->second) {
-                ++n_cand;
-                if (!sig1.empty()) continue;            // already decided; just count
-                const auto q = st.mw_slip->arcZdMean(o.satellite, s1, s2);
-                if (!q.exists) continue;                // this pair was never formed
-                any_exists = true;
-                // arcZdMean reports !valid for two different reasons: fewer than two
-                // lagged samples, and an SD arc whose group MW pivot arc is missing.
-                // Only the latter is a frame-reconstruction failure; conflating them
-                // would report a warm-up epoch as a datum defect.
-                if (!q.valid && q.count >= 2) any_recon_fail = true;
-                if (q.count > best_n) { best_n = q.count; near_s1 = s1; near_s2 = s2; }
-                if (q.valid && q.count >= static_cast<std::size_t>(cfg.min_arc_epochs)) {
-                    zd = q; sig1 = s1; sig2 = s2;
-                    col1 = k1; col2 = k2; sidx1 = i1; sidx2 = i2;
-                }
-            }
-        }
-        if (sig1.empty()) {
-            // Ordered from most to least specific: a pair that exists but cannot be
-            // framed is a different defect from one that is merely young, and both
-            // differ from a pair the detector never built.
-            const char* why = !any_exists      ? "NO_ARC"
-                            : any_recon_fail   ? "FRAME_RECON"
-                                               : "IMMATURE";
-            if (!any_exists)          ++ctr.skip_no_arc;
-            else if (any_recon_fail)  ++ctr.skip_frame_recon;
-            else                      ++ctr.skip_immature;
-            tr(why, o.satellite, {}, near_s1, near_s2, {}, {}, n_cand, best_n,
-               false, 0.0, 0.0, 0.0, 0.0, 0.0);
-            continue;
-        }
-        const double f1 = fb1, f2 = fb2;
-        // λ cross-check: the detector's own λ_WL comes from the actual signal
-        // frequencies, so a disagreement with the tier's nominal c/(f1−f2) means the
-        // elected pair is not the tier this row's coefficients assume (a mis-tiered
-        // row would fold a wrong-wavelength constraint without any error).
-        const double lam_nom = Constants::SPEED_OF_LIGHT / (f1 - f2);
-        if (!(f1 > 0.0) || !(f2 > 0.0) || std::abs(f1 - f2) < 1.0
-            || !(zd.lambda_wl > 0.0) || !std::isfinite(zd.lambda_wl)
-            || std::abs(zd.lambda_wl - lam_nom) > 1e-6 * std::abs(lam_nom)) {
-            ++ctr.skip_bad_lambda;
-            tr("BAD_LAMBDA", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
-               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
-            continue;
-        }
-        // The satellite code-bias columns must be the ones the MW observable actually
-        // carries.  The arc reports its own code channels (matchChannel's same-attribute
-        // pick, with an in-band fallback), so nothing is guessed: without them the OSB
-        // attribution would be an assumption, and a wrong OSB column is undetectable
-        // downstream.
-        if (zd.code1.empty() || zd.code2.empty()) {
-            ++ctr.skip_missing_code;
-            tr("NO_CODE", o.satellite, {}, sig1, sig2, zd.code1, zd.code2, n_cand,
-               zd.count, zd.bia_corrected, zd.lambda_wl, zd.mean_m, 0.0, 0.0, 0.0);
-            continue;
-        }
-        SdEwlArc a;
-        a.sat = o.satellite;
-        a.mean_m = zd.mean_m;
-        // Attach the published integer only if the search settled on the pair the
-        // integer was decided on (increment 2b).  A mismatch is not an error (the
-        // decision runs before assembly and does not know which pairs will have local
-        // columns this epoch), but folding across it would put one bias frame's integer
-        // into another frame's row, so it is counted and the arc stays float.
-        if (my_fix) {
-            if (sig1 == my_fix->sig1 && sig2 == my_fix->sig2) {
-                a.has_fix = true;
-                a.n_fix_cyc = my_fix->n_cyc;
-                a.fix_measured = my_fix->measured;
-            } else {
-                ++ctr.fix_pair_mismatch;
-            }
-        }
-        // arcZdMean returns a variance of the mean (~1/n); it is floored so a long quiet
-        // arc cannot dominate the shared border with an unphysically tight row.  A fixed
-        // row takes the per-sample floor instead (amendment A1): the accumulator is
-        // arc-cumulative, so consecutive-epoch rows share n−1 of n samples, and refolding
-        // a variance of the mean as white every epoch over-claims information as sqrt(k),
-        // increasingly so as the fixed-row residuals fall to code-noise scale.  Folding
-        // the current mean at per-sample weight adds about one sample of information per
-        // epoch, which asymptotically matches the information the data carry.
-        a.var_m2 = a.has_fix
-                       ? std::max(zd.var_of_mean_m2,
-                                  cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m)
-                       : std::max(zd.var_of_mean_m2,
-                                  cfg.sigma_floor_m * cfg.sigma_floor_m);
-        a.count = zd.count;
-        a.bia = zd.bia_corrected;
-        a.lam_ewl = zd.lambda_wl;
-        a.lam_b1 = Constants::SPEED_OF_LIGHT / f1;
-        a.lam_b2 = Constants::SPEED_OF_LIGHT / f2;
-        a.f1 = f1;
-        a.f2 = f2;
-        a.amb_col_b1 = col1;
-        a.amb_col_b2 = col2;
-        // Non-throwing shared lookups: phaseBiasColumn / codeBiasColumn use `index_.at()`
-        // and throw when the key is unregistered.  A bare call here would escape into the
-        // parallel produce loop's catch and drop the whole station's block (including its
-        // valid phase rows) because of one absent bias column.
-        const auto pbCol = [&est, &o](const std::string& sig) -> Eigen::Index {
-            try { return est.phaseBiasColumn(o.satellite, sig); }
-            catch (...) { return -1; }
-        };
-        const auto cbCol = [&est, &o](const std::string& code) -> Eigen::Index {
-            try { return est.codeBiasColumn(o.satellite, code); }
-            catch (...) { return -1; }
-        };
-        a.pb_b1 = pbCol(sig1);
-        a.pb_b2 = pbCol(sig2);
-        a.cb_b1 = cbCol(zd.code1);
-        a.cb_b2 = cbCol(zd.code2);
-        if (a.pb_b1 < 0 || a.pb_b2 < 0 || a.cb_b1 < 0 || a.cb_b2 < 0) {
-            ++ctr.skip_missing_shared_col;
-            tr("NO_SHARED_COL", o.satellite, {}, sig1, sig2, zd.code1, zd.code2,
-               n_cand, zd.count, a.bia, a.lam_ewl, a.mean_m, 0.0, 0.0, 0.0);
-            continue;
-        }
-        // This arc's half of H·x_lin, with exactly the coefficients the row folds in
-        // emitGroup below (the two must stay in step, or design and frame drift apart).
-        // Split into its ambiguity and bias halves so the fixed row, whose design drops
-        // the ambiguity columns, can drop the matching linearization terms at one site.
-        a.pred_amb_m = (a.lam_ewl / a.lam_b1) * xAt(sidx1)
-                     - (a.lam_ewl / a.lam_b2) * xAt(sidx2);
-        a.pred_bias_m = (f1 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig1))
-                      - (f2 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig2))
-                      - (f1 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code1))
-                      - (f2 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code2));
-        a.pred_m = a.pred_amb_m + a.pred_bias_m;
-        a.sig1 = sig1;
-        a.sig2 = sig2;
-        a.code1 = zd.code1;
-        a.code2 = zd.code2;
-        a.n_cand = n_cand;
-        by_const[cons].push_back(std::move(a));
     }
+    // arcZdMean returns a variance of the mean (~1/n); it is floored so a long quiet
+    // arc cannot dominate the shared border with an unphysically tight row.  A fixed
+    // row takes the per-sample floor instead (amendment A1): the accumulator is
+    // arc-cumulative, so consecutive-epoch rows share n−1 of n samples, and refolding
+    // a variance of the mean as white every epoch over-claims information as sqrt(k),
+    // increasingly so as the fixed-row residuals fall to code-noise scale.  Folding
+    // the current mean at per-sample weight adds about one sample of information per
+    // epoch, which asymptotically matches the information the data carry.
+    a.var_m2 = a.has_fix
+                   ? std::max(zd.var_of_mean_m2,
+                              cfg.fix_sigma_floor_m * cfg.fix_sigma_floor_m)
+                   : std::max(zd.var_of_mean_m2,
+                              cfg.sigma_floor_m * cfg.sigma_floor_m);
+    a.count = zd.count;
+    a.bia = zd.bia_corrected;
+    a.lam_ewl = zd.lambda_wl;
+    a.lam_b1 = Constants::SPEED_OF_LIGHT / f1;
+    a.lam_b2 = Constants::SPEED_OF_LIGHT / f2;
+    a.f1 = f1;
+    a.f2 = f2;
+    a.amb_col_b1 = col1;
+    a.amb_col_b2 = col2;
+    // Non-throwing shared lookups: phaseBiasColumn / codeBiasColumn use `index_.at()`
+    // and throw when the key is unregistered.  A bare call here would escape into the
+    // parallel produce loop's catch and drop the whole station's block (including its
+    // valid phase rows) because of one absent bias column.
+    const auto pbCol = [&est, &o](const std::string& sig) -> Eigen::Index {
+        try { return est.phaseBiasColumn(o.satellite, sig); }
+        catch (...) { return -1; }
+    };
+    const auto cbCol = [&est, &o](const std::string& code) -> Eigen::Index {
+        try { return est.codeBiasColumn(o.satellite, code); }
+        catch (...) { return -1; }
+    };
+    a.pb_b1 = pbCol(sig1);
+    a.pb_b2 = pbCol(sig2);
+    a.cb_b1 = cbCol(zd.code1);
+    a.cb_b2 = cbCol(zd.code2);
+    if (a.pb_b1 < 0 || a.pb_b2 < 0 || a.cb_b1 < 0 || a.cb_b2 < 0) {
+        ++ctr.skip_missing_shared_col;
+        tr("NO_SHARED_COL", o.satellite, {}, sig1, sig2, zd.code1, zd.code2,
+           n_cand, zd.count, a.bia, a.lam_ewl, a.mean_m, 0.0, 0.0, 0.0);
+        return;
+    }
+    // This arc's half of H·x_lin, with exactly the coefficients the row folds in
+    // emitGroup below (the two must stay in step, or design and frame drift apart).
+    // Split into its ambiguity and bias halves so the fixed row, whose design drops
+    // the ambiguity columns, can drop the matching linearization terms at one site.
+    a.pred_amb_m = (a.lam_ewl / a.lam_b1) * xAt(sidx1)
+                 - (a.lam_ewl / a.lam_b2) * xAt(sidx2);
+    a.pred_bias_m = (f1 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig1))
+                  - (f2 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig2))
+                  - (f1 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code1))
+                  - (f2 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code2));
+    a.pred_m = a.pred_amb_m + a.pred_bias_m;
+    a.sig1 = sig1;
+    a.sig2 = sig2;
+    a.code1 = zd.code1;
+    a.code2 = zd.code2;
+    a.n_cand = n_cand;
+    by_const[cons].push_back(std::move(a));
 }
 
 void sdEwlEmitGroup(const SdEwlRowView& v, const std::vector<const SdEwlArc*>& g,
