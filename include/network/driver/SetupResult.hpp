@@ -23,10 +23,10 @@
 #include "config/GnssConfig.hpp"                    // GnssConfig (consumer_config), BaselineConfig via GnssConfigTypes
 #include "rinex/MultiRinexSync.hpp"
 #include "network/driver/RunTypes.hpp"               // NetStation
-#include "network/solve/Sbasis.hpp"                 // card HLT: SatHealth
+#include "network/solve/Sbasis.hpp"                 // SatHealth
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"     // BroadcastEphemeris (brdc_rts nav staging)
-#include "products/BrdcClockApriori.hpp"            // card NBP native broadcast clock a priori
+#include "products/BrdcClockApriori.hpp"            // native broadcast clock a priori
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"            // NetworkProductWriter, SbasisContract
@@ -74,7 +74,7 @@ namespace GnssProcessor {
         /// advances the cursor.  (Card 8)
         std::vector<BroadcastEphemeris> brdc_nav_staged;
         std::size_t brdc_nav_cursor = 0;
-        /// Card NBP (@c network.apriori_source @c sp3_brdc_clock): the native broadcast
+        /// Under @c network.apriori_source @c sp3_brdc_clock: the native broadcast
         /// clock a priori (selector, offset table from 00:00 of the observation day,
         /// transmission-time store feed, wire stamp), built in Phase 3 from the navigation
         /// file's GPS records.  Every producer station's model reads its a priori clock
@@ -96,14 +96,14 @@ namespace GnssProcessor {
         /// the start plus @c processing.max_duration_s, else 1 s past the last synced
         /// epoch).  Read by the group-delay latch (the records in force during the
         /// run) and by the S contract's a-priori identity (the product files in force
-        /// during the run).  (Card OWD)
+        /// during the run).
         double window_t0_s = 0.0;
         double window_t1_s = 0.0;
-        /// Card HLT (@c network.sat_health): every satellite's broadcast health over time,
+        /// Under @c network.sat_health: every satellite's broadcast health over time,
         /// built at setup from the navigation file.  Read by the synced-epoch door
         /// ("exclude") and by the clock-pivot election ("pivot").  Empty when the knob is off.
         NetworkSbasis::SatHealth sat_health;
-        /// Card HLT, "exclude": the observations the door removed inside the processing
+        /// Under "exclude": the observations the door removed inside the processing
         /// window, per satellite.  (The door also clears the synced epochs outside the
         /// window, which no reader processes.)
         std::map<std::string, long long> sat_health_removed;

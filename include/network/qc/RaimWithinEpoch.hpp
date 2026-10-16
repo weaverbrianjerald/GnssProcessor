@@ -68,7 +68,7 @@ struct WeChoice {
 };
 
 /**
- * @brief The culprit T2 drops next (pure; card NOM3 step SG2): the best arc, satellite and
+ * @brief The culprit T2 drops next (pure): the best arc, satellite and
  *        station not yet dropped, each gated on effect / sigma0 > raim_k; a satellite with at
  *        least raim_min_sta arcs over the gate takes its arc's place (consensus escalation);
  *        on an equal score the preference is arc, then satellite, then station (surgical-first),

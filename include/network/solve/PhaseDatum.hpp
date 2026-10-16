@@ -41,8 +41,8 @@
 #include "network/state/Entities.hpp"        // net::ArcTable: the arcs' leveling carry
 #include "network/driver/RunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "network/solve/AnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
-#include "network/solve/PhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule (card EV7 §6)
-#include "network/solve/AnchorReentry.hpp"  // AnchorReentry and the drop memo (card SID phase 4)
+#include "network/solve/PhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule
+#include "network/solve/AnchorReentry.hpp"  // AnchorReentry and the drop memo
 
 #include <cstddef>
 #include <map>
@@ -209,7 +209,7 @@ struct PhaseHeldBasis {
     /// restored-arc convention (@ref localCarryYoung), so a warm-resume-restored entry
     /// reads mature instead of being refused for min_age epochs after every resume.
     /// An arc with no carry entry is refused as newborn.  Null: no age gate.
-    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
+    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb).
     // ---- write-back (per call; the driver sums them into the run-end readout) ----
     long long n_held = 0;             ///< families re-pinned at their frozen basis value this epoch.
     /// New basis entries written: every election that did not re-pin a retained
@@ -253,7 +253,7 @@ struct PhaseHeldBasis {
     long long n_depose_unusable = 0;
 };
 
-/// Coverage-gate drop-edge bundle (card EV7 §6, @c network.phase_datum_gate_drop_erase;
+/// Coverage-gate drop-edge bundle (@c network.phase_datum_gate_drop_erase;
 /// the rule itself is @ref networkPhaseGateDropEdges in network/solve/PhaseGateDrop.hpp).
 ///
 /// The driver passes it on every run, armed or not, because requirement F2 asks the
@@ -470,8 +470,8 @@ struct AnchorCandidacyUsable {
  *                      the continuous/cold decision and every target computation
  *                      are unchanged; the pass changes only which station reaches
  *                      the continuous branch.
- * @param gate_drop     Coverage-gate drop edge (card EV7 §6,
- *                      @c network.phase_datum_gate_drop_erase), or @c nullptr, which
+ * @param gate_drop     Coverage-gate drop edge
+ *                      (@c network.phase_datum_gate_drop_erase), or @c nullptr, which
  *                      leaves the election unchanged.  When supplied, this epoch's
  *                      coverage-gate drop edges are detected immediately before the
  *                      incumbent swap (the last point at which @p anchor_incumbent
@@ -516,7 +516,7 @@ void networkElectPhaseAnchors(
         const AnchorCandidacyUsable* cand_usable = nullptr,
         PhaseHeldBasis* held = nullptr,
         PhaseGateDrop* gate_drop = nullptr,
-        /// Anchor re-entry (card SID phase 4, S2 / B1): the ledger read at the
+        /// Anchor re-entry: the ledger read at the
         /// first-sighting branch, and the drop-edge memory the restore decides on.
         /// Null (the default) leaves the election byte-identical; with only its
         /// observe half armed it counts and records events and changes nothing else.
@@ -672,10 +672,10 @@ StationStep networkPhaseDatumPinRows(StationBuild& build);
  * prioritized machinery (no pivot-first, every station carries its arcs,
  * per-(sat,signal) shared set) and diverges only at the election (a spanning-tree
  * chain election) and the pin fold (per-tree-edge ambiguity pins with a target,
- * plus a datum-receiver RPB pin).  (Moved here from runNetwork at card NOM3 step
- * EP1, where it had stayed beside the phase-datum aliases.)
+ * plus a datum-receiver RPB pin).  (Moved here from runNetwork,
+ * where it had stayed beside the phase-datum aliases.)
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkIsGaugePinned_), so the station
+ * A free function (formerly Application::networkIsGaugePinned_), so the station
  * steps in the family files can call it.
  */
 bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_datum_prioritized,

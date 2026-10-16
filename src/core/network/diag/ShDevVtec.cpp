@@ -279,8 +279,8 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
     const std::set<std::pair<int, std::string>>& carry_slipped_raw = ep.funnel.carry_slipped_raw;
     // ---- End of the bindings ----
     // The alias lines of networkPassB_ this stage reads, verbatim.
-    // The SH-deviation carry's switches, resolved in NetworkKnobs::snapshot (card NOM3
-    // step EP0; they were parameters, computed by the driver with the same expressions).
+    // The SH-deviation carry's switches, resolved in NetworkKnobs::snapshot
+    // (they were parameters, computed by the driver with the same expressions).
     const double sh_dev_tau     = ctx.knobs.sh_dev_tau;
     const bool   sh_dev_on      = ctx.knobs.sh_dev_on;
     const bool   sh_dev_demean  = ctx.knobs.sh_dev_demean;    // anti-ratchet de-mean (Iono-2 v3)

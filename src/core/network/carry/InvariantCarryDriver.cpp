@@ -588,7 +588,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 (arcinfo.at(k).tree_edge ? tree_edges : chords).push_back(k);
             if (chords.empty()) continue;   // spanning tree only → no DD to carry
 
-            // The cycle algebra (arcgraph, card AGT): the tree of the component's tree edges.
+            // The cycle algebra (arcgraph): the tree of the component's tree edges.
             // A malformed (non-spanning or cyclic) tree from the election is not representable,
             // so the component is skipped rather than folded with a wrong cycle.
             const std::optional<arcgraph::IntTree> tree = arcgraph::singleTreeOf(tree_edges);

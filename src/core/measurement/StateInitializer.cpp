@@ -88,7 +88,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // per-band keying below cannot represent that: C1C and C1W share a band digit,
     // so both resolve to "<sys>_DCB" with the same coefficient, and the second code
     // would assert a zero receiver inter-signal bias and push the whole difference
-    // into the satellite column (card B5D records the cost).
+    // into the satellite column.
     //
     // A band-1 code that is not this station's latched canonical code therefore
     // gets its own per-(receiver, system, signal) state with unit coefficient: an
@@ -115,13 +115,13 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     //
     // With the knob off the whole block is skipped, so the output is byte-identical.
     //
-    // Card SID phase 6b (R2) generalises the predicate.  With
+    // The predicate generalises for the all-channel mode.  With
     // `processing.channel_mode: all` on the network path a station contributes
     // every admitted code attribute of every selected band, not an allow-listed
     // band-1 pair, and the per-band keying below would assert a zero receiver
     // inter-signal bias on each of them.  On band 2 and above the RF-0d
     // geometry-free pin also asserts the satellite side to zero, which repeats
-    // the card B5D defect on both sides.  Under the widening the test therefore
+    // the same defect on both sides.  Under the widening the test therefore
     // drops the allow-list and the band-1 restriction and keeps only what makes a
     // row a second one: an admitted code that is not that band's latched canonical
     // code, on any band digit.  The rest (unit coefficient, absolute frame,

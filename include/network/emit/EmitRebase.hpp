@@ -189,7 +189,7 @@ using EmitRebaseArcs =
  *        graph: the @ref NetworkEmitRebase::Entry::component the re-base groups by.
  *
  * Per group the arcs are united on the shared union-find (@c arcgraph::Dsu,
- * network/ar/ArcGraph.hpp, card AGT): station index i is vertex i, the satellite of
+ * network/ar/ArcGraph.hpp): station index i is vertex i, the satellite of
  * lexical rank k is the vertex after every station's plus k, and each arc links the
  * station under the satellite, in arc order.  Ids are 1-based and global across groups:
  * groups in key order, and within a group the components numbered in the order of

@@ -332,7 +332,7 @@ TEST(NetworkCouplingTest, AppendScalarScattersRowsIntoStationBlock) {
 // --- phaseBiasShiftOf: the eq34 D4 §14 re-base, through the traversal ---------
 // CoupledShared::s_prev and CarryPrior::value are the same number for the same
 // identity, so the D4 v2-shift that applies `cp.value += s` applies the same `+s` to
-// every matching coupling term and to nothing else (card PRM phase 2: one rule,
+// every matching coupling term and to nothing else (one rule,
 // phaseBiasShiftOf, applied to every reference eq34ShiftCarry walks).
 
 // Selectivity: only the PhaseBias entry whose (sat, signal) is in shift_sat

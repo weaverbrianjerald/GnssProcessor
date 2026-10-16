@@ -1,9 +1,9 @@
 /**
  * @file test_network_knobs_epoch_driver.cpp
- * @brief The epoch driver's configuration-derived values in NetworkKnobs (card NOM3 step
- *        EP0) equal the expressions runNetwork computed before they moved.
+ * @brief The epoch driver's configuration-derived values in NetworkKnobs
+ *        equal the expressions runNetwork computed before they moved.
  *
- * Card NOM3 step EP0 moved the values runNetwork derived from the configuration, once in
+ * The move took the values runNetwork derived from the configuration, once in
  * its setup or again on every epoch (the section timers, the resolved clock anchor sigma,
  * the SH-deviation switches, the VCE monitor's families, the Galileo top band, the
  * streaming source, the within-epoch tier, the phase-datum switches, the max-duration and
@@ -89,7 +89,7 @@ bool loadGolden(const char* name, GnssConfig& cfg) {
     return cfg.loadFromJson(fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / name, log);
 }
 
-/// The values as the driver computed them before card NOM3 step EP0.
+/// The values as the driver computed them before they moved into NetworkKnobs.
 struct DriverValues {
     bool sec_timers_on;
     double clk_anchor_sigma;
@@ -402,7 +402,7 @@ TEST(NetworkKnobsEpochDriver, VceFlushScheduleStartsUnanchored) {
     EXPECT_EQ(carry->first_vce_s, -1.0);
 }
 
-// Card NOM3 step SG: the retro-bump / URA-inflate feed, formerly a local of the solve
+// The retro-bump / URA-inflate feed, formerly a local of the solve
 // (`ura_retro || ura_refloat_inflate > 1.0`), is a knob read by the within-epoch tier and the
 // solve's result.
 TEST(NetworkKnobsEpochDriver, RetroFeedIsEitherUraConsumer) {

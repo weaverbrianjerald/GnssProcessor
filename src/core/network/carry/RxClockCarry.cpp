@@ -39,14 +39,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -218,7 +218,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
                 // Invariant #1's absent-station edge: a stale carry is refused,
                 // never aged into a fold.  The harvest prune erases it.
                 ++R.pl_blk_rxclk_gap_drop;
-                ++R.prm_rxclk_gap_skip;   // card PRM phase 3a
+                ++R.prm_rxclk_gap_skip;
                 continue;
             }
             const double gap_ep =
@@ -411,7 +411,7 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
                             net::drop(sta_rows, StationId{key.first}, &net::StationState::signals,
                                       key.second, &net::StationSignalState::rx_clk_rate);
                             ++ctx.counters.n_rxclk_carry_refused;
-                            // Card PRM phase 3a: the carried clock the jump erased.
+                            // The carried clock the jump erased.
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkJumpErase,
                                        static_cast<long long>(prm_n_clk));
                             continue;
@@ -470,22 +470,21 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
             net::put(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
                      &net::StationSignalState::rx_clk) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pr.col, SharedHistoryMap::RxClk,
-                                          static_cast<int>(i), pr.kind);   // card SCL2 X2; no-op off
+                                          static_cast<int>(i), pr.kind);   // no-op off
         }
     }
     // Decoupling edge (invariants #1 and #7): a station unseen past the horizon
     // is dropped, not aged into a fold, and its drift state goes with it, because
     // extrapolating a rate across an unobserved hour is the stale-prior failure
     // the carry is designed to avoid.  Counted.  The horizon is the registry's
-    // (network.carry_rx_clock_max_gap_s, the same double as rxclk_gap_s; card PRM
-    // phase 3b).
+    // (network.carry_rx_clock_max_gap_s, the same double as rxclk_gap_s).
     carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rx_clk, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxClock).gap_horizon_s,
                   [&](const StationId& id, const std::string& kind, const LocalCarry&) {
                       net::drop(sta_rows, id, &net::StationState::signals, kind,
                                 &net::StationSignalState::rx_clk_rate);
                       ++ctx.counters.n_rxclk_carry_gap_drop;
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapPrune);
                   });
     ctx.carry.rxclk_prev_now_s = pl_now_s;
 }

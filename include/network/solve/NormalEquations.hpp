@@ -73,7 +73,7 @@
 
 #include <cmath>      // std::isfinite (the carry-aware readback's refuse-never-clamp screen)
 #include <cstddef>
-#include <memory>     // std::shared_ptr (the detached fold's opaque factor, card FCF)
+#include <memory>     // std::shared_ptr (the detached fold's opaque factor)
 #include <utility>
 #include <vector>
 
@@ -173,7 +173,7 @@ public:
     /**
      * @brief A station's diagonal prior rows, passed to @ref addStation so that
      *        the positive-definiteness test judges the block the solve uses
-     *        (@c network.station_prior_before_pd; card RF-PD-fix).
+     *        (@c network.station_prior_before_pd).
      *
      * The same triple @ref addStationPrior takes (local columns, per-column
      * information increments @f$\Lambda_i\ge0@f$ and RHS increments
@@ -1505,7 +1505,7 @@ public:
 
     /**
      * @brief Arm the null-direction read on a PD rejection in @ref addStation
-     *        (@c network.trace_station_pd_null; card RF-PD).
+     *        (@c network.trace_station_pd_null).
      *
      * Off (the default), the rejection path is byte-identical: no
      * eigen-decomposition, no allocation, no record filled.  On, it costs one

@@ -1,6 +1,6 @@
 /**
  * @file test_network_row_classify.cpp
- * @brief Card NOM step N2b: every reader of "what is this row" reads the row's
+ * @brief Every reader of "what is this row" reads the row's
  *        contribution tag (network/assembly/RowClassify.hpp).
  *
  * The contracts:
@@ -9,8 +9,8 @@
  *    coupling-region kinds are coupling rows, the station constraint and phase-colour
  *    prior rows are pins by their weight, and every kind no station row carries (a
  *    diagonal prior, a shared kind) and @c Unset is unclassified;
- *  - the classifier reads the tag and not the columns: the two cases card NOM section 16
- *    (suspect 3) found misfiled by the column inference are filed by their type (a phase
+ *  - the classifier reads the tag and not the columns: the two cases
+ *    misfiled by the column inference are filed by their type (a phase
  *    row with no phase-bias column before the carry is warm, a code row whose only shared
  *    column is the clock), and a phase-colour prior row after the coupling region is a
  *    local prior row, not a coupling row;

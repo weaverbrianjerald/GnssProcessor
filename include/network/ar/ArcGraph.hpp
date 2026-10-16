@@ -10,7 +10,7 @@
  *   - the Card-4 carry: the integer-id layer;
  *   - the datum-graph census and the emit re-base: Dsu;
  *   - the producer AR search: growBaselineForest, shortCycleBasis, basisChangeMap;
- *   - the hold of card ARL task 2: CycleLattice.
+ *   - the integer hold: CycleLattice.
  *
  * Plain value types and free functions.  No state: callers keep incumbents in
  * NetworkCarryState.  No estimator or run-context access.
@@ -30,7 +30,7 @@
  *   2. **Typed family graph**: one constellation with one band or an L1/L2 pair, stations and
  *      satellites in dense slots (@ref arcgraph::ArcGraph), and its components.
  *   3. **Spanning forests**, two named rules with one output type: the eq34 chain walk
- *      (@ref arcgraph::growChainForest) and the baseline Prim of card ARL
+ *      (@ref arcgraph::growChainForest) and the baseline Prim
  *      (@ref arcgraph::growBaselineForest).
  *   4. **Cycles and bases**: @ref arcgraph::fundamentalBasis and the unit-triangular short basis
  *      @ref arcgraph::shortCycleBasis.
@@ -49,8 +49,8 @@
  *
  * Two helpers exist only to reproduce pre-migration orders byte for byte:
  * @ref arcgraph::legacyChainVertexRank (the eq34 string vertex order) and the
- * @ref arcgraph::ForestRules::stop_at_gap / @ref arcgraph::BasisCoverage::ParentOnly pair (card
- * ARL tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
+ * @ref arcgraph::ForestRules::stop_at_gap / @ref arcgraph::BasisCoverage::ParentOnly pair
+ * (tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
  */
 #include "common/GnssIdentity.hpp"   // System, StationId, SatId, SignalId, ArcId
 
@@ -469,7 +469,7 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
  * it.  Under @ref ForestRules::refuse_slipped_first the first pass reads only clean arcs (counting,
  * reference and satellite attachment); a second pass then reaches the rest through slipped arcs.
  * With the legacy rules (min_common 2, stop_at_gap, no incumbent, no refusal, first common) this
- * is exactly card ARL's tree_basis Prim.
+ * is exactly the legacy tree_basis Prim.
  *
  * @param g         The graph.
  * @param c         The component to span.
@@ -599,7 +599,7 @@ CycleBasis fundamentalBasis(const ArcGraph& g, const SpanningForest& f, int band
  * family bands and, under Full, span every component of that graph (joinForests); every chord of
  * every band is then closed, so each band holds lattice_dim cycles.
  *
- * With a @p sticky basis (the cycle-basis search's last basis, card AGT step AGT-5), a chord that
+ * With a @p sticky basis (the cycle-basis search's last basis), a chord that
  * basis closed with a BorrowedDd keeps that DD's partner and reference while they still close it
  * (the partner earlier in the closing order, every term a tree arc or an earlier pivot), so the
  * borrowed closures do not flip as satellites rise and set; any other chord is closed by the rule
@@ -671,7 +671,7 @@ struct CycleLattice {
     std::map<ArcId, int>   pivot_row;  ///< Pivot arc -> row.
     /// Loop epoch each row entered: the epoch passed to @ref latticeOffer; a row
     /// reduced by another row takes the later of the two epochs.  0 for a row offered without
-    /// an epoch (every caller before card FCF).
+    /// an epoch.
     std::vector<long long> entered_ep;
 };
 
@@ -703,7 +703,7 @@ LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, lo
  * @param L      The lattice.
  * @param c      The cycle.
  * @param newest When not null and the cycle is in the span: the latest entry epoch of the rows
- *               the implication uses (its support; card FCF), or -1 when it uses none.
+ *               the implication uses (its support), or -1 when it uses none.
  * @return The integer, or @c std::nullopt outside the lattice's span.
  */
 std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, long long* newest = nullptr);
@@ -718,8 +718,8 @@ std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, l
  * When no row holds it at +-1, every row that touches it is dropped.
  *
  * What remains is the part of the lattice that holds the arc at 0, so no integer it implies
- * depends on the arc's old integer: a slip of the arc leaves every remaining value right (card
- * FCF: a cycle whose integer is in question is released through its arcs, never through the rows
+ * depends on the arc's old integer: a slip of the arc leaves every remaining value right
+ * (a cycle whose integer is in question is released through its arcs, never through the rows
  * behind it alone, since other rows can hold one of its arcs as a non-pivot term).
  *
  * @param L   The lattice.
@@ -729,7 +729,7 @@ std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, l
 int latticeEliminateArc(CycleLattice& L, const ArcId& arc);
 
 /**
- * @brief Plant a wrong integer on one arc (card FCF's event harness, @c fixed_cycle_plant):
+ * @brief Plant a wrong integer on one arc (the event harness, @c fixed_cycle_plant):
  *        every row's integer moves by @p delta times the row's coefficient on @p arc.
  *
  * The lattice then implies, for every cycle in its span, its integer plus @p delta times the

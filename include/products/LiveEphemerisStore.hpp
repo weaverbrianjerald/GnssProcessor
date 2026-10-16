@@ -89,7 +89,7 @@ public:
     void insert(const BroadcastEphemeris& eph, bool from_igs = true);
 
     /**
-     * @brief Insert a record in transmission order (card NBP's store feed).
+     * @brief Insert a record in transmission order.
      *
      * The transmission order is authoritative: the record replaces the current one
      * whatever its toe, and an IODE change keeps the replaced record as "previous", as
@@ -200,7 +200,7 @@ public:
      *
      * The value the store reports as @c SatelliteClock::iode for @p eph: GPS / QZSS the
      * 8-bit IODE, Galileo the low 8 bits of IODnav, BeiDou mod(toe / 720, 240).  Exposed
-     * so a caller that selects a record itself (card NBP's broadcast clock a priori) can
+     * so a caller that selects a record itself (the broadcast clock a priori) can
      * stamp the wire with the value the consumer's IODE pin compares against.
      *
      * @param eph A decoded broadcast record.

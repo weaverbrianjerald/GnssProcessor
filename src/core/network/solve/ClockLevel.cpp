@@ -1,6 +1,6 @@
 /**
  * @file ClockLevel.cpp
- * @brief Implementation of the satellite clock level read: card CTU's level monitor, its
+ * @brief Implementation of the satellite clock level read: the level monitor, its
  *        innovation instrument and the G5 restore raise.  The level direction and the
  *        read are described in the header banner.
  *
@@ -263,8 +263,8 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
         try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s); }
         catch (...) { continue; }
         if (x_r.size() != R.A_r.cols()) continue;
-        // A code-bias column's rows: the code observation rows (by their tags; card NOM
-        // step N2b) that carry the column's partial and the satellite clock's.  The tag
+        // A code-bias column's rows: the code observation rows (by their tags)
+        // that carry the column's partial and the satellite clock's.  The tag
         // replaces the row's position ahead of the coupling region, which kept out the
         // coupling rows (statements about the carry, which can carry both partials).
         const Eigen::Index n_rows = R.A_s.rows();
@@ -555,7 +555,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
         for (const auto& [key, row] : pcc.row)
             if (key == sat + "|CLK") { has_clk = true; break; }
         if (!has_clk) continue;   // the pivot: pinned, no level to loosen
-        // Card CTU G5: the seam is a process-noise event of variance v along the level
+        // The seam is a process-noise event of variance v along the level
         // direction, applied by this epoch's time update (the dense fold, and the coupling
         // rows' exact update when armed), not a raise of the stashed block.  The
         // distinction matters for the restored coupling rows: a row harvested in a lineage
@@ -625,7 +625,7 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
         net::putSat(ctx.entities, sat, &net::SatelliteState::clm_info) += info;
         ++net::putSat(ctx.entities, sat, &net::SatelliteState::clm_n);
     }
-    // Card CTU G5: the same information in the constellation contrast and at the fit's own
+    // The same information in the constellation contrast and at the fit's own
     // unit variance, 1 / (s0^2 Q_ss): the level variance a consistent carry holds after
     // these epochs is its inverse (section 14.4: the effective code gain is IF-efficient).
     if (tw.ok && std::isfinite(tw.s0sq) && tw.s0sq > 0.0)
@@ -712,7 +712,7 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (!ctx.knobs.clm_on) return 0;
-    // Card CTU level monitor (section 9.3): the ratio of the stashed block's level
+    // The level monitor: the ratio of the stashed block's level
     // variance to the code-only bound, per satellite per kept epoch from its second
     // epoch of code on.  A consistent estimator keeps it at or above 1; the control
     // (the card 1d kappa) reads far below 1, the freeze's truth-free fingerprint.

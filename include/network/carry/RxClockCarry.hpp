@@ -32,8 +32,8 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * Step `rx_clock_block` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds: none
  * (it records only). It returns at once unless the frozen enclosing conditions
  * legacy_local_inject && do_amb_carry. Records: pl_rxclk and its gap counters; rxclk_bc,
- * rxclk_pred. The frozen text of networkPassB_'s produce loop below its bindings (card NOM3
- * step PB1b).
+ * rxclk_pred. The frozen text of networkPassB_'s produce loop below its
+ * bindings.
  * @param carry The station's carry frame (the build, the priors, the coupling builder, the
  *              block columns).
  */
@@ -65,8 +65,8 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
 // ---- End of the harvest half, declarations ----
 
 /**
- * @brief Run-end report: the receiver-clock carry's jump gate, in metres (card NOM2 step
- *        TD2: moved from the leveling-carry retirement report).
+ * @brief Run-end report: the receiver-clock carry's jump gate, in metres (moved from the
+ *        leveling-carry retirement report).
  *
  * The gate k sigma over the station-epoch tests, its mean, minimum and maximum in metres,
  * the largest |innovation| seen and the refusals, so a given step reads as above or

@@ -34,7 +34,7 @@
  *     gauge re-realization does not trip a single satellite (invariant #5).
  *  8. Loader contract: defaults off, every knob parses, and the knob snapshot
  *     holds the values a run would use.
- *  9. The gauge-free fold (card Q3 §2.1) carries no information along the
+ *  9. The gauge-free fold carries no information along the
  *     per-constellation clock common direction.
  */
 
@@ -556,7 +556,7 @@ TEST(ClockAnchorLoader, ClockModelInterlockDisarmsTheAnchor) {
 }
 
 // ===========================================================================
-// 9: the gauge-free fold (card Q3 §2.1)
+// 9: the gauge-free fold
 // ===========================================================================
 //
 // The property is algebraic and can be checked exactly: after the downdate the

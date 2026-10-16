@@ -1005,13 +1005,13 @@ template <auto F>
 std::size_t arcRows(const NetworkEntities& e) { return present(e.arcs, F); }
 
 // Record L: (station, sat, signal) -> the leveling carry's value, variance and last-seen time;
-// the marginal variance under card SCL2 X2, and the optional first-stash variance.
+// the marginal variance under the shared history, and the optional first-stash variance.
 void lToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     // network.phase_datum_handover_max_var_ratio: the arc's first-stash variance is an
     // optional trailing L field, filled only when the ratio ceiling is armed, so a
     // default snapshot's L rows stay byte-identical.
     const bool l_var_first = ctx.knobs.pd_handover_max_var_ratio > 0.0;
-    // Card SCL2 X2: the history is not snapshotted, so a row is written with its marginal
+    // The history is not snapshotted, so a row is written with its marginal
     // variance (var plus its history coefficients' squared norm); off, var as before.
     const bool shx_marg = ctx.knobs.carry_cpl_shx;
     forEach(ctx.entities.arcs, &R::amb, [&](const ArcId& id, const LocalCarry& lc) {

@@ -308,7 +308,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     for (const CongruenceHit& h : cg_hits) {
         if (!h.reported) continue;
         const std::string sname = stationName(stations, h.station);
-        // The station's holdoff clock (by NAME, O3; card NOM step N4e2).
+        // The station's holdoff clock (by NAME, O3).
         const std::optional<StationId> sid = net::stationOfName(ctx.entities, sname);
         const long long* last =
             sid ? net::get(ctx.entities.stations, *sid, &net::StationState::cg_event_last) : nullptr;

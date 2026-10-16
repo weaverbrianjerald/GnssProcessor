@@ -34,14 +34,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -209,7 +209,7 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
         A_r.middleRows(out, mc) = llt.matrixL().solve(Hc);
         y.segment(out, mc)      = llt.matrixL().solve(zc);
         w.segment(out, mc).setOnes();
-        for (int k = 0; k < mc; ++k)   // one tag per row (card NOM N2a), in row order
+        for (int k = 0; k < mc; ++k)   // one tag per row, in row order
             tags.push_back(makeRowTag(ContributionKind::GimIono, rws[k].sat));
         out += mc;
     }
@@ -267,7 +267,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
         double var;              ///< per-LOS representativeness variance (m²).
         std::vector<double> map_tecu;             ///< Per layer: M_l(el)·tecu_to_L1m.
         std::vector<std::vector<double>> basis;   ///< Per layer: Ȳ_nm(IPP_l) in coeff order.
-        std::string sat;                          ///< The line of sight's satellite (the row's tag, card NOM N2a).
+        std::string sat;                          ///< The line of sight's satellite (the row's tag).
     };
     std::map<char, std::vector<SRow>> by_const;
     std::vector<double> bvals;
@@ -395,7 +395,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
         A_s.middleRows(out, mc) = llt.matrixL().solve(Hs);
         y.segment(out, mc)      = llt.matrixL().solve(zc);
         w.segment(out, mc).setOnes();
-        for (int k = 0; k < mc; ++k)   // one tag per row (card NOM N2a), in row order
+        for (int k = 0; k < mc; ++k)   // one tag per row, in row order
             tags.push_back(makeRowTag(ContributionKind::ShIonoTie, rws[k].sat));
         out += mc;
     }

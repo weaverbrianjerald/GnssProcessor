@@ -63,7 +63,7 @@ int networkExtraBandScopeRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const std::vector<NetStation>& stations = v.setup.stations;
 
-    // ---- Extra-band code deweight (network.extra_band_code_sigma_scale, card L5P)
+    // ---- Extra-band code deweight (network.extra_band_code_sigma_scale)
     // Same contract.  The fold runs inside the parallel produce phase, so its row
     // counts are kept per station (as gl_rows_deweighted is); they are summed here,
     // once, before the block reads them.

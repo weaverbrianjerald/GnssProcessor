@@ -54,9 +54,9 @@ namespace {
 /// (invariant #4).
 constexpr int kTopoColEventCap = 64;
 
-/// One classified row: its class and the satellite its contribution tag names (card NOM
-/// step N2b).  (Named apart from the declared contribution tag, RowTag of
-/// network/assembly/Contributions.hpp, card NOM N2a.)
+/// One classified row: its class and the satellite its contribution tag names.
+/// (Named apart from the declared contribution tag, RowTag of
+/// network/assembly/Contributions.hpp.)
 struct ClassifiedRow {
     NetRowClass cls{NetRowClass::ObsOther};
     std::string sat;
@@ -235,7 +235,7 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             if (!c.have[ti]) continue;                         // no usable centre
             // Skip cells born this epoch (as INC-1 does).  An SH tie row is a structural
             // row, not a per-cell birth, so it is never deferred, although its tag names
-            // its line of sight's satellite (card NOM step N2b keeps that rule).
+            // its line of sight's satellite (the row classifier keeps that rule).
             if (tg.cls != NetRowClass::IonoShRow && !tg.sat.empty() && have_prior
                 && !net::hasLos(ctx.entities.los, static_cast<int>(i), tg.sat,
                                 &net::LosState::prefit_present_prev))

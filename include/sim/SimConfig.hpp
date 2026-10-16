@@ -439,7 +439,7 @@ struct SimConfig {
         bool signal_bias{ false };
         /// Which observables @c signal_bias reaches: "both" (the default, the historical
         /// behaviour), "code" (code OSBs only, phase rows unbiased) or "phase" (phase OSBs
-        /// only).  Test-only staging for card ARL (the integer-ambiguity ladder), which
+        /// only).  Test-only staging for the integer-ambiguity ladder, which
         /// adds the satellite code and phase biases one layer at a time.  The synthetic
         /// OSB (@c signals.synth_osb_amp_m) follows the same scope, and
         /// @c truth_bias.csv records what was injected (0 for the excluded observable).

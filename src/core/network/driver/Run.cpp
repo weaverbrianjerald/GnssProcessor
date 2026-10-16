@@ -9,7 +9,7 @@
  * declarations the moved statements read, so each name keeps the object it denoted.
  */
 #include "network/driver/Run.hpp"
-#include "network/driver/Epoch.hpp"          // NetworkEpoch (the readout's epoch, card NOM3 step EP2)
+#include "network/driver/Epoch.hpp"          // NetworkEpoch (the readout's epoch)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -124,7 +124,7 @@ NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConf
 // brackets are disjoint and tile the loop body between the assembly wall and the
 // emitted-epoch readout; the residual (other − Σ net) is logged as "unattributed".
 // With the toggle off, networkSubBegin / networkSubEnd (runNetwork's subBegin / subEnd
-// closures until card NOM3 step EP1) return early (no clock reads, no
+// closures) return early (no clock reads, no
 // est.sectionTimers() calls), so the output is byte-identical to an untimed run.
 // The sub-blocks (enum SubBlock) and their printed names (kSubBlockNames) are declared
 // beside SubBlockTimer in network/driver/WlRunTypes.hpp; their run totals are
@@ -349,14 +349,14 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // canonical-latch cache from the producer roster.  Disarmed, every member of
     // ctx.carry.cpa is untouched and the seam is unreachable.
     networkCanonicalPairArm(ctx, config_, static_cast<int>(stations.size()));
-    // Signal roster and arc ledger (card SID phase 1,
-    // docs/refound/SID_signal_identity_2026-09-22.md section 5): sizes the roster's
+    // Signal roster and arc ledger
+    // (docs/refound/SID_signal_identity_2026-09-22.md section 5): sizes the roster's
     // per-station caches, resolves the arc ledger's horizon from the readers' own gap
-    // windows, and records the station names.  Every network run sets them up (card NOM
-    // step N3a); network.signal_roster switches the ledger's trace only.
+    // windows, and records the station names.  Every network run sets them up;
+    // network.signal_roster switches the ledger's trace only.
     networkSignalRosterArm(ctx, config_, log, stations);
-    // Emitter read against the ledger, and the wire declaration (card SID phase 5a,
-    // docs/refound/SID_signal_identity_2026-09-22.md section 4).  Disarmed
+    // Emitter read against the ledger, and the wire declaration
+    // (docs/refound/SID_signal_identity_2026-09-22.md section 4).  Disarmed
     // (network.ledger_emit absent), every member of ctx.ledger_emit is untouched and
     // all three seams are unreachable.
     networkLedgerEmitArm(ctx, config_, log);

@@ -13,7 +13,7 @@
 #include "network/carry/Coupling.hpp"
 
 #include "network/solve/Estimator.hpp"   // est.clockColumn / phaseBiasColumn / codeBiasColumn / vtecCoeffColumn
-#include "network/carry/SharedHistory.hpp"   // sharedHistoryRowTerms (card SCL2 X2)
+#include "network/carry/SharedHistory.hpp"   // sharedHistoryRowTerms
 #include "config/GnssConfigTypes.hpp"    // GlobalVtecShConfig::q_per_degree (couplingQ)
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseSatPhaseBiasKey (card 1d dump)
 #include "common/GnssIdentity.hpp"       // letterOfSat: a term's constellation letter
@@ -190,7 +190,7 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
                                               const LocalCarry& lc, double var_eff,
                                               double gap, PendCplRow& row, double& sigma2,
                                               CouplingExactRow* xr_keep) {
-    // Card CTU: a row harvested at the stash the dense block belongs to takes the exact
+    // A row harvested at the stash the dense block belongs to takes the exact
     // route; any other row (harvested earlier, so its regression is on an older border
     // than P describes) keeps the card 1d route below, counted.  Off: cxu is null and
     // the body below is unchanged.
@@ -283,7 +283,7 @@ bool CouplingRowBuilder::scalarRowIngredients(Eigen::Index col, double x_lin_val
             rhs += e.m_shr * e.s_prev;
         }
     }
-    // Card SCL2 X2: off card CTU's exact route the history columns are not this row's
+    // Off the exact route the history columns are not this row's
     // generation, so its history terms are marginalized at their harvest variance.
     if (shx) sharedHistoryRowTerms(*shx, lc, nullptr, dep_var, R.cxu);
     sigma2 = var_eff + dep_var + tu_var;
@@ -401,7 +401,7 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
         rhs += m * xe.shat_s(s);
         X.shrink_abs_sum += std::abs(xr.m_s(s) - m);
     }
-    // Card SCL: the row's terms on the clock clones (the rows' copy of the epoch has the
+    // The row's terms on the clock clones (the rows' copy of the epoch has the
     // cloned clocks in S on their clones, at Q = 0).  Empty, and nothing counted, off.
     if (!xe.clone_s.empty()) {
         long long nt = 0;
@@ -446,7 +446,7 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
         rhs += d * pv->second.second;
         ++X.gauge_held;
     }
-    // Card SCL2 X2: the row's terms on the shared-history columns (constant, no walk, prior
+    // The row's terms on the shared-history columns (constant, no walk, prior
     // mean 0, so the right-hand side does not move; no gauge member, so no deficit); a stale
     // generation or a column not registered marginalizes them.  No-op off.
     if (shx) sharedHistoryRowTerms(*shx, lc, &emit, dep_var, X);
@@ -461,7 +461,7 @@ bool CouplingRowBuilder::exactRowIngredients(Eigen::Index col, double x_lin_val,
     sigma2 = var_eff + dep_var + tu_var + xr.var_add;
     if (!(sigma2 > 0.0) || !std::isfinite(rhs)) return false;
     row.y = rhs;
-    if (xr_keep) *xr_keep = std::move(xr);   // card WSX: the pair term reads it in the block
+    if (xr_keep) *xr_keep = std::move(xr);   // the pair term reads it in the block
     return true;
 }
 
@@ -474,7 +474,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
     //     σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt.  The departed terms
     //     stay per row, on Σ's diagonal, as on the scalar path.  A column refused by
     //     the scalar screen is dropped from the block and counted.
-    // xr: the row's exact-route result, kept only for card WSX's pair term (ok false otherwise).
+    // xr: the row's exact-route result, kept only for the pair term (ok false otherwise).
     struct Ing { PendCplRow row; double sigma2{0.0}; const LocalBlockCol* c{nullptr}; CouplingExactRow xr; };
     const bool wsx = cxu_cross && cxu != nullptr && cxu->ok;
     std::vector<Ing> ing;
@@ -485,8 +485,8 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         if (!scalarRowIngredients(c.col, c.x_lin, *c.lc, c.var_eff, c.gap, g.row, g.sigma2,
                                   wsx ? &g.xr : nullptr)) {
             ++R.pl_blk_col_refused;
-            if (c.is_pc) R.pc_refused.push_back(c.col);   // card LGM: the injector backstops it
-            if (c.is_rx_cb) R.rxcb_refused.push_back(c.col);   // card L5B: not a fold
+            if (c.is_pc) R.pc_refused.push_back(c.col);   // the injector backstops it
+            if (c.is_rx_cb) R.rxcb_refused.push_back(c.col);   // not a fold
             continue;
         }
         // The ZWD column (B9-in-block) is counted only after it survives the scalar
@@ -571,13 +571,13 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
                 continue;
             }
             if (ci.vce_fac != 1.0 || cj.vce_fac != 1.0) v *= std::sqrt(ci.vce_fac * cj.vce_fac);
-            // Card LGM: a Gauss-Markov column's cross covariance transitions with it.
+            // A Gauss-Markov column's cross covariance transitions with it.
             if (ci.phi != 1.0 || cj.phi != 1.0) v *= ci.phi * cj.phi;
             blk.Sigma(i, j) = v;
             blk.Sigma(j, i) = v;
         }
     }
-    // (2a) Card WSX (network.carry_coupling_exact_cross): the exact update's bracket
+    // (2a) Cross terms (network.carry_coupling_exact_cross): the exact update's bracket
     //      between two rows that both took the exact route, M_i' B M_k (couplingExactCross,
     //      the term the per-row form drops; the cross-station half stays out).  Added after
     //      the harvested cross covariances; not scaled by the VCE factor, as the
@@ -644,7 +644,7 @@ bool CouplingRowBuilder::buildLocalBlock(const std::vector<LocalBlockCol>& cols)
         }
         row.y = z(k);
         row.w = 1.0;                                     // unit-information whitened row
-        row.tag = blk.rows[static_cast<std::size_t>(k)].tag;   // the primary column's (card NOM N2a)
+        row.tag = blk.rows[static_cast<std::size_t>(k)].tag;   // the primary column's
         crows.push_back(std::move(row));
     }
     R.pl_blk = std::move(blk);
@@ -683,7 +683,7 @@ void CouplingRowBuilder::appendCouplingRows() {
             R.w(m0 + k) = row.w;
             R.y(m0 + k) = row.y;
             R.cpl_row_local_cols[static_cast<size_t>(k)] = row.local_col;
-            R.row_tags.push_back(row.tag);   // card NOM N2a
+            R.row_tags.push_back(row.tag);
         }
     }
 }
@@ -1134,7 +1134,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                     pl_finish_var(p.var_eff, p.sat), p.gap,
                     vce_apply.factor(NetworkCarryVceApply::kPl, p.sat),
                     /*is_zwd=*/false, /*is_iono=*/false});
-                // The column's identity, for its block row's tag (card NOM N2a).
+                // The column's identity, for its block row's tag.
                 if (const auto col_sat = SatId::parse(p.sat)) {
                     bc.back().sat = *col_sat;
                     if (const auto col_sig = SignalId::fromObsCode(col_sat->sys, p.signal))
@@ -1200,7 +1200,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                                         zwd_pushed = true;
                                     }
                                 }
-                                // Card PRM phase 3a: a gap refusal here is
+                                // A gap refusal here is
                                 // counted at the diagonal B9 gate below, which
                                 // it always reaches (ZwdGapSkip, once per entry).
                             }
@@ -1237,7 +1237,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                 bc.push_back(cc);
                 R.pl_rxcb_blk_cols.push_back(cc.col);
             }
-            // Card LGM: the phase-colour columns last.
+            // The phase-colour columns last.
             for (const LocalBlockCol& pc : pc_bc) bc.push_back(pc);
             blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
             if (!blk_done) {
@@ -1292,7 +1292,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                 R.pl_rxcb_blk_cols.clear();
             } else if (blk_done) {
                 R.pl_cb_injected += static_cast<int>(rxcb_bc.size());
-                // Card L5B: the receiver IFB columns that became rows of this
+                // The receiver IFB columns that became rows of this
                 // factorized block (a column the scalar screen refused is not one).
                 for (std::size_t k = 0; k < rxcb_ifb.size(); ++k)
                     if (rxcb_ifb[k]
@@ -1300,7 +1300,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                                      rxcb_bc[k].col) == R.rxcb_refused.end())
                         ++st.l5b.blk_folds;
             }
-            // Card LGM: a phase-colour column folded through the block unless the
+            // A phase-colour column folded through the block unless the
             // scalar screen refused it; on a non-SPD block each column takes the
             // per-column route with the same predicted copy.  A column that folds
             // on neither route gets a backstop birth row after the carry section,

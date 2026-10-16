@@ -57,7 +57,7 @@
  * ## Scope and conventions
  *
  * Pure numeric leaf that depends only on `NetworkArcGraph` (the cycle algebra: the
- * union-find, the tree, the fundamental cycles and the W rows; card AGT, which took
+ * union-find, the tree, the fundamental cycles and the W rows; it took
  * them over from `NetworkZStore`) and the
  * `NetworkEstimator` kernel (the fold and the posterior readout).  It does not depend on
  * `ApplicationNetwork`: the caller (the live epoch loop or a unit test) resolves each
@@ -112,7 +112,7 @@ public:
          *        (D5 v3).
          *
          * Measured: 2.1 % of D5 resets coincide with a raw MW/GF step, against 95 % on the
-         * same run's Card-G arc resumptions (known real discontinuities), and 97.4 % of
+         * same run's gap-instrumentation arc resumptions (known real discontinuities), and 97.4 % of
          * inter-reset gaps are one epoch.  The gate therefore fires on a persistent
          * model-versus-data disagreement rather than on slips, and re-taps continuous arcs
          * indefinitely.  With this armed, a flagged chord is re-tapped unless the raw

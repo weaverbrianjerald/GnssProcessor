@@ -282,7 +282,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // inactive system with a priority list would enter the rows with no bias column.  The
     // loader accepts that combination with a warning; removing the inactive systems here,
     // before any reader of the synced epochs runs, makes processing.active_systems the one
-    // admission rule.  (Card OWD, O4)
+    // admission rule.
     {
         const std::map<std::string, std::size_t> removed =
             sync.retainSystems(config_.getActiveSystems());
@@ -309,14 +309,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the start-offset skip of runNetwork's fast-forward, then the max-duration cutoff
     // (without a cutoff the window ends 1 s after the last synced epoch).  The group-delay
     // latch takes the navigation records in force during the window, and the S contract
-    // names the product files in force during it.  (Card OWD)
+    // names the product files in force during it.
     setup.window_t0_s = TimeUtils::continuousGpsSeconds(synced.front().time)
                       + config_.networkStartOffsetHours() * 3600.0;
     setup.window_t1_s = config_.getMaxDuration() > 0.0
                       ? setup.window_t0_s + config_.getMaxDuration()
                       : TimeUtils::continuousGpsSeconds(synced.back().time) + 1.0;
 
-    // Card HLT: broadcast satellite health on the network path (network.sat_health).  The
+    // Broadcast satellite health on the network path (network.sat_health).  The
     // series is built once from the navigation file, a record taking force at its clock
     // epoch as in the O3 latch.  "exclude": a satellite's observations leave the synced
     // epochs at which the broadcast flags it, here beside the constellation door, so every
@@ -512,7 +512,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                    "Set navigation_path / products to cover the observation day.");
         return 1;
     }
-    // Card NBP (network.apriori_source sp3_brdc_clock): SP3 orbits (required by the branch
+    // Broadcast clock a priori (network.apriori_source sp3_brdc_clock): SP3 orbits (required by the branch
     // above) and the broadcast clock of the navigation file, with no CLK product.  A loaded
     // CLK would shadow the broadcast clock silently (interpolateClock takes precedence in
     // getSatelliteClockCorrection), so it is refused, as brdc_rts refuses one.  The selector
@@ -656,7 +656,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // record: the first record is the value in force when the file starts, which is
             // right only for a run that starts there.  The rule and its reasons are in
             // NetworkSbasis::latchBroadcastGroupDelays, beside the pair rule it feeds.
-            // (Card OWD, O3)
             const NetworkSbasis::GroupDelayLatch latch = NetworkSbasis::latchBroadcastGroupDelays(
                 nav, setup.window_t0_s, setup.window_t1_s);
             if (latch.sats.empty()) {
@@ -763,7 +762,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     const double pb_cover_min  = config_.networkPhaseBiasMinStationFraction();
     // Under the all-channel widening the tally is reported even with the gate at 0:
     // "0 = every tracked channel admitted" is a statement about which channels
-    // entered the solve, and the run log has to make it.  (Card SID phase 6b, R7)
+    // entered the solve, and the run log has to make it.
     const bool chan_all_tally = config_.networkChannelModeAll();
     if (sig_cover_min > 0.0 || pb_cover_min > 0.0 || chan_all_tally) {
         std::map<std::string, std::set<std::pair<std::string, std::string>>> sta_tracks; // station -> {(system, code)}
@@ -820,7 +819,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     const std::string tag = fmt::format("{}({:.0f}%)", c, 100.0 * code_n[{sys, c}] / ns);
                     // A threshold of 0 leaves the allow-list empty, which the producer
                     // reads as "admit every tracked channel"; without this clause the
-                    // forced tally (card SID phase 6b) would print the whole list under
+                    // forced tally would print the whole list under
                     // GATE, the opposite of what the run does.
                     const bool admitted =
                         (thr <= 0.0) ? true : (ait != allow.end() && ait->second.count(c));
@@ -865,7 +864,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // receiver correction takes on the two lowest bands of that list ("exact",
     // "same_system", "cross_system", "none"), collected for one summary line:
     // system -> route -> station names.  Filled only when a constellation other than
-    // GPS is active, so a GPS-only setup log is unchanged.  (Card GAL, R6)
+    // GPS is active, so a GPS-only setup log is unchanged.
     const bool atx_src_on = networkMultiGnssActive(config_);
     std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
     // --- Marker → ARP roster reduction ----------------------------
@@ -903,7 +902,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Coordinates::markerToArp that the held-out consumer's truth uses.
         // markerToArp is an exact no-op at or below a 1e-6 m eccentricity, so a
         // 0/0/0 station is bit-for-bit unchanged in either knob state.
-        // (Card UPO §4, requirement U1)
         {
             const Eigen::Vector3d hen = parser->getAntennaDeltaHen();
             const bool   has_record = parser->hasAntennaDeltaHen();
@@ -976,7 +974,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // below skips it), so the consumer keeps the default gate.  sp3 mode passes
         // false (byte-identical).  (Card 5, RTF-1 / plan D1)
         st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
-        // Card NBP: a producer station's a priori satellite clock is the native broadcast
+        // A producer station's a priori satellite clock is the native broadcast
         // a priori (null in every other mode, byte-identical).  buildStation never builds
         // the held-out consumer, which reconstructs brdc(iode) + C from the store.
         st.model->setBroadcastClockApriori(setup.brdc_apriori.get());
@@ -1047,7 +1045,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // The receiver ATX frequency source per active constellation, on the two lowest
         // bands of its priority list (the dual pair: GPS 1 and 2, Galileo 1 and 5).  A
         // station whose route is not "exact" on some band gets its own line; every
-        // station lands in the summary.  Measure-only.  (Card GAL, R6)
+        // station lands in the summary.  Measure-only.
         if (rx_corr_on && atx_src_on) {
             std::string rx_ant = parser->getReceiverAntennaType();
             const auto last = rx_ant.find_last_not_of(" \t\r\n");
@@ -1153,8 +1151,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // on the pairs no chain watched.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.if_slip->setAllPairs(
                 config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All);
-            // Push the hardened reference-satellite gate (Card R,
-            // docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
+            // Push the hardened reference-satellite gate
+            // (docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
             // user/kinematic path keeps the legacy gate (spec R5).  With
             // network.cycle_slip.if_phase_td_ref_gate off, rg.enable is false and the
             // gate is disabled (byte-identical).
@@ -1241,7 +1239,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         return s;
     };
     // Receiver ATX source summary per constellation: the route of each station's
-    // worst band (exact < same_system < cross_system < none).  (Card GAL, R6)
+    // worst band (exact < same_system < cross_system < none).
     for (const auto& [sys_name, by_route] : atx_src_by_sys) {
         std::string t;
         for (const char* route : { "exact", "same_system", "cross_system", "none" }) {
@@ -1281,7 +1279,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "covered any uncalibrated radomes).");
     }
 
-    // --- Marker → ARP summary (card UPO §4, requirement U2) -----------------
+    // --- Marker → ARP summary -----------------
     // Emitted in both knob states.  With the knob on it records the roster's frame;
     // with it off it measures the error the run carries, which is the number the
     // fix is judged against (standing invariant #4).
@@ -1436,7 +1434,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           config_.networkCodeBiasDiscJumpTest(),
                           config_.networkClockDiscOnSetChange(),
                           config_.networkDiscThresholdFracCycles(),
-                          nc.disc_mark_scope == "channel");  // per-channel mark scope (Card MS)
+                          nc.disc_mark_scope == "channel");  // per-channel mark scope
     NetworkProductEmitter& emitter = *setup.emitter;
 
     // --- Optional on-disk product serialization -----------------------------
@@ -1465,7 +1463,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // the flat default phase-bias threshold) and misses every declared clock
         // re-reference, so the declaration cannot depend on an output option.  The
         // records are the same byte for byte as a contract-less writer's; only the
-        // header gains the S line.  (Card OWD, O1)
+        // header gains the S line.
         {
             // Stamp the S-basis contract into a v2 header (B6).  The declaration semantics
             // are the A3-corrected per-constellation satellite-clock-pin basis.
@@ -1515,7 +1513,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             std::string apriori_id =
                 fmt::format("{}{}{:04d}{:03d}", dl.product_source, dl.product_type, dl.year, dl.doy);
             if (config_.networkAprioriBrdcClock()) {
-                // Card NBP: the SP3 files in force, the navigation file and the rule
+                // The SP3 files in force, the navigation file and the rule
                 // ("sp3+brdc:<SP3>|<nav>|ttom").  A consumer (and the replay driver) reads
                 // this prefix as "the clock refers to the stamped broadcast ephemeris" and
                 // refuses a CLK-bearing root under it.
@@ -1540,7 +1538,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 // the previous, the observation and the next day's products, and the first
                 // merged SP3 / CLK (getProductPath) is the previous day's, so naming it would
                 // declare the previous day's products (DOY-128 on a DOY-129 wire).
-                // (Card OWD, O1)
                 bool named_all = false;
                 const std::string in_force = aprioriIdentityForWindow(
                     config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
@@ -1583,11 +1580,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
             pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // per-λ jump gate, discfrac= (H3)
-            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
-            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
-            pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held (Card LAH)
+            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope=
+            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold=
+            pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held
                 nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
-            pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold (Card SMH)
+            pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold
                 nc.emit_pb_hold && nc.emit_pb_hold_smoothed;
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
@@ -1670,7 +1667,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // baseline arm (consume_network_products = false): a consumer that consumes
             // no products still has ambiguities, iono states and residuals, and the A/B
             // between the two arms is one of the comparisons this trace serves.
-            // (Card CST)
             consumer->setConsumerSatTrace(nc.trace_consumer_sat);
             const bool undiff = cl.consumer_undifferenced;
             if (undiff)

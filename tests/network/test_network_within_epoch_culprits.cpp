@@ -24,7 +24,7 @@
  *  - off on both goldens, loaded from config/golden/ (the tier armed, the DD carry off).
  *
  * Not certified here: the hand-off itself, i.e. that the DD-carry rebuild reads the object
- * the T2 block writes (the defect card WCF closes).  The rebuild and the T2 block are not
+ * the T2 block writes (the defect that hand-off closes).  The rebuild and the T2 block are not
  * unit-testable seams; the hand-off is certified by a run on a carry_invariant posture with
  * the tier armed where T2 trips, with the writer's count non-zero and equal to the
  * reader's.
@@ -138,7 +138,7 @@ TEST(WithinEpochCulpritVerdict, AgreeWhenTheCountsMatch) {
 }
 
 TEST(WithinEpochCulpritVerdict, InertWiringWhenNoRebuildReadACulprit) {
-    // The defect card WCF fixed: re-solves with culprits, no rebuild that saw one.
+    // The earlier defect: re-solves with culprits, no rebuild that saw one.
     const WithinEpochCulpritReading r = withinEpochCulpritVerdict(tally(3, 0));
     EXPECT_EQ(r.verdict, WithinEpochCulpritVerdict::InertWiring);
     EXPECT_TRUE(r.warn);
