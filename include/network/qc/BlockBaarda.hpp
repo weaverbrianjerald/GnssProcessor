@@ -6,7 +6,7 @@
  *
  * Measure-only, off by default, fingerprint-safe; with it off, the output is
  * byte-identical.  Nothing here changes a weight, a state or a decision.  SPEC §9
- * row 1 assigns any response to a loud block to a different card.
+ * row 1 assigns any response to a loud block to a different mechanism.
  *
  * ## Purpose of a block tier
  *
@@ -35,7 +35,7 @@
  * ## Reading the ladder: @f$t_B@f$ is a variance ratio, not a sigma
  *
  * The rungs are shared with the prior-residual census (@ref
- * NetworkPriorResidual::ladder, SPEC §4's "census bins"), so both cards write one
+ * NetworkPriorResidual::ladder, SPEC §4's "census bins"), so both write one
  * file format with one reader.  The unit differs.  In that census @f$|t|@f$ is a
  * standardized residual, and rung 4 means four sigma.  Here @f$T_B@f$ includes the
  * @f$1/b@f$, so @f$E[t_B]=1@f$ under @f$H_0@f$ for every block size, and rung 4
@@ -105,7 +105,7 @@
  * It takes @ref Input blocks and returns ladders; @c tests/network/test_block_baarda.cpp
  * drives it directly with synthetic blocks of known truth.  The per-epoch trace,
  * event and aggregate emission is in @c network/qc/BlockBaarda.cpp, the only
- * translation unit of this card that touches traces.
+ * translation unit of this census that touches traces.
  */
 
 #include "common/GnssIdentity.hpp"       // systemOfSat, constellationKey: a satellite's family
@@ -179,7 +179,7 @@ inline constexpr int kBlockBaardaMaxB = 12;
 class NetworkBlockBaarda {
 public:
     /// Ladder rungs, shared with the prior-residual census (SPEC §4's "census
-    /// bins") so both cards' CSVs have one shape and one reader.  The unit differs;
+    /// bins") so both CSVs have one shape and one reader.  The unit differs;
     /// see the file banner before comparing occupancies.
     static constexpr int kLadderBins   = NetworkPriorResidual::kLadderBins;
     static constexpr int kLadder4Sigma = NetworkPriorResidual::kLadder4Sigma;
@@ -242,7 +242,7 @@ public:
             return std::exp(sum_log_t / static_cast<double>(n_geo)) / kBlockChi2GeoMean1;
         }
         /// block_only / blocks_flagged, the headline number of INC-3.  Per SPEC
-        /// §8.4, this number decides whether a response card is worth writing.
+        /// §8.4, this number decides whether a response is worth writing.
         double blockOnlyFraction() const {
             if (n_reported <= 0) return 0.0;
             return static_cast<double>(n_block_only) / static_cast<double>(n_reported);
@@ -460,8 +460,8 @@ public:
         // A block is block_only when it is loud and every one of its rows was
         // individually quiet at the same threshold in the same units.  No existing
         // tier sees that population, and SPEC §8.4 makes its fraction the number
-        // that decides whether a response card is worth writing (INC-3, the
-        // card's distinct output).
+        // that decides whether a response is worth writing (INC-3, the
+        // census's distinct output).
         out.block_only = out.reported && !(out.row_t > report_sigma_);
         if (out.reported) {
             ++L.n_reported; ++R.n_reported;
@@ -708,7 +708,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep);
 
 /// Run-end readout (invariant #4): denominators first, then the ladders, then the
 /// INC-3 fraction, which SPEC §8.4 makes the number that decides whether a response
-/// card is worth writing.
+/// is worth writing.
 void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
                               const std::shared_ptr<spdlog::logger>& log,
                               const std::vector<NetStation>& stations);

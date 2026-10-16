@@ -69,8 +69,8 @@
  * and the deficient directions of the Galileo split carried live CB components
  * (`PB:E03:L5X:0.35 CB:E03:C5X:0.35 …`): the columns existed and their row support
  * thinned.  The strict key predicate can therefore be empty on the run §6.3 grades,
- * as the spec anticipates ("a low number falsifies the family-partition definition,
- * not the card").
+ * as the spec anticipates (a low number falsifies the family-partition definition,
+ * not the census).
  *
  * This implementation evaluates both predicates in one pass over the same partition:
  *  - `zero_keys`: the spec's strict predicate.  It alone drives the contingency
@@ -99,7 +99,7 @@
  * The assembled row stacks are the obvious edge source, but @c classifyRow scans
  * every shared column of every row (@c A_s is column-major, so the walk strides
  * badly); the prefit census measures 7.6 ms/epoch at 63 stations doing it, fifteen
- * times this card's 0.5 ms budget, for a graph that needs no residuals, weights or
+ * times the 0.5 ms budget, for a graph that needs no residuals, weights or
  * Jacobian.  The census walks @c modeled[station] instead: the per-station modeled
  * observation list, whose `observed` map is keyed by full RINEX-3 code and from
  * which the measurement admission screen has already removed every rejected
@@ -347,7 +347,7 @@ struct NetDatumGraphSpectral {
 std::vector<std::string> netDatumGraphDetailIds(std::string_view detail);
 
 // ---------------------------------------------------------------------------
-//  Reconciliation, the card's deliverable (INC-1)
+//  Reconciliation, the main deliverable (INC-1)
 // ---------------------------------------------------------------------------
 
 /**

@@ -4,8 +4,8 @@
  *        docs/refound/L5P_l5_phase_posture_2026-09-21.md knob B).
  *
  * In the network solve, the code rows of a signal whose band is neither band of
- * the constellation's ionosphere-free pin pair fold at sigma x scale.  With card
- * B5D armed, the extra-band code-bias column stays determined by those same rows,
+ * the constellation's ionosphere-free pin pair fold at sigma x scale.  With the scaling
+ * armed, the extra-band code-bias column stays determined by those same rows,
  * so the wire keeps a band-5 code bias while the rows lose their pull on the
  * shared states.
  *
@@ -21,7 +21,7 @@
  *
  * The weight arithmetic itself (`w /= scale * scale` on the code rows, phase rows
  * untouched) is graded on the arms by the `w` column of `network_pf_rows.csv` at
- * the first epoch, which gate G1 of the card compares against the base.
+ * the first epoch, which gate G1 compares against the base.
  */
 #include <gtest/gtest.h>
 

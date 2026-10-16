@@ -17,7 +17,7 @@
  *   2. Receiver DSB lines (CAS format: two observation codes) parse with both
  *      signals and the is_dsb flag.
  *   3. The satellite vector is unchanged by receiver/DSB content (same count,
- *      same values), so its consumers stay byte-identical (the card's structural
+ *      same values), so its consumers stay byte-identical (the structural
  *      guarantee).
  *   4. Satellite DSB lines are skipped and counted, never folded into the OSB
  *      vector, whose consumers assume observable-specific semantics.
@@ -128,7 +128,7 @@ TEST(BiaReceiverRecords, ReceiverDsbLinesCarryBothSignals) {
     EXPECT_NEAR(r.rx[0].bias, -8.1234 * kNsToM, 1e-9);
 }
 
-// The card's structural guarantee: the satellite vector is identical with and
+// The structural guarantee: the satellite vector is identical with and
 // without receiver/DSB content in the file.
 TEST(BiaReceiverRecords, SatelliteVectorIsUntouchedByReceiverContent) {
     const auto plain = parse("sat_only", kSatOsb);

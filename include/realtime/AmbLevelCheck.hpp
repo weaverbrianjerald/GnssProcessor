@@ -4,7 +4,7 @@
  *        code level at the re-coupling edge of invariant #7: windowed levels,
  *        the two tests, the trip decision and its counters.
  *
- * Cards CC and PBT establish that a preserved ambiguity is continuous; neither
+ * The CC and PBT results establish that a preserved ambiguity is continuous; neither
  * establishes that it is correct.  On the RF-0hv field bed, mass resets
  * re-levelled accumulated ambiguity error from code as a side effect and left
  * the ambiguities nearer the truth than the arm that preserved them (PBT §7).

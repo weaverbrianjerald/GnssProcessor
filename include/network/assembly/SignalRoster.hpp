@@ -561,7 +561,7 @@ namespace GnssProcessor {
         /// (@c logs/network_arc_ledger.csv and the @c ARC event rows of the build and
         /// the audit).  Decides what is written, never what is built or counted.
         bool      trace{ false };
-        long long epochs{ 0 };      ///< seam invocations; the processed-epoch clock of this card.
+        long long epochs{ 0 };      ///< seam invocations; the processed-epoch clock of this seam.
 
         // --- The "signals as planned" table -------------------
         /// The site census at the start of this epoch's build, so the audit can state
@@ -742,7 +742,7 @@ namespace GnssProcessor {
         long long gap_2_30_answered{ 0 };     ///< of those, answered by the gap re-entry tier in the same epoch.
         long long gap_any{ 0 };               ///< raw-side re-entries after any number of missed epochs.
         /// Carry-side gap census: the audit's own population, presence in
-        /// `network_amb_state.csv`, on which the card's figures were measured.
+        /// `network_amb_state.csv`, on which the original figures were measured.
         long long carry_gap_any{ 0 };         ///< carry returns after at least one missed epoch.
         long long carry_gap_2_30{ 0 };        ///< of those, after 2 to 30 missed epochs.
         long long carry_gap_2_30_answered{ 0 };///< of those, answered by the gap re-entry tier at the return epoch.

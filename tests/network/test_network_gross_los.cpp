@@ -135,7 +135,7 @@ TEST(NetworkGrossLosRule, EmptySignalLabelsStillCount) {
     // and the W6 datum signal's rows even when they are estimated, carry no CB:
     // column and therefore no signal label.  Counting distinct labels instead of
     // rows would leave the screen inert, without a symptom, on those postures (the
-    // failure mode the card addresses), so the rows count and the empty labels are
+    // failure mode this screen addresses), so the rows count and the empty labels are
     // left out of the event detail.
     const std::vector<GrossLosSample> cell = {
         row("", 30.0, -27.0), row("", 25.0, -22.0)};

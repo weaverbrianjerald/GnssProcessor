@@ -151,8 +151,8 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (!ctx.knobs.carry_cpl_exact) return 0;
-    // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
-    // ran and every row took card 1d's kappa, however clean the rest reads.  The rows
+    // Run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
+    // ran and every row took the scalar kappa, however clean the rest reads.  The rows
     // and the fold read one decision per key; the fold line counts
     // what a clock-pivot handover changed after the rows were built.
     const auto& c  = ctx.counters;
@@ -188,7 +188,7 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
         log->warn("Network: network.carry_coupling_exact_update is ARMED but no "
                   "row took the exact route: the card is INERT for this run.");
     if (ctx.knobs.carry_cpl_exact_cross) {
-        // Card WSX: the within-station bracket, its reach and its size.
+        // The within-station bracket, its reach and its size.
         const auto hist = [&X](int cls) {
             std::string s;
             for (int b = 0; b < CouplingExactCounters::kCrossRhoBins; ++b)

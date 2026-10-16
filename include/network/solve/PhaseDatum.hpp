@@ -172,7 +172,7 @@ void networkBuildPhaseDatumCandidates(
 /// is byte-identical: its existing branches are unchanged and nothing below is
 /// allocated.
 ///
-/// The four items of the card, in the order they act inside one election:
+/// The four items, in the order they act inside one election:
 ///  1. Held basis: a retained incumbent re-pins at the frozen @c basis value instead of
 ///     re-deriving it, so the datum is constant for the whole tenure.
 ///  2. Every handover declared: a new election records @c prev_value / @c prev_station
@@ -276,7 +276,7 @@ struct PhaseGateDrop {
  * @brief Cold anchor-fallback inputs (@c network.phase_datum_candidacy_usable,
  *        docs/SPEC_event_harness.md §15): a read-only view shaped like
  *        @ref AnchorHygiene, so an election handed a default instance behaves as it
- *        does without the card.
+ *        does without the anchor hygiene.
  *
  * The election's sweep takes the first coverage-ranked tracker of the key; the
  * continuous branch then looks that successor up in the handover ledger and may
@@ -368,7 +368,7 @@ struct AnchorCandidacyUsable {
  * @param handover          Two-edge continuous handover
  *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).
  *                          @c nullptr (the default) is the election without the
- *                          card: every pin target is 0.0.  When supplied, a
+ *                          anchor hygiene: every pin target is 0.0.  When supplied, a
  *                          handover pins the incoming anchor at its own absolute
  *                          ambiguity estimate from the ledger, which is its value
  *                          in the outgoing frame, so the gauge change is an

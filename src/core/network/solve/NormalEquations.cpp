@@ -729,7 +729,7 @@ void NetworkNormalEquations::reduce(int n_threads) {
     sumzero_gauges_.clear();
     station_sumzero_.clear();
     sumzero_folded_ = false;
-    // Same for the invariant-carry DD priors (@ref foldReducedDdPriors, Card 4): a
+    // Same for the invariant-carry DD priors (@ref foldReducedDdPriors): a
     // rebuilt reduced system drops the folded G M Gᵀ; the driver re-folds after the reduce.
     dd_priors_.clear();
     station_ddprior_.clear();
@@ -1480,7 +1480,7 @@ void NetworkNormalEquations::applyDdPriorCorrection(std::size_t station,
                                                     const Eigen::VectorXd& x_s,
                                                     Eigen::VectorXd& x_r) const {
     const Station& st = stations_[station];
-    // DD-prior correction (@ref foldReducedDdPriors, Card 4): the constrained locals
+    // DD-prior correction (@ref foldReducedDdPriors): the constrained locals
     // are x_r −= N_rr⁻¹ C_{L,r}ᵀ κ, with κ = M(z_free − Gᵀ x_s − ẑ) shared across this
     // station's terms of each block.  Only the DD (cycle) directions change.  With no
     // DD priors folded the list is empty and the reconstruction is byte-identical to

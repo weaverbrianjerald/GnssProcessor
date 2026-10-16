@@ -227,7 +227,7 @@ IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
 /**
  * @brief Partial fix in the decorrelated space, then the single-signal integers it determines.
  *
- * Card ARL (the integer-ambiguity ladder).  With a free slant ionosphere the
+ * Integer-ambiguity ladder.  With a free slant ionosphere the
  * uncombined L1/L2 double differences are each imprecise (about 0.3 cycle) while
  * combinations of a pair (the wide lane, the ionosphere-free part) are precise, so
  * a subset chosen entry by entry (@ref selectFixableSubset) finds nothing and the

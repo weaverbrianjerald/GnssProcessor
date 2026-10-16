@@ -1,6 +1,6 @@
 /**
  * @file EmitRebase.cpp
- * @brief Implementation of the emit-layer frame re-base (Card 4 (M1) phase D).
+ * @brief Implementation of the emit-layer frame re-base (phase D).
  */
 
 #include "network/emit/EmitRebase.hpp"
@@ -155,7 +155,7 @@ int networkEmitRebaseRunEnd(const NetworkRunEndView& v) {
     const bool emit_rebase_on = v.ctx.knobs.emit_rebase_on;
 
     if (!emit_rebase_on) return 0;
-    // Emit-layer re-base telemetry (Card 4 (M1) phase D, spec §3): the integer cycles
+    // Emit-layer re-base telemetry (phase D, spec §3): the integer cycles
     // and common-fractional shift removed onto the previous emission frame (an
     // S-selection on outputs only; user DDs are invariant to it).  For the consumer
     // A/B: high integer/fractional churn with a silent disc counter is the datum

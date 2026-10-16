@@ -53,10 +53,10 @@ enum SubBlock {
     SB_GAUGEBUILD,   //          the block ahead of the DD build (until the epoch function replaced the closures,
                      //          also the carry-driver closure's set-up)
     SB_DDBUILD,      //          networkBuildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
-                     //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
+                     //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords)
     SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve
                      //          (net removes the internal solve/reduce)
-    SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback) (card 4)
+    SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback)
     SB_NETAR,        //          producer-side network AR, phase 2 (log-only; off in the tier)
     SB_SOLPREP,      //          toSolutionEpoch + per-sat discontinuity signalling
     SB_EMITSTORE,    // block 7: emit re-base + store push + solution CSV
@@ -73,7 +73,7 @@ enum SubBlock {
                      //       epoch, and the disagreement pass after the clock update
                      //      .  Both brackets accumulate into one
                      //       entry: they are the same observatory, and the cost of
-                     //       interest is what the card adds to an epoch.
+                     //       interest is what the signal roster adds to an epoch.
     SB_COUNT
 };
 

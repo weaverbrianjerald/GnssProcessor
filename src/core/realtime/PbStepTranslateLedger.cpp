@@ -1,7 +1,7 @@
 /**
  * @file PbStepTranslateLedger.cpp
- * @brief Translate / skip / refuse decision for a phase-bias product step (card
- *        PBT (A)).  The header holds the algebra, the scope and the refusal branches.
+ * @brief Translate / skip / refuse decision for a phase-bias product step.
+ *        The header holds the algebra, the scope and the refusal branches.
  */
 
 #include "realtime/PbStepTranslateLedger.hpp"

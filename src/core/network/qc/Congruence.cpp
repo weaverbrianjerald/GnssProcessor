@@ -3,19 +3,19 @@
  * @brief Station congruence screen: the per-station coordinate sweep and its
  *        emission (docs/SPEC_redundancy_census.md CG-INC-1..3).  See
  *        Congruence.hpp for the design argument, the sign convention and
- *        the two @f$\hat\sigma_0@f$ corrections taken from the block card.
+ *        the two @f$\hat\sigma_0@f$ corrections taken from the block census.
  *
  * Measure-only.  Nothing here writes a weight, a state, a coordinate or a
  * decision; this translation unit reads the solved system and emits counters,
  * ladders, a per-station MDB table and events.  SPEC §8 row 1 assigns any
- * response (a deweight, an exclusion, a re-coordination) to a separate card,
+ * response (a deweight, an exclusion, a re-coordination) to a separate mechanism,
  * because re-coordinating a station is a datum act with two edges to bound under
  * standing invariant #7.
  *
  * ## Cost
  *
  * The sweep runs inside the redundancy census's swept branch, so it inherits that
- * card's stride, targeted-escalation and trip schedule and adds no scheduler
+ * census's stride, targeted-escalation and trip schedule and adds no scheduler
  * (SPEC §3).  Per swept station it forms one @f$b\times b@f$ residual cofactor
  * over the station's data rows, one @f$b\times 3@f$ contraction and one
  * @f$3\times 3@f$ eigensolve.  The cofactor and the @c rowRedundancy call the
@@ -94,7 +94,7 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
     // ---- which rows carry position information -----------------------------
     // Observation rows only (code and phase), and only those with a nonzero,
     // finite geometry triple, a positive weight and a finite residual.  Pins and
-    // coupling rows are excluded for the reason the block card excludes them: a
+    // coupling rows are excluded for the reason the block census excludes them: a
     // pin's ~1e10 weight would swamp anything it joined, and on a within-epoch
     // re-solve the coupling rows are re-whitened in a copy and no longer describe
     // the system that was solved.  SH↔slant tie rows are excluded because they
@@ -535,7 +535,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     const EpochMeasurement& em = build.em;
     // The alias lines of networkPassB_ this function reads, verbatim.
     // Station congruence screen (docs/SPEC_redundancy_census.md, CG-INC-0).  The one
-    // thing the assembly owes that card: retain each data row's position partial,
+    // thing the assembly owes it: retain each data row's position partial,
     // which networkSplitStation_ drops because the network holds every coordinate
     // fixed.  Off: the block below never runs and StationAssembly::row_pos_enu stays
     // empty (byte-identical, no allocation).
@@ -561,7 +561,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     //
     // Only the data rows exist at this point (every later fold, i.e. the
     // datum pins, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows
-    // and the Card-1 coupling rows, is appended), so sizing to em.H.rows() is
+    // and the coupling rows, is appended), so sizing to em.H.rows() is
     // exact and the consumer's `row < row_pos_enu.rows()` test is the
     // structural bound on which rows can carry geometry.
     //

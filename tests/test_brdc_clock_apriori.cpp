@@ -207,7 +207,7 @@ TEST(NbpBrdcParse, Orbit7FieldsAndWeekReduction) {
 }
 
 // The DOY-129 file: 465 GPS records, every one with a transmission time, lead toc - ttom
-// p50 7182 s (the card's facts).
+// p50 7182 s (the file's facts).
 TEST(NbpBrdcParse, Doy129Orbit7) {
     const fs::path nav = navFixture();
     if (nav.empty()) GTEST_SKIP() << "DOY-129 navigation file not found";

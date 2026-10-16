@@ -707,7 +707,7 @@ TEST(NetworkProductIoTest, UraAndClockDriftRoundTrip) {
 // OrbitClockCorrection, so a file-replayed product gates the clock on the
 // producer's broadcast baseline in the same way as the live closed loop.  A
 // second satellite left at the default sentinel (clock_iode = -1) writes no
-// token (Card 4, RTF-2).
+// token (RTF-2).
 TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
     const std::string path = tempFile("gnss_netprod_iode.txt");
     std::filesystem::remove(path);
@@ -779,7 +779,7 @@ TEST(NetworkProductIoTest, ClockIodeAndOrbitEchoRoundTripAndStamp) {
 // counters.  With serialize_disc_counters armed, the C line carries the
 // always-written c1 (field 4) and the clock disc counter (field 5) before the
 // key=value tokens, and the reader parses both the positional counter and the
-// trailing IODE.  This is the field-ordering stress case (Card 4, RTF-2).
+// trailing IODE.  This is the field-ordering stress case (RTF-2).
 TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
     const std::string path = tempFile("gnss_netprod_iode_disc.txt");
     std::filesystem::remove(path);
@@ -831,8 +831,8 @@ TEST(NetworkProductIoTest, ClockIodeCoexistsWithSerializedDiscCounters) {
 
 // The sp3-mode sentinel (clock_iode = -1) writes no iode=/oiod=/oepoch= token, so
 // a producer that never sets the fields is byte-identical to a run that
-// explicitly leaves them at their sentinels: the twin-file invariant (Card 4,
-// RTF-2).
+// explicitly leaves them at their sentinels: the twin-file invariant
+// (RTF-2).
 TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
     const std::string a = tempFile("gnss_netprod_iode_a.txt");
     const std::string b = tempFile("gnss_netprod_iode_b.txt");
@@ -841,7 +841,7 @@ TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
 
     // File A: plain makeEpoch (fields at their in-struct defaults).
     { NetworkProductWriter w(a); ASSERT_TRUE(w.good()); w.write(makeEpoch(kT0, -0.7)); }
-    // File B: the same epoch with the Card-4 fields explicitly at their sentinels.
+    // File B: the same epoch with the IODE fields explicitly at their sentinels.
     NetworkSolutionEpoch sol = makeEpoch(kT0, -0.7);
     for (auto& s : sol.sats) {
         s.clock_iode    = -1;
@@ -854,7 +854,7 @@ TEST(NetworkProductIoTest, ClockIodeSentinelTwinFileByteIdentical) {
     const std::string bb = readAllBytes(b);
     EXPECT_EQ(ba, bb);                                  // byte-identical
     const std::string da = dataBytes(a);                // wire probes: data lines only
-    EXPECT_EQ(da.find("iode="), std::string::npos);     // no Card-4 tokens at all
+    EXPECT_EQ(da.find("iode="), std::string::npos);     // no IODE tokens at all
     EXPECT_EQ(da.find("oiod="), std::string::npos);
     EXPECT_EQ(da.find("oepoch="), std::string::npos);
 
@@ -1595,7 +1595,7 @@ TEST(NetworkProductIoTest, ContractRoundTripEnsembleAmbDatum) {
 // nothing and cannot be skipped.
 //
 // Wire-value contract: 0 = PivotReceiverZeroAmbiguity (legacy single-pivot),
-// 1 = SumToZeroPerReceiver (Fix A ensemble), 2 = SingleReceiverChain (Card 3 eq34).
+// 1 = SumToZeroPerReceiver (Fix A ensemble), 2 = SingleReceiverChain (eq34).
 // Append new realizations; do not insert or reorder.
 static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::PivotReceiverZeroAmbiguity) == 0,
               "AmbDatum wire value 0 is frozen — it is S-line field 4 on every stored product");
@@ -1606,7 +1606,7 @@ static_assert(static_cast<int>(SbasisDeclaration::AmbDatum::SingleReceiverChain)
 
 // The eq34 declaration survives the wire as value 2.  Companion to
 // ContractRoundTripEnsembleAmbDatum above, which covers the ensemble datum; this
-// test covers the Card 3 datum.  The serialized contract has its own eq34 branch,
+// test covers the eq34 datum.  The serialized contract has its own eq34 branch,
 // separate from the per-solve declaration; without it an eq34 product declares the
 // legacy pivot datum it does not use (docs/SPEC_sbasis_realization_contract.md §D).
 TEST(NetworkProductIoTest, ContractRoundTripEq34AmbDatum) {
@@ -3108,10 +3108,10 @@ NetworkStateSnapshot makeFullSnapshot() {
     s.ura_retro_sats = {"G13", "E09"};
     s.retro_active   = {"G13"};
     s.c1_zoh_active  = {"C21"};
-    s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // re-level baselines (Card 6)
-    s.eph_cutover_disc_pending = {"C21"};           // pending forced disc (Card 6)
+    s.relevel_iode   = {{"G01", 10}, {"E11", 7}};   // re-level baselines
+    s.eph_cutover_disc_pending = {"C21"};           // pending forced disc
 
-    // Card-1 coupling regressors (format v3; see §18.12 for the design): the
+    // Coupling regressors (format v3; see §18.12 for the design): the
     // shared-column dictionary plus one packed regression per carried row, keyed
     // on the L / Z keys above (the parser refuses an orphan QL/QZ, so these
     // reference local_carry[{7,"G01","L1C"}] and zwd_carry[7]).  Entry order
@@ -3221,8 +3221,8 @@ TEST(NetworkStateSnapshotTest, SerializeParseRoundTripsEveryGroup) {
     EXPECT_EQ(r.ura_retro_sats, s.ura_retro_sats);
     EXPECT_EQ(r.retro_active, s.retro_active);
     EXPECT_EQ(r.c1_zoh_active, s.c1_zoh_active);
-    EXPECT_EQ(r.relevel_iode, s.relevel_iode);                       // Card 6
-    EXPECT_EQ(r.eph_cutover_disc_pending, s.eph_cutover_disc_pending);// Card 6
+    EXPECT_EQ(r.relevel_iode, s.relevel_iode);                       // re-level baselines
+    EXPECT_EQ(r.eph_cutover_disc_pending, s.eph_cutover_disc_pending);// pending forced disc
     // Coupling regressors (§18.12): the dictionary field-for-field, then
     // whole-container equality on the rows.  std::vector<std::pair<int,double>>
     // compares element-wise in order, which is the required property: the

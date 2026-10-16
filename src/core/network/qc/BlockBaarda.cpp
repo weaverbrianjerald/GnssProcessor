@@ -7,13 +7,13 @@
  * Measure-only.  Nothing here writes a weight, a state or a decision; this
  * translation unit reads the solved system and emits counters, ladders and events.
  * SPEC §9 row 1 assigns any response to a loud block (a deweight, a refloat, an
- * exclusion) to a different card, and §11 states that this card does not act on a
+ * exclusion) to a different mechanism, and §11 states that this census does not act on a
  * block "including the loud ones".
  *
  * ## Cost
  *
  * The sweep runs inside the redundancy census's swept branch, so it inherits that
- * card's stride, targeted-escalation and trip schedule and adds no scheduler
+ * census's stride, targeted-escalation and trip schedule and adds no scheduler
  * (SPEC §4).  Per swept station the census forms the post-fit residual once (one
  * @c reconstructStation, a cached LDLᵀ solve with no factorization, and two
  * GEMVs), shared with the congruence rider.  Per block this file then pays one
@@ -470,7 +470,7 @@ void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
         }
     }
 
-    // ---- block-only fraction, the card's headline number (INC-3) ----------
+    // ---- block-only fraction, the census's headline number (INC-3) ----------
     if (tot_reported == 0) {
         log->info("Network (block-Baarda census): INC-3 — ZERO blocks cleared t_B > "
                   "{:.3g} over {} block(s), so the smearing fraction is UNDEFINED, not "
@@ -535,8 +535,8 @@ void networkBlockBaardaArm(NetworkRun& run) {
     const SlipQcChannel& slip_qc = run.engines.slip_qc;
     // ---- End of the bindings ----
     // The block-Baarda accumulator lives in ctx.carry (its feed site is inside
-    // the redundancy-census seam, which took ctx but no run-TU reference until card
-    // NOM3 step EP1; the seam takes the run now, and moving the accumulator to the
+    // the redundancy-census seam, which once took ctx but no run-TU reference;
+    // the seam takes the run now, and moving the accumulator to the
     // run's engines is a later step), so it is seated here from config rather than
     // constructed by the context.  An
     // unarmed run keeps the default-constructed empty-family instance, whose

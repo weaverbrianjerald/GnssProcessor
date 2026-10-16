@@ -226,7 +226,7 @@ bool decodeKeplerRecord(const std::string& epoch,
     // The Galileo data-source word says which message the record is (I/NAV or
     // F/NAV) and which clock and group-delay pair it carries; the network's
     // group-delay latch prefers the F/NAV (E1, E5a) records.  Other systems keep
-    // -1.  (Card OWD, O3.)
+    // -1.
     if (sys == System::Galileo) eph.data_source = static_cast<int>(std::lround(src_d));
     eph.received_time = GnssTime{0, 0.0};   // file load: no wall-clock receipt stamp
 
@@ -259,14 +259,14 @@ bool decodeKeplerRecord(const std::string& epoch,
     k.toc = GnssTime{week, toc_sow};
 
     // GPS / QZSS IODC (fourth field of broadcast orbit 6; the second group delay of
-    // Galileo and BeiDou sits there instead).  (Card NBP.)
+    // Galileo and BeiDou sits there instead).
     if (sys == System::GPS || sys == System::QZSS)
         eph.iodc = static_cast<int>(std::lround(tgd1));
     // Broadcast orbit 7: transmission time of message, fit interval.  The transmission
     // time is seconds of the record's week, which RINEX allows to be referred to the
     // neighbouring week (a negative value, or one past the week end); it is reduced to
-    // within half a week of toc.  0.9999E+09 is the RINEX "unknown" value.  (Card NBP:
-    // the broadcast clock a priori selects the latest record transmitted at or before
+    // within half a week of toc.  0.9999E+09 is the RINEX "unknown" value.  (The
+    // broadcast clock a priori selects the latest record transmitted at or before
     // the epoch.)
     const double ttom = orb(6, 0);
     eph.fit_interval  = orb(6, 1);

@@ -15,13 +15,13 @@
  * Each case pins a decision that has no other observable:
  *
  *   1. a freed anchor arc stages exactly one directive per (sat, signal) family, and
- *      a freed non-anchor arc stages none; the card rests on this discrimination,
+ *      a freed non-anchor arc stages none; the handover rests on this discrimination,
  *      because a slip at a station that anchors nothing does not touch any gauge;
  *   2. the same holds through the DD invariant-carry funnel, which carries the freed
  *      set on carry_invariant lineages where the leveling latch is empty, and a family
  *      named by both vehicles is staged once;
  *   3. `anchorFor` finds a production directive on an unarmed run: the injector's
- *      `armed` flag gates the harness schedule, not this card, and a lookup that
+ *      `armed` flag gates the harness schedule, not this handover, and a lookup that
  *      required it would make the knob a no-op in every production posture;
  *   4. an injected directive takes precedence over a production one for the same
  *      family: a harness leg that scripts a `cold` handover tests the cold branch, and
@@ -197,7 +197,7 @@ TEST(AnchorSlipHandoverStage, FreedAnchorArcStagesOnePerFamily) {
     EXPECT_EQ(families(inject.anchor_now_slip),
               (std::vector<std::string>{"G10_L1C", "G10_L2W"}));
     // The staged directive asks for the continuous branch; a directive that asked
-    // for cold would re-realize the gauge, which the card exists to avoid.
+    // for cold would re-realize the gauge, which the handover exists to avoid.
     for (const auto& d : inject.anchor_now_slip) EXPECT_FALSE(d.cold);
     // The injector's own vector is untouched.
     EXPECT_TRUE(inject.anchor_now.empty());
@@ -290,7 +290,7 @@ TEST(AnchorSlipHandoverLookup, InjectedDirectiveWinsForTheSameFamily) {
     scripted.cold = true;
     inject.anchor_now.push_back(scripted);
 
-    InjectAnchorDirective production;    // the card, for the same family
+    InjectAnchorDirective production;    // the production staging, for the same family
     production.sat = "G10";
     production.signal = kSigA;
     production.cold = false;
@@ -302,7 +302,7 @@ TEST(AnchorSlipHandoverLookup, InjectedDirectiveWinsForTheSameFamily) {
                                 "production one — a leg testing the cold branch would "
                                 "silently become a continuous leg";
     EXPECT_EQ(found, &inject.anchor_now.front());
-    // A family only the card staged still resolves to the card's directive.
+    // A family only production staged still resolves to the production directive.
     InjectAnchorDirective other;
     other.sat = "G27";
     other.signal = kSigB;
@@ -323,7 +323,7 @@ TEST(AnchorSlipHandoverLifetime, BothVectorsClearPerEpochIncludingUnarmedRuns) {
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 
-    // An unarmed run: `networkInjectEpoch` returns early, and the production card
+    // An unarmed run: `networkInjectEpoch` returns early, and the production staging
     // is the only writer.  The clear still happens there; without it the ban would
     // re-fire at every later election (invariant #7's decoupling edge).
     ASSERT_FALSE(ctx.inject.armed);

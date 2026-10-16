@@ -27,7 +27,7 @@
  *
  * The wire refers to the stamped ephemeris: C_wire = C_est + O_s,k with @c iode = k, so
  * a consumer holding record k reconstructs brdc_k(t) + C_wire = a_s(t) + C_est (the
- * card 7 IODE path of @c GnssCorrections::getSatelliteClockCorrection).  The store feed
+ * IODE path of @c GnssCorrections::getSatelliteClockCorrection).  The store feed
  * by transmission time keeps the stamped record current (or previous) in
  * @c LiveEphemerisStore when the consumer reads it.
  *

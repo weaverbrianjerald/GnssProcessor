@@ -171,7 +171,7 @@ namespace GnssProcessor {
                 // the network scope): FDMA makes a single shared per-(sat,signal) OSB
                 // unphysical for GLONASS, whose receiver group delay stays in the
                 // per-FCN-slot rx IFB and whose code feeds the satellite clock alone.
-                // (Card NOM N1b, checked: the per-slot IFB exists only on the FDMA bands
+                // (Checked: the per-slot IFB exists only on the FDMA bands
                 // at a known slot k != 0, and the GLONASS branch below is not reached
                 // in a loaded run, because the loader refuses
                 // network.estimate_sat_code_bias together with network.estimate_glonass.)

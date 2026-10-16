@@ -433,15 +433,15 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   // sets `M := 0` on a non-PD Pᶻ+B.  Unconditional,
                                   // like the redundancy and prefit columns and unlike
                                   // the adm ones, because INC-0 is an always-on
-                                  // instrument, not an armed card.  Blank on epochs
+                                  // instrument, not an armed feature.  Blank on epochs
                                   // the invariant carry did not fold on.
                                   "ddfold_degen_blocks,ddfold_degen_rows,"
                                   "ddfold_min_pivot_rel"
                                // docs/SPEC_measurement_admission.md INC-3: the
                                // absolute, product-referenced |z| census.  Appended
-                               // only when the card is armed, unlike the two
+                               // only when the admission census is armed, unlike the two
                                // censuses above, whose unconditional columns change
-                               // the artifact of every unarmed run.  The card's off
+                               // the artifact of every unarmed run.  Its off
                                // contract is structural byte-identity, and its own
                                // §7 gates are same-build A/B comparisons of this
                                // file.  adm_sta_worst_z = the median over screened
@@ -453,14 +453,14 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                        ? ",adm_sta_worst_z,adm_net_worst_z" : "")
                                // docs/SPEC_prior_residual_census.md: the per-epoch
                                // summary of the carry-prior census.  Appended only
-                               // when the card is armed (as for adm, unlike the
-                               // redundancy and prefit columns), because the card's
+                               // when the prior-residual census is armed (as for adm, unlike the
+                               // redundancy and prefit columns), because its
                                // off contract is structural byte-identity and its
                                // §9.1 gate compares this file across arms.
                                // prires_rows is the denominator (a count of rows
                                // over 4 sigma cannot be interpreted without it), and
                                // prires_rows_resp / _frame partition the populations
-                               // the card keeps apart.
+                               // the census keeps apart.
                                << (es_prires_columns_
                                        ? ",prires_rows,prires_rows_resp,prires_rows_frame,"
                                          "prires_n_reported,prires_max_t"
@@ -854,7 +854,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     }
     if (nc.prior_residual_census) {
         // docs/SPEC_prior_residual_census.md INC-1: the exceedance ladder, the
-        // card's main product.  Durability: the census seam flushes this stream on
+        // census's main product.  Durability: the census seam flushes this stream on
         // each content-hour roll, so a killed run keeps every completed content
         // hour.  (Of the streams owned here, only health_trace, armed by
         // network.health_interval_s, is flushed on every write; see writeHealthRow.)
@@ -867,7 +867,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     }
     if (nc.block_baarda) {
         // docs/SPEC_redundancy_census.md BB-INC-1: the per-(family x label) exceedance
-        // ladder over t_B, the card's main product.  Nothing flushes this stream
+        // ladder over t_B, the census's main product.  Nothing flushes this stream
         // before teardown (network.health_interval_s flushes only health_trace), so
         // a killed run loses the rows still buffered.
         block_baarda_trace.open(block_baarda_trace_path);
@@ -879,7 +879,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     }
     if (nc.congruence_screen) {
         // docs/SPEC_redundancy_census.md CG-INC-1: one row per swept station per
-        // epoch.  This file is the card's main product: the spec's §7.2 perturbed
+        // epoch.  This file is the census's main product: the spec's §7.2 perturbed
         // arm is graded on a per-station run median of `d_e`, and its §7.3 MDB table
         // is built from `mdb_*`; neither survives aggregation into a ladder.  As
         // with the ladder above, nothing flushes the stream before teardown
@@ -893,7 +893,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     }
     if (nc.mdb) {
         // docs/SPEC_redundancy_census.md MDB-INC-1: the per-(constellation x
-        // class) MDB distribution, the card's main product.  Not flushed before
+        // class) MDB distribution, the census's main product.  Not flushed before
         // teardown either (network.health_interval_s flushes only health_trace).
         mdb_trace.open(mdb_trace_path);
         if (mdb_trace)
@@ -904,7 +904,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     }
     if (nc.datum_graph_census) {
         // docs/SPEC_datum_graph_census.md INC-2: the predicted-versus-observed
-        // S-basis dimension contingency, the card's main product.  Not flushed
+        // S-basis dimension contingency, the census's main product.  Not flushed
         // before teardown either (network.health_interval_s flushes only
         // health_trace).
         datum_graph_trace.open(datum_graph_trace_path);
@@ -938,7 +938,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // Long format: one row per discrete QC action.  tier names the emitting
             // layer: the core tiers are T1_if_slip, T2_within_epoch, T3_raim,
             // T4_attrib, T5_clock_model, T6_clock_monitor, GATE, SIGMA0, PIVOT and
-            // RETRO, and later cards add their own (ARC, ADMISSION, DD_FOLD,
+            // RETRO, and later instruments add their own (ARC, ADMISSION, DD_FOLD,
             // PHASE_DATUM, TOPOLOGY and others).  statistic/threshold blank where not
             // in scope; detail is comma-sanitized (',' -> ';').  Rows are written even
             // on epochs that are later withheld, so the file records how each epoch
@@ -1208,7 +1208,7 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         o << ',';
         if (r.ddfold_min_pivot_rel) o << fmt::format("{:.6e}", *r.ddfold_min_pivot_rel);
         // Measurement-admission census (INC-3): two columns, present in the schema
-        // only when the card is armed (see the header write in openAll).  Blank on
+        // only when the admission screen is armed (see the header write in openAll).  Blank on
         // an epoch the screen did not run, following the file's "unavailable is not
         // 0" convention: a genuine 0.0 worst-|z| and a skipped epoch are different
         // statements.
@@ -1219,7 +1219,7 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
             if (r.adm_net_worst_z) o << fmt::format("{:.6e}", *r.adm_net_worst_z);
         }
         // Prior-residual census: five columns, present in the schema only when the
-        // card is armed.  Blank on an epoch the census did not run: a genuine 0-row
+        // census is armed.  Blank on an epoch the census did not run: a genuine 0-row
         // epoch (every carry family absent) and an un-run epoch differ, and standing
         // invariant #4 depends on telling "ran, saw nothing" from "never ran".
         if (es_prires_columns_) {
@@ -1333,7 +1333,7 @@ void NetworkRunTraces::writeCarryVceApplyRows(const GnssTime& t,
           << fmt::format("{:.1f}", g.n_eff_r) << '\n';
     }
     // Durability: nothing else flushes this stream (only health_trace is flushed on
-    // every write), and it is the card's graded artifact, so an hourly flush bounds
+    // every write), and it is a graded artifact, so an hourly flush bounds
     // what a killed run, or one hung in Windows Error Reporting (WER), can lose to one
     // content hour.
     const int hour = static_cast<int>(t.tow / 3600.0);
@@ -1862,7 +1862,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        : std::string())
                // The re-entry vet (INC-4) is gated on its own arming rather than on the
                // block's, so a run without the vet keeps exactly the six fields above
-               // and the card's §9.7 conditional-column contract also holds one level
+               // and the spec's §9.7 conditional-column contract also holds one level
                // down.
                << (nc.adm_revet
                        ? fmt::format("\"adm_revet\":true,\"adm_revet_gap_ep\":{},"
@@ -2093,7 +2093,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        : std::string())
                // The arc-level tracker's per-band signal source.  This
                // block lists knobs, not counters (the two GRK counters are read
-               // from the run-end card-G readout), so the knob is what is
+               // from the run-end readout), so the knob is what is
                // recorded here.  It affects the solve through the detections and
                // the gap re-entry response, so an archived logs/ folder has to be
                // able to say which side of it its products came from.  Emitted
@@ -2165,7 +2165,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.slip_qc.oracle_true_slip,
                                      nc.slip_qc.oracle_window_s)
                        : std::string())
-               // Coupling regressors (Card-1, §18.12), both halves of the frame restore:
+               // Coupling regressors (§18.12), both halves of the frame restore:
                // the write knob says whether this run's snapshots carry QS/QL/QZ/QR
                // records (format v3), the read knob whether a resumed leg rebuilt
                // LocalCarry::coupling from them.  Startup record only: an archived
@@ -2415,7 +2415,7 @@ void NetworkRunTraces::writeFlagRateAndRunSummary(const GnssConfig& config_,
         // family of n>=2 non-reference DDs, not a per-(station,sat,pair) sample, and its
         // threshold is a different quantity; folding it into T1 would average two rates
         // over incommensurable denominators and hide the asymmetry between the two arms.
-        // An implied Gaussian alpha is meaningful only when the hardened Card-R gate is
+        // An implied Gaussian alpha is meaningful only when the hardened gate is
         // armed (threshold max(k*s_eff, floor_frac*lambda_IF)); on the legacy path the
         // decision is a bare physical floor, an absolute bound with no k.
         {
@@ -2500,7 +2500,7 @@ void NetworkRunTraces::closeAll() {
     if (block_baarda_trace.is_open()) block_baarda_trace.close();
     // Closed here so its tail is flushed at teardown, like the block-Baarda ladder above,
     // and because this file is the only place the per-station MDB table's inputs exist:
-    // an unflushed tail would lose the deliverable the card was armed for.
+    // an unflushed tail would lose the deliverable the census was armed for.
     if (congruence_trace.is_open()) congruence_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // estimability dump
     // Added after INC-4; the relocation did not leave it to the destructor, so the rule
@@ -2522,7 +2522,7 @@ void NetworkRunTraces::closeAll() {
     if (anchor_guard_trace.is_open()) anchor_guard_trace.close();
     if (level_innov_win_trace.is_open()) level_innov_win_trace.close();
     // Same reason: added after INC-4, and the station-block audit is the graded
-    // artifact of a §24.10 card-ZP arm, so its tail must be flushed at teardown.
+    // artifact of a §24.10 station-block arm, so its tail must be flushed at teardown.
     if (station_block_trace.is_open()) station_block_trace.close();
     // Same reason (RF-1 §7.4): added after INC-4, and the carry-state trace is the
     // instrument that step 2 exists to produce, so its tail must be flushed at teardown.

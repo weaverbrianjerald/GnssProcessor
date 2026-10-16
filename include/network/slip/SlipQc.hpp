@@ -316,7 +316,7 @@ struct PassABuffers {
     /// per-satellite MW silence, MW flags and LLI of this epoch, filled in the
     /// parallel region (per-station slot, no shared write) and consumed by the
     /// serial verdict seam before either drain.  Collected whatever the knob
-    /// state, so the census sizes the card before it is armed (invariant #4).  It
+    /// state, so the census sizes the mechanism before it is armed (invariant #4).  It
     /// reads detector output PASS A already holds, so with the knob off the cost
     /// is a map insert.
     std::vector<std::map<std::string, CommonBandEvidence>> sta_cb_ev;
@@ -415,7 +415,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *
  * Gated inside on network.cycle_slip.mw_detect; call it unconditionally.  The
  * refloat_signal lambda lives in this drain and is deliberately kept separate
- * from the IF driver's refloat_pair.  The drain also feeds the Card-4 C3c
+ * from the IF driver's refloat_pair.  The drain also feeds the invariant-carry C3c
  * funnel: every flagged (station, ambiguity) is inserted into
  * @p carry_slipped_ambs from epoch 1, independent of the legacy carry's warm gate.
  *
@@ -449,14 +449,14 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @param modeled            Per-station modeled observations (LLI flag scan).
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry armed (C3c feed gate).
+ * @param carry_invariant    DD invariant carry armed (C3c feed gate).
  * @param carry_warm         Legacy phase-leveling carry past its warmup gate
  *                           (refloat is meaningful only when warm; cold, the
  *                           detection is diagnostic).
  * @param carry_slipped_ambs The per-epoch C3c slip-event set: the single instance
  *                           owned by the run loop, by non-const reference.  A value
  *                           copy anywhere on this path would silently disable the
- *                           Card-4 slip funnel (standing invariant #1).
+ *                           invariant-carry slip funnel (standing invariant #1).
  * @param raw                This epoch's shared raw observables and step verdicts.
  *                          With @c computed false there is no
  *                           evidence: the qualification is skipped and LLI stays
@@ -482,7 +482,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @p datum_amb_reref_sats, which the first drain after that skip consumes: a
  * block ahead of this drain's station loop pending-reseeds the satellite's
  * ambiguities at every non-pivot station, erases their local carry, feeds the
- * Card-4 C3c funnel, inserts the satellite into @p datum_mark_sats for a
+ * invariant-carry C3c funnel, inserts the satellite into @p datum_mark_sats for a
  * per-satellite disc mark at the next emit, and emits the `datum_reref` event.
  *
  * @param datum_pb_reref_sats  Per-satellite PhaseBias skip-stash queue
@@ -595,7 +595,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * pending-reseed mark.  Counted: @c wu_restart_carry_arcs (arcs reached through the
  * carry) and @c wu_restart_no_arc (a warm, in-horizon restart with nothing to
  * free), which is outside @c wu_restart_refloated.  Without @p arcs the
- * drain reaches live columns only, the behaviour before the card.
+ * drain reaches live columns only, the earlier behaviour.
  *
  * @param arcs   The leveling carry (the arc table), read-only; null reaches live columns only.
  * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
@@ -710,7 +710,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param present              Per-station PASS-A presence (absent stations produce no resumptions anyway).
  * @param i_lo                 First non-pivot station index (0 under the prioritized datum).
  * @param n_sta_total          Station count.
- * @param carry_invariant      Card-4 DD invariant carry vehicle armed.
+ * @param carry_invariant      DD invariant carry vehicle armed.
  * @param carry_warm           The legacy phase-leveling carry is warm (a stale value can
  *                             exist).  Implies @c network.phase_leveling by
  *                             construction (ApplicationNetwork.cpp: `carry_warm = pl_on
@@ -1027,7 +1027,7 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  * @param present            Per-station PASS-A presence.
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry armed (C3c feed gate).
+ * @param carry_invariant    DD invariant carry armed (C3c feed gate).
  * @param carry_warm         Legacy carry warm gate (refloat vs diagnostic).
  * @param carry_slipped_ambs The per-epoch C3c slip-event set, by non-const
  *                           reference (see networkSlipDrainMwRefloat).
@@ -1122,7 +1122,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
  * @param stations           Station roster; @c sm is modified (pending-reseed marks).
  * @param present            Per-station PASS-A presence.
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry vehicle armed.
+ * @param carry_invariant    DD invariant carry vehicle armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
  * @param inject             Injector ledger: this drain closes @c n_applied,

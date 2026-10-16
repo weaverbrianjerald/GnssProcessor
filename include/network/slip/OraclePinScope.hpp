@@ -11,7 +11,7 @@
  * includes network/driver/RunTypes.hpp (StateManager, NetworkEstimator, PppModel,
  * MeasurementModel), which the config TU should not depend on.
  *
- * The oracle-pin card is described in include/network/slip/OraclePin.hpp.
+ * The oracle pin is described in include/network/slip/OraclePin.hpp.
  */
 
 #include <set>

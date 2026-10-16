@@ -300,7 +300,7 @@ void NetworkEstimator::reset() {
     n_hist_   = 0;              // and so are the history columns
     shared_cov_.resize(0, 0);   // match a freshly-constructed estimator exactly
     phase_sumzero_gauges_.clear();  // the ensemble datum is per-epoch (Fix A)
-    dd_priors_.clear();             // the DD priors are per-epoch too (Card 4, M1)
+    dd_priors_.clear();             // the DD priors are per-epoch too
     // The contribution log is per epoch: read by the epoch tail, which runs
     // before the next epoch's reset.
     contrib_log_.clear();
@@ -321,7 +321,7 @@ void NetworkEstimator::beginEpoch() {
     // from the carried DDs).  Clearing them at the epoch boundary means an epoch
     // that sets none cannot re-fold a stale block: the off path stays
     // byte-identical, and carry_invariant tolerates an epoch with no carry
-    // available (Card 4, M1).
+    // available.
     dd_priors_.clear();
     // RHS-attribution recorder: a re-opened epoch (including the within-epoch RAIM
     // re-solve) keeps only the captures of the final build, so the list is cleared
@@ -373,7 +373,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
         neq_.foldReducedSumZeroGauges(phase_sumzero_gauges_);
     }
     // Fold the invariant-carry DD priors onto the reduced system (idempotent within
-    // the reduce; Card 4, M1).  The DD fold and the sum-to-zero gauge fold are both
+    // the reduce).  The DD fold and the sum-to-zero gauge fold are both
     // post-reduce Woodbury folds on the unmodified per-station N_rr, so composing
     // them over coupled local ambiguity columns is inexact: the cross term is
     // dropped and the solution is biased with nothing to flag it.  The two are
@@ -1561,7 +1561,7 @@ NetworkSolutionEpoch NetworkEstimator::toSolutionEpoch(const Eigen::VectorXd& x_
                 // consumer must not treat an 'R' bias as an integer candidate.  A
                 // consumer reads the flag only with
                 // network.require_signal_integer_for_ar (default off).  Under the
-                // pivot-receiver anchor datum, the prioritized anchor or the Card-3
+                // pivot-receiver anchor datum, the prioritized anchor or the
                 // Eq-34 single-receiver-chain datum (network.phase_datum_eq34) the
                 // emitted bias carries only integer lumps and keeps the integer
                 // property for CDMA satellites.
@@ -1784,7 +1784,7 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // instead of a pivot magnitude.  Measure-only; it runs only on an already-rejected
     // block.
     est.setStationPdNullTrace(config_.getNetworkConfig().trace_station_pd_null);
-    // PD-safe DD fold, kernel half (card 4): product-form posterior read-back,
+    // PD-safe DD fold, kernel half: product-form posterior read-back,
     // equilibrated scale-relative factorization, counted eigenvalue-clamp repair.  Set
     // once here (it survives est.reset(), like the timers).  Off ⇒ byte-identical; the
     // INC-0 counters it feeds are always on and solve-neutral.

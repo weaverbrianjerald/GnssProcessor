@@ -160,7 +160,7 @@ TEST(SdEwlFfrTest, GateIsMonotoneAndMatchesTheEwlMaturityLadder) {
 TEST(SdEwlFlipTest, FreshDecisionFoldsAndStableDecisionFolds) {
     // Fresh matters for the S2 single-epoch virtual fold: after a warm resume there is
     // no previous decision, so requiring agreement would keep the feature from ever
-    // folding and make the A/B byte-identical (the Card-1e trap: a byte-identical A/B
+    // folding and make the A/B byte-identical (the known trap: a byte-identical A/B
     // can mean the feature never ran).
     EXPECT_EQ(sdEwlFlipCheck(false, 0, 0, 42, 10), SdEwlFlipVerdict::Fresh);
     EXPECT_EQ(sdEwlFlipCheck(true, 42, 10, 42, 11), SdEwlFlipVerdict::Stable);

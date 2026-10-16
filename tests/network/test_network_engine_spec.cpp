@@ -3,7 +3,7 @@
  * @brief The engines' constructor arguments (networkEngineSpec) equal
  *        the setup expressions runNetwork evaluated before they moved.
  *
- * Card NOM3 step EP1 builds the run's engines inside NetworkRun from a NetworkEngineSpec,
+ * NetworkRun builds the run's engines from a NetworkEngineSpec,
  * a pure function of the configuration and the knobs whose body is the setup statements
  * that built the engines, cut from runNetwork.  The statements in frozenSetup() are
  * runNetwork's, copied from ApplicationNetwork.cpp as it stood before the step (main

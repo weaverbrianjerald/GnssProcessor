@@ -34,7 +34,7 @@ ParamRoute borderRoute(const NetworkKnobs& k) {
 }
 
 /// The route of a carried local column that is not in the whitened block: a conditional
-/// coupling row with the border when card 1 is armed, else a diagonal station prior.
+/// coupling row with the border when the conditional coupling is armed, else a diagonal station prior.
 ParamRoute localRowRoute(const NetworkKnobs& k) {
     return k.carry_cpl_cond ? ParamRoute::ConditionalRow : ParamRoute::DiagonalStationPrior;
 }
@@ -177,7 +177,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.q_rule = s.carried ? ParamQRule::RandomWalk : ParamQRule::None;
         s.var_floor_m2 = k.pl_var_floor;
         s.birth_var_m2 = k.amb_birth_var_floor;
-        // Card PRM phase 3b: the gap prune's horizon (and the leveling vehicle's inject
+        // Phase 3b: the gap prune's horizon (and the leveling vehicle's inject
         // skip's), the knob snapshot's double whether or not the kind is carried.
         s.gap_horizon_s = k.pl_max_gap_s;
         if (!s.carried)
@@ -277,7 +277,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         set(NetworkParamKind::RxCodeBias, std::move(s));
     }
     {
-        // Card LGM: the registry's first new kind.  q is the stationary variance at the
+        // The registry's first new kind.  q is the stationary variance at the
         // zenith; the elevation law and the time constant complete the model.
         ParamSpec s;
         s.estimated = s.carried = k.pc_on;
@@ -295,7 +295,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         set(NetworkParamKind::PhaseColour, std::move(s));
     }
     {
-        // Card NOM N1: the station coordinates are columns of every station's state
+        // The station coordinates are columns of every station's state
         // manager that networkSplitStation_ keeps out of the local block (the network holds
         // each station at its roster coordinate; the A6 linearity guard throws if one
         // reaches A_r).  Declared here so the parameter inventory's Pinned instances have
@@ -313,7 +313,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         set(NetworkParamKind::RxPosition, std::move(s));
     }
 
-    // Card PRM phase 3a: the responses armed per kind and event.  A declared response site
+    // Phase 3a: the responses armed per kind and event.  A declared response site
     // (network/assembly/Responses.hpp) whose own gate holds on this snapshot contributes its
     // policy to its kind's event; an armed datum mechanism contributes
     // Stransform to the handover of every kind whose carried value it moves (a border kind
@@ -417,7 +417,7 @@ std::string NetworkParamRegistry::modelJson() const {
                          paramQRuleName(s.q_rule), jnum(s.q_anchored), jnum(s.tau_s),
                          jnum(s.var_floor_m2), jnum(s.birth_var_m2), jnum(s.gap_horizon_s),
                          paramRouteName(s.route), esc(s.source));
-        // Card PRM phase 3a: the armed response policies per event.
+        // Phase 3a: the armed response policies per event.
         for (std::size_t e = 0; e < kParamEvents; ++e) {
             std::string list;
             for (std::size_t p = 0; p < kResponsePolicies; ++p)
