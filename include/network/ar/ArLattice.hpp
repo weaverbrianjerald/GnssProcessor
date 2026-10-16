@@ -1,8 +1,8 @@
 #pragma once
 /**
  * @file ArLattice.hpp
- * @brief The ledger of fixed integer cycles: card AGT's lattice observatory (step AGT-6,
- *        @c network.ambiguity_resolution.trace_lattice), re-scoped by card FCF (step FCF-3) as
+ * @brief The ledger of fixed integer cycles: the lattice observatory
+ *        (@c network.ambiguity_resolution.trace_lattice), re-scoped as
  *        the one owner of the integers a fixed-cycle hold may carry, with its one release seam.
  *
  * ## What it holds
@@ -54,7 +54,7 @@
  *
  * ## One reading of a life
  *
- * The ledger keeps no stamp of its own.  Card AGT section 3 binds the readers of an arc's life
+ * The ledger keeps no stamp of its own.  The arc-life design binds the readers of an arc's life
  * to one record, and the search's reading (@ref arcLifeStep, network/ar/ArcLife.hpp) is that
  * record, with its echo rule.  Post-fit QC at epoch t (RAIM T3 / T4, the gross-LOS Act) acts
  * after the emission; its stamp is read at t + 1 (counted as late by the fold).
@@ -75,8 +75,8 @@
  * no detector flags leaves the zero-q float on the old integer, the search fixes it again, and
  * the lattice confirms it.  The ledger then keeps the stale integer after the search stops
  * fixing it too (the S8 twin without the slip fixes: 30 epochs confirmed by the search, 34 more
- * held by the ledger alone, no guard firing; card FCFC section 5).  The guard there is the slip
- * fixes of card ARL section 13; the float re-validation acts once the float moves, and the fold's
+ * held by the ledger alone, no guard firing).  The guard there is the slip
+ * fixes; the float re-validation acts once the float moves, and the fold's
  * lapse (@c fixed_cycles.lapse_ep) stops the folding once the search no longer determines the
  * pair.
  */

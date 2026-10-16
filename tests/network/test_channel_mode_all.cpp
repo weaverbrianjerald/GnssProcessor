@@ -1,11 +1,11 @@
 /**
  * @file test_channel_mode_all.cpp
  * @brief Contract tests for `processing.channel_mode: all` on the network path
- *        (card SID phase 6b, docs/refound/SID_signal_identity_2026-09-22.md).
+ *        (docs/refound/SID_signal_identity_2026-09-22.md).
  *
  * Under the widening, every admitted code and phase attribute of every selected
- * band is modelled at every station.  The widening subsumes card SCC (the second
- * code channel) and card SID phase 6a (the second phase channel) instead of being
+ * band is modelled at every station.  The widening subsumes the second-code scope (the second
+ * code channel) and the second-phase scope (the second phase channel) instead of being
  * refused beside them: their allow-lists are ignored, their sigma scales apply to
  * every non-canonical code row and non-canonical phase row, and the rows enter
  * through the same two sets so every downstream consumer keeps working.
@@ -143,7 +143,7 @@ TEST(ChannelModeAllTest, AnUndecidedLatchAnswersFalseRatherThanPromoting) {
 
 TEST(ChannelModeAllTest, AnAbsentCanonicalMakesThisTheFallbackNotASecond) {
     // The band's canonical row has to be present this epoch, the same clause
-    // cards SCC and SID phase 6a apply; without it the row is the fallback case.
+    // the second-code and second-phase scopes apply; without it the row is the fallback case.
     EXPECT_FALSE(channelAllIsExtra("L1C", "L1W", false));
 }
 
@@ -175,7 +175,7 @@ TEST(ChannelModeAllTest, WidensTheCHANNELDimensionAndNeverTheBAND) {
 TEST(ChannelModeAllTest, AChannelAbsentFromThePriorityListStillEntersWhenAdmitted) {
     // The X channels are not in the working bases' GPS priority list, so the latch
     // can never choose one; the widening admits them all the same, which is what
-    // makes band 2 the population that the knob of card RF-0f decides.
+    // makes band 2 the population that the knob decides.
     const std::vector<std::string> keys{ "C2W", "C2X", "L2W", "L2X" };
     const auto got = channelAllExtraChannels(
         keys, { '2' }, { { '2', "C2W" } }, { { '2', "L2W" } }, nullptr);
@@ -299,7 +299,7 @@ TEST(ChannelModeAllTest, ArmsOnTheFloatVehicleWithTheHeldBasis) {
 
 TEST(ChannelModeAllTest, IsClampedToSingleOnTheLevelingVehicle) {
     // Every extra phase channel would create its own zero-q level with no wired
-    // event response, against standing invariant #1; card SID phase 6a's own
+    // event response, against standing invariant #1; the second-phase scope's own
     // interlock applies the same rule to a single extra channel.
     LogManager log;
     const fs::path p = writeTempConfig("level", networkConfig("", kChanAll));

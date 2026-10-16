@@ -12,7 +12,7 @@
  *
  * The tests lock:
  *   - under the default `sat` scope a mark bumps all three generations, whatever
- *     channel mask the call site passes (byte-identical to the build before card MS);
+ *     channel mask the call site passes (byte-identical to the build without the scope);
  *   - under `channel` a clock-only mark leaves the phase and code generations
  *     untouched, and a code-bias mark leaves the clock and phase untouched;
  *   - two sites marking the same satellite in one epoch combine their masks by OR;
@@ -115,7 +115,7 @@ TEST(DiscMarkScopeTest, SatScopeBumpsAllThreeWhateverMaskIsPassed) {
     e.markSatDiscontinuity({ "G32" }, Chan::kDiscChanClock);   // a narrow mask
     e.emitToStore(msEpoch(t), store);
     // Under the legacy scope all three generations step anyway, byte-identical to a
-    // build before card MS; that is what makes the default safe.
+    // build without the scope; that is what makes the default safe.
     EXPECT_EQ(e.clockDiscontinuityCounter("G32"), 1);
     EXPECT_EQ(e.codeBiasDiscontinuityCounter("G32", "C1W"), 1);
     EXPECT_EQ(e.discontinuityCounter("G32", "L1W"), 1);
@@ -369,7 +369,7 @@ TEST(DiscMarkScopeTest, SLineDeclaresTheScopeAndOffIsByteIdentical) {
     EXPECT_TRUE(parsed_on.disc_mark_scope_channel);
     EXPECT_FALSE(parsed_off.disc_mark_scope_channel);
     // The flag reaches the replay emitter's construction, although the R record cannot
-    // carry the channel set (see the field's Doxygen and the open item of card MS).
+    // carry the channel set (see the field's Doxygen).
     EXPECT_TRUE(NetworkProductReader::makeReplayEmitter(parsed_on).discMarkScopeChannel());
     EXPECT_FALSE(NetworkProductReader::makeReplayEmitter(parsed_off).discMarkScopeChannel());
     fs::remove(with_p, ec); fs::remove(without_p, ec);

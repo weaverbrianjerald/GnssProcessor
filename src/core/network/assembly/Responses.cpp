@@ -1,6 +1,6 @@
 /**
  * @file Responses.cpp
- * @brief The declared responses of the carried instances (card PRM phase 3a; see
+ * @brief The declared responses of the carried instances (see
  *        Responses.hpp).
  */
 #include "network/assembly/Responses.hpp"
@@ -464,10 +464,10 @@ int networkResponsesRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card PRM phase 3a (section 4.5): the responses of the carried instances over the run,
+    // The responses of the carried instances over the run,
     // one row per declared site (kind, event, policy) with its count; the Stransform
     // responses of the datum mechanisms, from the traversal's moved values per kind; the
-    // free-epoch latch per cause (card RF-1 section 1.5's untraced latches); and the
+    // free-epoch latch per cause; and the
     // declaration check: a site that responded on a run where it is not declared armed.  The
     // same rows go to the run manifest as a `param_responses` record.
     const auto& C = ctx.counters;

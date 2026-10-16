@@ -26,11 +26,11 @@
 #include "common/Constants.hpp"
 #include "network/state/Entities.hpp"     // net::ArcTable: the arcs' leveling carry
 #include "network/driver/RunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
-#include "network/state/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap (card SID phase 3)
+#include "network/state/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap
 #include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey (parseIfPairResetKey)
 #include "network/carry/Inject.hpp"     // InjectArcErase / NetworkInjectState (event harness, Study 1)
 #include "network/diag/RunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
-#include "network/slip/RawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
+#include "network/slip/RawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters
 #include "network/slip/SlipOracle.hpp"   // NetworkSlipOracle (sim-only oracle slip response)
 #include "network/slip/CommonBandScope.hpp"  // Common-band verdict types for the drain hook (SPEC_event_harness §14)
 
@@ -302,7 +302,7 @@ struct PassABuffers {
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob on).
         long long evidence_would_admit{ 0 };  ///< Knob off; the evidence rule alone would have admitted it.
         long long legacy_admitted{ 0 };       ///< Admitted by the legacy integer gate.
-        /// Detector pairs the network did not form under card L5P
+        /// Detector pairs the network did not form
         /// (`network.cycle_slip.mw_detect_pairs: primary`), because the pair
         /// carries a band outside the constellation's ionosphere-free pin pair.
         /// Zero under the default `all` and on a two-band lineage, so a nonzero
@@ -457,11 +457,11 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *                           owned by the run loop, by non-const reference.  A value
  *                           copy anywhere on this path would silently disable the
  *                           Card-4 slip funnel (standing invariant #1).
- * @param raw                This epoch's shared raw observables and step verdicts
- *                           (card L evidence).  With @c computed false there is no
+ * @param raw                This epoch's shared raw observables and step verdicts.
+ *                          With @c computed false there is no
  *                           evidence: the qualification is skipped and LLI stays
  *                           decisive.
- * @param qc                 Card L / G knob snapshot (all off: legacy behaviour).
+ * @param qc                 Knob snapshot (all off: legacy behaviour).
  * @param raw_hist           Per-station cross-epoch slip-QC state; the per-station
  *                           LLI accounting for the M4 top-offenders line is
  *                           tallied here.
@@ -672,7 +672,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *
  * The key is therefore built with @c StateKeys::makeAmbiguityKey, the format the
  * PASS-B inject site reads (@c relevel.free_ambs.count({i, key}) over
- * @c StateManager::getAmbiguities() keys) and the format the Card-G arc
+ * @c StateManager::getAmbiguities() keys) and the format the gap-instrumentation arc
  * classification synthesizes, so a freed arc reads @c shifted_fresh there by
  * construction.  The question "is there anything to protect?" is asked of the
  * carry: a @ref LocalCarry entry for (station, satellite, signal) whose
@@ -687,7 +687,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *
  * Limitation: under an IF-combination ambiguity basis the live key is
  * @c "<sat>_<sigA>_<sigB>", which this per-band key does not match.  The network
- * producer is uncombined (per-band), and the Card-G classification has the same
+ * producer is uncombined (per-band), and the gap classification has the same
  * exposure, so the two instruments agree; a combined basis would need both sites
  * widened together.
  *
@@ -737,7 +737,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *                             any outstanding pend on the same (station, satellite),
  *                             as the raw-slip drains do.
  *
- * ## Ledger-driven population (@c SlipQcParams::ledger_reentry, card SID phase 3)
+ * ## Ledger-driven population (@c SlipQcParams::ledger_reentry)
  *
  * Armed, the arc list is not this tier's own resumption list but the arc
  * ledger's admitted Gap-to-Reentered population (@p sid), and the raw verdict is
@@ -760,8 +760,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param sid     This epoch's ledger-driven population, or nullptr / @c armed
  *                false for the historical raw-driven path (byte-identical).
  * @param sid_out Per-arc outcome sink for the unified "answered" census (R4), or
- *                nullptr when no roster was set up (every network run sets one up
- *                since card NOM step N3a).  Written in both states of
+ *                nullptr when no roster was set up (every network run sets one up).
+ *                Written in both states of
  *                network.ledger_reentry.
  */
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
@@ -783,8 +783,8 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 ArcLedger* arc_ledger = nullptr);
 
 /**
- * @brief The gap re-entry response keyed on the signal instead of the row (card
- *        GRS, docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+ * @brief The gap re-entry response keyed on the signal instead of the row
+ *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
  *
  * ## Population
  *
@@ -856,7 +856,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
  *
  * Parameters are the row-level drain's, with the same contracts.
  *
- * With the ledger armed (@p sid, card SID phase 3), this tier responds only to
+ * With the ledger armed (@p sid), this tier responds only to
  * the ledger arcs whose exact (station, satellite, signal) has a per-signal
  * resumption this epoch; the row-level drain owns the census and every other
  * arc.  The `sig_resume` decoupling-edge event is emitted for every raw

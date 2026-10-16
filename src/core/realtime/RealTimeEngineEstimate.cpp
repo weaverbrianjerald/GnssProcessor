@@ -15,9 +15,9 @@
 #include "app/EpochUpdateSupport.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "common/Constants.hpp"         // SPEED_OF_LIGHT (Card ALC)
-#include "common/PppUtils.hpp"          // carrier wavelengths (Card ALC)
-#include "filter/StateKeySchema.hpp"    // makeAmbiguityKey (Card ALC)
+#include "common/Constants.hpp"         // SPEED_OF_LIGHT
+#include "common/PppUtils.hpp"          // carrier wavelengths
+#include "filter/StateKeySchema.hpp"    // makeAmbiguityKey
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -343,10 +343,10 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 
 // ---------------------------------------------------------------------------
 // Consumer re-validation of float ambiguities against their own code level
-//: the re-coupling edge of invariant #7 for cards CC and PBT.
+//: the re-coupling edge of invariant #7 for those two carries.
 // ---------------------------------------------------------------------------
 //
-// New code, not relocated from the pre-cut source.  Cards CC and PBT both
+// New code, not relocated from the pre-cut source.  The declared-step carry and the phase-bias translation both
 // preserve an ambiguity across a phase-bias product step; neither checks whether
 // the preserved value is still correct.  PBT sec.7 found that mass resets, by
 // re-levelling accumulated ambiguity error from code, left the reset-only arm
@@ -389,7 +389,7 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
 // Mode.  `act` refloats both of the satellite's ambiguities through the existing
 // first-sighting/reset path (the same StateManager::resetAmbiguity call, at the
 // same ambiguity_std, that the reset_disc path in RealTimeEngineSsrBreaks.cpp
-// uses; see card CC).  `observe` writes nothing; it only counts and emits the
+// uses).  `observe` writes nothing; it only counts and emits the
 // AMB_LEVEL rows.
 //
 // Placement.  After the update, the constraints and AR, and before the CST
@@ -549,7 +549,7 @@ void RealTimeEngine::checkAmbiguityLevel_(RtEpochContext& ctx) {
         amb_level_check_.noteRefloat();
         noteAmbLevelDisturbed_(sat);
         amb_level_check_.restart(sat);
-        noteConsumerSatEvent_(sat + "|" + sig1, "refloat_level");   // card CST (no-op unarmed)
+        noteConsumerSatEvent_(sat + "|" + sig1, "refloat_level");   // (no-op unarmed)
         noteConsumerSatEvent_(sat + "|" + sig2, "refloat_level");
         amb_level_events_.push_back(AmbLevelEvent{
             sat, "refloat", which, v.diff, v.sigma, v.n,

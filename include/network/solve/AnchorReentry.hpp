@@ -2,8 +2,8 @@
 /**
  * @file AnchorReentry.hpp
  * @brief Anchor election read against the arc ledger, and the re-entry it can act on
- *        (@c network.ledger_screens, @c network.ledger_anchor; card SID phase 4,
- *        S2 and B1).
+ *        (@c network.ledger_screens,
+ *        @c network.ledger_anchor).
  *
  * ### First sighting versus return
  *

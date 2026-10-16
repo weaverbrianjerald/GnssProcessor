@@ -570,7 +570,7 @@ TEST(GapReentryCoresumedTest, SiblingAlreadyFreedThisEpochIsNotFreedTwice) {
 }
 
 // ===========================================================================
-// The ledger-driven population (card SID phase 3)
+// The ledger-driven population
 // ===========================================================================
 
 // Under network.ledger_reentry the row-level drain's ledger loop owns the census and

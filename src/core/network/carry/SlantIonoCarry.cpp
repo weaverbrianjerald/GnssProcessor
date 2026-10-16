@@ -38,14 +38,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -177,7 +177,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
                 // Invariant #1's absent-satellite edge: a stale LOS is refused,
                 // never aged into a fold.  The harvest prune erases it.
                 ++R.pl_blk_iono_gap_drop;
-                ++R.prm_iono_gap_skip;   // card PRM phase 3a
+                ++R.prm_iono_gap_skip;
                 continue;
             }
             const double gap_ep =
@@ -188,7 +188,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
                 icol, x_lin(iidx), iit, ivar_eff,
                 std::max(0.0, igap), /*vce_fac=*/1.0,
                 /*is_zwd=*/false, /*is_iono=*/true});
-            if (const auto col_sat = SatId::parse(isat))   // its block row's tag (card NOM N2a)
+            if (const auto col_sat = SatId::parse(isat))   // its block row's tag
                 iono_bc.back().sat = *col_sat;
         }
     }
@@ -306,7 +306,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
             }
             net::putLos(ctx.entities, key.first, key.second, &net::LosState::iono_blk) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, icol, SharedHistoryMap::Iono,
-                                          static_cast<int>(i), isat);   // card SCL2 X2; no-op off
+                                          static_cast<int>(i), isat);   // no-op off
         }
     }
     // Decoupling edge (invariants #1 and #7): a LOS unseen past the horizon is
@@ -314,12 +314,12 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
     // eclipse / set edge, and a run whose count is 0 over a full day did not
     // exercise it.  The horizon is the registry's: under the block carry it is
     // network.carry_iono_in_block_max_gap_s, the same double
-    // (ctx.knobs.iono_blk_max_gap_s) this prune read before card PRM phase 3b.
+    // (ctx.knobs.iono_blk_max_gap_s) this prune read before the registry took it.
     carryGapPrune(los_rows, &net::LosState::iono_blk, pl_now_s,
                   ctx.params.spec(NetworkParamKind::SlantIono).gap_horizon_s,
                   [&](const auto&, const auto&) {
                       ++ctx.counters.n_iono_blk_gap_drop;
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapPrune);
                   });
 }
 

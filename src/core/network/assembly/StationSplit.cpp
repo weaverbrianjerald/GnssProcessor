@@ -34,14 +34,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -119,14 +119,14 @@ StationStep networkStationDataRows(StationBuild& build) {
     // for the post-solve slant-iono back-substitution (viz trace).
     std::map<int, int>& h2local = R.h2local;
     std::vector<ParamDisposition> col_disp;
-    // Card NOM N2a: the split tags its data rows (kind, satellite, signal) in its own
+    // The split tags its data rows (kind, satellite, signal) in its own
     // weight passes; every site below that appends rows appends their tags in
     // lockstep (StationAssembly::row_tags).  Every reader that asks what a row is
     // reads its tag (filter/NetworkRowClassify).
     networkSplitStation(config_, st, est, em, ctx.param_inventory.rx_ifb,
                          R.A_s, R.A_r, R.w, R.y, h2local, col_disp, R.row_tags);
     R.n_data_rows = R.A_s.rows();
-    // The parameter inventory (card NOM N1): every column of this station's state
+    // The parameter inventory: every column of this station's state
     // manager as a parameter instance with the disposition the split just gave it,
     // and every shared state a gate withheld from the station this epoch as an
     // absorbed instance (N1b), into this station's own slot (no shared write;
@@ -139,7 +139,7 @@ StationStep networkStationDataRows(StationBuild& build) {
 // (clock/phase-bias columns) and the local nuisance block A_r (everything
 // except the 3 fixed-position columns and the shared columns).  Returns the
 // H-column → A_r-column map (used for the pivot ambiguity pins) and, per state
-// column, the disposition the split gave it (card NOM N1: the parameter
+// column, the disposition the split gave it (the parameter
 // inventory records it; the five branches below each set one).  The receiver
 // IFB drop reads the run's rule, built once in NetworkRunContext.
 void networkSplitStation(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
@@ -187,7 +187,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // Receiver inter-frequency-bias (IFB) columns on the bands outside each
     // constellation's clock-reference pair (the "<sys>_IFB<band>" states, e.g.
     // GPS_IFB5): two treatments, chosen once per run by the declared rule
-    // (networkRxIfbRule, card NOM N1, passed in as ifb_rule).  The receiver DCB between
+    // (networkRxIfbRule, passed in as ifb_rule).  The receiver DCB between
     // the two pair bands ("<sys>_DCB") is always kept, and the GLONASS per-slot IFB (a
     // different form, not governed by the rule) is untouched.
     //
@@ -209,7 +209,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     //    delay) is false without the weighting (network.w6_iono_constraint none, the
     //    goldens); the held value is then a seed error in every extra-band code row, and
     //    the parameter inventory prints a WARNING.
-    //  - Estimated (network.estimate_rx_extra_band_code_delay, card L5B): the column takes
+    //  - Estimated (network.estimate_rx_extra_band_code_delay): the column takes
     //    the ordinary path below (a local column unless no row informs it) and from there
     //    the receiver code-bias carry, harvest, snapshot and trace paths, which key on the
     //    local columns.  An extra-band code row whose satellite code bias is not a shared
@@ -233,7 +233,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
                 drop_cols.insert(static_cast<int>(kv.second));
         }
     }
-    // Card L5B: the extra-band code rows excluded at zero weight (empty unless the knob
+    // The extra-band code rows excluded at zero weight (empty unless the knob
     // turned the drop off), as a row mask for the column test below.
     std::vector<char> excluded_row;
     if (ifb_rule.estimated_by_knob) {
@@ -321,7 +321,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     A_r.resize(m, static_cast<Eigen::Index>(local_cols.size()));
     for (size_t j = 0; j < local_cols.size(); ++j)
         A_r.col(static_cast<Eigen::Index>(j)) = em.H.col(local_cols[j]);
-    // Card L5B: a station-epoch with a receiver IFB column in the block counts once.
+    // A station-epoch with a receiver IFB column in the block counts once.
     if (ifb_rule.estimated_by_knob) {
         bool ifb_estimated = false;
         for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
@@ -333,11 +333,11 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     }
 
     w = em.R_v.cwiseInverse();   // per-obs information = 1/σ²
-    // One contribution tag per data row (card NOM N2a): code or phase with the row's
+    // One contribution tag per data row: code or phase with the row's
     // satellite and signal.  The weight passes below that scale a row as a second-channel
     // row change its kind where they decide it, so a tag and a weight cannot disagree.
     tagDataRows(tags, m, em.satellite_ids, em.signal_types);
-    // Card L5B: the excluded extra-band code rows carry no information (rxIfbExcludedRows).
+    // The excluded extra-band code rows carry no information (rxIfbExcludedRows).
     // The scalings below keep a zero at zero.
     for (std::size_t r = 0; r < excluded_row.size(); ++r)
         if (excluded_row[r]) w(static_cast<Eigen::Index>(r)) = 0.0;
@@ -430,7 +430,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // here, so the solve, the pre-fit census and every post-fit screen read the
     // same number: they all read R.w, which is this vector.
     //
-    // Why code only, and why here rather than in the measurement model: the card
+    // Why code only, and why here rather than in the measurement model: this step
     // separates two effects that the band-5-code-removed emulation removed
     // together, the band-5 pairs of the wide-lane detector (the mw_detect_pairs
     // knob) and the pull the band-5 code rows have on the shared states.  With B5D
@@ -492,8 +492,8 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // cell is republished serially into st.scc_cells after PASS A) and fallback
     // rows (an allow-listed band-1 code that arrived with no canonical code beside
     // it; R2 routes it through the same state, and a nonzero count is a finding
-    // about the canonical latch, not about card SCC).  The counters run whether
-    // or not the scale is applied: a scale of 1 is the card's default posture,
+    // about the canonical latch, not about second-code routing).  The counters run whether
+    // or not the scale is applied: a scale of 1 is the default posture,
     // not an unarmed one.
     //
     // Off: the whole block is skipped and the output is byte-identical.  With the
@@ -517,7 +517,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
                 if (r >= static_cast<Eigen::Index>(em.satellite_ids.size())) break;
                 const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
                 if (sat.empty()) continue;
-                // A companion or a fallback row (card NOM N2a: one kind for both, the rows
+                // A companion or a fallback row (one kind for both, the rows
                 // routed through the inter-signal state).
                 tags[static_cast<std::size_t>(r)].kind = ContributionKind::DataCodeCompanion;
                 if (st.scc_cells.count(StateKeys::makeSatBiasKey(sat, sig))) ++n_comp;
@@ -528,9 +528,9 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
             st.scc_fallback_rows += n_fall;
         }
     }
-    // --- Second-phase rows, R5 + R7 (card SID phase 6a) ------------------------
+    // --- Second-phase rows, R5 + R7 ------------------------
     // (docs/refound/SID_signal_identity_2026-09-22.md section 4.)  The phase
-    // counterpart of the block above, with one structural difference: card SCC
+    // counterpart of the block above, with one structural difference: second-code routing
     // recognizes its rows by the receiver state they route through, while a second
     // phase row is modelled exactly like the latched one (its float ambiguity
     // absorbs the receiver inter-signal constant, so no such state exists).  The
@@ -557,7 +557,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
             const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
             if (sat.empty()) continue;
             if (!st.spc_cells.count(StateKeys::makeSatPhaseBiasKey(sat, sig))) continue;
-            tags[static_cast<std::size_t>(r)].kind = ContributionKind::DataPhaseSecond;   // card NOM N2a
+            tags[static_cast<std::size_t>(r)].kind = ContributionKind::DataPhaseSecond;
             ++n_sp;
             if (sp_scale > 1.0) w(r) /= sp_scale * sp_scale;       // σ × scale
         }

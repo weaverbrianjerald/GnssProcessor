@@ -142,7 +142,7 @@ const char* kNavHdrV3 =
 } // namespace
 
 // --------------------------------------------------------------------------
-// (a) the observation path (the defect named in card RXP)
+// (a) the observation path
 // --------------------------------------------------------------------------
 
 TEST(Rinex3BlankPrnTest, BlankPaddedNumberIsZeroPaddedAndKeepsItsMeasurements) {

@@ -221,8 +221,8 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
     ctx.carry.ep_sigma0_pf_phase = 0.0;
     ctx.carry.ep_pf_rows         = 0;
 
-    // Each row's class, satellite and signal come from its contribution tag (card NOM
-    // step N2b, filter/NetworkRowClassify): the observation rows by their declared type
+    // Each row's class, satellite and signal come from its contribution tag
+    // (filter/NetworkRowClassify): the observation rows by their declared type
     // (code, phase), the SH ties and the coupling and block rows by their kinds.  Before
     // the tags the class was inferred from the shared columns a row touched (an SH, a
     // phase-bias, a code-bias or a clock column) and from a touch above 0.5 on an
@@ -323,7 +323,7 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep) {
                 if (phase_row || code_row) {
                     // Signed v (metres), the row weight, and the LOS elevation.  The
                     // satellite and the signal are the row tag's (the observation's own
-                    // code, card OWD), so a row whose only shared column is the clock
+                    // code), so a row whose only shared column is the clock
                     // keeps its signal.
                     if (row_sig.empty()) ++ctx.counters.pf_rows_no_signal;
                     auto& t = traces.pf_rows_trace;
@@ -387,7 +387,7 @@ void networkDatumInfoRatio(NetworkRunContext& ctx, NetworkRunTraces& traces,
     // normals, non-square, solver failure).  There is then nothing to measure
     // against, and a cutoff reconstructed from a guess would mislead.
     if (!(ev_max >= 0.0) || declared_dim <= 0) return;
-    // Card SCL: the gate's own view when it judged one (the clock clones marginalized;
+    // The gate's own view when it judged one (the clock clones marginalized;
     // the clock columns keep their indices); the reduced normals otherwise.
     const Eigen::MatrixXd& N = N_gate ? *N_gate : est.reducedSharedNormals();
     const Eigen::Index n = N.rows();

@@ -1,12 +1,12 @@
 /**
  * @file test_pb_hold_block.cpp
- * @brief Unit gates of card SMD, the smoothed hold's (c, p_1, p_2) block clone, an
+ * @brief Unit gates of the smoothed hold's (c, p_1, p_2) block clone, an
  *        instrument of @c network.emit_pb_hold_smoothed (its wire selection, the
  *        removed key @c emit_pb_hold_smoothed_block, is gone).
  *
  * 1. The phase-visible row, advanced by @ref pbHoldCloneAdvanceRow and re-harvested by
  *    @ref pbHoldCloneRebase, equals the fixed-point smoother of D = c - sum_j w_j p_j (an
- *    augmented filter carrying D(t0) as a zero-noise state) at every epoch; card REV's
+ *    augmented filter carrying D(t0) as a zero-noise state) at every epoch;
  *    @ref pbHoldCloneRowValueVar is that filter's variance of D(t0), non-increasing.
  * 2. The row is the functional of the three single-key rows, its time-update variance the
  *    block's with every cross term (@ref couplingExactCross), and its fold inflation g'Qg
@@ -57,7 +57,7 @@ namespace fs = std::filesystem;
 namespace GnssProcessor {
 namespace {
 
-// --- The dense walk model (card SMH's, with the level walking on G01) -----------------
+// --- The dense walk model (with the level walking on G01) -----------------
 
 /// The five border keys: G01's clock and its L1C and L2W phase biases, G02's clock and L1C.
 std::vector<PbHoldCloneTerm> modelKeys() {
@@ -111,7 +111,7 @@ void kfUpdate(Eigen::VectorXd& x, Eigen::MatrixXd& P, const Eigen::MatrixXd& H,
     return ::testing::AssertionFailure() << a << " vs " << b << " (tol " << tol << " relative)";
 }
 
-/// Card CTU's epoch inputs over the stash (x, P), every key in S with the walk as its
+/// The exact-coupling epoch inputs over the stash (x, P), every key in S with the walk as its
 /// inflation, and optionally the seam's off-diagonal noise @p off between G01's clock and
 /// its L1C phase bias.
 CouplingExactEpoch exactEpoch(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
@@ -215,7 +215,7 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
     Eigen::MatrixXd Pa;
     std::vector<PbHoldCloneTerm> terms;
     double value = 0.0, var = 0.0, stamp = 0.0;
-    double v_prev = 0.0;   // card REV: the row's V at its previous update
+    double v_prev = 0.0;   // the row's V at its previous update
     bool born = false;
     const int T = 40, t0 = 3;
     for (int t = 1; t <= T; ++t) {
@@ -247,7 +247,7 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
             for (const auto& tm : st.terms)
                 if (tm.col >= 0 && tm.p_prev > 0.0) m(tm.col) += tm.coeff;
             EXPECT_TRUE(nearRel(st.var + m.dot(P * m), Pa(5, 5), 1e-8)) << "epoch " << t;
-            // Card REV: the helper the trace's V comes from is that variance, and the
+            // The helper the trace's V comes from is that variance, and the
             // smoother never raises it (the freeze's "rise" cause is not the smoother's).
             const double v_rev = pbHoldCloneRowValueVar(st.terms, st.var, P);
             EXPECT_TRUE(nearRel(v_rev, Pa(5, 5), 1e-8)) << "epoch " << t << ": card REV's V";
@@ -279,7 +279,7 @@ TEST(PbHoldBlockTest, ThePhaseVisibleRowIsTheFixedPointSmootherOfD) {
             Pa.block(0, 5, 5, 1) = Pg;
             Pa.block(5, 0, 1, 5) = Pg.transpose();
             Pa(5, 5) = g.dot(Pg);
-            // Card REV: V at birth is the filtered variance of D at the stash.
+            // V at birth is the filtered variance of D at the stash.
             v_prev = pbHoldCloneRowValueVar(terms, 0.0, P);
             EXPECT_TRUE(nearRel(v_prev, Pa(5, 5), 1e-12)) << "V at birth";
         }
@@ -577,7 +577,7 @@ TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
     ASSERT_EQ((net::getSig(ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::smh_block_pending) ? 1u : 0u), 1u) << "the generation queues its block";
     net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_block_pending);
     net::dropAll(ctx->entities.sat_signals, &net::SatSignalState::smh_pending);
-    // Epoch 2: card SMH's clock clone passed 2 cm and writes the wire.  The key's block
+    // Epoch 2: the smoothed hold's clock clone passed 2 cm and writes the wire.  The key's block
     // clone beside it revised D(t0) by +3 cm (Phi_D = -3 cm) on the same clock motion, and
     // the split is recorded.
     PbHoldClone clk = liveBlock("G32", "L1W", 2);
@@ -624,10 +624,10 @@ TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
 }
 
 TEST(PbHoldBlockTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
-    // Card SMD section 7: at the epoch a clone dies the key takes LAH's step of that epoch
+    // At the epoch a clone dies the key takes the hold family's step of that epoch
     // on top of the transfer it had reached, so C - P does not step.  G32's clock moves 5 cm
     // at the death epoch while its mates hold (the constellation's median step is 0).  The
-    // writing member is card SMH's clock clone; the anchor's withdrawal is a bridge, not a
+    // writing member is the smoothed hold's clock clone; the anchor's withdrawal is a bridge, not a
     // revert.
     GnssConfig cfg;
     auto ctx = smdContext(cfg, "bridgestep");

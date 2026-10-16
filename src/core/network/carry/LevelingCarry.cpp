@@ -39,14 +39,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -124,7 +124,7 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
     // ---- End of the bindings ----
 
     if (!(var_eff > 0.0)) return;
-    // The column's identity, for the row's or the prior's tag (card NOM N2a).
+    // The column's identity, for the row's or the prior's tag.
     const RowTag amb_tag =
         makeRowTag(ContributionKind::PriorAmbiguityCarry, sat, signal);
     if (carry_cpl_cond) {
@@ -253,8 +253,8 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
     // its harvest still feeds the VCE monitor and the sticky tree.
     const bool do_amb_carry = carry.do_amb_carry;
     // The variance tail, the fold note and the row build are the three ambiguity-carry
-    // helpers of LevelingCarry.cpp, bound above under their frozen names (card NOM3
-    // step PB1b, CALLABLE); PlPend is a namespace type (network/assembly/StationBuild.hpp).
+    // helpers of LevelingCarry.cpp, bound above under their frozen names.
+    // PlPend is a namespace type (network/assembly/StationBuild.hpp).
     std::vector<PlPend>& pl_pend = carry.pl_pend;  // stays empty when off
     // This station's LOS elevations by satellite, for the birth-prior
     // floor's elevation mapping (RF-1 step 4).  Built only when the floor is
@@ -300,7 +300,7 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
         // bands are removed from it (their carry is already shifted to the
         // post-slip level and should inject).
         if (st.sm->isAmbiguityPendingReseed(key)) {
-            // Card PRM phase 3a: counted only for an arc with a carried entry
+            // Counted only for an arc with a carried entry
             // (read-only find; a new arc has no prior to skip).  Per station:
             // this is the parallel produce phase.
             if (net::getArc(ctx.entities.arcs, std::make_tuple(i, parts->satellite, parts->signal), &net::ArcState::amb)
@@ -322,7 +322,7 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
             // The counter above still names the population, so the two
             // vehicles' response loads stay comparable.
             if (!amb_float_kf) {
-                // Card PRM phase 3a: the leveling vehicle's free epoch, counted
+                // The leveling vehicle's free epoch, counted
                 // for an arc with a carried entry (read-only find), by what
                 // latched it.  A recorded cause that is non-zero and has no bit
                 // outside the re-entry responses (gap re-entry, wind-up
@@ -369,7 +369,7 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
             // post-harvest prune still erases the arcs that are really gone,
             // which is the one remaining erase case of §3.4.
             if (!amb_float_kf) {
-                ++R.prm_amb_gap_skip;   // card PRM phase 3a (the leveling vehicle's skip)
+                ++R.prm_amb_gap_skip;   // the leveling vehicle's skip
                 continue;
             }
         }
@@ -747,7 +747,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             nlc.n_folds = nlc_n_folds;
             net::putArc(ctx.entities, lkey, &net::ArcState::amb) = std::move(nlc);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pa.col, SharedHistoryMap::Amb,
-                                          static_cast<int>(i), pa.sat, pa.signal);   // card SCL2 X2; no-op off
+                                          static_cast<int>(i), pa.sat, pa.signal);   // no-op off
         }
         if (hblk && cross.size() == hblk->C.rows()) {
             // Local block (F3): row a of the station's harvest block is this
@@ -927,7 +927,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
     // to be measured against the quality-selected retirement paths, not assumed.
     // The fleet size is captured before the loop, so "fleet-scale" is a ratio.
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same double
-    // as pl_max_gap_s; card PRM phase 3b).
+    // as pl_max_gap_s).
     const long long fleet_before = static_cast<long long>(net::present(ctx.entities.arcs, &net::ArcState::amb));
     const long long n_pruned = carryGapPrune(
         ctx.entities.arcs, &net::ArcState::amb, pl_now_s,
@@ -948,7 +948,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
                     net::satKey(id.sat), net::signalKey(id.signal),
                     lc, "gap_prune");
             }
-            // The decoupling edge of the carry itself (card SID phase 3, R3a).
+            // The decoupling edge of the carry itself.
             // The key is buffered for the roster's audit pass, which owns the
             // trace bundle and the epoch time and writes the
             // `ARC arc_death reason=horizon` row (under its trace switch) and
@@ -957,7 +957,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
             // nothing in the solve reads it.
             if (ctx.roster.active)
                 events.harvest.sid_carry_prune_deaths.push_back(net::arcTuple(id));
-            // Card PRM phase 3a: an arc the float vehicle's drop already dropped
+            // An arc the float vehicle's drop already dropped
             // this epoch (networkAmbFloatApplyDrops stamps dropped_ep with this
             // epoch's n_loop_epochs before PASS B; this harvest runs later in the
             // same epoch, and the counter does not move in between).
@@ -968,7 +968,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
         });
     if (n_pruned > 0) {
         ctx.counters.n_cr_gap_prune += n_pruned;
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapPrune, n_pruned);   // card PRM phase 3a
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapPrune, n_pruned);
         ++ctx.counters.n_cr_gap_prune_epochs;
         if (n_pruned > ctx.counters.n_cr_gap_prune_max) {
             ctx.counters.n_cr_gap_prune_max       = n_pruned;

@@ -3,10 +3,10 @@
  * @brief Tests for the optional @ref NetworkNormalEquations::StationPrior argument of
  *        `NetworkNormalEquations::addStation`, which folds a station's own datum rows
  *        into @f$N_{rr}/u_r@f$ before the positive-definiteness test instead of
- *        afterwards through @ref addStationPrior (`network.station_prior_before_pd`,
- *        card RF-PD-fix).
+ *        afterwards through @ref addStationPrior
+ *        (`network.station_prior_before_pd`).
  *
- * Two guarantees, one per gate the card pre-registered:
+ * Two guarantees, one per gate:
  *
  *  1. **Admission.**  A station whose observation-only local block is singular in
  *     exactly one direction, the direction its own loose prior row gauges, is

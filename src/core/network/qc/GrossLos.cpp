@@ -277,7 +277,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     const bool   gl_bound     = ctx.knobs.gl_bound;
     const bool   gl_emit_excl = ctx.knobs.gl_emit_exclude;
     const bool   gl_sta_tier  = ctx.knobs.gl_station_tier;
-    // --- The cold-start bound (card ICF response 1); 0 = off, already resolved against
+    // --- The cold-start bound; 0 = off, already resolved against
     // the screen and the hold at the knob resolve.  It acts inside the maturity horizon,
     // where the σ-bar declarations are held.
     const double cold_bound   = ctx.knobs.gl_cold_bound_m;
@@ -503,7 +503,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
             }
         }
 
-        // --- The cold station guard (card ICF response 1) ---------------------------
+        // --- The cold station guard ---------------------------
         // The whole-station rule above, read on the cold-start bound: when most of a
         // station's lines of sight are over the bound in one epoch, the fault is the
         // station's, and folding all of its code rows would remove what determines its
@@ -661,7 +661,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                                           d.n_rows, st.declared_tow, st.n_declared));
                 }
             }
-            // --- The cold-start bound (card ICF response 1) --------------------------
+            // --- The cold-start bound --------------------------
             // Inside the horizon, a line of sight far beyond any plausible residual is
             // declared at once with the screen's own response (the deferred erase below
             // and the code fold the publish half applies).  A standing cold declaration
@@ -774,7 +774,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                                       st.first_over_tow, gl_emit_excl ? 0 : 1));
                 st.first_over_age_ep = 0;
             } else if (edge == GrossLosEdge::Clear && st.cold) {
-                // The re-coupling edge of a cold declaration (card ICF response 1): the
+                // The re-coupling edge of a cold declaration: the
                 // screen's release test passed, and the carried ambiguity is erased once
                 // more, because it was harvested while the fault was in the line of
                 // sight's rows; the line of sight reconnects on a fresh ambiguity.
@@ -816,7 +816,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         const double gap = now_s - gs.last_seen_s;
         if (gap <= max_gap_s) return false;
         if (gs.gross && gs.cold) {
-            // The cold path's absent-satellite exit (card ICF response 1), with the same
+            // The cold path's absent-satellite exit, with the same
             // re-seed as its release: whatever carry the line of sight still holds was
             // harvested while the fault was in its rows.
             ++tal.cold_expired;
@@ -968,7 +968,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                     (*lit) = h;
                     ++tal.bound_amb_held;
                     prmRespond(ctx.counters.prm_resp,
-                               ResponseSite::AmbGrossHold);   // card PRM phase 3a
+                               ResponseSite::AmbGrossHold);
                 }
                 // No pending-reseed under the hold: the state is pinned, not
                 // refloated.  Marking it would give the next assembly a free column,
@@ -977,15 +977,15 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 if (net::dropArc(ctx.entities.arcs, lk, &net::ArcState::amb)) {
                     ++ctx.counters.n_cr_gross_los;
                     prmRespond(ctx.counters.prm_resp,
-                               ResponseSite::AmbGrossErase);   // card PRM phase 3a
+                               ResponseSite::AmbGrossErase);
                 }
                 // Under carry_invariant this mark is bookkeeping; on the
                 // phase-leveling vehicle it is the actuator (the same asymmetry the
                 // RAIM erase documents).
                 if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
             }
-            // The gross-LOS writer of the arc-ledger reason buffer (card SID phase 4a,
-            // S1).  The screen's published action is a code-row deweight (a cap, not a
+            // The gross-LOS writer of the arc-ledger reason buffer.
+            // The screen's published action is a code-row deweight (a cap, not a
             // drop: the rows still fold), so the arc is recorded with the `deweight`
             // bit, which kArcReasonGapMask excludes from every gap mask.  The `gross`
             // bit records a removal of carried state, so it is written on the erase
@@ -1015,7 +1015,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 *it1 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
-                           ResponseSite::IonoGrossHold);   // card PRM phase 3a
+                           ResponseSite::IonoGrossHold);
             }
             if (LocalCarry* it2 = net::getLos(los, si, sat, &net::LosState::iono_blk)) {
                 const LocalCarry h = glFreeze(*it2);
@@ -1023,10 +1023,10 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 *it2 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
-                           ResponseSite::IonoGrossHold);   // card PRM phase 3a
+                           ResponseSite::IonoGrossHold);
             }
         } else {
-            // Card PRM phase 3a: each erase that removed an entry is counted.
+            // Each erase that removed an entry is counted.
             if (net::dropLos(los, si, sat, &net::LosState::iono)) {
                 ++tal.iono_erased;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
@@ -1035,7 +1035,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 ++tal.iono_erased;
                 prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGrossErase);
             }
-            // Card LGM: a gross line of sight's phase-colour entry re-starts from its
+            // A gross line of sight's phase-colour entry re-starts from its
             // birth prior as well (the gross phase rows wrote into it).
             if (net::dropLos(los, si, sat, &net::LosState::pc)) {
                 ++ctx.counters.n_pc_erase_gross;
@@ -1058,7 +1058,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 gross_ev.gl_act_release.push_back({ si, sat });
         }
     }
-    // --- The cold-start bound's erase (card ICF response 1): at the declaration, at each
+    // --- The cold-start bound's erase: at the declaration, at each
     //     epoch the bound is exceeded again, and as the re-seed at the release or the
     //     expiry.  The screen's own erase (the bound is resolved off under the hold, so
     //     respond is the erase here), followed by a sweep of any other carried ambiguity
@@ -1114,7 +1114,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
 }
 
 // ---------------------------------------------------------------------------
-// Run-end readout of the cold-start bound (card ICF response 1)
+// Run-end readout of the cold-start bound
 // ---------------------------------------------------------------------------
 
 void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
@@ -1422,8 +1422,8 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
 /**
  * @brief Run-end section: the gross line-of-sight screen's cold-start bound.
  *
- * The table's row for the cold-start bound of the gross line-of-sight screen (card ICF
- * response 1); the report is the overload above, which a unit test calls directly.
+ * The table's row for the cold-start bound of the gross line-of-sight screen;
+ * the report is the overload above, which a unit test calls directly.
  *
  * Gate: none of its own: the row calls the report above on every run, as the teardown
  * did, and that report applies its own.
@@ -1436,7 +1436,7 @@ static int networkGrossLosColdBoundRunEnd(const NetworkRunEndView& v) {
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    networkGrossLosColdBoundRunEnd(ctx, config_, log);   // card ICF response 1
+    networkGrossLosColdBoundRunEnd(ctx, config_, log);
     return 0;
 }
 

@@ -39,7 +39,7 @@ namespace GnssProcessor {
 /**
  * @brief Run-end section: slip QC: MW and LLI detections, the re-level response.
  *
- * Slip QC: card E's MW and LLI detections and the slip re-level response (free
+ * Slip QC: the MW and LLI detections and the slip re-level response (free
  * epoch, bridge v2 and v3).
  *
  * Gate: each section under its own condition, as in the teardown:
@@ -56,7 +56,7 @@ static int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v) {
 
     // --- Slip-QC hardening run-end telemetry (docs/SPEC_slip_qc_hardening.md) ---
     // All-zero counters on an armed run mean a miswire, not a quiet run (invariant #4).
-    // Card E's line prints whenever mw_detect is on and counts detections as well as
+    // The MW-detect line prints whenever mw_detect is on and counts detections as well as
     // refloats, because a refloat-only count makes the funnel wiring look dead on a cold
     // run (the L3 defect).
     if (config_.networkCycleSlipMwDetect()) {
@@ -297,7 +297,7 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
                   C.n_mw_drop_unknown);
     }
 
-    // ---- MW pair scope (network.cycle_slip.mw_detect_pairs, card L5P) --------
+    // ---- MW pair scope (network.cycle_slip.mw_detect_pairs) --------
     // Printed only when the scope is armed; the counter is structurally 0 under `all`.
     // The count is the ON-path telemetry (invariant #4), and an armed run reporting 0
     // on a three-band lineage means the wiring is inert, not that the detector is quiet.
@@ -390,7 +390,7 @@ static int networkSlipDatumStationRunEnd(const NetworkRunEndView& v) {
 
     // Datum-station slip detect (§9.7.10): run-end ON-path telemetry.  An armed run with
     // injected datum-station slips reporting 0/0 is a miswire, not a quiet day
-    // (invariant #4).  Counted separately from Card E: those are non-pivot detections
+    // (invariant #4).  Counted separately from the MW-detect line: those are non-pivot detections
     // answered by a local refloat; these are at the gauge-pinned datum station and are
     // answered by a network re-reference.
     if (config_.networkCycleSlipDatumStationDetect()) {
@@ -450,8 +450,8 @@ static int networkSlipDatumStationRunEnd(const NetworkRunEndView& v) {
  * @brief Run-end section: slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate.
  *
  * Slip QC: the gap instrumentation, the GRK tracker key, the SID-3 ledger re-entry and
- * the GRS per-signal re-entry, then the IF-TD reference gate per chain (card
- * R).
+ * the GRS per-signal re-entry, then the IF-TD reference gate
+ * per chain.
  *
  * Gate: each section under its own condition, as in the teardown:
  * `nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry ||
@@ -470,7 +470,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
         || nc.slip_qc.gap_reentry_per_signal) {
         const auto& qcc = slip_qc.counters;
         // ---- Response clause (network.cycle_slip.gap_reentry_relevel) ----
-        // Appended to the Card-G line rather than logged separately, because the G3
+        // Appended to the gap-instrumentation line rather than logged separately, because the G3
         // rule is read off the SHIFTED→bridged number in the same sentence: with the
         // response armed that number is the residual, and the reader needs to see at
         // once whether it is small because nothing re-entered or because the response
@@ -661,7 +661,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
             }
         }
         // ---- Per-signal tier --------------------------------
-        // Reported only when the rider is armed, so an unarmed run's Card-G line is
+        // Reported only when the rider is armed, so an unarmed run's gap-instrumentation line is
         // unchanged.  Its populations are disjoint from the row-level ones above (a
         // satellite reported there contributes nothing here), so the two are added,
         // never reconciled.  Resumptions above zero with arcs at zero is dead wiring

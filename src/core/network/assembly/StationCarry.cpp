@@ -34,14 +34,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -105,7 +105,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     // The alias lines of networkPassB_ this function reads, verbatim.
     const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
-    // The border kinds' process noise, from the parameter registry (card PRM phase 1).
+    // The border kinds' process noise, from the parameter registry.
     const double q_clock = ctx.params.q(SharedParamKind::Clock);     // m²/s
     const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s
     const double q_cb    = ctx.params.q(SharedParamKind::CodeBias);  // m²/s (W6 OSB carry-forward)
@@ -177,7 +177,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
                                                ctx.knobs.carry_cpl_gauge, ctx.knobs.carry_cpl_reinit,
                                                sat_signals, R}};
     const Eigen::VectorXd& x_lin = carry.x_lin;
-    std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;  // (col, Λ, η, tag): legacy diagonal path (the tag: card NOM N2a)
+    std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;  // (col, Λ, η, tag): legacy diagonal path (the tag)
     // The pre-PD half of the same channel.  Rows land here
     // only under network.station_prior_before_pd, and then never in `inj`:
     // the two are folded by different calls that do not sum.  Empty when
@@ -198,18 +198,18 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
         cb.sats = &ctx.entities.sats;   // readmit_marg
         cb.loop_ep      = static_cast<long long>(ctx.counters.n_loop_epochs);
     }
-    // Card CTU: the exact time update's epoch inputs (built serially before this
+    // The exact time update's epoch inputs (built serially before this
     // loop by networkCouplingExactPrepare; read-only here).
     if (ctx.knobs.carry_cpl_exact) {
-        // Card SCL: the rows read the copy with each cloned clock on its clone
+        // The rows read the copy with each cloned clock on its clone
         // when it was built this epoch (rows_on is false off and on any epoch it
-        // was not); card CTU's own epoch otherwise.
+        // was not); the exact time update's own epoch otherwise.
         cb.cxu       = ctx.carry.ccl.rows_on ? &ctx.carry.ccl.rows_epoch
                                              : &ctx.carry.cxu_epoch;
-        cb.cxu_cross = ctx.knobs.carry_cpl_exact_cross;   // card WSX
-        if (ctx.knobs.carry_cpl_shx) cb.shx = &ctx.carry.shx;   // card SCL2 X2
+        cb.cxu_cross = ctx.knobs.carry_cpl_exact_cross;
+        if (ctx.knobs.carry_cpl_shx) cb.shx = &ctx.carry.shx;
     }
-    // The carry steps, in table order (kStationCarrySteps, card NOM3 step PB1b).
+    // The carry steps, in table order (kStationCarrySteps).
     for (const StationCarryStep& s : kStationCarrySteps) s.build(carry);
     return StationStep::Next;
 }
@@ -239,7 +239,7 @@ void networkStationPriorFinalize(StationCarryFrame& carry) {
     // every column contributes at most one row, the vector has no
     // duplicates, and this leaves it byte-identical.
     // The tag travels with its entry; an entry merged into another keeps its
-    // tag in carry_merged (card NOM N2a).
+    // tag in carry_merged.
     if (inj.size() > 1) {
         std::size_t w = 0;
         for (std::size_t r = 1; r < inj.size(); ++r) {
@@ -278,7 +278,7 @@ void networkStationPriorFinalize(StationCarryFrame& carry) {
             if (std::get<0>(inj_prior[r]) == std::get<0>(inj_prior[w])) {
                 std::get<1>(inj_prior[w]) += std::get<1>(inj_prior[r]);
                 std::get<2>(inj_prior[w]) += std::get<2>(inj_prior[r]);
-                R.prior_merged.push_back(std::get<3>(inj_prior[r]));   // card NOM N2a
+                R.prior_merged.push_back(std::get<3>(inj_prior[r]));
             } else {
                 inj_prior[++w] = inj_prior[r];
             }

@@ -1,7 +1,7 @@
 /**
  * @file Contributions.cpp
  * @brief The contribution declarations, the row tags' helpers and checks, the tallies and
- *        the "contributions as armed" table (card NOM step N2a).  See
+ *        the "contributions as armed" table.  See
  *        network/assembly/Contributions.hpp.
  */
 
@@ -73,7 +73,7 @@ constexpr const char* kSplit = "MeasurementModel::computeMeasurementUpdate, netw
 constexpr const char* kPinFold = "networkPhaseDatumPinRows (PhaseDatum.cpp), station step phase_datum_pins";
 constexpr const char* kGloFold = "networkGlonassAnchorRows (StationAnchors.cpp), station step glonass_anchors";
 constexpr const char* kLgmRows = "networkPhaseColourRows (PhaseColourCarry.cpp), station step phase_colour_rows";
-// The builder column of the station kinds, from the step rows of card NOM3 step PB1b
+// The builder column of the station kinds, from the step rows
 // (scripts/nom_pb1/rows_pb1b.py, decision 3): the function and file that create the
 // kind's rows, and the station step that calls it.
 constexpr const char* kSimZeroIono = "networkSimZeroIonoRows (StationAnchors.cpp), station step sim_zero_iono";
@@ -559,7 +559,7 @@ StationTagCheck checkStationTags(const StationAssembly& R) {
             || contributionInCouplingRegion(g.kind) != cpl_region)
             ++c.misplaced;
     }
-    // The rows the row classifier files as unclassified (card NOM N2b): a row past the
+    // The rows the row classifier files as unclassified: a row past the
     // tags, or a tag whose kind maps to obs_other.
     for (Eigen::Index row = 0; row < R.A_r.rows(); ++row) {
         const double w = (row < R.w.size()) ? R.w(row) : 1.0;
@@ -885,7 +885,7 @@ int networkContributionsRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card NOM N2a: every contribution to the normal equations by its declared kind over
+    // Every contribution to the normal equations by its declared kind over
     // the run ("contributions as armed", the run's table) and its manifest record.
     networkContributionsRunEnd(ctx, log, traces, config_.getNetworkConfig());
     return 0;

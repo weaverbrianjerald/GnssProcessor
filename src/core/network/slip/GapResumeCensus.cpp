@@ -1,6 +1,6 @@
 /**
  * @file GapResumeCensus.cpp
- * @brief The arc-resumption bridge census of one network epoch (card NOM3 step EP2).
+ * @brief The arc-resumption bridge census of one network epoch.
  *
  * Every statement below a "From ..." preamble is the frozen text of
  * Application::networkProcessEpoch_ (main 7141240), moved by scripts/nom_ep2_cut.py and checked

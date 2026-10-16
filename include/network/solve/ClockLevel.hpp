@@ -2,7 +2,7 @@
 
 /**
  * @file ClockLevel.hpp
- * @brief The satellite clock level read from the code alone: card CTU's level monitor,
+ * @brief The satellite clock level read from the code alone: the level monitor,
  *        its innovation instrument and the G5 restore raise
  *        (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
  *
@@ -128,7 +128,7 @@ struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
- * @brief Card CTU G5 (section 9.3): after a warm resume, raise the restored dense border
+ * @brief After a warm resume, raise the restored dense border
  *        along each satellite's level direction (its clock and phase-bias rows moved
  *        together) by the code-only level variance 1/I_c of the writer monitor's
  *        contrast-frame information (the snapshot's LB rows), once, before the first
@@ -150,7 +150,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 void networkClockLevelRestoreRaise(NetworkRun& run);
 
 /**
- * @brief The level monitor and bound raise of card CTU
+ * @brief The level monitor and bound raise
  *        (@c network.clock_level_monitor, @c network.clock_level_bound_raise;
  *        docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
  *

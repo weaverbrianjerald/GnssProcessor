@@ -5,7 +5,7 @@
  *
  * Written as a seam, not relocated from the driver.  Seam contract: a free function over
  * the run context that owns no state; the open window and the run totals are in
- * @c ctx.counters (the window moved there in card NOM step N4g).
+ * @c ctx.counters (the window moved there).
  */
 
 #include "network/diag/PhaseVisibleDiag.hpp"

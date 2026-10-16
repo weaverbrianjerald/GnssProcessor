@@ -157,7 +157,7 @@
  *   * after the PASS-A slip scans and their union into the funnel, because it
  *     inserts into `carry_slipped_ambs` / `carry_slipped_raw` and every consumer
  *     (`networkAnchorHygiene`, the T5v2 deviation erase in PASS B, the C3c
- *     DD-prior build, the Card-G gap classifier) must see those insertions;
+ *     DD-prior build, the gap classifier) must see those insertions;
  *   * after `networkAssemblyPrefilter_`, so a satellite the two-station
  *     observability gate has just erased is not screened, evented, or counted as
  *     admitted;
@@ -370,7 +370,7 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
  *        The file banner describes the statistic and the ordering contract.
  *
  * Epoch form; the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -386,7 +386,7 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
  *   - @p log = run.log: producer logger (debug).
  *   - @p traces = run.traces: ADMISSION-tier `trace_events` rows.
  *   - @p t = ep.se.time: this epoch's time (event stamps).
- *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  The same counter Card G and the flicker classifier use, so the three instruments' per-epoch totals are directly comparable.
+ *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  The same counter the gap instrumentation and the flicker classifier use, so the three instruments' per-epoch totals are directly comparable.
  *   - @p stations = run.setup.stations: [in/out] non-const: a withheld band's satellite phase-bias and code-bias states, and the clock state of a satellite left with no observable, are pruned as the coverage gate prunes a thin key's.
  *   - @p present = ep.pass_a.present: this epoch's presence mask.
  *   - @p modeled = pass_a.modeled: [in/out] per-station observations.  Read for the statistic; on a rejection the failing band's entries are erased from `observed`, never from `raw_observed`, which the slip detectors own and which must keep reporting the true tracking state.

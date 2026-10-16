@@ -5,7 +5,7 @@
  * Diagnostics only: none of these functions mutates estimator state.  The two
  * seams run before the broadcast-grade drop, so satellites the precise solution
  * discards still appear in the census and the trace.  The per-satellite readout
- * of card CST (traceConsumerSat_) runs at the epoch tail instead; see its section.
+ * of the consumer trace (traceConsumerSat_) runs at the epoch tail instead; see its section.
  */
 
 #include "realtime/RealTimeEngine.hpp"

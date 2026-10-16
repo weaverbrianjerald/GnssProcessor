@@ -1,11 +1,11 @@
 /**
  * @file AnchorReentry.cpp
- * @brief Anchor re-entry against the arc ledger (card SID phase 4, S2 and B1); see
+ * @brief Anchor re-entry against the arc ledger; see
  *        AnchorReentry.hpp.
  *
  * Every function here is a pure function of the ledger and the run-scope memory: no
  * context, no config, no estimator.  The election remains the only scope that knows
- * about traces, counters and the pin, as with the card EV7 drop-edge predicate
+ * about traces, counters and the pin, as with the drop-edge predicate
  * (@c PhaseGateDrop.hpp) and its own rule.
  */
 #include "network/solve/AnchorReentry.hpp"

@@ -1,6 +1,6 @@
 /**
  * @file test_wsx_within_station_cross.cpp
- * @brief Unit gates of card WSX (@c network.carry_coupling_exact_cross): the exact time
+ * @brief Unit gates of the exact cross term (@c network.carry_coupling_exact_cross): the exact time
  *        update's bracket between two carried rows of a station, added in the station's
  *        whitened local block (docs/refound/WSX_within_station_cross_terms_2026-09-30.md).
  *

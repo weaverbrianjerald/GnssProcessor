@@ -212,15 +212,15 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                         pd_elev_of[mi][mo.satellite] = mo.elevation;
                 held_basis.elev = &pd_elev_of;
             }
-            // The coverage gate's drop edge (card EV7 §6).  It is passed on every
+            // The coverage gate's drop edge.  It is passed on every
             // run, armed or not: requirement F2 asks the unarmed run to report the
             // size of the class, and detection is pure observation over the census
             // and the pre-swap incumbent map (the erase below is the only thing the
             // knob gates).
             PhaseGateDrop gate_drop;
             gate_drop.on = ctx.knobs.pd_gate_drop_erase;
-            // The ledger read at the election's first-sighting branch (card SID
-            // phase 4, S2 / B1).  `observe` alone is the observatory and is
+            // The ledger read at the election's first-sighting branch.
+            // `observe` alone is the observatory and is
             // byte-identical; `restore` adds the phase 4b action.  Both are false on
             // every unarmed run, which leaves every branch on the pointer
             // unreachable inside the election.  ctx.roster.active is true on every
@@ -261,16 +261,16 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                      // so every branch it gates is unreachable and
                                      // the election is byte-identical.
                                      held_basis.on ? &held_basis : nullptr,
-                                     // always non-null (card EV7 §6, see above)
+                                     // always non-null (see above)
                                      &gate_drop,
                                      // In effect null when neither half is armed:
                                      // the election tests `observe` on its first
-                                     // line (card SID phase 4).
+                                     // line.
                                      &pd_reentry);
             net::assignSig(ctx.entities, &SG::anchor_incumbent, anchor_incumbent);
             net::assignSig(ctx.entities, &SG::anchor_pin_target, pin_target);
             if (held_basis.on) net::assignSig(ctx.entities, &SG::phase_basis, basis_view);
-            // Both edges of the gate are events (card EV7 §6, F2).  One row per drop
+            // Both edges of the gate are events.  One row per drop
             // edge, with the identities on either side (what left, which station was
             // anchoring it, which stations still carry it) and `handled` saying
             // whether the response ran, so an unarmed row and an armed row are
@@ -279,13 +279,13 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 ++ctx.counters.n_pd_gate_drop_edges;
                 if (gd.handled) ++ctx.counters.n_pd_gate_drop_handled;
                 // Asks the arc ledger what state the dropped family's arcs are in,
-                // counted where the edge is already evented (card SID phase 1,
-                // class (h)).  Read-only and a no-op when the knob is off.
+                // counted where the edge is already evented
+                // (class (h)).  Read-only and a no-op when the knob is off.
                 networkSignalRosterGateDrop(ctx, gd.sat, gd.signal);
-                // The coverage-gate writer (card SID phase 4a, S1).  The gate
+                // The coverage-gate writer.  The gate
                 // removes a phase-bias column and, when armed, the family's carried
                 // ambiguities; it does not remove the phase rows, which is the
-                // whole of card EV7's mechanism, so this bit is expected to open
+                // whole of the gate-drop mechanism, so this bit is expected to open
                 // few or no admitted gaps.  It is recorded anyway, so the readout
                 // can state that the gate fired and opened nothing.
                 arcReasonExpand(ctx.reasons, ctx.arc_ledger, -1, gd.sat,
@@ -305,7 +305,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                                              : gd.prev_anchor,
                                       gd.handled ? 1 : 0));
             }
-            // Folds the ledger read (card SID phase 4, S2 / B1).  It happens here,
+            // Folds the ledger read.  It happens here,
             // where every other election readback is folded, so the counters and
             // the two event tiers are written in one place and in epoch order.
             networkSignalRosterAnchorRead(ctx, traces, se.time, pd_reentry);
@@ -565,7 +565,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 // The capture is also taken when a drop edge was handled, so the
                 // gate-drop arc counter does not read 0 on a run that leaves
                 // network.trace_amb_state off; the row writer itself stays
-                // knob-gated and does nothing there (card EV7 §6).
+                // knob-gated and does nothing there.
                 const int n_erased = networkApplyPhaseAnchorCarryReref(
                         pa_reref, ctx.entities.arcs,
                         (ctx.knobs.trace_amb_state || !gate_drop_fams.empty())
@@ -576,7 +576,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                     // apart in network_amb_state.csv: a handover or first-sighting
                     // re-reference (`anchor_reref`) and a coverage-gate drop edge
                     // (`gate_drop`).  They are disjoint by construction, so the test
-                    // is a lookup, not a precedence rule (card EV7 §6, F2).
+                    // is a lookup, not a precedence rule.
                     const bool is_gd =
                         gate_drop_fams.count({std::get<1>(k), std::get<2>(k)}) > 0;
                     if (is_gd) ++ctx.counters.n_pd_gate_drop_arcs;
@@ -590,7 +590,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 ctx.counters.pa_reref_erase_total += n_erased;
                 ctx.counters.n_cr_phase_datum_reref += n_erased;   // retirement census: frame step
                 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbAnchorRerefErase,
-                           n_erased);   // card PRM phase 3a
+                           n_erased);
                 log->debug("Network[1(d)]: {} marked (sat,signal) family(ies) "
                            "marginalized ({} new this election); {} phase-"
                            "leveling local carry(ies) erased — refloat next "

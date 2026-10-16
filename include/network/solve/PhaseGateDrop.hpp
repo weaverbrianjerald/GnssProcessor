@@ -2,7 +2,7 @@
 /**
  * @file PhaseGateDrop.hpp
  * @brief Predicate for the drop edge of the phase-datum coverage gate
- *        (@c network.phase_datum_gate_drop_erase, card EV7 §6).
+ *        (@c network.phase_datum_gate_drop_erase).
  *
  * The coverage gate @c network.phase_datum_min_stations removes a (satellite,
  * signal) phase-bias column when fewer than k present stations track it.  The gate

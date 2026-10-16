@@ -1,7 +1,7 @@
 /**
  * @file CarrySites.cpp
- * @brief The site table, the mechanism table and the traversal of carried references
- *        (card PRM phase 2).  The design is in the header's file comment.
+ * @brief The site table, the mechanism table and the traversal of carried references.
+ *        The design is in the header's file comment.
  */
 
 #include "network/state/CarrySites.hpp"
@@ -127,7 +127,7 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
 }};
 
 // The reasons an exemption gives.  "Owed" exemptions are the gaps of the hand lists this
-// card replaced (card PRM section 15 and phase 3b), which network.carry_rebase_complete moves
+// table replaced, which network.carry_rebase_complete moves
 // (owedReason below); the others are by design.
 constexpr const char* kOwed =
     "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
@@ -155,8 +155,8 @@ constexpr const char* kPbHoldEmit =
     "held_m is a held emitted value in the emit frame: moving it needs its own design, so "
     "it is exempt from network.carry_rebase_complete too";
 
-/// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete,
-/// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its
+/// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete).
+/// The handover's reasons, the receiver clock's included, are its
 /// own design and its walks take no knob.
 bool owedReason(const char* reason) {
     return reason == kOwed || reason == kOwedClv64;
@@ -487,7 +487,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card PRM phase 2 (sections 5 and 6): the carried references of the border per site,
+    // The carried references of the border per site,
     // held at the run's end and moved by each mechanism over the run through the one
     // traversal; then, per mechanism, the sites it does not move with the reason.  The
     // same rows go to the run manifest as a `param_sites` record.
@@ -517,7 +517,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
                           held[i], jm, sp.record ? sp.record : "");
     }
     js += "],\"mechanisms\":[";
-    // Card PRM phase 3b: under network.carry_rebase_complete a mechanism's owed sites are
+    // Under network.carry_rebase_complete a mechanism's owed sites are
     // moved, so they leave its "not moved" list for a list of their own (the line and the
     // record are unchanged with the knob off).
     const bool complete = ctx.knobs.rebase_complete;

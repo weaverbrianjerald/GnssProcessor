@@ -148,7 +148,7 @@ namespace GnssProcessor {
         void setOrbitEchoStore(const SsrCorrectionStore* store) { orbit_echo_store_override_ = store; }
 
         /**
-         * @brief Take the a priori satellite clock from card NBP's native broadcast clock
+         * @brief Take the a priori satellite clock from the native broadcast clock
          *        a priori instead of a CLK product (@c network.apriori_source
          *        @c sp3_brdc_clock; producer stations only).
          *

@@ -48,8 +48,8 @@
  */
 
 #include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)
-#include "network/ar/ArCycleBasis.hpp" // ArEpochFixes (the lattice observatory's input; card AGT)
-#include "network/ar/ArSuspect.hpp"   // ArSuspectReentry (reentryOutcome; card ARL)
+#include "network/ar/ArCycleBasis.hpp" // ArEpochFixes (the lattice observatory's input)
+#include "network/ar/ArSuspect.hpp"   // ArSuspectReentry (reentryOutcome)
 #include "network/solve/Estimator.hpp"   // NetworkEstimator
 #include "network/solve/Sbasis.hpp"      // NetworkSbasis::Plan (shared_datum)
 #include "network/driver/RunTypes.hpp"    // NetStation / StationAssembly
@@ -238,8 +238,8 @@ std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
                                          const Eigen::MatrixXd& Q_cond);
 
 /**
- * @brief What the DDs the suspect-corner mask released got at their first search (card
- *        ARL, the release edge of network/ar/ArSuspect.hpp).
+ * @brief What the DDs the suspect-corner mask released got at their first search
+ *        (the release edge of network/ar/ArSuspect.hpp).
  *
  * Counts the DDs flagged in @p reentry and those of them kept, and over the L1/L2 pairs
  * whose two DDs both re-entered (each pair once): both singles kept, or else the wide lane
@@ -258,9 +258,9 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
                                 const std::vector<PairLane>& lanes, double det_sigma_cyc);
 
 /**
- * @brief The search block of a DD: "cons|sta_r|ref_sta" (one block per baseline, card ARL
- *        block_search), or "cons|sta_r" under the cycle basis (one block per station, card
- *        AGT: a station's partner and borrowed DDs in every band, so the two bands of a chord
+ * @brief The search block of a DD: "cons|sta_r|ref_sta" (one block per baseline under the
+ *        block_search), or "cons|sta_r" under the cycle basis (one block per station:
+ *        a station's partner and borrowed DDs in every band, so the two bands of a chord
  *        share a block).  The covariance readback and the search use the same key.
  * @param cons        Constellation key ("G").
  * @param sta_r       The DD's station.

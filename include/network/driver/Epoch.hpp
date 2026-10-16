@@ -29,7 +29,7 @@
  *   assembly      EpochAssembly        networkPassB_             networkPassB_; est_index_of also networkSolveGlue (each T2 replay rebuilds it)
  *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call), networkSolveGlue
  *                                                                (each replay's DD rebuild)
- *   ws            EpochWorkspace       construction (empty)      networkSolveGlue (the primary DD build reads it empty, card WCF)
+ *   ws            EpochWorkspace       construction (empty)      networkSolveGlue (the primary DD build reads it empty)
  *   solve         NetworkSolveGlueResult  the solve              the driver stores the solve's return; solve.handoff also networkPostFitRaim, networkClockQc
  *   ar_fixes      ArEpochFixes         the producer AR           the driver stores networkProducerAr's return
  *   fixed_cycles  FixedCycleEmission   the fixed-cycle fold      the driver stores networkFixedCycles's return
@@ -49,7 +49,7 @@
  *     (`const std::vector<bool>& present = ep.pass_a.present;`), and each name it writes
  *     through its output, marked `// written`; below the preamble the body never spells `ep.`;
  *   - a seam reads only groups available at its spine line (scripts/nom_epoch_lint.py);
- *   - no seam keeps a pointer or a copy of an epoch member across a call (card WCF's defect
+ *   - no seam keeps a pointer or a copy of an epoch member across a call (a past defect
  *     was a by-value pointer copy that stayed null while the original moved on).
  * After the solve the seams' outputs are solve.handoff, prep.sol and events (each writer its
  * own group of it); the driver's own writes are the four stores above (the lint checks the
@@ -97,7 +97,7 @@ struct NetworkRun;
 /// from the driver's three const locals (dt, pl_now_s, carry_warm), which keep their names
 /// for the inline blocks.
 struct EpochClock {
-    double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step, card NOM3 section 2 finding 4.)
+    double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step)
     double pl_now_s{0.0};     ///< This epoch in continuous GPS seconds.
     bool   carry_warm{false}; ///< The phase-leveling carry is past its warm-up (the emitted-epoch count reached network.phase_leveling_warmup_epochs).
 };

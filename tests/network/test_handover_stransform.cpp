@@ -100,7 +100,7 @@ std::vector<CarryPrior> makeCarry() {
     };
 }
 
-/// The kernel on a carried clock list: it walks the run's carried state (card PRM phase 2),
+/// The kernel on a carried clock list: it walks the run's carried state,
 /// so the list is moved into a NetworkCarryState's prev_carry and back.
 ClockStransformResult applyTo(std::vector<CarryPrior>& c,
                               const std::vector<std::pair<std::string, double>>& v_c,
@@ -382,7 +382,7 @@ TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
 }
 
 // ===========================================================================
-// 9: card PRM phase 2, the transform before the coupling rows
+// 9: the transform before the coupling rows
 // ===========================================================================
 
 // The knob needs the transform it moves, and refuses the broadcast a priori (the ephemeris
@@ -444,7 +444,7 @@ struct PreviewBed {
     NetworkEstimator* est = nullptr;      ///< fx->est(), renewed by layout()
     std::vector<std::string> registered;
     // The anchor sigma the preview's declaration reads (ctx.knobs.clk_anchor_sigma) is set
-    // to the 3.0 m this bed passed as an argument before card NOM3 step EP0.
+    // to the 3.0 m this bed passed as an argument before NetworkKnobs held it.
     explicit PreviewBed(const std::string& tag, bool armed = true)
         : L(tag, std::string("    \"scoped_handover_response\": true,\n"
                              "    \"handover_stransform\": true,\n"

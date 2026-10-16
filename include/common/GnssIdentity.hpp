@@ -48,7 +48,7 @@
  * New types only: no existing call site reads them yet (step N0b migrates the call sites).
  * IRNSS has no @c System value: its letter 'I' maps to @c System::Unknown here, and
  * @ref SatId::parse refuses it.  Adding IRNSS to the enum is a user-side decision that
- * card NOM leaves out of its scope (section 15).
+ * is out of scope here.
  *
  * ### Step N0b additions
  *
@@ -407,8 +407,8 @@ namespace GnssProcessor {
         /**
          * @brief Parse a RINEX satellite id.
          *
-         * Normalizes the three spellings in use: "G05", the blank-padded "G 5" (card
-         * RXP) and the unpadded "G5".  Refuses everything else: an empty or longer
+         * Normalizes the three spellings in use: "G05", the blank-padded "G 5"
+         * and the unpadded "G5".  Refuses everything else: an empty or longer
          * string, an unknown letter (@ref systemFromLetter gives Unknown), a lower-case
          * letter, a non-digit, PRN 0.
          *
@@ -693,8 +693,8 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief A signal of one satellite: (satellite, signal), such as G05 "1C" (card NOM
-     *        step N4.0).
+     * @brief A signal of one satellite: (satellite, signal), such as G05
+     *        "1C".
      *
      * Replaces the composite keys of the per-satellite-signal state: the strings
      * "G05|L1C" and "G05_L1C" and the (satellite, code) pairs.  Ordered by (satellite,
