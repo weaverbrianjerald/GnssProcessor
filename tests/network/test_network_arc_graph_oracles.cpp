@@ -87,7 +87,7 @@ using namespace arcgraph;
 // The Card-4 driver's union-find and pair completion (frozen).
 // =====================================================================================
 
-// ---- BEGIN FROZEN src/core/network/carry/NetworkInvariantCarryDriver.cpp lines 73-90 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkInvariantCarryDriver.cpp lines 73-90 @ b5592b6 (verbatim) ----
 /// A tiny path-compressing union-find over the (small, per-group) integer vertex set.
 class UnionFind {
 public:
@@ -116,7 +116,7 @@ struct FrozenDriverCounters { long long pair_tree_promotions{0}; };
 long long frozenPairCompletion(std::vector<ArcKey>& tree_edges, std::vector<ArcKey>& chords) {
     const FrozenPairGroup g;
     FrozenDriverCounters counters_;
-// ---- BEGIN FROZEN src/core/network/carry/NetworkInvariantCarryDriver.cpp lines 674-689 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkInvariantCarryDriver.cpp lines 674-689 @ b5592b6 (verbatim) ----
             if (g.pair && !chords.empty()) {
                 UnionFind tf;
                 for (const ArcKey& t : tree_edges) tf.unite(t.u, t.v);
@@ -140,7 +140,7 @@ long long frozenPairCompletion(std::vector<ArcKey>& tree_edges, std::vector<ArcK
 /// The roots the chain datum's string union-find gives after a union sequence.
 std::map<std::string, std::string> frozenStringUfRoots(
     const std::vector<std::pair<std::string, std::string>>& seq, const std::vector<std::string>& vertices) {
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 352-363 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 352-363 @ b5592b6 (verbatim) ----
         std::map<std::string, std::string> uf;
         auto find = [&](std::string v) -> std::string {
             auto it = uf.find(v);
@@ -168,7 +168,7 @@ std::map<std::string, std::string> frozenStringUfRoots(
 /// of its own so that its UnionFind and its netDatumGraphComponents meet neither the driver's
 /// frozen UnionFind above nor the live function.
 namespace frozen_census {
-// ---- BEGIN FROZEN src/core/network/solve/NetworkDatumGraph.cpp lines 54-85 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkDatumGraph.cpp lines 54-85 @ b5592b6 (verbatim) ----
 class UnionFind {
 public:
     int make() {
@@ -203,7 +203,7 @@ private:
 };
 // ---- END FROZEN ----
 
-// ---- BEGIN FROZEN src/core/network/solve/NetworkDatumGraph.cpp lines 166-229 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkDatumGraph.cpp lines 166-229 @ b5592b6 (verbatim) ----
 std::map<char, NetDatumGraphConsCensus>
 netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges) {
     // Per constellation: vertex ids for the stations and the satellites that
@@ -292,7 +292,7 @@ std::map<std::string, int> frozenEmitRebaseComponents(const EmitRebaseEpoch& ep)
     const std::vector<bool>&              present = ep.present;
     const std::vector<int>&               est_index_of = ep.est_index_of;
     const std::set<std::string>&          shared_phase_keys = ep.shared_phase_keys;
-// ---- BEGIN FROZEN src/core/network/emit/NetworkEmitStore.cpp lines 197-240 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkEmitStore.cpp lines 197-240 @ b5592b6 (verbatim) ----
         // (b) Connected-component partition of the (receiver,satellite) bipartite
         //     graph per (const,signal): the common fractional δ is shared only within
         //     a component (each elects its own datum receiver r1).  Union-find over
@@ -378,7 +378,7 @@ struct FrozenDd {
 std::vector<FrozenDd> frozenPrim(const std::map<std::string, std::map<std::size_t, double>>& vis,
                                  const std::vector<FrozenArStation>& stations, int* n_const_signal_out) {
     const FrozenNetar netar;
-// ---- BEGIN FROZEN src/core/network/ar/NetworkProducerAr.cpp lines 323-323 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkProducerAr.cpp lines 323-323 @ b5592b6 (verbatim) ----
         struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; ArSuspectCornerState suspect; };
 // ---- END FROZEN ----
     std::map<std::pair<std::string, std::string>,
@@ -389,7 +389,7 @@ std::vector<FrozenDd> frozenPrim(const std::map<std::string, std::map<std::size_
             for (const auto& [sta, value] : by_sta)
                 ar_pool[{"G", "L1C"}][sat][sta] = ArRec{value, sta, col++, ArSuspectCornerState{}};
     }
-// ---- BEGIN FROZEN src/core/network/ar/NetworkProducerAr.cpp lines 362-370 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkProducerAr.cpp lines 362-370 @ b5592b6 (verbatim) ----
         std::vector<std::pair<std::size_t, Eigen::Index>> reqs;
         std::map<std::pair<std::size_t, Eigen::Index>, int> req_idx;
         auto reqOf = [&](const ArRec& r) -> int {
@@ -400,7 +400,7 @@ std::vector<FrozenDd> frozenPrim(const std::map<std::string, std::map<std::size_
             reqs.push_back(k); req_idx[k] = idx; return idx;
         };
 // ---- END FROZEN ----
-// ---- BEGIN FROZEN src/core/network/ar/NetworkProducerAr.cpp lines 379-478 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkProducerAr.cpp lines 379-478 @ b5592b6 (verbatim) ----
         struct DDrow {
             int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
             std::string cons, signal, sat_j, ref_sat, sta_r, ref_sta;
@@ -701,7 +701,7 @@ FrozenChainOut frozenChainWalk(const ChainGroupInput& in, Tape& tape) {
         stations[i].pinned_amb_targets.tape = &tape;
         stations[i].pinned_amb_targets.ri   = i;
     }
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 135-145 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 135-145 @ b5592b6 (verbatim) ----
     // Slip-aware election (Card 3/4): true when this arc slipped this epoch.  The
     // funnel is complete here by the ordering contract (every PASS-A drain, signal
     // integrity and measurement admission run before the election).  The key is
@@ -716,7 +716,7 @@ FrozenChainOut frozenChainWalk(const ChainGroupInput& in, Tape& tape) {
 // ---- END FROZEN ----
     const auto& sat_el = in.sat_el;
     const auto& cover  = in.cover;
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 151-154 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 151-154 @ b5592b6 (verbatim) ----
     auto cov = [&](System sys, size_t i) -> int {
         auto it = cover.find(rinexLetter(sys)); if (it == cover.end()) return 0;
         auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
@@ -740,14 +740,14 @@ FrozenChainOut frozenChainWalk(const ChainGroupInput& in, Tape& tape) {
     arcs.vertex_name  = &stationVertexName;
     satrx.tape        = &tape;
     satrx.vertex_name = &satVertexName;
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 267-271 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 267-271 @ b5592b6 (verbatim) ----
         // Graph vertices are named "R<station index>" (a receiver) and "S<sat>" (a
         // satellite); the prefix is the vertex kind, not a constellation letter.
         auto rV = [](size_t i){ return "R" + std::to_string(i); };
         auto sV = [](const std::string& s){ return "S" + s; };
         auto isSatVertex = [](const std::string& v) { return v[0] == 'S'; };
 // ---- END FROZEN ----
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 273-301 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 273-301 @ b5592b6 (verbatim) ----
         // Longevity score of arc (station ri, sat) (I4): higher means a longer
         // expected life and so a better new tree edge (fewer future deaths,
         // fewer b_s re-references).  A rising arc (elevation grew since last
@@ -778,7 +778,7 @@ FrozenChainOut frozenChainWalk(const ChainGroupInput& in, Tape& tape) {
             return life;
         };
 // ---- END FROZEN ----
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 303-349 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 303-349 @ b5592b6 (verbatim) ----
         // Sticky-tree seed (spec D2 step 3): the incumbent tree edges
         // (sat-side parents in anchor_incumbent, "sat_signal" → station;
         // receiver-side parents in eq34_rx_parent, "station|c|σ" → sat)
@@ -828,7 +828,7 @@ FrozenChainOut frozenChainWalk(const ChainGroupInput& in, Tape& tape) {
         }
 // ---- END FROZEN ----
     FrozenChainOut out;
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 351-806 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 351-806 @ b5592b6 (verbatim) ----
         // --- Union-find over vertices "R<idx>" / "S<sat>". ---
         std::map<std::string, std::string> uf;
         auto find = [&](std::string v) -> std::string {
@@ -2145,7 +2145,7 @@ struct FrozenStationMaps {
 // The frozen election compiles against the real run context: nothing in it is stood in but the
 // station maps of FrozenStationMaps (card NOM step N4a).
 namespace frozen_eq34 {
-// ---- BEGIN FROZEN src/core/network/solve/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
+// ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
 void networkElectChainDatum(NetworkRunContext& ctx,
                             const GnssConfig& config_,
                             const std::shared_ptr<spdlog::logger>& log,
