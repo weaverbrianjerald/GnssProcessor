@@ -18,7 +18,7 @@
  *          carried clock untouched, so the re-level is deferred with relevel_iode in
  *          lock-step) and before the D2 / clock-osc prior injection and the solve.
  *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
- *          not.  Mutates ctx.carry.{relevel_iode, eph_cutover_disc_pending} and, through
+ *          not.  Mutates the satellite table (relevel_iode, the Disc::EphCutover bit) and, through
  *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
  *          prev_carry, prev_clk, the local_carry and zwd_carry coupling; with
  *          network.carry_rebase_complete also its owed sites).  Acts only when
@@ -58,6 +58,7 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  * map (the slant ionosphere and its block, the gross screen's three holds, the receiver
  * clock, phase bias and code bias, card LGM's phase colour).
  * @param carry    the run's carried state.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param sat      the satellite whose broadcast version rolled.
  * @param d        the shift Delta_eph (m); every reference moves by -d.
  * @param cpl_cond @c network.carry_conditional_coupling.
@@ -65,7 +66,8 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  * @param complete also move the owed sites (false = the walk of card PRM phase 2).
  * @return the number of references moved.
  */
-long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
+long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                               const std::string& sat, double d,
                                bool cpl_cond, CarrySiteCounts* counts = nullptr,
                                bool complete = false);
 

@@ -102,7 +102,7 @@ TEST(RaimPoolDataRowsOnly, OnAdmitsTheOwnPhaseRowsOnly) {
             << contributionKindName(k) << ": on, the tag decides, not the coefficient";
     }
     // The carried-prior rows the off rule admits are refused, whatever they clear.
-    for (const CK k : {CK::CouplingScalar, CK::CouplingJoint, CK::BlockAmbiguityCarry,
+    for (const CK k : {CK::CouplingScalar, CK::BlockAmbiguityCarry,
                        CK::BlockZwdCarry, CK::BlockIonoCarry, CK::BlockRxClockCarry,
                        CK::BlockRxCbCarry, CK::BlockPhaseColourCarry, CK::SdEwl}) {
         EXPECT_TRUE(raimPoolAdmitsRow(makeRowTag(k, "G05", "L1W"), true, col, false))

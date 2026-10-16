@@ -129,13 +129,12 @@ enum class ResponsePolicy : int {
     Loosen,            ///< Folded at the loose rate until a guard re-validates it (card Q3's anchor).
     Recouple,          ///< The guard re-validated a loosened instance: it folds at its anchored rate again.
     Reinit,            ///< Folded at the re-initialization variance (the clock monitor's flag).
-    Retap,             ///< Value kept, variance inflated.
     Hold,              ///< Frozen and re-applied while a guard holds it.
     ReanchorAtTarget,  ///< A carried time link re-anchored at its absolute target.
 };
 
 /// Number of @ref ResponsePolicy values (array sizing).
-inline constexpr std::size_t kResponsePolicies = 18;
+inline constexpr std::size_t kResponsePolicies = 17;
 
 /// @brief Table name of an event (e.g. "slip").
 const char* paramEventName(ParamEvent e);
@@ -178,14 +177,13 @@ struct ParamSpec {
     /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
     /// site reads it in place of the knob: network.phase_leveling_max_gap_s for the
     /// ambiguity, the wet delay and the receiver phase bias;
-    /// network.phase_colour_max_gap_s for the phase colour; for the slant ionosphere the
-    /// horizon of the carry in force (network.carry_iono_in_block_max_gap_s under the
-    /// block carry, network.iono_carry_max_gap_s under the diagonal carry; the loader
-    /// refuses both at once); network.carry_rx_clock_max_gap_s for the receiver clock;
+    /// network.phase_colour_max_gap_s for the phase colour;
+    /// network.carry_iono_in_block_max_gap_s for the slant ionosphere under the block
+    /// carry; network.carry_rx_clock_max_gap_s for the receiver clock;
     /// the constant @c kRxCbMaxGapS for the receiver code bias.  NaN for a kind with no
-    /// gap horizon declared here: the slant ionosphere with neither carry armed, and the
-    /// border kinds, whose gap response is READMIT's park (its expiry, a GapPrune of the
-    /// parked entry, runs on network.readmit_seed_horizon_s against the park time).
+    /// gap horizon declared here: the slant ionosphere with the in-block carry unarmed,
+    /// and the border kinds, whose gap response is READMIT's park (its expiry, a GapPrune
+    /// of the parked entry, runs on network.readmit_seed_horizon_s against the park time).
     double       gap_horizon_s{std::numeric_limits<double>::quiet_NaN()};
     ParamRoute   route{ParamRoute::NotCarried};
     std::string  source;            ///< The knob(s) behind q, the floor and the route.

@@ -4,14 +4,14 @@
 
 - **id:** AIL
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** READ: the golden coupling update discards a young arc's ambiguity information each epoch (CTU's root); the exact update's steady loss is the anchored clock's walk (A2 FAILS, A3 holds).
+- **status:** closed
+- **summary:** READ: the scalar coupling update discarded a young arc's ambiguity information each epoch (CTU's root); the exact update's steady loss is the anchor's clock walk (A2 FAILS, A3 holds); the exact update is ARMED.
 - **source:** [LGM](LGM_los_phase_nuisance_2026-10-01.md) section 5.3; [CTU](CTU_coupling_time_update_2026-09-28.md) (the coupling time update; the legacy clock q in card 1d's kappa); [RF-1 design](RF-1_float_ambiguities_design.md) (the float vehicle); `src/core/filter/NetworkCoupling.cpp` (`buildLocalBlock`, `scalarRowIngredients`, `exactRowIngredients`); `src/core/app/NetworkRunContext.cpp` (`networkHarvestLocalCarries`)
 - **knobs / posture:** `network.trace_amb_if` (trace class, default off); no solve change in this card's instrument
 - **dates in the text:** 2026-10-01
 - **hashes / run dirs:** exe `gnss_processor_ail.exe`; the wander reads `runs/_rap_lgm_{ctl,pc,pcw}amb_gs`, `runs/_rap_lgm_{ctl,pc}amb_ps`; this card's arms `runs/_rap_ail_*` (controls `runs/_rap_ailc_*`, the anchor-rate arms `runs/_rap_ail_q0_ps`, `runs/_rap_lgm_pcq0_ps`, `runs/_rap_lgm_pcwq0_ps`)
 
-**Outcome.** Question: is the carried ionosphere-free ambiguity's 3.3 to 6.6 mm per-epoch motion lost at the inject or never gained in the solve? At the inject: below 20 epochs the golden posture loses 75 mm (sim) and 157 mm (field), the exact update 4.7 and 5.1 mm. With the anchor's rate near zero the sim's loss falls 8 to 10 times and card LGM's colour state carries the colour, at a cost to the clock level. [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) armed the exact update; [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 9 left the joint carry unbuilt for cost.
+**Outcome.** Question: is the carried ionosphere-free ambiguity's 3.3 to 6.6 mm per-epoch motion lost at the inject or never gained? At the inject: below 20 epochs the scalar update loses 75 mm (sim) and 157 mm (field), the exact update 4.7 and 5.1 mm (A2 FAILS); the stated variance matches the wander (A3 holds). The exact update's steady loss is the anchor's walk, physical on the field. [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) armed the exact update; [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md) section 9 left the joint carry unbuilt for cost; [LGM](LGM_los_phase_nuisance_2026-10-01.md)'s state stays off. Nothing owed. Status reviewed 2026-10-13.
 
 ## 1. The reading that opens the card
 

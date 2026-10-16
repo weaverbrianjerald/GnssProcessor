@@ -11,9 +11,9 @@ for a given config, every recommended knob that is off or absent and whose valid
 matches this config.  It edits nothing.
 
 Scope matters: the report is not a list to arm wholesale.  The ledger's SCOPED tier exists
-because a knob validated at one scale can be harmful at another: network.mw_wl
-.bridge_sample_debias was validated at 50 stations and measured net-harmful at 305
-(short-baseline wrong-integer rate 0.0% -> 12.5%).
+because a knob validated at one scale can be harmful at another: the retired
+network.mw_wl.bridge_sample_debias was validated at 50 stations and measured net-harmful
+at 305 (short-baseline wrong-integer rate 0.0% -> 12.5%).
 
 Regime filtering.  Each recommended knob carries a machine-readable ``regime`` predicate in
 the ledger, evaluated against this config.  A knob outside its validated regime is
@@ -136,7 +136,7 @@ def snapshot_state(cfg):
 #  Mirrors the regime facts computed by GnssConfig::networkPostureRegime_ (in
 #  GnssConfigNetworkPosture.cpp).  Keep the two in step: a predicate added here is added
 #  there, and vice versa.
-_ALLOWED_NAMES = {"n_sta", "n_sys", "tri", "warm", "lane", "rt", "par", "pstations", "gps_only",
+_ALLOWED_NAMES = {"n_sta", "n_sys", "tri", "warm", "rt", "par", "pstations", "gps_only",
                   "gps_gal_only", "spacing_s", "on", "val", "v", "found", "True", "False", "None"}
 _ALLOWED_CALLS = {"on", "val"}
 _ALLOWED_NODES = (
@@ -173,8 +173,6 @@ def make_env(cfg):
     net = cfg.get("network", {}) or {}
     proc = cfg.get("processing", {}) or {}
     freq = str(proc.get("frequency_mode", proc.get("signal_mode", "dual")) or "").lower()
-    mw = net.get("mw_wl", {}) or {}
-    lc = net.get("lane_carry", {}) or {}
 
     def on(path):
         found, v = resolve(cfg, path)
@@ -194,7 +192,6 @@ def make_env(cfg):
         # Not a path-set test; snapshot_state() explains why a seed leg has the path set
         # and is still cold.
         "warm":  snapshot_state(cfg)[0],
-        "lane":  bool(mw.get("ewl_enable") or mw.get("enable") or lc.get("enable")),
         # service_mode is the real-time service producer, so it counts as the RT posture:
         # knobs scoped "post-processing only" stay silent there and RT-only knobs stay
         # silent everywhere else.  Mirrors the loader's `rt`.
@@ -315,8 +312,8 @@ def loader_default_true(config_src_dir=None):
     on(path) is a truthiness test and returns False for an absent key, so on() applied to a
     default-true knob inverts the predicate; such predicates use val(path, True) instead.
     Known cases: network.parallel_stations (5 predicates) and
-    network.carry_invariant_emit_rebase (whose inversion suppressed the
-    emit_pb_filter_gate_v2 recommendation).  verify_loader flags every on() reference to a
+    network.carry_invariant_emit_rebase (whose inversion suppressed the recommendation of
+    the since-deleted emit_pb_filter_gate_v2).  verify_loader flags every on() reference to a
     knob in this set.
 
     Every ``<obj>.value("x", true)`` match (the nlohmann struct-literal form the jval regex
@@ -450,7 +447,6 @@ def main():
     print(f"#   regime: {env['n_sta']} station(s), {env['n_sys']} constellation(s), "
           f"{cfg.get('processing',{}).get('frequency_mode','?')} frequency mode, "
           f"{'WARM-RESUME' if env['warm'] else 'cold'} start, "
-          f"{'lane/WL armed' if env['lane'] else 'no lane layer'}, "
           f"{'REAL-TIME' if env['rt'] else 'post-processed'}, "
           f"mode={cfg.get('processing',{}).get('mode','?')}")
     print(f"#   chain state: {warm_why}")
@@ -500,10 +496,9 @@ def main():
                 print(f"      ^ CHAIN: fingerprinted - arming it on this resumed leg "
                       f"{'hard-aborts (state_snapshot_require on)' if require else 'SILENTLY cold-starts (state_snapshot_require is FALSE)'}"
                       f".  Arm it in a FRESH lineage (new seed), not here.")
-            print(f"      default at {k['default_at']}")
-            print(f"      scope: {k['scope']}")
-            if k.get("interlock"):
-                print(f"      interlock: {k['interlock']}")
+            print(f"      default {k.get('default', '')!r}; {k.get('why', '')}")
+            if k.get("card"):
+                print(f"      evidence: {k['card']}")
         if a.show_suppressed:
             for k, found, v, pred in suppressed:
                 print(f"  [out of regime] {k['knob']}  (needs: {pred})")

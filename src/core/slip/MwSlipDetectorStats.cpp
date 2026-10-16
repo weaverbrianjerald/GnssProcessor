@@ -455,8 +455,6 @@ namespace GnssProcessor {
         stats.mean         -= stored.bias_m;
         stats.mean_lag     -= stored.bias_m;   // lagged snapshot rides the same frame (MwArcStats doc)
         stats.prev_mw      -= stored.bias_m;
-        if (std::isfinite(stats.prev_mw_lag))
-            stats.prev_mw_lag -= stored.bias_m;   // the lagged raw sample shifts too (WL-3)
         // The local raw-MW ring holds pre-commit (uncorrected) samples;
         // re-anchor it with the mean, or the commit epoch's local deviation
         // jumps by the full bias (decimeters), the same false-fire that the

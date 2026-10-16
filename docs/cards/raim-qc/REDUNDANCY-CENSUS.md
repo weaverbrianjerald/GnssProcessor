@@ -5,14 +5,14 @@
 - **id:** redundancy census
 - **topic:** raim-qc
 - **status:** closed
-- **summary:** Census BUILT and smoke-gated: solve byte-identical OFF vs ON, and the two-tier escalation found the same worst cell 21× cheaper; the leg-19 known-answer gates stayed OWED.
+- **summary:** Census BUILT and smoke-gated (OFF identity, escalation 21× cheaper); all four knobs armed in both goldens; on the float vehicle every block-Baarda LOS block is singular and every cross-flag event is a phase row.
 - **dates in the text:** 2026-08-01 to 2026-08-15
 - **knobs / posture:** `network.mdb`, `network.block_baarda`, `network.congruence_screen`, `network.redundancy_census_stride`, `network.redundancy_eps`, `network.redundancy_pivot_eps`, `network.redundancy_hot_sigma`, `network.redundancy_escalate_sigma`, `network.mdb_event_m`, `network.mdb_event_holdoff_ep` (+4 more in the text; all default-OFF, measure-only, fingerprint-SAFE)
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/ft63_leg19_rhsat`, `runs/ft63_redund_{off,on,escal,diag}`
 - **source:** `docs/archive/SPEC_redundancy_census.md` (preamble), §1 to §10 (10.1 to 10.8), §14 (14.1 to 14.7), §15; the riders' own sections are [Rider A](../raim-qc/MDB-RIDER-A.md), [Rider B](../raim-qc/BLOCK-BAARDA-RIDER-B.md) and [Rider C](../raim-qc/CONGRUENCE-RIDER-C.md)
 
-**Outcome.** The census asks whether a row is testable: a row with redundancy r_i near 0 is invisible to every residual test, so the alarm crosses an uncheckable row with a large centred innovation. The cold FT63 smoke met gates 1 and 5 (OFF identity, escalation); a full 63-station sweep cost ~380 ms per epoch against the 100 to 300 ms estimate. Gates 2, 3, 4, 6 and 7 stayed OWED; §15's ten rows are a register in [OPEN_ITEMS](../../status/OPEN_ITEMS.md) §C. Rider C, armed in the re-founding runs, ranked the monument-to-antenna offsets in a table nothing read ([UPO](../../refound/UPO_consumer_up_offset_2026-09-22.md) §6.2).
+**Outcome.** The census asks whether a row is testable and cross-flags uncheckable rows carrying large centred innovations. The cold smoke met gates 1 and 5; the leg-19 gates lapsed with the FT63 lineage. All four knobs are armed in both goldens: the MDB and congruence tables print every run (congruence ranked [UPO](../../refound/UPO_consumer_up_offset_2026-09-22.md)'s offsets), but on `_rf0hv15` every block-Baarda LOS block is singular (field 60279 of 60302, sim all) at 5 % of loop wall, and every cross-flag event is a phase row (field 93, sim 437). Owed: [OPEN_ITEMS](../../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

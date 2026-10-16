@@ -4,15 +4,15 @@
 
 - **id:** REF-FAN
 - **topic:** slip
-- **status:** open
-- **summary:** RECOMMEND_SCOPED: the reference arm on the additional IF-TD chains removes the fan-out (collateral refloats 6 to 0) and holds the flood; the field pin is still owed.
+- **status:** closed
+- **summary:** Reference arm on additional IF-TD chains: collateral refloats 6 to 0, flood held. ARMED on both refound goldens via the RF-0 base; inert at dual frequency, live at three bands (L5).
 - **dates in the text:** 2026-09-13
 - **knobs / posture:** `network.cycle_slip.if_phase_td_ref_arm_all` (requires `if_phase_td_pairs = all` and `if_phase_td_ref_gate`)
 - **hashes named in the text** (commit / exe / byte-cert): `87a33bf0`, `9bd2d51`, `e6b04a4`, `bea5df33`, `1c217798`, `e6071f43`
 - **run dirs named in the text:** `runs/evleg_fp1_`
 - **source:** `docs/archive/SPEC_event_harness.md`, sections 22.6, 22.7
 
-**Outcome.** The card asked whether testing each additional chain's own reference satellite stops a slip on it from refloating the chain's other satellites. F1, F3 (in substance) and F4 PASS; F2 passes its primary bars (E1 consumer mean |Δ3D| 1.94 to 0.72 m) with two misses, the consumer max (E5 +53 %, E1 +3 %) and the E3/G24 station clock at +45. The sim pin rode `golden_sim_tri_w6` ([ledger](../../CONFIG_promotion_ledger.md) row `if_phase_td_ref_arm_all`), retired 2026-09-15. FP-2 ([FIELD-HARNESS](../harness/FIELD-HARNESS.md) section 20.3) gave the inherited path its first field fires, but its 6 h twin FAILED the pin on the refloat response cost; the field pin stays owed ([OPEN_ITEMS](../../status/OPEN_ITEMS.md) section D).
+**Outcome.** Question: does testing each additional IF-TD chain's own reference satellite stop a slip on it from refloating the chain's other satellites? F1, F3 (in substance) and F4 PASS; F2 passes its primary bars (E1 consumer mean |Δ3D| 1.94 to 0.72 m), missing the E5 consumer max (+53 %) and the E3/G24 clock at +45. The field pin owed against the retired Card-4 golden is moot: the RF-0 base armed the knob on both refound goldens, inert at dual frequency. Closed; the L5 counter check is in [OPEN_ITEMS](../../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

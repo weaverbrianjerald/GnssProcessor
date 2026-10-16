@@ -6,7 +6,7 @@
  * The held emission is p(t0) + [c~(t) - c~(t0)], with c~ = c - M and M the accumulated
  * median emitted-clock step over the satellites present at consecutive emissions.
  * Covered here:
- *   - the loader requires network.emit_pb_hold and refuses network.clock_level_carry;
+ *   - the loader requires network.emit_pb_hold;
  *   - a level move of one satellite (its clock and phase bias together) leaves the
  *     wire's c - p at its generation-start value, where the plain hold moves it;
  *   - a clock move common to every satellite stays on the clock (the held phase bias
@@ -49,6 +49,14 @@ namespace fs = std::filesystem;
 
 namespace GnssProcessor {
 namespace {
+
+/// The value behind an entity-table lookup, throwing like std::map::at when it is absent
+/// (card NOM step N4b moved the map the test read into the constellation table).
+template <class V>
+const V& netAt(const V* p) {
+    if (p == nullptr) throw std::out_of_range("netAt: absent");
+    return *p;
+}
 
 std::shared_ptr<spdlog::logger> lahLogger() {
     static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
@@ -99,7 +107,7 @@ std::uint32_t genOf(const NetworkSolutionEpoch& sol, const std::string& sat) {
     return 0;
 }
 
-std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
+std::string lahConfig(bool hold, bool phase_clock, double max_gap_s) {
     return std::string("{\n") +
         "  \"processing\": {\n"
         "    \"mode\": \"ppp-rtk-network\",\n"
@@ -109,7 +117,6 @@ std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
         "  \"network\": {\n"
         "    \"emit_pb_hold\": " + (hold ? "true" : "false") + ",\n"
         "    \"emit_pb_hold_phase_clock\": " + (phase_clock ? "true" : "false") + ",\n"
-        "    \"clock_level_carry\": " + (clv ? "true" : "false") + ",\n"
         "    \"emit_pb_hold_max_gap_s\": " + std::to_string(max_gap_s) + ",\n"
         "    \"stations\": [\n"
         "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
@@ -119,11 +126,11 @@ std::string lahConfig(bool hold, bool phase_clock, bool clv, double max_gap_s) {
         "}\n";
 }
 
-bool lahLoads(bool hold, bool phase_clock, bool clv, const char* tag) {
+bool lahLoads(bool hold, bool phase_clock, const char* tag) {
     LogManager log_mgr;
     GnssConfig cfg;
     const fs::path p = fs::temp_directory_path() / (std::string("lah_load_") + tag + ".json");
-    { std::ofstream f(p); f << lahConfig(hold, phase_clock, clv, 300.0); }
+    { std::ofstream f(p); f << lahConfig(hold, phase_clock, 300.0); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
     return ok;
@@ -143,7 +150,7 @@ struct LahHarness {
     LahHarness(bool phase_clock, const char* tag, double max_gap_s = 300.0) {
         cfg_path = fs::temp_directory_path()
                    / ("lah_cfg_" + std::string(tag) + (phase_clock ? "_on" : "_off") + ".json");
-        { std::ofstream f(cfg_path); f << lahConfig(true, phase_clock, false, max_gap_s); }
+        { std::ofstream f(cfg_path); f << lahConfig(true, phase_clock, max_gap_s); }
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
         EXPECT_TRUE(cfg.getNetworkConfig().emit_pb_hold);
         EXPECT_EQ(cfg.getNetworkConfig().emit_pb_hold_phase_clock, phase_clock);
@@ -173,27 +180,10 @@ std::string slurp(const fs::path& p) {
 
 // --- 1. The loader -----------------------------------------------------------------
 
-TEST(PbHoldPhaseClockTest, LoaderRequiresTheHoldAndRefusesClockLevelCarry) {
-    EXPECT_TRUE(lahLoads(true, true, false, "ok"));
-    EXPECT_FALSE(lahLoads(false, true, false, "nohold"))
+TEST(PbHoldPhaseClockTest, LoaderRequiresTheHold) {
+    EXPECT_TRUE(lahLoads(true, true, "ok"));
+    EXPECT_FALSE(lahLoads(false, true, "nohold"))
         << "the phase-clock mode is a mode of the hold";
-    EXPECT_FALSE(lahLoads(true, true, true, "clv"))
-        << "card CLV's transfer and the phase-clock mode both move the held phase bias";
-    EXPECT_TRUE(lahLoads(true, false, true, "clv_off"))
-        << "the refusal is the mode's: the plain hold with CLV still loads";
-}
-
-TEST(PbHoldPhaseClockTest, LoaderRefusesTheFastClockTier) {
-    LogManager log_mgr;
-    GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / "lah_load_fc1.json";
-    std::string body = lahConfig(true, true, false, 300.0);
-    const std::string anchor = "\"network\": {\n";
-    body.insert(body.find(anchor) + anchor.size(), "    \"fast_clock\": { \"enable\": true },\n");
-    { std::ofstream f(p); f << body; }
-    EXPECT_FALSE(cfg.loadFromJson(p, log_mgr))
-        << "FC-1's K records move the clock between full epochs without the held phase bias";
-    std::error_code ec; fs::remove(p, ec);
 }
 
 // --- 2. The level move --------------------------------------------------------------
@@ -233,7 +223,7 @@ TEST(PbHoldPhaseClockTest, ALevelMoveLeavesThePhaseVisibleClockHeld) {
         if (mode) {
             EXPECT_EQ(k.n_pbh_frz_moved, 5) << "five held G32 emissions moved; G12 and G05 did not";
             EXPECT_EQ(k.n_pbh_frz_epochs, 5);
-            EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.0, 1e-15);
+            EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.0, 1e-15);
             // What the hold hides is now the phase-visible wander only: here, nothing.
             for (double d : h.ctx->carry.pb_hold_dev_abs_m) EXPECT_NEAR(d, 0.0, 1e-12);
             EXPECT_EQ(h.ctx->carry.pb_hold_frz_step_abs_m.size(), 15u);   // 5 epochs x 3 keys
@@ -259,7 +249,7 @@ TEST(PbHoldPhaseClockTest, ACommonClockMoveStaysOnTheClock) {
         EXPECT_NEAR(pbOf(sol, "G12"), 0.10, 1e-12);
         EXPECT_NEAR(pbOf(sol, "G05"), -0.20, 1e-12);
     }
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.20, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.20, 1e-12);
 }
 
 // --- 3. Gaps and missing clocks --------------------------------------------------------
@@ -283,7 +273,7 @@ TEST(PbHoldPhaseClockTest, ASatelliteBackInsideMaxGapPicksUpItsWholeMove) {
     // M = 0.01 + 0.01 + 0.01 = 0.03 (G32 is absent from the previous emission, so its
     // own 7 cm is not a step in the median), so c~ moved by 0.07 - 0.03 = 0.04 m and the
     // held phase bias with it.
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.03, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.03, 1e-12);
     EXPECT_NEAR(pbOf(e3, "G32"), 0.30 + 0.04, 1e-12);
 }
 
@@ -377,8 +367,8 @@ TEST(PbHoldPhaseClockTest, AConstellationsCommonMoveStaysOnItsClocks) {
         EXPECT_NEAR(pbOf(sol, "E24"), -0.60, 1e-12) << "epoch " << k;
         EXPECT_NEAR(pbOf(sol, "G32"), 0.30, 1e-12) << "epoch " << k;
     }
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('E'), 0.5, 1e-12);
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.0, 1e-15);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::Galileo, &net::ConstellationState::pb_hold_frz_M)), 0.5, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.0, 1e-15);
 }
 
 TEST(PbHoldPhaseClockTest, AnEmittedEpochWithoutSatellitesBreaksTheStep) {
@@ -393,13 +383,13 @@ TEST(PbHoldPhaseClockTest, AnEmittedEpochWithoutSatellitesBreaksTheStep) {
     h.step(e1, store);
     auto e2 = lahEpoch(259260.0, { { "G32", 1.20, 0.30 }, { "G12", -0.30, 0.10 }, { "G05", 0.45, -0.20 } });
     h.step(e2, store);
-    EXPECT_TRUE(h.ctx->carry.pb_hold_frz_M.empty() || h.ctx->carry.pb_hold_frz_M.at('G') == 0.0);
+    EXPECT_TRUE((net::present(h.ctx->entities.constellations, &net::ConstellationState::pb_hold_frz_M) == 0) || netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)) == 0.0);
     EXPECT_NEAR(pbOf(e2, "G32"), 0.50, 1e-12);
     EXPECT_NEAR(pbOf(e2, "G12"), 0.30, 1e-12);
     // And the step after it is again against its own previous emission.
     auto e3 = lahEpoch(259290.0, { { "G32", 1.40, 0.30 }, { "G12", -0.10, 0.10 }, { "G05", 0.65, -0.20 } });
     h.step(e3, store);
-    EXPECT_NEAR(h.ctx->carry.pb_hold_frz_M.at('G'), 0.20, 1e-12);
+    EXPECT_NEAR(netAt(net::get(h.ctx->entities.constellations, System::GPS, &net::ConstellationState::pb_hold_frz_M)), 0.20, 1e-12);
     EXPECT_NEAR(pbOf(e3, "G32"), 0.50, 1e-12);
 }
 

@@ -44,7 +44,7 @@ namespace fs = std::filesystem;
 
 LosId los(int sta, const char* sat) { return LosId{StationId{sta}, *SatId::parse(sat)}; }
 
-using CarryMap = std::map<std::tuple<int, std::string, std::string>, LocalCarry>;
+using CarryMap = net::ArcTable;
 
 LocalCarry carryEntry(double birth_s, double relevel_s, long long dropped_ep) {
     LocalCarry lc{};
@@ -121,8 +121,8 @@ TEST(NetworkArSuspectLedger, FoldReadsTheDropStampInsideTheWindowOnly) {
     ArSuspectLedger L;
     const RelevelEpochState relevel;
     CarryMap carry;
-    carry[{2, "G05", "L1C"}] = carryEntry(100.0, 0.0, 25);
-    carry[{3, "G06", "L1C"}] = carryEntry(100.0, 0.0, 10);   // 30 - 10 = 20 >= 10: old
+    net::putArcIn(carry, {2, "G05", "L1C"}, &net::ArcState::amb) = carryEntry(100.0, 0.0, 25);
+    net::putArcIn(carry, {3, "G06", "L1C"}, &net::ArcState::amb) = carryEntry(100.0, 0.0, 10);   // 30 - 10 = 20 >= 10: old
     arSuspectFoldEpoch(L, 30, 3000.0, 10, relevel, carry, nullptr);
     EXPECT_EQ(arSuspectBits(L, los(2, "G05"), 30, 10), kArSuspectDrop);
     // First seen by this fold (no fold ran at 25..29): stamped at the first search that
@@ -153,14 +153,14 @@ TEST(NetworkArSuspectLedger, FoldStampsADropOnceAndLeavesTheRaimDropToRaim) {
     ArSuspectCounters c;
     const RelevelEpochState relevel;
     CarryMap carry;
-    carry[{4, "G07", "L1C"}] = carryEntry(1.0, 0.0, 0);
+    net::putArcIn(carry, {4, "G07", "L1C"}, &net::ArcState::amb) = carryEntry(1.0, 0.0, 0);
     for (long long e = 1; e <= 4; ++e) {
         // A pre-search drop at epoch 2 (SB_PREASM, before the fold).
-        if (e == 2) carry[{4, "G07", "L1C"}].dropped_ep = 2;
+        if (e == 2) net::putArcIn(carry, {4, "G07", "L1C"}, &net::ArcState::amb).dropped_ep = 2;
         arSuspectFoldEpoch(L, e, 30.0 * static_cast<double>(e), 10, relevel, carry, &c);
         // A post-search drop at epoch 3 (RAIM, after the fold): RAIM stamps it itself.
         if (e == 3) {
-            carry[{4, "G07", "L1C"}].dropped_ep = 3;
+            net::putArcIn(carry, {4, "G07", "L1C"}, &net::ArcState::amb).dropped_ep = 3;
             arSuspectNote(L, los(4, "G07"), arSuspectPostSearchEpoch(3), kArSuspectRaim, &c);
         }
     }
@@ -178,14 +178,14 @@ TEST(NetworkArSuspectLedger, AReLevelIsOwnedByItsDropOrItsLatch) {
     RelevelEpochState relevel;
     // Epoch 1: an arc's float-vehicle drop (pre-search) writes dropped_ep and relevel_s.
     // Epoch 2: another arc is in the latch; its harvest re-level (post-search) is read at 3.
-    carry[{0, "G01", "L1C"}] = carryEntry(0.5, 0.0, 0);
-    carry[{1, "G02", "L1C"}] = carryEntry(0.5, 0.0, 0);
-    carry[{0, "G01", "L1C"}].relevel_s  = 30.0;
-    carry[{0, "G01", "L1C"}].dropped_ep = 1;
+    net::putArcIn(carry, {0, "G01", "L1C"}, &net::ArcState::amb) = carryEntry(0.5, 0.0, 0);
+    net::putArcIn(carry, {1, "G02", "L1C"}, &net::ArcState::amb) = carryEntry(0.5, 0.0, 0);
+    net::putArcIn(carry, {0, "G01", "L1C"}, &net::ArcState::amb).relevel_s  = 30.0;
+    net::putArcIn(carry, {0, "G01", "L1C"}, &net::ArcState::amb).dropped_ep = 1;
     arSuspectFoldEpoch(L, 1, 30.0, 10, relevel, carry, &c);
     relevel.free_ambs.insert({1, StateKeys::makeAmbiguityKey("G02", "L1C")});
     arSuspectFoldEpoch(L, 2, 60.0, 10, relevel, carry, &c);
-    carry[{1, "G02", "L1C"}].relevel_s = 60.0;   // the harvest of epoch 2
+    net::putArcIn(carry, {1, "G02", "L1C"}, &net::ArcState::amb).relevel_s = 60.0;   // the harvest of epoch 2
     relevel.free_ambs.clear();
     arSuspectFoldEpoch(L, 3, 90.0, 10, relevel, carry, &c);
     EXPECT_EQ(c.stamps[1], 0);   // no re-level stamp: both are owned
@@ -193,7 +193,7 @@ TEST(NetworkArSuspectLedger, AReLevelIsOwnedByItsDropOrItsLatch) {
     EXPECT_EQ(c.stamps[2], 1);   // the drop
     EXPECT_EQ(c.events, 2);
     // A re-level nobody owns (an unknown writer at epoch 3) is stamped at its own epoch.
-    carry[{2, "G03", "L1C"}] = carryEntry(0.5, 90.0, 0);
+    net::putArcIn(carry, {2, "G03", "L1C"}, &net::ArcState::amb) = carryEntry(0.5, 90.0, 0);
     arSuspectFoldEpoch(L, 4, 120.0, 10, relevel, carry, &c);
     EXPECT_EQ(c.stamps[1], 1);
     EXPECT_EQ(L.corners.at(los(2, "G03")).last_ep[1], 3);
@@ -220,8 +220,8 @@ TEST(NetworkArSuspectLedger, FoldTellsAReLevelFromAFirstStash) {
     for (long long e = 1; e <= 3; ++e) {
         const double s = 30.0 * static_cast<double>(e);
         if (e == 3) {
-            carry[{0, "G01", "L1C"}] = carryEntry(/*birth*/ 0.5, /*relevel*/ 60.0, 0);
-            carry[{1, "G02", "L1C"}] = carryEntry(/*birth*/ 60.0, /*relevel*/ 60.0, 0);
+            net::putArcIn(carry, {0, "G01", "L1C"}, &net::ArcState::amb) = carryEntry(/*birth*/ 0.5, /*relevel*/ 60.0, 0);
+            net::putArcIn(carry, {1, "G02", "L1C"}, &net::ArcState::amb) = carryEntry(/*birth*/ 60.0, /*relevel*/ 60.0, 0);
         }
         arSuspectFoldEpoch(L, e, s, 10, relevel, carry, nullptr);
     }

@@ -121,7 +121,7 @@ std::string jsonPath(const std::filesystem::path& p) {
 struct Harness {
     LogManager        log_manager;
     NetworkSlipOracle oracle;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
 
     Harness() {
         oracle.carry = &carry;
@@ -143,14 +143,14 @@ struct Harness {
         lc.var         = var;
         lc.last_seen_s = last_seen_s;
         lc.birth_s     = birth_s;
-        carry[std::make_tuple(0, std::string(kSat), sig)] = lc;
+        net::putArcIn(carry, std::make_tuple(0, std::string(kSat), sig), &net::ArcState::amb) = lc;
     }
     void addTruth(const std::string& sig, double tow_s, int delta) {
         oracle.truth[std::make_tuple(0, std::string(kSat), sig)]
             .push_back({kW + tow_s, delta});
     }
     LocalCarry& c(const std::string& sig) {
-        return carry.at(std::make_tuple(0, std::string(kSat), sig));
+        return (*net::getArc(carry, std::make_tuple(0, std::string(kSat), sig), &net::ArcState::amb));
     }
     /// @p cause is the calling detector's tier bit.  It steers only the
     /// false-alarm keep attribution, never a decision, so cases that are not

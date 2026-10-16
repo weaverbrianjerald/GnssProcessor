@@ -169,7 +169,7 @@ bool isPhaseObservationKind(ContributionKind k);
  * | @c DataPhase, @c DataPhaseSecond | @c obs_phase |
  * | @c ShIonoTie | @c iono_sh_row |
  * | @c AmbiguityPin, the three eq34 rows, both GLONASS anchors, @c GimIono, @c SdEwl, @c PhaseColourBirth, @c PhaseColourBackstop | @c pivot_pin when @p w >= @ref kNetPivotPinWeight, else @c local_pin_row |
- * | @c CouplingScalar, @c CouplingJoint, the six @c Block*Carry kinds | @c cpl_row |
+ * | @c CouplingScalar, the six @c Block*Carry kinds | @c cpl_row |
  * | every other kind (a diagonal prior or a shared kind, which no row should carry), and @c Unset | @c obs_other (unclassified) |
  *
  * @param k The row's kind.
@@ -216,7 +216,7 @@ NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string*
  *
  * Admitted: the observation phase rows (@c DataPhase, @c DataPhaseSecond, which carry
  * exactly +1 on their ambiguity column), the carried-prior rows of the coupling region
- * (@c CouplingScalar, @c CouplingJoint and the six @c Block*Carry kinds: a whitened block
+ * (@c CouplingScalar and the six @c Block*Carry kinds: a whitened block
  * row is one row of L⁻¹ and touches the ambiguity columns pushed before its own), and the
  * SD-EWL constraint rows (@c SdEwl: whitened between-satellite rows on the ambiguity
  * columns, which the SD-EWL smoke of card NOM step N2b measured clearing 0.5).  The rule

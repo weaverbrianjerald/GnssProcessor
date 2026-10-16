@@ -153,6 +153,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
  * (@c p_prev > 0; a pinned term keeps its pinned route); and the stash's pinned pivot value.
  *
  * @param carry  The run's carried state, mutated in place.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param v_c    The structural direction's nonzero (satellite, coefficient) entries.
  * @param q      The incoming pivot satellite.
  * @param mech   @c Handover or @c HandoverBeforeRows.
@@ -161,7 +162,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
  *         carried clock entries re-expressed.
  */
 ClockStransformResult applyClockStransform(
-    NetworkCarryState& carry,
+    NetworkCarryState& carry, net::NetworkEntities& entities,
     const std::vector<std::pair<std::string, double>>& v_c,
     const std::string& q, CarryMechanism mech = CarryMechanism::Handover,
     CarrySiteCounts* counts = nullptr);
@@ -226,12 +227,13 @@ struct ClockStransformDenseResult {
  * @p q, no block row for @p q, or @p q equal to @p p_out.
  *
  * @param carry The run's carried state: @c prev_carry and @c prev_carry_cov, mutated in place.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param c     The constellation's leading character.
  * @param q     The incoming pivot.
  * @param p_out The outgoing pivot (the frame the block is in); empty: nothing is appended.
  * @return What was done.
  */
-ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, net::NetworkEntities& entities, char c,
                                                      const std::string& q,
                                                      const std::string& p_out);
 
@@ -243,14 +245,20 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
  *        coefficient is 1 for every clock of the constellation, so the membership is the
  *        constellation's, as the forward transform's before the rows.
  * @param carry         The run's carried state.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
  * @param constellation The constellation's leading character.
  * @param c0            The coefficient the transform applied (m).
  * @param var_q         The variance it added (m^2).
  * @param counts        Optional out: per-site tallies (accumulated).
  * @return the number of references moved back.
  */
-long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
+long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& entities,
+                              char constellation, double c0,
                               double var_q, CarrySiteCounts* counts = nullptr);
+
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
 
 /**
  * @brief The handover's S-transform before the coupling rows (card PRM phase 2,
@@ -276,25 +284,30 @@ long long undoClockStransform(NetworkCarryState& carry, char constellation, doub
  * outgoing datum before anything else moves it.  A failing election (an exception) is left to
  * the solve glue, which skips the epoch.
  *
- * @param ctx                   Run context (carry, counters, knobs).
- * @param config_               Config (the declaration).
- * @param log                   Logger (unused; the seam signature).
- * @param traces                Event sink (STRANSFORM sts_undone rows).
- * @param sat_health            The broadcast health the election passes over (card HLT).
- * @param est                   This epoch's estimator, columns registered.
- * @param t                     This epoch's time.
- * @param registered_clock_sats This epoch's registered satellite clocks.
- * @param clk_anchor_sigma      The resolved broadcast anchor sigma (m; the declaration).
+ * @c ctx.knobs.clk_anchor_sigma (card NOM3 step EP0).
+ *
+ * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+ * retired in card NOM3 step EP2 (the unit tests call this form through
+ * tests/support/NetworkTestRun.hpp).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ *            run.traces (traces). Read: run.config (config_), run.log (log),
+ *            run.setup.sat_health (sat_health), run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+ *           ep.columns.registered_clock_sats (registered_clock_sats).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: Run context (carry, counters, knobs).
+ *   - @p config_ = run.config: Config (the declaration).
+ *   - @p log = run.log: Logger (unused; the seam signature).
+ *   - @p traces = run.traces: Event sink (STRANSFORM sts_undone rows).
+ *   - @p sat_health = run.setup.sat_health: The broadcast health the election passes over (card HLT).
+ *   - @p est = run.engines.est: This epoch's estimator, columns registered.
+ *   - @p t = ep.se.time: This epoch's time.
+ *   - @p registered_clock_sats = ep.columns.registered_clock_sats: This epoch's registered satellite clocks. The declaration reads the resolved broadcast anchor sigma from
+ * @param events The epoch's events; written: handover (sts_pre).
  */
-void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
-                                         const GnssConfig& config_,
-                                         const std::shared_ptr<spdlog::logger>& log,
-                                         NetworkRunTraces& traces,
-                                         const NetworkSbasis::SatHealth& sat_health,
-                                         const NetworkEstimator& est,
-                                         const GnssTime& t,
-                                         const std::vector<std::string>& registered_clock_sats,
-                                         double clk_anchor_sigma);
+void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 /**
  * @brief Re-express the carried shared state of each changed constellation in the
@@ -327,6 +340,7 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
  * @param registered_clock_sats This epoch's registered satellite-clock set (the
  *                              same vector @ref NetworkSbasis::buildSharedDatum
  *                              receives), used to build @f$v_c@f$.
+ * @param events The epoch's events; writes handover (the release set, c0, the dense record), reads its preview.
  */
 void networkHandoverStransform(NetworkRunContext& ctx,
                                const GnssConfig& config_,
@@ -336,37 +350,24 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const NetworkSbasis::Plan& plan,
                                bool datum_changed,
                                const std::set<char>& changed_consts,
-                               const std::vector<std::string>& registered_clock_sats);
+                               const std::vector<std::string>& registered_clock_sats, EpochEvents& events);
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: broadcast satellite health (HLT).
+ * @brief Run-end report: satellite health (HLT) and clock-pivot handovers with their S-transform.
  *
- * Broadcast satellite health on the network path (card HLT): flagged satellites, the
- * pivot election's skips and fallbacks, and the observations the setup door removed.
- *
- * Gate: returns 0 at once unless `ctx.knobs.sat_health != 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSatHealthRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: clock-pivot handovers and their S-transform.
- *
- * The clock-pivot handovers and their S-transform (PRM 2, SCL B2).
- *
- * Gate: returns 0 at once unless `!ctx.counters.pivot_handovers.empty() ||
- * ctx.knobs.handover_stransform`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkHandoverStransform.cpp, print in this order, each gated on its own knob:
+ *   - networkSatHealthRunEnd: broadcast satellite health (HLT).
+ *   - networkPivotHandoverRunEnd: clock-pivot handovers and their S-transform.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkPivotHandoverRunEnd(const NetworkRunEndView& v);
+int networkHandoverStransformRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 

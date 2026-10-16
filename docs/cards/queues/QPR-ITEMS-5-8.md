@@ -4,15 +4,15 @@
 
 - **id:** QPR 5–8
 - **topic:** queues
-- **status:** open
-- **summary:** Item 8's ionosphere error PERSISTS with SH on and 8(b) is FALSIFIED; item 7's A4 escalation VALIDATED, promotion REFUSED; items 5, 6 and 7's SH-gate half stay owed.
+- **status:** superseded
+- **summary:** Item 8's ionosphere error PERSISTS with SH on and 8(b) is FALSIFIED; items 5, 7 and 8 SUPERSEDED or moot under the re-founding (GF pin at broadcast T_GD, no SH, float vehicle); item 6 re-filed as owed.
 - **dates in the text:** 2026-08-14 → 2026-08-21
 - **knobs / posture:** `network.level_authority_csgf`, `network.raim_withhold_adapt_escalate`, `network.estimate_iono_sh`, `network.carry_iono`
 - **hashes named in the text** (commit / exe / byte-cert): `65ba362`, `a4b3eee9`
 - **run dirs named in the text:** `runs/t3iono`, `runs/q8a_ctl`, `runs/q8a_sh`, `runs/camp60_refprod`, `runs/camp60_f4`
 - **source:** `docs/archive/QUEUE_principled_replacements.md`, items 5, 6, 7, 8
 
-**Outcome.** With the SH field on, item 8(a) moved the per-LOS interaction only 5 % (0.7061 to 0.6691 m), so the root is the representation; 8(b)'s carry family failed at all four arms (interaction 3.181 to 3.800 m; the CS-GF pre-registration required ≤ 2.0), and the 8-family closed on 2026-08-21 with the O2 accumulator unbuilt. Item 7's escalation cut the A4 era from 29 withheld epochs to 1, but the settled-σ̂₀ gate FAILED (2.42 against ≤ 1.35). Item 5's LV-6 census later failed both gates, so its fold stage did not open ([SPEC_level_authority_internal.md](../../SPEC_level_authority_internal.md) §6.3); item 6 is unbuilt.
+**Outcome.** Item 8(a) found the per-LOS ionosphere error PERSISTS with SH on (0.7061 to 0.6691 m); 8(b)'s carry family FALSIFIED at all four arms; item 5's LV-6 census failed both gates; item 7's A4 escalation passed its mechanism but failed the σ̂₀ gate (2.42). The [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) replaced all three: the level is the per-signal GF pin at broadcast T_GD ([RF-0c](../../refound/RF-0c_gf_pin_2026-09-15.md)), SH left the producer, the float vehicle has no zero-q level, and the goldens withhold no epochs ([EXL](../../refound/EXL_exact_update_lah_promotion_2026-10-01.md)). Item 6, the start-offset seek, is filed in [OPEN_ITEMS](../../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

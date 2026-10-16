@@ -64,7 +64,7 @@ namespace {
 struct IonoBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 
@@ -80,8 +80,8 @@ struct IonoBlockFixture {
 
     CouplingRowBuilder make() {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                                  /*gauge=*/false, /*reinit=*/false, tu_reinit_hist, R};
+                                  /*tu=*/false, /*gauge=*/false, /*reinit=*/false,
+                                  tu_reinit_hist, R};
     }
 };
 
@@ -530,25 +530,26 @@ TEST(CarryIonoInBlockTest, IonoWithoutAHarvestBlockZeroesItsPairsAndIsCountedSep
 // not per signal, so one erase clears the LOS once however many bands tripped, and
 // a sibling satellite (or the same satellite at another station) survives.
 TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
-    NetworkCarryState carry;
+    net::NetworkEntities ent;   // the line-of-sight table (card NOM step N4c)
     auto put = [&](int sta, const std::string& sat, double v) {
-        carry.iono_blk_carry[{sta, sat}] = LocalCarry{v, 0.0120, 100.0};
+        net::putLos(ent, sta, sat, &net::LosState::iono_blk) = LocalCarry{v, 0.0120, 100.0};
     };
     put(0, "G01", 3.10);
     put(0, "G02", 4.20);
     put(1, "G01", 2.90);
-    ASSERT_EQ(carry.iono_blk_carry.size(), 3u);
+    ASSERT_EQ(net::present(ent.los, &net::LosState::iono_blk), 3u);
 
     // Same shape as the expression at the NetworkRaim T4 site: erase({i, pa.sat}).
-    const std::size_t erased = carry.iono_blk_carry.erase({0, std::string("G01")});
+    const std::size_t erased = net::dropLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk);
     EXPECT_EQ(erased, 1u);                                   // one counted erase
-    EXPECT_EQ(carry.iono_blk_carry.count({0, std::string("G01")}), 0u);
-    EXPECT_EQ(carry.iono_blk_carry.count({0, std::string("G02")}), 1u);  // sibling sat
-    EXPECT_EQ(carry.iono_blk_carry.count({1, std::string("G01")}), 1u);  // other station
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 0, std::string("G02"), &net::LosState::iono_blk) != nullptr), 1u);  // sibling sat
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ent.los, 1, std::string("G01"), &net::LosState::iono_blk) != nullptr), 1u);  // other station
     // Idempotent across the per-signal loop: a second band's erase counts nothing.
-    EXPECT_EQ(carry.iono_blk_carry.erase({0, std::string("G01")}), 0u);
-    // The legacy diagonal map is a separate map; the two vehicles never share state.
-    EXPECT_TRUE(carry.iono_carry.empty());
+    EXPECT_EQ(net::dropLos(ent.los, 0, std::string("G01"), &net::LosState::iono_blk), 0u);
+    // The retired diagonal vehicle's map is a separate map and stays empty: nothing
+    // writes it, and the in-block carry never shares its state.
+    EXPECT_TRUE((net::present(ent.los, &net::LosState::iono) == 0));
 }
 
 // =============================================================================
@@ -560,7 +561,6 @@ TEST(CarryIonoInBlockTest, DefaultIsOffOnAnArmedF3Posture) {
     ASSERT_TRUE(loadInto("default", networkConfig(kF3Posture), cfg));
     EXPECT_FALSE(cfg.networkCarryIonoInBlock());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());   // the vehicle is armed
-    EXPECT_FALSE(cfg.networkCarryIono());                // and the legacy carry is off
 }
 
 TEST(CarryIonoInBlockTest, DisabledWhenTheF3BlockIsOff) {
@@ -619,19 +619,6 @@ TEST(CarryIonoInBlockTest, DisabledWhenF3CannotBuildABlockOnThisPosture) {
     EXPECT_FALSE(cfg.networkCarryIonoInBlock());
 }
 
-// The mutex is a hard error rather than a warning plus disable: carry_iono is not
-// another setting of this mechanism but the diagonal vehicle the in-block carry replaces
-// (QUEUE 8(b), FALSIFIED four times).  Running both would assert each LOS's iono
-// direction a third time, and no run-end counter could tell the vehicles apart.
-TEST(CarryIonoInBlockTest, CoArmingTheLegacyDiagonalCarryIonoIsARefusedConfig) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("coarm",
-                          networkConfig(std::string(kF3Posture)
-                                        + "    \"carry_iono\": true,\n"
-                                          "    \"carry_iono_in_block\": true,\n"),
-                          cfg));
-}
-
 TEST(CarryIonoInBlockTest, ArmedHappyPathResolvesQAndTheGapSentinel) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("armed",
@@ -640,15 +627,12 @@ TEST(CarryIonoInBlockTest, ArmedHappyPathResolvesQAndTheGapSentinel) {
                          cfg));
     EXPECT_TRUE(cfg.networkCarryIonoInBlock());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
-    EXPECT_FALSE(cfg.networkCarryIono());                    // the legacy vehicle stays off
     // Default q: m² at L1 per epoch (σ ≈ 5 cm/epoch), not m²/s as for zwd_carry_q.
     EXPECT_DOUBLE_EQ(cfg.networkCarryIonoInBlockQM2(), 2.5e-3);
     // The gap sentinel resolves to the leveling gap, so the iono carry never outlives
     // the block it belongs to.
     EXPECT_DOUBLE_EQ(cfg.networkCarryIonoInBlockMaxGapS(),
                      cfg.networkPhaseLevelingMaxGapS());
-    // Arming it does not subject the iono columns to the F3 young-column age gate.
-    EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
 
 TEST(CarryIonoInBlockTest, ExplicitQAndGapOverrideTheDefaults) {

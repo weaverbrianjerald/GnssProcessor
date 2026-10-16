@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file NetworkRxCodeBiasCarryRunEnd.hpp
- * @brief Run-end report of the receiver code-bias carry family (rx-CB carry, LV-1, LV-2, LV-4, LV-5, S2H, H-rider).
+ * @brief Run-end report of the receiver code-bias carry family (rx-CB carry, H-rider).
  *
  * The run-end reports defined in NetworkRxCodeBiasCarryRunEnd.cpp; each is a row of kNetworkRunEndReports
  * (filter/NetworkRunEnd.hpp).
@@ -16,15 +16,11 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the receiver code-bias carry family.
  *
- * The receiver code-bias carry family: the carry itself, the LV-2 de-mean, the LV-5
- * within-epoch mu, the LV-4 step gate, the H-rider census sigma0, the S2H harvest and
- * the LV-1 seed frame, each under its own knob.
+ * The receiver code-bias carry family: the carry itself and the H-rider census sigma0,
+ * each under its own knob.
  *
  * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCarryRxCodeBias()`; `config_.networkRxCbCarryDemean()`;
- * `config_.networkRxCbCarryDemeanWithin()`; `config_.networkRxCbCarryStepGate()`;
- * `config_.networkHSigma0PrefitCensus()`; `config_.networkRxCbHarvestDemean()`;
- * `config_.networkIonoSeedFieldFrame()`.
+ * `config_.networkCarryRxCodeBias()`; `config_.networkHSigma0PrefitCensus()`.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
  * @return 0 (this report does not set the exit code).

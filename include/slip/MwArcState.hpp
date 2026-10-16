@@ -17,7 +17,6 @@
  *   - @ref mw::DemotedArcLevel: the pre-jump level a demoted arc leaves for the
  *     across-gap settle estimate.
  *   - @ref mw::EstimatedBias: the in-house phase-bias estimate of one arc key.
- *   - @ref mw::BridgeArcStats: one tri-frequency phase-bridge arc (network-only).
  */
 
 #include <array>
@@ -227,9 +226,9 @@ namespace GnssProcessor {
             /** Lagged snapshot of {mean, M2, count} as of the end of the previous
              *  processed epoch (copied at the top of the per-epoch statistics
              *  update).  @ref arcZdMean serves these, so a same-epoch consumer
-             *  (the MW-WL layer, SPEC_mw_wl_card §3.3) never re-ingests the
-             *  current epoch's observations (the guard against counting 1/n of
-             *  the information twice).  Frame rule: every constant-shift
+             *  (the SD pre-reduce EWL rows) never re-ingests the current epoch's
+             *  observations (SPEC_mw_wl_card §3.3, the guard against counting 1/n
+             *  of the information twice).  Frame rule: every constant-shift
              *  re-reference of @c mean (BSSD pivot S-transform, in-house
              *  bias-commit re-anchor) shifts @c mean_lag by the same constant, so
              *  the lagged value is always expressed in the arc's current frame. */
@@ -237,16 +236,6 @@ namespace GnssProcessor {
             double M2_lag{ 0.0 };          /**< Lagged Welford accumulator (m^2). */
             size_t count_lag{ 0 };         /**< Lagged sample count. */
             double prev_mw{ 0.0 };         /**< Previous epoch MW value for differencing (meters). */
-            /** The lagged raw sample: @c prev_mw as of the top of the current
-             *  epoch's statistics update, i.e. the raw MW of the previous
-             *  processed epoch, served by @ref arcZdLast with the same one-epoch
-             *  lag (F1) as @c mean_lag.  Frame rule: every constant-shift
-             *  re-reference of @c prev_mw (BSSD pivot S-transform, in-house
-             *  bias-commit re-anchor) shifts this alongside.  NaN until two
-             *  epochs have been processed. */
-            double prev_mw_lag{ std::numeric_limits<double>::quiet_NaN() };
-            double prev_epoch_s{ 0.0 };     /**< Continuous GPS seconds @c prev_mw was sampled (WL-3 alignment stamp). */
-            double prev_epoch_lag_s{ 0.0 }; /**< Continuous GPS seconds @c prev_mw_lag was sampled (WL-3: the SD pivot re-add + the caller's cycle-consistency guard both align on this). */
             double last_epoch_s{ 0.0 };    /**< Continuous GPS seconds of the last update (for gap detection). */
             std::deque<double> diff_window; /**< Rolling window of epoch-to-epoch MW differences (meters). */
             bool   bia_corrected{ false };  /**< True if both satellite BIA bias and BSSD receiver bias are removed (integer-ready). */
@@ -397,38 +386,6 @@ namespace GnssProcessor {
         };
 
         // --- Network-only: the phase bridge, owned with card NOM ------------------
-
-        /**
-         * @brief Per-arc Welford of the geometry-free WL↔EWL phase bridge
-         *        @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, ZD, phase-only).
-         *
-         * A deliberately lean mirror of @ref MwArcStats: Hatch/Welford mean, M2 and
-         * count, with a one-epoch lag snapshot (the same-epoch double-count guard
-         * that @ref arcZdMean also uses) and a gap reset.  No SD pivot, no BIA
-         * correction, no detection statistic: @f$GF_b@f$ is a raw-phase ZD quantity
-         * (its receiver and satellite biases cancel in the closed DD cycle the layer
-         * forms), and the cycle-slip response comes from the same funnel that resets
-         * the ambiguity.  @ref resetSatellite / @ref resetSatelliteSignal /
-         * @ref resetAll erase the matching bridge arc, and @ref updateBridgeArc
-         * guards against a missed reset with a gross-jump refloat.  Keyed
-         * @c "sat_sig1_sig2_sig5".
-         */
-        struct BridgeArcStats {
-            double mean{ 0.0 };            ///< Running Hatch mean of @f$GF_b@f$ (m).
-            double M2{ 0.0 };              ///< Welford accumulator (m²).
-            std::size_t count{ 0 };        ///< Sample count.
-            double mean_lag{ 0.0 };        ///< Lagged mean as of the previous epoch's end (m).
-            double M2_lag{ 0.0 };          ///< Lagged Welford accumulator (m²).
-            std::size_t count_lag{ 0 };    ///< Lagged sample count.
-            double prev_gf{ std::numeric_limits<double>::quiet_NaN() };     ///< Previous epoch's raw @f$GF_b@f$ sample (m); staging for the lane increment (WL-3).
-            double prev_gf_lag{ std::numeric_limits<double>::quiet_NaN() }; ///< Lagged raw sample (the previous processed epoch's @c prev_gf), served by @ref arcBridgeLast (WL-3 §3.2 once-only use).
-            double prev_epoch_s{ 0.0 };     ///< Continuous GPS seconds @c prev_gf was sampled.
-            double prev_epoch_lag_s{ 0.0 }; ///< Continuous GPS seconds @c prev_gf_lag was sampled (the caller's cycle-consistency stamp).
-            double last_epoch_s{ 0.0 };    ///< Continuous GPS seconds of the last update (gap detection).
-            double lambda_wl{ 0.0 };       ///< WL wavelength c/(f1−f2) (m).
-            double lambda_ewl{ 0.0 };      ///< EWL wavelength c/(f2−f5) (m).
-            double iono_coeff{ 0.0 };      ///< GF_b iono sensitivity C_iono (see @ref MwBridgeMean::iono_coeff).
-        };
 
     } // namespace mw
 

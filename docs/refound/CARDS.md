@@ -15,37 +15,37 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [ALC-STAT](ALC-STAT_statistics_audit_2026-09-17.md): closed, 2026-09-17: level check not a calibrated 4-sigma test: t tail, correlated code noise, bias aliasing.
 - [ALC-BAND](ALC-BAND_window_scope_review_2026-09-17.md): closed, 2026-09-17: band-scoped restart WITHDRAWN: WL and IF depend on both arcs; paired restarts kept.
 - [ALC2](ALC2_restart_policy_adoption_2026-09-19.md): closed, 2026-09-19: level-check restart REFUSED (sub-dm to 0); translate + level check adopted, later off.
-- [PBH](PBH_phase_bias_hold_2026-09-19.md): open, 2026-09-19: phase-bias hold BUILT, all five bars PASS, ADOPTED; wire phase error equals the clock's.
+- [PBH](PBH_phase_bias_hold_2026-09-19.md): closed, 2026-09-19: phase-bias hold: all five bars PASS, ARMED in both goldens (RECOMMEND_SCOPED); snapshot of the hold owed with seams.
 - [AB1](AB1_sh_consumer_product_2026-09-20.md): parked, 2026-09-20: SH VTEC add-back: frozen rule FAILS, consumer constraint KEEP_OFF, product specified only.
-- [AB2](AB2_l5_third_frequency_2026-09-20.md): open, 2026-09-20: L5 third frequency: field loss was a gap re-entry hole; response ARMED; L5 not adopted.
-- [GRS](GRS_gap_reentry_per_signal_2026-09-20.md): open, 2026-09-20: per-signal gap re-entry rider: ARMED, sim fault repaired, field triple bar B1 FAILS.
+- [AB2](AB2_l5_third_frequency_2026-09-20.md): superseded, 2026-09-20: L5 third frequency: field loss was a gap re-entry hole, response armed; L5 SEQUENCED, superseded by L5B.
+- [GRS](GRS_gap_reentry_per_signal_2026-09-20.md): closed, 2026-09-20: per-signal gap re-entry rider ARMED, sim fault repaired; triple bar B1 failed, now L5B's.
 - [CPA](CPA_canonical_pair_admission_2026-09-20.md): closed, 2026-09-20: canonical-pair admission: KEEP_OFF, falsified; the gain belonged to the canonical latch.
-- [CSL](CSL_canonical_signal_latch_2026-09-20.md): open, 2026-09-20: canonical-signal latch: priority rule ARMED, 162 to 603 epochs below 1 dm; cause unread.
+- [CSL](CSL_canonical_signal_latch_2026-09-20.md): closed, 2026-09-20: canonical-signal latch: priority rule ARMED, 162 to 603 epochs below 1 dm; in the goldens.
 - [TBI](TBI_three_band_ignition_2026-09-20.md): closed, 2026-09-20: three-band ignition: H1 STANDS, a zero band-5 inter-signal assertion damages the wire.
-- [B5D](B5D_band5_code_datum_2026-09-20.md): open, 2026-09-20: band-5 code datum: built, not armed; datum cured, triple consumer fails L5 adoption bars.
-- [L5P](L5P_l5_phase_posture_2026-09-21.md): open, 2026-09-21: the L5 phase posture: the gap is the band-5 code rows; deweight NOT ARMED, L5 SEQUENCED.
-- [MSC](MSC_multi_site_consumer_2026-09-21.md): open, 2026-09-21: multi-site census: WTZZ00DEU not representative, no 2026-09-20 adoption holds by count.
-- [RXP](RXP_rinex3_blank_prn_2026-09-21.md): open, 2026-09-21: blank-padded RINEX 3 ids FIXED (16 of 310 files); new field baseline WORSE at WTZZ00DEU.
-- [EV7](EV7_all_sat_clock_decouple_2026-09-21.md): open, 2026-09-21: all-satellite decouple: coverage-gate drop edge fixed and ARMED, clock trips 50 to 1.
-- [RF-3](RF-3_code_row_qc_2026-09-22.md): open, 2026-09-22: gross-LOS screen ARMED (rows above 10 m 100 to 32); drop floor OFF; hold FALSIFIED.
+- [B5D](B5D_band5_code_datum_2026-09-20.md): superseded, 2026-09-20: band-5 code datum: datum cured, L5 bars fail, knob default off; L5 SEQUENCED, superseded by L5B.
+- [L5P](L5P_l5_phase_posture_2026-09-21.md): superseded, 2026-09-21: L5 phase posture: the gap is the band-5 code rows; both knobs off; L5 SEQUENCED, superseded by L5B.
+- [MSC](MSC_multi_site_consumer_2026-09-21.md): closed, 2026-09-21: multi-site census: WTZZ00DEU unrepresentative, no 2026-09-20 adoption held; CLOSED, census is the standing bar.
+- [RXP](RXP_rinex3_blank_prn_2026-09-21.md): closed, 2026-09-21: blank-padded RINEX 3 ids FIXED (16 of 310 files); WTZZ00DEU loss was EV7's decouple.
+- [EV7](EV7_all_sat_clock_decouple_2026-09-21.md): closed, 2026-09-21: all-satellite decouple: coverage-gate drop-edge erase ARMED, clock-anchor trips 50 to 1.
+- [RF-3](RF-3_code_row_qc_2026-09-22.md): closed, 2026-09-22: gross-LOS screen ARMED (rows above 10 m 100 to 32), hold FALSIFIED; RF-3c writer owed.
 - [GRB](GRB_golden_rebase_2026-09-22.md): closed, 2026-09-22: golden re-base onto the RF-0hv float vehicle: verify PASS, 57 armed, byte-identical arms.
-- [SID](SID_signal_identity_2026-09-22.md): open, 2026-09-22: signal roster and arc ledger built; channel_mode all KEEP OFF, family ignition datum owed.
+- [SID](SID_signal_identity_2026-09-22.md): closed, 2026-09-22: roster and arc ledger built, all OFF (6b KEEP_OFF); NOM carries them; ignition datum owed.
 - [GRK](GRK_gap_reentry_key_mismatch_2026-09-22.md): closed, 2026-09-22: tracker keyed on the latched phase: ARMED, gross code rows 507 to 101, consumer-inert.
 - [SCU](SCU_station_coordinates_unknowns_2026-09-22.md): parked, 2026-09-22: station coordinates: MIZU00JPN 1.6 m off its data, DROPPED; constrained states PARKED.
 - [UPO](UPO_consumer_up_offset_2026-09-22.md): closed, 2026-09-22: consumers' standing Up offset: roster at the monument, a DEFECT; ARP reduction ARMED.
 - [SCC](SCC_second_code_channel_2026-09-21.md): closed, 2026-09-21: second code channel ARMED at scale 10 against its failed bar B1; census dropouts 50 to 4.
-- [AB3](AB3_lanes_2026-09-20.md): open, 2026-09-20: lanes add-back: field wide-lane integers exist (gap +0.283, bar 0.10); lane design owed.
-- [GAL](GAL_gps_galileo_dual_2026-09-22.md): open, 2026-09-22: Galileo beside GPS: NOT ARMED, census 348 to 434.5, adoption waits on the clock level.
+- [AB3](AB3_lanes_2026-09-20.md): open, 2026-09-20: lanes add-back: field wide-lane gap +0.283 (bar 0.10), old layer refused; SEQUENCED after L5, design owed.
+- [GAL](GAL_gps_galileo_dual_2026-09-22.md): superseded, 2026-09-22: Galileo beside GPS: bars missed, clock level frozen at ignition; SUPERSEDED by GAL2, ARMED by GAD 2026-10-13.
 - [CLV](CLV_clock_level_2026-09-22.md): superseded, 2026-09-22: clock level re-base: sim level fixed, field not; SUPERSEDED by CTU's exact coupling update.
 - [OWD](OWD_owed_defects_2026-09-22.md): closed, 2026-09-22: five GAL defects fixed (S line on every wire, raise-only re-inflation): all gates PASS.
-- [HLT](HLT_broadcast_health_2026-09-25.md): open, 2026-09-25: broadcast satellite health: BUILT, NOT ARMED; neither mode consistently better at 2 h.
+- [HLT](HLT_broadcast_health_2026-09-25.md): closed, 2026-09-25: broadcast health BUILT, NOT ARMED (2 h within the level re-draw); E14/E18 mode owed.
 - [CLV2](CLV2_clock_level_batch2_2026-09-25.md): superseded, 2026-09-25: clock level batch 2: R-A2 and consumer response FAIL; SUPERSEDED by CTU's recursion.
 - [PBF](PBF_pb_hold_presence_edges_2026-09-28.md): closed, 2026-09-28: held phase bias presence edges answered: ARHT00ATA 804 to 0.762 m in hour 2, ARMED.
 - [CTU](CTU_coupling_time_update_2026-09-28.md): closed, 2026-09-28: exact coupling time update: anchor-floor clock folds 63 % to 0 %, ARMED via card EXL.
-- [CTU2](CTU2_level_recursion_followup_2026-09-29.md): open, 2026-09-29: level recursion follow-up: clean-sim G1 and G2 PASS, field G4 and the G5 seam FAIL.
-- [LAH](LAH_level_aware_hold_2026-09-29.md): open, 2026-09-29: phase-clock hold: census h1 2.27 to 0.59 m, ARMED interim by EXL, C1W regressions owed.
-- [PVN](PVN_phase_visible_nees_2026-09-29.md): open, 2026-09-29: phase-visible NIS and NEES: covariance consistent to conservative, sim NIS 0.87 / 1.03.
-- [PRM](PRM_parameter_registry_2026-09-29.md): open, 2026-09-29: parameter registry: phases 0 to 2 byte-identical, 26 reference sites; phase 3 in PRM3.
+- [CTU2](CTU2_level_recursion_followup_2026-09-29.md): closed, 2026-09-29: level recursion follow-up: fixture, rx-CB and drop defects fixed; field G4 and G5 FAIL; ARMED via EXL.
+- [LAH](LAH_level_aware_hold_2026-09-29.md): closed, 2026-09-29: phase-clock hold: census h1 2.27 to 0.59 m; ARMED interim by EXL; C1W regressions owed.
+- [PVN](PVN_phase_visible_nees_2026-09-29.md): closed, 2026-09-29: phase-visible NIS and NEES: covariance consistent to conservative (sim NIS 0.87 / 1.03); closed, NIS a gate.
+- [PRM](PRM_parameter_registry_2026-09-29.md): closed, 2026-09-29: parameter registry: phases 0 to 2 byte-identical, 26 sites; knob table dropped; closed, NOM continues it.
 - [SMH](SMH_smoothed_hold_clone_2026-09-29.md): closed, 2026-09-29: smoothed phase-bias hold: NOT ARMED, C1W census loss from hour 3; the hold family closed.
 - [SMD](SMD_smoothed_hold_block_member_2026-09-30.md): closed, 2026-09-30: phase-visible block member: P1 and P2 FAIL (no level part), C1W loss from hour 3 stays.
 - [QPV](QPV_anchor_q_phase_visible_2026-09-30.md): closed, 2026-09-30: anchor q from passed motion: Q1 FAILS (3.1 times the floor); the q stays at the floor.
@@ -61,26 +61,26 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [WUP](WUP_windup_accumulated_promotion_2026-10-01.md): closed, 2026-10-01: accumulated wind-up ARMED: restart response fixed, staircase gone, census median -2.6 cm.
 - [SFR](SFR_sim_fixture_coloured_phase_2026-10-01.md): closed, 2026-10-01: sim fixture re-based: field-matched phase colour capped at 20 degrees, sim golden moved.
 - [I2S](I2S_second_order_iono_sign_2026-10-01.md): closed, 2026-10-01: second-order iono sign inverted (receiver-to-satellite vector); FIXED with its oracle.
-- [LGM](LGM_los_phase_nuisance_2026-10-01.md): open, 2026-10-01: per-line-of-sight colour state: BUILT, not armed, starved by the loose carried ambiguity.
-- [AIL](AIL_ambiguity_information_loss_2026-10-01.md): open, 2026-10-01: ambiguity loss: golden inject discards young arcs; exact update loses the clock walk.
+- [LGM](LGM_los_phase_nuisance_2026-10-01.md): closed, 2026-10-01: per-line-of-sight colour state: BUILT, starved by the anchor's walk on the field; closed, default off.
+- [AIL](AIL_ambiguity_information_loss_2026-10-01.md): closed, 2026-10-01: ambiguity loss: scalar update discarded young arcs (CTU root); steady loss is the anchor walk; EXL ARMED.
 - [RPD](RPD_replay_station_prior_2026-10-01.md): closed, 2026-10-01: within-epoch replay: pre-PD datum rows passed, failed re-solves undone; FIXED and HARDENED.
 - [EXL](EXL_exact_update_lah_promotion_2026-10-01.md): closed, 2026-10-01: exact update with phase-clock hold ARMED: field hour 1 0.108 m, baseline pair _rf0hv14.
-- [SCL](SCL_self_contained_clock_level_2026-10-03.md): open, 2026-10-03: broadcast-clock level lock: B1 clone built, field census +0.3 cm against COD, not armed.
-- [MDR](MDR_multiday_replay_2026-10-05.md): open, 2026-10-05: field golden on four more days: hours 3 to 6 transfer; ARHT00ATA divergence owed.
-- [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md): open, 2026-10-06: level residue under the clone: per-station harvest; X2 cuts hour 6 to 0.017 m, not armed.
-- [SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md): open, 2026-10-07: card SCL2's continuation.
+- [SCL](SCL_self_contained_clock_level_2026-10-03.md): closed, 2026-10-03: broadcast-clock level lock cured by B1 (clock clone): field h1 0.673 to 0.107 m; G1, G2, G4 FAIL. Closed, off.
+- [MDR](MDR_multiday_replay_2026-10-05.md): closed, 2026-10-05: field golden transfers to four more days in hours 3 to 6; ARHT00ATA divergence owed.
+- [SCL2](SCL2_level_residue_under_the_clone_2026-10-06.md): closed, 2026-10-06: level residue under B1: per-station harvest; X2 shared history cuts hour 6 to 0.017 m. Closed, landed off.
+- [SCL2B](SCL2B_shared_history_with_the_hold_2026-10-07.md): closed, 2026-10-07: X2b (SMH hold on X2 history): held-out census neutral h2-6, h1 +0.012 m; G4 FAILS. Closed, landed off.
   Amendment A1 (card SMH's hold rows projected onto X2's shared history) built and graded: the solve is X2's (hour-6
   de-commoned level 0.017 / 0.019 m against B1 alone's 0.042 / 0.045, the statement consistent); the hold's walk-share
   error halves against X2 and beats B1; the sim census passes (+0.0034 m) and the field census median passes, both at or
   better than B1 alone. Failing: G1's ratio (the code's realization), G4's site count (the posture's, B1 alone worse),
   the in-loop sim consumer in hours 2 and 3. Cost 1.100. X2 with X2b landed default off; nothing armed.
-- [NBP](NBP_native_broadcast_clock_posture_2026-10-07.md): open, 2026-10-07: pre-registered. The self-contained posture
+- [NBP](NBP_native_broadcast_clock_posture_2026-10-07.md): closed, 2026-10-07: native SP3 + broadcast-clock posture equals the bed; fails vs COD on DOY 130-132 (+0.017 m). Closed, off.
   of cards SCL, SCL2 and SCL2B built natively: SP3 orbits and the broadcast clock from the navigation file (latest
   transmitted healthy record), a continuous internal a priori with a per-ephemeris offset table, the wire's clock referred
   to the stamped IODE, no CLK product. The shipped `brdc_rts` path selects a different record on 99.6 % of
   satellite-epochs. Gates: equivalence with the bed.
   LANDED 2026-10-07, default off: every gate passed; the native posture equals the bed to the print resolution at no cost.
-- [PFQ](PFQ_pivot_frame_process_noise_2026-10-08.md): open, 2026-10-08: pivot-frame clock noise. FALSIFIED standalone (the
+- [PFQ](PFQ_pivot_frame_process_noise_2026-10-08.md): closed, 2026-10-08: pivot-frame clock noise PASSES on the clock clone, neutral with X2; arms with the clone.
   per-row update drops the shared walk between rows); on the augmented previous border (card SCL's clock clone, joint
   walk factor) it PASSES: walk bed common level 0.051 to 0.011 m, consumer within 2 mm. Default off; arm with the clone.
 - [BCL](BCL_previous_border_on_clones_2026-10-08.md): parked, 2026-10-08: the whole previous border on clones (card SCL's
@@ -91,7 +91,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   2026-10-13 with card GFC's datum by card GAD (was NOT ARMED):
   census hours 2 to 6 -0.018 m (11 of 16 better), hour 1 -0.23 m, inter-system bias on truth; missed C1X recovery
   (0.05 m against 0.02), WTZZ00DEU hour 3, GPS clock wire +14 %. Adoption is the author's decision.
-- [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md): open, 2026-10-08: L5 R-1 on the exact-update golden: sim
+- [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md): superseded, 2026-10-08: L5 R-1 on the exact update: the field cost is the receiver band-5 code delay; L5 SEQUENCED, superseded by L5B.
   passes, field census fails on all four postures; the receiver's band-5 code delay is not a state of the network solve.
   L5 SEQUENCED: R-1b (estimate it), then R-2.
 - [NOM](NOM_network_object_model_2026-10-08.md): open, 2026-10-08: network object model. N0a (typed identities), N1
@@ -109,6 +109,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   a Melbourne-Wubbena wide lane is no better than the float's own. Rung 3: troposphere neutral, phase colour cuts the
   pairs fixed from 42 % to 19 %, one big slip handled, no wrong fix; the star basis covers a fifth of the integers.
 - [NOM3](NOM3_network_giants_2026-10-09.md): open, 2026-10-09: pre-registered. The four giant network functions (the per-epoch
+- [NOM4](NOM4_network_object_model_finish_2026-10-15.md): open, 2026-10-15: the continuation of NOM3 (file at the 60 KB bar): PB1b, EP3, EP4 landed (wave 2, identical on 23 + 22 arms); HV1, N3b, TD2, N4, N5 to come.
   driver, PASS B, the solve, the carry harvest) cut by the run-end method; card WCF first (the within-epoch culprit
   withhold, unreachable since 2026-07-24).
   (57 contribution kinds, a tag on every row and fold; every reader on the tags; RAIM pool admission declared; solve
@@ -167,4 +168,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   control: golden chord WL and 6 h wire E_L1 up to 0.029 cycle off the null (tolerance 0.02); graders, truth-wire
   positive control and the E_b slope pass. Re-registered by the author's ruling (IRD-0r: above 0.15 cycle and
   within max(0.05, the null's 99 % band)); PASSES in 44 of 44 cells; re-based onto `a02ccfb`; IRD-1 next.
+- [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
+  they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
+  golden comparison passed (only declared text moves on the goldens).
 - [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: pre-registered. Card NOM's standard on the user side (KalmanFilter, MeasurementModel, the slip layer, then StateManager and the PPP pipeline); 19 defects confirmed by reading; U0 (the gate) and U1a (the state families declared once) built, identical on 14 user arms and both goldens.

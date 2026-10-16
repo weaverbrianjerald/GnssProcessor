@@ -12,6 +12,7 @@
  */
 
 #include "filter/NetworkPriorResidual.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
@@ -33,6 +34,10 @@
 #include "filter/NetworkRunEnd.hpp"
 #include "filter/NetworkRunGroups.hpp"
 #include <memory>
+#include "app/NetworkRun.hpp"
+#include "slip/NetworkRawObservables.hpp"
+#include <map>
+#include <string_view>
 
 namespace GnssProcessor {
 
@@ -75,8 +80,9 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                               const std::shared_ptr<spdlog::logger>& log,
                               NetworkRunTraces& traces, const SyncedEpoch& se,
                               const std::vector<NetStation>& stations,
-                              NetworkPriorResidual& prires) {
+                              NetworkPriorResidual& prires, EpochEvents& events) {
     if (!prires.enabled()) return;
+    EpochEvents::Status& status_ev = events.status;
     const auto t_begin = std::chrono::steady_clock::now();
     const NetworkConfig& nc = config_.getNetworkConfig();
     auto& q = ctx.counters;
@@ -88,12 +94,12 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     q.prires_epochs = prires.epochs();
 
     // --- the epoch-status scalars (read before the L1 row is written) --------
-    ctx.carry.prires_ep_tow      = se.time.tow;
-    ctx.carry.ep_prires_rows     = prires.epochRows();
-    ctx.carry.ep_prires_resp     = prires.epochRowsResp();
-    ctx.carry.ep_prires_frame    = prires.epochRowsFrame();
-    ctx.carry.ep_prires_reported = prires.epochReported();
-    ctx.carry.ep_prires_max_t    = prires.epochMaxAbsT();
+    status_ev.prires_ep_tow      = se.time.tow;
+    status_ev.ep_prires_rows     = prires.epochRows();
+    status_ev.ep_prires_resp     = prires.epochRowsResp();
+    status_ev.ep_prires_frame    = prires.epochRowsFrame();
+    status_ev.ep_prires_reported = prires.epochReported();
+    status_ev.ep_prires_max_t    = prires.epochMaxAbsT();
     q.prires_rows     += prires.epochRows();
     q.prires_reported += prires.epochReported();
     q.prires_hits_dropped += prires.hitsDropped();
@@ -107,11 +113,11 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     // and deweight use the robust median σ̂₀ formed in NetworkSolveGlue.
     if (prires.globalOn()) {
         const NetworkPriorResidual::GlobalResult g = prires.epochGlobal();
-        ctx.carry.ep_s0g_formed      = g.formed;
-        ctx.carry.ep_s0g_sigma0      = g.sigma0_global;
-        ctx.carry.ep_s0g_tension_def = g.tension_defined;
-        ctx.carry.ep_s0g_tension     = g.prior_tension;
-        ctx.carry.ep_s0g_flags       = g.flags;
+        status_ev.ep_s0g_formed      = g.formed;
+        status_ev.ep_s0g_sigma0      = g.sigma0_global;
+        status_ev.ep_s0g_tension_def = g.tension_defined;
+        status_ev.ep_s0g_tension     = g.prior_tension;
+        status_ev.ep_s0g_flags       = g.flags;
         ++q.s0g_epochs;
         if (g.formed) ++q.s0g_formed;
         q.s0g_data_rows  += g.s.n_data;
@@ -129,8 +135,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
         // APPROX column is not quoted without its warning.  One-shot; the run-end
         // line carries the epoch counts.
         if ((g.flags & NetworkPriorResidual::kGlobalApprox)
-            && !ctx.carry.s0g_approx_warned) {
-            ctx.carry.s0g_approx_warned = true;
+            && !ctx.counters.s0g_approx_warned) {
+            ctx.counters.s0g_approx_warned = true;
             log->warn("Network (constraint-aware global σ̂₀): {} of this epoch's {} data row(s) "
                       "entered with r ≡ 1 at TOW {:.1f} — network.raim_redundancy_normalize is "
                       "off, so Σr_data is a ROW COUNT rather than a redundancy, the denominator "
@@ -140,8 +146,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                       g.s.n_data_approx, g.s.n_data, se.time.tow);
         }
         if ((g.flags & NetworkPriorResidual::kGlobalNoData)
-            && !ctx.carry.s0g_nodata_warned) {
-            ctx.carry.s0g_nodata_warned = true;
+            && !ctx.counters.s0g_nodata_warned) {
+            ctx.counters.s0g_nodata_warned = true;
             log->warn("Network (constraint-aware global σ̂₀): ZERO data rows at TOW {:.1f} — the "
                       "post-fit RAIM walk contributed nothing (network.raim off, not yet warm, or "
                       "no station qualified), so this epoch's sigma0_global is a PRIOR-ONLY "
@@ -218,11 +224,20 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
     for (const auto& h : prires.hits()) {
         const std::string& fam = prires.families()[static_cast<std::size_t>(h.family_idx)];
         const std::string sta  = stationName(stations, h.station);
-        const std::string key  = fam + "\x1f" + sta + "\x1f" + h.sat + "\x1f" + h.signal;
-        auto it = ctx.carry.prires_event_last.find(key);
-        if (it != ctx.carry.prires_event_last.end() && now_ep - it->second < holdoff)
+        // The line of sight's holdoff clock of (family, signal).  The hit's station index
+        // is the row's own (-1 for a shared satellite-level prior, whose name is empty), so
+        // no name converter is needed and a shared prior keeps its clock.
+        const std::optional<LosId> hid = net::losOf(ctx.entities, h.station, h.sat);
+        const std::string sub = fam + "\x1f" + h.signal;
+        const long long* last =
+            hid ? net::get(ctx.entities.los, *hid, &net::LosState::events, sub,
+                           &net::LosEventState::prires_event_last)
+                : nullptr;
+        if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        ctx.carry.prires_event_last[key] = now_ep;
+        if (hid)
+            net::put(ctx.entities.los, *hid, &net::LosState::events, sub,
+                     &net::LosEventState::prires_event_last) = now_ep;
         traces.emitEvent(
             se.time, "PRIORRES",
             h.raw_formal ? "prior_residual_raw" : "prior_residual",
@@ -250,8 +265,8 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
         ++q.prires_events;
     }
     // Invariant #4: a truncated identity stream must not read as a quiet epoch.
-    if (prires.hitsDropped() > 0 && !ctx.carry.prires_trunc_warned) {
-        ctx.carry.prires_trunc_warned = true;
+    if (prires.hitsDropped() > 0 && !ctx.counters.prires_trunc_warned) {
+        ctx.counters.prires_trunc_warned = true;
         log->warn("Network (prior-residual census): {} above-threshold row(s) exceeded the "
                   "per-epoch identity buffer ({}) at TOW {:.1f} and their INDIVIDUAL "
                   "identities were dropped.  Every LADDER count is complete and unaffected — "
@@ -724,5 +739,93 @@ int networkPriorResidualRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// Setup builder (card NOM3 step EP4); documented at its declaration in filter/NetworkPriorResidual.hpp.
+void networkPriorResidualArm(NetworkRun& run) {
+    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    //      checked by scripts/nom_ep4_verify.py). ----
+    NetworkRunContext& ctx = run.ctx;
+    const SlipQcChannel& slip_qc = run.engines.slip_qc;
+    NetworkPriorResidual& prires_est = run.engines.prires;
+    // ---- End of the bindings ----
+    // Prior-residual census.  An engine the run owns, like the carry-VCE monitor
+    // (run.engines.prires and run.engines.carry_vce, app/NetworkRun.hpp; both were
+    // run-TU locals until card NOM3 step EP1), read by the same four seams: SB_T1A
+    // advances it, SB_LEVELING feeds pl/zwd/rxcb, SB_STASH_STATUS feeds pb/cb and
+    // drains it, and the teardown reads it.  It shares the M2 monitor's per-row
+    // arithmetic and does not affect the solve: with the census armed the
+    // solution is byte-identical.
+    // Corroboration resolver.  It is injected here rather than plumbed through five
+    // seam signatures, and it captures slip_qc by reference because the evidence
+    // it reads is refreshed per epoch inside that channel.
+    //
+    // The resolver gathers domain counts only; the verdict rule is @ref
+    // priorResidualConsensus, a pure function with its own unit cases.  The split
+    // makes the roster-independence claim checkable without a network.  A plain OR
+    // over a domain saturates as the roster grows, because P(any of N steps) -> 1;
+    // on a 303-station roster it moved `cb` rows reading raw_stepped from 29 % to
+    // 70 % on identical data.
+    //
+    // A carried prior's domain is the set of (station, satellite) pairs whose raw
+    // MW/GF observables can witness a discontinuity in it:
+    //   * `pl`          -> one pair (station, sat): the arc's own verdict;
+    //   * `zwd`, `rxcb` -> receiver level: that station's satellites;
+    //   * `pb`, `cb`    -> satellite level: the stations that measured that sat.
+    //
+    // Both multi-member domains are aggregated once per epoch into the maps below
+    // rather than re-scanned per row.  Otherwise a shared-family row would walk
+    // every station map (131 cb rows x 303 stations = 40k lookups per epoch),
+    // making the census quadratic in the roster.  Building the maps is one pass
+    // over the verdict table, and the per-row lookup is then O(log n).
+    //
+    // The cache is keyed on slip_qc.epoch_idx, the monotonic processed-epoch
+    // index, so it invalidates itself exactly when the evidence is refreshed.  All
+    // five feed sites run serially after the solve, so the mutable capture is
+    // race-free by construction (the parallel produce phase never reaches it).
+    if (ctx.knobs.prires_corrob) {
+        struct CorrobCache {
+            long long epoch = -1;
+            std::map<std::string, PriorResidualEvidence> by_sat;   // satellite-level domains
+            std::vector<PriorResidualEvidence>           by_sta;   // receiver-level domains
+        };
+        auto cache = std::make_shared<CorrobCache>();
+        prires_est.setCorroborator(
+            [&slip_qc, cache](std::string_view /*family*/, int station,
+                              std::string_view sat) -> PriorResidualEvidence {
+                const RawSlipEpoch& ep = slip_qc.epoch;
+                if (!ep.computed) return PriorResidualEvidence{};
+                if (cache->epoch != slip_qc.epoch_idx) {
+                    cache->epoch = slip_qc.epoch_idx;
+                    cache->by_sat.clear();
+                    cache->by_sta.assign(ep.verdict.size(), PriorResidualEvidence{});
+                    for (std::size_t i = 0; i < ep.verdict.size(); ++i)
+                        for (const auto& kv : ep.verdict[i]) {
+                            if (!kv.second.measured) continue;   // no predecessor ⇒ in no domain
+                            const int step = kv.second.stepped ? 1 : 0;
+                            PriorResidualEvidence& a = cache->by_sta[i];
+                            ++a.n_measured; a.n_stepped += step;
+                            PriorResidualEvidence& b = cache->by_sat[kv.first];
+                            ++b.n_measured; b.n_stepped += step;
+                        }
+                }
+                if (station >= 0 && static_cast<std::size_t>(station) < ep.verdict.size()) {
+                    if (sat.empty()) return cache->by_sta[static_cast<std::size_t>(station)];
+                    // pl has a one-member domain, where priorResidualConsensus
+                    // reduces to the member's own verdict, so this family is
+                    // bit-for-bit unaffected by the consensus rule.
+                    const auto& vmap = ep.verdict[static_cast<std::size_t>(station)];
+                    const auto it = vmap.find(std::string(sat));
+                    if (it == vmap.end() || !it->second.measured)
+                        return PriorResidualEvidence{};
+                    return PriorResidualEvidence{1, it->second.stepped ? 1 : 0};
+                }
+                if (!sat.empty()) {
+                    const auto it = cache->by_sat.find(std::string(sat));
+                    if (it != cache->by_sat.end()) return it->second;
+                }
+                return PriorResidualEvidence{};
+            });
+    }
+}
 
 }  // namespace GnssProcessor

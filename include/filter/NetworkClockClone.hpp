@@ -63,6 +63,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
 struct NetworkRunContext;   // app/NetworkRunContext.hpp defines it as a struct
 
 /// A cloned clock's walk must exceed this fraction of its stashed variance: below it the
@@ -242,9 +244,10 @@ struct ClockCloneCounters {
  * re-attributed (BCL-d: a clock card SCL did not clone; without BCL-a, a bias whose column is
  * absent, whose phase-bias frame is re-referenced or held, or which is parked), in
  * @c ccl.xcol.  No-op off.
+ * @param events The epoch's events, read: the chain election's re-referenced (sat, signal) set.
  */
 void networkClockCloneRegister(NetworkRunContext& ctx, NetworkEstimator& est,
-                               const std::vector<std::string>& registered_clock_sats);
+                               const std::vector<std::string>& registered_clock_sats, const EpochEvents& events);
 
 /**
  * @brief Build the rows' epoch: card CTU's epoch with each cloned clock on its clone
@@ -347,6 +350,7 @@ void networkClockCloneFoldBegin(NetworkRunContext& ctx, NetworkEstimator& est);
  *        clock, 1/Q for a cloned clock (its column appears only in its walk factor).
  * @return true when the joint fold ran (the caller then skips card CTU's fold); false when
  *         no clone stands in this epoch (nothing folded).
+ * @param events The epoch's events, read: the handover's re-expressed constellations and dense record.
  */
 bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 NetworkEstimator& est,
@@ -356,7 +360,7 @@ bool networkClockCloneDenseFold(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 const std::vector<char>& dinflate,
                                 const std::vector<char>& dreexp,
                                 const Eigen::MatrixXd& cov_eff, bool within_epoch_armed,
-                                std::map<std::string, double>* clk_prior_info);
+                                std::map<std::string, double>* clk_prior_info, const EpochEvents& events);
 
 /// Count one dense-fold fallback on a clone epoch (the clones are then free or isolated).
 void networkClockCloneNoteFallback(NetworkRunContext& ctx);

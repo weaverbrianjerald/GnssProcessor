@@ -57,8 +57,7 @@ namespace GnssProcessor {
         GimIono,                  ///< External GIM slant-ionosphere rows (whitened per constellation).
         SdEwl,                    ///< Between-satellite single-differenced EWL rows (whitened per constellation).
         // --- Station coupling and block rows: the coupling region (appendCouplingRows) ---
-        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column (card 1; also card 1b's per-row fallback).
-        CouplingJoint,            ///< The station's coupling rows whitened jointly (card 1b).
+        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column (card 1).
         BlockAmbiguityCarry,      ///< Whitened local carry block row whose primary column is an ambiguity (F3).
         BlockZwdCarry,            ///< Whitened local carry block row whose primary column is the wet delay (B9-in-block).
         BlockIonoCarry,           ///< Whitened local carry block row whose primary column is a slant ionosphere (I-in-block).
@@ -71,7 +70,6 @@ namespace GnssProcessor {
         // --- Station priors (the diagonal channels) ------------------------------------
         PriorAmbiguityCarry,      ///< Diagonal carried prior on an ambiguity (leveling carry, diagonal route).
         PriorZwdCarry,            ///< Diagonal carried prior on the wet delay (B9).
-        PriorIonoCarry,           ///< Diagonal carried prior on a slant ionosphere (QUEUE 8b).
         PriorRxCbCarry,           ///< Diagonal carried prior on a receiver code bias (rx-CB carry).
         PriorAmbiguityOraclePin,  ///< Simulation-only oracle ambiguity pin (diagonal).
         PriorRxCbDatum,           ///< Zero-mean receiver DCB datum on the post-PD channel (RXCB-DATUM, pre-PD routing off).
@@ -81,9 +79,6 @@ namespace GnssProcessor {
         CbSatGfPair,              ///< W6 code-bias datum: the per-satellite geometry-free pair row (sat_gf_datum).
         CbExtraBandHeld,          ///< W6 code-bias datum: an extra-band column held at its own level (B5D).
         CbExtraGf,                ///< W6 code-bias datum: an extra signal's geometry-free row (ISC asserted zero, RF-0d).
-        CbGfPin,                  ///< W6 code-bias datum: the slant posture's geometry-free pin row.
-        CbFamilyGf,               ///< W6 code-bias datum: a secondary family's geometry-free row (FAMILY-GF).
-        CbIfLevel,                ///< W6 code-bias datum: the per-constellation ionosphere-free level row (RF-0e e1).
         CbSumToZero,              ///< W6 code-bias datum: the (constellation, signal) sum-to-zero row.
         CbFamilyBirth,            ///< Soft first-sighting family prior on a satellite's inter-family code-bias difference (card GFC step 2): one row per (satellite, birth), at 1/sigma^2, apart from the gauge rows.
         ClockConstraintRows,      ///< Constraint-realized clock datum rows (sum-to-zero or broadcast-anchored).
@@ -92,7 +87,6 @@ namespace GnssProcessor {
         CbKaula,                  ///< Loose physical-bound prior on the satellite code biases (card KP).
         PbHeal,                   ///< Drop-and-heal prior on a near-null phase-bias direction (the rank gate's response).
         ShPrior,                  ///< Carried SH-VTEC prior.
-        PhaseHold,                ///< Phase-bias hold prior (ensemble datum).
         PinBridge,                ///< eq34 pin bridge on an unpinned key (reattach hygiene).
         BorderCarryDiagonal,      ///< The border carry, diagonal form (D2, and the dense fold's leftovers).
         BorderCarryGaugeFree,     ///< The border carry, diagonal with the clock common mode downdated (card Q3 gauge-free fold).
@@ -106,7 +100,6 @@ namespace GnssProcessor {
         ColdClockAnchor,          ///< A-priori satellite-clock anchor (cold-start conditioning).
         // --- Pins, gauges, DD blocks ---------------------------------------------------
         ClockPivotPin,            ///< Per-constellation clock pivot pins (Dirichlet, in the solve).
-        EnsemblePhaseGauge,       ///< Ensemble sum-to-zero phase-bias gauges (fix A).
         DdPriorBlock,             ///< Card-4 DD prior blocks (carry_invariant).
         // --- Not a family ----------------------------------------------------------------
         Unset,                    ///< No site named a kind: the default of every tag and fold record.
@@ -116,6 +109,16 @@ namespace GnssProcessor {
     /// declaration table).
     inline constexpr std::size_t kContributionKinds =
         static_cast<std::size_t>(ContributionKind::Unset);
+
+    /// A set of contribution kinds, one bit per kind (card NOM3 step PB1b: the kinds a station
+    /// step can create, filter/NetworkStationBuild.hpp).
+    using ContributionKindSet = std::uint64_t;
+    static_assert(kContributionKinds <= 64, "ContributionKindSet holds one bit per kind");
+
+    /// The bit of kind @p k in a ContributionKindSet.
+    constexpr ContributionKindSet kindBit(ContributionKind k) {
+        return ContributionKindSet{1} << static_cast<unsigned>(k);
+    }
 
     /**
      * @brief One shared fold of the primary build: the kind its site named and its

@@ -193,8 +193,12 @@ remain and are listed in the card.
 
 ## One epoch, in eight stages
 
-The epoch loop is in `runNetwork()` (`src\core\app\ApplicationNetwork.cpp`). Each stage
-is a function in its own file; the loop calls them in this order.
+One epoch is `Application::networkProcessEpoch_` (`src\core\app\ApplicationNetworkEpoch.cpp`),
+called by `runNetwork()` (`src\core\app\ApplicationNetwork.cpp`) for each synced epoch. Each
+stage is a function in its own file, called in this order with the run (`NetworkRun`,
+`app\NetworkRun.hpp`: the context, configuration, traces and engines) and the epoch
+(`NetworkEpoch`, `app\NetworkEpoch.hpp`: this epoch's values, grouped by the stage that
+writes them, const to every reader).
 
 | # | stage | main functions (file) |
 | --- | --- | --- |
@@ -210,10 +214,19 @@ is a function in its own file; the loop calls them in this order.
 The order of stages 7 and 8 matters: the product is written before the post-fit checks
 run, so a check's response reaches the product one epoch later.
 
-*In progress:* the state these stages share lives in one large structure,
-`NetworkRunContext` (`include\app\NetworkRunContext.hpp`), grouped by the design card that
-added each piece rather than by station, satellite or signal. Card NOM step N4 regroups it
-by entity, so that everything about one satellite or one arc sits in one record.
+The state the stages share has three homes. What belongs to one constellation, satellite,
+satellite signal, station, line of sight or arc is a row of an entity table
+(`net::NetworkEntities`, `include\app\NetworkEntities.hpp`), keyed by its typed identity, so
+everything about one satellite sits in one record; each field's declaration row states how it
+survives a restart. What one stage hands later stages of the same epoch is an epoch event
+(`EpochEvents`, `include\app\NetworkEpoch.hpp`, read as `ep.events`): it is built empty with
+the epoch, one group per writing stage, so nothing is cleared by hand and nothing from a
+skipped epoch reaches the next one. What stays run-wide (the carried priors, latches set at
+one epoch and read at the next, hand-offs a later stage drains, run counters) is
+`NetworkCarryState` and `NetworkServiceCounters` in `NetworkRunContext`
+(`include\app\NetworkRunContext.hpp`), each member with its row in `net::kRunFields`. A stage
+names what it writes: an events group arrives as an output parameter, and an entity table it
+binds for writing has its row in `net::kEntityWriters`.
 
 ## The run end
 
@@ -222,7 +235,8 @@ INERT clauses for armed knobs that never acted. These lines are the run's own te
 (an armed knob reading "0 driven" is dead wiring), and grading scripts parse them.
 
 The run end is a table. `include\filter\NetworkRunEnd.hpp` declares
-`kNetworkRunEndReports`: 107 reports in print order, each row naming what it reports and
+`kNetworkRunEndReports`: 83 rows in print order, one report per subsystem (each printed
+under a `Network[run-end] <row name>` heading line), each row naming what it reports and
 the file it lives in. `networkTeardown` (`src\core\filter\NetworkTeardown.cpp`, 68 lines)
 walks the table. A report is one function, `int networkXxxRunEnd(const NetworkRunEndView&)`,
 in the file of the subsystem it describes: the RAIM pool's report is in `NetworkRaim.cpp`,
@@ -234,8 +248,8 @@ exit code. To find what a mechanism reports at run end, open its file and search
 ## Where new code goes
 
 `CLAUDE.md` (section "Network producer: where new code goes") maps each kind of change to
-its file: a new per-epoch step to a `Network*` stage file, new run state to
-`NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
+its file: a new per-epoch step to a `Network*` stage file, a new per-epoch event to the
+writing stage's group of `EpochEvents`, new run state to `NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
 new run-end readout to a report in the subsystem's own file plus one row of
 `kNetworkRunEndReports` (the table's header lists the order rules). The loop itself stays a
 list of calls.
@@ -255,4 +269,6 @@ A change to network behaviour starts as a card with its gates written before the
 run, is graded on both the simulated and the real bed against the baseline, and reaches
 the goldens only by the author's decision.
 
-Next: back to [6 · First tasks](06_first_tasks.md), or the network card a task names.
+Next: [8 · Adding a network parameter](08_adding_a_network_parameter.md) when a task adds a
+per-station state; otherwise back to [6 · First tasks](06_first_tasks.md), or the network
+card a task names.

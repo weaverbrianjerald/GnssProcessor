@@ -4,14 +4,14 @@
 
 - **id:** L5P
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** BUILT, NOT ARMED: the triple arm's residual gap is the band-5 CODE ROWS, not the wide-lane detector pairs; the scale-10 deweight fails the clock-wire bar and does not transfer across sites; L5 SEQUENCED.
+- **status:** superseded
+- **summary:** L5 phase posture: the triple gap is the band-5 code rows, not the wide-lane detector pairs; both knobs built, default off, not recommended; L5 SEQUENCED, the return plan continues in card L5B.
 - **source:** [B5D](B5D_band5_code_datum_2026-09-20.md) sections 3 and 4; [TBI](TBI_three_band_ignition_2026-09-20.md) section 4 (the L5 adoption bars)
 - **knobs / posture:** new `network.cycle_slip.mw_detect_pairs` (`all`, the default, or `primary`) and `network.extra_band_code_sigma_scale` (default 1.0, network only); on the RF-0hv working bases with `processing.frequency_mode: triple` and `network.sat_gf_extra_band_free: true`
 - **dates in the text:** 2026-09-21
 - **hashes / run dirs:** bases `runs/_rap_b5_tri`, `runs/_rap_b5_simtri`, `runs/_rf0hv5_{field,sim}6`; emulation `runs/_rap_tB_nocode5_net`
 
-**Outcome.** The question was whether the gap from the cured datum (390 epochs below a decimetre) to the emulation (535) is the band-5 code rows or the detector's band-5 wide-lane pairs (55 detections, 28 in hour 1). The code scale recovers it (597 at WTZZ00DEU), the pair scope does not (391), and G2 makes `primary` field-blocking by the letter. B1 FAILS on the clock wire (0.0099 / 0.0217 m); across 16 census sites hours 2 to 6 worsen at 9. Neither knob is recommended; owed: return plan R-1 to R-4 (section 4).
+**Outcome.** Question: is the gap from the cured datum (390 epochs below a decimetre) to the emulation (535) the band-5 code rows or the detector's band-5 wide-lane pairs? The code scale recovers it at WTZZ00DEU (597), the pair scope does not (391); B1 FAILS on the clock wire and the census worsens at 9 of 16 sites in hours 2 to 6. Neither knob is recommended. L5 is SEQUENCED, not closed: R-1 ran in [L5R](L5R_l5_return_on_the_exact_update_2026-10-08.md) and the plan continues in [L5B](L5B_band5_receiver_delay_2026-10-10.md). Status reviewed 2026-10-13.
 
 ## 1. What is built (both default to today's behaviour, byte-identical at the default)
 

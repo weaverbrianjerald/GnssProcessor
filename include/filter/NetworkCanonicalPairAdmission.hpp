@@ -41,8 +41,8 @@
  *
  * At the top of the epoch body, on a per-epoch mutable copy of the
  * @c SyncedEpoch, immediately after the event-harness injector and therefore
- * upstream of @c networkFastClockTick, @c PppModel::computeModels, every T0
- * detector, @c networkComputeRawObservables and assembly.  It uses the same site
+ * upstream of @c PppModel::computeModels, every T0 detector,
+ * @c networkComputeRawObservables and assembly.  It uses the same site
  * and the same scratch-buffer contract as @ref networkInjectEpoch, for the same
  * reason: everything downstream is derived from the @c RinexObservation, so
  * dropping the record here is equivalent to a missing RINEX record.  The row-level

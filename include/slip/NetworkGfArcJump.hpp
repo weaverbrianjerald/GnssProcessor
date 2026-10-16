@@ -192,8 +192,8 @@ struct GfArcJumpCounters {
  *        answer each flag (file banner, "The response").
  *
  * Sited after the IF-TD driver and before the wind-up, gap re-entry and injected-free
- * drains and the lane observatory's PASS-A half, so a GF-freed pair enters this epoch's
- * free-epoch latch before anything reads it.  A no-op unless the knob is armed and the
+ * drains, so a GF-freed pair enters this epoch's free-epoch latch before anything reads
+ * it.  A no-op unless the knob is armed and the
  * raw observables were computed this epoch.  One event row per flag
  * (network_events.csv, tier @c T1_gf_jump, event @c gf_jump, statistic |r|, threshold
  * the bar applied).

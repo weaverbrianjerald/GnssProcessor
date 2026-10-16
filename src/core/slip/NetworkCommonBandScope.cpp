@@ -436,7 +436,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
                 }
 
             // B = the arc's tracked phase bands, i.e. the live ambiguity signals
-            // the drains would act on.  Same source the §Z scope reads.
+            // the drains would act on.
             std::set<std::string> live;
             for (const auto& kv : stations[i].sm->getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(kv.first);

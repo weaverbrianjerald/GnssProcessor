@@ -25,7 +25,7 @@
  * is an explicit reference into the caller's NetworkRunContext.
  *
  * Ordering contract.  This function mutates persistent and epoch-local carries.  It
- * erases @c ctx.carry.local_carry entries and marks StateManager ambiguities
+ * erases @c ctx.entities.arcs entries and marks StateManager ambiguities
  * pending-reseed for every refloated (station,sat,σ); inserts consensus / whole-sat
  * culprits into @c clock_refloat_sats and @c retro_flag_sats (consumed downstream by
  * the SB_CLOCKUPD two-state clock update and retro-flag feed); folds σ̂0 into
@@ -35,7 +35,7 @@
  *     the just-restashed @c local_carry; erasing an entry is the refloat);
  *   - before SB_CLOCKUPD (the only consumer of @p clock_refloat_sats /
  *     @p retro_flag_sats filled here) and the epoch stash/status tail.
- * The caller keeps the @c subBegin/subEnd(SB_RAIM) brackets and the arming guard
+ * The caller keeps the @c networkSubBegin/End(SB_RAIM) brackets and the arming guard
  * `if (raim_on && (carry_warm || ctx.knobs.raim_ci_on))`; this function is the
  * guarded body.
  */
@@ -53,8 +53,7 @@
 #include <set>
 #include <string>
 #include <vector>
-
-namespace GnssProcessor { struct RawSlipEpoch; }   // slip/NetworkRawObservables.hpp
+#include <cstdint>
 
 namespace spdlog { class logger; }
 
@@ -77,12 +76,11 @@ struct NetworkRunTraces;    // logging/NetworkRunTraces.hpp, included in the .cp
  *  - @c pool_cells > 0, @c sats_flagged == 0
  *                                        → it screened real residuals and nothing was bad
  *                                          (zero opportunity, not zero capability).
- *  - @c sats_flagged > 0, @c refloats_queued == 0
- *                                        → it flagged but the actuator is disarmed.
+ *  - @c sats_flagged > 0                 → it flagged; the re-host is measure-only, so
+ *                                          no carry consumer acted on the flag.
  *
  * Every member stays at zero unless @c ctx.knobs.raim_ci_on, and the run-end readout
- * is written only then, so an off run reports nothing.  Modelled on
- * @c NetworkIonoDwReleaseTallies.
+ * is written only then, so an off run reports nothing.
  */
 struct NetworkRaimCiTallies {
     long long epochs = 0;            ///< Seam passes with the re-hosted pool armed.
@@ -90,8 +88,6 @@ struct NetworkRaimCiTallies {
     long long pool_cells = 0;        ///< Total carried-ambiguity cells screened (the census size).
     long long sats_flagged = 0;      ///< Consensus-flagged satellite-epochs.
     long long arcs_flagged = 0;      ///< Attribution-flagged isolated (station,sat) arc-epochs.
-    long long refloats_queued = 0;   ///< Arcs queued into raim_refloat_pending (actuator armed only).
-    long long refloats_drained = 0;  ///< Queued arcs delivered into the C3c funnel at the next epoch's head.
     double    sigma0_max = 0.0;      ///< Largest σ̂0 seen over epochs with a non-empty pool.
     double    sigma0_sum = 0.0;      ///< Σ σ̂0 over epochs with a non-empty pool (mean = sigma0_sum / sigma0_n).
     long long sigma0_n = 0;          ///< Epochs contributing to sigma0_sum.
@@ -166,183 +162,109 @@ struct RaimPoolAdmissionTally {
     std::string ownColumnText() const;
 };
 
-/**
- * @brief Outcome of the band-scoped T4 erase decision for one cell (§Z).
- *
- * See docs/SPEC_event_harness.md §Z.  @c act false means there is no per-band
- * evidence for this (station, satellite) this epoch; the caller then erases the whole
- * arc as an unscoped run does, because refusing the response on missing evidence is
- * the other failure mode (standing invariant #1).
- */
-struct RaimEraseBandScope {
-    bool        act{false};            ///< The scope decided this cell.
-    bool        single_band{false};    ///< One signal only: @ref erase is empty and the caller skips the erase.
-    bool        kept_over_gate{false}; ///< Every band stood above the gate, so @ref keep is the least-bad band, not a clean one.
-    std::string keep;                  ///< The signal left pinned as the line of sight's level anchor.
-    std::set<std::string> erase;       ///< The signals to free.
-};
-
-/**
- * @brief Decide which bands of one T4-flagged cell to erase (§Z).  Pure function.
- *
- * Study 1 (docs/SPEC_event_harness.md §9) measured that the ~0.445-cycle level
- * floor a T4 attribution erase leaves on a healthy arc comes from the band scope
- * alone, not from anything else on the erase path: the same erase restricted to 2
- * of 3 bands leaves 0.050 cycles on every band, including the one not erased.
- * Freeing all bands removes the line of sight's last level anchor, so (ρ, I, N₁..N₃)
- * are re-drawn from one epoch of code, and the station-common iono error that lands
- * in the fresh zero-q level persists (the re-coupling edge of invariant #1).
- *
- * Rule: erase every band whose own post-fit normalized residual exceeds the T4
- * gate, and always keep the band with the smallest |r| (ties go to the lexically
- * lowest signal, so the choice is deterministic).  Two edge cases are deliberate:
- *  - **No band over the gate.**  The cell was flagged by the median-polish
- *    interaction, which is net of the row and column effects, so a per-signal
- *    residual can sit under k·σ̂₀ while the arc still stands out.  Every band except
- *    the pin is erased; a slip response is not suppressed for lack of per-band
- *    evidence.
- *  - **Every band over the gate.**  The pin is then the least-bad band;
- *    @ref RaimEraseBandScope::kept_over_gate marks it, so the cells that keep a
- *    suspect level are visible (invariant #7).
- *
- * @param sig_r One (signal, |r|) pair per carried ambiguity of the cell: the Pass-1
- *              attribution cells before @c cell_max collapses the signal axis.
- *              Empty ⇒ @c act false.
- * @param bar   The T4 gate in the same units as @p sig_r (k·σ̂₀).
- * @return The decision.
- */
-RaimEraseBandScope networkRaimEraseBandScope(
-    const std::vector<std::pair<std::string, double>>& sig_r, double bar);
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkPostFitHandoff;   // filter/NetworkSolveGlue.hpp (card NOM3 step EP1)
 
 /**
  * @brief Run the post-fit network RAIM pass for this epoch (Pass 1 residual scan,
  *        Pass 2 consensus, median-polish attribution, and the resulting refloats).
  *
- * @param ctx                [in/out] carry + counters + knobs.  The whole context is
- *                           passed instead of ~24 individual references because the
- *                           body mutates local_carry / ura_sigma0_ewma /
- *                           arc_spike_streak by value: one missing `&` in an
- *                           enumerated parameter list would compile and discard a
- *                           refloat or the URA fold without any diagnostic.  The body
- *                           opens with an alias preamble copied byte for byte from
- *                           the former run-TU alias block.
- * @param config_            RAIM getters, among them networkRaimAttribution /
- *                           networkRaimSigma0Trigger / networkRaimWithinEpoch.
- * @param log                "main_log": the refloat summary + within-epoch warning.
- * @param traces             raim_trace / raim_attrib_trace / station_res_trace /
- *                           events_trace + the emitEvent forwarder.
- * @param se                 Current synced epoch (week/TOW for the trace + log rows).
- * @param stations           [in/out] StateManager markAmbiguityPendingReseed on
- *                           refloat; name / is_pivot reads.
- * @param asm_res            Per-station assembly (pl_amb / A_s / A_r / y / w).
- * @param est_index_of       Station → reduced-system index (< 0 = absent).
- * @param present            This epoch's presence mask (attribution refloat scope).
- * @param x_s                Post-fit shared solution vector.
- * @param est                reconstructStation / rowRedundancy (both const).
- * @param shared_datum       The shared hard-pin datum (Baarda redundancy input).  The
- *                           run TU passes `plan.shared_datum`; this is the only
- *                           substitution relative to the moved body.
- * @param clock_refloat_sats [in/out] consensus / whole-sat culprits whose shared
- *                           clock also refloats (fed to SB_CLOCKUPD).
- * @param retro_flag_sats    [in/out] culprits whose emitted correction was
- *                           contaminated (retro-bump feed, SB_CLOCKUPD).
- * @param retro_feed         Whether the retro-bump path is armed this run
- *                           (ura_retro || ura_refloat_inflate > 1.0).
- * @param n_arc_refloat_epoch [in/out] this epoch's isolated-arc refloat count
- *                           (heartbeat churn metric, read later in the epoch).
- * @param prires             [in/out] the prior-residual census accumulator, used here
- *                           only as the data-side feed of the constraint-aware
- *                           global variance component
- *                           (docs/SPEC_prior_residual_census.md §14).  The Pass-1
- *                           row walk already holds every row's @c (w, v, r_i), so
- *                           the feed costs a multiply and two adds inside an
- *                           existing loop.  Inert unless
- *                           @c network.prior_residual_global_sigma0 is armed, and
- *                           measure-only in every case: none of this seam's
- *                           decisions (the σ̂0 pool, the consensus, the attribution,
- *                           the refloats) read from it.  The accumulator is drained
- *                           in SB_STASH_STATUS, which runs after this seam, so the
- *                           epoch's data side is complete when the column is written.
- * @param slip_ep            This epoch's pre-solve slip-QC raw-observable evidence
- *                           (nullable).  Read only by the corroborated retap
- *                           (network.cycle_slip.relevel_retap_corroborate): its keep
- *                           branch requires the (station, sat) to be measured and
- *                           not stepped, the same tri-state the D5-v3 corroboration
- *                           gate consumes (SPEC_lane_slip_response §3).  nullptr or
- *                           !computed means there is no positive evidence, so every
- *                           corroborated keep falls back to the erase (standing
- *                           invariant #1: a slip response is not suppressed for lack
- *                           of evidence).
+ * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * replace the explicit parameters; the definition binds each former parameter in its preamble,
+ * under its former name.
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ *            run.traces (traces), run.setup.stations (stations), run.engines.prires (prires).
+ *            Read: run.config (config_), run.log (log), run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ *           ep.assembly.asm_res (asm_res), ep.assembly.est_index_of (est_index_of),
+ *           ep.pass_a.present (present), ep.solve.x_s (x_s), ep.solve.plan.shared_datum
+ *           (shared_datum), ep.solve.retro_feed (retro_feed).
+ * @param handoff [in/out] The post-fit hand-off (ep.solve.handoff), written:
+ *     handoff.clock_refloat_sats (clock_refloat_sats), handoff.retro_flag_sats
+ *     (retro_flag_sats), handoff.n_arc_refloat_epoch (n_arc_refloat_epoch).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: [in/out] carry + counters + knobs. The whole context is passed instead
+ *     of ~24 individual references because the body mutates local_carry / ura_sigma0_ewma /
+ *     arc_spike_streak by value: one missing `&` in an enumerated parameter list would compile
+ *     and discard a refloat or the URA fold without any diagnostic. The body opens with an
+ *     alias preamble copied byte for byte from the former run-TU alias block.
+ *   - @p config_ = run.config: RAIM getters, among them networkRaimAttribution /
+ *     networkRaimSigma0Trigger / networkRaimWithinEpoch.
+ *   - @p log = run.log: "main_log": the refloat summary + within-epoch warning.
+ *   - @p traces = run.traces: raim_trace / raim_attrib_trace / station_res_trace /
+ *     events_trace + the emitEvent forwarder.
+ *   - @p se = ep.se: Current synced epoch (week/TOW for the trace + log rows).
+ *   - @p stations = run.setup.stations: [in/out] StateManager markAmbiguityPendingReseed on
+ *     refloat; name / is_pivot reads.
+ *   - @p asm_res = ep.assembly.asm_res: Per-station assembly (pl_amb / A_s / A_r / y / w).
+ *   - @p est_index_of = ep.assembly.est_index_of: Station → reduced-system index (< 0 =
+ *     absent).
+ *   - @p present = ep.pass_a.present: This epoch's presence mask (attribution refloat scope).
+ *   - @p x_s = ep.solve.x_s: Post-fit shared solution vector.
+ *   - @p est = run.engines.est: reconstructStation / rowRedundancy (both const).
+ *   - @p shared_datum = ep.solve.plan.shared_datum: The shared hard-pin datum (Baarda
+ *     redundancy input). The run TU passes `plan.shared_datum`; this is the only substitution
+ *     relative to the moved body.
+ *   - @p clock_refloat_sats = handoff.clock_refloat_sats: [in/out] consensus / whole-sat
+ *     culprits whose shared clock also refloats (fed to SB_CLOCKUPD).
+ *   - @p retro_flag_sats = handoff.retro_flag_sats: [in/out] culprits whose emitted correction
+ *     was contaminated (retro-bump feed, SB_CLOCKUPD).
+ *   - @p retro_feed = ep.solve.retro_feed: Whether the retro-bump path is armed this run
+ *     (ura_retro || ura_refloat_inflate > 1.0).
+ *   - @p n_arc_refloat_epoch = handoff.n_arc_refloat_epoch: [in/out] this epoch's isolated-arc
+ *     refloat count (heartbeat churn metric, read later in the epoch).
+ *   - @p prires = run.engines.prires: [in/out] the prior-residual census accumulator, used
+ *     here only as the data-side feed of the constraint-aware global variance component
+ *     (docs/SPEC_prior_residual_census.md §14). The Pass-1 row walk already holds every row's
+ *     @c (w, v, r_i), so the feed costs a multiply and two adds inside an existing loop. Inert
+ *     unless @c network.prior_residual_global_sigma0 is armed, and measure-only in every case:
+ *     none of this seam's decisions (the σ̂0 pool, the consensus, the attribution, the
+ *     refloats) read from it. The accumulator is drained in SB_STASH_STATUS, which runs after
+ *     this seam, so the epoch's data side is complete when the column is written.
  */
-void networkPostFitRaim(NetworkRunContext& ctx,
-                        const GnssConfig& config_,
-                        const std::shared_ptr<spdlog::logger>& log,
-                        NetworkRunTraces& traces,
-                        const SyncedEpoch& se,
-                        std::vector<NetStation>& stations,
-                        const std::vector<StationAssembly>& asm_res,
-                        const std::vector<int>& est_index_of,
-                        const std::vector<bool>& present,
-                        const Eigen::VectorXd& x_s,
-                        const NetworkEstimator& est,
-                        const NetworkEstimator::Datum& shared_datum,
-                        std::set<std::string>& clock_refloat_sats,
-                        std::set<std::string>& retro_flag_sats,
-                        bool retro_feed,
-                        int& n_arc_refloat_epoch,
-                        NetworkPriorResidual& prires,
-                        const RawSlipEpoch* slip_ep = nullptr);
+void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHandoff& handoff);
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: within-epoch RAIM: the WE-CI screen and the T2 responses.
+ * @brief Run-end report: RAIM: the carried-phase pools and the re-host, the withhold era, the R2
+ *        station factor, the R4 rate hygiene.
  *
- * The within-epoch RAIM tier: the WE-CI code and ionosphere screen
- * (network.raim_we_code_iono) and the T2 within-epoch responses with their failed
- * re-solves (network.raim_within_epoch).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRaimWeCodeIono()`; `config_.networkRaimWithinEpoch()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkWithinEpochRaimRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the carried-phase RAIM pools: admissions and the re-host.
- *
- * The carried-phase RAIM pools: their admissions per contribution kind (card NOM N2b,
- * card RPA; a pool that never walked prints nothing) and the RAIM pool re-host on the
- * invariant carry (network.raim_carry_invariant).
- *
- * Gate: each section under its own condition, as in the teardown: always (a block);
- * `ctx.knobs.raim_ci_on`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkRaim.cpp, print in this order, each gated on its own knob:
+ *   - networkRaimPoolRunEnd: the carried-phase RAIM pools: admissions and the re-host.
+ *   - networkRaimWithholdRunEnd: the withhold era, the R2 station factor, the R4 rate hygiene.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkRaimPoolRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the withhold era, the R2 station factor, the R4 rate hygiene.
- *
- * The withhold-era release policy at both edges, the R2 station factor and the R4 rate
- * hygiene.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRaimWithholdAdaptEscalate() > 0 ||
- * config_.networkRaimWithholdFreeErase()`; `config_.networkRaimStationFactor()`;
- * `config_.networkRaimRateHygiene()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkRaimWithholdRunEnd(const NetworkRunEndView& v);
+int networkRaimRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+// ---- PASS B station steps, declarations (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py) ----
+
+struct StationBuild;                       // filter/NetworkStationBuild.hpp (card NOM3 step PB1b)
+struct StationCarryFrame;                  // filter/NetworkStationBuild.hpp
+enum class StationStep : std::uint8_t;     // filter/NetworkStationBuild.hpp
+
+/**
+ * @brief The RAIM pool re-host's carry-neutral checkable-column census.
+ *
+ * Step `raim_columns` of kStationBuildSteps (filter/NetworkStationBuild.hpp); its kinds: none
+ * (it records only). It returns at once unless `raim_ci_on || pd_handover_continuous`. Records:
+ * qc_amb. The frozen text of networkPassB_'s produce loop below its bindings (card NOM3 step
+ * PB1b).
+ * @param build One station's build: the station and its slot writable, the run read only.
+ * @return StationStep::Next.
+ */
+StationStep networkRaimColumnCensus(StationBuild& build);
+
+// ---- End of the PASS B station steps, declarations (card NOM3 step PB1b) ----
 
 } // namespace GnssProcessor

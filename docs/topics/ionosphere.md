@@ -42,13 +42,13 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [iono-field agreement](../cards/ionosphere/IONO-FIELD-AGREEMENT.md) | iono input coherent both-high (corr 0.981), broken low-high; 25° cutoff trims wander 8 % | closed | 2026-08-12 |
 | [EXT-CB arms 1–36](../cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | level defect = receiver GF-bias convention offset + ignition transient; L2-ESCAPE closed | closed | 2026-08-15 |
 | [LV](../cards/ionosphere/LV-REF.md) | reference: lv ladder knob and verdict ledgers, section map, binding grading protocol | reference | 2026-08-21 |
-| [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | ambiguity/iono split over-count: B_fit 3.00 freezes the level; F3 0.217 cyc sim 3 h | open | 2026-09-04 |
+| [AMB-IONO](../cards/ionosphere/AMB-IONO-SPLIT.md) | closed: diagonal carry over-counts each LOS's iono per band (B 3.00); F3's block is now float_kf's structure | closed | 2026-09-04 |
 | [F3 (pre-reg)](../cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | f3 pre-registration: F3 beat its 3 h line 2.7×, F1 intermediate, var floor FALSIFIED | closed | 2026-09-04 |
 | [F3 24 h](../cards/ionosphere/AMB-IONO-F3-24H.md) | settled quarter FALSIFIED as traced; the episodes were the DD trace's reference satellite | superseded | 2026-09-05 |
 | [0910 afternoon](../cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | level memory FAILS x4; fewer T4 erases FAIL the consumer at every K; continuity KEEP_OFF | closed | 2026-09-10 |
 | [0910 morning](../cards/ionosphere/AMB-IONO-0910-MORNING.md) | oracle repair FAILS, PB-gauge levelling FALSIFIED; the phase bias is a receiver's float | closed | 2026-09-10 |
 | [0910 second half](../cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | eleven probes FAIL with one shape; emission continuity FALSIFIED; producer AR NO-GO | closed | 2026-09-10 |
-| [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | open-question register, items 1 to 44: many closed in the text, the rest still owed | open | 2026-09-10 |
+| [AMB-IONO open](../cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | closed: 45 items reviewed: 13 done, 10 falsified, 12 superseded, 7 moot, 2 dup; 1 owed (unread config keys) | closed | 2026-09-10 |
 | [LV-SEED](../cards/ionosphere/LV-SEED-per-los-level.md) | all three hypotheses refuted (arc start, iono, geometry); wander is the satellite clock | closed | 2026-09-14 |
 | [LV-1](../cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free iono seeding: stated mechanism FALSIFIED (a solve no-op); kept as a diagnostic | closed | — |
 | [LV-2](../cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB de-mean: do NOT arm, it re-pins the common mode to a frozen frame (+15 to +21 TECU) | closed | — |

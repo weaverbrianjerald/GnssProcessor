@@ -39,6 +39,12 @@ from that first line to the item's opening brace.  Exit 0 only when all four che
 A body is compared as text, so the check proves where each function now lives, not what
 its names refer to: the includes of each new file are new, and the compiler, not this
 script, proves them sufficient.
+
+Historical.  The check holds for the HV0 cut as it landed.  Later work edited the relocated
+bodies without declaring the edits here: card NOM3 step EP0 (NetworkKnobs::snapshot) and the
+retired-key deletion (card RKD: the phase hold inject, the LV-5 pre-pass, the leveling
+harvest, the carry stash, the knob snapshot).  On such a tree the script reports those items
+as missing; it is kept as the record of the cut, not as a gate.
 """
 import argparse
 import pathlib

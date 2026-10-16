@@ -206,6 +206,9 @@ namespace GnssProcessor {
                                   const NetworkProductEmitter& emitter,
                                   const NetworkSolutionEpoch& sol);
 
+    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
     /**
      * @brief Fold half (E1): compare the capture with the ledger, count, write events.
      *
@@ -213,12 +216,20 @@ namespace GnssProcessor {
      * admitted machine has advanced for this epoch.  When no capture ran (a withheld
      * epoch), every counter is left unchanged.
      *
-     * @param ctx    Run context.
-     * @param traces Trace bundle (the @c ARC event rows).
-     * @param se     This epoch (its time stamps the rows).
+     * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+     * retired in card NOM3 step EP2 (the unit tests call this form through
+     * tests/support/NetworkTestRun.hpp).
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.traces (traces).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     *
+     * The former parameters, by binding:
+     *   - @p ctx = run.ctx: Run context.
+     *   - @p traces = run.traces: Trace bundle (the @c ARC event rows).
+     *   - @p se = ep.se: This epoch (its time stamps the rows).
      */
-    void networkLedgerEmitFold(NetworkRunContext& ctx, NetworkRunTraces& traces,
-                               const SyncedEpoch& se);
+    void networkLedgerEmitFold(NetworkRun& run, const NetworkEpoch& ep);
 
     /**
      * @brief E2: build this epoch's declaration from the roster.

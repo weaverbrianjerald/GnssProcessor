@@ -347,9 +347,9 @@ TEST(NetworkSharedHistoryTest, RegistrationNeedsTheGenerationAndAReferenceAndFol
     LocalCarry stale{1.0, 1e-4, kStash};   // re-stashed without history terms: ignored
     stale.shx_coef = {0.0, 0.5, 0.0};
     stale.shx_stash_s = kStash - 30.0;
-    ctx.carry.local_carry[std::make_tuple(0, std::string("G02"), std::string("L1C"))] = a;
-    ctx.carry.zwd_carry[1] = z;
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G02"), std::string("L1C"))] = stale;
+    net::putArc(ctx.entities, std::make_tuple(0, std::string("G02"), std::string("L1C")), &net::ArcState::amb) = a;
+    net::put(ctx.entities.stations, StationId{1}, &net::StationState::zwd) = z;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G02"), std::string("L1C")), &net::ArcState::amb) = stale;
 
     NetworkEstimator est;
     est.registerClock("G01");
@@ -391,7 +391,7 @@ TEST(NetworkSharedHistoryTest, RegistrationNeedsTheGenerationAndAReferenceAndFol
     off.ctx->carry.cxu_stash_valid = true;
     off.ctx->carry.cxu_stash_s = kStash;
     off.ctx->carry.shx = ctx.carry.shx;
-    off.ctx->carry.local_carry = ctx.carry.local_carry;
+    net::assignArc(off.ctx->entities, &net::ArcState::amb, net::arcMap(ctx.entities.arcs, &net::ArcState::amb));
     NetworkEstimator e3;
     e3.registerClock("G01");
     networkSharedHistoryRegister(*off.ctx, e3);
@@ -431,7 +431,7 @@ TEST(NetworkSharedHistoryTest, HarvestEndKeepsTheSharedTermAcrossStations) {
             h.rc[{static_cast<std::size_t>(sta), col}] = rc;
             LocalCarry lc{1.0 + i, 2e-4 + 1e-5 * i, kStash};
             var0.push_back(lc.var);
-            ctx.carry.local_carry[std::make_tuple(sta, sat, std::string("L1C"))] = lc;
+            net::putArc(ctx.entities, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb) = lc;
             networkSharedHistoryNoteEntry(H, static_cast<std::size_t>(sta), col,
                                           SharedHistoryMap::Amb, sta, sat, "L1C");
         }
@@ -460,7 +460,7 @@ TEST(NetworkSharedHistoryTest, HarvestEndKeepsTheSharedTermAcrossStations) {
         for (int i = 0; i < 4; ++i) {
             const auto& [sta, sat, col] = rows[static_cast<std::size_t>(i)];
             (void)col;
-            const LocalCarry& lc = ctx.carry.local_carry.at(std::make_tuple(sta, sat, std::string("L1C")));
+            const LocalCarry& lc = (*net::getArc(ctx.entities.arcs, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb));
             ASSERT_TRUE(sharedHistoryCoefValid(lc));
             ASSERT_EQ(lc.shx_coef.size(), static_cast<std::size_t>(ncl));
             for (int j = 0; j < ncl; ++j) coef(i, j) = lc.shx_coef[static_cast<std::size_t>(j)];
@@ -507,7 +507,7 @@ namespace {
 struct RowFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     CouplingExactEpoch ep;
     SharedHistoryState shx;
@@ -553,8 +553,8 @@ struct RowFixture {
 
     /// One row through buildCplRow, with or without the shared history.
     PendCplRow row(const LocalCarry& lc, bool with_shx) {
-        CouplingRowBuilder cb{est, shc, 1e-4, 1e-4, 1e-4, false, true, false, false, false,
-                              tu_reinit_hist, R};
+        CouplingRowBuilder cb{est, shc, 1e-4, 1e-4, 1e-4, /*tu=*/true, /*gauge=*/false,
+                              /*reinit=*/false, tu_reinit_hist, R};
         cb.cxu = &ep;
         if (with_shx) cb.shx = &shx;
         cb.buildCplRow(4, 0.1, lc, 0.02, 30.0);
@@ -821,18 +821,18 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
         r3(i) = nd(rng);
     }
     const double v1 = r1.dot(Sig * r1), v2 = r2.dot(Sig * r2), v3 = r3.dot(Sig * r3);
-    ctx.carry.smh_clone["G05|L1C"] = pendingClone("G05", r1, v1, ep, 1e-6);
-    ctx.carry.smh_clone["G07|L1C"] = pendingClone("G07", r2, v2, ep - 1, 2e-6);   // another epoch
+    net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone("G05", r1, v1, ep, 1e-6);
+    net::putSig(ctx.entities, "G07|L1C", &net::SatSignalState::smh_clone) = pendingClone("G07", r2, v2, ep - 1, 2e-6);   // another epoch
     PbHoldClone dead = pendingClone("G09", r2, v2, ep, 3e-6);
     dead.alive = false;
-    ctx.carry.smh_clone["G09|L1C"] = dead;
+    net::putSig(ctx.entities, "G09|L1C", &net::SatSignalState::smh_clone) = dead;
     PbHoldClone blk = pendingClone("G11", r2, v2, ep, 4e-6);
     blk.block        = true;
     blk.pv_var       = 5e-6;
     blk.pv_shx.rc    = r3;
     blk.pv_shx.rc_var = v3;
     blk.pv_shx.rc_ep = ep;
-    ctx.carry.smh_block["G11|L1C"] = blk;
+    net::putSig(ctx.entities, "G11|L1C", &net::SatSignalState::smh_block) = blk;
 
     networkSharedHistoryProjectHoldRows(ctx, &X, kStash);
     const auto check = [&](const PbHoldCloneShx& sh, double var, double var0, const Eigen::VectorXd& r) {
@@ -844,12 +844,12 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
         EXPECT_EQ(sh.rc_ep, -1) << "no longer pending";
         EXPECT_EQ(sh.rc.size(), 0);
     };
-    check(ctx.carry.smh_clone.at("G05|L1C").shx, ctx.carry.smh_clone.at("G05|L1C").var, 1e-6, r1);
-    check(ctx.carry.smh_block.at("G11|L1C").shx, ctx.carry.smh_block.at("G11|L1C").var, 4e-6, r2);
-    check(ctx.carry.smh_block.at("G11|L1C").pv_shx, ctx.carry.smh_block.at("G11|L1C").pv_var, 5e-6, r3);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").shx.rc_ep, ep - 1) << "not this epoch's pending";
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").var, 2e-6);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G09|L1C").var, 3e-6) << "a dead row is not touched";
+    check((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx, (*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6, r1);
+    check((*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).shx, (*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).var, 4e-6, r2);
+    check((*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).pv_shx, (*net::getSig(ctx.entities.sat_signals, "G11|L1C", &net::SatSignalState::smh_block)).pv_var, 5e-6, r3);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, ep - 1) << "not this epoch's pending";
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).var, 2e-6);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G09|L1C", &net::SatSignalState::smh_clone)).var, 3e-6) << "a dead row is not touched";
     EXPECT_EQ(ctx.counters.shx.hold_projected, 3);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
     ASSERT_EQ(ctx.counters.shx.hold_kept_share.size(), 3u);
@@ -857,26 +857,26 @@ TEST(NetworkSharedHistoryTest, HarvestEndProjectsTheHoldRowsOntoTheCompression) 
 
     // The re-harvest's finalize: the row pending from the previous epoch takes the per-row term.
     networkSharedHistoryFinalizeHoldRows(ctx, ep);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").var, 2e-6 + v2);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G07|L1C").shx.rc_ep, -1);
-    EXPECT_TRUE(ctx.carry.smh_clone.at("G07|L1C").shx.coef.empty());
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).var, 2e-6 + v2);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, -1);
+    EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G07|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
     EXPECT_EQ(ctx.counters.shx.hold_nocomp_unreached, 1);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6 + sharedHistoryProject(r1, X.L, X.V, 2).rem)
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6 + sharedHistoryProject(r1, X.L, X.V, 2).rem)
         << "a projected row is final";
 
     // No compression this epoch (a harvest without the regression, a failed compression):
     // the per-row term, counted.
-    ctx.carry.smh_clone["G13|L1C"] = pendingClone("G13", r3, v3, ep, 6e-6);
+    net::putSig(ctx.entities, "G13|L1C", &net::SatSignalState::smh_clone) = pendingClone("G13", r3, v3, ep, 6e-6);
     networkSharedHistoryProjectHoldRows(ctx, nullptr, kStash);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G13|L1C").var, 6e-6 + v3);
-    EXPECT_TRUE(ctx.carry.smh_clone.at("G13|L1C").shx.coef.empty());
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G13|L1C", &net::SatSignalState::smh_clone)).var, 6e-6 + v3);
+    EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G13|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
     EXPECT_EQ(ctx.counters.shx.hold_nocomp_end, 1);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 0);
     // A width mismatch (the hold's Y is not the compression's) is a failure too.
-    ctx.carry.smh_clone["G15|L1C"] = pendingClone("G15", Eigen::VectorXd::Ones(3), 0.5, ep, 0.0);
+    net::putSig(ctx.entities, "G15|L1C", &net::SatSignalState::smh_clone) = pendingClone("G15", Eigen::VectorXd::Ones(3), 0.5, ep, 0.0);
     networkSharedHistoryProjectHoldRows(ctx, &X, kStash);
-    EXPECT_EQ(ctx.carry.smh_clone.at("G15|L1C").var, 0.5);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G15|L1C", &net::SatSignalState::smh_clone)).var, 0.5);
     EXPECT_EQ(ctx.counters.shx.hold_proj_failed, 1);
 }
 
@@ -981,11 +981,11 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
         NetworkRunContext& ctx = *S.ctx;
         ASSERT_TRUE(ctx.knobs.emit_pb_hold_smoothed);
         const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-        ctx.carry.smh_clone["G05|L1C"] = pendingClone("G05", Eigen::VectorXd::Ones(2), 0.25, ep, 1e-6);
+        net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone("G05", Eigen::VectorXd::Ones(2), 0.25, ep, 1e-6);
         networkSharedHistoryProjectHoldRows(ctx, nullptr, kStash);
         networkSharedHistoryFinalizeHoldRows(ctx, ep);
-        EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6);
-        EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").shx.rc_ep, ep);
+        EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6);
+        EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx.rc_ep, ep);
         EXPECT_EQ(ctx.counters.shx.hold_proj_failed + ctx.counters.shx.hold_projected
                       + ctx.counters.shx.hold_nocomp_end + ctx.counters.shx.hold_nocomp_unreached, 0);
     }
@@ -1073,25 +1073,25 @@ TEST(NetworkSharedHistoryTest, AmendmentIsBitwiseInertWithTheHistoryOrTheSmoothe
                 const std::string sat = (i % 2) ? "G03" : "G02";
                 const Eigen::Index col = 10 * (sta + 1) + (i % 2);
                 hh.rc[{static_cast<std::size_t>(sta), col}] = rcs[static_cast<std::size_t>(i)];
-                ctx.carry.local_carry[std::make_tuple(sta, sat, std::string("L1C"))] = LocalCarry{1.0, 1e-4, kStash};
+                net::putArc(ctx.entities, std::make_tuple(sta, sat, std::string("L1C")), &net::ArcState::amb) = LocalCarry{1.0, 1e-4, kStash};
                 networkSharedHistoryNoteEntry(H, static_cast<std::size_t>(sta), col, SharedHistoryMap::Amb, sta,
                                               sat, "L1C");
             }
             if (with_hold)
-                ctx.carry.smh_clone["G05|L1C"] = pendingClone(
+                net::putSig(ctx.entities, "G05|L1C", &net::SatSignalState::smh_clone) = pendingClone(
                     "G05", Eigen::VectorXd::Ones(2), 0.25, static_cast<long long>(ctx.counters.n_loop_epochs), 1e-6);
             networkSharedHistoryHarvestEnd(H, hh, ctx, kStash);
             if (with_hold) {
-                EXPECT_EQ(ctx.carry.smh_clone.at("G05|L1C").var, 1e-6) << "the hold off: not projected";
-                EXPECT_TRUE(ctx.carry.smh_clone.at("G05|L1C").shx.coef.empty());
+                EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).var, 1e-6) << "the hold off: not projected";
+                EXPECT_TRUE((*net::getSig(ctx.entities.sat_signals, "G05|L1C", &net::SatSignalState::smh_clone)).shx.coef.empty());
             }
             return S;
         };
         const auto A  = runEnd("hold_off_a", false);
         const auto Bc = runEnd("hold_off_b", true);
-        ASSERT_EQ(A->ctx->carry.local_carry.size(), 4u);
-        for (const auto& [key, lc] : A->ctx->carry.local_carry) {
-            const LocalCarry& lb = Bc->ctx->carry.local_carry.at(key);
+        ASSERT_EQ(net::present(A->ctx->entities.arcs, &net::ArcState::amb), 4u);
+        for (const auto& [key, lc] : net::arcMap(A->ctx->entities.arcs, &net::ArcState::amb)) {
+            const LocalCarry& lb = (*net::getArc(Bc->ctx->entities.arcs, key, &net::ArcState::amb));
             EXPECT_EQ(lc.var, lb.var);
             EXPECT_EQ(lc.shx_coef, lb.shx_coef);
             EXPECT_EQ(lc.shx_stash_s, lb.shx_stash_s);
@@ -1214,8 +1214,8 @@ TEST(NetworkSharedHistoryTest, KeepsTheClockGaugeWithAPinnedPivotColumn) {
         EXPECT_EQ(cond_var, 2e-4) << "X2 defers the conditional variance";
         EXPECT_EQ(row.segment(4, 3).cwiseAbs().maxCoeff(), 0.0) << "the Y terms are gone";
         rows_after.push_back(row);
-        ctx.carry.local_carry[std::make_tuple(sta, std::string(i % 3 == 0 ? "G02" : "G03"),
-                                              std::string("L") + std::to_string(i))] = LocalCarry{1.0, 2e-4, kStash};
+        net::putArc(ctx.entities, std::make_tuple(sta, std::string(i % 3 == 0 ? "G02" : "G03"),
+                                              std::string("L") + std::to_string(i)), &net::ArcState::amb) = LocalCarry{1.0, 2e-4, kStash};
         networkSharedHistoryNoteEntry(Hh, static_cast<std::size_t>(sta), col, SharedHistoryMap::Amb, sta,
                                       i % 3 == 0 ? "G02" : "G03", std::string("L") + std::to_string(i));
     }

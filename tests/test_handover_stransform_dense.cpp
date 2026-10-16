@@ -28,6 +28,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkClockClone.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -92,7 +93,7 @@ Eigen::MatrixXd fixtureP() {
 /// The carried state: one entry per block key at var = P_ii (its decision made, unmoved), and
 /// a parked GPS clock G07 with no block row.
 NetworkCarryState fixtureCarry() {
-    NetworkCarryState c;
+    NetworkCarryState c; net::NetworkEntities c_ent;
     const Eigen::MatrixXd P = fixtureP();
     c.prev_carry_cov.P = P;
     for (int i = 0; i < kK; ++i) {
@@ -192,6 +193,7 @@ struct SeamBed {
     std::unique_ptr<NetworkRunContext> ctx;
     std::shared_ptr<spdlog::logger> log;
     std::vector<std::string> registered{"G02", "G05", "G32", "E02", "E03"};
+    EpochEvents events;   ///< The current epoch's events.
     SeamBed(const std::string& tag, const std::string& extra) : L(tag, extra) {
         EXPECT_TRUE(L.ok);
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
@@ -202,12 +204,12 @@ struct SeamBed {
         traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, log);
         ctx = std::make_unique<NetworkRunContext>(L.cfg, L.cfg.getNetworkConfig());
-        NetworkCarryState fx = fixtureCarry();
+        NetworkCarryState fx = fixtureCarry(); net::NetworkEntities fx_ent;
         ctx->carry.prev_carry     = fx.prev_carry;
         ctx->carry.prev_carry_cov = fx.prev_carry_cov;
-        ctx->carry.prev_pivot["G"] = "G01";
-        ctx->carry.last_pivot["G"] = "G01";
-        ctx->carry.cxu_pivot['G']  = {"G01", 0.0};
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::prev_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::last_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot)  = {"G01", 0.0};
     }
     ~SeamBed() {
         traces.reset();
@@ -219,7 +221,7 @@ struct SeamBed {
         plan.clock_pivot["G"] = "G02";
         plan.clock_pivot["E"] = "E02";
         networkHandoverStransform(*ctx, L.cfg, log, *traces, GnssTime{2313, 276150.0}, plan,
-                                  /*datum_changed=*/true, std::set<char>{'G'}, registered);
+                                  /*datum_changed=*/true, std::set<char>{'G'}, registered, events);
     }
 };
 
@@ -244,9 +246,9 @@ bool carryEqual(const std::vector<CarryPrior>& a, const std::vector<CarryPrior>&
 
 // (a) and (b): the kernel against the explicit S P+ S^T, and the incoming pivot exact.
 TEST(HandoverStransformDense, EqualsTheExplicitSPSTransposeOfTheAugmentedBlock) {
-    NetworkCarryState c = fixtureCarry();
+    NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
     const Reference ref = reference();
-    const ClockStransformDenseResult r = applyClockStransformDense(c, 'G', "G02", "G01");
+    const ClockStransformDenseResult r = applyClockStransformDense(c, c_ent, 'G', "G02", "G01");
     ASSERT_TRUE(r.applied) << r.reason;
     EXPECT_TRUE(r.selfcheck_ok);
     EXPECT_TRUE(r.p_added);
@@ -294,9 +296,9 @@ TEST(HandoverStransformDense, EqualsTheExplicitSPSTransposeOfTheAugmentedBlock) 
 
 // (c): the S-transform property on the block.
 TEST(HandoverStransformDense, ContrastsAndTheUnmovedBlockAreInvariant) {
-    NetworkCarryState c = fixtureCarry();
+    NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
     const Reference ref = reference();
-    ASSERT_TRUE(applyClockStransformDense(c, 'G', "G02", "G01").applied);
+    ASSERT_TRUE(applyClockStransformDense(c, c_ent, 'G', "G02", "G01").applied);
     const Eigen::MatrixXd& Pn = c.prev_carry_cov.P;
     const Eigen::MatrixXd& Po = ref.Pplus;
     const double tol = 1e-12 * Po.cwiseAbs().maxCoeff();
@@ -330,12 +332,12 @@ TEST(HandoverStransformDense, ContrastsAndTheUnmovedBlockAreInvariant) {
 
 // (d) and (e): idempotent, and positive semi-definite.
 TEST(HandoverStransformDense, SecondCallIsTheIdentityAndTheResultIsPsd) {
-    NetworkCarryState c = fixtureCarry();
-    ASSERT_TRUE(applyClockStransformDense(c, 'G', "G02", "G01").applied);
+    NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
+    ASSERT_TRUE(applyClockStransformDense(c, c_ent, 'G', "G02", "G01").applied);
     const Eigen::MatrixXd P1 = c.prev_carry_cov.P;
     const std::vector<CarryPrior> carry1 = c.prev_carry;
     const auto row1 = c.prev_carry_cov.row;
-    const ClockStransformDenseResult r2 = applyClockStransformDense(c, 'G', "G02", "G01");
+    const ClockStransformDenseResult r2 = applyClockStransformDense(c, c_ent, 'G', "G02", "G01");
     ASSERT_TRUE(r2.applied);
     EXPECT_EQ(r2.c0, 0.0);
     EXPECT_EQ(r2.pqq, 0.0);
@@ -352,14 +354,14 @@ TEST(HandoverStransformDense, SecondCallIsTheIdentityAndTheResultIsPsd) {
 // (f): the diagonal kernel, folded with the off-diagonals it leaves in the outgoing frame,
 // over-states every clock contrast by exactly 2 var_q; the dense kernel keeps it.
 TEST(HandoverStransformDense, DiagonalKernelOverstatesAClockContrastByTwiceVarQ) {
-    NetworkCarryState diag = fixtureCarry();
-    NetworkCarryState dense = fixtureCarry();
+    NetworkCarryState diag = fixtureCarry(); net::NetworkEntities diag_ent;
+    NetworkCarryState dense = fixtureCarry(); net::NetworkEntities dense_ent;
     const Eigen::MatrixXd P0 = fixtureP();
     const double var_q = P0(kQ, kQ);
     const std::vector<std::string> registered{"G02", "G05", "G32", "E02", "E03"};
     const auto v_c = NetworkSbasis::clockNullDirection(registered, "G");
-    ASSERT_TRUE(applyClockStransform(diag, v_c, "G02").applied);
-    ASSERT_TRUE(applyClockStransformDense(dense, 'G', "G02", "G01").applied);
+    ASSERT_TRUE(applyClockStransform(diag, diag_ent, v_c, "G02").applied);
+    ASSERT_TRUE(applyClockStransformDense(dense, dense_ent, 'G', "G02", "G01").applied);
     EXPECT_TRUE(bitwiseEqual(diag.prev_carry_cov.P, P0)) << "the diagonal kernel leaves the block";
     const double c_true = P0(1, 1) + P0(3, 3) - 2.0 * P0(1, 3);
     const double c_diag = entry(diag, "G05")->var + entry(diag, "G32")->var - 2.0 * diag.prev_carry_cov.P(1, 3);
@@ -376,10 +378,10 @@ TEST(HandoverStransformDense, DiagonalKernelOverstatesAClockContrastByTwiceVarQ)
 // in the entries the kernel does not write is left as it is and does not fail the self-check
 // (the 6 h golden arms' first build flagged every edge this way).
 TEST(HandoverStransformDense, SelfCheckIgnoresTheStashsRoundingAsymmetry) {
-    NetworkCarryState c = fixtureCarry();
+    NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
     c.prev_carry_cov.P(2, 4) += 1e-19;   // E02 against the G02 code bias: u = 0 on both sides
     const double kept = c.prev_carry_cov.P(2, 4);
-    const ClockStransformDenseResult r = applyClockStransformDense(c, 'G', "G02", "G01");
+    const ClockStransformDenseResult r = applyClockStransformDense(c, c_ent, 'G', "G02", "G01");
     ASSERT_TRUE(r.applied);
     EXPECT_TRUE(r.selfcheck_ok);
     EXPECT_EQ(c.prev_carry_cov.P(2, 4), kept);
@@ -390,31 +392,31 @@ TEST(HandoverStransformDense, SelfCheckIgnoresTheStashsRoundingAsymmetry) {
 
 // (g): the paths that cannot apply change nothing.
 TEST(HandoverStransformDense, NotAppliedPathsChangeNothing) {
-    const NetworkCarryState base = fixtureCarry();   // the reference (the state is not copyable)
+    const NetworkCarryState base = fixtureCarry(); net::NetworkEntities base_ent;   // the reference (the state is not copyable)
     {   // no block row for the incoming pivot (a carried entry only)
-        NetworkCarryState c = fixtureCarry();
+        NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
         CarryPrior g09;
         g09.kind = SharedParamKind::Clock; g09.sat = "G09"; g09.value = 0.25; g09.var = 0.5;
         c.prev_carry.push_back(g09);
         const std::vector<CarryPrior> before = c.prev_carry;
-        const ClockStransformDenseResult r = applyClockStransformDense(c, 'G', "G09", "G01");
+        const ClockStransformDenseResult r = applyClockStransformDense(c, c_ent, 'G', "G09", "G01");
         EXPECT_FALSE(r.applied);
         EXPECT_STREQ(r.reason, "no_q_row");
         EXPECT_TRUE(bitwiseEqual(c.prev_carry_cov.P, base.prev_carry_cov.P));
         EXPECT_TRUE(carryEqual(c.prev_carry, before));
     }
     {   // no carried entry for the incoming pivot
-        NetworkCarryState c = fixtureCarry();
-        const ClockStransformDenseResult r = applyClockStransformDense(c, 'G', "G10", "G01");
+        NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
+        const ClockStransformDenseResult r = applyClockStransformDense(c, c_ent, 'G', "G10", "G01");
         EXPECT_FALSE(r.applied);
         EXPECT_STREQ(r.reason, "no_q_entry");
         EXPECT_TRUE(bitwiseEqual(c.prev_carry_cov.P, base.prev_carry_cov.P));
         EXPECT_TRUE(carryEqual(c.prev_carry, base.prev_carry));
     }
     {   // an empty block
-        NetworkCarryState c = fixtureCarry();
+        NetworkCarryState c = fixtureCarry(); net::NetworkEntities c_ent;
         c.prev_carry_cov.clear();
-        const ClockStransformDenseResult r = applyClockStransformDense(c, 'G', "G02", "G01");
+        const ClockStransformDenseResult r = applyClockStransformDense(c, c_ent, 'G', "G02", "G01");
         EXPECT_FALSE(r.applied);
         EXPECT_STREQ(r.reason, "empty_block");
         EXPECT_TRUE(carryEqual(c.prev_carry, base.prev_carry));
@@ -427,27 +429,27 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
     {
         SeamBed B("seam_off", kArmed);
         ASSERT_FALSE(B.ctx->knobs.handover_stransform_dense);
-        NetworkCarryState expect = fixtureCarry();
+        NetworkCarryState expect = fixtureCarry(); net::NetworkEntities expect_ent;
         const auto v_c = NetworkSbasis::clockNullDirection(B.registered, "G");
-        ASSERT_TRUE(applyClockStransform(expect, v_c, "G02").applied);
+        ASSERT_TRUE(applyClockStransform(expect, expect_ent, v_c, "G02").applied);
         B.handover();
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, fixtureP()));
         EXPECT_EQ(B.ctx->carry.prev_carry_cov.row.size(), static_cast<std::size_t>(kK));
         EXPECT_TRUE(carryEqual(B.ctx->carry.prev_carry, expect.prev_carry));
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
-        EXPECT_EQ(B.ctx->carry.sts_consts.count('G'), 1u);
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
+        EXPECT_EQ(B.events.handover.sts_consts.count('G'), 1u);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 0);
     }
     {
         SeamBed B("seam_on", kArmed + "    \"handover_stransform_dense\": true,\n");
         ASSERT_TRUE(B.ctx->knobs.handover_stransform_dense);
-        NetworkCarryState expect = fixtureCarry();
-        ASSERT_TRUE(applyClockStransformDense(expect, 'G', "G02", "G01").applied);
+        NetworkCarryState expect = fixtureCarry(); net::NetworkEntities expect_ent;
+        ASSERT_TRUE(applyClockStransformDense(expect, expect_ent, 'G', "G02", "G01").applied);
         B.handover();
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, expect.prev_carry_cov.P));
         EXPECT_TRUE(carryEqual(B.ctx->carry.prev_carry, expect.prev_carry));
-        ASSERT_EQ(B.ctx->carry.sts_dense.count('G'), 1u);
-        const auto& rec = B.ctx->carry.sts_dense.at('G');
+        ASSERT_EQ(B.events.handover.sts_dense.count('G'), 1u);
+        const auto& rec = B.events.handover.sts_dense.at('G');
         EXPECT_EQ(rec.q, "G02");
         EXPECT_EQ(rec.p, "G01");
         EXPECT_TRUE(rec.p_added);
@@ -457,7 +459,7 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(rec.row_sats, (std::set<std::string>{"G01", "G02", "G05", "G32"}));
         // The parked G07 has no decision this epoch, so it is not in the clean set.
         EXPECT_EQ(rec.clean, (std::set<std::string>{"G02", "G05", "G32"}));
-        EXPECT_EQ(B.ctx->carry.sts_consts.count('G'), 1u);
+        EXPECT_EQ(B.events.handover.sts_consts.count('G'), 1u);
         EXPECT_EQ(B.ctx->counters.sts_edges, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_fallback, 0);
@@ -466,12 +468,13 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(B.ctx->counters.sts_dense_parked, 1);
         EXPECT_EQ(B.ctx->counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)], 1);
         EXPECT_GT(B.ctx->counters.sts_dense_var_saved, 0.0) << "positively correlated clocks";
-        // The next epoch clears the record before anything reads it.
-        B.ctx->carry.sts_dense['E'];
+        // The next epoch's events start empty.
+        B.events.handover.sts_dense['E'];
+        B.events = EpochEvents{};
         NetworkSbasis::Plan plan;
         networkHandoverStransform(*B.ctx, B.L.cfg, B.log, *B.traces, GnssTime{2313, 276180.0},
-                                  plan, /*datum_changed=*/false, {}, B.registered);
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
+                                  plan, /*datum_changed=*/false, {}, B.registered, B.events);
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
     }
     {   // the incoming pivot without a block row: the diagonal kernel, counted
         SeamBed B("seam_fallback", kArmed + "    \"handover_stransform_dense\": true,\n");
@@ -481,7 +484,7 @@ TEST(HandoverStransformDense, SeamOffRunsTheDiagonalKernelAndOnRecordsTheDenseEd
         EXPECT_EQ(B.ctx->counters.sts_dense_fallback, 1);
         EXPECT_EQ(B.ctx->counters.sts_dense_edges, 0);
         EXPECT_EQ(B.ctx->counters.sts_edges, 1);
-        EXPECT_TRUE(B.ctx->carry.sts_dense.empty());
+        EXPECT_TRUE(B.events.handover.sts_dense.empty());
         EXPECT_TRUE(bitwiseEqual(B.ctx->carry.prev_carry_cov.P, P0));
         EXPECT_EQ(entry(B.ctx->carry, "G02")->value, 0.0);
     }
@@ -569,7 +572,7 @@ TEST(HandoverStransformDense, CloneFoldIsTheJointLawAcrossTheDenseHandover) {
     B.ctx->carry.cxu_epoch.ok = true;
     B.ctx->carry.cxu_epoch.P  = P0;
     B.handover();
-    ASSERT_EQ(B.ctx->carry.sts_dense.count('G'), 1u);
+    ASSERT_EQ(B.events.handover.sts_dense.count('G'), 1u);
 
     // The layout: the epoch's columns (G01 has left), then the GPS clocks' clones.
     NetworkEstimator est;
@@ -632,7 +635,8 @@ TEST(HandoverStransformDense, CloneFoldIsTheJointLawAcrossTheDenseHandover) {
 
     EpochWorkspace ws;
     ASSERT_TRUE(networkClockCloneDenseFold(*B.ctx, ws, est, dkeys, drow, dvar_eff, dinflate,
-                                           dreexp, cov_eff, /*within_epoch_armed=*/true, nullptr));
+                                           dreexp, cov_eff, /*within_epoch_armed=*/true, nullptr,
+                                           B.events));
     const ClockCloneCounters& C = B.ctx->counters.ccl;
     EXPECT_EQ(C.fold_dense_epochs, 1);
     EXPECT_EQ(C.fold_dense_standin, 3);

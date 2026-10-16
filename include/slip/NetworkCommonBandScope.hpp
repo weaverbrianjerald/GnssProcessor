@@ -94,11 +94,11 @@
  * IF-TD pair refloat each free (their own bands ∩ implicated), so the per-epoch
  * union is exactly `implicated` (Study 3's per-epoch invariant, §Z.2).
  *
- * ### Relation to refloat_band_scope
+ * ### Relation to the retired study-3 band scope
  *
- * @c network.cycle_slip.refloat_band_scope (§Z) picks the band to keep from the
- * MW/GF decomposition and was falsified on the storm bed: its fallback kept L1C
- * regardless of what had happened to it and collapsed the integers.  This scope
+ * The retired @c network.cycle_slip.refloat_band_scope (§Z) picked the band to keep
+ * from the MW/GF decomposition and was falsified on the storm bed: its fallback kept
+ * L1C regardless of what had happened to it and collapsed the integers.  This scope
  * is set-theoretic: it needs no decomposition, keeps only bands that were
  * positively exonerated, and with no exoneration does nothing.
  *

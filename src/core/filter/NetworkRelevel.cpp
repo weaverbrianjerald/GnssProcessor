@@ -27,10 +27,11 @@
 
 namespace GnssProcessor {
 
-long long ephCutoverShiftCarry(NetworkCarryState& carry, const std::string& sat, double d,
+long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                               const std::string& sat, double d,
                                bool cpl_cond, CarrySiteCounts* counts, bool complete) {
     return forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::EphRelevel, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::EphRelevel, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat != sat) return false;
             switch (r.site) {
@@ -69,8 +70,6 @@ void networkEphCutoverRelevel(NetworkRunContext& ctx,
                               const std::vector<std::string>& registered_clock_sats,
                               bool brdc_rts) {
     // --- Alias preamble (byte-copies of the SolveGlue run-TU alias block). ---
-    auto& relevel_iode = ctx.carry.relevel_iode;
-    auto& eph_cutover_disc_pending = ctx.carry.eph_cutover_disc_pending;
     const bool carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -119,15 +118,15 @@ if (brdc_rts) {
         const auto now = eph_store.computeSatelliteClock(sat, se.time);
         if (!now) continue;                                  // no eph held → nothing to track
         const int new_iode = now->iode;
-        auto bit = relevel_iode.find(sat);
-        if (bit == relevel_iode.end()) {                     // first sighting: seed, no shift
-            relevel_iode[sat] = new_iode;
+        const int* prev = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::relevel_iode);
+        if (prev == nullptr) {                               // first sighting: seed, no shift
+            net::putSat(ctx.entities, sat, &net::SatelliteState::relevel_iode) = new_iode;
             continue;
         }
-        if (bit->second == new_iode) continue;               // no roll (the common case)
-        const int old_iode = bit->second;
+        if (*prev == new_iode) continue;                     // no roll (the common case)
+        const int old_iode = *prev;
         const auto shift = eph_store.ephCutoverShiftMetres(sat, se.time, old_iode);
-        relevel_iode[sat] = new_iode;                        // baseline advances regardless
+        net::putSat(ctx.entities, sat, &net::SatelliteState::relevel_iode) = new_iode;   // baseline advances regardless
         if (shift) {
             // Re-base the carried clock state by −Δ_eph.  Only the offset / level term
             // moves; the drift (c1) and the 2×2 covariance are frame-invariant.
@@ -143,7 +142,7 @@ if (brdc_rts) {
             // moved.  The sites the re-level does not move are declared in the mechanism table
             // (card CLV section 6.4 item 6).
             CarrySiteCounts prm_cc;
-            ephCutoverShiftCarry(ctx.carry, sat, d, carry_cpl_cond, &prm_cc,
+            ephCutoverShiftCarry(ctx.carry, ctx.entities, sat, d, carry_cpl_cond, &prm_cc,
                                  ctx.knobs.rebase_complete);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
@@ -158,7 +157,7 @@ if (brdc_rts) {
             // discontinuity (the consumer resets this satellite's network-corrected
             // ambiguity across the step); NetworkSolPrep lands it at the satellite's next
             // actual emit.  Not expected when the check runs every epoch.
-            eph_cutover_disc_pending.insert(sat);
+            net::markSat(ctx.entities, sat, net::Disc::EphCutover);
             log->warn("Network (Card 6): {} eph cutover IODE {}->{} but the prior version "
                       "is no longer held — forcing a per-sat discontinuity (Δ_eph "
                       "incomputable).", sat, old_iode, new_iode);

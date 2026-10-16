@@ -4,14 +4,14 @@
 
 - **id:** MSC
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** WTZZ00DEU is unrepresentative (603 sub-decimetre epochs, site median 145); by the frozen count rule no 2026-09-20 adoption holds across 16 sites; the census FAILS its own standing-instrument bar.
+- **status:** closed
+- **summary:** WTZZ00DEU is unrepresentative (603 sub-decimetre epochs, site median 145); no 2026-09-20 adoption holds by the frozen count rule; CLOSED, the 16-site paired census is the standing adoption instrument.
 - **source:** [TBI](TBI_three_band_ignition_2026-09-20.md) section 5 (the replay controls); [CSL](CSL_canonical_signal_latch_2026-09-20.md) sections 4 and 5; [B5D](B5D_band5_code_datum_2026-09-20.md) sections 3 and 4
 - **knobs / posture:** no new knob; `network.closed_loop.replay_products_path` with `network.closed_loop.station` moved to the site; recorded wires only, no producer run
 - **dates in the text:** 2026-09-21
 - **hashes / run dirs:** wires `runs/_rf0hv3_field6`, `runs/_rf0hv4_field6`, `runs/_rap_gD_dual`, `runs/_rf0hv5_field6`, `runs/_rap_lF_tri`, `runs/_rap_b5_tri`, `runs/_rap_tB_nocode5_net`; exe `build/x64-Release/gnss_processor_b5d.exe`
 
-**Outcome.** Question: do WTZZ00DEU verdicts hold for independent consumers replayed on the recorded wires (a replay matches its closed loop to 0.002 m per half hour). Two adoptions read SITE-SPECIFIC and the latch MIXED; together the three improve 13 sites by a median 0.19 m (post hoc). CSL's support reading is refuted: both consumer families gain. The latch thinned the wire's C1W code biases ([SCC](SCC_second_code_channel_2026-09-21.md) restored coverage); a consumer diverges 70 m on the dropouts. Owed: more sites with a pre-frozen paired statistic, and unread KOKB00USA and UTQI00USA; [RXP](RXP_rinex3_blank_prn_2026-09-21.md) explained ANMG00MYS.
+**Outcome.** Question: do WTZZ00DEU verdicts hold for 16 independent consumers replayed on the recorded wires? No: WTZZ00DEU is unrepresentative (603 sub-decimetre epochs against a site median of 145), no 2026-09-20 adoption passes the frozen count rule, and the count failed as a bar (site spread about 270 epochs against effects of tens). The census with a paired per-hour statistic is now the standing adoption instrument (`scripts/clock_level/gcensus.py`). [RXP](RXP_rinex3_blank_prn_2026-09-21.md) explained ANMG00MYS; KOKB00USA and UTQI00USA reach a decimetre on later wires; [SCC](SCC_second_code_channel_2026-09-21.md) removed the code-bias dropouts. CLOSED; owed in [OPEN_ITEMS](../status/OPEN_ITEMS.md). Status reviewed 2026-10-13.
 
 ## 1. The instrument and the sites (frozen before any replay is graded)
 

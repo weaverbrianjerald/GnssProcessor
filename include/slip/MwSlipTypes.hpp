@@ -181,14 +181,14 @@ namespace GnssProcessor {
      * arc is stored single-differenced (a non-pivot BIA arc) or undifferenced (a
      * pivot arc / no-BIA fallback), so a sign-weighted sum around a closed
      * station-satellite cycle cancels the receiver and satellite hardware biases
-     * exactly (M5 card WL-1; see @c NetworkMwWlLayer).
+     * exactly (M5 card WL-1; read by the SD pre-reduce EWL constraint).
      */
     struct MwArcZdMean {
         double      mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD-consistent MW mean (m), lagged one epoch (SPEC_mw_wl_card §3.3 double-count guard).
         double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²); for a reconstructed SD arc this is a conservative (over-counted) upper bound, because the common pivot variance cancels in a closed cycle.
         std::size_t count{ 0 };                                                ///< Lagged Welford sample count (min across the arc and, if reconstructed, its pivot).
         double      lambda_wl{ 0.0 };                                          ///< cached wide-lane wavelength (m).
-        bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a uniform frame, so the WL layer skips mixed-frame cycles.
+        bool        bia_corrected{ false };                                    ///< satellite-bias frame of the underlying arc (true = BIA-subtracted).  Cycle-level satellite-bias cancellation requires a uniform frame, so the SD pre-reduce EWL rows skip mixed-frame pairs.
         bool        valid{ false };                                            ///< the arc exists, has ≥2 lagged samples, and a finite ZD mean/variance was recovered.
         /// The (satellite, signal-pair) arc key is present in the accumulator,
         /// i.e. the detector currently holds an arc (of any age) on this exact
@@ -209,77 +209,6 @@ namespace GnssProcessor {
         /// mis-attributed OSB column is a modelling error nothing downstream detects.
         /// Empty on an arc fed before this was recorded (never within one run).
         std::string code1, code2;
-    };
-
-    /**
-     * @brief A per-arc lagged per-epoch MW sample in the ZD-consistent frame: the
-     *        per-epoch increment source of the lane-coordinate carry (WL-3).
-     *
-     * This is not the Welford mean (@ref arcZdMean): under the lane-coordinate
-     * carry the estimator owns the accumulation, so each epoch's raw sample must
-     * enter exactly once.  The served value is the raw MW of the arc's previous
-     * processed epoch, with the same one-epoch lag as @c mean_lag (F1), so a
-     * same-epoch consumer never re-ingests the observations the estimator is
-     * folding this epoch.  @c var_m2 is the per-sample Welford variance
-     * M2_lag/(n_lag−1) (m²): the per-epoch noise, not the variance of the mean.
-     * For a reconstructed SD arc the value adds the group pivot's own lagged raw
-     * sample, and the variance adds both arcs' per-sample variances (conservative,
-     * because the common pivot term cancels in a closed DD cycle).  The
-     * reconstruction requires the arc and its pivot to have sampled the same
-     * epoch (checked via @c epoch_s, else @c valid=false).
-     */
-    struct MwArcZdLast {
-        double      value_m{ std::numeric_limits<double>::quiet_NaN() };  ///< ZD-consistent lagged raw MW sample (m).
-        double      var_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Per-sample Welford variance (m²); conservative for SD-reconstructed arcs.
-        double      epoch_s{ 0.0 };                                       ///< Continuous GPS seconds at which the sample was taken; the caller's cycle-consistency guard (all arcs of a DD cycle must share it).
-        std::size_t count{ 0 };                                           ///< Lagged Welford sample count backing @c var_m2.
-        double      lambda_wl{ 0.0 };                                     ///< Cached wide-lane wavelength (m).
-        bool        bia_corrected{ false };                               ///< Frame flag; mixed-frame cycles must be skipped (as in @ref MwArcZdMean).
-        bool        valid{ false };                                       ///< A finite lagged sample + variance was recovered (needs ≥2 lagged samples).
-    };
-
-    /**
-     * @brief A per-arc geometry-free WL↔EWL phase bridge Welford summary.
-     *
-     * The bridge observable @f$GF_b=\phi_{WL}-\phi_{EWL}@f$ (meters, phase only, no
-     * code) is geometry-free: the geometry, clock and tropo terms cancel between
-     * the two lane phases, leaving @f$\lambda_{WL}N_{WL}-\lambda_{EWL}N_{EWL}@f$
-     * (constant along the arc) plus a slow differential-iono residue and phase
-     * noise.  The raw phases carry the receiver and satellite hardware biases, so
-     * @f$GF_b@f$ is stored undifferenced (ZD) per (station, sat); those biases
-     * cancel in the closed DD cycle the layer forms, so no MW-style SD pivot is
-     * needed (unlike @ref MwArcZdMean).  The layer double-differences
-     * @f$\sum c\,GF_b@f$ over the Card-4 chord basis and adds
-     * @f$\lambda_{EWL}\,\nabla\Delta N_{EWL}^{\text{fixed}}@f$ to obtain a fast,
-     * iono-limited WL integer determination: @f$z_{WL}^{\text{bridge}}=[\sum
-     * c\,GF_b+\lambda_{EWL}N_{EWL}]/\lambda_{WL}@f$.
-     */
-    struct MwBridgeMean {
-        double      gf_mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD @f$GF_b@f$ mean (m), lagged one epoch (same double-count guard as @ref MwArcZdMean).
-        double      var_of_mean_m2{ std::numeric_limits<double>::quiet_NaN() };   ///< Welford variance of the lagged mean = M2_lag/(n_lag(n_lag−1)) (m²).  Reflects the differential-iono drift and phase noise (read by the §3.4 v1 iono σ-guard).
-        std::size_t count{ 0 };                                                   ///< Lagged Welford sample count.
-        double      lambda_wl{ 0.0 };                                             ///< cached WL wavelength c/(f1−f2) (m).
-        double      lambda_ewl{ 0.0 };                                            ///< cached EWL wavelength c/(f2−f5) (m).
-        double      iono_coeff{ 0.0 };                                            ///< @f$GF_b@f$ sensitivity to the L1-referenced slant iono @f$I_1@f$ (m/m): @f$C_{iono}=f_{ref}^2(\tfrac1{f_1 f_2}-\tfrac1{f_2 f_5})@f$, @f$f_{ref}=@f$ GPS L1 (the estimator's iono-state frame, MeasurementModel §Jacobian).  Without the per-sample de-bias (@ref setBridgePerSampleDebias) the consumer subtracts @f$C_{iono}\sum c\,\hat I_1@f$ to de-bias the bridge (SPEC §3.4 v2; the v1 Welford-only form fails under a stable differential iono, whose near-zero variance passes the σ-guard yet biases the rounded integer).
-        bool        valid{ false };                                              ///< the arc exists, has ≥2 lagged samples, and a finite mean/variance/λ was recovered.
-    };
-
-    /**
-     * @brief A bridge arc's lagged per-epoch raw @f$GF_b@f$ sample: the
-     *        phase-precision increment source of the lane-coordinate carry
-     *        (WL-3, SPEC_lane_carry_card.md §3.2).  Mirrors @ref MwArcZdLast:
-     *        raw sample and per-sample variance, not the Welford mean, with the
-     *        same one-epoch lag (F1) and once-only use.
-     */
-    struct MwBridgeLast {
-        double      gf_m{ std::numeric_limits<double>::quiet_NaN() };   ///< Lagged raw ZD @f$GF_b@f$ sample (m).
-        double      var_m2{ std::numeric_limits<double>::quiet_NaN() }; ///< Per-sample Welford variance M2_lag/(n_lag−1) (m²).
-        double      epoch_s{ 0.0 };                                     ///< Continuous GPS seconds the sample was taken (cycle-consistency guard).
-        std::size_t count{ 0 };                                         ///< Lagged Welford sample count.
-        double      lambda_wl{ 0.0 };                                   ///< WL wavelength (m).
-        double      lambda_ewl{ 0.0 };                                  ///< EWL wavelength (m).
-        double      iono_coeff{ 0.0 };                                  ///< @f$GF_b@f$ iono sensitivity (see @ref MwBridgeMean::iono_coeff).
-        bool        valid{ false };                                     ///< A finite lagged sample + variance was recovered.
     };
 
 } // namespace GnssProcessor

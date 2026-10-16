@@ -40,11 +40,11 @@ is its entry there.
 
 | | |
 | --- | --- |
-| **New contributor?** Start at [onboarding/README.md](onboarding/README.md) | [1 Setup](onboarding/01_setup.md) · [2 Code tour](onboarding/02_code_tour.md) · [3 Worked example](onboarding/03_worked_example.md) · [4 Git workflow](onboarding/04_git_workflow.md) · [5 Debugging](onboarding/05_debugging.md) · [6 First tasks](onboarding/06_first_tasks.md) · [7 Network tour](onboarding/07_network_tour.md) · `CONTRIBUTING.md` (repo root) |
+| **New contributor?** Start at [onboarding/README.md](onboarding/README.md) | [1 Setup](onboarding/01_setup.md) · [2 Code tour](onboarding/02_code_tour.md) · [3 Worked example](onboarding/03_worked_example.md) · [4 Git workflow](onboarding/04_git_workflow.md) · [5 Debugging](onboarding/05_debugging.md) · [6 First tasks](onboarding/06_first_tasks.md) · [7 Network tour](onboarding/07_network_tour.md) · [8 Adding a network parameter](onboarding/08_adding_a_network_parameter.md) · `CONTRIBUTING.md` (repo root) |
 | Architecture, capabilities, build targets, config sections (the pre-2026-09-19 root README) | [OVERVIEW.md](OVERVIEW.md) |
 | Build, standing invariants, the standard armed set, the anti-regrowth trees | `CLAUDE.md` (repo root) |
 | The goldens — the armed set made executable | `config/golden/` + `python scripts/make_golden_config.py --verify` |
-| Every knob's verdict and regime | [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md) — a **living register**, kept whole; `CONFIG_promotion_ledger.json` is its machine-read twin |
+| Every config key's verdict and regime | [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md), the view generated from `CONFIG_promotion_ledger.json` (the ledger itself) |
 | What is owed, everywhere | [status/OPEN_ITEMS.md](status/OPEN_ITEMS.md) |
 | Configuration reference | [CONFIG.md](CONFIG.md) |
 | The real-data truth-graded harness | [test_suite.md](test_suite.md) |
@@ -66,9 +66,8 @@ is its entry there.
    and when it closes (`closed` / `parked` / `superseded`, with the date).
 4. **No non-archive file over ~60 KB.** When one approaches it, split it by topic —
    the card id stays, the file gains a suffix, and both are listed here. The one
-   exemption is a **living register** that is appended to one row at a time and read
-   by a tool at a fixed path — today that is `CONFIG_promotion_ledger.md` alone, named
-   in `SIZE_EXEMPT` in `scripts/docs_index_check.py` with its reason.
+   exemption is the generated ledger view `CONFIG_promotion_ledger.md`, named in
+   `SIZE_EXEMPT` in `scripts/docs_index_check.py` with its reason.
 5. **Every card file starts with the STATUS block** — `id`, `topic`, `status`,
    `summary`, `source`, plus the knobs / hashes / run dirs / date span. `status` is one
    of `open`, `closed`, `parked`, `superseded`, `reference`; the project's own verdict
@@ -225,13 +224,13 @@ Standing documents (not split this pass):
 | [iono-field agreement](cards/ionosphere/IONO-FIELD-AGREEMENT.md) | iono input coherent both-high (corr 0.981), broken low-high; 25° cutoff trims wander 8 % | closed | 2026-08-12 |
 | [EXT-CB arms 1–36](cards/ionosphere/LV-EXTCB-CAMPAIGN.md) | level defect = receiver GF-bias convention offset + ignition transient; L2-ESCAPE closed | closed | 2026-08-15 |
 | [LV](cards/ionosphere/LV-REF.md) | reference: lv ladder knob and verdict ledgers, section map, binding grading protocol | reference | 2026-08-21 |
-| [AMB-IONO](cards/ionosphere/AMB-IONO-SPLIT.md) | ambiguity/iono split over-count: B_fit 3.00 freezes the level; F3 0.217 cyc sim 3 h | open | 2026-09-04 |
+| [AMB-IONO](cards/ionosphere/AMB-IONO-SPLIT.md) | closed: diagonal carry over-counts each LOS's iono per band (B 3.00); F3's block is now float_kf's structure | closed | 2026-09-04 |
 | [F3 (pre-reg)](cards/ionosphere/AMB-IONO-F3-PREDICTIONS.md) | f3 pre-registration: F3 beat its 3 h line 2.7×, F1 intermediate, var floor FALSIFIED | closed | 2026-09-04 |
 | [F3 24 h](cards/ionosphere/AMB-IONO-F3-24H.md) | settled quarter FALSIFIED as traced; the episodes were the DD trace's reference satellite | superseded | 2026-09-05 |
 | [0910 afternoon](cards/ionosphere/AMB-IONO-0910-AFTERNOON.md) | level memory FAILS x4; fewer T4 erases FAIL the consumer at every K; continuity KEEP_OFF | closed | 2026-09-10 |
 | [0910 morning](cards/ionosphere/AMB-IONO-0910-MORNING.md) | oracle repair FAILS, PB-gauge levelling FALSIFIED; the phase bias is a receiver's float | closed | 2026-09-10 |
 | [0910 second half](cards/ionosphere/AMB-IONO-0910-SECOND-HALF.md) | eleven probes FAIL with one shape; emission continuity FALSIFIED; producer AR NO-GO | closed | 2026-09-10 |
-| [AMB-IONO open](cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | open-question register, items 1 to 44: many closed in the text, the rest still owed | open | 2026-09-10 |
+| [AMB-IONO open](cards/ionosphere/AMB-IONO-OPEN-QUESTIONS.md) | closed: 45 items reviewed: 13 done, 10 falsified, 12 superseded, 7 moot, 2 dup; 1 owed (unread config keys) | closed | 2026-09-10 |
 | [LV-SEED](cards/ionosphere/LV-SEED-per-los-level.md) | all three hypotheses refuted (arc start, iono, geometry); wander is the satellite clock | closed | 2026-09-14 |
 | [LV-1](cards/ionosphere/LV-1-BIAS-FREE-SEEDING.md) | bias-free iono seeding: stated mechanism FALSIFIED (a solve no-op); kept as a diagnostic | closed | — |
 | [LV-2](cards/ionosphere/LV-2-RXCB-DEMEAN.md) | rx-CB de-mean: do NOT arm, it re-pins the common mode to a frozen frame (+15 to +21 TECU) | closed | — |
@@ -267,8 +266,8 @@ Standing documents (not split this pass):
 | [D5-A](cards/slip/D5A-RETAP-ATTRIBUTION.md) | the D5 re-tap instrument: 3.0 % raw-step coincidence, re-tap count a third overstated | closed | 2026-08-15 |
 | [slip-QC follow-ups](cards/slip/SLIPQC-FOLLOWUPS.md) | slip-QC follow-ups: D5-A, H1/H2 landed; Card W never launched, OP untriggered, H3 deferred | closed | 2026-08-15 |
 | [lane slip response](cards/slip/LANE-SLIP-RESPONSE.md) | lane-integer slip cost 100 % response-inflicted; both retap keeps FALSIFIED, KEEP_OFF | closed | 2026-08-22 |
-| [T4 lane restore](cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore of the pre-erase carry after a T4 erase: specified, not built | open | 2026-08-23 |
-| [rung 3](cards/slip/LANE-SNAP-RUNG3.md) | seed-site snap deleted (solve no-op); observatory solve-inert; apply leg re-scoped to T4 | open | 2026-08-23 |
+| [T4 lane restore](cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore after a T4 erase: specified, never built; superseded by RF-1's bounded drop | superseded | 2026-08-23 |
+| [rung 3](cards/slip/LANE-SNAP-RUNG3.md) | seed-site lane snap deleted (exact solve no-op); observatory solve-inert; apply leg moot under RF-1; closed | closed | 2026-08-23 |
 | [wind-up census](cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | 20 gaps in 4 h between the wind-up and carry horizons; restart response ARMED by card WUP | closed | 2026-08-23 |
 | [IF-TD ref gate](cards/slip/IFTD-REF-GATE.md) | the IF-TD ref gate is 100 % false on the sim bed; Card R takes acting refloats 546 to 0 | closed | 2026-09-08 |
 | [Card G response](cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | gap re-entry re-level: bridged arcs 88 to 0, consumer +56 %; KEEP_OFF; armed on float | closed | 2026-09-09 |
@@ -282,7 +281,7 @@ Standing documents (not split this pass):
 | [Study 6](cards/slip/STUDY-6-common-band-scope.md) | common-band scope KEEP_OFF (consumer +3.3 cm); superseded by Study 7's RECOMMEND_ON | superseded | 2026-09-11 |
 | [Study 7](cards/slip/STUDY-7-common-band-narrowing.md) | common-band scope + IF-TD on every pair RECOMMEND_ON together, sim p50 0.174 to 0.120 m | closed | 2026-09-11 |
 | [REF-ARC](cards/slip/REF-ARC-CLAUSE.md) | ref-arc clause PROMOTED: an untested reference pair cannot exonerate; sim storm neutral | closed | 2026-09-13 |
-| [REF-FAN](cards/slip/REF-FAN.md) | reference-slip fan-out: RECOMMEND_SCOPED, collateral refloats 6 to 0; field pin still owed | open | 2026-09-13 |
+| [REF-FAN](cards/slip/REF-FAN.md) | reference-slip fan-out: collateral refloats 6 to 0; armed on both goldens, inert at dual frequency; closed | closed | 2026-09-13 |
 | [RULE F2](cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
 | [RULE F3](cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
 
@@ -322,7 +321,7 @@ Standing documents (not split this pass):
 | [RNEG](cards/raim-qc/RNEG-REPARTITION.md) | r-negative re-partition: worst \|t\| 2.48e8 was a floor artifact; RNEG read in metres | closed | 2026-09-09 |
 | [GL](cards/raim-qc/GL-gross-los-screen.md) | gross-LOS screen: tail 13 to 16× smaller but bars FAILED; completed and ARMED by RF-3 | closed | 2026-09-14 |
 | [GL-2 + R8](cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
-| [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | gate rulings: degrade under a 120-epoch cap, rms_ho ratio; unbuilt, grace floor un-derived | open | — |
+| [DEC-day129-gate-policy](decisions/DEC-day129-gate-policy.md) | gate rulings (degrade, 120-epoch cap, rms_ho ratio) unbuilt; superseded, SH and seams out of the re-founding | superseded | — |
 | [T3 mechanism](cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
 
 Standing documents (not split this pass):
@@ -336,7 +335,7 @@ Standing documents (not split this pass):
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
 | [LV-3 contract](cards/wire-contract/LEVEL-CONTRACT.md) | level contract: W6 sum-to-zero or a00 GIM anchor owns the level; LV-1/2/4/5 SUPERSEDED | closed | 2026-08-15 |
-| [level health](cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | level health: Phase A PASS on era-3 (7/7), causal limb misses slides; Phase B build owed | open | 2026-08-23 |
+| [level health](cards/wire-contract/LEVEL-HEALTH-CHANNEL.md) | level health: Phase A PASS, slides need lvlretro, Phase B unbuilt; superseded, SH dropped from the producer | superseded | 2026-08-23 |
 
 Standing documents (not split this pass):
 
@@ -347,7 +346,7 @@ Standing documents (not split this pass):
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
 | [CC](cards/consumer/CC-declared-step-carry.md) | declared-step carry exact, default OFF (re-grade fails 2 of 5 bars); warm start LANDED | closed | 2026-09-14 |
-| [CI](cards/consumer/CI-consumer-instrument.md) | consumer bars SUSPENDED: 6 to 8 m on the network's products, 0.25 m on CODE's | open | 2026-09-14 |
+| [CI](cards/consumer/CI-consumer-instrument.md) | consumer sound (0.25 m on CODE), old wire 6 to 8 m; suspended bars moot; closed, re-founding grades cold 6 h | closed | 2026-09-14 |
 | [CI census](cards/consumer/CI-census-wire-vs-code.md) | wire-vs-CODE census: W1 and W3 FAIL; the clock carries a metre-level code-model error | closed | 2026-09-14 |
 | [consumer AR](cards/consumer/CONSUMER-AR-BLUNDER.md) | consumer WL-only blunder: a frame mismatch FFR misses, caught by the innovation screen | closed | — |
 
@@ -398,16 +397,20 @@ Standing documents (not split this pass):
 
 - [CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md)
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[RKD](refound/RKD_retired_key_deletion_2026-10-14.md), the 144 retired network keys deleted with
+their code (closed, 2026-10-14: landed; the same-build golden comparison passed).
+
 ### `queues` — [topics/queues.md](topics/queues.md)
 
 | card | one line | status | last dated |
 | --- | --- | --- | --- |
-| [QPR blocked](cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked and leave-alone register: item 3 churn root found same day, D5 hold lifted by 8(a) | open | 2026-08-14 |
-| [QPR](cards/queues/QPR-00-CHARTER.md) | queue charter: fifth ranking 2026-08-20, order superseded by the 2026-09-14 re-founding | open | 2026-08-21 |
-| [QPR 0–3](cards/queues/QPR-ITEMS-0-3.md) | items 0–3: 1(d) carry re-reference validated, 1f promoted, 0 downgraded, 1(b) deferred | open | 2026-08-21 |
-| [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | the T3 null: excess is per-LOS iono error; R2 and R4 validated measure-only, R1 held | open | 2026-08-21 |
-| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: iono error persists with SH on, 8(b) falsified, A4 promotion refused; 5, 6 owed | open | 2026-08-21 |
-| [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 14 verified code defects open, 5 fixed; suspicions and author checks listed | open | 2026-09-28 |
+| [QPR blocked](cards/queues/QPR-BLOCKED-AND-CLOSED.md) | blocked/leave-alone: churn fixed by 1(d), D5 retired by RF-1, trio runaway to L5B; verdicts stand | superseded | 2026-08-14 |
+| [QPR](cards/queues/QPR-00-CHARTER.md) | queue charter: SUPERSEDED by the 2026-09-14 re-founding; two leftovers re-filed to OPEN_ITEMS | superseded | 2026-08-21 |
+| [QPR 0–3](cards/queues/QPR-ITEMS-0-3.md) | items 0–3: 1(a), 1(b), 1(d), 1f, 1g, clock marking armed in goldens; item 2 tooling; rest moot | closed | 2026-08-21 |
+| [QPR 4](cards/queues/QPR-ITEM-4-T3-NULLS.md) | T3 null: excess is per-LOS iono error; R2/R4 built measure-only; rest superseded by RF-3 code-row QC | superseded | 2026-08-21 |
+| [QPR 5–8](cards/queues/QPR-ITEMS-5-8.md) | items 5–8: 8(b) falsified; 5, 7, 8 superseded by RF-0c, RF-1, no SH; item 6 re-filed as owed | superseded | 2026-08-21 |
+| [CAF](cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md) | comment audit: 5 defects fixed; Card-4, lane and stand-down rows moot; 20 owed lines re-filed to OPEN_ITEMS | closed | 2026-09-28 |
 
 Standing documents (not split this pass):
 
@@ -453,10 +456,6 @@ posture call stays in the verdict section of the card that reached it.
 
 - [status/OPEN_ITEMS.md](status/OPEN_ITEMS.md) — every owed / open item the corpus
   names, each with the card and section that is its evidence.
-- [status/OPEN_ITEMS_A_current_program.md](status/OPEN_ITEMS_A_current_program.md):
-  section A of that register (the current program), in its own file since 2026-09-22.
-- [status/OPEN_ITEMS_A_before_2026-09-20.md](status/OPEN_ITEMS_A_before_2026-09-20.md):
-  the section A rows whose bold lead-in is last dated before 2026-09-20.
 
 ---
 
@@ -467,11 +466,10 @@ byte-for-byte in `docs/archive/` and is never appended to; the old path now hold
 routing stub whose table resolves any `§N.N` citation in one hop, which is what keeps
 the several hundred `// … (SPEC_x §N.N): …` comments in `src/` and `include/` working.
 
-**A nineteenth file over 60 KB was deliberately NOT split:**
-[CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md). It is a **living register** —
-one row per knob, appended to in place by the `scripts/_*_ledger_oneoff.py` family and
-by every future promotion, with `CONFIG_promotion_ledger.json` as its machine-read
-twin. It stays whole at its path and carries a named size exemption in
+**A nineteenth file over 60 KB was not split:**
+[CONFIG_promotion_ledger.md](CONFIG_promotion_ledger.md). Since 2026-10-13 it is the
+view of `CONFIG_promotion_ledger.json` (one verdict per config key), rendered by
+`scripts/ledger_render.py`, with a named size exemption in
 `scripts/docs_index_check.py` (`SIZE_EXEMPT`). See
 [topics/config-ledger.md](topics/config-ledger.md).
 

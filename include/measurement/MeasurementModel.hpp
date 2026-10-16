@@ -129,11 +129,11 @@ namespace GnssProcessor {
          * satellite or signal leaves no stale column.
          *
          * Every shared state a gate here withholds from the station (GLONASS
-         * code-only scope, unmatched antenna, coverage allowlist, pivot allowlist,
-         * CB-ADM co-gate) is noted in @ref absorbedSharedStates, which this call
-         * clears first: the parameter inventory counts each as an absorbed instance
-         * (card NOM N1b; the record is measurement/AbsorbedSharedStates.hpp, the
-         * inventory filter/NetworkParamInventory.hpp).
+         * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
+         * noted in @ref absorbedSharedStates, which this call clears first: the
+         * parameter inventory counts each as an absorbed instance (card NOM N1b; the
+         * record is measurement/AbsorbedSharedStates.hpp, the inventory
+         * filter/NetworkParamInventory.hpp).
          *
          * @param observations This station's modeled observations for the epoch.
          * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to
@@ -190,28 +190,6 @@ namespace GnssProcessor {
          */
         void setPhaseBiasSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
             phase_bias_signal_allowlist_ = std::move(allowlist);
-        }
-
-        /**
-         * @brief Withhold all of this station's satellite phase-bias contributions.
-         *
-         * The per-station analogue of @ref setPhaseBiasSignalAllowlist.  When true,
-         * @ref ensureNetworkSharedStates allocates no phase-bias state for this
-         * station, so its carrier phase writes no shared phase-bias Jacobian,
-         * scatters no phase-bias column into the border, and the station cannot be
-         * elected a phase-bias anchor.  The observations are still admitted: the
-         * station still feeds the satellite clock, code bias and ionosphere (its
-         * position is held at the roster coordinate in the network, never
-         * estimated), and only the shared phase-bias coupling is removed, with the
-         * local float ambiguity absorbing each arc.  Each withheld state is noted in
-         * @ref absorbedSharedStates (reason unmatched_antenna).
-         *
-         * The network producer uses this to keep a station with an unmatched
-         * receiver antenna (no receiver PCV, so uncalibrated phase) out of the
-         * emitted satellite phase biases.  Default false: byte-identical.
-         */
-        void setPhaseBiasEmissionExcluded(bool excluded) {
-            phase_bias_emission_excluded_ = excluded;
         }
 
         /**
@@ -459,11 +437,6 @@ namespace GnssProcessor {
         /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
         /// system → admitted phase signals.  Empty (default) = allow every signal.
         std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
-
-        /// Per-station phase-bias emission exclusion (see @ref setPhaseBiasEmissionExcluded).
-        /// True = allocate no satellite phase-bias state for this station's observations
-        /// (all signals).  False (default) = contribute normally; byte-identical.
-        bool phase_bias_emission_excluded_{false};
 
         /// The shared states withheld from this station this epoch (see
         /// @ref absorbedSharedStates).  Network producer only.

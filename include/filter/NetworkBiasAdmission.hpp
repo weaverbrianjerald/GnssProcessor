@@ -168,4 +168,40 @@ int networkBiasAdmissionRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+// ---- Solve stage 2 and 6 helpers (card NOM3 step SG) ----
+
+struct NetworkRun;
+struct NetworkEpoch;
+struct EpochWorkspace;   // filter/NetworkRunTypes.hpp
+
+/**
+ * @brief The card KP physical-bound prior on the admitted OSB columns: folded after the W6 gauge
+ *        rows and before the rank gate, through the diagonal prior channel (K3), and captured
+ *        for the within-epoch replay.  No-op with network.cb_kaula_prior off.
+ * @param run The run: the estimator is folded; ctx counters (n_kp_epochs, n_kp_cols) are written.
+ * @param ep  The epoch, read: columns (registered_code_keys).
+ * @param ws  [in/out] The replay capture (cap_priors, cap_prior_kinds).
+ */
+void networkFoldCodeBiasKaulaPrior(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws);
+
+/**
+ * @brief Stage 6 of the network solve: the one-shot K2 anti-fragility margin of the KP prior
+ *        against the rank-gate cutoff, logged once.
+ * @param run The run: ctx counters (kp_margin_logged) are written; the log.
+ */
+void networkKaulaMargin(NetworkRun& run);
+
+struct NetworkRun;
+
+/**
+ * @brief Runs the code-bias admission census once before the loop and logs its table.
+ *
+ * Armed by network.cb_admission with the satellite code-bias slice; refused, with a warning,
+ * under streaming.  Setup builder (card NOM3 step EP4): called once from
+ * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx.admission and its two counters.
+ */
+void networkCbAdmissionCensus(NetworkRun& run);
+
 } // namespace GnssProcessor

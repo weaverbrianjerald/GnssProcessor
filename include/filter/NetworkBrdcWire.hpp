@@ -9,7 +9,7 @@
  * the broadcast record k, not the offset table, so each clock record goes out as
  * C_wire = C_est + O_s,k with @c iode = k: brdc_k(t) + C_wire = a_s(t) + C_est.  Nothing
  * in the solve moves; the seam runs after the emit-side hold (every reader of C_est,
- * CLK-R, the holds, CLV, has run) and before the store push and the product write.
+ * CLK-R, the holds, has run) and before the store push and the product write.
  *
  * Telemetry: the run-end counters of @c NetworkServiceCounters (@c nbp_*) and the O trace
  * @c network_brdc_offset.csv, which lets a grader form C - O.

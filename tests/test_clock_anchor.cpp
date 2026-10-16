@@ -41,6 +41,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkClockAnchor.hpp"
 #include "filter/NetworkEstimator.hpp"
@@ -346,7 +347,7 @@ GuardRun guardedEpoch(NetworkRunContext& ctx, const GnssConfig& cfg,
     std::vector<std::string> reg(t.sats.begin(), t.sats.end());
     GnssTime tm; tm.week = 2300; tm.tow = now_s;
     networkClockAnchorGuard(ctx, cfg, nullLogger(), traces, tm, est,
-                            plan, out.x, out.ws, reg, {}, false, {});
+                            plan, out.x, out.ws, reg, {}, false, {}, EpochEvents{});
     return out;
 }
 
@@ -401,7 +402,7 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     EXPECT_EQ(ctx.counters.cta_resolves, 1);
     EXPECT_EQ(ctx.counters.cta_resolve_failed, 0);
     EXPECT_FALSE(ctx.carry.clk_anchor.sat.at("G03").anchored);       // decoupled
-    EXPECT_TRUE(ctx.carry.clk_anchor_disc_pending.count("G03") > 0);  // wire-marked
+    EXPECT_TRUE(net::hasSat(ctx.entities.sats, "G03", net::Disc::ClockAnchor));  // wire-marked
     EXPECT_EQ(ctx.counters.cta_marks, 1);
     // … and the emitted value follows the data, not the stale anchor.  Without
     // the re-solve the epoch would publish a clock pulled most of the 3 m toward

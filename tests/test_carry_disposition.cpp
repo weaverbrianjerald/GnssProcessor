@@ -11,6 +11,8 @@
  */
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch networkCarryDecide's epoch form takes
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarryDisposition.hpp"
@@ -92,10 +94,11 @@ TEST(CarryDisposition, DecideFollowsTheFoldsClauses) {
     ASSERT_TRUE(ctx.knobs.cta_on);
     ASSERT_GT(ctx.knobs.readmit_seed_horizon_s, 0.0);
     NetworkEstimator est;
+    EpochEvents events;
     layout(est);
     const double dt = 30.0, now = 100000.0;
     const auto dec = [&](const CarryPrior& cp) {
-        return carryFoldDecide(ctx, est, cp, dt, now, now);
+        return carryFoldDecide(ctx, est, cp, dt, now, now, events);
     };
 
     CarryPrior sh = entry(SharedParamKind::VtecSh, "", "", 1.0, 1e-2);
@@ -109,9 +112,9 @@ TEST(CarryDisposition, DecideFollowsTheFoldsClauses) {
     EXPECT_EQ(d.var_decided_m2, pb.var);
     EXPECT_EQ(d.value_decided_m, pb.value);
 
-    ctx.carry.eq34_reref.insert({"G01", "L1C"});
+    events.phase_datum.eq34_reref.insert({"G01", "L1C"});
     EXPECT_EQ(dec(pb).disposition, CarryDisposition::Reref);
-    ctx.carry.eq34_reref.clear();
+    events.phase_datum.eq34_reref.clear();
     ctx.carry.phase_anchor_reref.insert({"G01", "L1C"});
     EXPECT_EQ(dec(pb).disposition, CarryDisposition::Reref);
     ctx.carry.phase_anchor_reref.clear();
@@ -167,6 +170,7 @@ TEST(CarryDisposition, VarEffIsTheFoldsExpression) {
     ASSERT_TRUE(L.ok);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
     NetworkEstimator est;
+    EpochEvents events;
     layout(est);
     std::mt19937 rng(7u);
     std::uniform_real_distribution<double> lv(-9.0, -2.0), ldt(0.0, 3.0);
@@ -176,7 +180,7 @@ TEST(CarryDisposition, VarEffIsTheFoldsExpression) {
         const double dt  = std::pow(10.0, ldt(rng));
         // Phase bias: cp.var + q*dt, floored.
         CarryPrior pb = entry(SharedParamKind::PhaseBias, "G01", "L1C", 0.1, var);
-        const CarryFoldDecision dp = carryFoldDecide(ctx, est, pb, dt, now, now);
+        const CarryFoldDecision dp = carryFoldDecide(ctx, est, pb, dt, now, now, events);
         double want = pb.var + ctx.params.q(SharedParamKind::PhaseBias) * std::max(0.0, dt);
         want = std::max(want, ctx.knobs.pb_var_floor);
         EXPECT_EQ(carryFoldVarEff(ctx, pb, dp, pb.var, true), want);
@@ -189,7 +193,7 @@ TEST(CarryDisposition, VarEffIsTheFoldsExpression) {
             ctx.carry.clk_anchor.sat["G02"].t_last   = now - dt;
         }
         CarryPrior ck = entry(SharedParamKind::Clock, "G02", "", 0.3, var);
-        const CarryFoldDecision dc = carryFoldDecide(ctx, est, ck, dt, now, now);
+        const CarryFoldDecision dc = carryFoldDecide(ctx, est, ck, dt, now, now, events);
         ClockAnchorFold af;
         const double got = carryFoldVarEff(ctx, ck, dc, ck.var, true, &af);
         const double dt_sat = now - (now - dt);              // the anchor's own elapsed time
@@ -214,6 +218,7 @@ TEST(CarryDisposition, AReexpressedVarianceKeepsTheDecision) {
     ASSERT_TRUE(L.ok);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
     NetworkEstimator est;
+    EpochEvents events;
     layout(est);
     const double now = 300000.0, dt = 30.0;
     ctx.carry.clk_anchor.sat["G01"].anchored = true;
@@ -221,9 +226,9 @@ TEST(CarryDisposition, AReexpressedVarianceKeepsTheDecision) {
     for (const double v0 : {1e-7, 4e-6, 1e-3}) {          // under, near and over the 1e-5 floor
         for (const double dv : {0.0, 1.1244e-3, 4.4e-4}) {
             CarryPrior ck = entry(SharedParamKind::Clock, "G01", "", 0.4, v0);
-            const CarryFoldDecision d0 = carryFoldDecide(ctx, est, ck, dt, now, now);
+            const CarryFoldDecision d0 = carryFoldDecide(ctx, est, ck, dt, now, now, events);
             ck.var += dv;                                    // the S-transform's v^2 var_q
-            const CarryFoldDecision d1 = carryFoldDecide(ctx, est, ck, dt, now, now);
+            const CarryFoldDecision d1 = carryFoldDecide(ctx, est, ck, dt, now, now, events);
             EXPECT_EQ(d0.disposition, d1.disposition);
             EXPECT_EQ(d0.q_applied_m2, d1.q_applied_m2);
             EXPECT_EQ(carryFoldVarEff(ctx, ck, d0, ck.var, true),
@@ -311,8 +316,9 @@ TEST(CarryDisposition, AnchorDecideAndCommitFollowTheRule) {
 TEST(CarryDisposition, ThePassOverwritesEveryEntryAndNothingElse) {
     Loaded L("pass");
     ASSERT_TRUE(L.ok);
-    NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
-    NetworkEstimator est;
+    NetworkTestRun fx(L.cfg);   // the epoch form reads the run's context and estimator
+    NetworkRunContext& ctx = fx.ctx();
+    NetworkEstimator& est = fx.est();
     layout(est);
     GnssTime t;
     t.week = 2313;
@@ -326,7 +332,9 @@ TEST(CarryDisposition, ThePassOverwritesEveryEntryAndNothingElse) {
     parked.fold.disposition = CarryDisposition::Anchored;    // stale record from a past epoch
     ctx.carry.prev_carry = {ck, parked};
     const ClockAnchorSat before = ctx.carry.clk_anchor.sat["G01"];
-    networkCarryDecide(ctx, est, t, 30.0);
+    NetworkEpoch& e = fx.newEpoch(t);
+    e.clock.dt = 30.0;
+    networkCarryDecide(fx.run(), e);
     EXPECT_EQ(ctx.carry.prev_carry[0].fold.disposition, CarryDisposition::Anchored);
     EXPECT_EQ(ctx.carry.prev_carry[1].fold.disposition, CarryDisposition::Parked);
     EXPECT_EQ(ctx.carry.clk_anchor.sat["G01"].t_last, before.t_last);

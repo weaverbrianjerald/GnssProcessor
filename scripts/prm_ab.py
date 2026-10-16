@@ -8,22 +8,23 @@
 `make` writes two arms per posture with scripts/rapid_arm.py, all from the committed goldens:
   _rap_prm_<tag>_gf / _gs   config/golden/golden_{field,sim}_refound.json as generated
   _rap_prm_<tag>_pf / _ps   the same plus the knobs of the clock-level program posture
-                            (PROGRAM below: the smoothed block hold and the monitors, with card
+                            (PROGRAM below: the smoothed hold and the monitors, with card
                             LAH's phase-clock hold off, which the loader refuses with the
-                            smoothed hold), the posture of cards CTU2, SMD, REV and LGM
+                            smoothed hold), the posture of cards CTU2, REV and LGM (card
+                            SMD's block member was removed; its block clones remain the
+                            smoothed hold's instrument)
   _rap_prm_<tag>_sf / _ss   the golden with the scalar coupling update (SCALAR below: card CTU's
                             exact update off), the route the goldens ran before card EXL
   _rap_prm_<tag>_df / _ds   the golden on the diagonal border fold (DIAG below: no dense carried
                             covariance, so no conditional coupling, no exact update and the level
                             vehicle)
-  _rap_prm_<tag>_c? / r? / q? / o? / h?   card PRM phase 2: card CLV's level re-base, the
-                            ephemeris cut-over re-level, the eq34 D4 shift, the declared anchor
-                            handover, and the handover S-transform before the rows (CLV,
-                            RELEVEL, EQ34, DHO, HANDOVER below)
-  _rap_prm_<tag>_k? / l? / e? / u?   card PRM phase 3b step 2: the same four re-base postures
+  _rap_prm_<tag>_r? / q? / o? / h?   card PRM phase 2: the ephemeris cut-over re-level, the
+                            eq34 D4 shift, the declared anchor handover, and the handover
+                            S-transform before the rows (RELEVEL, EQ34, DHO, HANDOVER below)
+  _rap_prm_<tag>_l? / e? / u?   card PRM phase 3b step 2: the same three re-base postures
                             with network.carry_rebase_complete (each mechanism also moves its
-                            owed sites; postures clvc, relevelc, eq34c, dhoc, graded against
-                            clv, relevel, eq34, dho with --map k=c, l=r, e=q, u=o)
+                            owed sites; postures relevelc, eq34c, dhoc, graded against
+                            relevel, eq34, dho with --map l=r, e=q, u=o)
 The sim arms start at 00:30:15 (the fixture-start convention); every arm runs --hours (default 2).
 
 `run` runs the arms of one tag with the given executable (a renamed copy of the Release build;
@@ -51,7 +52,6 @@ PROGRAM = [
     'network.clock_anchor_guard_space=phase',
     'network.clock_level_monitor=true',
     'network.emit_pb_hold_smoothed=true',
-    'network.emit_pb_hold_smoothed_block=true',
     'network.phase_visible_monitor=true',
     'network.rank_gate_tol=1e-11',
 ]
@@ -75,18 +75,13 @@ DIAG = [
     'network.shared_carry_full_cov=false',
 ]
 # Card PRM phase 2: the postures on which each carry re-base mechanism the goldens leave inert
-# actually runs (the probes of 2026-10-02, card PRM section 16).  Card CLV's level re-base
-# (with the code-bias follow; the loader refuses the level carry with card LAH's hold); the
-# ephemeris cut-over re-level (broadcast a priori from the brdc-only data root, without the
-# satellite code bias the loader refuses there without the SH field; the field needs 2.1 h to
+# actually runs (the probes of 2026-10-02, card PRM section 16; card CLV's level re-base and
+# its postures clv / clvc were removed with the mechanism).  The ephemeris cut-over re-level
+# (broadcast a priori from the brdc-only data root, without the satellite code bias the
+# loader refuses there without the SH field; the field needs 2.1 h to
 # reach the 02:00 navigation batch); the eq34 chain datum's D4 carry shift; the float vehicle's
 # declared anchor handover; and the clock-pivot handover's S-transform before the coupling rows
 # (step 3: behaviour-changing at the 6 h goldens' handover, compared with --map g=h).
-CLV = [
-    'network.emit_pb_hold_phase_clock=false',
-    'network.clock_level_carry=true',
-    'network.clock_level_free_cb_follow=if',
-]
 RELEVEL = [
     'network.apriori_source=brdc_rts',
     'files.internal_data_root=' + ROOT + '/data_brdc_rts',
@@ -96,13 +91,13 @@ EQ34 = ['network.phase_datum_eq34=true', 'network.phase_datum_eq34_carry_shift=t
 DHO = ['network.amb_float_declared_handover=true']
 HANDOVER = ['network.handover_stransform_before_rows=true']
 # Card PRM phase 3b step 2: each re-base posture with the owed sites moved too (behaviour-changing
-# on its own posture; graded against the posture without the knob, --map k=c and so on).
+# on its own posture; graded against the posture without the knob, --map l=r and so on).
 COMPLETE = ['network.carry_rebase_complete=true']
 # name -> (arm letter, knobs); the arm suffix is the letter and the bed.
 POSTURES = {'golden': ('g', []), 'program': ('p', PROGRAM), 'scalar': ('s', SCALAR),
-            'diag': ('d', DIAG), 'clv': ('c', CLV), 'relevel': ('r', RELEVEL),
+            'diag': ('d', DIAG), 'relevel': ('r', RELEVEL),
             'eq34': ('q', EQ34), 'dho': ('o', DHO), 'handover': ('h', HANDOVER),
-            'clvc': ('k', CLV + COMPLETE), 'relevelc': ('l', RELEVEL + COMPLETE),
+            'relevelc': ('l', RELEVEL + COMPLETE),
             'eq34c': ('e', EQ34 + COMPLETE), 'dhoc': ('u', DHO + COMPLETE)}
 # Every arm letter names one posture (an arm's suffix is its letter and its bed).
 assert len({v[0] for v in POSTURES.values()}) == len(POSTURES)

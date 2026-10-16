@@ -12,10 +12,9 @@
  * re-solves the epoch without it, up to a few times: a satellite whose ambiguities refloat
  * at every station, one satellite at one station (an isolated arc), or a whole station,
  * which the re-solve leaves out of the estimator.  Each re-solve rebuilds the DD-carry
- * priors (networkBuildCarryDdPriors, and the MW wide-lane rows it appends,
- * networkMwWlInject).  A culprit satellite or arc invalidates its carried double
- * differences, so the rebuild treats every carried ambiguity a culprit names as slipped
- * and re-taps the chord, instead of folding the stale carried value again.
+ * priors (networkBuildCarryDdPriors).  A culprit satellite or arc invalidates its carried
+ * double differences, so the rebuild treats every carried ambiguity a culprit names as
+ * slipped and re-taps the chord, instead of folding the stale carried value again.
  *
  * The sets travel through the epoch: one @ref WithinEpochCulprits lives in the epoch's
  * workspace (@c EpochWorkspace::we_culprits, filter/NetworkRunTypes.hpp), the T2 block is
@@ -121,8 +120,7 @@ struct WithinEpochCulprits {
  * Both ends count only under the effective @c network.carry_invariant
  * (@c NetworkKnobs::carry_invariant), the knob without which the rebuild returns before it
  * reads the sets, so the two counts are comparable on every posture (both stay 0 on the
- * goldens, where T2 adapts without the DD carry).  The MW wide-lane rows read the same set
- * inside one rebuild and count nothing.
+ * goldens, where T2 adapts without the DD carry).
  *
  * The unit suite certifies the set, this tally's verdict and the report's gate; the
  * hand-off itself (the rebuild reading the object the T2 block writes) is certified only

@@ -61,6 +61,7 @@ using GnssProcessor::ambStateFormatRow;
 using GnssProcessor::ambStateRouteName;
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
+namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
 using GnssProcessor::LogManager;
 using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
@@ -167,10 +168,8 @@ TEST(AmbFloatVehicleTest, DefaultsToTheLevelVehicle) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kRf0Posture), cfg));
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
-    // The supporting knobs are all inert by default.  Design §3.5 makes the q default
-    // explicit rather than implied, so it is pinned here.
+    // The supporting knobs are all inert by default.
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_birth_var_m2, 0.0);
-    EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_q_m2s, 0.0);
     EXPECT_FALSE(cfg.getNetworkConfig().amb_float_declared_handover);
     EXPECT_FALSE(cfg.getNetworkConfig().trace_amb_state);
     EXPECT_EQ(cfg.getNetworkConfig().trace_amb_state_every, 1);
@@ -189,8 +188,8 @@ TEST(AmbFloatVehicleTest, ParsesLevelAndFloatKf) {
 }
 
 // An unknown value must not kill a long run, and must not pass silently either: the
-// established pattern (network.trace_dd_fractional_ref, network.raim_erase_band_scope)
-// is log->error naming what the knob changes, then the default.
+// established pattern (network.trace_dd_fractional_ref) is log->error naming what the
+// knob changes, then the default.
 TEST(AmbFloatVehicleTest, UnknownVehicleFallsBackToLevel) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("typo", networkConfig(std::string(kRf0Posture)
@@ -211,13 +210,11 @@ TEST(AmbFloatVehicleTest, SupportingKnobsParse) {
                          networkConfig(std::string(kRf0Posture)
                                        + "    \"ambiguity_vehicle\": \"float_kf\",\n"
                                          "    \"amb_float_birth_var_m2\": 0.25,\n"
-                                         "    \"amb_float_q_m2s\": 1e-9,\n"
                                          "    \"amb_float_declared_handover\": true,\n"
                                          "    \"trace_amb_state\": true,\n"
                                          "    \"trace_amb_state_every\": 5,\n"),
                          cfg));
     EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_birth_var_m2, 0.25);
-    EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().amb_float_q_m2s, 1e-9);
     EXPECT_TRUE(cfg.getNetworkConfig().amb_float_declared_handover);
     EXPECT_TRUE(cfg.getNetworkConfig().trace_amb_state);
     EXPECT_EQ(cfg.getNetworkConfig().trace_amb_state_every, 5);
@@ -269,57 +266,35 @@ TEST(AmbFloatVehicleTest, CarryInvariantLoadsFineOnTheLevelVehicle) {
     EXPECT_EQ(cfg.getNetworkConfig().ambiguity_vehicle, NetworkAmbiguityVehicle::Level);
 }
 
-// float_kf subsumes F1 (×B_eff) and F3 (the station-wide whitened block): the joint
-// block removes the over-count that F1 corrects approximately, and F3's buildLocalBlock
-// is the fold the vehicle makes structural.  Both are refused with a log line and
-// forced off, so the effective fold is never attributable to two knobs.
-TEST(AmbFloatVehicleTest, FloatKfRefusesF1AndF3) {
+// float_kf subsumes F3 (the station-wide whitened block): F3's buildLocalBlock is the
+// fold the vehicle makes structural.  The knob is refused with a log line and forced
+// off, so the effective fold is never attributable to two switches.
+TEST(AmbFloatVehicleTest, FloatKfRefusesF3) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("refuse",
                          networkConfig(std::string(kRf0Posture)
                                        + "    \"ambiguity_vehicle\": \"float_kf\",\n"
-                                         "    \"phase_leveling_los_scale\": true,\n"
                                          "    \"phase_leveling_local_block\": true,\n"),
                          cfg));
-    EXPECT_FALSE(cfg.networkPhaseLevelingLosScale());
     EXPECT_FALSE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// On the level vehicle both stay armed: the refusal is scoped to the float_kf arm, not
+// On the level vehicle it stays armed: the refusal is scoped to the float_kf arm, not
 // a blanket disable that would silently change every existing F3 lineage.
-TEST(AmbFloatVehicleTest, LevelVehicleLeavesF1AndF3Armed) {
+TEST(AmbFloatVehicleTest, LevelVehicleLeavesF3Armed) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("keep",
                          networkConfig(std::string(kRf0Posture)
-                                       + "    \"phase_leveling_los_scale\": true,\n"
-                                         "    \"phase_leveling_local_block\": true,\n"),
+                                       + "    \"phase_leveling_local_block\": true,\n"),
                          cfg));
-    EXPECT_TRUE(cfg.networkPhaseLevelingLosScale());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
 }
 
-// The young-arc inflate is a time-decaying patch on the inject for the same defect that
-// the vehicle's floored birth prior fixes at the source.  It draws a warning, not a
-// refusal, because an arm may want the contrast; the test pins that it is still armed
-// after the load.
-TEST(AmbFloatVehicleTest, FloatKfWarnsButKeepsTheYoungArcInflate) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("yng",
-                         networkConfig(std::string(kRf0Posture)
-                                       + "    \"ambiguity_vehicle\": \"float_kf\",\n"
-                                         "    \"phase_leveling_young_inflate_var_m2\": 0.09,\n"),
-                         cfg));
-    EXPECT_DOUBLE_EQ(cfg.networkPhaseLevelingYoungInflateVarM2(), 0.09);
-}
-
 TEST(AmbFloatVehicleTest, NegativeSupportingKnobsAreRejected) {
-    GnssConfig a, b;
+    GnssConfig a;
     EXPECT_FALSE(loadInto("negbirth",
                           networkConfig(std::string(kRf0Posture)
                                         + "    \"amb_float_birth_var_m2\": -1.0,\n"), a));
-    EXPECT_FALSE(loadInto("negq",
-                          networkConfig(std::string(kRf0Posture)
-                                        + "    \"amb_float_q_m2s\": -1e-9,\n"), b));
 }
 
 // =============================================================================
@@ -520,7 +495,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
 
     NetworkEstimator est;
     GnssProcessor::GlobalVtecShConfig shc{};
-    std::map<std::tuple<GnssProcessor::SharedParamKind, std::string, std::string>, double> tu_hist;
+    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history (card NOM step N4d)
     const NetworkEstimator::Datum datum{};          // no shared border, nothing to pin
     const std::vector<Eigen::Index> carried{kColN1, kColN2};
 
@@ -553,8 +528,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
             // joint prior rather than two marginals.
             GnssProcessor::CouplingRowBuilder cb{
                 est, shc, /*q_clock=*/0.0, /*q_cb=*/0.0, /*q_pb=*/0.0,
-                /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                /*gauge=*/false, /*reinit=*/false, tu_hist, R};
+                /*tu=*/false, /*gauge=*/false, /*reinit=*/false, tu_hist, R};
             const bool ok = cb.buildLocalBlock({
                 GnssProcessor::LocalBlockCol{kColN1, 0.0, &c1, c1.var, 0.0, 1.0},
                 GnssProcessor::LocalBlockCol{kColN2, 0.0, &c2, c2.var, 0.0, 1.0}});
@@ -945,7 +919,7 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
     using GnssProcessor::CoupledShared;
     using GnssProcessor::SharedParamKind;
     const double delta = -3.5;
-    GnssProcessor::NetworkCarryState carry;
+    GnssProcessor::NetworkCarryState carry; GnssProcessor::net::NetworkEntities carry_ent;
     GnssProcessor::LocalCarry lc{0.0, 1e-4, 100.0};
     lc.coupling = {
         CoupledShared{SharedParamKind::PhaseBias, "G07", "L1C", 0, 0, 'C', 0, 1.0, 20.0, 0.1},
@@ -953,16 +927,16 @@ TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBia
         CoupledShared{SharedParamKind::Clock,     "G07", "",    0, 0, 'C', 0, 0.8,  5.0, 0.1},
     };
     const std::tuple<int, std::string, std::string> other{4, "G09", "L1C"};   // another family
-    carry.local_carry[other] = lc;
+    net::putArc(carry_ent, other, &net::ArcState::amb) = lc;
     long long n_shift = 0, n_pb = 0, n_cpl = 0;
-    GnssProcessor::declaredHandoverShiftCarry(carry, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
+    GnssProcessor::declaredHandoverShiftCarry(carry, carry_ent, "G07", "L1C", delta, n_shift, n_pb, n_cpl);
     EXPECT_EQ(n_cpl, 1);
     EXPECT_EQ(n_shift, 0);
-    const auto& coupling = carry.local_carry[other].coupling;
+    const auto& coupling = net::putArc(carry_ent, other, &net::ArcState::amb).coupling;
     EXPECT_DOUBLE_EQ(coupling[0].s_prev, 20.0 + delta);   // the shifted PB column
     EXPECT_DOUBLE_EQ(coupling[1].s_prev, 30.0);           // a different signal: untouched
     EXPECT_DOUBLE_EQ(coupling[2].s_prev,  5.0);           // the clock: never moved by this
-    EXPECT_DOUBLE_EQ(carry.local_carry[other].value_abs, 0.0);   // another family's level stays
+    EXPECT_DOUBLE_EQ(net::putArc(carry_ent, other, &net::ArcState::amb).value_abs, 0.0);   // another family's level stays
 }
 
 // The transform is idempotent: a second application, with Δ read from the already

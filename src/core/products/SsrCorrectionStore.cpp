@@ -66,21 +66,6 @@ void SsrCorrectionStore::pushClock(const SsrClockCorrection& rec, const SsrHeade
     auto& r = by_sat_[rec.sat]; r.clock = rec; r.header = header;
 }
 
-bool SsrCorrectionStore::pushFastClock(const SsrClockCorrection& rec) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    const auto it = by_sat_.find(rec.sat);
-    if (it == by_sat_.end() || !it->second.clock) return false;   // refresh only, never establish
-    SsrClockCorrection& c = *it->second.clock;
-    // Three fields change: the value, and the two times that define its age and its
-    // extrapolation base.  All other fields (c1, c2, iod_ssr, iode, orbit linkage,
-    // combined_code_sigma_m, code_phase_corr, disc_counter) and the shared SatRecord
-    // header belong to the slow-cadence record and are left untouched by contract.
-    c.c0            = rec.c0;
-    c.received_time = rec.received_time;
-    c.epoch_time    = rec.epoch_time;
-    return true;
-}
-
 void SsrCorrectionStore::pushCombined(const SsrCombinedCorrection& rec, const SsrHeader& header) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto& r = by_sat_[rec.sat]; r.combined = rec; r.header = header;
@@ -563,7 +548,7 @@ NetworkProducerStatus::State NetworkProducerStatus::parseState(const std::string
     if (token == "partial")         return State::Partial;
     if (token == "withheld_sigma0") return State::WithheldSigma0;
     if (token == "withheld_gate")   return State::WithheldGate;
-    if (token == "withheld_sh")     return State::WithheldShGate;   // Phase 2.2 SH health gate
+    if (token == "withheld_sh")     return State::WithheldShGate;   // Phase 2.2 SH health gate (retired producer; archived product files)
     return State::Unknown;
 }
 

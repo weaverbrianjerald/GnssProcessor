@@ -21,7 +21,7 @@
 
 namespace GnssProcessor {
 
-// ---- Written by scripts/nom_td_cut.py (card NOM step TD1b); change the generator, not this region ----
+// ---- Written by scripts/nom_td_cut.py (card NOM step TD1b); the row call edited by hand in step TD2 ----
 
 int networkTeardown(const NetworkRunContext& ctx,
                     const GnssConfig& config_,
@@ -41,7 +41,7 @@ int networkTeardown(const NetworkRunContext& ctx,
     // precedence (the injection verdict over the joint-block PD-fallback bar).
     int verdict = 0;
     for (const NetworkRunEndRow& row : kNetworkRunEndReports) {
-        const int rc = row.report(view);
+        const int rc = networkRunEndCallRow(row, view);   // with its heading line (TD2)
         if (rc != 0) verdict = rc;
     }
 

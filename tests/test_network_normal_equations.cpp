@@ -1171,8 +1171,8 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDegenerateBlockIsInertAndInd
 // n_threads > 1) computes each block's algebra in parallel but accumulates the GMGᵀ /
 // GM(z_free−ẑ) contributions serially in block-index order, so the reduced system, the
 // solve, the per-station reconstruction and every per-block readout are byte-identical
-// to the serial fold (n_threads == 1).  parallel_reduce, by contrast, reassociates and
-// differs at the ULP level.  The block set includes a chordless (K=0) inert slot and a
+// to the serial fold (n_threads == 1).  The threaded reduce(), by contrast, reassociates
+// and differs at the ULP level.  The block set includes a chordless (K=0) inert slot and a
 // degenerate (non-PD) inert slot, so the slot bookkeeping is covered too.
 TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsParallelMatchesSerialByteForByte) {
     std::mt19937 gen(20260713);

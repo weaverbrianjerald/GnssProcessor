@@ -14,7 +14,7 @@
  *    lattice (step FCF-4 is not built), and an unnamed source; source lattice under Observe
  *    loads (step FCF-3) with its persist_ep and lapse_ep (lapse_ep named inert under source
  *    epoch); the fold's interlocks (no search, no cycle basis, the level vehicle, no held basis,
- *    carry_invariant, phase_datum_ensemble, phase_datum_eq34, cycle_slip.turbo_edit,
+ *    carry_invariant, phase_datum_eq34, cycle_slip.turbo_edit,
  *    cycle_slip.relevel_delta_bridge, sd_ewl.fix_enable, the smoothed hold under Emit);
  *    malformed values;
  *  - card FCFB section 5's review fixes: Emit refuses a posture missing any of the slip fixes
@@ -305,7 +305,6 @@ TEST(FixedCycleConfig, TheRemainingInterlocksRefuse) {
     struct Case { const char* tag; std::string net_extra; const char* why; };
     const Case cases[] = {
         {"carry_invariant", ",\n    \"carry_invariant\": true", "network.carry_invariant"},
-        {"ensemble", ",\n    \"phase_datum_ensemble\": true", "refuses network.phase_datum_ensemble"},
         {"eq34", ",\n    \"phase_datum_eq34\": true", "refuses network.phase_datum_eq34"},
         {"turbo_edit", ",\n    \"cycle_slip\": { \"turbo_edit\": true }", "refuses network.cycle_slip.turbo_edit"},
         // The bridge disarms itself without the free epoch, the MW detector and IF-TD.

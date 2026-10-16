@@ -4,14 +4,14 @@
 
 - **id:** GAL
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** BUILT, NOT ARMED: Galileo E1 and E5a beside GPS improve the consumer on both beds (census median count 348 to 434.5); adoption waits on the frozen clock level it exposed.
+- **status:** superseded
+- **summary:** Galileo E1/E5a beside GPS built 2026-09-22, NOT ARMED: census gained but frozen bars missed, root the ignition-frozen clock level; SUPERSEDED by GAL2 and ARMED by GAD 2026-10-13.
 - **source:** the author's decision of 2026-09-22; [RF-0c](RF-0c_gf_pin_2026-09-15.md) and [RF-0d](RF-0d_per_signal_pin_2026-09-15.md) (the pin and its cross-band rule), [RF-0f](RF-0f_isc_state_2026-09-15.md) (an inter-signal correction on disjoint station sets), [B5D](B5D_band5_code_datum_2026-09-20.md) (the assertion class), [SID](SID_signal_identity_2026-09-22.md) sections 11 and 12 (families and canonical stations), [SCC](SCC_second_code_channel_2026-09-21.md); the retired golden `config/golden/golden_sim_tri_w6.json` (GPS and Galileo triple on the pre-re-founding posture); `docs/SPEC_family_gf_datum.md` (the per-family geometry-free pin, built 2026-08-13 on the retired `code_bias_gf_datum` path, never run on data)
 - **knobs / posture:** `processing.active_systems: ["GPS", "Galileo"]` with `processing.signal_priorities.Galileo` (C1C, C1X, L1C, L1X, C5Q, C5X, L5Q, L5X; E5b left out under `frequency_mode: dual`) on the RF-0hv working bases at main `fdfff99`; every new knob default OFF and byte-identical; nothing armed in the bases by this card
 - **dates in the text:** 2026-09-22
 - **hashes / run dirs:** baseline pair `runs/_rf0hv10_{field,sim}6`; arms `runs/_rap_gal_*` (`_rap_gal_g2b_sim6`, `_rap_gal_g3x2_sim6`, `_rap_gal_g4c_field2`, `_rap_gal_g5_field6`, `_rap_gal_g5s_field6`); census keys `gal`, `galg` (plain wire, confounded), `gals`, `galgs` (contract-bearing wire) against `rf3gl2nb`; exe `gnss_processor_gal.exe` v3 `13b778f0...`; main `787eca5`
 
-**Outcome.** A second constellation at every station was tested against the consumer errors left on the GPS-only posture. Frozen bars were MISSED: G2's inter-system bias, code-bias truth and GPS gross rows, G3's split-family recovery (C1X 0.60 to 0.88 m rms against 0.02), G5's GPS clock wire. G3 exposed the root (section 6.1): every satellite clock level frozen at ignition. That work passed from card [CLV](CLV_clock_level_2026-09-22.md) (superseded) to card [CTU](CTU_coupling_time_update_2026-09-28.md)'s exact update, armed by card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md); the goldens stay GPS-only. Card [OWD](OWD_owed_defects_2026-09-22.md) fixed five other owed defects.
+**Outcome.** Question: does Galileo at every station cut the GPS-only posture's consumer errors? The census gained (median count 348 to 434.5), but frozen bars were MISSED: G2's inter-system bias and GPS gross rows, G3's split-family recovery (0.60 to 0.88 m rms against 0.02), G5's GPS clock wire. G3 exposed every satellite clock level frozen at ignition, fixed by card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md); card [OWD](OWD_owed_defects_2026-09-22.md) fixed the other defects. SUPERSEDED: rebuilt by card [GAL2](GAL2_galileo_on_the_exact_update_2026-10-08.md), ARMED by card [GAD](GAD_galileo_adoption_2026-10-13.md) (its section 4 holds the rest); the BeiDou pair rule is moot. Status reviewed 2026-10-13.
 
 ## 1. The decision and the reading it tests
 

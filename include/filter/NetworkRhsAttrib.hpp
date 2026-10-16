@@ -5,8 +5,8 @@
  *        shared columns at a chosen epoch (the era-2 injector probe).
  *
  * Diagnostics-only, off by default, and not fingerprinted: it is a forward-only
- * readout and leaves the meaning of stored state unchanged (as for
- * adaptive_iono_q).  A shared-snapshot replay leg with only this armed is
+ * readout and leaves the meaning of stored state unchanged.  A shared-snapshot
+ * replay leg with only this armed is
  * therefore A/B-comparable against an unarmed control.
  *
  * ## What it computes
@@ -23,7 +23,7 @@
  *    both channels the kernel folds: the pre-PD prior folded with the block (for
  *    example @c prior_rx_cb_datum_pre_pd) and the post-PD diagonal prior when the
  *    consume folded it (@c prior_ambiguity_carry, @c prior_zwd_carry,
- *    @c prior_iono_carry, @c prior_rx_cb_carry, @c prior_rx_cb_datum,
+ *    @c prior_rx_cb_carry, @c prior_rx_cb_datum,
  *    @c prior_ambiguity_oracle_pin);
  *  - each shared fold the estimator captured, by its kind: @c "shared:" and the kind's
  *    name (@ref rhsAttribSharedClass; for example @c shared:border_carry_dense,
@@ -86,7 +86,7 @@
  *  - @c network.rhs_attrib_on_trip (bool, default false): the INC-5 flight
  *    recorder (docs/SPEC_prefit_census_observability.md §7).  Arms the capture
  *    recorder every epoch and dumps automatically at the first trip of a QC era
- *    (SH-gate engage, A4 σ̂₀ withhold, clock runaway, a₀₀-band exit) instead of
+ *    (A4 σ̂₀ withhold, clock runaway, a₀₀-band exit) instead of
  *    at a hand-picked TOW.  With @c rhs_attrib_on_trip_prev (default true) the
  *    retained frame of the previous epoch is dumped too, since the pre-trip
  *    frame is the one that shows the cause.
@@ -543,9 +543,10 @@ Eigen::Index rhsAttribResolveLocalKey(const std::vector<std::string>& names,
  * acts through the folds' own right-hand sides (@f$z_{\text{free}}@f$ of a DD block,
  * @f$\gamma@f$ of a gauge) and through the two reconstruction corrections; that part of
  * its effect is attributed whole, to the @c dd_fold fold, @c SUMZERO and @c DDPRIOR, and
- * not to the row.  The ensemble gauges' @f$\gamma g/\beta@f$ in the reduced right-hand
- * side is in no channel of the class decomposition (@c network.phase_datum_ensemble) and
- * shows in @c FBCLOSURE, as it shows in the class closure.
+ * not to the row.  A sum-to-zero gauge's @f$\gamma g/\beta@f$ in the reduced right-hand
+ * side (the estimator's gauge kernel; no production datum folds one since the ensemble
+ * datum was removed) is in no channel of the class decomposition and shows in
+ * @c FBCLOSURE, as it shows in the class closure.
  *
  * ## Checks of the single parts
  *
@@ -721,7 +722,7 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
  * @param log     Run logger (closure-violation warning and the dump line).
  * @param dir     Output directory (created if absent).
  * @param kind    Short tag naming the reason for the dump ("armed",
- *                "trip:sigma0", "trip-prev:sh_gate", …).  It appears in the log
+ *                "trip:sigma0", "trip-prev:clk_runaway", …).  It appears in the log
  *                text only, so the CSVs stay byte-comparable across dump reasons.
  * @param columns The named columns (@c network.rhs_attrib_columns); empty = no
  *                `cols_` or `loc_` file.
@@ -735,40 +736,50 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
                           const std::vector<std::string>& columns = {},
                           std::set<std::string>* warned = nullptr);
 
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
 /**
  * @brief Post-solve reduced-RHS class attribution at the armed target epochs.
  *
  * Call after the epoch's solve (the kernel's reduced system and the station
- * LDLᵀ blocks must be current) and after the postfit sweep, from the driver's
- * SB_FRAMEDIAG block.  No-op unless @c network.rhs_attrib_tow ≥ 0 and this
- * epoch's TOW lies in the armed window.
+ * LDLᵀ blocks must be current) and after the postfit sweep, from the FrameDiag
+ * slot of the observer table (filter/NetworkEpochObservers.hpp).  No-op unless the
+ * estimator's attribution capture is armed (@c est.attribArmed(), the driver's gate
+ * until card NOM3 step EP3), @c network.rhs_attrib_tow ≥ 0 and this epoch's TOW lies
+ * in the armed window.
  *
- * @param ctx          Run context (the dumped-epoch count and counters; owns no
- *                     attribution state).
- * @param config_      Full configuration (reads @c network.rhs_attrib_*).
- * @param log          Main run logger (arming and closure lines).
- * @param traces       Run traces (provides the log directory for the dump files).
- * @param se           This synced epoch (week/tow stamp).
- * @param stations     Network station list (names for the dump).
- * @param est          The solved estimator (kernel accessors and capture recorder).
- * @param plan_datum   The epoch's minimum-constraint datum pins (from
- *                     @c plan.shared_datum), attributed per pin.
- * @param asm_res      PASS A/B station assemblies (the row stacks to classify).
- * @param est_index_of Station → kernel slot map (−1 = not folded this epoch).
- * @param x_s          Optional: the epoch's shared solution as the driver holds it,
- *                     written beside the recomputed one in `cols_<tow>.csv` and read by
- *                     the station-local readout `loc_<tow>.csv`
- *                     (@c network.rhs_attrib_columns); nullptr = neither.
+ * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * replace the explicit parameters; the definition binds each former parameter in its preamble,
+ * under its former name.
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx). Read:
+ *            run.config (config_), run.log (log), run.traces (traces), run.setup.stations
+ *            (stations), run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
+ *           ep.assembly.est_index_of (est_index_of), &ep.solve.x_s (x_s).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: Run context (the dumped-epoch count and counters; owns no attribution
+ *     state).
+ *   - @p config_ = run.config: Full configuration (reads @c network.rhs_attrib_*).
+ *   - @p log = run.log: Main run logger (arming and closure lines).
+ *   - @p traces = run.traces: Run traces (provides the log directory for the dump files).
+ *   - @p se = ep.se: This synced epoch (week/tow stamp).
+ *   - @p stations = run.setup.stations: Network station list (names for the dump).
+ *   - @p est = run.engines.est: The solved estimator (kernel accessors and capture recorder).
+ *   - @p plan_datum = ep.solve.plan.shared_datum: The epoch's minimum-constraint datum pins
+ *     (from @c plan.shared_datum), attributed per pin.
+ *   - @p asm_res = ep.assembly.asm_res: PASS A/B station assemblies (the row stacks to
+ *     classify).
+ *   - @p est_index_of = ep.assembly.est_index_of: Station → kernel slot map (−1 = not folded
+ *     this epoch).
+ *   - @p x_s = &ep.solve.x_s: Optional: the epoch's shared solution as the driver holds it,
+ *     written beside the recomputed one in `cols_<tow>.csv` and read by the station-local
+ *     readout `loc_<tow>.csv` (@c network.rhs_attrib_columns); nullptr = neither.
  */
-void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
-                           const std::shared_ptr<spdlog::logger>& log,
-                           const NetworkRunTraces& traces, const SyncedEpoch& se,
-                           const std::vector<NetStation>& stations,
-                           NetworkEstimator& est,
-                           const NetworkEstimator::Datum& plan_datum,
-                           const std::vector<StationAssembly>& asm_res,
-                           const std::vector<int>& est_index_of,
-                           const Eigen::VectorXd* x_s = nullptr);
+void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief INC-5 flight recorder: consume a pending trip, then refresh the
@@ -789,30 +800,53 @@ void networkRhsAttribution(NetworkRunContext& ctx, const GnssConfig& config_,
  * No-op unless @c network.rhs_attrib_on_trip.  Measure-only: the solve reads
  * nothing written here.
  *
- * @param ctx          Run context (the trip latch, the retained frame and counters).
- * @param config_      Full configuration (reads @c network.rhs_attrib_*).
- * @param log          Main run logger.
- * @param traces       Run traces (provides the log directory for the dump files).
- * @param se           This synced epoch (week/tow stamp).
- * @param stations     Network station list.
- * @param est          The solved estimator.
+ * The solve's sigma0 exit (networkSigma0WithholdTail) calls this form with its own map and no
+ * solution; the epoch form below forwards the epoch's (card NOM3 step SG3, which retired the
+ * explicit form EP1 kept).
+ *
+ * @param run          The run: ctx (the trip latch, the retained frame and counters) is written;
+ *                     read: config (network.rhs_attrib_*), log, traces (the log directory),
+ *                     setup.stations, engines.est (the solved estimator).
+ * @param ep           The epoch, read: se (week/tow stamp), assembly.asm_res.
  * @param plan_datum   The epoch's minimum-constraint datum pins.
- * @param asm_res      PASS A/B station assemblies.
- * @param est_index_of Station → kernel slot map (−1 = not folded this epoch).
+ * @param est_index_of Station -> kernel slot map (-1 = not folded this epoch); inside the solve
+ *                     the solve's own map (one access path).
  * @param x_s          Optional: the epoch's shared solution as the driver holds it, read
  *                     by the current-epoch dump only (the `cols_` @c SOLVE line and the
  *                     station-local readout); the retained previous frame never holds one.
  *                     nullptr (the A4 withhold path) = neither.
  */
-void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
-                          const std::shared_ptr<spdlog::logger>& log,
-                          const NetworkRunTraces& traces, const SyncedEpoch& se,
-                          const std::vector<NetStation>& stations,
-                          const NetworkEstimator& est,
-                          const NetworkEstimator::Datum& plan_datum,
-                          const std::vector<StationAssembly>& asm_res,
-                          const std::vector<int>& est_index_of,
-                          const Eigen::VectorXd* x_s = nullptr);
+void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
+                            const NetworkEstimator::Datum& plan_datum,
+                            const std::vector<int>& est_index_of,
+                            const Eigen::VectorXd* x_s = nullptr);
+
+/**
+ * @brief Epoch form of networkRhsAttribTrip (card NOM3 step EP1; generated by
+ *        scripts/nom_ep1_cut.py): one call forwarding to networkRhsAttribTripAt with the
+ *        epoch's datum, map and solution (card NOM3 step SG3).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ *            Read: run.config (config_), run.log (log), run.traces (traces),
+ *            run.setup.stations (stations), run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+ *           ep.solve.plan.shared_datum (plan_datum), ep.assembly.asm_res (asm_res),
+ *           ep.assembly.est_index_of (est_index_of), &ep.solve.x_s (x_s).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx.
+ *   - @p config_ = run.config.
+ *   - @p log = run.log.
+ *   - @p traces = run.traces.
+ *   - @p se = ep.se.
+ *   - @p stations = run.setup.stations.
+ *   - @p est = run.engines.est.
+ *   - @p plan_datum = ep.solve.plan.shared_datum.
+ *   - @p asm_res = ep.assembly.asm_res.
+ *   - @p est_index_of = ep.assembly.est_index_of.
+ *   - @p x_s = &ep.solve.x_s.
+ */
+void networkRhsAttribTrip(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief INC-5 trigger-site helper: record a QC condition and report its
@@ -826,7 +860,7 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
  * (invariant #4).  A site that calls only on the true branch is miswired.
  *
  * @param ctx    Run context (latch set and counters).
- * @param kind   Stable era name ("sh_gate", "sigma0", "clk_runaway", "a00_band"),
+ * @param kind   Stable era name ("sigma0", "clk_runaway", "a00_band"),
  *               passed as a string literal.  It is copied into a std::string,
  *               so its lifetime does not matter.
  * @param active Whether the condition holds this epoch.
@@ -834,7 +868,8 @@ void networkRhsAttribTrip(NetworkRunContext& ctx, const GnssConfig& config_,
  *               is armed; false otherwise.  After a true return
  *               @c ctx.carry.rhs_trip_pending is set; the first era to trip in
  *               an epoch names the dump.
+ * @param trip The epoch's trip reason (EpochEvents::Qc::rhs_trip_pending); set on a rising edge when empty.
  */
-bool networkRhsTripEdge(NetworkRunContext& ctx, const char* kind, bool active);
+bool networkRhsTripEdge(NetworkRunContext& ctx, std::string& trip, const char* kind, bool active);
 
 } // namespace GnssProcessor

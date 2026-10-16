@@ -455,8 +455,7 @@ namespace GnssProcessor {
         /**
          * @brief Format re-inflation counters as the run-end summary (card OWD, O2).
          *
-         * One format everywhere (the consumer, the producer summed over its stations, the
-         * PPP run), parsed by the card's graders:
+         * One format everywhere (the consumer, the PPP run), parsed by the card's graders:
          * "code_bias raised=N kept=M | isb raised=N kept=M | iono ... | iono_rate ... |
          * sat_bias ... | sat_phase_bias ... | sat_clock raised=N kept=M".
          *

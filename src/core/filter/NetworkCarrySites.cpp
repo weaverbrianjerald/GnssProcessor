@@ -27,6 +27,13 @@ namespace GnssProcessor {
 namespace {
 
 using S = CarrySite;
+using ES = net::StationState;         // the station carries (card NOM step N4a)
+using ESS = net::StationSignalState;
+using EC = net::ConstellationState;   // the constellation carries (card NOM step N4b)
+using ECh = net::ChannelState;
+using EL = net::LosState;             // the line-of-sight carries (card NOM step N4c)
+using EG = net::SatSignalState;       // the satellite-signal carries (card NOM step N4d)
+using EA = net::SatelliteState;       // the satellite carries (card NOM step N4e1)
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -58,8 +65,7 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
      "an open pin bridge's held phase bias (value)", "moves", nullptr, "cold-started"},
     {S::PbHold, "pb_hold", "pb_hold", "SAT|SIGNAL", R::Held,
      "the phase hold's held value (held_m, emit frame)",
-     "not moved: a re-base accumulates the emit-side transfer (clk_level xfer) for the "
-     "hold's signals instead",
+     "not moved: held_m is an emitted value in the emit frame",
      nullptr, "cold-started (the generation advances)"},
     {S::CodeBiasPrev, "code_bias_prev", "code_bias_prev_", "<const>|<signal> -> sat",
      R::Baseline, "the time-linked code-bias datum's previous solved value", "moves", "CBP",
@@ -127,13 +133,6 @@ constexpr const char* kOwed =
     "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
 constexpr const char* kOwedClv64 =
     "not moved before card PRM phase 2 (card CLV section 6.4 item 6; owed to phase 3b)";
-constexpr const char* kLgmAfterClv =
-    "card LGM's carry postdates card CLV's list; the two are not armed together (owed)";
-constexpr const char* kOscOffWithClv =
-    "card CLV is resolved off with network.clock_model (the loader)";
-constexpr const char* kHoldTransfer =
-    "held_m stays in the emit frame; the re-base accumulates the emit-side transfer "
-    "(clk_level xfer) for the hold's signals instead";
 constexpr const char* kStsRowsBefore =
     "the handover epoch's rows are built before the transform; from the next epoch every "
     "term is re-harvested in the incoming datum";
@@ -153,15 +152,14 @@ constexpr const char* kStsRxClock =
 constexpr const char* kD4BridgeRoot =
     "a bridged satellite is a root of the chain with a known zero shift (by construction)";
 constexpr const char* kPbHoldEmit =
-    "held_m is a held emitted value in the emit frame: moving it needs its own design (card "
-    "CLV accumulates an emit-side transfer instead), so it is exempt from "
-    "network.carry_rebase_complete too";
+    "held_m is a held emitted value in the emit frame: moving it needs its own design, so "
+    "it is exempt from network.carry_rebase_complete too";
 
 /// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete,
 /// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its
 /// own design and its walks take no knob.
 bool owedReason(const char* reason) {
-    return reason == kOwed || reason == kOwedClv64 || reason == kLgmAfterClv;
+    return reason == kOwed || reason == kOwedClv64;
 }
 
 /// One mechanism's row: the sites it moves and the sites it exempts with a reason.
@@ -171,21 +169,6 @@ struct MechRow {
 };
 
 constexpr std::uint32_t bit(S s) { return carrySiteBit(s); }
-
-MechRow clockLevelRow() {
-    MechRow r{};
-    r.moves = bit(S::PrevCarry) | bit(S::PrevClk) | bit(S::CbExcPrevClk)
-            | bit(S::PbHoldPrevClock) | bit(S::PbLevelPrev) | bit(S::PinBridge)
-            | bit(S::CodeBiasPrev) | bit(S::AmbiguityCoupling) | bit(S::ZwdCoupling)
-            | bit(S::IonoCoupling) | bit(S::IonoBlockCoupling) | bit(S::HoldAmbiguityCoupling)
-            | bit(S::HoldIonoCoupling) | bit(S::HoldIonoBlockCoupling) | bit(S::RxClockCoupling)
-            | bit(S::RxPhaseBiasCoupling) | bit(S::RxCodeBiasCoupling);
-    r.exempt[static_cast<int>(S::CxuPivot)]            = kOwed;
-    r.exempt[static_cast<int>(S::ClockOsc)]            = kOscOffWithClv;
-    r.exempt[static_cast<int>(S::PbHold)]              = kHoldTransfer;
-    r.exempt[static_cast<int>(S::PhaseColourCoupling)] = kLgmAfterClv;
-    return r;
-}
 
 MechRow ephRelevelRow() {
     MechRow r{};
@@ -255,8 +238,8 @@ MechRow declaredHandoverRow() {
 
 const MechRow& mechRow(CarryMechanism m) {
     static const std::array<MechRow, kCarryMechanisms> rows{{
-        clockLevelRow(), ephRelevelRow(), handoverRow(false), handoverRow(true),
-        eq34ShiftRow(), declaredHandoverRow()}};
+        ephRelevelRow(), handoverRow(false), handoverRow(true), eq34ShiftRow(),
+        declaredHandoverRow()}};
     return rows[static_cast<std::size_t>(m)];
 }
 
@@ -280,7 +263,6 @@ const char* carryRefRoleName(CarryRefRole r) {
 
 const char* carryMechanismName(CarryMechanism m) {
     switch (m) {
-        case CarryMechanism::ClockLevel:         return "clock_level";
         case CarryMechanism::EphRelevel:         return "eph_relevel";
         case CarryMechanism::Handover:           return "handover";
         case CarryMechanism::HandoverBeforeRows: return "handover_before_rows";
@@ -320,7 +302,8 @@ bool carryMechanismMoves(CarryMechanism m, CarrySite s, bool complete) {
     return (carryMechanismSiteMask(m, complete) & carrySiteBit(s)) != 0;
 }
 
-long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
+long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                  std::uint32_t sites,
                                   const CarryRefVisitor& visit, CarrySiteCounts* counts) {
     static const std::string kNone;
     long long moved = 0;
@@ -342,62 +325,60 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
             hand(CarriedRef{S::PrevCarry, cp.kind, cp.sat, cp.signal, -1, &cp.value, &cp.var,
                             cp.t_park_s > 0.0, &cp, nullptr, nullptr, nullptr});
     if (on(S::CxuPivot))
-        for (auto& [cc, pv] : carry.cxu_pivot) {
-            (void)cc;
-            hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
-                            &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::cxu_pivot,
+                     [&](System, std::pair<std::string, double>& pv) {
+                         hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
+                                         &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
+    // The satellite carries (card NOM step N4e1), in satellite order: the order of their old
+    // satellite-string keys (O1).
     if (on(S::ClockOsc))
-        for (auto& [sat, o] : carry.clock_osc)
-            hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, sat, kNone, -1, &o.x0,
+        net::forEach(entities.sats, &EA::clock_osc, [&](const SatId& id, ClockOsc& o) {
+            hand(CarriedRef{S::ClockOsc, SharedParamKind::Clock, net::satKey(id), kNone, -1, &o.x0,
                             nullptr, false, nullptr, nullptr, nullptr, &o});
+        });
     if (on(S::PrevClk))
-        for (auto& [sat, b] : carry.prev_clk)
-            hand(CarriedRef{S::PrevClk, SharedParamKind::Clock, sat, kNone, -1, &b.first,
+        net::forEach(entities.sats, &EA::prev_clk, [&](const SatId& id, std::pair<double, double>& b) {
+            hand(CarriedRef{S::PrevClk, SharedParamKind::Clock, net::satKey(id), kNone, -1, &b.first,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        });
     if (on(S::CbExcPrevClk))
-        for (auto& [sat, v] : carry.cb_exc_prev_clk)
-            hand(CarriedRef{S::CbExcPrevClk, SharedParamKind::Clock, sat, kNone, -1, &v,
+        net::forEach(entities.sats, &EA::cb_exc_prev_clk, [&](const SatId& id, double& v) {
+            hand(CarriedRef{S::CbExcPrevClk, SharedParamKind::Clock, net::satKey(id), kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+        });
     if (on(S::PbHoldPrevClock))
-        for (auto& [sat, v] : carry.pb_hold_prev_clock_m)
-            hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, sat, kNone, -1, &v,
+        net::forEach(entities.sats, &EA::pb_hold_prev_clock_m, [&](const SatId& id, double& v) {
+            hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, net::satKey(id), kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
-    if (on(S::PbLevelPrev)) {
-        for (auto& [key, v] : carry.pb_level_prev) {   // "sat_signal" keys
-            const auto a = StateKeys::parseAmbiguityKey(key);
-            if (!a) continue;
-            hand(CarriedRef{S::PbLevelPrev, SharedParamKind::PhaseBias, a->satellite, a->signal,
-                            -1, &v, nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
-    }
-    if (on(S::PinBridge)) {
-        for (auto& [key, br] : carry.pin_bridge) {   // "sat_signal" keys
-            const auto a = StateKeys::parseAmbiguityKey(key);
-            if (!a) continue;
-            hand(CarriedRef{S::PinBridge, SharedParamKind::PhaseBias, a->satellite, a->signal,
-                            -1, &br.value, nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
-    }
-    if (on(S::PbHold)) {
-        for (auto& [key, st] : carry.pb_hold) {
-            const std::size_t bar = key.find('|');
-            if (bar == std::string::npos) continue;
-            const std::string sat = key.substr(0, bar);
-            const std::string sig = key.substr(bar + 1);
-            hand(CarriedRef{S::PbHold, SharedParamKind::PhaseBias, sat, sig, -1, &st.held_m,
-                            nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
-    }
+        });
+    // The satellite-signal carries (card NOM step N4d), in (satellite, signal) order: the
+    // order of their old "sat_signal" / "sat|signal" keys (O1).
+    if (on(S::PbLevelPrev))
+        net::forEach(entities.sat_signals, &EG::pb_level_prev, [&](const SatSignalId& id, double& v) {
+            hand(CarriedRef{S::PbLevelPrev, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), -1, &v, nullptr, false, nullptr, nullptr,
+                            nullptr, nullptr});
+        });
+    if (on(S::PinBridge))
+        net::forEach(entities.sat_signals, &EG::pin_bridge, [&](const SatSignalId& id, net::PinBridge& br) {
+            hand(CarriedRef{S::PinBridge, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), -1, &br.value, nullptr, false, nullptr,
+                            nullptr, nullptr, nullptr});
+        });
+    if (on(S::PbHold))
+        net::forEach(entities.sat_signals, &EG::pb_hold, [&](const SatSignalId& id, net::PbHoldKey& st) {
+            hand(CarriedRef{S::PbHold, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), -1, &st.held_m, nullptr, false, nullptr,
+                            nullptr, nullptr, nullptr});
+        });
     if (on(S::CodeBiasPrev))
-        for (auto& [fam, per_sat] : carry.code_bias_prev_) {
-            const std::size_t bar = fam.find('|');
-            if (bar == std::string::npos) continue;
-            const std::string sig = fam.substr(bar + 1);
-            for (auto& [sat, v] : per_sat)
-                hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
-                                nullptr, false, nullptr, nullptr, nullptr, nullptr});
-        }
+        net::forEach(entities.constellations, &EC::channels, &ECh::code_bias_prev,
+                     [&](System, const std::string& sig, std::map<std::string, double>& per_sat) {
+                         for (auto& [sat, v] : per_sat)
+                             hand(CarriedRef{S::CodeBiasPrev, SharedParamKind::CodeBias, sat, sig, -1, &v,
+                                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
+                     });
     // A local carry map: its value in a border frame (when the site exists) and its
     // regression terms.
     const auto terms = [&](S site, int station, LocalCarry& lc) {
@@ -406,61 +387,93 @@ long long forEachCarriedReference(NetworkCarryState& carry, std::uint32_t sites,
                             false, nullptr, &cs, &lc, nullptr});
     };
     if (on(S::AmbiguityValue))
-        for (auto& [key, lc] : carry.local_carry)
-            hand(CarriedRef{S::AmbiguityValue, SharedParamKind::PhaseBias, std::get<1>(key),
-                            std::get<2>(key), std::get<0>(key), &lc.value_abs, nullptr, false,
-                            nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+            hand(CarriedRef{S::AmbiguityValue, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), id.station.index, &lc.value_abs, nullptr,
+                            false, nullptr, nullptr, &lc, nullptr});
+        });
     if (on(S::AmbiguityCoupling))
-        for (auto& [key, lc] : carry.local_carry) terms(S::AmbiguityCoupling, std::get<0>(key), lc);
+        net::forEach(entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+            terms(S::AmbiguityCoupling, id.station.index, lc);
+        });
     if (on(S::ZwdCoupling))
-        for (auto& [key, lc] : carry.zwd_carry) terms(S::ZwdCoupling, key, lc);
+        net::forEach(entities.stations, &ES::zwd, [&](const StationId& id, LocalCarry& lc) {
+            terms(S::ZwdCoupling, id.index, lc);
+        });
     if (on(S::IonoCoupling))
-        for (auto& [key, lc] : carry.iono_carry) terms(S::IonoCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::iono,
+                     [&](const LosId& id, LocalCarry& lc) { terms(S::IonoCoupling, id.station.index, lc); });
     if (on(S::IonoBlockCoupling))
-        for (auto& [key, lc] : carry.iono_blk_carry) terms(S::IonoBlockCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::iono_blk, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::IonoBlockCoupling, id.station.index, lc);
+        });
     if (on(S::HoldAmbiguityValue))
-        for (auto& [key, lc] : carry.gl_hold_amb)
-            hand(CarriedRef{S::HoldAmbiguityValue, SharedParamKind::PhaseBias, std::get<1>(key),
-                            std::get<2>(key), std::get<0>(key), &lc.value_abs, nullptr, false,
-                            nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, LocalCarry& lc) {
+            hand(CarriedRef{S::HoldAmbiguityValue, SharedParamKind::PhaseBias, net::satKey(id.sat),
+                            net::signalKey(id.signal), id.station.index, &lc.value_abs, nullptr,
+                            false, nullptr, nullptr, &lc, nullptr});
+        });
     if (on(S::HoldAmbiguityCoupling))
-        for (auto& [key, lc] : carry.gl_hold_amb)
-            terms(S::HoldAmbiguityCoupling, std::get<0>(key), lc);
+        net::forEach(entities.arcs, &net::ArcState::gl_hold_amb, [&](const ArcId& id, LocalCarry& lc) {
+            terms(S::HoldAmbiguityCoupling, id.station.index, lc);
+        });
     if (on(S::HoldIonoCoupling))
-        for (auto& [key, lc] : carry.gl_hold_iono) terms(S::HoldIonoCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::gl_hold_iono, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::HoldIonoCoupling, id.station.index, lc);
+        });
     if (on(S::HoldIonoBlockCoupling))
-        for (auto& [key, lc] : carry.gl_hold_iono_blk)
-            terms(S::HoldIonoBlockCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::gl_hold_iono_blk, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::HoldIonoBlockCoupling, id.station.index, lc);
+        });
     if (on(S::RxClockValue))
-        for (auto& [key, lc] : carry.rx_clk_carry)
-            hand(CarriedRef{S::RxClockValue, SharedParamKind::Clock, kNone, key.second, key.first,
-                            &lc.value_abs, nullptr, false, nullptr, nullptr, &lc, nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_clk,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxClockValue, SharedParamKind::Clock, kNone, key, id.index,
+                                         &lc.value_abs, nullptr, false, nullptr, nullptr, &lc, nullptr});
+                     });
     if (on(S::RxClockCoupling))
-        for (auto& [key, lc] : carry.rx_clk_carry) terms(S::RxClockCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_clk,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxClockCoupling, id.index, lc);
+                     });
     if (on(S::RxPhaseBiasValue))
-        for (auto& [key, lc] : carry.rpb_carry)
-            hand(CarriedRef{S::RxPhaseBiasValue, SharedParamKind::PhaseBias, kNone, key.second,
-                            key.first, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
-                            nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rpb,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxPhaseBiasValue, SharedParamKind::PhaseBias, kNone, key,
+                                                 id.index, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
+                                                 nullptr});
+                     });
     if (on(S::RxPhaseBiasCoupling))
-        for (auto& [key, lc] : carry.rpb_carry) terms(S::RxPhaseBiasCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rpb,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxPhaseBiasCoupling, id.index, lc);
+                     });
     if (on(S::RxCodeBiasValue))
-        for (auto& [key, lc] : carry.rx_cb_carry)
-            hand(CarriedRef{S::RxCodeBiasValue, SharedParamKind::CodeBias, kNone, key.second,
-                            key.first, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
-                            nullptr});
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_cb,
+                     [&](const StationId& id, const std::string& key, LocalCarry& lc) {
+                         hand(CarriedRef{S::RxCodeBiasValue, SharedParamKind::CodeBias, kNone, key,
+                                                 id.index, &lc.value_abs, nullptr, false, nullptr, nullptr, &lc,
+                                                 nullptr});
+                     });
     if (on(S::RxCodeBiasCoupling))
-        for (auto& [key, lc] : carry.rx_cb_carry) terms(S::RxCodeBiasCoupling, key.first, lc);
+        net::forEach(entities.stations, &ES::signals, &ESS::rx_cb,
+                     [&](const StationId& id, const std::string&, LocalCarry& lc) {
+                         terms(S::RxCodeBiasCoupling, id.index, lc);
+                     });
     if (on(S::PhaseColourCoupling))
-        for (auto& [key, lc] : carry.pc_carry) terms(S::PhaseColourCoupling, key.first, lc);
+        net::forEach(entities.los, &EL::pc, [&](const LosId& id, LocalCarry& lc) {
+            terms(S::PhaseColourCoupling, id.station.index, lc);
+        });
     return moved;
 }
 
-void carrySiteHeld(const NetworkCarryState& carry, long long (&held)[kCarrySites]) {
+void carrySiteHeld(const NetworkCarryState& carry, const net::NetworkEntities& entities,
+                   long long (&held)[kCarrySites]) {
     CarrySiteCounts c;
     // The walk writes nothing, creates no entry and reads no value (its contract), and this
     // visitor moves nothing, so counting through the mutable walk leaves the carry as it was.
-    forEachCarriedReference(const_cast<NetworkCarryState&>(carry), kAllCarrySites,
+    forEachCarriedReference(const_cast<NetworkCarryState&>(carry),
+                            const_cast<net::NetworkEntities&>(entities), kAllCarrySites,
                             [](const CarriedRef&) { return false; }, &c);
     for (int i = 0; i < kCarrySites; ++i) held[i] = c.visited[i];
 }
@@ -480,7 +493,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
     // same rows go to the run manifest as a `param_sites` record.
     const auto& C = ctx.counters;
     long long held[kCarrySites]{};
-    carrySiteHeld(ctx.carry, held);
+    carrySiteHeld(ctx.carry, ctx.entities, held);
     std::string js = "{\"record\":\"param_sites\",\"sites\":[";
     for (int i = 0; i < kCarrySites; ++i) {
         const CarrySiteSpec& sp = carrySiteSpec(static_cast<CarrySite>(i));

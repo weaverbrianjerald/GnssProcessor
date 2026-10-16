@@ -48,7 +48,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [RNEG](../cards/raim-qc/RNEG-REPARTITION.md) | r-negative re-partition: worst \|t\| 2.48e8 was a floor artifact; RNEG read in metres | closed | 2026-09-09 |
 | [GL](../cards/raim-qc/GL-gross-los-screen.md) | gross-LOS screen: tail 13 to 16× smaller but bars FAILED; completed and ARMED by RF-3 | closed | 2026-09-14 |
 | [GL-2 + R8](../cards/raim-qc/GL-2-whole-satellite-standdown.md) | stand-down FAILED (consumer 22.25 m in hour 4), left OFF; rx-CB carry exonerated | closed | 2026-09-14 |
-| [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | gate rulings: degrade under a 120-epoch cap, rms_ho ratio; unbuilt, grace floor un-derived | open | — |
+| [DEC-day129-gate-policy](../decisions/DEC-day129-gate-policy.md) | gate rulings (degrade, 120-epoch cap, rms_ho ratio) unbuilt; superseded, SH and seams out of the re-founding | superseded | — |
 | [T3 mechanism](../cards/raim-qc/T3-IONO-MECHANISM.md) | per-LOS ionosphere error drives the T3 heterogeneity (corr +0.926) and the DD integers | closed | — |
 
 **Standing documents** (still at their original paths, indexed not moved):

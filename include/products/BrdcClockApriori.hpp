@@ -201,7 +201,7 @@ public:
      *        the selected record's IODE and add O to @c clock_c0_m.
      *
      * Applied after the emit-side hold and before the store push and the product write,
-     * so every reader of the solve (CLK-R, the holds, CLV) has already read C_est.  A
+     * so every reader of the solve (CLK-R, the holds) has already read C_est.  A
      * satellite without a selectable record keeps its value and @c clock_iode -1, which
      * the row reports.
      *

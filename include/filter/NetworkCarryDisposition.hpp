@@ -5,9 +5,9 @@
  *        docs/refound/PRM_parameter_registry_2026-09-29.md sections 4.3, 4.4 and 15).
  *
  * The D2 fold (`networkInjectD2CarryPrior`) decides, for every carried border entry, whether
- * it folds, at which process noise, and under which rule: the phase hold, a frame
- * re-reference, the clock oscillator, the READMIT park and seed, the clock monitor's reinit,
- * the Q3 anchor, the B4 floors, the VCE factor, the switch-on seam's level noise.  The
+ * it folds, at which process noise, and under which rule: a frame re-reference, the clock
+ * oscillator, the READMIT park and seed, the clock monitor's reinit, the Q3 anchor, the B4
+ * floors, the VCE factor, the switch-on seam's level noise.  The
  * coupling rows of card CTU's exact update are built in PASS B, before the fold runs, and
  * need the same decision, so until this card they read a mirror of the fold, clause for
  * clause, beside it.  @ref networkCarryDecide makes the decision once, before PASS B, and
@@ -27,6 +27,8 @@
 #include "filter/NetworkRunTypes.hpp"   // CarryPrior, CarryFoldDecision, CarryDisposition
 
 namespace GnssProcessor {
+
+struct EpochEvents;   // app/NetworkEpoch.hpp
 
 struct NetworkRunContext;   // app/NetworkRunContext.hpp, included in the .cpp only
 struct ClockAnchorFold;     // filter/NetworkClockAnchor.hpp
@@ -55,10 +57,10 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
 /**
  * @brief Decide one carried border entry's fold for this epoch, without side effects.
  *
- * The clauses in the fold's order: a VtecSh entry and a phase bias under the phase hold are
- * @c Held (folded by the SH inject and the hold, before the gate); a phase bias whose frame
- * was re-referenced this epoch (eq34 or the anchored election) is @c Reref; a clock under the
- * clock oscillator model is @c OnOscillator; a parked entry is @c Parked unless its column
+ * The clauses in the fold's order: a VtecSh entry is @c Held (folded by the SH inject,
+ * before the gate); a phase bias whose frame was re-referenced this epoch (eq34 or the
+ * anchored election) is @c Reref; a clock under the clock oscillator model is
+ * @c OnOscillator; a parked entry is @c Parked unless its column
  * is back inside the seed horizon (@c Seeded, at q over the gap since the park); a clock the
  * monitor flagged is @c Reinit; otherwise the entry folds at q of its kind over the driver's
  * step, a clock under the armed anchor at the anchor's increment (@c Anchored or @c Loose,
@@ -72,10 +74,11 @@ bool carryColumnPresent(const NetworkEstimator& est, const CarryPrior& cp);
  * @param cta_now_s     continuous GPS seconds of the epoch (the anchor's clock), or 0 off
  * @param readmit_now_s continuous GPS seconds of the epoch (the READMIT clock), or 0 off
  * @return the decision, with the carried value and variance it was made on.
+ * @param events The epoch's events, read: the chain election's re-referenced (sat, signal) set.
  */
 CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEstimator& est,
                                   const CarryPrior& cp, double dt, double cta_now_s,
-                                  double readmit_now_s);
+                                  double readmit_now_s, const EpochEvents& events);
 
 /**
  * @brief The variance the fold folds for decision @p d on the carried variance @p var.
@@ -100,6 +103,9 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
                        const CarryFoldDecision& d, double var, bool dense,
                        ClockAnchorFold* anchor = nullptr);
 
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
 /**
  * @brief Decide every carried border entry for this epoch (@ref carryFoldDecide), and
  *        record the decision on the entry.
@@ -109,13 +115,23 @@ double carryFoldVarEff(const NetworkRunContext& ctx, const CarryPrior& cp,
  * Writes every entry of @c prev_carry, parked ones included, so no reader sees a decision
  * from an earlier epoch.  Writes nothing else: the anchor's state and counters advance at
  * the fold.
- * @param ctx run context (the carry's decisions are written)
- * @param est this epoch's estimator, layout registered
- * @param t   the epoch
- * @param dt  the driver's inter-epoch step
+ *
+ * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+ * retired in card NOM3 step EP2 (the unit tests call this form through
+ * tests/support/NetworkTestRun.hpp).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ *            Read: run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t), ep.clock.dt
+ *           (dt).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: run context (the carry's decisions are written)
+ *   - @p est = run.engines.est: this epoch's estimator, layout registered
+ *   - @p t = ep.se.time: the epoch
+ *   - @p dt = ep.clock.dt: the driver's inter-epoch step
  */
-void networkCarryDecide(NetworkRunContext& ctx, const NetworkEstimator& est, const GnssTime& t,
-                        double dt);
+void networkCarryDecide(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Card PFQ (@c network.clock_pivot_frame_q): add the pivot's walk to the decided
@@ -142,29 +158,16 @@ void networkCarryPivotFrame(NetworkRunContext& ctx);
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the pivot-frame clock noise (PFQ).
+ * @brief Run-end report: the pivot-frame clock noise (PFQ) and the fold's dispositions of the
+ *        carried border (PRM 1b).
  *
- * The pivot-frame clock noise (card PFQ): clocks that took the pivot's walk, at which
- * rate source, and the pairs the dense fold and the exact update carried.
- *
- * Gate: returns 0 at once unless `ctx.knobs.pfq_on`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPivotFrameQRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the fold's dispositions of the carried border (PRM 1b).
- *
- * The fold's dispositions of the carried border over the run (card PRM phase 1b), with
- * the `param_dispositions` manifest record.
- *
- * Gate: each section under its own condition, as in the teardown: always;
- * `C.prm_undecided_at_fold > 0`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkCarryDisposition.cpp, print in this order, each gated on its own knob:
+ *   - networkPivotFrameQRunEnd: the pivot-frame clock noise (PFQ).
+ *   - networkCarryDispositionTableRunEnd: the fold's dispositions of the carried border (PRM 1b).
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
 int networkCarryDispositionRunEnd(const NetworkRunEndView& v);
 

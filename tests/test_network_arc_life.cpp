@@ -30,6 +30,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -148,11 +149,11 @@ TEST(NetworkArcLife, TheRunContextIsReadByStationSatelliteAndPhaseCode) {
     LocalCarry lc{};
     lc.birth_ep  = 4;
     lc.relevel_s = 4 * kDt;
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G05"), std::string("L2W"))] = lc;
-    ctx.carry.amb_flag_ep[{1, StateKeys::makeAmbiguityKey("G05", "L2W")}] = 3;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G05"), std::string("L2W")), &net::ArcState::amb) = lc;
+    net::putAmbFlagEp(ctx.entities, 1, StateKeys::makeAmbiguityKey("G05", "L2W")) = 3;
     // Another band and another station are other arcs.
-    ctx.carry.local_carry[std::make_tuple(1, std::string("G05"), std::string("L1C"))] = LocalCarry{};
-    ctx.carry.amb_flag_ep[{0, StateKeys::makeAmbiguityKey("G05", "L2W")}] = 9;
+    net::putArc(ctx.entities, std::make_tuple(1, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
+    net::putAmbFlagEp(ctx.entities, 0, StateKeys::makeAmbiguityKey("G05", "L2W")) = 9;
 
     const ArcLifeStamp s = arcLifeStamp(ctx, arc);
     EXPECT_EQ(s.adm_generation, 1);
@@ -183,7 +184,10 @@ struct EpochPlan {
 /// The producer's owners of an arc's life, run in epoch order for one subject arc (station 0,
 /// G05, L1C) and one companion (station 0, G07, L1C) that keeps the station present.
 struct LifeLoop {
-    ArcLedger                                                     ledger;
+    /// The ledger's records (step N4f2), on the heap so a returned loop keeps the ledger's
+    /// binding valid (the ledger holds a pointer to them).
+    std::unique_ptr<net::NetworkEntities>                         ents{std::make_unique<net::NetworkEntities>()};
+    ArcLedger                                                     ledger{*ents};
     std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
     std::map<std::pair<int, std::string>, long long>              flags;
     std::optional<ArcLifeTrack> last;

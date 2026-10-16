@@ -168,39 +168,6 @@ TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) 
     }
 }
 
-// clock_signal_basis_hold: parses (default false, so the per-epoch IF-pin
-// reference selection is byte-identical), and, armed alongside the W6 slice it
-// modifies, survives the estimate_sat_code_bias coupling.  The toggle holds the
-// per-satellite clock↔code-bias IF-pin reference pair fixed in time; it is
-// meaningful only when the network estimates its own code biases, so it has to
-// coexist with that flag rather than be overwritten by the coupling.
-TEST(CodeBiasNetworkConfig, ClockSignalBasisHoldParsesAndSurvivesCoupling) {
-    LogManager log;
-    // Default: key absent -> false (per-epoch reference re-selection, byte-identical).
-    {
-        const fs::path p = writeTempConfig("basis_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkClockSignalBasisHold());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed with the W6 code-bias slice: the coupling forces the prerequisites on,
-    // and the hold toggle survives it.  Both are true, so the emitted (δtˢ, dˢ)
-    // split is estimated (W6) and held to a fixed signal basis in time.
-    {
-        const fs::path p = writeTempConfig("basis_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                          "    \"estimate_sat_code_bias\": true,\n"
-                          "    \"clock_signal_basis_hold\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());       // coupled slice on
-        EXPECT_TRUE(cfg.networkClockSignalBasisHold());      // hold toggle survives the coupling
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
 // network.code_datum_time_linked (Card 2): parses (default false = the legacy zero-
 // target code-bias datum, byte-identical) and survives the estimate_sat_code_bias
 // coupling (the datum it re-times exists only in W6, so it has to coexist with that
@@ -227,49 +194,6 @@ TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedParsesAndSurvivesCoupling) {
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());       // coupled slice on
         EXPECT_TRUE(cfg.networkCodeDatumTimeLinked());       // time-linked toggle survives
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// code_datum_time_linked and clock_signal_basis_hold both re-target the per-satellite
-// IF-pin row (the clock↔code split): the time-linked datum subsumes the hold for the
-// pin value, so arming both is a hard load error rather than a silent last-wins.
-TEST(CodeBiasNetworkConfig, CodeDatumTimeLinkedWithSignalBasisHoldIsError) {
-    LogManager log;
-    const fs::path p = writeTempConfig("cbtl_conflict",
-        networkConfig(kGpsGal, kPriosGps,
-                      "    \"estimate_sat_code_bias\": true,\n"
-                      "    \"code_datum_time_linked\": true,\n"
-                      "    \"clock_signal_basis_hold\": true,\n"));
-    GnssConfig cfg;
-    EXPECT_FALSE(cfg.loadFromJson(p, log));
-    std::error_code ec; fs::remove(p, ec);
-}
-
-// phase_bias_exclude_unmatched_antenna: parses (default false, so every station
-// contributes to phase-bias emission, byte-identical), and arms independently of
-// the W6 code-bias slice (it gates only which stations feed the satellite phase
-// biases, orthogonal to whether the network also estimates code biases).
-TEST(CodeBiasNetworkConfig, PhaseBiasExcludeUnmatchedAntennaParses) {
-    LogManager log;
-    // Default: key absent -> false (every station contributes, byte-identical).
-    {
-        const fs::path p = writeTempConfig("pbexcl_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed on its own (no code-bias slice): the toggle is honoured, so a station
-    // with an unmatched receiver antenna is withheld from satellite phase-bias emission.
-    {
-        const fs::path p = writeTempConfig("pbexcl_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                          "    \"phase_bias_exclude_unmatched_antenna\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkPhaseBiasExcludeUnmatchedAntenna());
         std::error_code ec; fs::remove(p, ec);
     }
 }
@@ -701,7 +625,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_FALSE(c0.networkEmitClockDisc());
     EXPECT_FALSE(c0.networkEmitUra());
     EXPECT_FALSE(c0.networkClockModel());
-    EXPECT_FALSE(c0.networkEmitClockRate());   // decoupled C1: off by default (byte-identical)
     EXPECT_FALSE(c0.networkRaimWithinEpoch());
     EXPECT_DOUBLE_EQ(c0.networkRaimWithholdSigma0(), 0.0);
     EXPECT_FALSE(c0.networkSerializeDiscCounters());
@@ -733,7 +656,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_DOUBLE_EQ(c1.networkRaimWithholdSigma0(), 6.0);       // 2x the default trigger 3.0
     EXPECT_TRUE(c1.networkEmitGenerationId());
     EXPECT_TRUE(c1.networkSerializeDiscCounters());
-    EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract);
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);
     EXPECT_DOUBLE_EQ(c1.getNetworkConfig().health_interval_s, 30.0);
@@ -755,7 +677,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     const fs::path p2 = writeTempConfig("svc_override",
         networkConfig(kGpsGal, kPriosGps,
                       "    \"service_mode\": true,\n"
-                      "    \"serialize_sbasis_contract\": true,\n"
                       "    \"contract_rebroadcast_s\": 10.0,\n"));
     GnssConfig c2;
     ASSERT_TRUE(c2.loadFromJson(p2, log));
@@ -763,38 +684,6 @@ TEST(NetworkServiceProfile, ServiceModeArmsCoherentSet) {
     EXPECT_TRUE(c2.networkEmitUra());                            // rest still armed
 
     std::error_code ec2; fs::remove(p0, ec2); fs::remove(p1, ec2); fs::remove(p2, ec2);
-}
-
-// network.emit_clock_rate: the decoupled C1 (clock-rate) emission toggle round-trips,
-// is off by default (byte-identical), and is not armed by service_mode (it is the
-// alternative to clock_model, which service_mode arms instead).  It emits the rate
-// without carrying it; clock_model's two-state carry is a no-go (see
-// docs/CLOCK_HADAMARD_CALIB).
-TEST(NetworkEmitClockRate, TogglesAndDefaults) {
-    LogManager log;
-
-    const fs::path pdef = writeTempConfig("emit_rate_def",
-        networkConfig(kGpsGal, kPriosGps, ""));
-    GnssConfig cdef;
-    ASSERT_TRUE(cdef.loadFromJson(pdef, log));
-    EXPECT_FALSE(cdef.networkEmitClockRate());                   // off by default
-
-    const fs::path pon = writeTempConfig("emit_rate_on",
-        networkConfig(kGpsGal, kPriosGps, "    \"emit_clock_rate\": true,\n"));
-    GnssConfig con;
-    ASSERT_TRUE(con.loadFromJson(pon, log));
-    EXPECT_TRUE(con.networkEmitClockRate());                     // explicit on parses
-    EXPECT_FALSE(con.networkClockModel());                       // independent of clock_model
-
-    // service_mode does not arm emit_clock_rate (clock_model carries C1 under the bundle).
-    const fs::path psvc = writeTempConfig("emit_rate_svc",
-        networkConfig(kGpsGal, kPriosGps, "    \"service_mode\": true,\n"));
-    GnssConfig csvc;
-    ASSERT_TRUE(csvc.loadFromJson(psvc, log));
-    EXPECT_FALSE(csvc.networkEmitClockRate());
-    EXPECT_TRUE(csvc.networkClockModel());
-
-    std::error_code ec; fs::remove(pdef, ec); fs::remove(pon, ec); fs::remove(psvc, ec);
 }
 
 // The bundle wins: an explicit `false` on an armed bool, an explicit 0 numeric,
@@ -896,7 +785,6 @@ TEST(NetworkServiceProfile, EmptyProductPathParsesWithArmedSetUnchanged) {
     EXPECT_TRUE(c1.getNetworkConfig().product_output_path.empty());
     EXPECT_TRUE(c1.getNetworkConfig().product_flush_per_epoch);   // still armed
     EXPECT_TRUE(c1.networkEmitEpochStatusRecord());               // still armed
-    EXPECT_TRUE(c1.getNetworkConfig().serialize_sbasis_contract); // still armed
     EXPECT_DOUBLE_EQ(c1.networkContractRebroadcastS(), 30.0);     // still armed
 
     std::error_code ec; fs::remove(p1, ec);
@@ -1604,21 +1492,9 @@ TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     }
 }
 
-// Mutual exclusion: eq34 + ensemble are two realizations of the same gauge, so
-// the load fails.  eq34 + prioritized is allowed (eq34 supersedes).  (Card 3)
-TEST(CodeBiasNetworkConfig, Eq34EnsembleMutexFailsPrioritizedSupersedes) {
+// eq34 + prioritized is allowed: eq34 supersedes.  (Card 3)
+TEST(CodeBiasNetworkConfig, Eq34SupersedesPrioritized) {
     LogManager log;
-    // eq34 && ensemble -> load fails.
-    {
-        const fs::path p = writeTempConfig("eq34_ens",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"phase_datum_ensemble\": true,\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log))
-            << "phase_datum_eq34 + phase_datum_ensemble must be rejected at load.";
-        std::error_code ec; fs::remove(p, ec);
-    }
     // eq34 && prioritized -> loads (eq34 supersedes; both getters reflect config).
     {
         const fs::path p = writeTempConfig("eq34_prio",
@@ -1645,7 +1521,6 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
         ASSERT_TRUE(cfg.loadFromJson(p, log));
         EXPECT_FALSE(cfg.networkCarryInvariantInnovGate());
         EXPECT_DOUBLE_EQ(cfg.networkCarryInvariantInnovK(), 4.0);
-        EXPECT_FALSE(cfg.networkCarryInvariantInnovRefold());
         std::error_code ec; fs::remove(p, ec);
     }
     // On atop carry_invariant + eq34, with a custom k.
@@ -1805,60 +1680,6 @@ TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     }
 }
 
-// network.mw_wl.enable uses the Card-4 chord basis, so it requires
-// network.carry_invariant (SPEC §11 Q1 mutex).  Default off (byte-identical), and the
-// knobs parse when armed alongside carry_invariant.  (M5 card WL-1)
-TEST(CodeBiasNetworkConfig, MwWlSeedContract) {
-    LogManager log;
-    // Default: absent → off (the producer is byte-identical).
-    {
-        const fs::path p = writeTempConfig("mwwl_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkMwWlSeed());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // enable=true without carry_invariant → the load fails (a hard mutex, not a silent no-op).
-    {
-        const fs::path p = writeTempConfig("mwwl_no_carry",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"mw_wl\": { \"enable\": true },\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log))
-            << "network.mw_wl.enable without network.carry_invariant must be rejected.";
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // enable=true with carry_invariant (+eq34) → loads; the knobs parse.
-    {
-        const fs::path p = writeTempConfig("mwwl_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"enable\": true, \"min_arc_epochs\": 15, "
-                "\"sigma_floor_cyc\": 0.08, \"max_rows_per_epoch\": 500 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkMwWlSeed());
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.min_arc_epochs, 15);
-        EXPECT_NEAR(cfg.getNetworkConfig().mw_wl.sigma_floor_cyc, 0.08, 1e-12);
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.max_rows_per_epoch, 500);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // min_arc_epochs below 2 clamps to 2 (a variance-of-mean needs >=2 samples).
-    {
-        const fs::path p = writeTempConfig("mwwl_clamp",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"enable\": true, \"min_arc_epochs\": 1 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_EQ(cfg.getNetworkConfig().mw_wl.min_arc_epochs, 2);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
 // PD-safe invariant-DD fold (docs/SPEC_pd_safe_dd_fold.md §4): default off (the fold's
 // arithmetic is byte-identical), and inert without network.carry_invariant, where there
 // is no DD-prior fold to make PD-safe.  The response is a warning plus disarm, not a load
@@ -1963,360 +1784,6 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
         EXPECT_TRUE(cfg.networkCarryAwareCovariance());
         std::error_code ec; fs::remove(p, ec);
     }
-}
-
-// The per-constellation top tier is the EWL machinery run on the lane-tier table, so
-// uwl_enable requires ewl_enable (hard error); all knobs default off/inert
-// (byte-identical); gal_top_band validates to {7,8}; the cold-fix clamps keep the
-// a-priori σ positive and the λ floor above the GPS EWL.  (M5 card UWL-1,
-// docs/SPEC_uwl_card.md §5)
-TEST(CodeBiasNetworkConfig, UwlTierContract) {
-    LogManager log;
-    // Defaults: absent → off, top band '7', cold fix off with the spec numbers.
-    {
-        const fs::path p = writeTempConfig("uwl_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_FALSE(mw.uwl_enable);
-        EXPECT_FALSE(mw.uwl_cold_fix);
-        EXPECT_FALSE(mw.uwl_mid_enable);
-        EXPECT_EQ(mw.uwl_gal_top_band, '7');
-        EXPECT_NEAR(mw.uwl_cold_sigma_m, 0.7, 1e-12);
-        EXPECT_NEAR(mw.uwl_cold_min_lambda_m, 8.0, 1e-12);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // uwl_enable without ewl_enable → the load fails (the tier is the EWL machinery).
-    {
-        const fs::path p = writeTempConfig("uwl_no_ewl",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"uwl_enable\": true },\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log))
-            << "network.mw_wl.uwl_enable without ewl_enable must be rejected.";
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed: knobs parse; gal_top_band 8 selects the E5-AltBOC 19.5 m tier.
-    {
-        const fs::path p = writeTempConfig("uwl_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"ewl_enable\": true, \"uwl_enable\": true, "
-                "\"uwl_gal_top_band\": 8, \"uwl_cold_fix\": true, \"uwl_mid_enable\": true, "
-                "\"uwl_cold_sigma_m\": 0.5, \"uwl_cold_min_lambda_m\": 9.0 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_TRUE(mw.uwl_enable);
-        EXPECT_TRUE(mw.uwl_cold_fix);
-        EXPECT_TRUE(mw.uwl_mid_enable);
-        EXPECT_EQ(mw.uwl_gal_top_band, '8');
-        EXPECT_NEAR(mw.uwl_cold_sigma_m, 0.5, 1e-12);
-        EXPECT_NEAR(mw.uwl_cold_min_lambda_m, 9.0, 1e-12);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Validation clamps: bad top band keeps 7; σ≤0 restores 0.7; a λ floor that would
-    // admit the GPS 5.861 m EWL clamps to 6.0 (the cold fix is a UWL privilege).
-    {
-        const fs::path p = writeTempConfig("uwl_clamps",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"ewl_enable\": true, \"uwl_enable\": true, "
-                "\"uwl_gal_top_band\": 9, \"uwl_cold_sigma_m\": -1.0, "
-                "\"uwl_cold_min_lambda_m\": 5.0 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_EQ(mw.uwl_gal_top_band, '7');
-        EXPECT_NEAR(mw.uwl_cold_sigma_m, 0.7, 1e-12);
-        EXPECT_NEAR(mw.uwl_cold_min_lambda_m, 6.0, 1e-12);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// The dual-top tier and the per-family pair census.  Defaults off (byte-identical);
-// dual_top forces ewl_fold_rows off (a doubly-decided row is never folded twice);
-// family_min_arcs clamps to ≥1; the inert combinations load with warnings, not errors
-// (the wiring gates them on the masters).  (Increment 5 + v2, docs/SPEC_uwl_card.md
-// §1b/§7.5, HANDOFF reconciliation)
-TEST(CodeBiasNetworkConfig, UwlDualTopAndFamilyContract) {
-    LogManager log;
-    // Defaults: absent → all off, min_arcs 8.
-    {
-        const fs::path p = writeTempConfig("uwl_dual_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_FALSE(mw.uwl_dual_top);
-        EXPECT_FALSE(mw.uwl_sib_gate);
-        EXPECT_FALSE(mw.uwl_family_pairs);
-        EXPECT_EQ(mw.uwl_family_min_arcs, 8);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed dual + sib gate + family: knobs parse; ewl_fold_rows is forced off
-    // under dual_top even when explicitly requested (the F-A refold class).
-    {
-        const fs::path p = writeTempConfig("uwl_dual_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"lane_carry\": { \"enable\": true },\n"
-                "    \"mw_wl\": { \"ewl_enable\": true, \"uwl_enable\": true, "
-                "\"uwl_dual_top\": true, \"uwl_sib_gate\": true, "
-                "\"uwl_family_pairs\": true, \"uwl_family_min_arcs\": 12, "
-                "\"ewl_fold_rows\": true },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_TRUE(mw.uwl_dual_top);
-        EXPECT_TRUE(mw.uwl_sib_gate);
-        EXPECT_TRUE(mw.uwl_family_pairs);
-        EXPECT_EQ(mw.uwl_family_min_arcs, 12);
-        EXPECT_FALSE(mw.ewl_fold_rows)
-            << "uwl_dual_top must force ewl_fold_rows OFF (a cycle decided by both "
-               "rungs must never fold two integer rows).";
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Inert combinations still load (with warnings): dual/sib/family without their masters.
-    // min_arcs clamps to 1.
-    {
-        const fs::path p = writeTempConfig("uwl_dual_inert",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"ewl_enable\": true, "
-                "\"uwl_dual_top\": true, \"uwl_sib_gate\": true, "
-                "\"uwl_family_pairs\": true, \"uwl_family_min_arcs\": 0 },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log))
-            << "inert dual/sib/family knobs must warn, not reject.";
-        const auto& mw = cfg.getNetworkConfig().mw_wl;
-        EXPECT_TRUE(mw.uwl_dual_top);      // parsed; wiring gates on uwl_enable
-        EXPECT_EQ(mw.uwl_family_min_arcs, 1);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// network.lane_carry.fold_blocked is a performance knob: default off (byte-identical
-// sequential fold), parses when armed, and is not a lane-shape knob (it leaves
-// lane_meas/bridge_meas untouched, so it cannot move a run out of the §6.1
-// equivalence shape).  (LF-1 INC-1)
-TEST(CodeBiasNetworkConfig, LaneFoldBlockedContract) {
-    LogManager log;
-    // Default absent → off; the other lane_carry knobs keep their defaults.
-    {
-        const fs::path p = writeTempConfig("foldblk_default",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"lane_carry\": { \"enable\": true },\n"
-                "    \"mw_wl\": { \"ewl_enable\": true },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& lc = cfg.getNetworkConfig().lane_carry;
-        EXPECT_FALSE(lc.fold_blocked);
-        EXPECT_FALSE(lc.skip_pinned_increments);   // default off (INC-2)
-        EXPECT_EQ(lc.skip_pinned_within_n, 3);      // default window (INC-2)
-        EXPECT_FALSE(lc.parallel_components);       // default off (INC-4)
-        EXPECT_TRUE(lc.lane_meas);       // unaffected: perf knob, not a shape knob
-        EXPECT_TRUE(lc.bridge_meas);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Armed → both perf knobs parse; within_n clamps ≥1; shape knobs untouched.
-    {
-        const fs::path p = writeTempConfig("foldblk_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"lane_carry\": { \"enable\": true, \"fold_blocked\": true, "
-                "\"skip_pinned_increments\": true, \"skip_pinned_within_n\": 0, "
-                "\"parallel_components\": true },\n"
-                "    \"mw_wl\": { \"ewl_enable\": true },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        const auto& lc = cfg.getNetworkConfig().lane_carry;
-        EXPECT_TRUE(lc.fold_blocked);
-        EXPECT_TRUE(lc.skip_pinned_increments);
-        EXPECT_EQ(lc.skip_pinned_within_n, 1) << "within_n clamps to ≥1 (0 would never skip)";
-        EXPECT_TRUE(lc.parallel_components);
-        EXPECT_TRUE(lc.lane_meas);
-        EXPECT_TRUE(lc.bridge_meas);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// Per-sample bridge iono de-bias (the 60-ep age-bias fix): defaults off
-// (byte-identical raw accumulation); parses when armed with the bridge;
-// inert-warns (loads) without ewl_enable.
-TEST(CodeBiasNetworkConfig, BridgeSampleDebiasContract) {
-    LogManager log;
-    {
-        const fs::path p = writeTempConfig("psd_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("psd_armed",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_datum_eq34\": true,\n"
-                "    \"carry_invariant\": true,\n"
-                "    \"mw_wl\": { \"ewl_enable\": true, "
-                "\"bridge_sample_debias\": true },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("psd_inert",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"mw_wl\": { \"bridge_sample_debias\": true },\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log))
-            << "bridge_sample_debias without ewl_enable must warn, not reject.";
-        EXPECT_TRUE(cfg.getNetworkConfig().mw_wl.bridge_sample_debias);
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// ===========================================================================
-// network.external_sat_code_bias (EXT-CB): the satellite code and phase biases
-// come from the external .BIA instead of being estimated (the third satellite-
-// bias posture, alongside V1 slant-absorption and W6 own-OSB)
-// ===========================================================================
-
-namespace {
-
-// A network config that can also carry estimation / model_corrections blocks.
-// The EXT-CB contract spans all three sections: it suppresses a network force
-// chain whose observable effect is on model_corrections.enable_code_phase_bias
-// and estimation.estimate_ifb.
-std::string extCbConfig(const std::string& network_extra,
-                        const std::string& estimation_block = "",
-                        const std::string& model_corr_block = "") {
-    return std::string("{\n") +
-        "  \"processing\": {\n"
-        "    \"mode\": \"ppp-rtk-network\",\n"
-        "    \"active_systems\": " + kGpsGal + ",\n"
-        "    \"signal_priorities\": " + kPriosGps + "\n"
-        "  },\n"
-        + estimation_block + model_corr_block +
-        "  \"network\": {\n"
-        "    \"clock_datum_station\": \"AAAA\",\n"
-        + network_extra +
-        "    \"stations\": [\n"
-        "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
-        "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
-        "    ]\n"
-        "  }\n"
-        "}\n";
-}
-
-} // namespace
-
-// estimate_iono_sh force-chains estimate_sat_code_bias on, which force-sets
-// enable_code_phase_bias off, so without EXT-CB "SH-VTEC ionosphere with external
-// satellite biases" (the classical known-DCB global-iono setup) is unreachable.
-// Arming external_sat_code_bias suppresses that force and nothing else about the
-// SH slice.
-TEST(NetworkExternalSatCodeBiasConfig, SuppressesTheShToW6ForceChain) {
-    LogManager log;
-
-    // Default: absent -> false, and nothing about the existing postures moves.
-    {
-        const fs::path p = writeTempConfig("extcb_default", extCbConfig(""));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_FALSE(cfg.networkExternalSatCodeBias());
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // Control: estimate_iono_sh alone still force-chains W6 and still turns the
-    // .BIA off.  EXT-CB leaves this behaviour untouched.
-    {
-        const fs::path p = writeTempConfig("extcb_control",
-            extCbConfig("    \"estimate_iono_sh\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.estimateNetworkIonoSh());
-        EXPECT_TRUE(cfg.estimateNetworkSatCodeBias());
-        EXPECT_FALSE(cfg.getModelCorrections().enable_code_phase_bias);
-        std::error_code ec; fs::remove(p, ec);
-    }
-    // EXT-CB + SH: the SH field stays co-estimated, the W6 slice is not armed,
-    // the .BIA stays applied, and the receiver DCB is forced on (trap #4: on
-    // undifferenced rows the per-(rx,constellation) GF code lump needs an
-    // explicit state, or it is absorbed into the slant iono and conflicts with
-    // the field).
-    {
-        const fs::path p = writeTempConfig("extcb_sh",
-            extCbConfig("    \"external_sat_code_bias\": true,\n"
-                        "    \"estimate_iono_sh\": true,\n"));
-        GnssConfig cfg;
-        ASSERT_TRUE(cfg.loadFromJson(p, log));
-        EXPECT_TRUE(cfg.networkExternalSatCodeBias());
-        EXPECT_TRUE(cfg.estimateNetworkIonoSh());
-        EXPECT_FALSE(cfg.estimateNetworkSatCodeBias())
-            << "EXT-CB must suppress the estimate_iono_sh -> W6 force chain.";
-        EXPECT_TRUE(cfg.getModelCorrections().enable_code_phase_bias)
-            << "the .BIA is the satellite bias SOURCE in this posture.";
-        EXPECT_TRUE(cfg.estimateIfb());
-        EXPECT_FALSE(cfg.estimateSatBiases())
-            << "no satellite code-bias state — the product supplies it.";
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// Two satellite code-bias sources cannot both be selected: W6 estimates its own
-// OSB and skips the .BIA entirely, EXT-CB consumes the .BIA and creates no
-// state.  Arming both would ask for a state on rows the product already
-// corrected.  An explicit enable_code_phase_bias=false under EXT-CB leaves the
-// satellite code bias neither applied nor estimated (the V1 slant-absorption
-// posture under EXT-CB's name).  Both configurations fail the load.
-TEST(NetworkExternalSatCodeBiasConfig, RejectsW6AndAnExplicitBiaOff) {
-    LogManager log;
-
-    {
-        const fs::path p = writeTempConfig("extcb_w6",
-            extCbConfig("    \"external_sat_code_bias\": true,\n"
-                        "    \"estimate_sat_code_bias\": true,\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log));
-        std::error_code ec; fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("extcb_nobia",
-            extCbConfig("    \"external_sat_code_bias\": true,\n",
-                        /*estimation_block=*/"",
-                        "  \"model_corrections\": { \"enable_code_phase_bias\": false },\n"));
-        GnssConfig cfg;
-        EXPECT_FALSE(cfg.loadFromJson(p, log));
-        std::error_code ec; fs::remove(p, ec);
-    }
-}
-
-// The .BIA is a daily post-processing bias product, and the self-sufficient
-// real-time service does not have one (the same reasoning that makes the
-// external-GIM code-bias path post-processing-only).  A real-time producer
-// takes its satellite biases from an SSR stream, a different mechanism with its
-// own age/continuity semantics.
-TEST(NetworkExternalSatCodeBiasConfig, RejectsBrdcRtsApriori) {
-    LogManager log;
-    const fs::path p = writeTempConfig("extcb_brdc",
-        extCbConfig("    \"external_sat_code_bias\": true,\n"
-                    "    \"estimate_iono_sh\": true,\n"
-                    "    \"apriori_source\": \"brdc_rts\",\n"));
-    GnssConfig cfg;
-    EXPECT_FALSE(cfg.loadFromJson(p, log));
-    std::error_code ec; fs::remove(p, ec);
 }
 
 // ---------------------------------------------------------------------------
@@ -2483,228 +1950,4 @@ TEST(CodeBiasNetworkConfig, CarryInvariantTurboEditAloneStillWarns) {
         << "turbo_edit contributes nothing to carry_slipped_ambs under carry_invariant.\n"
         << r.text;
     std::error_code ec; fs::remove(p, ec);
-}
-
-// ---------------------------------------------------------------------------
-// network.phase_leveling_los_scale (F1; docs/SPEC_amb_iono_split_overcount.md).
-//
-// The knob multiplies each carried leveling-ambiguity row's variance by B_eff (the
-// carried columns injected on the same station-satellite LOS this epoch) so the
-// B rows of one LOS assert one unit of iono-direction precision instead of B.
-// Solve-affecting when on, byte-identical when off.  The loader's contract has three
-// parts, each visible only through the "gnss_config" log:
-//   1. the default is off, and an off lineage prints neither line;
-//   2. on under a live leveling carry, it prints the armed info line (kLosScaleArmed);
-//   3. on with no leveling carry to scale (leveling off, or carry_invariant
-//      superseding the leveling ambiguity carry so `do_amb_carry` is false), it
-//      warns as inert (kLosScaleInert) and is not disarmed (standing invariant #4:
-//      the run-end 'Network (leveling LOS-scale F1)' counter line is the on-path
-//      telemetry; this warning is its pre-run counterpart).
-// The B_eff arithmetic itself is pinned at the row-build seam in
-// test_network_coupling.cpp (LosScaledVarianceWeighsBandsAtOneThirdAndOffIsLegacyExact).
-// ---------------------------------------------------------------------------
-namespace {
-
-/// Stable phrase of the armed info line (GnssConfigLoadNetwork.cpp, emitted inside
-/// the `if (network_phase_leveling_)` post-parse block).
-constexpr const char* kLosScaleArmed = "per-LOS variance scale ARMED";
-/// Stable phrase of the inert warning (the post-parse guard that needs
-/// network_carry_invariant_ populated; fires on !phase_leveling || carry_invariant).
-constexpr const char* kLosScaleInert =
-    "network.phase_leveling_los_scale is on but the phase-leveling";
-
-} // namespace
-
-// Default off, and silent, both on a bare network block and on a leveling lineage
-// that never wrote the key (the byte-identity posture of every pre-F1 leveling run).
-TEST(NetworkPhaseLevelingConfig, LosScaleDefaultsOffAndIsSilent) {
-    std::error_code ec;
-    {
-        const fs::path p = writeTempConfig("pl_los_default",
-            networkConfig(kGpsGal, kPriosGps, ""));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_los_default");
-        ASSERT_TRUE(r.ok);
-        EXPECT_FALSE(r.cfg.networkPhaseLeveling());
-        EXPECT_FALSE(r.cfg.networkPhaseLevelingLosScale());
-        EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos) << r.text;
-        EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos) << r.text;
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_los_default_pl",
-            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_los_default_pl");
-        ASSERT_TRUE(r.ok);
-        ASSERT_TRUE(r.cfg.networkPhaseLeveling());
-        EXPECT_FALSE(r.cfg.networkPhaseLevelingLosScale())
-            << "leveling ON must not imply the scale — F1 is an explicit arm.";
-        EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos) << r.text;
-        EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos) << r.text;
-        fs::remove(p, ec);
-    }
-}
-
-// On under a live leveling carry: parses true, prints the armed line, no inert
-// warning, and moves no sibling leveling knob (the scale is applied at inject and
-// only loosens).
-TEST(NetworkPhaseLevelingConfig, LosScaleParsesTrueAndAnnouncesArmedUnderLeveling) {
-    std::error_code ec;
-    const fs::path p_off = writeTempConfig("pl_los_armed_ref",
-        networkConfig(kGpsGal, kPriosGps,
-            "    \"phase_leveling\": true,\n"));
-    const fs::path p_on = writeTempConfig("pl_los_armed",
-        networkConfig(kGpsGal, kPriosGps,
-            "    \"phase_leveling\": true,\n"
-            "    \"phase_leveling_los_scale\": true,\n"));
-    CapturedLoad ref = loadCapturingConfigLog(p_off, "pl_los_armed_ref");
-    CapturedLoad r   = loadCapturingConfigLog(p_on,  "pl_los_armed");
-    ASSERT_TRUE(ref.ok);
-    ASSERT_TRUE(r.ok);
-    ASSERT_TRUE(r.cfg.networkPhaseLeveling());
-    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale());
-    EXPECT_NE(r.text.find(kLosScaleArmed), std::string::npos)
-        << "an armed F1 must announce itself on the config log.\n" << r.text;
-    EXPECT_EQ(r.text.find(kLosScaleInert), std::string::npos)
-        << "phase_leveling ON without carry_invariant is the live posture — not INERT.\n"
-        << r.text;
-    // Sibling leveling state is untouched by the arm (compare against the same
-    // lineage with the key absent rather than against a hard-coded default).
-    EXPECT_DOUBLE_EQ(r.cfg.networkPhaseLevelingQAmb(), ref.cfg.networkPhaseLevelingQAmb());
-    EXPECT_EQ(r.cfg.networkCarryInvariant(), ref.cfg.networkCarryInvariant());
-    EXPECT_EQ(r.cfg.networkCycleSlipMwDetect(), ref.cfg.networkCycleSlipMwDetect());
-    fs::remove(p_off, ec);
-    fs::remove(p_on, ec);
-}
-
-// On with leveling off: the inject site the scale acts on does not exist, so the
-// guard warns (naming both predicates) and the armed line, which lives inside the
-// phase_leveling block, does not print.  The parsed value is kept as written; the
-// warning is the only effect (changing the value would be a state change that the
-// byte-identity comparison cannot see).
-TEST(NetworkPhaseLevelingConfig, LosScaleWithoutLevelingWarnsInertAndIsNotSilentlyDisarmed) {
-    const fs::path p = writeTempConfig("pl_los_nopl",
-        networkConfig(kGpsGal, kPriosGps,
-            "    \"phase_leveling_los_scale\": true,\n"));
-    CapturedLoad r = loadCapturingConfigLog(p, "pl_los_nopl");
-    ASSERT_TRUE(r.ok) << "the guard is advisory — it must not fail the load.";
-    EXPECT_FALSE(r.cfg.networkPhaseLeveling());
-    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale())
-        << "the loader keeps the value as written; the warn is the mechanism.";
-    EXPECT_NE(r.text.find(kLosScaleInert), std::string::npos)
-        << "F1 with phase_leveling off scales nothing — it must warn INERT.\n" << r.text;
-    EXPECT_NE(r.text.find("phase_leveling=false"), std::string::npos)
-        << "the warn must name the predicate that made it inert.\n" << r.text;
-    EXPECT_EQ(r.text.find(kLosScaleArmed), std::string::npos)
-        << "the ARMED line lives inside the phase_leveling block; it must not print.\n"
-        << r.text;
-    std::error_code ec; fs::remove(p, ec);
-}
-
-// On with leveling on but carry_invariant superseding the leveling ambiguity carry
-// as a solve input (Card 4's DD carry; `do_amb_carry` is false, the inject is
-// skipped): the same inert warning, naming carry_invariant.  carry_invariant
-// is legal only on the eq34 chain datum, so the posture carries phase_datum_eq34.
-TEST(NetworkPhaseLevelingConfig, LosScaleUnderCarryInvariantWarnsInert) {
-    const fs::path p = writeTempConfig("pl_los_cinv",
-        networkConfig(kGpsGal, kPriosGps,
-            "    \"phase_leveling\": true,\n"
-            "    \"phase_datum_eq34\": true,\n"
-            "    \"carry_invariant\": true,\n"
-            "    \"phase_leveling_los_scale\": true,\n"));
-    CapturedLoad r = loadCapturingConfigLog(p, "pl_los_cinv");
-    ASSERT_TRUE(r.ok);
-    ASSERT_TRUE(r.cfg.networkPhaseLeveling());
-    ASSERT_TRUE(r.cfg.networkCarryInvariant()) << "fixture must actually arm carry_invariant.";
-    EXPECT_TRUE(r.cfg.networkPhaseLevelingLosScale());
-    EXPECT_NE(r.text.find(kLosScaleInert), std::string::npos)
-        << "under carry_invariant the leveling carry is not the solve vehicle — INERT.\n"
-        << r.text;
-    EXPECT_NE(r.text.find("carry_invariant=true"), std::string::npos)
-        << "the warn must name the predicate that made it inert.\n" << r.text;
-    std::error_code ec; fs::remove(p, ec);
-}
-
-// Block admission age gate for F3 (network.phase_leveling_local_block_min_age_ep,
-// SPEC_amb_iono_split_overcount §6.12): default 0 = off (byte-identical), parses,
-// a negative value is refused, and setting it without the block warns as inert
-// (there is no block to keep a young leg out of) rather than disarming.
-TEST(NetworkPhaseLevelingConfig, BlockMinAgeDefaultsOffParsesAndWarnsInertWithoutTheBlock) {
-    std::error_code ec;
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_default",
-            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_default");
-        ASSERT_TRUE(r.ok);
-        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
-        EXPECT_EQ(r.text.find("F3 age gate"), std::string::npos) << r.text;
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_on",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_leveling\": true,\n"
-                "    \"shared_carry_full_cov\": true,\n"
-                "    \"carry_conditional_coupling\": true,\n"
-                "    \"phase_leveling_local_block\": true,\n"
-                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_on");
-        ASSERT_TRUE(r.ok);
-        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 30);
-        EXPECT_EQ(r.text.find("F3 age gate"), std::string::npos)
-            << "armed under the block: no INERT warn.\n" << r.text;
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_noblock",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_leveling\": true,\n"
-                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_noblock");
-        ASSERT_TRUE(r.ok);
-        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 30)
-            << "not silently disarmed — the warn is the contract";
-        EXPECT_NE(r.text.find("F3 age gate"), std::string::npos) << r.text;
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_neg",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_leveling_local_block_min_age_ep\": -1,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_neg");
-        EXPECT_FALSE(r.ok) << "a negative gate must be refused";
-        fs::remove(p, ec);
-    }
-    // The gate's response: "free" by default (young legs not injected), "diagonal" kept
-    // for the record and warned as measured-harmful, anything else refused.
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_mode_default",
-            networkConfig(kGpsGal, kPriosGps, "    \"phase_leveling\": true,\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_default");
-        ASSERT_TRUE(r.ok);
-        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockYoungMode(), "free");
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_mode_diag",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_leveling\": true,\n"
-                "    \"shared_carry_full_cov\": true,\n"
-                "    \"carry_conditional_coupling\": true,\n"
-                "    \"phase_leveling_local_block\": true,\n"
-                "    \"phase_leveling_local_block_min_age_ep\": 30,\n"
-                "    \"phase_leveling_local_block_young_mode\": \"diagonal\",\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_diag");
-        ASSERT_TRUE(r.ok);
-        EXPECT_EQ(r.cfg.networkPhaseLevelingLocalBlockYoungMode(), "diagonal");
-        EXPECT_NE(r.text.find("MEASURED HARMFUL"), std::string::npos) << r.text;
-        fs::remove(p, ec);
-    }
-    {
-        const fs::path p = writeTempConfig("pl_blk_age_mode_bad",
-            networkConfig(kGpsGal, kPriosGps,
-                "    \"phase_leveling_local_block_young_mode\": \"sideways\",\n"));
-        CapturedLoad r = loadCapturingConfigLog(p, "pl_blk_age_mode_bad");
-        EXPECT_FALSE(r.ok) << "an unknown mode must be refused";
-        fs::remove(p, ec);
-    }
 }

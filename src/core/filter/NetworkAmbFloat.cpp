@@ -5,6 +5,11 @@
  *        @see include/filter/NetworkAmbFloat.hpp
  */
 #include "filter/NetworkAmbFloat.hpp"
+#include "app/NetworkEpoch.hpp"          // NetworkEpoch (card NOM3 step EP2)
+#include "app/NetworkRun.hpp"            // NetworkRun (card NOM3 step EP2)
+#include "app/NetworkSetupResult.hpp"    // run.setup.stations
+#include "filter/NetworkResponses.hpp"   // networkResponseLatchTally
+#include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
@@ -125,11 +130,10 @@ void networkAmbFloatApplyDrops(
     const std::shared_ptr<spdlog::logger>& log,
     const std::vector<NetStation>& stations,
     const std::vector<std::map<std::string, double>>& elev_of,
-    long long week, double tow, double pl_now_s) {
+    long long week, double tow, double pl_now_s, EpochEvents& events) {
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf) return;            // the vehicle owns this response
-    auto& local_carry = ctx.carry.local_carry;
-    auto& relevel     = ctx.carry.relevel;
+    auto& relevel     = events.slip.relevel;
     auto& counters    = ctx.counters;
     const double floor_base = ctx.knobs.amb_birth_var_floor;
     // The drop-only floor, elevation-mapped with the same mapping as the birth floor
@@ -186,10 +190,10 @@ void networkAmbFloatApplyDrops(
     // free_epoch response with one), an unknown bit or no recorded cause is the slip row.
     constexpr unsigned kReentryBits =
         RelevelEpochState::kCauseGap | RelevelEpochState::kCauseWindup;
-    // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the lane
-    //     observatory, the phase-datum candidacy screen, the anchor-slip handover staging
-    //     and the harvest's own statistics guards all read it, and re-pointing them is a
-    //     separate change.  Only the response the set invokes changes here.
+    // (1) The latched free-epoch set.  The set itself is not consumed, per §4.1: the
+    //     phase-datum candidacy screen, the anchor-slip handover staging and the harvest's
+    //     own statistics guards all read it, and re-pointing them is a separate change.
+    //     Only the response the set invokes changes here.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(amb_key);
         if (!parts) continue;
@@ -200,11 +204,10 @@ void networkAmbFloatApplyDrops(
         // lands even without a carry because a flagged arc with no carry is still not a
         // datum (RF-2 items 3 and 4).
         if (ctx.knobs.pd_held_basis)
-            ctx.carry.amb_flag_ep[{sta, amb_key}] = now_ep;
-        const auto it = local_carry.find(
-            std::make_tuple(sta, parts->satellite, parts->signal));
-        if (it == local_carry.end()) continue;      // nothing carried ⇒ nothing to drop
-        const bool acted = dropAt(it->second, sta, parts->satellite);
+            net::putAmbFlagEp(ctx.entities, sta, amb_key) = now_ep;
+        const auto it = net::getArc(ctx.entities.arcs, std::make_tuple(sta, parts->satellite, parts->signal), &net::ArcState::amb);
+        if (it == nullptr) continue;      // nothing carried ⇒ nothing to drop
+        const bool acted = dropAt((*it), sta, parts->satellite);
         if (acted) ++n_free;
         else       ++n_idem;
         // Card PRM phase 3a: a drop that changed the carried prior (the variance moved,
@@ -217,7 +220,7 @@ void networkAmbFloatApplyDrops(
             prmRespond(counters.prm_resp, reentry ? ResponseSite::AmbDropLatchReentry
                                                   : ResponseSite::AmbDropLatchSlip);
         }
-        note(it->first, it->second, AmbDropCause::kReLevelFree);
+        note(std::make_tuple(sta, parts->satellite, parts->signal), (*it), AmbDropCause::kReLevelFree);
     }
     // (2) The gap cliff.  An arc present this epoch whose sighting gap already exceeds the
     //     horizon: on the leveling vehicle the inject skips it and the harvest re-stashes
@@ -227,18 +230,17 @@ void networkAmbFloatApplyDrops(
     //     erase, §3.4's one remaining erase case.  The loop does not test presence, so an
     //     absent arc past the horizon is also dropped and counted here before the prune
     //     erases it.
-    for (auto it = local_carry.begin(); it != local_carry.end(); ++it) {
-        const double gap = pl_now_s - it->second.last_seen_s;
-        if (!(gap > max_gap_s)) continue;
-        const bool acted =
-            dropAt(it->second, std::get<0>(it->first), std::get<1>(it->first));
+    net::forEach(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, LocalCarry& lc) {
+        const double gap = pl_now_s - lc.last_seen_s;
+        if (!(gap > max_gap_s)) return;
+        const bool acted = dropAt(lc, id.station.index, net::satKey(id.sat));
         if (acted) ++n_stale;
         else       ++n_idem;
         // Card PRM phase 3a: a drop that changed the carried prior (as in loop (1)).
         if (acted || last_decoupled_idem)
             prmRespond(counters.prm_resp, ResponseSite::AmbDropStaleGap);
-        note(it->first, it->second, AmbDropCause::kStaleGap);
-    }
+        note(net::arcTuple(id), lc, AmbDropCause::kStaleGap);
+    });
 
     const long long n = n_free + n_stale;
     if (n > 0) {
@@ -257,7 +259,8 @@ void networkAmbFloatApplyDrops(
                    tow, n, n_free, n_stale, n_idem);
 }
 
-void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                    const std::string& sat,
                                 const std::string& sig, double delta,
                                 long long& n_shift, long long& n_pb, long long& n_cpl,
                                 CarrySiteCounts* counts, bool complete) {
@@ -269,7 +272,7 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat
     // screen's held ambiguity as the ambiguity, the last solved phase bias and an open pin
     // bridge as the carried phase bias, and every other coupling map's terms on the family.
     forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias || r.sat != sat || r.signal != sig)
                 return false;
@@ -312,7 +315,6 @@ long long networkAmbFloatDeclaredHandover(
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
     if (handovers.empty()) return 0;
-    auto& local_carry = ctx.carry.local_carry;
     auto& counters    = ctx.counters;
 
     long long n_shift_total = 0;
@@ -331,15 +333,15 @@ long long networkAmbFloatDeclaredHandover(
         for (std::size_t s = 0; s < stations.size(); ++s)
             if (stations[s].name == h.to) { to_idx = static_cast<int>(s); break; }
         if (to_idx < 0) { ++counters.n_amb_sts_refused_cold; continue; }
-        const auto in_it = local_carry.find(std::make_tuple(to_idx, sat, sig));
-        if (in_it == local_carry.end() || !std::isfinite(in_it->second.value_abs)) {
+        const auto in_it = net::getArc(ctx.entities.arcs, std::make_tuple(to_idx, sat, sig), &net::ArcState::amb);
+        if (in_it == nullptr || !std::isfinite(in_it->value_abs)) {
             // The ledger says continuous but the incoming anchor holds no live carry
             // this epoch: the same "no Δ" case, counted separately because it is a
             // ledger/carry disagreement rather than a cold election.
             ++counters.n_amb_sts_refused_no_level;
             continue;
         }
-        const double delta = in_it->second.value_abs;
+        const double delta = in_it->value_abs;
         if (!(std::abs(delta) > 0.0)) {
             // Already in the new basis (Δ = 0): the transform is the identity, so take
             // ownership of the family (no erase) and continue.  This is the common case
@@ -357,17 +359,18 @@ long long networkAmbFloatDeclaredHandover(
         //      NetworkChainDatum.cpp, SPEC_card1_coupling_carry §14).
         CarrySiteCounts prm_cc;
         long long n_shift = 0, n_pb = 0, n_cpl = 0;
-        declaredHandoverShiftCarry(ctx.carry, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
+        declaredHandoverShiftCarry(ctx.carry, ctx.entities, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
                                    ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
         // Card PRM phase 3b step 2: the family's held emission, left in the old frame (PbHold
         // is exempt from the shift).  Measure-only.
-        if (delta != 0.0 && ctx.carry.pb_hold.count(sat + "|" + sig))
+        if (delta != 0.0
+            && net::getSig(ctx.entities.sat_signals, sat + "|" + sig, &net::SatSignalState::pb_hold))
             ++counters.prm_pbhold_unmoved_at_shift;
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.
-        const double x_post = in_it->second.value_abs;
+        const double x_post = in_it->value_abs;
         const bool ok = std::abs(x_post) <= kStsExactTolM;
         if (!ok) ++counters.n_amb_sts_selfcheck_fail;
         n_shift_total += n_shift;
@@ -397,6 +400,41 @@ long long networkAmbFloatDeclaredHandover(
     return n_shift_total;
 }
 
+// ---- The epoch form (card NOM3 step EP2; frozen text of Application::networkProcessEpoch_,
+//      moved by scripts/nom_ep2_cut.py) ----
+void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
+    // ---- From the run and the epoch (card NOM3 step EP2; generated by scripts/nom_ep2_cut.py,
+    //      each line checked by scripts/nom_ep2_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    NetworkSetupResult& setup = run.setup;
+    auto& stations = setup.stations;
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const SyncedEpoch& se = ep.se;
+    const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;
+    const double pl_now_s = ep.clock.pl_now_s;
+    // ---- End of the bindings ----
+    // The bounded drop (RF-1 step 4, docs/refound/RF-1_float_ambiguities_design.md
+    // §3.4), applied serially here: after PASS A's slip scans have latched
+    // relevel.free_ambs and before the parallel PASS-B inject reads the carry.  By the
+    // time a station's produce sees an arc, the drop has happened, and the inject folds
+    // the arc at birth strength instead of skipping it.  A no-op unless the vehicle is
+    // float_kf.  `modeled` carries this epoch's LOS elevations, with which the birth
+    // floor is mapped; the map is built only when the floor is armed.
+    std::vector<std::map<std::string, double>> amb_elev_of;
+    if (ctx.knobs.amb_birth_floor_on) {
+        amb_elev_of.resize(modeled.size());
+        for (std::size_t mi = 0; mi < modeled.size(); ++mi)
+            for (const auto& mo : modeled[mi])
+                amb_elev_of[mi][mo.satellite] = mo.elevation;
+    }
+    // Card PRM phase 3a: the latch per cause, before the response reads it.
+    networkResponseLatchTally(ctx, events);
+    networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
+                              se.time.week, se.time.tow, pl_now_s, events);
+}
+
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the ambiguity vehicle and the joint-block PD-fallback bar.
@@ -414,14 +452,14 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
     // miswire, not a quiet run (design §7.4 D3; invariant #4).
     if (ctx.knobs.amb_float_kf || config_.getNetworkConfig().trace_amb_state)
         log->info("Network (RF-1 ambiguity vehicle): vehicle=\"{}\"{}, birth_var_floor={} "
-                  "m^2, q={} m^2/s, declared_handover={}.  Mechanism counters: {} drop(s) "
+                  "m^2, declared_handover={}.  Mechanism counters: {} drop(s) "
                   "over {} epoch(s), {} declared S-transform(s) moving {} column(s), {} "
                   "joint-block fallback(s).",
                   ctx.knobs.amb_float_kf ? "float_kf" : "level",
                   ctx.knobs.pl_blk_from_vehicle
                       ? " — the joint block was STRUCTURAL (step 3)"
                       : " — the zero-q scalar carry",
-                  ctx.knobs.amb_birth_var_floor, ctx.knobs.amb_float_q_m2s,
+                  ctx.knobs.amb_birth_var_floor,
                   ctx.knobs.amb_float_declared_handover,
                   ctx.counters.n_amb_drop, ctx.counters.n_amb_drop_epochs,
                   ctx.counters.n_amb_stransform, ctx.counters.n_amb_stransform_cols,
@@ -518,7 +556,7 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                  "read the election, not this line.",
                  C.n_amb_stransform, C.n_amb_stransform_cols, C.n_amb_sts_identity,
                  C.n_amb_sts_refused_cold, C.n_amb_sts_refused_no_level,
-                 ctx.carry.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
+                 ctx.counters.pa_reref_erase_total, C.n_amb_sts_selfcheck_fail);
     }
     // Joint-block fallback bar (RF-1 step 3, design risk #3): a fallback rate above a
     // small threshold is a run-end failure, not a note.  Under float_kf a non-SPD block

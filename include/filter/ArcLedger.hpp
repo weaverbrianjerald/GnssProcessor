@@ -29,13 +29,26 @@
  *   Reentered - present ----> Tracking          (one epoch later, silently)
  *   Gap ------- horizon ----> Dead              (reason mask records why)
  *   Dead ------ present ----> Tracking          (birth, generation += 1)
- *   Dead ------ forget  ----> record erased
+ *   Dead ------ forget  ----> record reset (the arc's row stays)
  * @endverbatim
+ *
+ * ### Where the records live (card NOM step N4f2)
+ *
+ * The ledger is the machine; the records are the arc table's.  Each record is the
+ * @c ledger field of its arc's row (@c net::ArcState, app/NetworkEntities.hpp), beside
+ * the arc's leveling carry and its other carried fields, so a reader that needs an
+ * arc's lifecycle and its carry reads one row.  The ledger is bound to the run's
+ * entities at construction and keys its calls by the (station index, satellite,
+ * signal) tuple the roster speaks, converted to the arc's identity (a key that does
+ * not round-trip is counted by the reach table and never stored).  Rows are never
+ * erased (decision D8): the forget sweep resets the record and keeps the row, so the
+ * row's @c seen lifecycle remembers an arc the ledger has forgotten, while the ledger
+ * still reports a return after its forget window as a first sighting.
  *
  * The horizon is a time, not an epoch count, because the reader windows it covers
  * are all configured in seconds (@c network.phase_leveling_max_gap_s,
- * @c network.iono_carry_max_gap_s, @c network.emit_pb_hold_max_gap_s,
- * @c network.readmit_seed_horizon_s); a horizon counted in epochs would change
+ * @c network.emit_pb_hold_max_gap_s, @c network.readmit_seed_horizon_s); a horizon
+ * counted in epochs would change
  * meaning with an epoch interval other than 30 s.  The gap length is reported in
  * epochs, the unit of the existing re-entry instruments.
  *
@@ -69,7 +82,13 @@
 #include <tuple>
 #include <vector>
 
+#include "common/GnssIdentity.hpp"   // ArcId (the record table's key)
+
 namespace GnssProcessor {
+    namespace net {
+        struct NetworkEntities;   // app/NetworkEntities.hpp: the run's tables
+        struct ArcState;          // app/NetworkEntities.hpp: an arc's row (its ledger field)
+    }
 
     /**
      * @brief The five lifecycle states of one (station, satellite, signal) arc.
@@ -311,15 +330,28 @@ namespace GnssProcessor {
     /**
      * @brief The ledger: every arc of the run, and the machine that advances them.
      *
-     * Owned by @c NetworkRunContext (@c ctx.arc_ledger).  Not part of the
-     * warm-resume fingerprint and not snapshotted: the solve reads no value from
-     * it, so a resumed run re-seats every arc at its first post-resume sighting,
-     * as a fresh observer would.
+     * Held by @c NetworkRunContext (@c ctx.arc_ledger), bound to
+     * @c ctx.entities: the records are the @c ledger fields of the arc table's rows
+     * (see the file header).  Not part of the warm-resume fingerprint and not
+     * snapshotted: the solve reads no value from it, so a resumed run re-seats every
+     * arc at its first post-resume sighting, as a fresh observer would.
      */
     class ArcLedger {
     public:
         /// (station index, satellite, signal).
         using Key = std::tuple<int, std::string, std::string>;
+
+        /// The table the records live in: the run's arc table, in (station, satellite,
+        /// signal) order, which is the order of @ref Key (O1).
+        using Table = std::map<ArcId, net::ArcState>;
+
+        /**
+         * @brief Binds the ledger to the entities whose arc table holds its records.
+         * @param ents The run's entities (the arc table, and the converter tally a key
+         *             that does not round-trip is counted in).  Must outlive the ledger,
+         *             and stay where it is: a copy of the ledger shares the same table.
+         */
+        explicit ArcLedger(net::NetworkEntities& ents) : ents_(&ents) {}
 
         /**
          * @brief Set the two windows the machine runs on.
@@ -422,8 +454,9 @@ namespace GnssProcessor {
          */
         bool markStatePruned(const Key& key);
 
-        /// @brief Read-only access to every record the ledger still remembers.
-        const std::map<Key, ArcRecord>& arcs() const { return arcs_; }
+        /// @brief The arc table: a row whose @c ledger field is present holds a record
+        ///        the ledger still remembers (every other row is skipped by a reader).
+        const Table& arcs() const;
 
         /// @brief The record for one arc, or nullptr when it is unknown or forgotten.
         const ArcRecord* find(const Key& key) const;
@@ -435,7 +468,7 @@ namespace GnssProcessor {
         std::size_t admittedLiveCount() const;
 
         /// @brief Records retained, live plus gapped plus not-yet-forgotten dead.
-        std::size_t size() const { return arcs_.size(); }
+        std::size_t size() const;
 
         /**
          * @brief Whether this transition may be written as an event at this epoch.
@@ -456,7 +489,7 @@ namespace GnssProcessor {
         long long forget_ep_{ kArcLedgerForgetEp };
         long long epoch_idx_{ -1 };
         double    t_s_{ 0.0 };
-        std::map<Key, ArcRecord> arcs_;
+        net::NetworkEntities* ents_;   ///< The bound entities (the records' table).
         std::map<std::pair<int, int>, long long> ev_last_; ///< (station, transition) -> epoch of its last event.
     };
 

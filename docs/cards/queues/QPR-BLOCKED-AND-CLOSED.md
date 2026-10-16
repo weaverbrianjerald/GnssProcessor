@@ -4,15 +4,15 @@
 
 - **id:** QPR blocked
 - **topic:** queues
-- **status:** open
-- **summary:** Register of fixes blocked on a root cause and of falsified or decided approaches not to re-litigate; item 3's churn root was found the day it was filed.
+- **status:** superseded
+- **summary:** Blocked and leave-alone register, SUPERSEDED: item 3's churn resolved by 1(d), the D5 gates retired by RF-1, the triple-frequency runaway moved to L5B, the leave-alone verdicts standing.
 - **dates in the text:** 2026-08-14
 - **knobs / posture:** none
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** none
 - **source:** `docs/archive/QUEUE_principled_replacements.md`, the closing sections (see body)
 
-**Outcome.** The register lists the fixes that wait for a root cause, the approaches not to re-litigate, and the rule that item numbers stay stable. Item 3's clock re-realization churn was RESOLVED on 2026-08-14: the root is phase-bias-datum carry, moved to item 1(d). The triple-frequency runaway survives the INC-1 FREEZE (1720 to 1132 cyc), so the freeze is not the root and a mechanism card comes first; FLOAT stays the track. The D5 hold waited on 8(a), which found that the ionosphere error PERSISTS and so lifts it ([QPR 5–8](../queues/QPR-ITEMS-5-8.md)). The leave-alone list stands.
+**Outcome.** The register listed fixes waiting on a root cause and approaches not to re-litigate. Item 3's clock churn was resolved the day it was filed (phase-bias-datum carry, item 1(d), now armed). The D5 born-chord gates and the Card-4 invariant carry (the triple-frequency runaway's suspects) were retired by [RF-1](../../refound/RF-1_float_ambiguities_design.md); triple-frequency work continues in [L5B](../../refound/L5B_band5_receiver_delay_2026-10-10.md). L5 is SEQUENCED, not closed. The leave-alone verdicts stand (ZOH clock, empirical MW thresholds, adaptive iono q, datum-at-emit); lanes return only as [AB3](../../refound/AB3_lanes_2026-09-20.md)'s new build. Nothing is owed. Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

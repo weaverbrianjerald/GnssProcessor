@@ -48,7 +48,7 @@ constexpr double kStash = 1000.0;
 struct WsxFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     CouplingExactEpoch ep;
     std::vector<std::string> keys;
@@ -86,8 +86,8 @@ struct WsxFixture {
 
     CouplingRowBuilder make(bool cross) {
         CouplingRowBuilder cb{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                              /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                              /*gauge=*/false, /*reinit=*/false, tu_reinit_hist, R};
+                              /*tu=*/false, /*gauge=*/false, /*reinit=*/false,
+                              tu_reinit_hist, R};
         cb.cxu       = &ep;
         cb.cxu_cross = cross;
         return cb;

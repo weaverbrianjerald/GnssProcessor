@@ -22,7 +22,6 @@
 #include "app/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkIonoDeweightGate.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 
@@ -30,6 +29,19 @@
 #include "filter/NetworkRunEnd.hpp"
 #include <memory>
 #include <spdlog/spdlog.h>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkSetupResult.hpp"
+#include "rinex/MultiRinexSync.hpp"
+#include "filter/NetworkRunTypes.hpp"
+
+#include "app/NetworkEpoch.hpp"        // NetworkEpoch (card NOM3 step SG: the solve stages)
+#include "app/NetworkRun.hpp"          // NetworkRun
+#include "app/NetworkRunContext.hpp"
+#include "app/NetworkSetupResult.hpp"
+#include "config/GnssConfig.hpp"
+#include "filter/NetworkSolveGlue.hpp"   // SolveDatum, NetworkPostFitHandoff
+#include "logging/NetworkRunTraces.hpp"
 
 namespace GnssProcessor {
 
@@ -110,12 +122,21 @@ struct CellWorst {
 /// the last one (holdoff <= 0 disables the limit).  A parked cell keeps logging
 /// its identity, so its duration is readable from the events, but not once per
 /// epoch.
-bool holdoffAllows(NetworkRunContext& ctx, const std::string& key, long long seq,
-                   long long holdoff) {
-    auto& last = ctx.carry.prefit_event_last;
-    const auto it = last.find(key);
-    if (it != last.end() && holdoff > 0 && (seq - it->second) < holdoff) return false;
-    last[key] = seq;
+bool holdoffAllows(NetworkRunContext& ctx, const char* event, const std::string& station,
+                   const std::string& sat, const char* cls, long long seq, long long holdoff) {
+    // The line of sight's clock of (event, class): the station by NAME (O3), and "?" (the
+    // census's no-satellite placeholder) is the station's own row, SatId{}.
+    const std::optional<LosId> id =
+        net::losOfName(ctx.entities, station, sat == "?" ? std::string() : sat);
+    const std::string sub = std::string(event) + "|" + cls;
+    const long long* last =
+        id ? net::get(ctx.entities.los, *id, &net::LosState::events, sub,
+                      &net::LosEventState::prefit_event_last)
+           : nullptr;
+    if (last != nullptr && holdoff > 0 && (seq - *last) < holdoff) return false;
+    if (id)
+        net::put(ctx.entities.los, *id, &net::LosState::events, sub,
+                 &net::LosEventState::prefit_event_last) = seq;
     return true;
 }
 
@@ -216,8 +237,8 @@ double networkPrefitSigma0(const NetworkRunContext& ctx,
             // row, not a per-cell birth, so it is never deferred, although its tag names
             // its line of sight's satellite (card NOM step N2b keeps that rule).
             if (tg.cls != NetRowClass::IonoShRow && !tg.sat.empty() && have_prior
-                && ctx.carry.prefit_present_prev.count(
-                       {static_cast<int>(i), tg.sat}) == 0)
+                && !net::hasLos(ctx.entities.los, static_cast<int>(i), tg.sat,
+                                &net::LosState::prefit_present_prev))
                 continue;
             pool.push_back(prefitStandardizedDeviation(y, w, c.m[ti]));
         }
@@ -294,8 +315,10 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
 
     for (const auto& [key, cw] : worst) {
         const char* cls = rowClassName(static_cast<NetRowClass>(key.second));
-        const std::string hk = std::string("fused|") + station + "|" + key.first + "|" + cls;
-        if (!holdoffAllows(ctx, hk, seq, holdoff)) { ++ctr.fuse_events_held; continue; }
+        if (!holdoffAllows(ctx, "fused", station, key.first, cls, seq, holdoff)) {
+            ++ctr.fuse_events_held;
+            continue;
+        }
         ++ctr.fuse_events;
         traces.emitEvent(t, "PREFIT", "prefit_fused", key.first, station, cw.s, s_fuse,
                          "cap_weight",
@@ -317,13 +340,12 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const std::vector<NetStation>& stations,
                          const NetworkEstimator& est,
                          const std::vector<StationAssembly>& asm_res,
-                         const std::vector<int>& est_index_of,
-                         const NetworkIonoDeweightGate* iono_deweight) {
+                         const std::vector<int>& est_index_of, EpochEvents& events) {
     if (!ctx.knobs.pc_walk_on) return;
     (void)config_;   // arming is expressed entirely through the knob snapshot
-    // Cleared first, so an epoch the walk cannot serve leaves the epoch-status
-    // columns blank instead of repeating the previous epoch's numbers.
-    ctx.carry.ep_pc_rows = 0;
+    // The census scalars are epoch events: an epoch the walk cannot serve leaves the
+    // epoch-status columns blank instead of repeating the previous epoch's numbers.
+    EpochEvents::Census& census_ev = events.census;
 
     const bool   census_on   = ctx.knobs.pc_census_on;
     const bool   topo_on     = ctx.knobs.pc_topo_on;
@@ -415,7 +437,8 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 // is armed.  INC-1 defers them either way; a deferral conditional
                 // on INC-3 would make the census numbers depend on configuration.
                 if (have_prior_presence
-                    && ctx.carry.prefit_present_prev.count(cell) == 0) {
+                    && !net::hasLos(ctx.entities.los, cell.first, cell.second,
+                                    &net::LosState::prefit_present_prev)) {
                     born_here.insert(row_sat);
                     ++ctr.birth_rows;
                 }
@@ -482,9 +505,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                 ++ctr.events_class_skipped;
                 continue;
             }
-            const std::string hk =
-                std::string("exc|") + sname + "|" + key.first + "|" + cls;
-            if (holdoffAllows(ctx, hk, seq, holdoff)) {
+            if (holdoffAllows(ctx, "exc", sname, key.first, cls, seq, holdoff)) {
                 ++ctr.events;
                 traces.emitEvent(se.time, "PREFIT", "prefit_exceedance", key.first,
                                  sname, cw.s, ev_sigma, "flag",
@@ -557,17 +578,17 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // --- epoch scalars for the epoch-status row (INC-1) ----------------------
     if (census_on) {
         for (int t = 0; t < kNetDataClasses; ++t) {
-            ctx.carry.ep_pc_max_s[t]     = max_s[t];
-            ctx.carry.ep_pc_n_gt_10[t]   = n_gt_10[t];
-            ctx.carry.ep_pc_n_gt_1000[t] = n_gt_1k[t];
+            census_ev.ep_pc_max_s[t]     = max_s[t];
+            census_ev.ep_pc_n_gt_10[t]   = n_gt_10[t];
+            census_ev.ep_pc_n_gt_1000[t] = n_gt_1k[t];
             std::vector<double>& p = s_pool[t];
-            if (p.empty()) { ctx.carry.ep_pc_p99_s[t] = 0.0; continue; }
+            if (p.empty()) { census_ev.ep_pc_p99_s[t] = 0.0; continue; }
             const std::size_t k =
                 static_cast<std::size_t>(std::floor(0.99 * static_cast<double>(p.size() - 1)));
             std::nth_element(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(k), p.end());
-            ctx.carry.ep_pc_p99_s[t] = p[k];
+            census_ev.ep_pc_p99_s[t] = p[k];
         }
-        ctx.carry.ep_pc_rows = rows_epoch;
+        census_ev.ep_pc_rows = rows_epoch;
     }
 
     // --- topology ledger (INC-4) --------------------------------------------
@@ -578,42 +599,35 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
             traces.emitEvent(se.time, "TOPOLOGY", event, sat, station, stat, thr,
                              "delta", detail);
         };
-        std::map<int, double> w_now;
-        if (iono_deweight)
-            for (std::size_t i = 0; i < stations.size(); ++i)
-                w_now[static_cast<int>(i)] = iono_deweight->weight(stations[i].name);
-
         if (ctx.carry.topo_seeded) {
-            // (a) SH-tie row-count delta per station: the edges of the iono deweight valve.
+            // (a) SH-tie row-count delta per station.
             for (std::size_t i = 0; i < stations.size() && i < asm_res.size(); ++i) {
                 if (i >= est_index_of.size() || est_index_of[i] < 0) continue;
                 const int idx = static_cast<int>(i);
-                const auto pit = ctx.carry.topo_prev_tie.find(idx);
-                if (pit == ctx.carry.topo_prev_tie.end()) continue;   // first sighting
+                const int* pit = net::get(ctx.entities.stations, StationId{idx},
+                                          &net::StationState::topo_prev_tie);
+                if (pit == nullptr) continue;   // first sighting
                 const auto nit = tie_now.find(idx);
                 const int now = (nit == tie_now.end()) ? 0 : nit->second;
-                if (now == pit->second) continue;
-                const auto wp = ctx.carry.topo_prev_w.find(idx);
-                const auto wn = w_now.find(idx);
+                if (now == *pit) continue;
                 ++ctr.topo_tie_events;
                 emitTopo("tie_rows", "", stations[i].name,
-                         static_cast<double>(now), static_cast<double>(pit->second),
-                         fmt::format("prev={} now={} delta={:+d} w_prev={:.4g} w_now={:.4g}",
-                                     pit->second, now, now - pit->second,
-                                     wp == ctx.carry.topo_prev_w.end() ? 1.0 : wp->second,
-                                     wn == w_now.end() ? 1.0 : wn->second));
+                         static_cast<double>(now), static_cast<double>(*pit),
+                         fmt::format("prev={} now={} delta={:+d}",
+                                     *pit, now, now - *pit));
             }
             // (b) per-(station, satellite) row-kind changes while the sat stays present.
             for (const auto& [cell, mask] : kind_now) {
-                const auto pit = ctx.carry.topo_prev_kind.find(cell);
-                if (pit == ctx.carry.topo_prev_kind.end()) continue;   // rise, not a change
-                if (pit->second == mask) continue;
+                const unsigned* pit = net::getLos(ctx.entities.los, cell.first, cell.second,
+                                                  &net::LosState::topo_prev_kind);
+                if (pit == nullptr) continue;   // rise, not a change
+                if (*pit == mask) continue;
                 ++ctr.topo_kind_events;
                 const std::string sname =
                     (cell.first >= 0 && static_cast<std::size_t>(cell.first) < stations.size())
                         ? stations[static_cast<std::size_t>(cell.first)].name : std::string();
                 emitTopo("row_kinds", cell.second, sname, std::nullopt, std::nullopt,
-                         fmt::format("prev={} now={}", kindMaskName(pit->second),
+                         fmt::format("prev={} now={}", kindMaskName(*pit),
                                      kindMaskName(mask)));
             }
             // (c) shared-column registry deltas.
@@ -646,13 +660,14 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                       "epoch (a first sighting is not a topology change).",
                       se.time.tow, tie_now.size(), cm.label.size());
         }
-        ctx.carry.topo_prev_tie  = std::move(tie_now);
-        ctx.carry.topo_prev_kind = std::move(kind_now);
-        ctx.carry.topo_prev_w    = std::move(w_now);
+        net::dropAll(ctx.entities.stations, &net::StationState::topo_prev_tie);
+        for (const auto& [idx, n] : tie_now)
+            net::put(ctx.entities.stations, StationId{idx}, &net::StationState::topo_prev_tie) = n;
+        net::assignLos(ctx.entities, &net::LosState::topo_prev_kind, kind_now);
     }
 
     // --- presence map advance (INC-3) ---------------------------------------
-    ctx.carry.prefit_present_prev = std::move(present_now);
+    net::assignLosFlags(ctx.entities, &net::LosState::prefit_present_prev, present_now);
     ctx.carry.prefit_walk_seeded  = true;
 
     // --- publish the admission vet trigger ----------------------------------
@@ -662,12 +677,12 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // only the stamp `n_loop_epochs - 1` and counts anything older as an absent
     // consultation.  Both seams read `n_loop_epochs`, incremented once per loop
     // epoch before either runs, so the one-epoch offset is exact.
-    ctx.carry.prefit_code_flag    = std::move(code_flag_now);
+    net::assignLosFlags(ctx.entities, &net::LosState::prefit_code_flag, code_flag_now);
     ctx.carry.prefit_code_flag_ep = seq;
 
     // --- invariant #4: an inert walk reports that it is inert -----------------
-    if (rows_epoch == 0 && !ctx.carry.prefit_empty_logged) {
-        ctx.carry.prefit_empty_logged = true;
+    if (rows_epoch == 0 && !ctx.counters.prefit_empty_logged) {
+        ctx.counters.prefit_empty_logged = true;
         log->warn("Network (prefit census): ARMED but the first walked epoch (TOW "
                   "{:.1f}) classified ZERO data rows — every station was skipped (no "
                   "solve membership or a shared-dimension mismatch).  Every census "
@@ -766,10 +781,9 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
                           : std::string());
             if (p.topo_tie_events == 0 && p.epochs > 1)
                 log->info("Network (prefit census INC-4): NOT ONE station's SH-tie row "
-                          "set changed all run.  The deweight valve never moved a tie "
-                          "row here — so this run contains no instance of the era-2 "
-                          "topology event and cannot be used to grade the ledger "
-                          "against it.");
+                          "set changed all run.  This run therefore contains no instance "
+                          "of the era-2 topology event and cannot be used to grade the "
+                          "ledger against it.");
         }
         if (p.epochs == 0)
             log->warn("Network (prefit census): ARMED but the walk ran on ZERO epochs "
@@ -816,8 +830,8 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
                   static_cast<double>(p.rec_prev_bytes_last) / (1024.0 * 1024.0));
         if (p.rec_consults == 0)
             log->warn("Network (rhs-attrib INC-5): ARMED but NO trigger site ever "
-                      "consulted the latch — the four trip sites (SH-gate engage, "
-                      "sigma0 withhold, clock runaway, a00 band) are all gated behind "
+                      "consulted the latch — the three trip sites (sigma0 withhold, "
+                      "clock runaway, a00 band) are all gated behind "
                       "their own feature toggles, and none of them ran.  The recorder "
                       "is DEAD WIRING in this configuration, not a quiet run.");
         else if (p.rec_trips == 0)
@@ -837,5 +851,86 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// ---- Epoch forms (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): one forwarding
+//      call each, with the bindings of the frozen call site; the explicit forms
+//      above stay for their other callers. ----
+
+void networkPrefitCensus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
+    networkPrefitCensus(run.ctx, run.config, run.log, run.traces, ep.se, run.setup.stations,
+                        run.engines.est, ep.assembly.asm_res, ep.assembly.est_index_of, events);
+}
+
+// ---- End of the epoch forms ----
+
+// ---- Solve stages (card NOM3 step SG; generated by scripts/nom_sg_cut.py) ----
+/// The census-fed H sigma0 of this epoch, before any H line (card NOM3 step SG; Doxygen at the declaration).
+void networkCensusSigma0(NetworkRun& run, const NetworkEpoch& ep,
+                         const std::vector<int>& est_index_of) {
+    // ---- From the run, the epoch and the solve's values (card NOM3 step SG; generated by
+    //      scripts/nom_sg_cut.py, each line checked by scripts/nom_sg_verify.py) ----
+    NetworkRunContext& ctx = run.ctx;
+    NetworkSetupResult& setup = run.setup;
+    NetworkEstimator& est = run.engines.est;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    auto& stations = setup.stations;
+    // ---- End of the bindings ----
+    // The census-fed H σ̂₀ is computed once per epoch, before the solve, so every H
+    // site downstream (including the pre-solve observability-gate withhold further
+    // down) reads the same value.  Its inputs, the asm_res row stacks, are fixed at
+    // assembly, and the value is measure-only.  0.0 is the H grammar's "unavailable"
+    // (empty pool); the reset keeps a knob-off run at an inert 0 rather than a stale
+    // value (H-rider, edge-queue §1.6 item 3a).
+    ctx.carry.ep_h_sigma0_census = 0.0;
+    if (ctx.knobs.h_sigma0_census) {
+        ctx.carry.ep_h_sigma0_census = networkPrefitSigma0(
+            ctx, stations, est, asm_res, est_index_of, ctx.knobs.h_sigma0_class_mask);
+        if (ctx.carry.ep_h_sigma0_census > 0.0) ++ctx.counters.h_sig0_census_nonzero;
+    }
+}
+// ---- End of the solve stages ----
+
+// ---- PASS B serial stages (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py) ----
+
+void networkPrefitFuseEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochAssembly& assembly) {
+    // ---- From the run and the epoch (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py,
+    //      each line checked by scripts/nom_pb1_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    const SyncedEpoch& se = ep.se;
+    NetworkRunContext& ctx = run.ctx;
+    NetworkSetupResult& setup = run.setup;
+    NetworkRunTraces& traces = run.traces;
+    NetworkEstimator& est = run.engines.est;
+    const std::vector<bool>& present = ep.pass_a.present;
+    std::vector<StationAssembly>& asm_res = assembly.asm_res;  // written
+    // ---- End of the bindings ----
+    // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
+    auto& stations = setup.stations;
+
+    // --- Structural fuse (docs/SPEC_prefit_census_observability.md §4, INC-2) ---
+    // The single last-touch site for every data row's weight: every appender
+    // (splitStation, the GLONASS anchors, the SH/GIM iono ties, the SD-EWL rows)
+    // has finished, and nothing between here and est.addStation writes R.w.  Serial
+    // by design: the row build is parallel, so a fuse inside it would make the event
+    // order depend on the thread count.  s_fuse <= 0 (the default) skips the whole
+    // block (no classification, no allocation), so the off path is structurally
+    // byte-identical.  The rows are classified from their tags (card NOM step N2b).
+    const double pc_fuse_sigma = ctx.knobs.pc_fuse_sigma;
+    if (pc_fuse_sigma > 0.0) {
+        const Eigen::Index fuse_n_shared = est.numShared();
+        if (fuse_n_shared > 0) {
+            ++ctx.counters.pc.fuse_epochs;
+            for (size_t i = 0; i < stations.size(); ++i) {
+                if (!present[i]) continue;
+                StationAssembly& R = asm_res[i];
+                if (!R.ok || R.threw || R.state_mismatch || R.empty_innov) continue;
+                networkPrefitFuseStation(ctx, traces, se.time, fuse_n_shared,
+                                         stations[i].name, R, pc_fuse_sigma);
+            }
+        }
+    }
+}
+
+// ---- End of the PASS B serial stages (card NOM3 step PB1a) ----
 
 } // namespace GnssProcessor

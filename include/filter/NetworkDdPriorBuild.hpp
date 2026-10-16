@@ -1,33 +1,26 @@
 #pragma once
 /**
  * @file NetworkDdPriorBuild.hpp
- * @brief The two per-epoch DD-prior build steps of the PPP-RTK network producer: the
- *        ensemble sum-zero phase-bias gauges, and the invariant DD-carry prior blocks
- *        (card 4) with the WL/UWL lane machinery (mw_wl / ewl / uwl / lane_carry).
- *        Relocated verbatim from Application::runNetwork (decomposition INC-9b).
+ * @brief The per-epoch DD-prior build step of the PPP-RTK network producer: the
+ *        invariant DD-carry prior blocks (card 4).  Relocated verbatim from
+ *        Application::runNetwork (decomposition INC-9b).
  *
- * The run TU keeps both lambdas as thin `[&]` wrappers that forward to these free
- * functions, so the initial gauge/DD build and the within-epoch RAIM re-solve
- * (`resolve_dropping`) keep byte-identical capture semantics.  These functions own no
- * state.  Every WL run-state instance (ewl_lanes / wl_inject_epoch / mw_wl_layer /
- * mw_wl_f6 / ...) is a member of the driver's @ref NetworkLaneRun, and the lane switches
- * are read from NetworkKnobs (card NOM step TD1a).  Two inputs carry state across
- * epochs or passes and need care: carry_slipped_ambs, the driver's per-epoch slip
- * funnel, passed by reference, and lane_admit_pairs, read and written through
- * ctx.carry.  Every other argument keeps the name of the former runNetwork() capture.
+ * Until card NOM3 step EP1 the run TU kept the lambda as a thin `[&]` wrapper that
+ * forwarded to this free function, so the initial DD build and the within-epoch RAIM
+ * re-solve (`resolve_dropping`) kept byte-identical capture semantics; the epoch
+ * function and the solve's replay now call it directly over the run and the epoch.  The function owns no
+ * state; the carry switches are read from NetworkKnobs (card NOM step TD1a).  One input
+ * carries state across epochs or passes and needs care: carry_slipped_ambs, the
+ * driver's per-epoch slip funnel, read through the epoch (card NOM3 step EP1c).  Every
+ * other argument keeps the name of the former runNetwork() capture.
  */
 
 #include "filter/NetworkEstimator.hpp"          // NetworkEstimator
 #include "filter/NetworkSbasis.hpp"             // NetworkSbasis::Plan
 #include "filter/NetworkInvariantCarryDriver.hpp" // NetworkInvariantCarryDriver
-#include "filter/NetworkMwWlLayer.hpp"          // NetworkMwWlLayer (+ ::Config)
 #include "filter/NetworkRunTypes.hpp"           // NetStation / StationAssembly / CarryPrior
-#include "filter/NetworkWlRunTypes.hpp"         // EwlLane / WlInjectPlan / LaneTraceEntry / WlCounters / F6Capture
-#include "filter/NetworkRunGroups.hpp"          // NetworkLaneRun (card NOM step TD1a)
 #include "filter/NetworkZStore.hpp"             // ArcKey (carry_arc_amb_key maps)
-#include "rinex/MultiRinexSync.hpp"             // SyncedEpoch
 
-#include <functional>
 #include <map>
 #include <memory>
 #include <set>
@@ -41,66 +34,68 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct NetworkRunContext;
-struct NetworkRunTraces;
+
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochDdBuild;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
 /**
- * @brief Fold the ensemble Sum-Zero phase-bias gauges for this epoch into @p est.
- *        No-op unless @p phase_datum_ensemble.  The body is documented in the .cpp.
- */
-void networkBuildEnsembleGauges(NetworkEstimator& est,
-                                const std::vector<NetStation>& stations,
-                                const std::vector<int>& est_index_of,
-                                const std::vector<StationAssembly>& asm_res,
-                                const std::set<std::string>& shared_phase_keys,
-                                const std::vector<CarryPrior>& prev_carry,
-                                bool phase_datum_ensemble,
-                                bool phase_hold_on);
-
-
-/**
- * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and the WL/UWL
- *        lane rows, and install them via NetworkEstimator::setDdPriors.  Returns early
- *        unless carry_invariant, so with it off the output is byte-identical.
- * @param lane_run The driver's lane machinery; its per-build members are rewritten on
- *                 every build (in/out).
- * @param isUncarriedThirdBand Whether a (constellation, signal) is the EWL pair's
- *                 uncarried band, left out of the carry while the EWL lane is armed.
+ * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and install them
+ *        via NetworkEstimator::setDdPriors.  Returns early unless carry_invariant, so
+ *        with it off the output is byte-identical.  GLONASS never enters the carry.
  *
- * The lane wavelengths come from the identity layer (@c SignalId::wavelengthM, card
- * NOM step N0b); GLONASS never enters the carry, so no FDMA slot is needed.
+ * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * replace the explicit parameters; the definition binds each former parameter in its preamble,
+ * under its former name.
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ *            run.engines.carry_driver (carry_driver), run.engines.est (est). Read: run.config
+ *            (config_), run.log (log), run.setup.stations (stations).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.assembly.asm_res
+ *           (asm_res), ep.assembly.est_index_of (est_index_of), ep.pass_a.shared_phase_keys
+ *           (shared_phase_keys), ep.funnel.carry_slipped_ambs (carry_slipped_ambs),
+ *           ep.funnel.carry_slipped_raw (carry_slipped_raw), ep.ws.we_culprits (we_culprits).
+ *           The funnel is read only (card NOM3 step EP1c removed its writable parameter).
+ * @param dd_build [in/out] The DD build's reverse map (ep.dd_build), written:
+ *     dd_build.carry_arc_amb_key (carry_arc_amb_key).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx.
+ *   - @p config_ = run.config.
+ *   - @p log = run.log.
+ *   - @p carry_driver = run.engines.carry_driver.
+ *   - @p est = run.engines.est.
+ *   - @p stations = run.setup.stations.
+ *   - @p asm_res = ep.assembly.asm_res.
+ *   - @p est_index_of = ep.assembly.est_index_of.
+ *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
+ *   - @p carry_arc_amb_key = dd_build.carry_arc_amb_key.
+ *   - @p carry_slipped_ambs = ep.funnel.carry_slipped_ambs.
+ *   - @p carry_slipped_raw = ep.funnel.carry_slipped_raw: The raw-detector subset of this
+ *     epoch's slip funnel (card 4, M1, D5 v4). Every raw-observable inserter writes both sets
+ *     (NetworkSlipQc via the PASS-A binding, networkSignalIntegrity,
+ *     networkMeasurementAdmission), so the complement `carry_slipped_ambs \ carry_slipped_raw`
+ *     holds the estimation-side entries: the D5 innovation drain. The Iono-2 v3k erase-policy
+ *     split uses the same idiom. Read only under network.carry_invariant_innov_retap_only.
+ *   - @p we_culprits = ep.ws.we_culprits: The within-epoch RAIM tier's culprit sets (card C3c
+ *     §3; card WCF): every carried ambiguity of a culprit satellite or arc is treated as
+ *     slipped. The epoch workspace's member (@ref EpochWorkspace::we_culprits), naming
+ *     something only on a T2 re-solve's rebuild; each rebuild that reads a culprit is counted,
+ *     with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
  */
-void networkBuildCarryDdPriors(
-    NetworkRunContext& ctx,
-    const GnssConfig& config_,
-    const std::shared_ptr<spdlog::logger>& log,
-    NetworkRunTraces& traces,
-    NetworkInvariantCarryDriver& carry_driver,
-    NetworkEstimator& est,
-    const std::vector<NetStation>& stations,
-    const std::vector<StationAssembly>& asm_res,
-    const std::vector<int>& est_index_of,
-    const std::vector<bool>& present,
-    const std::set<std::string>& shared_phase_keys,
-    const SyncedEpoch& se,
-    std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key,
-    std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key2,
-    std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-    /// The raw-detector subset of this epoch's slip funnel (card 4, M1, D5 v4).  Every
-    /// raw-observable inserter writes both sets (NetworkSlipQc via the PASS-A binding,
-    /// networkSignalIntegrity, networkMeasurementAdmission, the deweight-release
-    /// drain), so the complement `carry_slipped_ambs \ carry_slipped_raw` holds the
-    /// estimation-side entries: the D5 innovation drain and the post-fit RAIM refloat
-    /// drain (raim_refloat_pending).  The Iono-2 v3k erase-policy split uses the same
-    /// idiom.  Read only under network.carry_invariant_innov_retap_only.
-    const std::set<std::pair<int, std::string>>& carry_slipped_raw,
-    /// The within-epoch RAIM tier's culprit sets (card C3c §3; card WCF): every carried
-    /// ambiguity of a culprit satellite or arc is treated as slipped (here and in the MW
-    /// wide-lane rows).  The epoch workspace's member (@ref EpochWorkspace::we_culprits),
-    /// naming something only on a T2 re-solve's rebuild; each rebuild that reads a culprit
-    /// is counted, with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
-    const WithinEpochCulprits& we_culprits,
-    int n_threads,
-    NetworkLaneRun& lane_run,
-    const std::function<bool(char, const std::string&)>& isUncarriedThirdBand);
+void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdBuild& dd_build);
 
+/**
+ * @brief The DD carry's z-store predict (q_z times the TOW step on the carried DD covariance),
+ *        once per epoch ahead of the DD build (card NOM3 step EP2).
+ *
+ * The build and the fold may re-run on a within-epoch re-solve; this predict does not.  The
+ * step is TOW-only (card NOM3 section 2 finding 4) and always clean (D5 v2).  Under
+ * network.carry_invariant, its first line.  The body is the frozen driver text, moved by
+ * scripts/nom_ep2_cut.py.
+ *
+ * @param run The run: the carry driver (written), ctx.carry.carry_prev_tow (read).
+ * @param ep  The epoch, read: se.time.tow.
+ */
+void networkCarryDriverBeginEpoch(NetworkRun& run, const NetworkEpoch& ep);
 } // namespace GnssProcessor

@@ -133,14 +133,14 @@ TEST(RelevelDeltaBridge, FdmaShapedLambdasRoundTrip) {
 TEST(RelevelDeltaBridge, LocalCarryApplyShape) {
     // The T0-repair mutation discipline on a hand-built map: value shifts,
     // var inflates, coupling and last_seen untouched.
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
-    carry[{3, "G07", "L1C"}] = LocalCarry{100.0, 0.01, 12345.0};
-    carry[{3, "G07", "L2W"}] = LocalCarry{200.0, 0.02, 12345.0};
+    net::ArcTable carry;
+    net::putArcIn(carry, {3, "G07", "L1C"}, &net::ArcState::amb) = LocalCarry{100.0, 0.01, 12345.0};
+    net::putArcIn(carry, {3, "G07", "L2W"}, &net::ArcState::amb) = LocalCarry{200.0, 0.02, 12345.0};
     const auto r = networkSlipDeltaBridgeSolve(2, 0.1, difFor(3, 1), 0.01,
                                                kLamWl, kLamIf, 200.0, 2.0);
     ASSERT_TRUE(r.ok);
-    auto& c1 = carry[{3, "G07", "L1C"}];
-    auto& c2 = carry[{3, "G07", "L2W"}];
+    auto& c1 = net::putArcIn(carry, {3, "G07", "L1C"}, &net::ArcState::amb);
+    auto& c2 = net::putArcIn(carry, {3, "G07", "L2W"}, &net::ArcState::amb);
     c1.value_abs += r.shift1_m;  c1.var += r.var1_m2;
     c2.value_abs += r.shift2_m;  c2.var += r.var2_m2;
     EXPECT_NEAR(c1.value_abs, 100.0 + kLam1 * 3, 1e-6);
@@ -167,30 +167,30 @@ TEST(RelevelDeltaBridge, BridgeReplaceOutcomeLadder) {
 
     const std::tuple<int, std::string, std::string> k1{5, "G09", "L1C"};
     const std::tuple<int, std::string, std::string> k2{5, "G09", "L2W"};
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
-    carry[k1] = LocalCarry{true1 + 0.3, 0.09, 999.0};
-    carry[k2] = LocalCarry{true2 - 0.2, 0.09, 999.0};
+    net::ArcTable carry;
+    net::putArcIn(carry, k1, &net::ArcState::amb) = LocalCarry{true1 + 0.3, 0.09, 999.0};
+    net::putArcIn(carry, k2, &net::ArcState::amb) = LocalCarry{true2 - 0.2, 0.09, 999.0};
 
     // Applied: the bridged level agrees with the free level within 3 cyc.
     DeltaBridgeSolve bs;
     EXPECT_EQ(networkSlipBridgeReplace(pd, 5, "G09", carry, 200.0, 0.50, 3.0, &bs),
               BridgeReplaceOutcome::Applied);
-    EXPECT_NEAR(carry[k1].value_abs, true1, 1e-6);
-    EXPECT_NEAR(carry[k2].value_abs, true2, 1e-6);
-    EXPECT_NEAR(carry[k1].var, 0.01 + bs.var1_m2, 1e-12);
-    EXPECT_DOUBLE_EQ(carry[k1].last_seen_s, 999.0);  // untouched
+    EXPECT_NEAR(net::putArcIn(carry, k1, &net::ArcState::amb).value_abs, true1, 1e-6);
+    EXPECT_NEAR(net::putArcIn(carry, k2, &net::ArcState::amb).value_abs, true2, 1e-6);
+    EXPECT_NEAR(net::putArcIn(carry, k1, &net::ArcState::amb).var, 0.01 + bs.var1_m2, 1e-12);
+    EXPECT_DOUBLE_EQ(net::putArcIn(carry, k1, &net::ArcState::amb).last_seen_s, 999.0);  // untouched
 
     // CorrobReject: a wrong MW integer puts the bridged level cycles away from
     // the free level, and the carry stays untouched.
     RelevelPend bad = pd;  bad.dn_wl = dn1 - dn2 + 7;
-    carry[k1] = LocalCarry{true1 + 0.3, 0.09, 999.0};
-    carry[k2] = LocalCarry{true2 - 0.2, 0.09, 999.0};
+    net::putArcIn(carry, k1, &net::ArcState::amb) = LocalCarry{true1 + 0.3, 0.09, 999.0};
+    net::putArcIn(carry, k2, &net::ArcState::amb) = LocalCarry{true2 - 0.2, 0.09, 999.0};
     EXPECT_EQ(networkSlipBridgeReplace(bad, 5, "G09", carry, 200.0, 0.50, 3.0),
               BridgeReplaceOutcome::CorrobReject);
-    EXPECT_NEAR(carry[k1].value_abs, true1 + 0.3, 1e-9);
+    EXPECT_NEAR(net::putArcIn(carry, k1, &net::ArcState::amb).value_abs, true1 + 0.3, 1e-9);
 
     // NoCarry: a band died between flag and replace.
-    carry.erase(k2);
+    net::dropArc(carry, k2, &net::ArcState::amb);
     EXPECT_EQ(networkSlipBridgeReplace(pd, 5, "G09", carry, 200.0, 0.50, 3.0),
               BridgeReplaceOutcome::NoCarry);
 

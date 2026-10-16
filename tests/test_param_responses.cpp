@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkCarrySites.hpp"
 #include "filter/NetworkParamRegistry.hpp"
@@ -307,23 +308,23 @@ TEST(ParamResponses, RebaseCompleteAddsNoDeclaredKindToday) {
 // The traversal tallies the prev_carry moves per border kind, and the run-scope tally adds
 // them per mechanism (the Stransform rows of the run-end table).
 TEST(ParamResponses, TraversalTalliesBorderMovesPerKind) {
-    NetworkCarryState c;
+    NetworkCarryState c; net::NetworkEntities c_ent;
     c.prev_carry = {prior(SharedParamKind::Clock, "G01", ""),
                     prior(SharedParamKind::Clock, "G02", ""),
                     prior(SharedParamKind::PhaseBias, "G01", "L1C"),
                     prior(SharedParamKind::CodeBias, "G01", "C1C")};
     CarrySiteCounts cc;
     const long long n = forEachCarriedReference(
-        c, carrySiteBit(CarrySite::PrevCarry),
+        c, c_ent, carrySiteBit(CarrySite::PrevCarry),
         [](const CarriedRef& ref) { return ref.kind != SharedParamKind::CodeBias; }, &cc);
     EXPECT_EQ(n, 3);
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::Clock)], 2);
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::PhaseBias)], 1);
     EXPECT_EQ(cc.moved_border[static_cast<int>(SharedParamKind::CodeBias)], 0);
     CarryMovedTally t;
-    carryTallyMoved(t, CarryMechanism::ClockLevel, cc);
-    carryTallyMoved(t, CarryMechanism::ClockLevel, cc);
-    const int m = static_cast<int>(CarryMechanism::ClockLevel);
+    carryTallyMoved(t, CarryMechanism::EphRelevel, cc);
+    carryTallyMoved(t, CarryMechanism::EphRelevel, cc);
+    const int m = static_cast<int>(CarryMechanism::EphRelevel);
     EXPECT_EQ(t.border[static_cast<int>(SharedParamKind::Clock)][m], 4);
     EXPECT_EQ(t.site[static_cast<int>(CarrySite::PrevCarry)][m], 6);
 }
@@ -335,16 +336,17 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     GnssConfig cfg;
     ASSERT_TRUE(loadGolden("sim", cfg));
     auto ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
-    auto& lat = ctx->carry.relevel;
+    EpochEvents events;
+    auto& lat = events.slip.relevel;
     const std::string a = StateKeys::makeAmbiguityKey("G05", "L1C");
     const std::string b = StateKeys::makeAmbiguityKey("G07", "L2W");
     const std::string c = StateKeys::makeAmbiguityKey("G09", "L1C");
     lat.free_ambs = {{0, a}, {1, b}, {2, c}};
     lat.free_cause[{0, a}] = RelevelEpochState::kCauseMw | RelevelEpochState::kCauseLli;
     lat.free_cause[{1, b}] = RelevelEpochState::kCauseGap;
-    ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))] = LocalCarry{};
-    ctx->carry.local_carry[std::make_tuple(2, std::string("G09"), std::string("L1C"))] = LocalCarry{};
-    networkResponseLatchTally(*ctx);
+    net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
+    net::putArc(ctx->entities, std::make_tuple(2, std::string("G09"), std::string("L1C")), &net::ArcState::amb) = LocalCarry{};
+    networkResponseLatchTally(*ctx, events);
     const auto& C = ctx->counters;
     EXPECT_EQ(C.prm_latch_epochs, 1);
     EXPECT_EQ(C.prm_latch_unique, 3);
@@ -360,7 +362,7 @@ TEST(ParamResponses, LatchTallyCountsEachCauseAndTheCarriedKeys) {
     EXPECT_STREQ(latchCauseName(6), "gap_reentry");
     // An empty latch is not an epoch of the tally.
     lat.free_ambs.clear();
-    networkResponseLatchTally(*ctx);
+    networkResponseLatchTally(*ctx, events);
     EXPECT_EQ(C.prm_latch_epochs, 1);
 }
 
@@ -447,23 +449,12 @@ TEST(ParamResponses, GoldensDeclareTheAmbiguityGapHorizon) {
         EXPECT_EQ(r.spec(K::RxCodeBias).gap_horizon_s, kRxCbMaxGapS) << bed;
         for (const K kind : {K::SatClock, K::SatPhaseBias, K::SatCodeBias, K::VtecSh})
             EXPECT_TRUE(std::isnan(r.spec(kind).gap_horizon_s)) << bed << " " << paramKindName(kind);
-        // Neither slant-ionosphere carry is armed on the goldens: no carry in force, no horizon.
+        // The in-block slant-ionosphere carry is not armed on the goldens: no horizon.
         EXPECT_TRUE(std::isnan(r.spec(K::SlantIono).gap_horizon_s)) << bed;
-        // Each slant-ionosphere route declares its own horizon (the two prunes read it), and
-        // the two knobs differ on the goldens, so the routes are told apart.
-        ASSERT_NE(k.iono_max_gap_s, k.iono_blk_max_gap_s) << bed;
-        NetworkKnobs kd = k;
-        kd.iono_on = true;
-        kd.iono_blk = false;
-        EXPECT_EQ(NetworkParamRegistry::build(kd, cfg).spec(K::SlantIono).gap_horizon_s,
-                  k.iono_max_gap_s) << bed;
+        // The in-block route declares its own horizon (its prune reads it).
         NetworkKnobs kb = k;
-        kb.iono_on = false;
         kb.iono_blk = true;
         EXPECT_EQ(NetworkParamRegistry::build(kb, cfg).spec(K::SlantIono).gap_horizon_s,
                   k.iono_blk_max_gap_s) << bed;
-        NetworkKnobs kx = k;
-        kx.iono_on = kx.iono_blk = true;
-        EXPECT_THROW(NetworkParamRegistry::build(kx, cfg), std::logic_error) << bed;
     }
 }

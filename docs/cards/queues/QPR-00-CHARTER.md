@@ -4,15 +4,15 @@
 
 - **id:** QPR
 - **topic:** queues
-- **status:** open
-- **summary:** Charter and build order of the principled-replacement queue (fifth ranking, 2026-08-20); the order is superseded for the network producer by the 2026-09-14 re-founding.
+- **status:** superseded
+- **summary:** Charter and build order of the principled-replacement queue (fifth ranking, 2026-08-20); SUPERSEDED by the 2026-09-14 re-founding, two leftovers re-filed to OPEN_ITEMS.
 - **dates in the text:** 2026-08-05 → 2026-08-21
 - **knobs / posture:** `network.cycle_slip.relevel_free_epoch`
 - **hashes named in the text** (commit / exe / byte-cert): `ca19d0d`, `353f99f`, `58f650c`
 - **run dirs named in the text:** `runs/inj_weab_`, `runs/pareref_on`
 - **source:** `docs/archive/QUEUE_principled_replacements.md`, the preamble
 
-**Outcome.** The charter ranks the symptom-level patches that have a known principled replacement and sets the order to build them. Its fifth ranking put item 9, the slip re-level walk, first; executed on 2026-08-20, the walk is dead under `network.cycle_slip.relevel_free_epoch` (ZWD hourly rms flat at 2.3 to 3.1 m). R0 and 1(d) were validated on 2026-08-14; 8(b) was FALSIFIED and the 8-family closed on 2026-08-21. Since 2026-09-14 the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) sets the order of work on the network producer ([queues topic](../../topics/queues.md)); the items remain statements of defects.
+**Outcome.** The charter ranked symptom-level patches with a known principled replacement and set their build order (fifth ranking, 2026-08-20: item 9 first). Item 9's walk was killed by `relevel_free_epoch`, itself replaced as the slip response by the float vehicle's drop ([RF-1](../../refound/RF-1_float_ambiguities_design.md)). Since 2026-09-14 the [re-founding](../../refound/NETWORK_REFOUNDING_2026-09-14.md) sets the order of work ([CARDS](../../refound/CARDS.md)); every other item is done, superseded, falsified or moot. Two leftovers are filed in [OPEN_ITEMS](../../status/OPEN_ITEMS.md): item 6's start-offset seek and item 4's prefit phase column. Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

@@ -32,6 +32,14 @@
 #include <memory>
 #include <string>
 
+#include "app/NetworkEpoch.hpp"        // NetworkEpoch (card NOM3 step SG: the solve stages)
+#include "app/NetworkRun.hpp"          // NetworkRun
+#include "app/NetworkRunContext.hpp"
+#include "app/NetworkSetupResult.hpp"
+#include "config/GnssConfig.hpp"
+#include "filter/NetworkSolveGlue.hpp"   // SolveDatum, NetworkPostFitHandoff
+#include "logging/NetworkRunTraces.hpp"
+
 namespace GnssProcessor {
 
 namespace {
@@ -393,10 +401,9 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     // data rejecting the seeded pre-gap realization (invariant #7's mark-if-moved),
     // attributed in the event detail and counted.
     std::string seed_tag;
-    if (!ctx.carry.readmit_seeded_s.empty()) {
-        const auto rs = ctx.carry.readmit_seeded_s.find(sat);
-        if (rs != ctx.carry.readmit_seeded_s.end()
-            && ctx.carry.readmit_now_s - rs->second <= kReadmitVerifyWindowS) {
+    if (net::present(ctx.entities.sats, &net::SatelliteState::readmit_seeded_s) > 0) {
+        const double* rs = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::readmit_seeded_s);
+        if (rs && ctx.carry.readmit_now_s - *rs <= kReadmitVerifyWindowS) {
             ++ctx.counters.n_readmit_seed_moved;
             seed_tag = ";readmit_seed_moved";
         }
@@ -404,7 +411,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     traces.emitEvent(t, "CLK_ANCHOR", "cta_decouple", sat, "", statistic, threshold,
                      "refloat", fmt::format("reason={};{}{}", reason, detail, seed_tag));
     if (ctx.knobs.cta_mark) {
-        ctx.carry.clk_anchor_disc_pending.insert(sat);
+        net::markSat(ctx.entities, sat, net::Disc::ClockAnchor);
         ++ctx.counters.cta_marks;
     }
     return true;
@@ -421,7 +428,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                              const std::vector<std::string>& registered_clock_sats,
                              const std::set<std::string>& clock_refloat_sats,
                              bool datum_changed,
-                             const std::set<char>& changed_consts) {
+                             const std::set<char>& changed_consts, const EpochEvents& events) {
     if (!ctx.knobs.cta_on) return;
     (void)config_;   // the seam signature is uniform across the run loop
     auto& anchor = ctx.carry.clk_anchor;
@@ -451,9 +458,9 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             // retire and the anchor stays engaged.  The statistic below still tests it.
             if (ctx.knobs.cta_datum_keep) {
                 const char cons = letterOfSat(sat);   // the dense kernel's key
-                const auto rec = ctx.carry.sts_dense.find(cons);
-                const bool keep = rec != ctx.carry.sts_dense.end()
-                               && ctx.carry.sts_consts.count(cons) > 0
+                const auto rec = events.handover.sts_dense.find(cons);
+                const bool keep = rec != events.handover.sts_dense.end()
+                               && events.handover.sts_consts.count(cons) > 0
                                && rec->second.selfcheck_ok
                                && rec->second.row_sats.count(sat) > 0
                                && it->second.folded && it->second.folded_anchored;
@@ -487,13 +494,10 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
     const double abs_m   = ctx.knobs.cta_abs_m;
     const double s_floor = std::max(1e-12, ctx.knobs.cta_sigma_floor_m
                                          * ctx.knobs.cta_sigma_floor_m);
-    // The resolved predicate, not the Q3 knob (card C-GF).  A withdraw must un-fold
-    // exactly what was folded; reading a different flag than the fold used leaves a
+    // The resolved predicate, not the Q3 knob.  A withdraw must un-fold exactly what
+    // was folded; reading a different flag than the fold used leaves a
     // negative-semidefinite residue in the shared normals (see NetworkRunContext.hpp).
     const bool gf         = ctx.knobs.carry_gauge_free;     // the fold (what a withdraw must un-fold)
-    // Closure is part of what was folded: it selects which directions U spans, so
-    // every withdraw below passes it alongside `gf` (card C-GF).
-    const bool gfc        = ctx.knobs.carry_gauge_free_closure;
     const bool proj_post  = ctx.knobs.cta_stat_proj_post;   // the denominator's posterior half
     const bool proj_prior = ctx.knobs.cta_stat_proj_prior;  // …and its prior half
     int pass = 0;
@@ -781,7 +785,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     est.contributionKind(ContributionKind::Q3Withdraw);
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/false, gf, gfc);
+                                                             /*restore=*/false, gf);
                 }
                 folded_dense = true;
             }
@@ -795,7 +799,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     std::set<std::string> ds;
                     for (const auto& p : diag_drop) ds.insert(p.sat);
                     est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
-                                                                /*restore=*/false, gfc);
+                                                                /*restore=*/false);
                 } else {
                     est.withdrawSharedPrior(diag_drop);
                 }
@@ -813,7 +817,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                     est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
-                                                             /*restore=*/true, gf, gfc);
+                                                             /*restore=*/true, gf);
                 }
                 if (!diag_drop.empty()) {
                     est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
@@ -821,7 +825,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                         std::set<std::string> ds;
                         for (const auto& p : diag_drop) ds.insert(p.sat);
                         est.refoldSharedPriorClockGaugeFreeDropping(ws.cap_priors, ds,
-                                                                    /*restore=*/true, gfc);
+                                                                    /*restore=*/true);
                     } else {
                         est.addSharedPrior(diag_drop);
                     }
@@ -1046,42 +1050,109 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-// Run-end report: the gauge-free shared carry (C-GF).
-int networkGaugeFreeCarryRunEnd(const NetworkRunEndView& v) {
-    const NetworkRunContext& ctx = v.ctx;
-    const std::shared_ptr<spdlog::logger>& log = v.log;
-    const NetworkEstimator& est = v.run.engines.est;
+// ---- End of the run-end reports ----
 
-    // Gauge-free shared carry readout (card C-GF), placed outside the Card-Q3 `cta_on`
-    // block above on purpose: the downdate can be armed by the carry
-    // (shared_carry_gauge_free) with the Q3 temporal anchor off, and the Q3 readout would
-    // then print nothing, leaving an armed mechanism with no telemetry (invariant #4).
-    if (ctx.knobs.carry_gauge_free && !ctx.knobs.cta_on) {
-        log->info("Network (Card C-GF): gauge-free shared carry active WITHOUT the Q3 clock "
-                  "anchor — {} clock prior key(s) gauge-downdated, {} epoch(s) inert, {} "
-                  "direction(s) DECLINED for partial support (closure test {}).",
-                  ctx.counters.cta_gf_keys, ctx.counters.cta_gf_inert,
-                  est.gaugeFreePartialSkipped(),
-                  ctx.knobs.carry_gauge_free_closure ? "ON" : "off");
-        if (ctx.counters.cta_gf_keys == 0)
-            log->warn("Network (Card C-GF): the gauge-free carry fold is ARMED but downdated "
-                      "ZERO keys — it is INERT for this run, and the carried block is folding "
-                      "information along the datum's own directions exactly as if the knob "
-                      "were off.  Any A/B against a raw-carry arm is measuring nothing.");
+// ---- Solve stages (card NOM3 step SG; generated by scripts/nom_sg_cut.py) ----
+/// The cold-start a-priori satellite-clock Tikhonov anchor (card NOM3 step SG; Doxygen at the declaration).
+void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws) {
+    // ---- From the run, the epoch and the solve's values (card NOM3 step SG; generated by
+    //      scripts/nom_sg_cut.py, each line checked by scripts/nom_sg_verify.py) ----
+    NetworkRunContext& ctx = run.ctx;
+    NetworkEstimator& est = run.engines.est;
+    const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
+    const bool   within_epoch_armed = ctx.knobs.within_epoch_armed;   // network.raim_within_epoch
+    const double clk_anchor_sigma   = ctx.knobs.clk_anchor_sigma;     // D6-resolved anchor sigma (m)
+    const bool   clock_brdc_anchored = ctx.knobs.clock_brdc_anchored; // brdc_rts: the per-satellite broadcast anchors are the clock gauge (pre-gate); no pivot machinery and no sum-to-zero membership wander
+    auto& cap_priors = ws.cap_priors;
+    // ---- End of the bindings ----
+    // --- A-priori satellite-clock anchor (cold-start conditioning) ------
+    // The shared clock column is Δδtˢ relative to the a-priori precise product clock,
+    // so it is small (sub-metre for precise post-processing).  With no absolute anchor
+    // the per-epoch joint solve floats it by hundreds of metres at cold start to absorb
+    // the clock↔iono↔bias confusion (no carry-forward exists at epoch 1, and from
+    // epoch 2 on the carry anchors to that floated value).  A Tikhonov prior pulling
+    // each Δδtˢ toward 0 with σ = initial_std.sat_clock (the documented "Δδtˢ vs
+    // a-priori product clock" quality: sub-metre for precise products, looser for RT
+    // broadcast) regularizes only the ill-conditioned cold-start direction.  The
+    // per-constellation clock datum stays fixed by the explicit Datum (a large-weight
+    // pin that dominates this soft prior), so the few-metre datum offset that the data
+    // determine is kept.  The prior is applied after the gate (like the carry-forward)
+    // so the null-space rank gate still sees the clock datum as a gauge, and it
+    // combines in information space with the carry-forward (anchor toward 0 plus random
+    // walk toward the previous value).  It applies only when σ binds (< 100 m); the
+    // loose default (1000 m) leaves the anchor off and the run byte-identical.
+    //
+    // Measured scope (305 stations, GPS+Galileo; see [[project_global_sh_iono]]):
+    // σ = 0.05 m reduces the cold-start clock-Δ rms from 56 to 2.9 m for about 6
+    // epochs, after which the W6 clock↔bias↔ambiguity systematic returns (the data want
+    // about 80 m, with information far above the anchor's).  The anchor improves
+    // cold-start clock-product quality only.  The divergence of the co-estimated
+    // SH-VTEC field is a separate, decoupled cold-start estimability defect (its
+    // large-scale level is unobservable under the common-mode-free iono R), and
+    // pinning the clock does not move the field.
+    {
+        const double clk_sigma = clk_anchor_sigma;  // m (D6-resolved; sp3 auto == initial_std.sat_clock)
+        // Broadcast-anchored datum: the same per-satellite anchors were folded before
+        // the gate as the gauge realization (buildSharedDatum constraint rows), and
+        // folding them again here would double the anchor information (effective
+        // σ/√2).  Skip them in that mode; every other mode keeps the post-gate
+        // regularizer.
+        if (!clock_brdc_anchored
+            && std::isfinite(clk_sigma) && clk_sigma > 0.0 && clk_sigma < 100.0) {
+            const double clk_info = 1.0 / (clk_sigma * clk_sigma);
+            std::vector<NetworkEstimator::SharedPrior> clk_anchor;
+            clk_anchor.reserve(registered_clock_sats.size());
+            for (const std::string& sat : registered_clock_sats) {
+                NetworkEstimator::SharedPrior p;
+                p.kind  = SharedParamKind::Clock;
+                p.sat   = sat;
+                p.value = 0.0;          // anchor Δδtˢ toward the a-priori clock
+                p.info  = clk_info;
+                clk_anchor.push_back(p);
+            }
+            est.contributionKind(ContributionKind::ColdClockAnchor);   // card NOM N2a
+            est.addSharedPrior(clk_anchor);
+            if (within_epoch_armed)
+                networkCapturePriors(cap_priors, ws.cap_prior_kinds, clk_anchor,
+                                     ContributionKind::ColdClockAnchor);
+        }
     }
-    if (ctx.knobs.carry_gauge_free_closure && est.gaugeFreePartialSkipped() > 0)
-        log->info("Network (Card C-GF): {} datum direction(s) were left folded because their "
-                  "support was only PARTLY carried (some of the constellation's registered "
-                  "clocks were absent from the carried set).  That is the CORRECT refusal — "
-                  "restricted to a subset the direction is no longer the datum's functional, "
-                  "and downdating it would delete an estimable carried-vs-uncarried contrast "
-                  "rather than gauge.  A count comparable to the downdated-key total means "
-                  "the border turns over faster than the carry, so the gauge-free treatment "
-                  "is reaching only a minority of epochs.",
-                  est.gaugeFreePartialSkipped());
-    return 0;
 }
 
-// ---- End of the run-end reports ----
+/// The Q3 guard between the solve and the within-epoch tier (card NOM3 step SG; Doxygen at the declaration).
+void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
+                                  const NetworkPostFitHandoff& handoff, Eigen::VectorXd& x_s,
+                                  EpochWorkspace& ws) {
+    // ---- From the run, the epoch and the solve's values (card NOM3 step SG; generated by
+    //      scripts/nom_sg_cut.py, each line checked by scripts/nom_sg_verify.py) ----
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    NetworkRunTraces& traces = run.traces;
+    NetworkEstimator& est = run.engines.est;
+    const SyncedEpoch& se = ep.se;
+    const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
+    const NetworkSbasis::Plan& plan = datum.plan;
+    const std::set<char>& changed_consts = datum.changed_consts;
+    const bool& datum_changed = datum.datum_changed;
+    const std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;
+    const EpochEvents& events = ep.events;
+    // ---- End of the bindings ----
+    // --- Guarded temporal clock anchor (card Q3, docs/SPEC_clock_temporal_anchor.md) ---
+    // Must run here: after the primary solve and before the within-epoch adaptation
+    // below.  A stiff clock prior fighting a real step pushes the tension into the
+    // residuals and raises σ̂0, and the adaptation would then attribute a prior fault to
+    // a satellite's or a station's data and drop it.  A prior fault is resolved first,
+    // by refloating the prior (never by de-weighting a measurement) and re-solving the
+    // epoch in place, so the assessment below sees the corrected solve and the epoch
+    // emits (adapt-and-emit; a withhold here would be an adaptation failure).
+    // clock_refloat_sats is always empty at this call (nothing is inserted before the
+    // within-epoch adaptation below), so the guard's `ext` coupling reads no satellites
+    // on this path.  No-op, with no state allocation, when off.
+    networkClockAnchorGuard(ctx, config_, log, traces, se.time, est, plan, x_s, ws,
+                            registered_clock_sats, clock_refloat_sats, datum_changed,
+                            changed_consts, events);
+}
+// ---- End of the solve stages ----
 
 }  // namespace GnssProcessor

@@ -45,6 +45,7 @@
 #include "logging/LogManager.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
+#include "support/NetworkTestRun.hpp"   // the run and epoch the seam's epoch form takes
 
 #include <spdlog/spdlog.h>
 
@@ -159,14 +160,18 @@ PppObservation obsWith(const std::string& sat,
 }
 
 /// One station with a real StateManager, plus the per-epoch scaffolding the seam takes.
+/// The run (its context, stations and slip-QC epoch index) is the fixture's; the funnel and
+/// the modelled rows are carried across steps here and handed to each epoch.
 struct Rig {
-    std::vector<NetStation> stations;
+    std::unique_ptr<NetworkTestRun> fx;
+    std::vector<NetStation>& stations;
     std::vector<bool> present{true};
     std::vector<std::vector<PppObservation>> modeled{1};
     std::set<std::pair<int, std::string>> slipped, slipped_raw;
     long long ep = 0;
 
-    Rig(LogManager& log, const GnssConfig& cfg) {
+    Rig(LogManager& log, const GnssConfig& cfg)
+        : fx(std::make_unique<NetworkTestRun>(cfg)), stations(fx->setup().stations) {
         stations.resize(1);
         stations[0].name = "AAAA";
         stations[0].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
@@ -175,12 +180,19 @@ struct Rig {
     /// Run one epoch with the given per-satellite band sets.
     void step(NetworkRunContext& ctx, const GnssConfig& cfg,
               const std::vector<PppObservation>& obs) {
-        NetworkRunTraces traces(fs::temp_directory_path());  // no stream opened ⇒ no I/O
+        (void)ctx; (void)cfg;   // the fixture's (the test binds ctx to it); carry_invariant comes from cfg
         modeled[0] = obs;
-        networkSignalIntegrity(ctx, cfg, spdlog::default_logger(), traces,
-                               epochAt(1000.0 + 30.0 * static_cast<double>(ep)), ep,
-                               stations, present, modeled, slipped, slipped_raw,
-                               /*carry_invariant=*/true, /*carry_warm=*/true);
+        NetworkEpoch& e = fx->newEpoch(epochAt(1000.0 + 30.0 * static_cast<double>(ep)));
+        fx->run().engines.slip_qc.epoch_idx = ep;
+        e.clock.carry_warm = true;
+        e.pass_a.present = present;
+        e.pass_a.modeled = modeled;
+        e.funnel.carry_slipped_ambs = slipped;
+        e.funnel.carry_slipped_raw = slipped_raw;
+        networkSignalIntegrity(fx->run(), e, e.pass_a, e.funnel);
+        modeled = e.pass_a.modeled;
+        slipped = e.funnel.carry_slipped_ambs;
+        slipped_raw = e.funnel.carry_slipped_raw;
         ++ep;
     }
 
@@ -210,8 +222,8 @@ struct Rig {
 TEST(NetworkSignalIntegrity, FlickeredBandReturnsAndRefloatsEveryBandOfTheLineOfSight) {
     LogManager lm;
     auto cfg = loadCfg(lm, "flicker", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // Five full-band epochs (1 + K + 1): the birth epoch is a transition and
     // contributes no vet sample, three vet epochs complete the vet, and one more
@@ -256,8 +268,8 @@ TEST(NetworkSignalIntegrity, FlickeredBandReturnsAndRefloatsEveryBandOfTheLineOf
 TEST(NetworkSignalIntegrity, DemotionSpansTheTransitionEpochThroughVetCompletion) {
     LogManager lm;
     auto cfg = loadCfg(lm, "vet", armed(/*scale=*/10.0, /*revet=*/3));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 5; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     ASSERT_DOUBLE_EQ(1.0, r.scaleFor("G21"));
@@ -292,8 +304,8 @@ TEST(NetworkSignalIntegrity, DemotionSpansTheTransitionEpochThroughVetCompletion
 TEST(NetworkSignalIntegrity, DemotionMapIsKeyedBySatelliteSoOnlyPhaseRowsCanMatch) {
     LogManager lm;
     auto cfg = loadCfg(lm, "codesafe", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 5; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1})});        // converged, then degraded
@@ -322,8 +334,8 @@ TEST(NetworkSignalIntegrity, DemotionMapIsKeyedBySatelliteSoOnlyPhaseRowsCanMatc
 TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSet) {
     LogManager lm;
     auto cfg = loadCfg(lm, "perm", armed(/*scale=*/10.0, /*revet=*/2, /*flicker=*/2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});  // 1 + K + 1, K = 2
     ASSERT_DOUBLE_EQ(1.0, r.scaleFor("G21"));
@@ -360,8 +372,8 @@ TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSe
 TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
     LogManager lm;
     auto cfg = loadCfg(lm, "reentry", armed());
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     ASSERT_TRUE(r.slipped.empty());
@@ -394,8 +406,8 @@ TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
 TEST(NetworkSignalIntegrity, StandingSingleFrequencyArcsAreCountedSeparatelyAndStabilise) {
     LogManager lm;
     auto cfg = loadCfg(lm, "standingsf", armed(/*scale=*/10.0, /*revet=*/2));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G07", {kL1})});
     EXPECT_EQ(1, ctx.counters.sig.standing_sf_arcs);
@@ -422,8 +434,8 @@ TEST(NetworkSignalIntegrity, WithholdRemovesPhaseObservablesAndKeepsEveryCodeObs
     auto cfg = loadCfg(lm, "withhold",
                        armed(/*scale=*/10.0, /*revet=*/3, /*flicker=*/5,
                              /*refloat=*/true, /*withhold=*/true));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 5; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1})});        // converged, then degraded
@@ -449,8 +461,8 @@ TEST(NetworkSignalIntegrity, CensusOnlyLegCountsWithoutChangingAnyWeightOrFunnel
     LogManager lm;
     auto cfg = loadCfg(lm, "censusonly",
                        armed(/*scale=*/1.0, /*revet=*/3, /*flicker=*/5, /*refloat=*/false));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     for (int k = 0; k < 4; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1})});          // band lost
@@ -481,8 +493,8 @@ TEST(NetworkSignalIntegrity, CensusOnlyLegCountsWithoutChangingAnyWeightOrFunnel
 TEST(NetworkSignalIntegrity, NeverConvergedArcIsExemptFromDemotionButStillCensused) {
     LogManager lm;
     auto cfg = loadCfg(lm, "birth", armed(/*scale=*/10.0, /*revet=*/3));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
 
     // The whole birth window: transition epoch + K vet epochs, none demoted.
     for (int k = 0; k < 4; ++k) {
@@ -515,9 +527,9 @@ TEST(NetworkSignalIntegrity, NeverConvergedArcIsExemptFromDemotionButStillCensus
 TEST(NetworkSignalIntegrity, WarmResumeVetsEveryArcForTheRevetWindowThenExpires) {
     LogManager lm;
     auto cfg = loadCfg(lm, "resume", armed(/*scale=*/10.0, /*revet=*/3));
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ASSERT_TRUE(ctx.knobs.sig_resume_warmup);
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
+    ASSERT_TRUE(ctx.knobs.sig_resume_warmup);
 
     // What networkTryWarmResume latches on a successful resume.
     ctx.carry.si_resume_warmup_ep = ctx.knobs.sig_revet_ep;
@@ -556,15 +568,15 @@ TEST(NetworkSignalIntegrity, DisarmedIsStructurallyInertEvenWithActionKnobsSet) 
         << "the INERT guard must disarm the action, not merely ignore it";
     EXPECT_FALSE(cfg->getNetworkConfig().signal_integrity.refloat_on_regain);
 
-    NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ASSERT_FALSE(ctx.knobs.sig_integrity_on);
     Rig r(lm, *cfg);
+    NetworkRunContext& ctx = r.fx->ctx();
+    ASSERT_FALSE(ctx.knobs.sig_integrity_on);
 
     for (int k = 0; k < 3; ++k) r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1})});
     r.step(ctx, *cfg, {obsWith("G21", {kL1, kL2})});
 
-    EXPECT_TRUE(ctx.carry.si_arc.empty()) << "no band history allocated";
+    EXPECT_TRUE((net::present(ctx.entities.los, &net::LosState::si_arc) == 0)) << "no band history allocated";
     EXPECT_TRUE(r.stations[0].phase_sigma_scale.empty()) << "no sigma map published";
     EXPECT_EQ(0, r.stations[0].si_rows_demoted);
     EXPECT_EQ(0, ctx.counters.sig.epochs) << "not one counter moved";

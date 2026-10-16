@@ -4,14 +4,14 @@
 
 - **id:** CSL
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** ARMED 2026-09-20 (`processing.canonical_signal_rule: priority`): the dual field consumer goes from 162 to 603 epochs below a decimetre; the mechanism, a station subset, is unread.
+- **status:** closed
+- **summary:** Priority latch ARMED 2026-09-20 (dual field 162 to 603 epochs below a decimetre, sim byte-identical); the per-station scope and the code half built, not armed; closed, the rule pinned in the goldens.
 - **source:** [CPA](CPA_canonical_pair_admission_2026-09-20.md) section 5 (where the lever was separated from the admission rule); [GRS](GRS_gap_reentry_per_signal_2026-09-20.md) section 8
 - **knobs / posture:** new `processing.canonical_signal_rule` (`count`, the default and today's behaviour, or `priority`) with `processing.canonical_signal_min_coverage` (default 0.5); RF-0hv working bases with the per-signal rider; the emulation it replaces is RINEX op `primaryonly`; later builds `processing.canonical_signal_priority_stations` (CSL-2) and `processing.canonical_signal_code_follows_phase` (CSL-3), not armed
 - **dates in the text:** 2026-09-20, 2026-09-21
 - **hashes / run dirs:** `runs/_rap_{gD_dual,cD_dual_primoff,kA_six,kB_seven,kC_consL1C,hD_tri_noalt,d12_grs,d12_prim}`; armed baseline pair `runs/_rf0hv5_{field,sim}6`; exe `gnss_processor_csl.exe`
 
-**Outcome.** The card asks whether a priority rule should replace the first-epoch satellite count that latches each station's canonical signal. CSL-1 passes G0, G1, B1, B3 and B4 and splits B2 (994 of 1440 epochs at 12 h, hour 12 over its bar); the consumer gain is complete with four of the six stations moved to L1W. The rule is pinned in the goldens ([GRB](GRB_golden_rebase_2026-09-22.md)). The code half (CSL-3) is NOT recommended and its coverage gap went to [SCC](SCC_second_code_channel_2026-09-21.md); [MSC](MSC_multi_site_consumer_2026-09-21.md) grades the latch MIXED across 16 sites. Owed: the mechanism and the four-station split.
+**Outcome.** Question: should a priority list, not the first epoch's satellite count, latch each station's canonical signal? CSL-1: dual field 162 to 603 epochs below a decimetre, sim byte-identical, B2 split at 12 h (hour 12 over its bar). ARMED 2026-09-20, pinned in the [goldens](../../config/golden/golden_manifest.json). The per-station scope (CSL-2) and the code half (CSL-3: WTZZ00DEU 173 epochs, bar 570) stay built and off; the coverage gap went to [SCC](SCC_second_code_channel_2026-09-21.md). The unread mechanism and four-station split are moot, the baseline having moved from `_rf0hv5` to `_rf0hv15`. Status reviewed 2026-10-13.
 
 ## 1. What is known (every number re-read from the run directories)
 

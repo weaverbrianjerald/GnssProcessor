@@ -37,8 +37,11 @@
 #include "filter/NetworkParamRegistry.hpp"  // NetworkParamKind, ParamEvent, ResponsePolicy
 
 #include <cstdint>
+#include <optional>
 
 namespace GnssProcessor {
+
+struct EpochEvents;   // app/NetworkEpoch.hpp
 
 class  GnssConfig;               // config/GnssConfig.hpp
 struct NetworkKnobs;             // app/NetworkRunContext.hpp
@@ -65,16 +68,13 @@ enum class ResponseSite : int {
     AmbGapPrune,           ///< an arc unseen past the gap horizon erased
     AmbRaimDrop,           ///< float vehicle: RAIM's attribution or consensus dropped a carried arc
     AmbRaimErase,          ///< leveling vehicle: RAIM's attribution or consensus erased a carried arc
-    AmbRaimRetap,          ///< RAIM's attribution kept the value and inflated the variance
     AmbDatumSlipErase,     ///< a slip at the datum station re-referenced the family: every station's arc erased
     AmbGrossErase,         ///< the gross line-of-sight screen erased a carried arc
     AmbGrossHold,          ///< the gross line-of-sight screen held a carried arc
     AmbWithholdErase,      ///< a withheld epoch's free response erased a carried arc
     AmbAnchorRerefErase,   ///< a phase-anchor re-reference (handover, coverage drop) erased the family's arcs
     AmbEq34Erase,          ///< the eq34 chain's re-reference erased a carried arc
-    AmbFleetFlush,         ///< the SH field's convergence flushed every carried arc
     // --- Slant ionosphere (iono_carry, iono_blk_carry) ---------------------------------
-    IonoSlipErase,         ///< a slip on the line of sight erased its carried ionosphere
     IonoRaimErase,         ///< RAIM's attribution erased the line of sight's carried ionosphere
     IonoGrossErase,        ///< the gross line-of-sight screen erased the carried ionosphere
     IonoGrossHold,         ///< the gross line-of-sight screen held the carried ionosphere
@@ -86,7 +86,6 @@ enum class ResponseSite : int {
     PcGapPrune,            ///< a phase colour unseen past its horizon erased
     // --- Receiver code bias (rx_cb_carry) ----------------------------------------------
     RxcbStepErase,         ///< the harvest's step test erased a carried receiver code bias
-    RxcbPeerStepErase,     ///< the peer-relative step gate erased a carried receiver code bias
     RxcbJumpSkip,          ///< the diagonal route's innovation test did not fold a receiver code bias
     RxcbGapSkip,           ///< a receiver code bias past the gap horizon not folded (either route)
     RxcbGapPrune,          ///< a receiver code bias unseen past the horizon erased
@@ -136,7 +135,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 69;
+inline constexpr int kResponseSites = 65;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");
@@ -262,6 +261,62 @@ long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase
 }
 
 /**
+ * @brief The entity-table form of @ref carryGapPrune (card NOM step N4a): walks field @p f
+ *        of table @p t in identity order (the order of the map it replaces) and resets each
+ *        present value past the horizon, after calling @p on_erase(id, value).  The rows
+ *        stay (an entity row is never erased).  @p on_erase must not insert rows.
+ *
+ * @param t         The entity table.
+ * @param f         The carried field (a @c std::optional of a type with @c last_seen_s).
+ * @param now_s     The current epoch time (s).
+ * @param horizon_s The kind's gap horizon (s).
+ * @param on_erase  Called once per pruned value, before its reset.
+ * @return The number of values reset.
+ */
+template <class T, class R, class V, class OnErase>
+long long carryGapPrune(T& t, std::optional<V> R::*f, double now_s, double horizon_s,
+                        OnErase on_erase) {
+    long long n = 0;
+    for (auto& kv : t) {
+        std::optional<V>& o = kv.second.*f;
+        if (o && carryPastHorizon(now_s, o->last_seen_s, horizon_s)) {
+            on_erase(kv.first, *o);
+            o.reset();
+            ++n;
+        }
+    }
+    return n;
+}
+
+/**
+ * @brief The nested entity-table form of @ref carryGapPrune: field @p f of the cells of
+ *        the nested map @p sub, in (identity, sub-key) order; @p on_erase(id, key, value).
+ *
+ * @param t         The entity table.
+ * @param sub       The nested map of the row (a station's signals).
+ * @param f         The carried field of a cell.
+ * @param now_s     The current epoch time (s).
+ * @param horizon_s The kind's gap horizon (s).
+ * @param on_erase  Called once per pruned value, before its reset.
+ * @return The number of values reset.
+ */
+template <class T, class R, class M, class SR, class V, class OnErase>
+long long carryGapPrune(T& t, M R::*sub, std::optional<V> SR::*f, double now_s,
+                        double horizon_s, OnErase on_erase) {
+    long long n = 0;
+    for (auto& kv : t)
+        for (auto& sk : kv.second.*sub) {
+            std::optional<V>& o = sk.second.*f;
+            if (o && carryPastHorizon(now_s, o->last_seen_s, horizon_s)) {
+                on_erase(kv.first, sk.first, *o);
+                o.reset();
+                ++n;
+            }
+        }
+    return n;
+}
+
+/**
  * @brief The free-epoch latch's causes, counted (card RF-1 section 1.5: "free-epoch latches
  *        not individually traced").
  *
@@ -295,8 +350,9 @@ long long responseSiteCount(const NetworkServiceCounters& C, ResponseSite s);
  * response reads it (the float vehicle's drop pass; the leveling vehicle's inject), so a
  * key's "carried" is whether the response found an entry to act on.
  * @param ctx run context (the counters are written; nothing else)
+ * @param events The epoch's events, read: the relevel free-epoch latch.
  */
-void networkResponseLatchTally(NetworkRunContext& ctx);
+void networkResponseLatchTally(NetworkRunContext& ctx, const EpochEvents& events);
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 

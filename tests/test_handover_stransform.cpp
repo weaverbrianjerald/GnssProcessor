@@ -38,6 +38,7 @@
 
 #include <gtest/gtest.h>
 
+#include "support/NetworkTestRun.hpp"   // the run and epoch the seam's epoch form takes
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -104,9 +105,9 @@ std::vector<CarryPrior> makeCarry() {
 ClockStransformResult applyTo(std::vector<CarryPrior>& c,
                               const std::vector<std::pair<std::string, double>>& v_c,
                               const std::string& q) {
-    NetworkCarryState state;
+    NetworkCarryState state; net::NetworkEntities state_ent;
     state.prev_carry = std::move(c);
-    const ClockStransformResult r = applyClockStransform(state, v_c, q);
+    const ClockStransformResult r = applyClockStransform(state, state_ent, v_c, q);
     c = std::move(state.prev_carry);
     return r;
 }
@@ -437,51 +438,56 @@ TEST(HandoverStransformConfig, BeforeRowsNeedsTheTransformAndRefusesBrdcRts) {
 struct PreviewBed {
     Loaded L;
     fs::path trace_dir;
-    std::unique_ptr<NetworkRunTraces> traces;
-    std::unique_ptr<NetworkRunContext> ctx;
-    std::unique_ptr<NetworkEstimator> est;
+    std::unique_ptr<NetworkTestRun> fx;   ///< The run the seam's epoch form takes (its setup's sat_health is empty).
+    NetworkRunTraces* traces = nullptr;   ///< fx->traces(), opened in trace_dir
+    NetworkRunContext* ctx = nullptr;     ///< fx->ctx()
+    NetworkEstimator* est = nullptr;      ///< fx->est(), renewed by layout()
     std::vector<std::string> registered;
-    const NetworkSbasis::SatHealth health{};
+    // The anchor sigma the preview's declaration reads (ctx.knobs.clk_anchor_sigma) is set
+    // to the 3.0 m this bed passed as an argument before card NOM3 step EP0.
     explicit PreviewBed(const std::string& tag, bool armed = true)
         : L(tag, std::string("    \"scoped_handover_response\": true,\n"
-                             "    \"handover_stransform\": true,\n")
+                             "    \"handover_stransform\": true,\n"
+                             "    \"apriori_clock_anchor_sigma_m\": 3.0,\n")
                      + (armed ? "    \"handover_stransform_before_rows\": true,\n" : "")) {
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
         const auto log = std::make_shared<spdlog::logger>("sts_rows_test", sink);
         trace_dir = fs::temp_directory_path() / ("sts_rows_traces_" + tag);
         fs::create_directories(trace_dir);
-        traces = std::make_unique<NetworkRunTraces>(trace_dir);
+        fx = std::make_unique<NetworkTestRun>(L.cfg, log, trace_dir);
+        traces = &fx->traces();
         traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
                         /*sh_model=*/nullptr, /*cl_trace_armed=*/false, log);
-        ctx = std::make_unique<NetworkRunContext>(L.cfg, L.cfg.getNetworkConfig());
-        ctx->carry.prev_pivot["G"] = "G01";
-        ctx->carry.last_pivot["G"] = "G01";
+        ctx = &fx->ctx();
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::prev_pivot) = "G01";
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::last_pivot) = "G01";
         ctx->carry.prev_carry = {clk("G02", -2.0, 0.25), clk("G05", -0.75, 0.5),
                                  clk("G32", 1.25, 0.125), clk("G07", 0.5, 0.0625)};
         ctx->carry.prev_carry[3].t_park_s = 1000.0;
-        ctx->carry.cxu_pivot['G'] = {"G01", 0.0};
+        net::put(ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G01", 0.0};
         LocalCarry lc{3.0, 1e-4, 100.0};
         lc.coupling = {CoupledShared{SharedParamKind::Clock, "G05", "", 0, 0, 'C', 0, 0.5, -0.75, 0.5},
                        CoupledShared{SharedParamKind::Clock, "G01", "", 0, 0, 'C', 0, -0.5, 0.0, 0.0}};
-        ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))] = lc;
+        net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb) = lc;
         layout({"G02", "G05", "G32"});
     }
     ~PreviewBed() {
-        traces.reset();
+        traces->closeAll();
         std::error_code ec;
         fs::remove_all(trace_dir, ec);
     }
     void layout(const std::vector<std::string>& sats) {
-        est = std::make_unique<NetworkEstimator>();
+        est = &fx->renewEstimator();
         registered = sats;
         for (const auto& s : sats) est->registerClock(s);
     }
     void preview() {
-        networkHandoverStransformBeforeRows(*ctx, L.cfg, nullptr, *traces, health, *est,
-                                            GnssTime{2313, 276150.0}, registered, 3.0);
+        NetworkEpoch& e = fx->newEpoch(GnssTime{2313, 276150.0});
+        e.columns.registered_clock_sats = registered;
+        networkHandoverStransformBeforeRows(fx->run(), e, e.events);
     }
     const CoupledShared& term(int i) {
-        return ctx->carry.local_carry[std::make_tuple(0, std::string("G05"), std::string("L1C"))]
+        return net::putArc(ctx->entities, std::make_tuple(0, std::string("G05"), std::string("L1C")), &net::ArcState::amb)
             .coupling[static_cast<std::size_t>(i)];
     }
 };
@@ -493,8 +499,8 @@ struct PreviewBed {
 TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivot) {
     PreviewBed B("rows_once");
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    const auto pre = B.fx->ep().events.handover.sts_pre.at('G');
     ASSERT_TRUE(pre.applied);
     ASSERT_EQ(pre.pivot, "G02");   // the lexically first registered clock (no sticky incumbent)
     EXPECT_EQ(pre.c0, -2.0);
@@ -505,7 +511,7 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.75);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 2.5);
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.3125);
-    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 2.0);
+    EXPECT_EQ(net::put(B.ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, 2.0);
     EXPECT_EQ(B.term(0).s_prev, 1.25);
     EXPECT_EQ(B.term(0).p_prev, 0.75);
     EXPECT_EQ(B.term(1).s_prev, 2.0);
@@ -517,8 +523,8 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
     // Skipped: the pivot is not adopted and the same pivot is elected again.
     const std::vector<CarryPrior> after = B.ctx->carry.prev_carry;
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    EXPECT_TRUE(B.ctx->carry.sts_pre.at('G').already);
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.at('G').already);
     EXPECT_EQ(B.ctx->counters.sts_pre_redetected, 1);
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 0);
     for (std::size_t i = 0; i < after.size(); ++i) {
@@ -532,10 +538,10 @@ TEST(HandoverStransformBeforeRows, PreviewReExpressesOnceAndKeepsItOnTheSamePivo
 TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
     PreviewBed B("rows_undo");
     B.preview();
-    ASSERT_TRUE(B.ctx->carry.sts_pre.at('G').applied);
+    ASSERT_TRUE(B.fx->ep().events.handover.sts_pre.at('G').applied);
     B.layout({"G01", "G02", "G05", "G32"});
     B.preview();
-    EXPECT_TRUE(B.ctx->carry.sts_pre.empty()) << "no handover: G01 is elected again";
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.empty()) << "no handover: G01 is elected again";
     EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
@@ -544,7 +550,7 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G05"), 0.5);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G07"), 0.5);
     EXPECT_EQ(varOf(B.ctx->carry.prev_carry, "G07"), 0.0625);
-    EXPECT_EQ(B.ctx->carry.cxu_pivot['G'].second, 0.0);
+    EXPECT_EQ(net::put(B.ctx->entities.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, 0.0);
     EXPECT_EQ(B.term(0).s_prev, -0.75);
     EXPECT_EQ(B.term(0).p_prev, 0.5);
     EXPECT_EQ(B.term(1).s_prev, 0.0);
@@ -555,12 +561,12 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesWhenTheOutgoingPivotReturns) {
 TEST(HandoverStransformBeforeRows, PreviewUndoesBeforeTransformingToAThirdPivot) {
     PreviewBed B("rows_third");
     B.preview();
-    ASSERT_EQ(B.ctx->carry.sts_pre.at('G').pivot, "G02");
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.at('G').pivot, "G02");
     B.layout({"G05", "G32"});   // G02 has left as well
     B.preview();
     EXPECT_EQ(B.ctx->counters.sts_pre_undone, 1);
-    ASSERT_EQ(B.ctx->carry.sts_pre.count('G'), 1u);
-    const auto pre = B.ctx->carry.sts_pre.at('G');
+    ASSERT_EQ(B.fx->ep().events.handover.sts_pre.count('G'), 1u);
+    const auto pre = B.fx->ep().events.handover.sts_pre.at('G');
     ASSERT_TRUE(pre.applied);
     EXPECT_EQ(pre.pivot, "G05");
     EXPECT_EQ(pre.c0, -0.75);       // G05's level in the outgoing datum
@@ -572,12 +578,12 @@ TEST(HandoverStransformBeforeRows, PreviewUndoesBeforeTransformingToAThirdPivot)
     EXPECT_EQ(B.ctx->carry.sts_carry_pivot.at('G').pivot, "G05");
 }
 
-// Off, the seam only clears its record.
+// Off, the record is empty (a record of the previous epoch does not reach this one).
 TEST(HandoverStransformBeforeRows, OffClearsTheRecordAndMovesNothing) {
     PreviewBed B("rows_off", /*armed=*/false);
-    B.ctx->carry.sts_pre['G'].pivot = "G02";   // a stale record
+    B.fx->ep().events.handover.sts_pre['G'].pivot = "G02";   // the previous epoch's record
     B.preview();
-    EXPECT_TRUE(B.ctx->carry.sts_pre.empty());
+    EXPECT_TRUE(B.fx->ep().events.handover.sts_pre.empty());
     EXPECT_TRUE(B.ctx->carry.sts_carry_pivot.empty());
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G02"), -2.0);
     EXPECT_EQ(levelOf(B.ctx->carry.prev_carry, "G05"), -0.75);

@@ -1,0 +1,5075 @@
+{
+ "tool": "scripts/nom_ep1_cut.py",
+ "base": "926dafa",
+ "base_sha": "926dafa03c6b8db72246089ccbe2b71f5513cf18",
+ "stage": "ep1b",
+ "shared_only": false,
+ "rows": [
+  "rows_app",
+  "rows_solve",
+  "rows_emit",
+  "rows_diag"
+ ],
+ "presolve_writer": "outputs",
+ "converted": [
+  "networkAmbStateTrace",
+  "networkAssemblyPrefilter_",
+  "networkAssemblyRegisterColumns_",
+  "networkBlockBaardaEmit",
+  "networkBuildCarryDdPriors",
+  "networkBuildSignalRoster",
+  "networkCarryDecide",
+  "networkChannelAllEpoch",
+  "networkClockLevelMonitor",
+  "networkClockLevelRestoreRaise",
+  "networkClockQc",
+  "networkCongruenceEmit",
+  "networkContributionsEpochTail",
+  "networkCouplingExactPrepare",
+  "networkDatumGraphCensus",
+  "networkDdFrac",
+  "networkEmitStore",
+  "networkFixedCycles",
+  "networkGrossLosScreen",
+  "networkHandoverStransformBeforeRows",
+  "networkInstallCarry",
+  "networkIonoDiag",
+  "networkLedgerEmitFold",
+  "networkLevelAuthorityCensus",
+  "networkLeveling",
+  "networkMdbFlush",
+  "networkMeasurementAdmission",
+  "networkMultiGnssEpoch",
+  "networkOraclePinEpoch",
+  "networkParamInventoryEpochTail",
+  "networkParamInventoryNoteSatellites",
+  "networkPassAHead_",
+  "networkPassASlipScan_",
+  "networkPassB_",
+  "networkPbHoldCloneHarvest",
+  "networkPbHoldCloneUpdate",
+  "networkPhaseVisibleMonitor",
+  "networkPostFitRaim",
+  "networkPostfitSigma0",
+  "networkPrefitCensus",
+  "networkProducerAr",
+  "networkRedundancyCensus",
+  "networkRhsAttribTrip",
+  "networkRhsAttribution",
+  "networkSdEwlAr",
+  "networkSecondPhaseEpochTail",
+  "networkShDevVtec",
+  "networkShHealth",
+  "networkShSpectrum",
+  "networkSignalIntegrity",
+  "networkSignalRosterAudit",
+  "networkSolPrep",
+  "networkSolveGlue",
+  "networkStashStatus",
+  "networkStationBlock",
+  "networkWriteStateSnapshot"
+ ],
+ "files": {
+  "CMakeLists.txt": {
+   "kind": "edited",
+   "lines": 765,
+   "frozen_lines": 761,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "5f3540e9e942bc36"
+  },
+  "include/app/Application.hpp": {
+   "kind": "edited",
+   "lines": 1125,
+   "frozen_lines": 982,
+   "edits": 12,
+   "doc_hunks": 4,
+   "sha256_lf": "0128c9c9db16a813"
+  },
+  "include/app/NetworkEpoch.hpp": {
+   "kind": "new",
+   "lines": 170,
+   "frozen_lines": null,
+   "edits": 0,
+   "doc_hunks": 0,
+   "sha256_lf": "e71e4024b30f6cd7"
+  },
+  "include/app/NetworkRun.hpp": {
+   "kind": "new",
+   "lines": 95,
+   "frozen_lines": null,
+   "edits": 0,
+   "doc_hunks": 0,
+   "sha256_lf": "fcb328f641e790cf"
+  },
+  "include/app/NetworkRunContext.hpp": {
+   "kind": "edited",
+   "lines": 4582,
+   "frozen_lines": 4544,
+   "edits": 5,
+   "doc_hunks": 8,
+   "sha256_lf": "5935c9d73a8c187d"
+  },
+  "include/app/SignalRoster.hpp": {
+   "kind": "edited",
+   "lines": 1188,
+   "frozen_lines": 1174,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "47b44981075c67e8"
+  },
+  "include/filter/NetworkAmbStateTrace.hpp": {
+   "kind": "edited",
+   "lines": 200,
+   "frozen_lines": 190,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "bf41b049d51585da"
+  },
+  "include/filter/NetworkBlockBaarda.hpp": {
+   "kind": "edited",
+   "lines": 735,
+   "frozen_lines": 718,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "030aee1ff2f40204"
+  },
+  "include/filter/NetworkCarryDisposition.hpp": {
+   "kind": "edited",
+   "lines": 195,
+   "frozen_lines": 173,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "d8925dd3fc79074c"
+  },
+  "include/filter/NetworkChannelAll.hpp": {
+   "kind": "edited",
+   "lines": 202,
+   "frozen_lines": 192,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "795496679b8e0e58"
+  },
+  "include/filter/NetworkClockLevel.hpp": {
+   "kind": "edited",
+   "lines": 210,
+   "frozen_lines": 186,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "3d38da5abd172132"
+  },
+  "include/filter/NetworkClockQc.hpp": {
+   "kind": "edited",
+   "lines": 139,
+   "frozen_lines": 130,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "05c4a27eee611aba"
+  },
+  "include/filter/NetworkCongruence.hpp": {
+   "kind": "edited",
+   "lines": 951,
+   "frozen_lines": 934,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "a8fe5df54c8f5704"
+  },
+  "include/filter/NetworkContributions.hpp": {
+   "kind": "edited",
+   "lines": 589,
+   "frozen_lines": 580,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "870da7352f71fb6a"
+  },
+  "include/filter/NetworkDatumGraph.hpp": {
+   "kind": "edited",
+   "lines": 517,
+   "frozen_lines": 511,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "f8aac50c6c913bf6"
+  },
+  "include/filter/NetworkDdFrac.hpp": {
+   "kind": "edited",
+   "lines": 101,
+   "frozen_lines": 85,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "19beb9d48cd9dfb4"
+  },
+  "include/filter/NetworkDdPriorBuild.hpp": {
+   "kind": "edited",
+   "lines": 91,
+   "frozen_lines": 68,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "637da93aad104ca6"
+  },
+  "include/filter/NetworkEmitStore.hpp": {
+   "kind": "edited",
+   "lines": 171,
+   "frozen_lines": 148,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "453728a96c815328"
+  },
+  "include/filter/NetworkFixedCycles.hpp": {
+   "kind": "edited",
+   "lines": 533,
+   "frozen_lines": 520,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "50451311f67e4407"
+  },
+  "include/filter/NetworkFrameDiag.hpp": {
+   "kind": "edited",
+   "lines": 292,
+   "frozen_lines": 278,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "eb1b419e777aabae"
+  },
+  "include/filter/NetworkGrossLos.hpp": {
+   "kind": "edited",
+   "lines": 631,
+   "frozen_lines": 622,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "7fccce3dba4690e8"
+  },
+  "include/filter/NetworkHandoverStransform.hpp": {
+   "kind": "edited",
+   "lines": 401,
+   "frozen_lines": 374,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "77b0cf1334a07639"
+  },
+  "include/filter/NetworkInstallCarry.hpp": {
+   "kind": "edited",
+   "lines": 85,
+   "frozen_lines": 66,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "67d73b51738424ee"
+  },
+  "include/filter/NetworkIonoDiag.hpp": {
+   "kind": "edited",
+   "lines": 81,
+   "frozen_lines": 64,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "58aaf0d846b48da1"
+  },
+  "include/filter/NetworkLedgerEmit.hpp": {
+   "kind": "edited",
+   "lines": 303,
+   "frozen_lines": 283,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "b4f5da46f82972c8"
+  },
+  "include/filter/NetworkLevelAuthority.hpp": {
+   "kind": "edited",
+   "lines": 88,
+   "frozen_lines": 71,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "b039aeba2fc79645"
+  },
+  "include/filter/NetworkLeveling.hpp": {
+   "kind": "edited",
+   "lines": 87,
+   "frozen_lines": 67,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "022f3c3c07a5235a"
+  },
+  "include/filter/NetworkMdb.hpp": {
+   "kind": "edited",
+   "lines": 483,
+   "frozen_lines": 473,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "046a93891debe83f"
+  },
+  "include/filter/NetworkMeasurementAdmission.hpp": {
+   "kind": "edited",
+   "lines": 490,
+   "frozen_lines": 451,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "fe64b181469534ac"
+  },
+  "include/filter/NetworkMultiGnss.hpp": {
+   "kind": "edited",
+   "lines": 204,
+   "frozen_lines": 194,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "e6be022f7a1e8cf6"
+  },
+  "include/filter/NetworkOraclePin.hpp": {
+   "kind": "edited",
+   "lines": 360,
+   "frozen_lines": 345,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "2eda2bb81fcf9bf9"
+  },
+  "include/filter/NetworkParamInventory.hpp": {
+   "kind": "edited",
+   "lines": 1056,
+   "frozen_lines": 1038,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "cfdf59a547d779e5"
+  },
+  "include/filter/NetworkPbHoldClone.hpp": {
+   "kind": "edited",
+   "lines": 599,
+   "frozen_lines": 556,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "0f8fc9ccee66e35f"
+  },
+  "include/filter/NetworkPhaseVisibleDiag.hpp": {
+   "kind": "edited",
+   "lines": 113,
+   "frozen_lines": 89,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "17057b8f86ee4d93"
+  },
+  "include/filter/NetworkPrefitCensus.hpp": {
+   "kind": "edited",
+   "lines": 362,
+   "frozen_lines": 334,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "adc6525b11ceea08"
+  },
+  "include/filter/NetworkPriorResidual.hpp": {
+   "kind": "edited",
+   "lines": 1331,
+   "frozen_lines": 1330,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "297baf056d5f1ba3"
+  },
+  "include/filter/NetworkProducerAr.hpp": {
+   "kind": "edited",
+   "lines": 356,
+   "frozen_lines": 354,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "ee7c0b2a5722e727"
+  },
+  "include/filter/NetworkRaim.hpp": {
+   "kind": "edited",
+   "lines": 281,
+   "frozen_lines": 284,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "76f4b2edf018e5cd"
+  },
+  "include/filter/NetworkRedundancyCensus.hpp": {
+   "kind": "edited",
+   "lines": 304,
+   "frozen_lines": 297,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "9e8e0cca28f45e66"
+  },
+  "include/filter/NetworkRhsAttrib.hpp": {
+   "kind": "edited",
+   "lines": 877,
+   "frozen_lines": 841,
+   "edits": 4,
+   "doc_hunks": 0,
+   "sha256_lf": "a9e60057b1ec2332"
+  },
+  "include/filter/NetworkRunGroups.hpp": {
+   "kind": "edited",
+   "lines": 141,
+   "frozen_lines": 95,
+   "edits": 7,
+   "doc_hunks": 1,
+   "sha256_lf": "9452b1630cfd9243"
+  },
+  "include/filter/NetworkSdEwlAr.hpp": {
+   "kind": "edited",
+   "lines": 305,
+   "frozen_lines": 299,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "9a38351ece5caa1a"
+  },
+  "include/filter/NetworkSecondPhaseScope.hpp": {
+   "kind": "edited",
+   "lines": 180,
+   "frozen_lines": 168,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "b40e9da5eb5e2c20"
+  },
+  "include/filter/NetworkShDevVtec.hpp": {
+   "kind": "edited",
+   "lines": 97,
+   "frozen_lines": 81,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "7cd80467e8966041"
+  },
+  "include/filter/NetworkShHealth.hpp": {
+   "kind": "edited",
+   "lines": 82,
+   "frozen_lines": 64,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "280754cec2bd0a09"
+  },
+  "include/filter/NetworkSignalIntegrity.hpp": {
+   "kind": "edited",
+   "lines": 397,
+   "frozen_lines": 358,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "8da84c2634c5ed56"
+  },
+  "include/filter/NetworkSolPrep.hpp": {
+   "kind": "edited",
+   "lines": 212,
+   "frozen_lines": 170,
+   "edits": 2,
+   "doc_hunks": 1,
+   "sha256_lf": "3b45b64b98e96381"
+  },
+  "include/filter/NetworkSolveGlue.hpp": {
+   "kind": "edited",
+   "lines": 189,
+   "frozen_lines": 145,
+   "edits": 8,
+   "doc_hunks": 3,
+   "sha256_lf": "e1235b038af33da1"
+  },
+  "include/filter/NetworkStashStatus.hpp": {
+   "kind": "edited",
+   "lines": 105,
+   "frozen_lines": 80,
+   "edits": 3,
+   "doc_hunks": 1,
+   "sha256_lf": "4aefee1295d8c34d"
+  },
+  "include/filter/NetworkStationBlock.hpp": {
+   "kind": "edited",
+   "lines": 258,
+   "frozen_lines": 249,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "9eebf80c0d666f86"
+  },
+  "include/filter/NetworkWlRunTypes.hpp": {
+   "kind": "edited",
+   "lines": 88,
+   "frozen_lines": 86,
+   "edits": 0,
+   "doc_hunks": 2,
+   "sha256_lf": "fb79b08283f48035"
+  },
+  "src/core/app/ApplicationNetwork.cpp": {
+   "kind": "edited",
+   "lines": 847,
+   "frozen_lines": 2530,
+   "edits": 81,
+   "doc_hunks": 7,
+   "sha256_lf": "22ce2dc27224ee95"
+  },
+  "src/core/app/ApplicationNetworkAssembly.cpp": {
+   "kind": "edited",
+   "lines": 5486,
+   "frozen_lines": 5442,
+   "edits": 11,
+   "doc_hunks": 0,
+   "sha256_lf": "f7e0bd88bc8178f4"
+  },
+  "src/core/app/ApplicationNetworkEpoch.cpp": {
+   "kind": "new",
+   "lines": 1611,
+   "frozen_lines": null,
+   "edits": 0,
+   "doc_hunks": 5,
+   "sha256_lf": "b3d0a21dd4f63770"
+  },
+  "src/core/app/NetworkBorderPrior.cpp": {
+   "kind": "edited",
+   "lines": 1007,
+   "frozen_lines": 994,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "816d7291f6ca6afe"
+  },
+  "src/core/app/NetworkRun.cpp": {
+   "kind": "new",
+   "lines": 152,
+   "frozen_lines": null,
+   "edits": 0,
+   "doc_hunks": 1,
+   "sha256_lf": "65a3da65a275d1d0"
+  },
+  "src/core/app/NetworkStateSnapshotWrite.cpp": {
+   "kind": "edited",
+   "lines": 604,
+   "frozen_lines": 593,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "90933c6a168cb7ad"
+  },
+  "src/core/app/SignalRoster.cpp": {
+   "kind": "edited",
+   "lines": 2404,
+   "frozen_lines": 2387,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "c9a80629e0ab10f7"
+  },
+  "src/core/filter/NetworkAmbStateTrace.cpp": {
+   "kind": "edited",
+   "lines": 178,
+   "frozen_lines": 169,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "5bdca55153f568c2"
+  },
+  "src/core/filter/NetworkBlockBaarda.cpp": {
+   "kind": "edited",
+   "lines": 509,
+   "frozen_lines": 499,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "b1f46be7f522ded1"
+  },
+  "src/core/filter/NetworkCarryDisposition.cpp": {
+   "kind": "edited",
+   "lines": 311,
+   "frozen_lines": 297,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "00e22caf2ab3e07c"
+  },
+  "src/core/filter/NetworkChannelAll.cpp": {
+   "kind": "edited",
+   "lines": 257,
+   "frozen_lines": 247,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "d4067d18a01a12d5"
+  },
+  "src/core/filter/NetworkClockLevel.cpp": {
+   "kind": "edited",
+   "lines": 772,
+   "frozen_lines": 756,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "65b50b50db7b64be"
+  },
+  "src/core/filter/NetworkClockQc.cpp": {
+   "kind": "edited",
+   "lines": 572,
+   "frozen_lines": 563,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "550e72ee2074f6a3"
+  },
+  "src/core/filter/NetworkCongruence.cpp": {
+   "kind": "edited",
+   "lines": 497,
+   "frozen_lines": 487,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "8567027cd309350e"
+  },
+  "src/core/filter/NetworkContributions.cpp": {
+   "kind": "edited",
+   "lines": 891,
+   "frozen_lines": 878,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "3393610ed3653742"
+  },
+  "src/core/filter/NetworkDatumGraph.cpp": {
+   "kind": "edited",
+   "lines": 708,
+   "frozen_lines": 694,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "8e9a5fbebaa4eeee"
+  },
+  "src/core/filter/NetworkDdFrac.cpp": {
+   "kind": "edited",
+   "lines": 386,
+   "frozen_lines": 378,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "c50fd531cacf6b02"
+  },
+  "src/core/filter/NetworkDdPriorBuild.cpp": {
+   "kind": "edited",
+   "lines": 207,
+   "frozen_lines": 198,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "afb4cd7ba6da3ae8"
+  },
+  "src/core/filter/NetworkEmitStore.cpp": {
+   "kind": "edited",
+   "lines": 1044,
+   "frozen_lines": 1039,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "67f14e7d9ae2e7b6"
+  },
+  "src/core/filter/NetworkFixedCycles.cpp": {
+   "kind": "edited",
+   "lines": 913,
+   "frozen_lines": 899,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "a2ad2afe8379a23b"
+  },
+  "src/core/filter/NetworkFrameDiag.cpp": {
+   "kind": "edited",
+   "lines": 561,
+   "frozen_lines": 543,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "3c727a3a2d5882ee"
+  },
+  "src/core/filter/NetworkGrossLos.cpp": {
+   "kind": "edited",
+   "lines": 1407,
+   "frozen_lines": 1400,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "ab3df6a0a816dc91"
+  },
+  "src/core/filter/NetworkHandoverStransform.cpp": {
+   "kind": "edited",
+   "lines": 736,
+   "frozen_lines": 721,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "7a2c944298869db9"
+  },
+  "src/core/filter/NetworkInstallCarry.cpp": {
+   "kind": "edited",
+   "lines": 430,
+   "frozen_lines": 422,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "2a877158fcb55856"
+  },
+  "src/core/filter/NetworkIonoDiag.cpp": {
+   "kind": "edited",
+   "lines": 287,
+   "frozen_lines": 279,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "707081348cffacb7"
+  },
+  "src/core/filter/NetworkLedgerEmit.cpp": {
+   "kind": "edited",
+   "lines": 468,
+   "frozen_lines": 455,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "c253bcc05bc8ad59"
+  },
+  "src/core/filter/NetworkLevelAuthority.cpp": {
+   "kind": "edited",
+   "lines": 174,
+   "frozen_lines": 163,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "2dc52ea6526c5c9b"
+  },
+  "src/core/filter/NetworkLeveling.cpp": {
+   "kind": "edited",
+   "lines": 119,
+   "frozen_lines": 110,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "3b96754f413f0dcf"
+  },
+  "src/core/filter/NetworkMdb.cpp": {
+   "kind": "edited",
+   "lines": 484,
+   "frozen_lines": 473,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "7ca87d0abb27aee6"
+  },
+  "src/core/filter/NetworkMeasurementAdmission.cpp": {
+   "kind": "edited",
+   "lines": 1069,
+   "frozen_lines": 1050,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "0b771411dc860d5a"
+  },
+  "src/core/filter/NetworkMultiGnss.cpp": {
+   "kind": "edited",
+   "lines": 261,
+   "frozen_lines": 251,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "35e482091fe1645e"
+  },
+  "src/core/filter/NetworkOraclePin.cpp": {
+   "kind": "edited",
+   "lines": 740,
+   "frozen_lines": 731,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "bc60f442895b3caa"
+  },
+  "src/core/filter/NetworkParamInventory.cpp": {
+   "kind": "edited",
+   "lines": 1218,
+   "frozen_lines": 1202,
+   "edits": 5,
+   "doc_hunks": 0,
+   "sha256_lf": "6049c0bce0165687"
+  },
+  "src/core/filter/NetworkPbHoldClone.cpp": {
+   "kind": "edited",
+   "lines": 1412,
+   "frozen_lines": 1392,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "f0e46d87c9233a04"
+  },
+  "src/core/filter/NetworkPhaseVisibleDiag.cpp": {
+   "kind": "edited",
+   "lines": 170,
+   "frozen_lines": 157,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "60893f5b56ca6ce7"
+  },
+  "src/core/filter/NetworkPrefitCensus.cpp": {
+   "kind": "edited",
+   "lines": 843,
+   "frozen_lines": 828,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "151e89d26b69da8e"
+  },
+  "src/core/filter/NetworkProducerAr.cpp": {
+   "kind": "edited",
+   "lines": 1388,
+   "frozen_lines": 1379,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "5378a24a8ab0697a"
+  },
+  "src/core/filter/NetworkRaim.cpp": {
+   "kind": "edited",
+   "lines": 1410,
+   "frozen_lines": 1401,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "b07a296f7ab8abcc"
+  },
+  "src/core/filter/NetworkRedundancyCensus.cpp": {
+   "kind": "edited",
+   "lines": 754,
+   "frozen_lines": 741,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "a924fa2272743997"
+  },
+  "src/core/filter/NetworkRhsAttrib.cpp": {
+   "kind": "edited",
+   "lines": 2078,
+   "frozen_lines": 2055,
+   "edits": 4,
+   "doc_hunks": 0,
+   "sha256_lf": "44f959e7295b3da5"
+  },
+  "src/core/filter/NetworkSdEwlAr.cpp": {
+   "kind": "edited",
+   "lines": 678,
+   "frozen_lines": 671,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "78a6a85c06ddc060"
+  },
+  "src/core/filter/NetworkSecondPhaseScope.cpp": {
+   "kind": "edited",
+   "lines": 230,
+   "frozen_lines": 221,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "0a4ec9a7656e0486"
+  },
+  "src/core/filter/NetworkShDevVtec.cpp": {
+   "kind": "edited",
+   "lines": 268,
+   "frozen_lines": 261,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "39206085e97134a1"
+  },
+  "src/core/filter/NetworkShHealth.cpp": {
+   "kind": "edited",
+   "lines": 356,
+   "frozen_lines": 348,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "4d41df267621b776"
+  },
+  "src/core/filter/NetworkSignalIntegrity.cpp": {
+   "kind": "edited",
+   "lines": 611,
+   "frozen_lines": 594,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "8c9854d9d635a9b9"
+  },
+  "src/core/filter/NetworkSolPrep.cpp": {
+   "kind": "edited",
+   "lines": 1383,
+   "frozen_lines": 1365,
+   "edits": 2,
+   "doc_hunks": 0,
+   "sha256_lf": "099f2c12e5fade95"
+  },
+  "src/core/filter/NetworkSolveGlue.cpp": {
+   "kind": "edited",
+   "lines": 2623,
+   "frozen_lines": 2614,
+   "edits": 7,
+   "doc_hunks": 0,
+   "sha256_lf": "90348257e08d18fc"
+  },
+  "src/core/filter/NetworkStashStatus.cpp": {
+   "kind": "edited",
+   "lines": 695,
+   "frozen_lines": 686,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "9168ca2d9fb2a32b"
+  },
+  "src/core/filter/NetworkStationBlock.cpp": {
+   "kind": "edited",
+   "lines": 421,
+   "frozen_lines": 410,
+   "edits": 3,
+   "doc_hunks": 0,
+   "sha256_lf": "5fb1f27a60b5338d"
+  },
+  "tests/test_network_epoch_contract.cpp": {
+   "kind": "new",
+   "lines": 247,
+   "frozen_lines": null,
+   "edits": 0,
+   "doc_hunks": 0,
+   "sha256_lf": "14c525c97ec4bec2"
+  }
+ },
+ "epoch_function": {
+  "frozen_lambda": [
+   976,
+   2494
+  ],
+  "transforms": [
+   {
+    "tag": "T-C networkPassAHead_",
+    "frozen_line": 1210,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPassASlipScan_",
+    "frozen_line": 1216,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkAssemblyPrefilter_",
+    "frozen_line": 1230,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkAssemblyRegisterColumns_",
+    "frozen_line": 1841,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPassB_",
+    "frozen_line": 1926,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkBuildSignalRoster",
+    "frozen_line": 1035,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkSignalRosterAudit",
+    "frozen_line": 2259,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkCouplingExactPrepare",
+    "frozen_line": 1911,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkWriteStateSnapshot",
+    "frozen_line": 2485,
+    "note": ""
+   },
+   {
+    "tag": "T-C comment networkWriteStateSnapshot",
+    "frozen_line": 2485,
+    "note": "a trailing comment moved into the seam's preamble"
+   },
+   {
+    "tag": "T-C networkSignalIntegrity",
+    "frozen_line": 1250,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkMeasurementAdmission",
+    "frozen_line": 1277,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkLevelAuthorityCensus",
+    "frozen_line": 1834,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkSdEwlAr",
+    "frozen_line": 1859,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkOraclePinEpoch",
+    "frozen_line": 1873,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkHandoverStransformBeforeRows",
+    "frozen_line": 1908,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkCarryDecide",
+    "frozen_line": 1910,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkSolveGlue",
+    "frozen_line": 2092,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkInstallCarry",
+    "frozen_line": 2125,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkProducerAr",
+    "frozen_line": 2131,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkGrossLosScreen",
+    "frozen_line": 2143,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkGrossLosScreen",
+    "frozen_line": 2232,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkFixedCycles",
+    "frozen_line": 2154,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkSolPrep",
+    "frozen_line": 2158,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPbHoldCloneUpdate",
+    "frozen_line": 2177,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPbHoldCloneHarvest",
+    "frozen_line": 2406,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkEmitStore",
+    "frozen_line": 2179,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPostFitRaim",
+    "frozen_line": 2213,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkClockQc",
+    "frozen_line": 2238,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkStashStatus",
+    "frozen_line": 2398,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkClockLevelRestoreRaise",
+    "frozen_line": 1901,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkClockLevelMonitor",
+    "frozen_line": 2411,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkRhsAttribution",
+    "frozen_line": 2387,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkRhsAttribTrip",
+    "frozen_line": 2394,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkIonoDiag",
+    "frozen_line": 2186,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkDdFrac",
+    "frozen_line": 2190,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkShDevVtec",
+    "frozen_line": 2194,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkShHealth",
+    "frozen_line": 2198,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkLeveling",
+    "frozen_line": 2202,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPhaseVisibleMonitor",
+    "frozen_line": 2245,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkLedgerEmitFold",
+    "frozen_line": 2268,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkSecondPhaseEpochTail",
+    "frozen_line": 2276,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkChannelAllEpoch",
+    "frozen_line": 2281,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkMultiGnssEpoch",
+    "frozen_line": 2286,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkParamInventoryNoteSatellites",
+    "frozen_line": 1111,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkParamInventoryEpochTail",
+    "frozen_line": 2290,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkContributionsEpochTail",
+    "frozen_line": 2295,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPostfitSigma0",
+    "frozen_line": 2316,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkShSpectrum",
+    "frozen_line": 2319,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkStationBlock",
+    "frozen_line": 2326,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkPrefitCensus",
+    "frozen_line": 2335,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkRedundancyCensus",
+    "frozen_line": 2344,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkBlockBaardaEmit",
+    "frozen_line": 2353,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkCongruenceEmit",
+    "frozen_line": 2362,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkMdbFlush",
+    "frozen_line": 2372,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkDatumGraphCensus",
+    "frozen_line": 2382,
+    "note": ""
+   },
+   {
+    "tag": "T-C networkAmbStateTrace",
+    "frozen_line": 2418,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1034,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1036,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1214,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1223,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1224,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1912,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 1935,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2077,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2078,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2090,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2091,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2115,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2116,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2129,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2130,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2133,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2134,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2167,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2178,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2184,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2185,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2188,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2189,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2192,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2193,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2196,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2197,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2200,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2201,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2205,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2206,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2236,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2237,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2242,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2255,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2297,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2304,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2396,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2397,
+    "note": ""
+   },
+   {
+    "tag": "T-E",
+    "frozen_line": 2433,
+    "note": ""
+   },
+   {
+    "tag": "T-F closure buildCarryDdPriors",
+    "frozen_line": 2072,
+    "note": ""
+   },
+   {
+    "tag": "T-F call buildCarryDdPriors",
+    "frozen_line": 2089,
+    "note": ""
+   },
+   {
+    "tag": "T-B9 EMITTED store",
+    "frozen_line": 2184,
+    "note": ""
+   },
+   {
+    "tag": "T-B2 WS",
+    "frozen_line": 981,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1168,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1196,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1199,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1200,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS",
+    "frozen_line": 1205,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR (unread)",
+    "frozen_line": 1229,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS (unread)",
+    "frozen_line": 1837,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS (unread)",
+    "frozen_line": 1838,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS (unread)",
+    "frozen_line": 1839,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1840,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1920,
+    "note": ""
+   },
+   {
+    "tag": "T-B4 SIZED",
+    "frozen_line": 1925,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR (unread)",
+    "frozen_line": 1921,
+    "note": ""
+   },
+   {
+    "tag": "T-B5 SCALAR",
+    "frozen_line": 1120,
+    "note": ""
+   },
+   {
+    "tag": "T-B3 ALIAS (unread)",
+    "frozen_line": 1941,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2092,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2098,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2099,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2100,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2101,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2102,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2103,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2104,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2105,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2106,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2107,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2108,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2109,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2110,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2111,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2112,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2113,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2114,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT read",
+    "frozen_line": 2097,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2131,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2154,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 RESULT",
+    "frozen_line": 2158,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2162,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2163,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2164,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2165,
+    "note": ""
+   },
+   {
+    "tag": "T-B7 member alias (unread)",
+    "frozen_line": 2166,
+    "note": ""
+   },
+   {
+    "tag": "T-B8 ACCESSOR (unread)",
+    "frozen_line": 2157,
+    "note": ""
+   },
+   {
+    "tag": "T-B6 CLOCK",
+    "frozen_line": 1157,
+    "note": ""
+   },
+   {
+    "tag": "T-B1 CTOR",
+    "frozen_line": 1020,
+    "note": ""
+   }
+  ],
+  "calls": [
+   {
+    "seam": "networkPassAHead_",
+    "frozen_line": 1210,
+    "args_before": 7,
+    "args_after": 3,
+    "call": "networkPassAHead_(run, ep, ep.pass_a)",
+    "new_line": 440
+   },
+   {
+    "seam": "networkPassASlipScan_",
+    "frozen_line": 1216,
+    "args_before": 12,
+    "args_after": 4,
+    "call": "networkPassASlipScan_(run, ep, ep.pass_a, ep.funnel)",
+    "new_line": 445
+   },
+   {
+    "seam": "networkAssemblyPrefilter_",
+    "frozen_line": 1230,
+    "args_before": 8,
+    "args_after": 3,
+    "call": "networkAssemblyPrefilter_(run, ep, ep.pass_a)",
+    "new_line": 456
+   },
+   {
+    "seam": "networkAssemblyRegisterColumns_",
+    "frozen_line": 1841,
+    "args_before": 14,
+    "args_after": 3,
+    "call": "networkAssemblyRegisterColumns_(run, ep, ep.columns)",
+    "new_line": 1056
+   },
+   {
+    "seam": "networkPassB_",
+    "frozen_line": 1926,
+    "args_before": 22,
+    "args_after": 4,
+    "call": "networkPassB_(run, ep, ep.pass_a, ep.assembly)",
+    "new_line": 1136
+   },
+   {
+    "seam": "networkBuildSignalRoster",
+    "frozen_line": 1035,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkBuildSignalRoster(run, ep)",
+    "new_line": 262
+   },
+   {
+    "seam": "networkSignalRosterAudit",
+    "frozen_line": 2259,
+    "args_before": 12,
+    "args_after": 2,
+    "call": "networkSignalRosterAudit(run, ep)",
+    "new_line": 1401
+   },
+   {
+    "seam": "networkCouplingExactPrepare",
+    "frozen_line": 1911,
+    "args_before": 5,
+    "args_after": 2,
+    "call": "networkCouplingExactPrepare(run, ep)",
+    "new_line": 1122
+   },
+   {
+    "seam": "networkWriteStateSnapshot",
+    "frozen_line": 2485,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkWriteStateSnapshot(run, ep)",
+    "new_line": 1607
+   },
+   {
+    "seam": "networkSignalIntegrity",
+    "frozen_line": 1250,
+    "args_before": 13,
+    "args_after": 4,
+    "call": "networkSignalIntegrity(run, ep, ep.pass_a, ep.funnel)",
+    "new_line": 475
+   },
+   {
+    "seam": "networkMeasurementAdmission",
+    "frozen_line": 1277,
+    "args_before": 13,
+    "args_after": 4,
+    "call": "networkMeasurementAdmission(run, ep, ep.pass_a, ep.funnel)",
+    "new_line": 499
+   },
+   {
+    "seam": "networkLevelAuthorityCensus",
+    "frozen_line": 1834,
+    "args_before": 8,
+    "args_after": 2,
+    "call": "networkLevelAuthorityCensus(run, ep)",
+    "new_line": 1053
+   },
+   {
+    "seam": "networkSdEwlAr",
+    "frozen_line": 1859,
+    "args_before": 9,
+    "args_after": 2,
+    "call": "networkSdEwlAr(run, ep)",
+    "new_line": 1071
+   },
+   {
+    "seam": "networkOraclePinEpoch",
+    "frozen_line": 1873,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkOraclePinEpoch(run, ep)",
+    "new_line": 1085
+   },
+   {
+    "seam": "networkHandoverStransformBeforeRows",
+    "frozen_line": 1908,
+    "args_before": 8,
+    "args_after": 2,
+    "call": "networkHandoverStransformBeforeRows(run, ep)",
+    "new_line": 1120
+   },
+   {
+    "seam": "networkCarryDecide",
+    "frozen_line": 1910,
+    "args_before": 4,
+    "args_after": 2,
+    "call": "networkCarryDecide(run, ep)",
+    "new_line": 1121
+   },
+   {
+    "seam": "networkSolveGlue",
+    "frozen_line": 2092,
+    "args_before": 24,
+    "args_after": 6,
+    "call": "networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.funnel)",
+    "new_line": 1288
+   },
+   {
+    "seam": "networkInstallCarry",
+    "frozen_line": 2125,
+    "args_before": 15,
+    "args_after": 2,
+    "call": "networkInstallCarry(run, ep)",
+    "new_line": 1300
+   },
+   {
+    "seam": "networkProducerAr",
+    "frozen_line": 2131,
+    "args_before": 12,
+    "args_after": 2,
+    "call": "networkProducerAr(run, ep)",
+    "new_line": 1304
+   },
+   {
+    "seam": "networkGrossLosScreen",
+    "frozen_line": 2143,
+    "args_before": 12,
+    "args_after": 3,
+    "call": "networkGrossLosScreen(run, ep, GrossLosPhase::Decide)",
+    "new_line": 1315
+   },
+   {
+    "seam": "networkGrossLosScreen",
+    "frozen_line": 2232,
+    "args_before": 12,
+    "args_after": 3,
+    "call": "networkGrossLosScreen(run, ep, ctx.knobs.gl_emit_exclude ? GrossLosPhase::Act : GrossLosPhase::Full)",
+    "new_line": 1379
+   },
+   {
+    "seam": "networkFixedCycles",
+    "frozen_line": 2154,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkFixedCycles(run, ep)",
+    "new_line": 1324
+   },
+   {
+    "seam": "networkSolPrep",
+    "frozen_line": 2158,
+    "args_before": 17,
+    "args_after": 2,
+    "call": "networkSolPrep(run, ep)",
+    "new_line": 1325
+   },
+   {
+    "seam": "networkPbHoldCloneUpdate",
+    "frozen_line": 2177,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkPbHoldCloneUpdate(run, ep)",
+    "new_line": 1336
+   },
+   {
+    "seam": "networkPbHoldCloneHarvest",
+    "frozen_line": 2406,
+    "args_before": 4,
+    "args_after": 2,
+    "call": "networkPbHoldCloneHarvest(run, ep)",
+    "new_line": 1529
+   },
+   {
+    "seam": "networkEmitStore",
+    "frozen_line": 2179,
+    "args_before": 25,
+    "args_after": 3,
+    "call": "networkEmitStore(run, ep, ep.prep.sol)",
+    "new_line": 1338
+   },
+   {
+    "seam": "networkPostFitRaim",
+    "frozen_line": 2213,
+    "args_before": 17,
+    "args_after": 3,
+    "call": "networkPostFitRaim(run, ep, ep.solve.handoff)",
+    "new_line": 1363
+   },
+   {
+    "seam": "networkClockQc",
+    "frozen_line": 2238,
+    "args_before": 17,
+    "args_after": 3,
+    "call": "networkClockQc(run, ep, ep.solve.handoff)",
+    "new_line": 1383
+   },
+   {
+    "seam": "networkStashStatus",
+    "frozen_line": 2398,
+    "args_before": 28,
+    "args_after": 2,
+    "call": "networkStashStatus(run, ep)",
+    "new_line": 1526
+   },
+   {
+    "seam": "networkClockLevelRestoreRaise",
+    "frozen_line": 1901,
+    "args_before": 2,
+    "args_after": 1,
+    "call": "networkClockLevelRestoreRaise(run)",
+    "new_line": 1113
+   },
+   {
+    "seam": "networkClockLevelMonitor",
+    "frozen_line": 2411,
+    "args_before": 8,
+    "args_after": 2,
+    "call": "networkClockLevelMonitor(run, ep)",
+    "new_line": 1534
+   },
+   {
+    "seam": "networkRhsAttribution",
+    "frozen_line": 2387,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkRhsAttribution(run, ep)",
+    "new_line": 1517
+   },
+   {
+    "seam": "networkRhsAttribTrip",
+    "frozen_line": 2394,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkRhsAttribTrip(run, ep)",
+    "new_line": 1523
+   },
+   {
+    "seam": "networkIonoDiag",
+    "frozen_line": 2186,
+    "args_before": 14,
+    "args_after": 2,
+    "call": "networkIonoDiag(run, ep)",
+    "new_line": 1342
+   },
+   {
+    "seam": "networkDdFrac",
+    "frozen_line": 2190,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkDdFrac(run, ep)",
+    "new_line": 1345
+   },
+   {
+    "seam": "networkShDevVtec",
+    "frozen_line": 2194,
+    "args_before": 12,
+    "args_after": 2,
+    "call": "networkShDevVtec(run, ep)",
+    "new_line": 1348
+   },
+   {
+    "seam": "networkShHealth",
+    "frozen_line": 2198,
+    "args_before": 15,
+    "args_after": 2,
+    "call": "networkShHealth(run, ep)",
+    "new_line": 1351
+   },
+   {
+    "seam": "networkLeveling",
+    "frozen_line": 2202,
+    "args_before": 18,
+    "args_after": 2,
+    "call": "networkLeveling(run, ep)",
+    "new_line": 1354
+   },
+   {
+    "seam": "networkPhaseVisibleMonitor",
+    "frozen_line": 2245,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkPhaseVisibleMonitor(run, ep)",
+    "new_line": 1387
+   },
+   {
+    "seam": "networkLedgerEmitFold",
+    "frozen_line": 2268,
+    "args_before": 3,
+    "args_after": 2,
+    "call": "networkLedgerEmitFold(run, ep)",
+    "new_line": 1407
+   },
+   {
+    "seam": "networkSecondPhaseEpochTail",
+    "frozen_line": 2276,
+    "args_before": 3,
+    "args_after": 2,
+    "call": "networkSecondPhaseEpochTail(run, ep)",
+    "new_line": 1415
+   },
+   {
+    "seam": "networkChannelAllEpoch",
+    "frozen_line": 2281,
+    "args_before": 5,
+    "args_after": 2,
+    "call": "networkChannelAllEpoch(run, ep)",
+    "new_line": 1420
+   },
+   {
+    "seam": "networkMultiGnssEpoch",
+    "frozen_line": 2286,
+    "args_before": 5,
+    "args_after": 2,
+    "call": "networkMultiGnssEpoch(run, ep)",
+    "new_line": 1425
+   },
+   {
+    "seam": "networkParamInventoryNoteSatellites",
+    "frozen_line": 1111,
+    "args_before": 2,
+    "args_after": 2,
+    "call": "networkParamInventoryNoteSatellites(run, ep)",
+    "new_line": 338
+   },
+   {
+    "seam": "networkParamInventoryEpochTail",
+    "frozen_line": 2290,
+    "args_before": 5,
+    "args_after": 2,
+    "call": "networkParamInventoryEpochTail(run, ep)",
+    "new_line": 1429
+   },
+   {
+    "seam": "networkContributionsEpochTail",
+    "frozen_line": 2295,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkContributionsEpochTail(run, ep)",
+    "new_line": 1433
+   },
+   {
+    "seam": "networkPostfitSigma0",
+    "frozen_line": 2316,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkPostfitSigma0(run, ep)",
+    "new_line": 1453
+   },
+   {
+    "seam": "networkShSpectrum",
+    "frozen_line": 2319,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkShSpectrum(run, ep)",
+    "new_line": 1455
+   },
+   {
+    "seam": "networkStationBlock",
+    "frozen_line": 2326,
+    "args_before": 10,
+    "args_after": 2,
+    "call": "networkStationBlock(run, ep)",
+    "new_line": 1462
+   },
+   {
+    "seam": "networkPrefitCensus",
+    "frozen_line": 2335,
+    "args_before": 9,
+    "args_after": 2,
+    "call": "networkPrefitCensus(run, ep)",
+    "new_line": 1470
+   },
+   {
+    "seam": "networkRedundancyCensus",
+    "frozen_line": 2344,
+    "args_before": 11,
+    "args_after": 2,
+    "call": "networkRedundancyCensus(run, ep)",
+    "new_line": 1478
+   },
+   {
+    "seam": "networkBlockBaardaEmit",
+    "frozen_line": 2353,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkBlockBaardaEmit(run, ep)",
+    "new_line": 1486
+   },
+   {
+    "seam": "networkCongruenceEmit",
+    "frozen_line": 2362,
+    "args_before": 6,
+    "args_after": 2,
+    "call": "networkCongruenceEmit(run, ep)",
+    "new_line": 1495
+   },
+   {
+    "seam": "networkMdbFlush",
+    "frozen_line": 2372,
+    "args_before": 5,
+    "args_after": 2,
+    "call": "networkMdbFlush(run, ep)",
+    "new_line": 1505
+   },
+   {
+    "seam": "networkDatumGraphCensus",
+    "frozen_line": 2382,
+    "args_before": 13,
+    "args_after": 2,
+    "call": "networkDatumGraphCensus(run, ep)",
+    "new_line": 1515
+   },
+   {
+    "seam": "networkAmbStateTrace",
+    "frozen_line": 2418,
+    "args_before": 3,
+    "args_after": 2,
+    "call": "networkAmbStateTrace(run, ep)",
+    "new_line": 1540
+   },
+   {
+    "seam": "networkBuildCarryDdPriors",
+    "frozen_line": 2089,
+    "via": "buildCarryDdPriors",
+    "call": "networkBuildCarryDdPriors(run, ep, ep.dd_build, ep.funnel)",
+    "new_line": 1285
+   }
+  ],
+  "brackets": 40,
+  "value_equal_sites": [
+   2262,
+   2291,
+   2296
+  ],
+  "epoch_members": [
+   {
+    "local": "ws",
+    "path": "ep.ws",
+    "transform": "WS",
+    "frozen_line": 981,
+    "alias": false
+   },
+   {
+    "local": "dt",
+    "path": "ep.clock.dt",
+    "transform": "CLOCK",
+    "frozen_line": 1147,
+    "alias": false
+   },
+   {
+    "local": "pl_now_s",
+    "path": "ep.clock.pl_now_s",
+    "transform": "CLOCK",
+    "frozen_line": 1156,
+    "alias": false
+   },
+   {
+    "local": "carry_warm",
+    "path": "ep.clock.carry_warm",
+    "transform": "CLOCK",
+    "frozen_line": 1157,
+    "alias": false
+   },
+   {
+    "local": "carry_slipped_ambs",
+    "path": "ep.funnel.carry_slipped_ambs",
+    "transform": "ALIAS",
+    "frozen_line": 1168,
+    "alias": true
+   },
+   {
+    "local": "carry_slipped_raw",
+    "path": "ep.funnel.carry_slipped_raw",
+    "transform": "ALIAS",
+    "frozen_line": 1196,
+    "alias": true
+   },
+   {
+    "local": "modeled",
+    "path": "ep.pass_a.modeled",
+    "transform": "SIZED",
+    "frozen_line": 1199,
+    "alias": true
+   },
+   {
+    "local": "present",
+    "path": "ep.pass_a.present",
+    "transform": "SIZED",
+    "frozen_line": 1200,
+    "alias": true
+   },
+   {
+    "local": "shared_phase_keys",
+    "path": "ep.pass_a.shared_phase_keys",
+    "transform": "ALIAS",
+    "frozen_line": 1205,
+    "alias": true
+   },
+   {
+    "local": "n_dropped_sats",
+    "path": "ep.pass_a.n_dropped_sats",
+    "transform": "SCALAR",
+    "frozen_line": 1229,
+    "alias": false
+   },
+   {
+    "local": "registered_clock_sats",
+    "path": "ep.columns.registered_clock_sats",
+    "transform": "ALIAS",
+    "frozen_line": 1837,
+    "alias": false
+   },
+   {
+    "local": "registered_code_keys",
+    "path": "ep.columns.registered_code_keys",
+    "transform": "ALIAS",
+    "frozen_line": 1838,
+    "alias": false
+   },
+   {
+    "local": "col_desc",
+    "path": "ep.columns.col_desc",
+    "transform": "ALIAS",
+    "frozen_line": 1839,
+    "alias": false
+   },
+   {
+    "local": "n_clock",
+    "path": "ep.columns.n_clock",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": false
+   },
+   {
+    "local": "n_pb",
+    "path": "ep.columns.n_pb",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": false
+   },
+   {
+    "local": "n_cb",
+    "path": "ep.columns.n_cb",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": false
+   },
+   {
+    "local": "n_present",
+    "path": "ep.columns.n_present",
+    "transform": "SCALAR",
+    "frozen_line": 1840,
+    "alias": true
+   },
+   {
+    "local": "asm_res",
+    "path": "ep.assembly.asm_res",
+    "transform": "SIZED",
+    "frozen_line": 1920,
+    "alias": false
+   },
+   {
+    "local": "est_index_of",
+    "path": "ep.assembly.est_index_of",
+    "transform": "SIZED",
+    "frozen_line": 1925,
+    "alias": false
+   },
+   {
+    "local": "total_pins",
+    "path": "ep.assembly.total_pins",
+    "transform": "SCALAR",
+    "frozen_line": 1921,
+    "alias": false
+   },
+   {
+    "local": "sec_asm_ms_epoch",
+    "path": "ep.assembly.sec_asm_ms_epoch",
+    "transform": "SCALAR",
+    "frozen_line": 1120,
+    "alias": true
+   },
+   {
+    "local": "carry_arc_amb_key",
+    "path": "ep.dd_build.carry_arc_amb_key",
+    "transform": "ALIAS",
+    "frozen_line": 1941,
+    "alias": false
+   },
+   {
+    "local": "sg_",
+    "path": "ep.solve",
+    "transform": "RESULT",
+    "frozen_line": 2092,
+    "alias": false,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "ar_fixes",
+    "path": "ep.ar_fixes",
+    "transform": "RESULT",
+    "frozen_line": 2131,
+    "alias": false,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "fce",
+    "path": "ep.fixed_cycles",
+    "transform": "RESULT",
+    "frozen_line": 2154,
+    "alias": false,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "sp_",
+    "path": "ep.prep",
+    "transform": "RESULT",
+    "frozen_line": 2158,
+    "alias": false,
+    "member_aliases_kept": []
+   },
+   {
+    "local": "x_emit",
+    "path": "ep.x_emit()",
+    "transform": "ACCESSOR",
+    "frozen_line": 2157,
+    "alias": false
+   }
+  ],
+  "preamble": [
+   "const std::shared_ptr<spdlog::logger>& log = run.log;",
+   "const NetworkConfig& nc = run.nc;",
+   "NetworkSetupResult& setup = run.setup;",
+   "const bool brdc_rts = setup.brdc_rts;",
+   "auto& brdc_nav_staged = setup.brdc_nav_staged;",
+   "auto& brdc_nav_cursor = setup.brdc_nav_cursor;",
+   "auto& stations = setup.stations;",
+   "const int n_threads = setup.n_threads;",
+   "const bool carry_par = setup.carry_par;",
+   "NetworkRunContext& ctx = run.ctx;",
+   "NetworkRunTraces& traces = run.traces;",
+   "SlipQcChannel& slip_qc = run.engines.slip_qc;",
+   "auto& last_pivot = ctx.carry.last_pivot;",
+   "auto& anchor_incumbent = ctx.carry.anchor_incumbent;",
+   "auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;",
+   "auto& start_anchor_s = ctx.carry.start_anchor_s;",
+   "auto& local_carry = ctx.carry.local_carry;",
+   "auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;",
+   "auto& grade_metric_s = ctx.carry.grade_metric_s;",
+   "const bool   pl_on         = ctx.knobs.pl_on;",
+   "const int    pl_warmup     = ctx.knobs.pl_warmup;",
+   "const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;",
+   "const bool   ura_on        = ctx.knobs.ura_on;",
+   "const bool   raim_on       = ctx.knobs.raim_on;",
+   "const double start_offset_s = ctx.knobs.start_offset_s;",
+   "auto& prev_tow = ctx.counters.prev_tow;",
+   "auto& prev_week = ctx.counters.prev_week;",
+   "auto& n_emitted = ctx.counters.n_emitted;",
+   "auto& n_gated_epochs = ctx.counters.n_gated_epochs;",
+   "auto& n_gated_key_epochs = ctx.counters.n_gated_key_epochs;",
+   "auto& max_dur_anchor_s = ctx.counters.max_dur_anchor_s;",
+   "auto& max_dur_anchored = ctx.counters.max_dur_anchored;",
+   "const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;",
+   "const bool carry_invariant         = ctx.knobs.carry_invariant;",
+   "const bool carry_innov_gate = ctx.knobs.carry_innov_gate;",
+   "NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;",
+   "auto& carry_sat_vertex = ctx.carry.carry_sat_vertex;",
+   "auto& carry_group_id = ctx.carry.carry_group_id;",
+   "auto& carry_prev_tow = ctx.carry.carry_prev_tow;",
+   "auto& carry_innov_pending = ctx.carry.carry_innov_pending;",
+   "const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;",
+   "NetworkRunTiming& timing = run.timing;",
+   "auto& n_loop_epochs = ctx.counters.n_loop_epochs;",
+   "auto& decim_counter = ctx.counters.decim_counter;",
+   "NetworkEstimator& est = run.engines.est;",
+   "std::vector<SubBlockTimer>& sec_sub_ep0 = timing.sec_sub_ep0;"
+  ],
+  "function_lines": [
+   154,
+   1611
+  ],
+  "preamble_count": 46
+ },
+ "seams": [
+  {
+   "seam": "networkPassAHead_",
+   "file": "include/app/Application.hpp",
+   "frozen_line": 783,
+   "kind": "declaration",
+   "form": "member",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a"
+   ],
+   "new_line": 844
+  },
+  {
+   "seam": "networkPassASlipScan_",
+   "file": "include/app/Application.hpp",
+   "frozen_line": 808,
+   "kind": "declaration",
+   "form": "member",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a",
+    "NetworkSlipFunnel& funnel"
+   ],
+   "new_line": 892
+  },
+  {
+   "seam": "networkAssemblyPrefilter_",
+   "file": "include/app/Application.hpp",
+   "frozen_line": 826,
+   "kind": "declaration",
+   "form": "member",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a"
+   ],
+   "new_line": 924
+  },
+  {
+   "seam": "networkAssemblyRegisterColumns_",
+   "file": "include/app/Application.hpp",
+   "frozen_line": 847,
+   "kind": "declaration",
+   "form": "member",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochColumns& columns"
+   ],
+   "new_line": 968
+  },
+  {
+   "seam": "networkPassB_",
+   "file": "include/app/Application.hpp",
+   "frozen_line": 881,
+   "kind": "declaration",
+   "form": "member",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a",
+    "EpochAssembly& assembly"
+   ],
+   "new_line": 1037
+  },
+  {
+   "seam": "networkBuildSignalRoster",
+   "file": "include/app/SignalRoster.hpp",
+   "frozen_line": 885,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 899
+  },
+  {
+   "seam": "networkSignalRosterAudit",
+   "file": "include/app/SignalRoster.hpp",
+   "frozen_line": 1061,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 1085
+  },
+  {
+   "seam": "networkCouplingExactPrepare",
+   "file": "include/app/NetworkRunContext.hpp",
+   "frozen_line": 4489,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 4529
+  },
+  {
+   "seam": "networkWriteStateSnapshot",
+   "file": "include/app/NetworkRunContext.hpp",
+   "frozen_line": 4395,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 4429
+  },
+  {
+   "seam": "networkSignalIntegrity",
+   "file": "include/filter/NetworkSignalIntegrity.hpp",
+   "frozen_line": 314,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a",
+    "NetworkSlipFunnel& funnel"
+   ],
+   "new_line": 363
+  },
+  {
+   "seam": "networkMeasurementAdmission",
+   "file": "include/filter/NetworkMeasurementAdmission.hpp",
+   "frozen_line": 397,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochPassA& pass_a",
+    "NetworkSlipFunnel& funnel"
+   ],
+   "new_line": 446
+  },
+  {
+   "seam": "networkLevelAuthorityCensus",
+   "file": "include/filter/NetworkLevelAuthority.hpp",
+   "frozen_line": 43,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 68
+  },
+  {
+   "seam": "networkSdEwlAr",
+   "file": "include/filter/NetworkSdEwlAr.hpp",
+   "frozen_line": 269,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 284
+  },
+  {
+   "seam": "networkOraclePinEpoch",
+   "file": "include/filter/NetworkOraclePin.hpp",
+   "frozen_line": 306,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 326
+  },
+  {
+   "seam": "networkHandoverStransformBeforeRows",
+   "file": "include/filter/NetworkHandoverStransform.hpp",
+   "frozen_line": 291,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 325
+  },
+  {
+   "seam": "networkCarryDecide",
+   "file": "include/filter/NetworkCarryDisposition.hpp",
+   "frozen_line": 117,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 140
+  },
+  {
+   "seam": "networkBuildCarryDdPriors",
+   "file": "include/filter/NetworkDdPriorBuild.hpp",
+   "frozen_line": 42,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochDdBuild& dd_build",
+    "NetworkSlipFunnel& funnel"
+   ],
+   "new_line": 88
+  },
+  {
+   "seam": "networkSolveGlue",
+   "file": "include/filter/NetworkSolveGlue.hpp",
+   "frozen_line": 119,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "EpochWorkspace& ws",
+    "std::vector<int>& est_index_of",
+    "EpochDdBuild& dd_build",
+    "NetworkSlipFunnel& funnel"
+   ],
+   "new_line": 185
+  },
+  {
+   "seam": "networkInstallCarry",
+   "file": "include/filter/NetworkInstallCarry.hpp",
+   "frozen_line": 49,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 83
+  },
+  {
+   "seam": "networkProducerAr",
+   "file": "include/filter/NetworkProducerAr.hpp",
+   "frozen_line": 321,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 334
+  },
+  {
+   "seam": "networkGrossLosScreen",
+   "file": "include/filter/NetworkGrossLos.hpp",
+   "frozen_line": 549,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "GrossLosPhase phase = GrossLosPhase::Full"
+   ],
+   "new_line": 568
+  },
+  {
+   "seam": "networkFixedCycles",
+   "file": "include/filter/NetworkFixedCycles.hpp",
+   "frozen_line": 494,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 513
+  },
+  {
+   "seam": "networkSolPrep",
+   "file": "include/filter/NetworkSolPrep.hpp",
+   "frozen_line": 120,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 179
+  },
+  {
+   "seam": "networkPbHoldCloneUpdate",
+   "file": "include/filter/NetworkPbHoldClone.hpp",
+   "frozen_line": 503,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 531
+  },
+  {
+   "seam": "networkPbHoldCloneHarvest",
+   "file": "include/filter/NetworkPbHoldClone.hpp",
+   "frozen_line": 528,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 572
+  },
+  {
+   "seam": "networkEmitStore",
+   "file": "include/filter/NetworkEmitStore.hpp",
+   "frozen_line": 72,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "NetworkSolutionEpoch& sol"
+   ],
+   "new_line": 120
+  },
+  {
+   "seam": "networkPostFitRaim",
+   "file": "include/filter/NetworkRaim.hpp",
+   "frozen_line": 214,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "NetworkPostFitHandoff& handoff"
+   ],
+   "new_line": 227
+  },
+  {
+   "seam": "networkClockQc",
+   "file": "include/filter/NetworkClockQc.hpp",
+   "frozen_line": 93,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep",
+    "NetworkPostFitHandoff& handoff"
+   ],
+   "new_line": 118
+  },
+  {
+   "seam": "networkStashStatus",
+   "file": "include/filter/NetworkStashStatus.hpp",
+   "frozen_line": 50,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 103
+  },
+  {
+   "seam": "networkClockLevelRestoreRaise",
+   "file": "include/filter/NetworkClockLevel.hpp",
+   "frozen_line": 136,
+   "kind": "declaration",
+   "form": "run",
+   "params": [
+    "NetworkRun& run"
+   ],
+   "new_line": 150
+  },
+  {
+   "seam": "networkClockLevelMonitor",
+   "file": "include/filter/NetworkClockLevel.hpp",
+   "frozen_line": 162,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 190
+  },
+  {
+   "seam": "networkRhsAttribution",
+   "file": "include/filter/NetworkRhsAttrib.hpp",
+   "frozen_line": 764,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 780
+  },
+  {
+   "seam": "networkRhsAttribTrip",
+   "file": "include/filter/NetworkRhsAttrib.hpp",
+   "frozen_line": 808,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 852
+  },
+  {
+   "seam": "networkIonoDiag",
+   "file": "include/filter/NetworkIonoDiag.hpp",
+   "frozen_line": 48,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 79
+  },
+  {
+   "seam": "networkDdFrac",
+   "file": "include/filter/NetworkDdFrac.hpp",
+   "frozen_line": 53,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 80
+  },
+  {
+   "seam": "networkShDevVtec",
+   "file": "include/filter/NetworkShDevVtec.hpp",
+   "frozen_line": 49,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 77
+  },
+  {
+   "seam": "networkShHealth",
+   "file": "include/filter/NetworkShHealth.hpp",
+   "frozen_line": 47,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 80
+  },
+  {
+   "seam": "networkLeveling",
+   "file": "include/filter/NetworkLeveling.hpp",
+   "frozen_line": 47,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 85
+  },
+  {
+   "seam": "networkPhaseVisibleMonitor",
+   "file": "include/filter/NetworkPhaseVisibleDiag.hpp",
+   "frozen_line": 65,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 91
+  },
+  {
+   "seam": "networkLedgerEmitFold",
+   "file": "include/filter/NetworkLedgerEmit.hpp",
+   "frozen_line": 220,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 241
+  },
+  {
+   "seam": "networkSecondPhaseEpochTail",
+   "file": "include/filter/NetworkSecondPhaseScope.hpp",
+   "frozen_line": 143,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 156
+  },
+  {
+   "seam": "networkChannelAllEpoch",
+   "file": "include/filter/NetworkChannelAll.hpp",
+   "frozen_line": 153,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 166
+  },
+  {
+   "seam": "networkMultiGnssEpoch",
+   "file": "include/filter/NetworkMultiGnss.hpp",
+   "frozen_line": 129,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 142
+  },
+  {
+   "seam": "networkParamInventoryNoteSatellites",
+   "file": "include/filter/NetworkParamInventory.hpp",
+   "frozen_line": 895,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 907
+  },
+  {
+   "seam": "networkParamInventoryEpochTail",
+   "file": "include/filter/NetworkParamInventory.hpp",
+   "frozen_line": 934,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 955
+  },
+  {
+   "seam": "networkContributionsEpochTail",
+   "file": "include/filter/NetworkContributions.hpp",
+   "frozen_line": 520,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 532
+  },
+  {
+   "seam": "networkPostfitSigma0",
+   "file": "include/filter/NetworkFrameDiag.hpp",
+   "frozen_line": 183,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 205
+  },
+  {
+   "seam": "networkShSpectrum",
+   "file": "include/filter/NetworkFrameDiag.hpp",
+   "frozen_line": 88,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 101
+  },
+  {
+   "seam": "networkStationBlock",
+   "file": "include/filter/NetworkStationBlock.hpp",
+   "frozen_line": 222,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 238
+  },
+  {
+   "seam": "networkPrefitCensus",
+   "file": "include/filter/NetworkPrefitCensus.hpp",
+   "frozen_line": 307,
+   "kind": "declaration",
+   "form": "adapter",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 341
+  },
+  {
+   "seam": "networkRedundancyCensus",
+   "file": "include/filter/NetworkRedundancyCensus.hpp",
+   "frozen_line": 162,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 177
+  },
+  {
+   "seam": "networkBlockBaardaEmit",
+   "file": "include/filter/NetworkBlockBaarda.hpp",
+   "frozen_line": 687,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 707
+  },
+  {
+   "seam": "networkCongruenceEmit",
+   "file": "include/filter/NetworkCongruence.hpp",
+   "frozen_line": 904,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 924
+  },
+  {
+   "seam": "networkMdbFlush",
+   "file": "include/filter/NetworkMdb.hpp",
+   "frozen_line": 376,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 388
+  },
+  {
+   "seam": "networkDatumGraphCensus",
+   "file": "include/filter/NetworkDatumGraph.hpp",
+   "frozen_line": 482,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 496
+  },
+  {
+   "seam": "networkAmbStateTrace",
+   "file": "include/filter/NetworkAmbStateTrace.hpp",
+   "frozen_line": 168,
+   "kind": "declaration",
+   "form": "direct",
+   "params": [
+    "NetworkRun& run",
+    "const NetworkEpoch& ep"
+   ],
+   "new_line": 180
+  },
+  {
+   "seam": "networkPassAHead_",
+   "file": "src/core/app/ApplicationNetworkAssembly.cpp",
+   "frozen_line": 1391,
+   "kind": "definition",
+   "body_frozen": [
+    1397,
+    1466
+   ],
+   "preamble": [
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkRunTraces& traces = run.traces;",
+    "std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;",
+    "std::vector<bool>& present = pass_a.present;",
+    "std::set<std::string>& shared_phase_keys = pass_a.shared_phase_keys;"
+   ],
+   "fallback": [],
+   "new_line": 1393,
+   "body_first_new_line": 1406
+  },
+  {
+   "seam": "networkPassASlipScan_",
+   "file": "src/core/app/ApplicationNetworkAssembly.cpp",
+   "frozen_line": 1468,
+   "kind": "definition",
+   "body_frozen": [
+    1477,
+    2443
+   ],
+   "preamble": [
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkRunTraces& traces = run.traces;",
+    "double dt = ep.clock.dt;",
+    "double pl_now_s = ep.clock.pl_now_s;",
+    "bool carry_warm = ep.clock.carry_warm;",
+    "std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;",
+    "std::vector<bool>& present = pass_a.present;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "std::set<std::pair<int, std::string>>& carry_slipped_ambs = funnel.carry_slipped_raw;",
+    "SlipQcChannel& qc = run.engines.slip_qc;"
+   ],
+   "fallback": [],
+   "new_line": 1476,
+   "body_first_new_line": 1494
+  },
+  {
+   "seam": "networkAssemblyPrefilter_",
+   "file": "src/core/app/ApplicationNetworkAssembly.cpp",
+   "frozen_line": 2445,
+   "kind": "definition",
+   "body_frozen": [
+    2452,
+    2546
+   ],
+   "preamble": [
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SlipQcChannel& qc = run.engines.slip_qc;",
+    "std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;",
+    "const std::vector<bool>& present = ep.pass_a.present;",
+    "int& n_dropped_sats = pass_a.n_dropped_sats;"
+   ],
+   "fallback": [],
+   "new_line": 2461,
+   "body_first_new_line": 2475
+  },
+  {
+   "seam": "networkAssemblyRegisterColumns_",
+   "file": "src/core/app/ApplicationNetworkAssembly.cpp",
+   "frozen_line": 2548,
+   "kind": "definition",
+   "body_frozen": [
+    2559,
+    2847
+   ],
+   "preamble": [
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const std::vector<bool>& present = ep.pass_a.present;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "std::vector<std::string>& registered_clock_sats = columns.registered_clock_sats;",
+    "std::vector<std::pair<std::string, std::string>>& registered_code_keys = columns.registered_code_keys;",
+    "std::vector<std::string>& col_desc = columns.col_desc;",
+    "int& n_clock = columns.n_clock;",
+    "int& n_pb = columns.n_pb;",
+    "int& n_cb = columns.n_cb;",
+    "int& n_present = columns.n_present;"
+   ],
+   "fallback": [],
+   "new_line": 2570,
+   "body_first_new_line": 2590
+  },
+  {
+   "seam": "networkPassB_",
+   "file": "src/core/app/ApplicationNetworkAssembly.cpp",
+   "frozen_line": 2849,
+   "kind": "definition",
+   "body_frozen": [
+    2865,
+    5440
+   ],
+   "preamble": [
+    "const SyncedEpoch& se = nep.se;",
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const std::set<std::pair<int, std::string>>& carry_slipped_ambs = nep.funnel.carry_slipped_ambs;",
+    "const std::set<std::pair<int, std::string>>& carry_slipped_raw = nep.funnel.carry_slipped_raw;",
+    "bool carry_warm = nep.clock.carry_warm;",
+    "double pl_now_s = nep.clock.pl_now_s;",
+    "std::vector<std::vector<PppObservation>>& modeled = pass_a.modeled;",
+    "std::vector<bool>& present = pass_a.present;",
+    "const std::set<std::string>& shared_phase_keys = nep.pass_a.shared_phase_keys;",
+    "const std::vector<std::string>& registered_clock_sats = nep.columns.registered_clock_sats;",
+    "const std::vector<std::pair<std::string, std::string>>& registered_code_keys = nep.columns.registered_code_keys;",
+    "int n_clock = nep.columns.n_clock;",
+    "int n_pb = nep.columns.n_pb;",
+    "int n_present = nep.columns.n_present;",
+    "std::vector<StationAssembly>& asm_res = assembly.asm_res;",
+    "std::vector<int>& est_index_of = assembly.est_index_of;",
+    "int& total_pins = assembly.total_pins;",
+    "double& sec_asm_ms_epoch = assembly.sec_asm_ms_epoch;",
+    "double& sec_asm_wall_ms = run.timing.asm_wall_ms;"
+   ],
+   "fallback": [
+    "ep"
+   ],
+   "new_line": 2879,
+   "body_first_new_line": 2910
+  },
+  {
+   "seam": "networkBuildSignalRoster",
+   "file": "src/core/app/SignalRoster.cpp",
+   "frozen_line": 948,
+   "kind": "definition",
+   "body_frozen": [
+    952,
+    1287
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;"
+   ],
+   "fallback": [],
+   "new_line": 951,
+   "body_first_new_line": 962
+  },
+  {
+   "seam": "networkSignalRosterAudit",
+   "file": "src/core/app/SignalRoster.cpp",
+   "frozen_line": 1293,
+   "kind": "definition",
+   "body_frozen": [
+    1303,
+    1809
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = nrun.ctx;",
+    "const GnssConfig& config_ = nrun.config;",
+    "const std::shared_ptr<spdlog::logger>& log = nrun.log;",
+    "NetworkRunTraces& traces = nrun.traces;",
+    "const SyncedEpoch& se = nep.se;",
+    "const std::vector<NetStation>& stations = nrun.setup.stations;",
+    "const std::vector<std::vector<PppObservation>>& modeled = nep.pass_a.modeled;",
+    "const std::vector<bool>& present = nep.pass_a.present;",
+    "const RawSlipEpoch* raw = nrun.engines.slip_qc.epoch.computed ? &nrun.engines.slip_qc.epoch : nullptr;",
+    "const std::set<std::pair<int, std::string>>& freed = nep.funnel.carry_slipped_ambs;",
+    "const NetworkSolutionEpoch& sol = nep.prep.sol;",
+    "bool emitted = nep.emitted;"
+   ],
+   "fallback": [
+    "ep",
+    "run"
+   ],
+   "new_line": 1302,
+   "body_first_new_line": 1321
+  },
+  {
+   "seam": "networkCouplingExactPrepare",
+   "file": "src/core/app/NetworkBorderPrior.cpp",
+   "frozen_line": 719,
+   "kind": "definition",
+   "body_frozen": [
+    721,
+    911
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const GnssTime& t = nep.se.time;",
+    "double dt = nep.clock.dt;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;"
+   ],
+   "fallback": [
+    "ep"
+   ],
+   "new_line": 723,
+   "body_first_new_line": 735
+  },
+  {
+   "seam": "networkWriteStateSnapshot",
+   "file": "src/core/app/NetworkStateSnapshotWrite.cpp",
+   "frozen_line": 40,
+   "kind": "definition",
+   "body_frozen": [
+    48,
+    591
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const GnssTime& t = ep.se.time;",
+    "double pl_now_s = ep.clock.pl_now_s;",
+    "NetworkProductEmitter& emitter = *run.setup.emitter;",
+    "const NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "const NetworkClockEmitRebase* clk_rebase = &run.emit.clk_rebase;",
+    "const NetworkEmitRebase* emit_rebase = &run.emit.rebase;",
+    "RealTimeEngine* consumer = run.setup.consumer.get();"
+   ],
+   "fallback": [],
+   "new_line": 44,
+   "body_first_new_line": 60
+  },
+  {
+   "seam": "networkSignalIntegrity",
+   "file": "src/core/filter/NetworkSignalIntegrity.cpp",
+   "kind": "adapter definition",
+   "forward": "networkSignalIntegrity(run.ctx, run.config, run.log, run.traces, ep.se.time, run.engines.slip_qc.epoch_idx, run.setup.stations, ep.pass_a.present, pass_a.modeled, funnel.carry_slipped_ambs, funnel.carry_slipped_raw, run.ctx.knobs.carry_invariant, ep.clock.carry_warm)",
+   "new_line": 601
+  },
+  {
+   "seam": "networkMeasurementAdmission",
+   "file": "src/core/filter/NetworkMeasurementAdmission.cpp",
+   "kind": "adapter definition",
+   "forward": "networkMeasurementAdmission(run.ctx, run.config, run.log, run.traces, ep.se.time, run.engines.slip_qc.epoch_idx, run.setup.stations, ep.pass_a.present, pass_a.modeled, funnel.carry_slipped_ambs, funnel.carry_slipped_raw, run.ctx.knobs.carry_invariant, ep.clock.carry_warm)",
+   "new_line": 1058
+  },
+  {
+   "seam": "networkLevelAuthorityCensus",
+   "file": "src/core/filter/NetworkLevelAuthority.cpp",
+   "frozen_line": 30,
+   "kind": "definition",
+   "body_frozen": [
+    35,
+    132
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<bool>& present = ep.pass_a.present;"
+   ],
+   "fallback": [],
+   "new_line": 34,
+   "body_first_new_line": 47
+  },
+  {
+   "seam": "networkSdEwlAr",
+   "file": "src/core/filter/NetworkSdEwlAr.cpp",
+   "frozen_line": 245,
+   "kind": "definition",
+   "body_frozen": [
+    254,
+    530
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "double now_s = ep.clock.pl_now_s;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<bool>& present = ep.pass_a.present;"
+   ],
+   "fallback": [],
+   "new_line": 248,
+   "body_first_new_line": 262
+  },
+  {
+   "seam": "networkOraclePinEpoch",
+   "file": "src/core/filter/NetworkOraclePin.cpp",
+   "frozen_line": 562,
+   "kind": "definition",
+   "body_frozen": [
+    567,
+    681
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const GnssTime& t = ep.se.time;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;"
+   ],
+   "fallback": [],
+   "new_line": 566,
+   "body_first_new_line": 577
+  },
+  {
+   "seam": "networkHandoverStransformBeforeRows",
+   "file": "src/core/filter/NetworkHandoverStransform.cpp",
+   "kind": "adapter definition",
+   "forward": "networkHandoverStransformBeforeRows(run.ctx, run.config, run.log, run.traces, run.setup.sat_health, run.engines.est, ep.se.time, ep.columns.registered_clock_sats)",
+   "new_line": 728
+  },
+  {
+   "seam": "networkCarryDecide",
+   "file": "src/core/filter/NetworkCarryDisposition.cpp",
+   "kind": "adapter definition",
+   "forward": "networkCarryDecide(run.ctx, run.engines.est, ep.se.time, ep.clock.dt)",
+   "new_line": 305
+  },
+  {
+   "seam": "networkBuildCarryDdPriors",
+   "file": "src/core/filter/NetworkDdPriorBuild.cpp",
+   "frozen_line": 37,
+   "kind": "definition",
+   "body_frozen": [
+    50,
+    196
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key = dd_build.carry_arc_amb_key;",
+    "std::set<std::pair<int, std::string>>& carry_slipped_ambs = funnel.carry_slipped_ambs;",
+    "const std::set<std::pair<int, std::string>>& carry_slipped_raw = ep.funnel.carry_slipped_raw;",
+    "const WithinEpochCulprits& we_culprits = ep.ws.we_culprits;"
+   ],
+   "fallback": [],
+   "new_line": 41,
+   "body_first_new_line": 60
+  },
+  {
+   "seam": "networkSolveGlue",
+   "file": "src/core/filter/NetworkSolveGlue.cpp",
+   "frozen_line": 93,
+   "kind": "definition",
+   "body_frozen": [
+    117,
+    2612
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<bool>& present = ep.pass_a.present;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;",
+    "const std::vector<std::pair<std::string, std::string>>& registered_code_keys = ep.columns.registered_code_keys;",
+    "const std::vector<std::string>& col_desc = ep.columns.col_desc;",
+    "int n_clock = ep.columns.n_clock;",
+    "int n_pb = ep.columns.n_pb;",
+    "int n_cb = ep.columns.n_cb;",
+    "int n_present = ep.columns.n_present;",
+    "int total_pins = ep.assembly.total_pins;",
+    "bool carry_warm = ep.clock.carry_warm;",
+    "double dt = ep.clock.dt;",
+    "double pl_now_s = ep.clock.pl_now_s;"
+   ],
+   "fallback": [],
+   "new_line": 98,
+   "body_first_new_line": 127
+  },
+  {
+   "seam": "networkInstallCarry",
+   "file": "src/core/filter/NetworkInstallCarry.cpp",
+   "frozen_line": 34,
+   "kind": "definition",
+   "body_frozen": [
+    49,
+    420
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "SlipQcChannel& slip_qc = run.engines.slip_qc;",
+    "const std::map<int, std::map<ArcKey, std::string>>& carry_arc_amb_key = ep.dd_build.carry_arc_amb_key;",
+    "bool carry_par = run.setup.carry_par;",
+    "int n_threads = run.setup.n_threads;",
+    "int seam_threads = run.setup.seam_threads;"
+   ],
+   "fallback": [],
+   "new_line": 38,
+   "body_first_new_line": 58
+  },
+  {
+   "seam": "networkProducerAr",
+   "file": "src/core/filter/NetworkProducerAr.cpp",
+   "frozen_line": 746,
+   "kind": "definition",
+   "body_frozen": [
+    757,
+    1295
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::filesystem::path& log_dir_ = run.log_dir;"
+   ],
+   "fallback": [],
+   "new_line": 750,
+   "body_first_new_line": 767
+  },
+  {
+   "seam": "networkGrossLosScreen",
+   "file": "src/core/filter/NetworkGrossLos.cpp",
+   "frozen_line": 210,
+   "kind": "definition",
+   "body_frozen": [
+    221,
+    913
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "std::vector<NetStation>& stations = run.setup.stations;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "double now_s = ep.clock.pl_now_s;"
+   ],
+   "fallback": [],
+   "new_line": 213,
+   "body_first_new_line": 229
+  },
+  {
+   "seam": "networkFixedCycles",
+   "file": "src/core/filter/NetworkFixedCycles.cpp",
+   "frozen_line": 722,
+   "kind": "definition",
+   "body_frozen": [
+    728,
+    808
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = nep.se;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = nep.solve.x_s;",
+    "const NetworkEstimator::Datum& datum = nep.solve.plan.shared_datum;",
+    "const ArEpochFixes& fixes = nep.ar_fixes;",
+    "const WithinEpochCulprits& we = nep.solve.we_landed;",
+    "const std::vector<NetStation>& stations = run.setup.stations;"
+   ],
+   "fallback": [
+    "ep"
+   ],
+   "new_line": 725,
+   "body_first_new_line": 743
+  },
+  {
+   "seam": "networkSolPrep",
+   "file": "src/core/filter/NetworkSolPrep.cpp",
+   "kind": "adapter definition",
+   "forward": "networkSolPrep(run.ctx, run.config, run.log, run.traces, run.setup, ep.se, run.engines.est, ep.x_emit(), ep.solve.plan, ep.clock.pl_now_s, ep.solve.datum_changed, ep.solve.changed_consts, ep.solve.sigma0_adapt, ep.solve.perconst_active, ep.solve.perconst_publish, ep.solve.perconst_dec_withhold, ep.solve.perconst_stats)",
+   "new_line": 1373
+  },
+  {
+   "seam": "networkPbHoldCloneUpdate",
+   "file": "src/core/filter/NetworkPbHoldClone.cpp",
+   "kind": "adapter definition",
+   "forward": "networkPbHoldCloneUpdate(run.ctx, run.log, run.engines.est, ep.solve.x_s, ep.ws, ep.solve.plan.shared_datum)",
+   "new_line": 1400
+  },
+  {
+   "seam": "networkPbHoldCloneHarvest",
+   "file": "src/core/filter/NetworkPbHoldClone.cpp",
+   "kind": "adapter definition",
+   "forward": "networkPbHoldCloneHarvest(run.ctx, run.engines.est, ep.solve.x_s, TimeUtils::continuousGpsSeconds(ep.se.time))",
+   "new_line": 1405
+  },
+  {
+   "seam": "networkEmitStore",
+   "file": "src/core/filter/NetworkEmitStore.cpp",
+   "frozen_line": 55,
+   "kind": "definition",
+   "body_frozen": [
+    80,
+    857
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.x_emit();",
+    "double pl_now_s = ep.clock.pl_now_s;",
+    "bool datum_changed = ep.solve.datum_changed;",
+    "double sigma0_adapt = ep.solve.sigma0_adapt;",
+    "const std::set<char>& epoch_withheld_consts = ep.prep.epoch_withheld_consts;",
+    "bool global_bump = ep.prep.global_bump;",
+    "const std::set<char>& serialized_consts = ep.prep.serialized_consts;",
+    "const std::set<std::string>& retro_emit_sats = ep.prep.retro_emit_sats;",
+    "NetworkEmitEngines& emit_engines = run.emit;",
+    "const std::vector<bool>& present = ep.pass_a.present;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "const std::set<std::pair<int, std::string>>& carry_slipped_ambs = ep.funnel.carry_slipped_ambs;",
+    "bool we_t2_opp = ep.solve.we_t2_opp;",
+    "bool we_t2_flag = ep.solve.we_t2_flag;",
+    "ClosedLoopTally& cl_tally = run.closed_loop;"
+   ],
+   "fallback": [],
+   "new_line": 57,
+   "body_first_new_line": 86
+  },
+  {
+   "seam": "networkPostFitRaim",
+   "file": "src/core/filter/NetworkRaim.cpp",
+   "frozen_line": 48,
+   "kind": "definition",
+   "body_frozen": [
+    64,
+    1154
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<bool>& present = ep.pass_a.present;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const NetworkEstimator::Datum& shared_datum = ep.solve.plan.shared_datum;",
+    "std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;",
+    "std::set<std::string>& retro_flag_sats = handoff.retro_flag_sats;",
+    "bool retro_feed = ep.solve.retro_feed;",
+    "int& n_arc_refloat_epoch = handoff.n_arc_refloat_epoch;",
+    "NetworkPriorResidual& prires = run.engines.prires;"
+   ],
+   "fallback": [],
+   "new_line": 52,
+   "body_first_new_line": 74
+  },
+  {
+   "seam": "networkClockQc",
+   "file": "src/core/filter/NetworkClockQc.cpp",
+   "frozen_line": 39,
+   "kind": "definition",
+   "body_frozen": [
+    55,
+    519
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const EpochWorkspace& ws = ep.ws;",
+    "const SyncedEpoch& se = ep.se;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;",
+    "bool datum_changed = ep.solve.datum_changed;",
+    "const std::set<char>& changed_consts = ep.solve.changed_consts;",
+    "bool clk_model_warm = ep.solve.clk_model_warm;",
+    "double pl_now_s = ep.clock.pl_now_s;",
+    "double dt = ep.clock.dt;",
+    "std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;",
+    "std::set<std::string>& retro_flag_sats = handoff.retro_flag_sats;",
+    "bool retro_feed = ep.solve.retro_feed;"
+   ],
+   "fallback": [],
+   "new_line": 43,
+   "body_first_new_line": 65
+  },
+  {
+   "seam": "networkStashStatus",
+   "file": "src/core/filter/NetworkStashStatus.cpp",
+   "frozen_line": 39,
+   "kind": "definition",
+   "body_frozen": [
+    67,
+    684
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "NetworkCarryVce& carry_vce_est = run.engines.carry_vce;",
+    "NetworkPriorResidual& prires_est = run.engines.prires;",
+    "const std::set<std::string>& clock_refloat_sats = ep.solve.handoff.clock_refloat_sats;",
+    "int n_arc_refloat_epoch = ep.solve.handoff.n_arc_refloat_epoch;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;",
+    "const std::vector<std::pair<std::string, std::string>>& registered_code_keys = ep.columns.registered_code_keys;",
+    "const std::set<std::string>& retro_emit_sats = ep.prep.retro_emit_sats;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "double sigma0_adapt = ep.solve.sigma0_adapt;",
+    "int total_pins = ep.assembly.total_pins;",
+    "double dt = ep.clock.dt;",
+    "bool datum_changed = ep.solve.datum_changed;",
+    "const std::set<char>& changed_consts = ep.solve.changed_consts;",
+    "int n_clock = ep.columns.n_clock;",
+    "int n_present = ep.columns.n_present;",
+    "int n_pb = ep.columns.n_pb;",
+    "int n_cb = ep.columns.n_cb;",
+    "int n_dropped_sats = ep.pass_a.n_dropped_sats;",
+    "int n_adapt = ep.solve.n_adapt;"
+   ],
+   "fallback": [],
+   "new_line": 43,
+   "body_first_new_line": 77
+  },
+  {
+   "seam": "networkClockLevelRestoreRaise",
+   "file": "src/core/filter/NetworkClockLevel.cpp",
+   "frozen_line": 522,
+   "kind": "definition",
+   "body_frozen": [
+    523,
+    579
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;"
+   ],
+   "fallback": [],
+   "new_line": 526,
+   "body_first_new_line": 532
+  },
+  {
+   "seam": "networkClockLevelMonitor",
+   "file": "src/core/filter/NetworkClockLevel.cpp",
+   "frozen_line": 581,
+   "kind": "definition",
+   "body_frozen": [
+    585,
+    687
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const GnssTime& t = ep.se.time;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "bool datum_changed = ep.solve.datum_changed;"
+   ],
+   "fallback": [],
+   "new_line": 589,
+   "body_first_new_line": 602
+  },
+  {
+   "seam": "networkRhsAttribution",
+   "file": "src/core/filter/NetworkRhsAttrib.cpp",
+   "frozen_line": 1942,
+   "kind": "definition",
+   "body_frozen": [
+    1950,
+    1965
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "const NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const NetworkEstimator::Datum& plan_datum = ep.solve.plan.shared_datum;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const Eigen::VectorXd* x_s = &ep.solve.x_s;"
+   ],
+   "fallback": [],
+   "new_line": 1946,
+   "body_first_new_line": 1962
+  },
+  {
+   "seam": "networkRhsAttribTrip",
+   "file": "src/core/filter/NetworkRhsAttrib.cpp",
+   "kind": "adapter definition",
+   "forward": "networkRhsAttribTrip(run.ctx, run.config, run.log, run.traces, ep.se, run.setup.stations, run.engines.est, ep.solve.plan.shared_datum, ep.assembly.asm_res, ep.assembly.est_index_of, &ep.solve.x_s)",
+   "new_line": 2070
+  },
+  {
+   "seam": "networkIonoDiag",
+   "file": "src/core/filter/NetworkIonoDiag.cpp",
+   "frozen_line": 38,
+   "kind": "definition",
+   "body_frozen": [
+    52,
+    277
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const EpochWorkspace& ws = ep.ws;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;"
+   ],
+   "fallback": [],
+   "new_line": 42,
+   "body_first_new_line": 61
+  },
+  {
+   "seam": "networkDdFrac",
+   "file": "src/core/filter/NetworkDdFrac.cpp",
+   "frozen_line": 40,
+   "kind": "definition",
+   "body_frozen": [
+    51,
+    342
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;"
+   ],
+   "fallback": [],
+   "new_line": 44,
+   "body_first_new_line": 60
+  },
+  {
+   "seam": "networkShDevVtec",
+   "file": "src/core/filter/NetworkShDevVtec.cpp",
+   "frozen_line": 40,
+   "kind": "definition",
+   "body_frozen": [
+    52,
+    217
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;"
+   ],
+   "fallback": [],
+   "new_line": 43,
+   "body_first_new_line": 60
+  },
+  {
+   "seam": "networkShHealth",
+   "file": "src/core/filter/NetworkShHealth.cpp",
+   "frozen_line": 38,
+   "kind": "definition",
+   "body_frozen": [
+    53,
+    346
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "NetworkCarryVce& carry_vce_est = run.engines.carry_vce;",
+    "NetworkPriorResidual& prires_est = run.engines.prires;",
+    "bool datum_changed = ep.solve.datum_changed;",
+    "double pl_now_s = ep.clock.pl_now_s;"
+   ],
+   "fallback": [],
+   "new_line": 42,
+   "body_first_new_line": 62
+  },
+  {
+   "seam": "networkLeveling",
+   "file": "src/core/filter/NetworkLeveling.cpp",
+   "frozen_line": 36,
+   "kind": "definition",
+   "body_frozen": [
+    54,
+    108
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "NetworkSetupResult& setup = run.setup;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "NetworkCarryVce& carry_vce_est = run.engines.carry_vce;",
+    "NetworkPriorResidual& prires_est = run.engines.prires;",
+    "bool carry_warm = ep.clock.carry_warm;",
+    "double pl_now_s = ep.clock.pl_now_s;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;",
+    "const std::vector<std::pair<std::string, std::string>>& registered_code_keys = ep.columns.registered_code_keys;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;"
+   ],
+   "fallback": [],
+   "new_line": 40,
+   "body_first_new_line": 64
+  },
+  {
+   "seam": "networkPhaseVisibleMonitor",
+   "file": "src/core/filter/NetworkPhaseVisibleDiag.cpp",
+   "kind": "adapter definition",
+   "forward": "networkPhaseVisibleMonitor(run.ctx, run.traces, ep.se, run.engines.est, ep.solve.x_s, ep.ws)",
+   "new_line": 164
+  },
+  {
+   "seam": "networkLedgerEmitFold",
+   "file": "src/core/filter/NetworkLedgerEmit.cpp",
+   "kind": "adapter definition",
+   "forward": "networkLedgerEmitFold(run.ctx, run.traces, ep.se)",
+   "new_line": 462
+  },
+  {
+   "seam": "networkSecondPhaseEpochTail",
+   "file": "src/core/filter/NetworkSecondPhaseScope.cpp",
+   "frozen_line": 84,
+   "kind": "definition",
+   "body_frozen": [
+    85,
+    128
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::vector<NetStation>& stations = run.setup.stations;"
+   ],
+   "fallback": [],
+   "new_line": 87,
+   "body_first_new_line": 95
+  },
+  {
+   "seam": "networkChannelAllEpoch",
+   "file": "src/core/filter/NetworkChannelAll.cpp",
+   "frozen_line": 61,
+   "kind": "definition",
+   "body_frozen": [
+    64,
+    157
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<bool>& present = ep.pass_a.present;"
+   ],
+   "fallback": [],
+   "new_line": 65,
+   "body_first_new_line": 75
+  },
+  {
+   "seam": "networkMultiGnssEpoch",
+   "file": "src/core/filter/NetworkMultiGnss.cpp",
+   "frozen_line": 41,
+   "kind": "definition",
+   "body_frozen": [
+    44,
+    88
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<bool>& present = ep.pass_a.present;"
+   ],
+   "fallback": [],
+   "new_line": 45,
+   "body_first_new_line": 55
+  },
+  {
+   "seam": "networkParamInventoryNoteSatellites",
+   "file": "src/core/filter/NetworkParamInventory.cpp",
+   "frozen_line": 976,
+   "kind": "definition",
+   "body_frozen": [
+    976,
+    988
+   ],
+   "preamble": [
+    "NetworkParamInventory& inv = run.ctx.param_inventory;",
+    "const SyncedEpoch& se = ep.se;"
+   ],
+   "fallback": [],
+   "new_line": 986,
+   "body_first_new_line": 993
+  },
+  {
+   "seam": "networkParamInventoryEpochTail",
+   "file": "src/core/filter/NetworkParamInventory.cpp",
+   "frozen_line": 966,
+   "kind": "definition",
+   "body_frozen": [
+    967,
+    974
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const NetworkConfig& nc = run.nc;",
+    "bool emitted = ep.emitted;"
+   ],
+   "fallback": [],
+   "new_line": 968,
+   "body_first_new_line": 978
+  },
+  {
+   "seam": "networkContributionsEpochTail",
+   "file": "src/core/filter/NetworkContributions.cpp",
+   "frozen_line": 676,
+   "kind": "definition",
+   "body_frozen": [
+    679,
+    705
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = nrun.ctx;",
+    "const NetworkEstimator& est = nrun.engines.est;",
+    "const std::shared_ptr<spdlog::logger>& log = nrun.log;",
+    "NetworkRunTraces& traces = nrun.traces;",
+    "const NetworkConfig& nc = nrun.nc;",
+    "bool emitted = ep.emitted;"
+   ],
+   "fallback": [
+    "run"
+   ],
+   "new_line": 680,
+   "body_first_new_line": 693
+  },
+  {
+   "seam": "networkPostfitSigma0",
+   "file": "src/core/filter/NetworkFrameDiag.cpp",
+   "frozen_line": 183,
+   "kind": "definition",
+   "body_frozen": [
+    191,
+    358
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const std::vector<std::vector<PppObservation>>* modeled = &ep.pass_a.modeled;"
+   ],
+   "fallback": [],
+   "new_line": 194,
+   "body_first_new_line": 210
+  },
+  {
+   "seam": "networkShSpectrum",
+   "file": "src/core/filter/NetworkFrameDiag.cpp",
+   "frozen_line": 70,
+   "kind": "definition",
+   "body_frozen": [
+    73,
+    181
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "NetworkEstimator& est = run.engines.est;"
+   ],
+   "fallback": [],
+   "new_line": 74,
+   "body_first_new_line": 85
+  },
+  {
+   "seam": "networkStationBlock",
+   "file": "src/core/filter/NetworkStationBlock.cpp",
+   "frozen_line": 249,
+   "kind": "definition",
+   "body_frozen": [
+    256,
+    382
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "NetworkEstimator& est = run.engines.est;",
+    "const Eigen::VectorXd& x_s = ep.solve.x_s;",
+    "const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;"
+   ],
+   "fallback": [],
+   "new_line": 253,
+   "body_first_new_line": 268
+  },
+  {
+   "seam": "networkPrefitCensus",
+   "file": "src/core/filter/NetworkPrefitCensus.cpp",
+   "kind": "adapter definition",
+   "forward": "networkPrefitCensus(run.ctx, run.config, run.log, run.traces, ep.se, run.setup.stations, run.engines.est, ep.assembly.asm_res, ep.assembly.est_index_of)",
+   "new_line": 836
+  },
+  {
+   "seam": "networkRedundancyCensus",
+   "file": "src/core/filter/NetworkRedundancyCensus.cpp",
+   "frozen_line": 201,
+   "kind": "definition",
+   "body_frozen": [
+    209,
+    602
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = nep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const NetworkEstimator& est = run.engines.est;",
+    "const NetworkEstimator::Datum& plan_datum = nep.solve.plan.shared_datum;",
+    "const std::vector<StationAssembly>& asm_res = nep.assembly.asm_res;",
+    "const std::vector<int>& est_index_of = nep.assembly.est_index_of;",
+    "const Eigen::VectorXd& x_s = nep.solve.x_s;"
+   ],
+   "fallback": [
+    "ep"
+   ],
+   "new_line": 205,
+   "body_first_new_line": 223
+  },
+  {
+   "seam": "networkBlockBaardaEmit",
+   "file": "src/core/filter/NetworkBlockBaarda.cpp",
+   "frozen_line": 247,
+   "kind": "definition",
+   "body_frozen": [
+    250,
+    332
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;"
+   ],
+   "fallback": [],
+   "new_line": 250,
+   "body_first_new_line": 261
+  },
+  {
+   "seam": "networkCongruenceEmit",
+   "file": "src/core/filter/NetworkCongruence.cpp",
+   "frozen_line": 228,
+   "kind": "definition",
+   "body_frozen": [
+    231,
+    312
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;"
+   ],
+   "fallback": [],
+   "new_line": 231,
+   "body_first_new_line": 242
+  },
+  {
+   "seam": "networkMdbFlush",
+   "file": "src/core/filter/NetworkMdb.cpp",
+   "frozen_line": 173,
+   "kind": "definition",
+   "body_frozen": [
+    175,
+    325
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;"
+   ],
+   "fallback": [],
+   "new_line": 177,
+   "body_first_new_line": 187
+  },
+  {
+   "seam": "networkDatumGraphCensus",
+   "file": "src/core/filter/NetworkDatumGraph.cpp",
+   "frozen_line": 342,
+   "kind": "definition",
+   "body_frozen": [
+    350,
+    624
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const GnssConfig& config_ = run.config;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;",
+    "const SyncedEpoch& se = ep.se;",
+    "const std::vector<NetStation>& stations = run.setup.stations;",
+    "const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;",
+    "const std::vector<int>& est_index_of = ep.assembly.est_index_of;",
+    "const NetworkSbasis::Plan& plan = ep.solve.plan;",
+    "const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;",
+    "const std::vector<std::pair<std::string, std::string>>& registered_code_keys = ep.columns.registered_code_keys;",
+    "const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;",
+    "bool datum_changed = ep.solve.datum_changed;"
+   ],
+   "fallback": [],
+   "new_line": 346,
+   "body_first_new_line": 365
+  },
+  {
+   "seam": "networkAmbStateTrace",
+   "file": "src/core/filter/NetworkAmbStateTrace.cpp",
+   "frozen_line": 105,
+   "kind": "definition",
+   "body_frozen": [
+    107,
+    135
+   ],
+   "preamble": [
+    "NetworkRunContext& ctx = run.ctx;",
+    "const std::shared_ptr<spdlog::logger>& log = run.log;",
+    "NetworkRunTraces& traces = run.traces;"
+   ],
+   "fallback": [],
+   "new_line": 109,
+   "body_first_new_line": 117
+  }
+ ],
+ "setup": {
+  "run_network": {
+   "frozen": [
+    192,
+    2528
+   ],
+   "edits": [
+    {
+     "class": "TYPE_MOVE",
+     "tag": "T-A the lambda and LoopSignal",
+     "frozen_line": 975
+    },
+    {
+     "class": "relocation",
+     "tag": "call rewrite",
+     "frozen_line": 2513
+    },
+    {
+     "class": "relocation",
+     "tag": "call rewrite",
+     "frozen_line": 2519
+    },
+    {
+     "class": "BRACKET",
+     "tag": "remove subBegin",
+     "frozen_line": 810
+    },
+    {
+     "class": "BRACKET",
+     "tag": "remove subEnd",
+     "frozen_line": 815
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sec_sub_ep0",
+     "frozen_line": 807
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sub_wall0",
+     "frozen_line": 808
+    },
+    {
+     "class": "FIELD_MOVE",
+     "tag": "remove sub_tmr0",
+     "frozen_line": 809
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end: the engines view",
+     "frozen_line": 2525
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "run end binding",
+     "frozen_line": 2527
+    },
+    {
+     "class": "new lines",
+     "tag": "the run's construction",
+     "frozen_line": 279
+    },
+    {
+     "class": "include",
+     "tag": "include",
+     "frozen_line": 76
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE est",
+     "frozen_line": 722
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE carry_driver",
+     "frozen_line": 655
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE slip_qc",
+     "frozen_line": 286
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE emit_engines",
+     "frozen_line": 675
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE timing",
+     "frozen_line": 711
+    },
+    {
+     "class": "OWNER_MOVE",
+     "tag": "OWNER_MOVE cl_tally (unread)",
+     "frozen_line": 251
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT pl_q_amb, pl_var_floor",
+     "frozen_line": 399
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT pl_q_amb, pl_var_floor",
+     "frozen_line": 402
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 412
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 413
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_vce_est",
+     "frozen_line": 416
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT prires_est",
+     "frozen_line": 441
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT reference",
+     "frozen_line": 441
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 625
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT reference",
+     "frozen_line": 625
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 626
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 631
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 632
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 635
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 639
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 640
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 641
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 642
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 648
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT carry_cfg",
+     "frozen_line": 653
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 669
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 670
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 671
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 672
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 673
+    },
+    {
+     "class": "SPEC_CUT",
+     "tag": "SPEC_CUT clk_rebase_cfg",
+     "frozen_line": 674
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_rts",
+     "frozen_line": 234
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_staged",
+     "frozen_line": 235
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS brdc_nav_cursor",
+     "frozen_line": 236
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_carry",
+     "frozen_line": 390
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS last_pivot",
+     "frozen_line": 391
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS anchor_incumbent",
+     "frozen_line": 392
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS this_epoch_anchor",
+     "frozen_line": 393
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS start_anchor_s",
+     "frozen_line": 394
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS local_carry",
+     "frozen_line": 395
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_sigma0_ewma",
+     "frozen_line": 396
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS grade_metric_s",
+     "frozen_line": 397
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_on",
+     "frozen_line": 398
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_warmup",
+     "frozen_line": 400
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS pl_max_gap_s",
+     "frozen_line": 401
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS ura_on",
+     "frozen_line": 573
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS raim_on",
+     "frozen_line": 574
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_tow",
+     "frozen_line": 590
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS prev_week",
+     "frozen_line": 591
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_emitted",
+     "frozen_line": 592
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_epochs",
+     "frozen_line": 593
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_gated_key_epochs",
+     "frozen_line": 594
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchor_s",
+     "frozen_line": 595
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS max_dur_anchored",
+     "frozen_line": 596
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_eq34",
+     "frozen_line": 614
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_invariant",
+     "frozen_line": 617
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_gate",
+     "frozen_line": 630
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_sat_vertex",
+     "frozen_line": 677
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_group_id",
+     "frozen_line": 678
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_prev_tow",
+     "frozen_line": 679
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS carry_innov_pending",
+     "frozen_line": 680
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS phase_datum_prioritized",
+     "frozen_line": 681
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS n_loop_epochs",
+     "frozen_line": 713
+    },
+    {
+     "class": "UNREAD_ALIAS",
+     "tag": "UNREAD_ALIAS decim_counter",
+     "frozen_line": 714
+    }
+   ],
+   "unread_aliases": {
+    "removed": [
+     "brdc_rts",
+     "brdc_nav_staged",
+     "brdc_nav_cursor",
+     "prev_carry",
+     "last_pivot",
+     "anchor_incumbent",
+     "this_epoch_anchor",
+     "start_anchor_s",
+     "local_carry",
+     "ura_sigma0_ewma",
+     "grade_metric_s",
+     "pl_on",
+     "pl_warmup",
+     "pl_max_gap_s",
+     "ura_on",
+     "raim_on",
+     "prev_tow",
+     "prev_week",
+     "n_emitted",
+     "n_gated_epochs",
+     "n_gated_key_epochs",
+     "max_dur_anchor_s",
+     "max_dur_anchored",
+     "phase_datum_eq34",
+     "carry_invariant",
+     "carry_innov_gate",
+     "carry_sat_vertex",
+     "carry_group_id",
+     "carry_prev_tow",
+     "carry_innov_pending",
+     "phase_datum_prioritized",
+     "n_loop_epochs",
+     "decim_counter"
+    ],
+    "kept": []
+   }
+  },
+  "groups": {
+   "engines_struct_frozen": [
+    43,
+    49
+   ]
+  },
+  "solve_handoff": {
+   "fields": [
+    "clock_refloat_sats",
+    "retro_flag_sats",
+    "n_arc_refloat_epoch"
+   ],
+   "epilogue_writes": 3
+  },
+  "application_hpp": {
+   "after_line": 516
+  },
+  "cmake": {
+   "sources": [
+    "src/core/app/ApplicationNetworkEpoch.cpp",
+    "src/core/app/NetworkRun.cpp"
+   ],
+   "tests": [
+    "tests/test_network_epoch_contract.cpp",
+    "tests/test_network_engine_spec.cpp"
+   ]
+  }
+ },
+ "spec_cut": [
+  [
+   399,
+   399,
+   "pl_q_amb, pl_var_floor"
+  ],
+  [
+   402,
+   402,
+   "pl_q_amb, pl_var_floor"
+  ],
+  [
+   412,
+   412,
+   "carry_vce_est"
+  ],
+  [
+   413,
+   415,
+   "carry_vce_est"
+  ],
+  [
+   416,
+   419,
+   "carry_vce_est"
+  ],
+  [
+   441,
+   452,
+   "prires_est"
+  ],
+  [
+   625,
+   625,
+   "carry_cfg"
+  ],
+  [
+   626,
+   626,
+   "carry_cfg"
+  ],
+  [
+   631,
+   631,
+   "carry_cfg"
+  ],
+  [
+   632,
+   632,
+   "carry_cfg"
+  ],
+  [
+   635,
+   635,
+   "carry_cfg"
+  ],
+  [
+   639,
+   639,
+   "carry_cfg"
+  ],
+  [
+   640,
+   640,
+   "carry_cfg"
+  ],
+  [
+   641,
+   641,
+   "carry_cfg"
+  ],
+  [
+   642,
+   642,
+   "carry_cfg"
+  ],
+  [
+   648,
+   648,
+   "carry_cfg"
+  ],
+  [
+   653,
+   654,
+   "carry_cfg"
+  ],
+  [
+   669,
+   669,
+   "clk_rebase_cfg"
+  ],
+  [
+   670,
+   670,
+   "clk_rebase_cfg"
+  ],
+  [
+   671,
+   671,
+   "clk_rebase_cfg"
+  ],
+  [
+   672,
+   672,
+   "clk_rebase_cfg"
+  ],
+  [
+   673,
+   673,
+   "clk_rebase_cfg"
+  ],
+  [
+   674,
+   674,
+   "clk_rebase_cfg"
+  ]
+ ],
+ "problems": [],
+ "doc_hunks": {
+  "src/core/app/ApplicationNetwork.cpp": 7,
+  "src/core/app/ApplicationNetworkEpoch.cpp": 5,
+  "src/core/app/NetworkRun.cpp": 1,
+  "include/app/Application.hpp": 4,
+  "include/app/NetworkRunContext.hpp": 8,
+  "include/filter/NetworkSolveGlue.hpp": 3,
+  "include/filter/NetworkDdPriorBuild.hpp": 1,
+  "include/filter/NetworkRedundancyCensus.hpp": 1,
+  "include/filter/NetworkPriorResidual.hpp": 1,
+  "include/filter/NetworkWlRunTypes.hpp": 2,
+  "include/filter/NetworkRunGroups.hpp": 1,
+  "include/filter/NetworkClockQc.hpp": 1,
+  "include/filter/NetworkDdFrac.hpp": 1,
+  "include/filter/NetworkEmitStore.hpp": 1,
+  "include/filter/NetworkInstallCarry.hpp": 1,
+  "include/filter/NetworkIonoDiag.hpp": 1,
+  "include/filter/NetworkLeveling.hpp": 1,
+  "include/filter/NetworkProducerAr.hpp": 1,
+  "include/filter/NetworkRaim.hpp": 1,
+  "include/filter/NetworkShDevVtec.hpp": 1,
+  "include/filter/NetworkShHealth.hpp": 1,
+  "include/filter/NetworkSolPrep.hpp": 1,
+  "include/filter/NetworkStashStatus.hpp": 1
+ },
+ "doc_hunks_after_deletion_only": [],
+ "stale_spellings": [
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   89
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/app/NetworkRun.hpp",
+   92
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/app/NetworkRunContext.hpp",
+   2163
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2465
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2529
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   2556
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/app/NetworkRunContext.hpp",
+   3912
+  ],
+  [
+   "an engine as a run-TU local",
+   "include/filter/NetworkPriorResidual.hpp",
+   312
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkRedundancyCensus.hpp",
+   172
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkRedundancyCensus.hpp",
+   173
+  ],
+  [
+   "sg_ (the solve result's old local)",
+   "include/filter/NetworkSolveGlue.hpp",
+   23
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "include/filter/NetworkSolveGlue.hpp",
+   181
+  ],
+  [
+   "subBegin / subEnd closures",
+   "include/filter/NetworkWlRunTypes.hpp",
+   45
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetwork.cpp",
+   137
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   390
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/app/ApplicationNetwork.cpp",
+   406
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   6
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   88
+  ],
+  [
+   "the per-epoch lambda",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   147
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   391
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1139
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/app/ApplicationNetworkEpoch.cpp",
+   1152
+  ],
+  [
+   "subBegin / subEnd closures",
+   "src/core/app/NetworkRun.cpp",
+   110
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkDdPriorBuild.cpp",
+   61
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkEmitStore.cpp",
+   162
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   343
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInstallCarry.cpp",
+   362
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkInvariantCarryDriver.cpp",
+   1221
+  ],
+  [
+   "an engine as a run-TU local",
+   "src/core/filter/NetworkProducerAr.cpp",
+   9
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "src/core/filter/NetworkSolveGlue.cpp",
+   1552
+  ],
+  [
+   "the solve's callbacks by their closure names",
+   "tests/test_network_arc_graph_oracles.cpp",
+   298
+  ]
+ ],
+ "retired_at_base": [
+  "row (W1) networkRxCbDemeanPrepass: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkFastClockTick: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkFastClockHarvest: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W2) networkBuildEnsembleGauges: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W3) networkClockLevelRebase: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "row (W4) networkIonoDwRelease: retired by the REMOVE-key deletion; gone at this base (not called, declared or defined)",
+  "declared EPOCH_MEMBER carry_arc_amb_key2: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE fc_ppp_utils: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared OWNER_MOVE lane_run: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT mw_wl_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT ewl_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT pb_filter_cfg: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared SPEC_CUT idw, iono_deweight: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared CALLABLE isUncarriedThirdBand: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared CALLBACK_DIRECT buildEnsembleGauges: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_datum_ensemble: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS phase_hold_on: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "declared UNREAD_ALIAS sh_converged_latch: retired by the REMOVE-key deletion; its frozen object is gone at this base",
+  "epoch member ep.dd_build.carry_arc_amb_key2: retired by the REMOVE-key deletion; `carry_arc_amb_key2` is not declared at this base",
+  "run member run.engines.iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
+  "run member run.engines.fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
+  "run member run.lanes: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
+  "specification field mw_wl_cfg: retired by the REMOVE-key deletion; `mw_wl_cfg` is not declared at this base",
+  "specification field ewl_cfg: retired by the REMOVE-key deletion; `ewl_cfg` is not declared at this base",
+  "specification field pb_filter_cfg: retired by the REMOVE-key deletion; `pb_filter_cfg` is not declared at this base",
+  "specification field idw: retired by the REMOVE-key deletion; `idw` is not declared at this base",
+  "engine fc_ppp_utils: retired by the REMOVE-key deletion; `fc_ppp_utils` is not declared at this base",
+  "engine iono_deweight: retired by the REMOVE-key deletion; `iono_deweight` is not declared at this base",
+  "constructor argument emit_engines #2: retired by the REMOVE-key deletion; `pb_filter_cfg` is not declared at this base",
+  "engine lane_run: retired by the REMOVE-key deletion; `lane_run` is not declared at this base",
+  "removed parameter networkBuildCarryDdPriors(isUncarriedThirdBand): retired by the REMOVE-key deletion; `isUncarriedThirdBand` is not declared at this base",
+  "removed parameter networkSolveGlue(buildEnsembleGauges): retired by the REMOVE-key deletion; `buildEnsembleGauges` is not declared at this base",
+  "designed text sh_converged_latch: retired by the REMOVE-key deletion; `sh_converged_latch` is not declared at this base",
+  "fc_n_emitted_before is spelled n_emitted_before at this base; the entries naming it are re-spelled"
+ ]
+}

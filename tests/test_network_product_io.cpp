@@ -965,7 +965,6 @@ TEST(NetworkProductIoTest, HeaderLegendDeclaresEveryEmittedField) {
     c.age_scale_k                = 1e-6;
     c.cb_pin_pair["G"]           = "C1C-C2L";
     c.gf_pin_pair["G"]           = "C1C-C2L";
-    c.disc_jump_test_decommon    = true;   // discdecom= (Card JT)
     c.present                    = true;
 
     // An epoch arming every optional record / field channel.
@@ -1188,8 +1187,9 @@ TEST(NetworkProductIoTest, CbPinPairTravelsInContractAndChecks) {
     std::filesystem::remove(bare);
 }
 
-// The geometry-free datum pair (network.code_bias_gf_datum, Odijk rd 3b).  Its
-// presence on the S line tells a consumer that the emitted code biases are the
+// The geometry-free datum pair (the retired network.code_bias_gf_datum, Odijk rd 3b;
+// the producer no longer fills it, and the wire keeps it for products written with
+// it).  Its presence on the S line tells a consumer that the emitted code biases are the
 // slant-posture estimable function (the pinned pair is identically the datum,
 // content only from j >= 3, each satellite's geometry-free bias absorbed by the
 // ionosphere, Table 8) rather than the single-layer one; the record layout is

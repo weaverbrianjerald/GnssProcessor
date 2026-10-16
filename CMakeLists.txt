@@ -131,17 +131,23 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
     src/core/app/ApplicationNetwork.cpp
+    src/core/app/ApplicationNetworkEpoch.cpp
+    src/core/app/NetworkRun.cpp
+    src/core/app/NetworkEpochAdmission.cpp
     src/core/app/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/app/ApplicationNetworkAssembly.cpp
     src/core/app/NetworkKnobs.cpp
     src/core/app/NetworkSnapshotFingerprint.cpp
     src/core/app/NetworkWarmResume.cpp
+    src/core/app/NetworkEntities.cpp
+    src/core/app/NetworkRunFields.cpp
     src/core/app/NetworkStateSnapshotWrite.cpp
     src/core/app/NetworkBorderPrior.cpp
     src/core/app/NetworkBorderStash.cpp
     src/core/app/NetworkLocalCarryHarvest.cpp
     src/core/app/SignalRoster.cpp
+    src/core/app/SignalRosterSites.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	src/core/slip/MwSlipDetectorEpoch.cpp
@@ -152,7 +158,6 @@ add_library(gnss_core STATIC
 	src/core/slip/MwSlipDetectorReset.cpp
 	src/core/slip/MwSlipDetectorTrace.cpp
 	src/core/slip/MwSlipDetectorZd.cpp
-	src/core/slip/MwPhaseBridge.cpp
 	# STAGED (not abandoned) — see header banners in include/slip/.
 	#   IfPhaseSlipDetector: DD IF-phase pre-fit residuals; only valid for
 	#     static sites with a precise a priori position — the NETWORK producer regime.
@@ -184,6 +189,7 @@ add_library(gnss_core STATIC
 	src/core/slip/SlipBridgeKernel.cpp
 	src/core/slip/NetworkRawObservables.cpp
 	src/core/slip/NetworkSlipQc.cpp
+	src/core/slip/NetworkGapResumeCensus.cpp
 	src/core/slip/NetworkSlipOracle.cpp
 	src/core/slip/NetworkCommonBandScope.cpp
 	src/core/slip/NetworkGfArcJump.cpp
@@ -199,7 +205,6 @@ add_library(gnss_core STATIC
     src/core/products/SignalDeclaration.cpp
     src/core/products/NetworkProductEmitter.cpp
     src/core/products/NetworkEmitRebase.cpp
-    src/core/products/NetworkPbEmitFilter.cpp
     src/core/products/NetworkClockEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
@@ -232,7 +237,6 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkNormalEquationsDetached.cpp
     src/core/filter/NetworkEstimator.cpp
     src/core/filter/NetworkInvariantCarryDriver.cpp
-    src/core/filter/NetworkMwWlLayer.cpp
     src/core/filter/NetworkSbasis.cpp
     src/core/filter/NetworkExtraBandScope.cpp
     src/core/filter/NetworkSecondCodeScope.cpp
@@ -240,11 +244,12 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkChannelAll.cpp
     src/core/filter/NetworkMultiGnss.cpp
     src/core/filter/NetworkPhaseDatum.cpp
+    src/core/filter/NetworkPhaseAnchorEpoch.cpp
+    src/core/filter/NetworkSlipFunnel.cpp
     src/core/filter/NetworkChainDatum.cpp
     src/core/filter/NetworkAnchorHygiene.cpp
     src/core/filter/NetworkSignalIntegrity.cpp
     src/core/filter/NetworkMeasurementAdmission.cpp
-    src/core/filter/NetworkIonoDwRelease.cpp
     src/core/filter/NetworkRaim.cpp
     src/core/filter/NetworkClockQc.cpp
     src/core/filter/NetworkClockAnchor.cpp
@@ -264,6 +269,7 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDatumGraph.cpp
     src/core/filter/NetworkBlockBaarda.cpp
     src/core/filter/NetworkCongruence.cpp
+    src/core/filter/NetworkCongruenceSetup.cpp
     src/core/filter/NetworkPriorResidual.cpp
     src/core/filter/NetworkSolPrep.cpp
     src/core/filter/NetworkEmitStore.cpp
@@ -274,6 +280,18 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkDdFrac.cpp
     src/core/filter/NetworkSdEwlAr.cpp
     src/core/filter/NetworkShDevVtec.cpp
+    src/core/filter/NetworkSolveStations.cpp
+    src/core/filter/NetworkStationBuild.cpp
+    src/core/filter/NetworkIonoConstraintRows.cpp
+    src/core/filter/NetworkLevelingCarry.cpp
+    src/core/filter/NetworkPhaseColourCarry.cpp
+    src/core/filter/NetworkRxClockCarry.cpp
+    src/core/filter/NetworkRxCodeBiasCarry.cpp
+    src/core/filter/NetworkSlantIonoCarry.cpp
+    src/core/filter/NetworkStationAnchors.cpp
+    src/core/filter/NetworkStationCarry.cpp
+    src/core/filter/NetworkStationSplit.cpp
+    src/core/filter/NetworkZwdCarry.cpp
     src/core/filter/NetworkShHealth.cpp
     src/core/filter/NetworkLeveling.cpp
     src/core/filter/NetworkStashStatus.cpp
@@ -286,30 +304,35 @@ add_library(gnss_core STATIC
     src/core/filter/NetworkFixedCycles.cpp
     src/core/filter/NetworkInstallCarry.cpp
     src/core/filter/NetworkDdPriorBuild.cpp
-    src/core/filter/NetworkMwWlGlue.cpp
     src/core/filter/NetworkSolveGlue.cpp
+    src/core/filter/NetworkCodeBiasDatum.cpp
+    src/core/filter/NetworkClockDatum.cpp
+    src/core/filter/NetworkRankGate.cpp
+    src/core/filter/NetworkSbasisCompletion.cpp
+    src/core/filter/NetworkRaimWithinEpoch.cpp
     src/core/filter/NetworkWithinEpochCulprits.cpp
     src/core/filter/NetworkLevelAuthority.cpp
     src/core/filter/NetworkRelevel.cpp
-    src/core/filter/NetworkFastClock.cpp
     src/core/filter/NetworkTeardown.cpp
     src/core/app/NetworkRunTimingRunEnd.cpp
     src/core/app/NetworkRunArtifactsRunEnd.cpp
     src/core/app/NetworkSolveStationsRunEnd.cpp
-    src/core/app/NetworkStationIonoRunEnd.cpp
     src/core/app/NetworkResumeRunEnd.cpp
     src/core/app/NetworkReadmitRunEnd.cpp
     src/core/app/NetworkClosedLoopRunEnd.cpp
     src/core/filter/NetworkLevelingCarryRunEnd.cpp
     src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp
     src/core/filter/NetworkCarryVceRunEnd.cpp
+    src/core/filter/NetworkCarryVceApply.cpp
     src/core/slip/NetworkSlipQcRunEnd.cpp
     src/core/filter/NetworkRunEnd.cpp
+    src/core/filter/NetworkEpochObservers.cpp
     src/core/filter/NetworkInject.cpp
     src/core/filter/NetworkCanonicalPairAdmission.cpp
     src/core/filter/ArcLedger.cpp
     src/core/filter/NetworkAnchorReentry.cpp
     src/core/filter/NetworkOraclePin.cpp
+    src/core/filter/NetworkOraclePinSetup.cpp
     src/core/filter/NetworkCoupling.cpp
     src/core/filter/NetworkCouplingExact.cpp
     src/core/filter/NetworkClockClone.cpp
@@ -359,6 +382,11 @@ if(MSVC)
     # pivoted LU, the rank and condition-number references) cross the Debug section
     # limit (C1128).
     set_source_files_properties(tests/test_network_detached_fold.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/test_pb_hold_block.cpp and tests/test_pb_hold_smoothed.cpp (card NOM3 step EP2): the
+    # run fixture (tests/support/NetworkTestRun.hpp) brings the run's engines into the
+    # translation unit and crosses the Debug section limit (C1128).
+    set_source_files_properties(tests/test_pb_hold_block.cpp tests/test_pb_hold_smoothed.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 target_link_libraries(gnss_core PUBLIC Eigen3::Eigen spdlog::spdlog netCDF::netcdf CURL::libcurl ZLIB::ZLIB)
@@ -463,7 +491,6 @@ add_executable(gnss_tests
     tests/test_neq_station_prior_before_pd.cpp
     tests/test_pd_safe_fold.cpp
     tests/test_carry_aware_covariance.cpp
-    tests/test_family_gf_datum.cpp
     tests/test_w6_iono_constraint.cpp
     tests/test_sat_gf_extra_band_free.cpp
     tests/test_network_estimator.cpp
@@ -472,7 +499,6 @@ add_executable(gnss_tests
     tests/test_residual_qc_wtest.cpp
     tests/test_pivot_frame_q.cpp
     tests/test_border_clone.cpp
-    tests/test_network_iono_deweight_gate.cpp
     tests/test_network_zstore.cpp
     tests/test_network_arc_graph.cpp
     tests/test_network_arc_graph_oracles.cpp
@@ -492,6 +518,7 @@ add_executable(gnss_tests
     tests/test_signal_roster.cpp
     tests/test_signal_roster_plan.cpp
     tests/test_signal_roster_always_on.cpp
+    tests/test_signal_roster_sites.cpp
     tests/test_arc_ledger.cpp
     tests/test_ledger_anchor.cpp
     tests/test_ledger_reentry.cpp
@@ -506,13 +533,11 @@ add_executable(gnss_tests
     tests/test_network_invariant_carry_driver.cpp
     tests/test_shdev_carry.cpp
     tests/test_rx_cb_carry.cpp
-    tests/test_network_mw_wl_layer.cpp
     tests/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
     tests/test_measurement_admission.cpp
     tests/test_measurement_model_prepass.cpp
-    tests/test_iono_dw_release_hygiene.cpp
     tests/test_redundancy_census.cpp
     tests/test_network_mdb.cpp
     tests/test_block_baarda.cpp
@@ -526,13 +551,8 @@ add_executable(gnss_tests
     tests/test_network_rank_gate.cpp
     tests/test_network_sbasis_complete.cpp
     tests/test_datum_graph_census.cpp
-    tests/test_network_fast_clock.cpp
-    tests/test_network_run_traces.cpp
     tests/test_station_block_audit.cpp
-    tests/test_mw_bridge.cpp
     tests/test_card4_emit_rebase.cpp
-    tests/test_pb_emit_filter.cpp
-    tests/test_pb_jump_decommon.cpp
     tests/test_clock_emit_rebase.cpp
     tests/test_clock_anchor.cpp
     tests/test_network_solprep_disc.cpp
@@ -544,8 +564,6 @@ add_executable(gnss_tests
     tests/test_phase_datum_handover.cpp
     tests/test_datum_station_slip_config.cpp
     tests/test_d5_corroborate_autoarm.cpp
-    tests/test_level_information_budget.cpp
-    tests/test_rx_cb_harvest_demean.cpp
     tests/test_h_heartbeat_rider.cpp
     tests/test_bia_receiver_records.cpp
     tests/test_iono_carry_config.cpp
@@ -618,6 +636,12 @@ add_executable(gnss_tests
     tests/test_network_rx_extra_band_delay.cpp
     tests/test_network_contributions.cpp
     tests/test_network_knobs_lane_emit.cpp
+    tests/test_network_knobs_epoch_driver.cpp
+    tests/test_network_knobs_station_assembly.cpp
+    tests/test_network_epoch_contract.cpp
+    tests/test_network_station_build.cpp
+    tests/test_network_harvest_layout.cpp
+    tests/test_network_engine_spec.cpp
     tests/test_network_row_classify.cpp
     tests/test_raim_pool_data_rows_only.cpp
     tests/test_network_rhs_attrib.cpp
@@ -628,14 +652,11 @@ add_executable(gnss_tests
     tests/test_carry_disposition.cpp
     tests/test_carry_sites.cpp
     tests/test_param_responses.cpp
-    tests/test_lane_observatory_config.cpp
     tests/test_zwd_seam_reseed_config.cpp
     tests/test_zwd_seam_reseed_q.cpp
     tests/test_carry_zwd_in_block.cpp
     tests/test_carry_iono_in_block.cpp
     tests/test_carry_rx_clock_in_block.cpp
-    tests/test_young_arc_inflate.cpp
-    tests/test_amb_seam_reinflate_config.cpp
     tests/test_resume_frame_restore.cpp
     tests/test_resume_pb_seam_mark.cpp
     tests/test_resume_border_restore.cpp
@@ -648,9 +669,12 @@ add_executable(gnss_tests
     tests/test_kalman_pivot_detectors.cpp
     tests/test_kalman_qc_counters.cpp
     tests/test_ppp_epoch_work.cpp
-    tests/test_band_scoped_response.cpp
     tests/test_network_inject.cpp
     tests/test_network_run_end.cpp
+    tests/test_network_entities_records.cpp
+    tests/test_network_epoch_observers.cpp
+    tests/test_network_solve_skip.cpp
+    tests/test_network_we_choice.cpp
     tests/test_network_within_epoch_culprits.cpp
     tests/test_canonical_pair_admission.cpp
     tests/test_oracle_pin.cpp

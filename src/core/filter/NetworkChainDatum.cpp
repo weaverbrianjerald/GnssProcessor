@@ -4,8 +4,9 @@
  *
  * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
  * alias preamble below reproduces the run TU's local names for the entries this body
- * references: 19 `auto& X = ctx.carry.X;` references (zwd_carry and
- * eq34_cpl_sprev_total serve the §14 coupling re-base) and 7 `ctx.knobs` values.
+ * references: `auto& X = ctx.carry.X;` references (eq34_cpl_sprev_total serves the §14
+ * coupling re-base), the entity tables of the station carries (card NOM step N4a: the
+ * receiver phase-bias carry and the receiver-side eq34 parents) and 7 `ctx.knobs` values.
  */
 
 #include "filter/NetworkChainDatum.hpp"
@@ -32,10 +33,27 @@
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkSetupResult.hpp"
+#include "filter/NetworkEstimator.hpp"
+#include "logging/NetworkRunTraces.hpp"
+#include "rinex/MultiRinexSync.hpp"
+#include <fmt/format.h>
+#include "app/NetworkLocalCarryHarvest.hpp"   // HarvestBorder, StationHarvestBlock (card NOM3 step HV1)
+#include "atmosphere/SphericalHarmonicIonosphere.hpp"
+#include "filter/NetworkAmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
+#include "filter/NetworkAmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
+#include "filter/NetworkCarryVce.hpp"
+#include "filter/NetworkParamInventory.hpp" // rxIfbFamilyReseeded (card L5B)
+#include "filter/NetworkPriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
+#include "filter/NetworkNormalEquations.hpp"
+#include "filter/NetworkSbasis.hpp"          // NetworkSbasis::Plan
+#include <set>
 
 namespace GnssProcessor {
 
-void eq34ShiftCarry(NetworkCarryState& carry,
+void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
                     const std::map<std::tuple<int, char, std::string>, double>& shift_rxg,
                     const std::map<std::pair<int, std::string>, double>& shift_rpb,
@@ -51,7 +69,7 @@ void eq34ShiftCarry(NetworkCarryState& carry,
         return s != 0.0;
     };
     forEachCarriedReference(
-        carry, carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete),
+        carry, entities, carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::PhaseBias) return false;
             double d = 0.0;
@@ -104,26 +122,31 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const PhaseDatumCandidates& cnd,
                             const AnchorHygiene& hyg,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                            std::set<std::string>& shared_phase_keys) {
+                            std::set<std::string>& shared_phase_keys, EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-auto& anchor_incumbent = ctx.carry.anchor_incumbent;
-auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-auto& eq34_rx_parent = ctx.carry.eq34_rx_parent;
-auto& eq34_sat_root = ctx.carry.eq34_sat_root;
-auto& eq34_prev_el = ctx.carry.eq34_prev_el;
-auto& eq34_reref_total = ctx.carry.eq34_reref_total;
-auto& eq34_erase_total = ctx.carry.eq34_erase_total;
-auto& eq34_shift_total = ctx.carry.eq34_shift_total;
-auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
-auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
-auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
-auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
-auto& eq34_prev_target = ctx.carry.eq34_prev_target;
-auto& eq34_reref = ctx.carry.eq34_reref;
-auto& local_carry = ctx.carry.local_carry;
-auto& rpb_carry = ctx.carry.rpb_carry;
-auto& zwd_carry = ctx.carry.zwd_carry;
+// The incumbent anchors as the old "sat_signal"-keyed map (card NOM step N4d): read-only
+// until the wholesale replacement at the end of the election, which writes the table.
+const std::map<std::string, std::string> anchor_incumbent =
+    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
+net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
+const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
+    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
+
+auto& eq34_reref_total = ctx.counters.eq34_reref_total;
+auto& eq34_erase_total = ctx.counters.eq34_erase_total;
+auto& eq34_shift_total = ctx.counters.eq34_shift_total;
+auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
+auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
+auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
+// The arcs' retained edges and pin targets (card NOM step N4f1): copied in, written back at
+// the end of the election.
+std::set<std::pair<int, std::string>> eq34_retained_edges =
+    net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
+const std::map<std::pair<int, std::string>, double> eq34_prev_target =
+    net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_prev_target);
+auto& eq34_reref = events.phase_datum.eq34_reref;
+net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
@@ -164,7 +187,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // fractional bias is its own estimable RPB state δ_{r,σ} and is not
     // part of the pin).  With full visibility (regional case) this is
     // the Odijk Eq-34 star (CC-R).  The shared set is the ungated union
-    // (as in the ensemble datum); the chain pins fix the enlarged
+    // (as in the retired ensemble datum); the chain pins fix the enlarged
     // (receiver+satellite) gauge.  Per (const,σ) component with n_c
     // stations and m_c sats: (n_c+m_c−1) tree-edge ambiguity pins + 1
     // RPB pin = n_c+m_c, the gauge dimension.  Every RPB-carrying
@@ -176,12 +199,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (empty ⇒ no scaling)
         st.pinned_amb_seed_lambda.clear();   // seed-round fold-deferred (empty ⇒ inert)
     }
-    this_epoch_anchor.clear();
+    // this_epoch_anchor is an epoch event: empty at the epoch's start.
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
-    // declared gauge dimension + shared-side bridge pins, replaced wholesale
-    // exactly like the tree maps.  Read after PASS B's serial consume.
-    ctx.carry.eq34_epoch_declared.clear();
-    ctx.carry.eq34_epoch_bridged.clear();
+    // declared gauge dimension + shared-side bridge pins, filled below (epoch events).
+    // Read after PASS B's serial consume.
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     // This epoch's receiver-side parent edges + per-sat component roots;
@@ -235,10 +256,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // step the shift walk below does not transform (unknown, or nonzero
     // with the carry shift off).  The emitted b_s re-references, so the
     // phase-leveling local carries for it are stale and its D2/C1 shared
-    // PB prior belongs to the retired frame.  Collected into the member
-    // set (cleared here), erased below before PASS B consumes the local
-    // carry, and marginalized at the shared-carry consume.
-    eq34_reref.clear();
+    // PB prior belongs to the retired frame.  Collected into the epoch's
+    // event set (empty at the epoch's start), erased below before PASS B
+    // consumes the local carry, and marginalized at the shared-carry consume.
     for (auto& [g, sats] : grp_sats) {
         // Plain locals rather than the structured bindings g/sats, so the
         // recordEdge lambda below can capture them (C++17 does not allow
@@ -274,8 +294,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             auto ei = sat_el[ri].find(sat);
             if (ei == sat_el[ri].end()) return -1e9;   // no elevation (unreachable for a live arc)
             const double el = ei->second;
-            auto pe = eq34_prev_el.find({ri, sat});
-            const bool rising = (pe != eq34_prev_el.end() && el > pe->second + 1e-6);
+            const double* pe = net::getLos(entities.los, static_cast<int>(ri), sat,
+                                           &net::LosState::eq34_prev_el);
+            const bool rising = (pe != nullptr && el > *pe + 1e-6);
             // Slip-aware (Card 3/4): an arc that slipped this epoch is the worst new
             // tree edge at any elevation.  As a tree edge it invalidates every
             // fundamental cycle that closes through it, so the whole dependent chord set
@@ -386,12 +407,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         }
         const std::string rx_suffix =
             "|" + constellationKey(grp_sys) + "|" + grp_sig;
-        for (const auto& [rxkey, sat] : eq34_rx_parent) {
-            if (rxkey.size() <= rx_suffix.size()
-                || rxkey.compare(rxkey.size() - rx_suffix.size(),
-                                 rx_suffix.size(), rx_suffix) != 0) continue;
-            seedEdge(rxkey.substr(0, rxkey.size() - rx_suffix.size()), sat);
-        }
+        // The receiver-side parents of this family, in station-name order (O3: the order of
+        // the "<name>|<c>|<sigma>" keys they had).
+        net::byStationName(entities.stations, entities.names,
+                           [&](const StationId& id, const net::StationState&) {
+            const std::string* sat = net::get(entities.stations, id, &net::StationState::signals,
+                                              rx_suffix.substr(1),
+                                              &net::StationSignalState::eq34_rx_parent);
+            if (sat) seedEdge(entities.names.names[id.index], *sat);
+        });
 
         // The connected components, in the order of their roots.  Under the shared link
         // rule (a station is united under a satellite, arc by arc) every root is a
@@ -469,10 +493,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         if (stations[i].name == best_name) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
-                auto it = eq34_datum_rx.find(dr_key);
-                if (it != eq34_datum_rx.end())
+                const std::string* drx = net::get(entities.constellations, grp_sys,
+                                                  &net::ConstellationState::channels, grp_sig,
+                                                  &net::ChannelState::datum_rx);
+                if (drx != nullptr)
                     for (size_t i : rx_list)
-                        if (stations[i].name == it->second) { r1 = i; break; }
+                        if (stations[i].name == *drx) { r1 = i; break; }
             }
             if (r1 == static_cast<size_t>(-1)) {
                 int best = -1;
@@ -496,7 +522,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
                             + comp_sats.size());   // n_c + m_c
-            ctx.carry.eq34_epoch_declared[dr_key] +=
+            events.phase_datum.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sats.size());
 
             // Sticky spanning tree (arcgraph::growChainForest, a two-queue BFS
@@ -558,12 +584,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 double target = 0.0;
                 double carry_val = std::numeric_limits<double>::quiet_NaN();
                 if (eq34_round && anchor_incumbent.count(amb)) {
-                    auto lc = local_carry.find(std::make_tuple(
-                        static_cast<int>(ri), sat, grp_sig));
-                    if (lc != local_carry.end() && roundable) {
+                    auto lc = net::getArc(ctx.entities.arcs, std::make_tuple(
+                        static_cast<int>(ri), sat, grp_sig), &net::ArcState::amb);
+                    if (lc != nullptr && roundable) {
                         const double lam = grp_lambda;
                         if (std::isfinite(lam) && lam > 0.0) {
-                            carry_val = lc->second.value_abs;
+                            carry_val = lc->value_abs;
                             target = lam * std::round(carry_val / lam);
                         }
                     }
@@ -649,9 +675,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     new_sat_root[amb] = stations[r1].name;
                 } else {
                     const std::string rxkey = stations[ri].name + rx_suffix;
-                    auto rp = eq34_rx_parent.find(rxkey);
-                    edge_changed = (rp != eq34_rx_parent.end()
-                                    && rp->second != sat);
+                    const std::string* rp =
+                        net::get(entities.stations, StationId{static_cast<int>(ri)},
+                                 &net::StationState::signals, rx_suffix.substr(1),
+                                 &net::StationSignalState::eq34_rx_parent);
+                    edge_changed = (rp != nullptr && *rp != sat);
                     new_rx_parent[rxkey] = sat;
                 }
                 if (edge_changed) {
@@ -750,7 +778,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     ++eq34_n_pins;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
-                    ++ctx.carry.eq34_epoch_bridged[dr_key];
+                    ++events.phase_datum.eq34_epoch_bridged[dr_key];
                 }
             }
             const arcgraph::SpanningForest forest = arcgraph::growChainForest(
@@ -814,7 +842,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                         // Unknown frame step: the carried δ̂_{r,σ}
                         // belongs to an unrecoverable retired frame.
                         // Card PRM phase 3a: counted only when an entry was erased.
-                        if (rpb_carry.erase({idx, rpb_key}) != 0)
+                        if (net::drop(sta_rows, StationId{idx}, &net::StationState::signals, rpb_key,
+                                      &net::StationSignalState::rpb) != 0)
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RpbEq34Erase);
                     } else if (s != 0.0) {
                         shift_rxg[std::make_tuple(idx, rinexLetter(grp_sys),
@@ -824,7 +853,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 }
             }
         }
-        if (!best_datum_rx.empty()) eq34_datum_rx[dr_key] = best_datum_rx;
+        if (!best_datum_rx.empty())
+            net::put(entities.constellations, grp_sys, &net::ConstellationState::channels,
+                     grp_sig, &net::ChannelState::datum_rx) = best_datum_rx;
     }
     // Rank cross-check (D3): recorded pins == Σ (n_c + m_c).  A mismatch
     // means a component was mis-pinned before the W5 gate ever runs.
@@ -854,17 +885,16 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ctx.counters.n_resume_datum_first_reref +=
                 static_cast<long long>(eq34_reref.size());
         int n_erased = 0;
-        for (auto it = local_carry.begin(); it != local_carry.end();) {
-            const auto& key = it->first;   // (station idx, sat, signal)
-            if (eq34_reref.count({std::get<1>(key), std::get<2>(key)})) {
-                it = local_carry.erase(it);
+        // The re-referenced (sat, signal) keys' leveling carries, at every station.
+        net::eraseIf(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
+            if (eq34_reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) {
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
                 prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);   // card PRM phase 3a
-            } else {
-                ++it;
+                return true;
             }
-        }
+            return false;
+        });
         eq34_erase_total += n_erased;
         if (n_erased > 0)
             log->debug("Network[eq34]: {} local ambiguity carry(ies) erased for "
@@ -904,20 +934,18 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+        eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
         // frame (PbHold is exempt from the shift).  Measure-only.
-        for (const auto& [hk, hv] : ctx.carry.pb_hold) {
-            (void)hv;
-            const auto bar = hk.find('|');
-            if (bar == std::string::npos) continue;
-            const auto sh = shift_sat.find({hk.substr(0, bar), hk.substr(bar + 1)});
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_hold,
+                     [&](const SatSignalId& id, const net::PbHoldKey&) {
+            const auto sh = shift_sat.find({net::satKey(id.sat), net::signalKey(id.signal)});
             if (sh != shift_sat.end() && sh->second != 0.0)
                 ++ctx.counters.prm_pbhold_unmoved_at_shift;
-        }
+        });
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }
@@ -952,8 +980,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             gname2idx[stations[i].name] = i;
         auto carryAlive = [&](size_t idx, const std::string& sat,
                               const std::string& sig) -> bool {
-            return local_carry.count(std::make_tuple(
-                static_cast<int>(idx), sat, sig)) != 0;
+            return (net::getArc(ctx.entities.arcs, std::make_tuple(
+                static_cast<int>(idx), sat, sig), &net::ArcState::amb) != nullptr) != 0;
         };
         eq34_retained_edges.clear();
         // Sat-side parents (amb → parent station) + their component roots.
@@ -971,7 +999,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 new_sat_root.emplace(amb, sr->second);
         }
         // Receiver-side parents ("<name>|<c>|<σ>" → sat).
-        for (const auto& [rxkey, sat] : eq34_rx_parent) {
+        net::byStationName(entities.stations, entities.names,
+                           [&](const StationId& sid, const net::StationState& row) {
+          for (const auto& [family, cell] : row.signals) {
+            if (!cell.eq34_rx_parent) continue;
+            const std::string rxkey = entities.names.names[sid.index] + "|" + family;
+            const std::string& sat = *cell.eq34_rx_parent;
             if (new_rx_parent.count(rxkey)) continue;
             const auto p2 = rxkey.rfind('|');
             if (p2 == std::string::npos || p2 == 0) continue;
@@ -985,7 +1018,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             new_rx_parent.emplace(rxkey, sat);
             eq34_retained_edges.emplace(static_cast<int>(gi->second),
                                         StateKeys::makeAmbiguityKey(sat, sig));
-        }
+          }
+        });
         // Pinned integers ({receiver idx, "sat_signal"} → target).
         for (const auto& [k, tgt] : eq34_prev_target) {
             if (new_prev_target.count(k)) continue;
@@ -995,20 +1029,33 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             new_prev_target.emplace(k, tgt);
         }
     }
-    anchor_incumbent = this_epoch_anchor;
-    eq34_rx_parent   = std::move(new_rx_parent);
-    eq34_sat_root    = std::move(new_sat_root);
-    eq34_prev_target = std::move(new_prev_target);
+    net::assignSig(entities, &net::SatSignalState::anchor_incumbent, this_epoch_anchor);
+    // The receiver-side parents are replaced wholesale ("<name>|<c>|<sigma>" -> sat).
+    net::dropAll(entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::eq34_rx_parent);
+    for (const auto& [rxkey, sat] : new_rx_parent) {
+        const auto p2 = rxkey.rfind('|');
+        const auto p1 = (p2 == std::string::npos || p2 == 0) ? std::string::npos
+                                                              : rxkey.rfind('|', p2 - 1);
+        const std::optional<StationId> sid =
+            p1 == std::string::npos ? std::nullopt : net::stationOfName(entities, rxkey.substr(0, p1));
+        if (sid)
+            net::put(entities.stations, *sid, &net::StationState::signals, rxkey.substr(p1 + 1),
+                     &net::StationSignalState::eq34_rx_parent) = sat;
+    }
+    net::assignSig(ctx.entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
+    net::assignArcAmb(ctx.entities, &net::ArcState::eq34_prev_target, new_prev_target);
+    net::assignArcAmbFlags(ctx.entities, &net::ArcState::eq34_retained_edge, eq34_retained_edges);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
     // can tell a rising arc from a setting one.  Rebuilt wholesale (a
     // pruned arc drops out); skipped when the longevity election is
     // off, so the map stays empty on the B9 baseline.
     if (eq34_longevity) {
-        eq34_prev_el.clear();
+        net::dropAll(entities.los, &net::LosState::eq34_prev_el);
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
             for (const auto& [sat, el] : sat_el[i])
-                eq34_prev_el[{i, sat}] = el;
+                net::putLos(entities, static_cast<int>(i), sat, &net::LosState::eq34_prev_el) = el;
         }
     }
 }
@@ -1020,12 +1067,12 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
-    const auto& eq34_reref_total = v.ctx.carry.eq34_reref_total;
-    const auto& eq34_erase_total = v.ctx.carry.eq34_erase_total;
-    const auto& eq34_shift_total = v.ctx.carry.eq34_shift_total;
-    const auto& eq34_cpl_sprev_total = v.ctx.carry.eq34_cpl_sprev_total;
-    const auto& eq34_gap_repin_total = v.ctx.carry.eq34_gap_repin_total;
-    const auto& eq34_mismatch_epochs = v.ctx.carry.eq34_mismatch_epochs;
+    const auto& eq34_reref_total = v.ctx.counters.eq34_reref_total;
+    const auto& eq34_erase_total = v.ctx.counters.eq34_erase_total;
+    const auto& eq34_shift_total = v.ctx.counters.eq34_shift_total;
+    const auto& eq34_cpl_sprev_total = v.ctx.counters.eq34_cpl_sprev_total;
+    const auto& eq34_gap_repin_total = v.ctx.counters.eq34_gap_repin_total;
+    const auto& eq34_mismatch_epochs = v.ctx.counters.eq34_mismatch_epochs;
 
     if (config_.networkPhaseDatumEq34())
         log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
@@ -1177,5 +1224,138 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// ---- PASS B serial stages (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py) ----
+
+void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAssembly& assembly,
+                         bool epoch_ok) {
+    // ---- From the run and the epoch (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py,
+    //      each line checked by scripts/nom_pb1_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    NetworkRunContext& ctx = run.ctx;
+    NetworkSetupResult& setup = run.setup;
+    const std::vector<StationAssembly>& asm_res = assembly.asm_res;
+    const std::vector<int>& est_index_of = assembly.est_index_of;
+    const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
+    // ---- End of the bindings ----
+    // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
+    auto& stations = setup.stations;
+    const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
+
+    // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): compare the pins that
+    // landed (folded by foldAmb/foldRpb and on a station est.addStation accepted)
+    // against the election's declared per-group gauge dimension Σ (n_c + m_c), minus
+    // the hygiene bridge pins realized on the shared side.  Serial, after the consume,
+    // so acceptance is known (est_index_of ≥ 0); an aborted epoch (pivot failure)
+    // never reaches a solve and is not audited.  Log-only run tallies; no solve input
+    // is touched.
+    if (!(phase_datum_eq34 && epoch_ok)) return;
+    auto& pa = ctx.counters.eq34_pin_audit;
+    ++pa.epochs;
+    std::map<std::string, long long> folded_ep, landed_ep;
+    for (size_t i = 0; i < stations.size(); ++i) {
+        for (const auto& [grp, t] : asm_res[i].pin_audit) {
+            folded_ep[grp]     += t[0];
+            pa.miss_state[grp] += t[1];
+            pa.miss_row[grp]   += t[2];
+            if (est_index_of[i] >= 0) landed_ep[grp] += t[0];
+        }
+        // Feed each accepted station's fold-realized targets into the next
+        // epoch's pinmove baseline (seed-round, §3.4).  Without this the election
+        // reads the provisional 0 and computes a spurious km-scale step every
+        // epoch, re-referencing the (sat,σ) permanently.  A dropped station's pin
+        // did not land; its arc re-elects from scratch in the next epoch.
+        if (est_index_of[i] >= 0) {
+            for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
+                net::putArcAmb(ctx.entities, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = tgt;
+                ++ctx.counters.seed_round_deferred;
+                const double ay = std::abs(y);
+                if (ay > ctx.counters.seed_round_max_abs_y_m)
+                    ctx.counters.seed_round_max_abs_y_m = ay;
+            }
+        }
+    }
+    for (const auto& [grp, decl] : phase_datum_ev.eq34_epoch_declared) {
+        const auto bit = phase_datum_ev.eq34_epoch_bridged.find(grp);
+        const long long bridged =
+            bit == phase_datum_ev.eq34_epoch_bridged.end() ? 0 : bit->second;
+        pa.declared[grp] += decl;
+        pa.bridged[grp]  += bridged;
+        pa.folded[grp]   += folded_ep[grp];
+        pa.landed[grp]   += landed_ep[grp];
+        pa.dropped_station[grp] += folded_ep[grp] - landed_ep[grp];
+        const long long short_n = (decl - bridged) - landed_ep[grp];
+        if (short_n > 0) {
+            ++pa.short_epochs[grp];
+            if (static_cast<int>(short_n) > pa.worst_short[grp])
+                pa.worst_short[grp] = static_cast<int>(short_n);
+        }
+    }
+}
+
+// ---- End of the PASS B serial stages (card NOM3 step PB1a) ----
+
+// ---- Harvest half (card NOM3 step HV1; generated by scripts/nom_hv1_cut.py) ----
+
+void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
+    // ---- From the run, the epoch and the harvest (card NOM3 step HV1; generated by
+    //      scripts/nom_hv1_cut.py, each line checked by scripts/nom_hv1_verify.py). ----
+    NetworkRunContext& ctx = run.ctx;
+    const NetworkEstimator& est = run.engines.est;
+    const Eigen::VectorXd& x_s = ep.solve.x_s;
+    std::vector<NetStation>& stations = run.setup.stations;
+    const std::vector<int>& est_index_of = ep.assembly.est_index_of;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    const NetworkSbasis::Plan& plan = ep.solve.plan;
+    double pl_now_s = ep.clock.pl_now_s;
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
+    const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
+    // ---- End of the bindings ----
+    // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
+    // Mirrors the ZWD harvest.  There is no card-1 coupling harvest for RPB
+    // columns, on purpose: coupling rows would give the RPB a de facto
+    // shared-border footprint (the D6 v2 caveat zone, tuGaugeRestore group
+    // exclusions); the diagonal conditional variance keeps the carry strictly
+    // local and conservative.
+    if (!(eq34_rpb_q > 0.0)) return;
+    for (size_t i = 0; i < stations.size(); ++i) {
+        if (est_index_of[i] < 0) continue;
+        const StationAssembly& R = asm_res[i];
+        if (R.pl_rpb.empty()) continue;
+        const std::size_t est_idx =
+            static_cast<std::size_t>(est_index_of[i]);
+        Eigen::VectorXd xr, vard;
+        std::vector<Eigen::Index> cols;
+        cols.reserve(R.pl_rpb.size());
+        for (const auto& t : R.pl_rpb) cols.push_back(std::get<1>(t));
+        try {
+            xr = est.reconstructStation(est_idx, x_s);
+            vard = est.conditionalLocalVarianceDiag(
+                est_idx, cols, plan.shared_datum);
+        } catch (...) { continue; }
+        for (std::size_t a = 0; a < R.pl_rpb.size(); ++a) {
+            const auto& [rpb_key, rcol, rx_lin] = R.pl_rpb[a];
+            if (rcol < 0 || rcol >= xr.size()) continue;
+            const double value_abs = rx_lin + xr(rcol);
+            const double var = (a < static_cast<std::size_t>(vard.size()))
+                                   ? vard(a) : -1.0;
+            if (!std::isfinite(value_abs) || !(var > 0.0)
+                || !std::isfinite(var)) continue;
+            net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals, rpb_key,
+                     &net::StationSignalState::rpb) =
+                LocalCarry{value_abs, var, pl_now_s};
+        }
+    }
+    // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
+    // double as pl_max_gap_s; card PRM phase 3b).
+    carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rpb, pl_now_s,
+                  ctx.params.spec(NetworkParamKind::RxPhaseBias).gap_horizon_s,
+                  [&](const auto&, const auto&, const auto&) {
+                      ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
+                  });
+}
+
+// ---- End of the harvest half ----
 
 } // namespace GnssProcessor

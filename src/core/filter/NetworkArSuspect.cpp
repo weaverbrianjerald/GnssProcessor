@@ -131,8 +131,7 @@ long long arSuspectEpochOfSecond(const std::deque<std::pair<long long, double>>&
 
 void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int window_ep,
                         const RelevelEpochState& relevel,
-                        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>&
-                            local_carry,
+                        const net::ArcTable& arcs,
                         ArSuspectCounters* c) {
     if (window_ep <= 0) return;
     // The epoch of the previous fold (0 before the first): a drop stamped after it is new
@@ -150,9 +149,9 @@ void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int 
     }
     // (3) The carry stamps (file banner, the ledger table), read through the one reader of
     //     the carry's life fields that the arc life stamp shares (card AGT section 3).
-    for (const auto& [key, lc] : local_carry) {
-        const int sta = std::get<0>(key);
-        const std::string& sat = std::get<1>(key);
+    net::forEach(arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
+        const int sta = id.station.index;
+        const std::string sat = net::satKey(id.sat);
         const CarryLife life = carryLifeOf(lc);
         // A drop no earlier fold has seen: this epoch's pre-search drop (the latch and the
         // stale gap), or one on an epoch whose search never ran.  A drop at the previous
@@ -165,13 +164,13 @@ void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int 
         // epoch's latch.
         if (life.relevel_s > 0.0 && life.relevel_s != life.birth_s) {
             const long long e = arSuspectEpochOfSecond(L.recent, life.relevel_s);
-            if (e <= 0 || e == life.dropped_ep) continue;
+            if (e <= 0 || e == life.dropped_ep) return;
             const std::optional<SatId> s = SatId::parse(sat);
-            if (!s || sta < 0) continue;
+            if (!s || sta < 0) return;
             const LosId los{StationId{sta}, *s};
             if (!freeStampAt(L, los, e)) arSuspectNote(L, los, e, kArSuspectRelevel, c);
         }
-    }
+    });
     // (4) This epoch's free-epoch latch, whatever detector filled it.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(amb_key);

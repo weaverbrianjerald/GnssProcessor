@@ -7,9 +7,9 @@
  * zero-mean-receiver-DCB datum from an armed but inert one, which the run-end
  * RXCB-DATUM line in networkSbasisDatumRunEnd asserts under standing invariant #4.  The
  * datum and the rx-CB carry are independent knobs, and datum without carry is the
- * canonical posture, so the accumulation in networkHarvestLocalCarries sits
- * outside the carry bracket (`if (ctx.knobs.rx_cb_on)`).  Inside it, a datum-only
- * run would report zero folds while the datum folds, and the run-end line would
+ * canonical posture, so the accumulation (networkRxCbDatumGaugeCensus, called by
+ * networkHarvestLocalCarries) sits outside the carry bracket
+ * (`if (ctx.knobs.rx_cb_on)`).  Inside it, a datum-only run would report zero folds while the datum folds, and the run-end line would
  * raise its invariant-#4 alarm against a working gauge.
  *
  * What is pinned here:
@@ -25,15 +25,17 @@
  *  5. Loader contract: the two knobs parse independently, and the datum does not
  *     require the carry.
  *
- * The harvest is called with `carry_warm = false` and no armed carry knobs, so
- * every walk ahead of the census is gated off and neither the NetworkEstimator
+ * The harvest is called through the test run fixture with `carry_warm = false`
+ * and no armed carry knobs, so every walk ahead of the census is gated off and neither the NetworkEstimator
  * nor any station's StateManager is dereferenced; the toy fixture below needs
  * no solvable network.
  */
 
 #include <gtest/gtest.h>
 
+#include "app/NetworkLocalCarryHarvest.hpp"   // networkHarvestLocalCarries (card NOM3 step HV1)
 #include "app/NetworkRunContext.hpp"
+#include "support/NetworkTestRun.hpp"   // the run and epoch the harvest's epoch form takes
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkEstimator.hpp"
 #include "filter/NetworkPriorResidual.hpp"
@@ -111,33 +113,23 @@ const char* const kNeither = "";
 std::size_t runCensus(const GnssConfig& cfg,
                       const std::vector<int>& rows,
                       const std::vector<int>& est_idx) {
-    NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
-
-    std::vector<NetStation> stations(rows.size());
-    std::vector<StationAssembly> asm_res(rows.size());
+    // The run and the epoch the harvest's epoch form takes (card NOM3 step HV1; the
+    // fixture builds the context, the engines and an empty setup from the configuration).
+    NetworkTestRun fx(cfg);
+    fx.setup().stations.resize(rows.size());
+    NetworkEpoch& e = fx.newEpoch(GnssTime{});
+    e.assembly.asm_res.resize(rows.size());
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        stations[i].name = "S" + std::to_string(i);
-        asm_res[i].pl_cb_datum_rows = rows[i];
+        fx.setup().stations[i].name = "S" + std::to_string(i);
+        e.assembly.asm_res[i].pl_cb_datum_rows = rows[i];
     }
-
-    NetworkEstimator      est;
-    Eigen::VectorXd       x_s;
-    NetworkSbasis::Plan   plan;
-    // Neither engine has a default ctor; both are inert here (their feed seams are
-    // carry_warm-gated) so a minimal no-family instance is enough.
-    NetworkCarryVce       carry_vce({}, /*window_epochs=*/1.0);
-    NetworkPriorResidual  prires({}, /*window_epochs=*/1.0);
-    const std::vector<std::string>                          clock_sats;
-    const std::set<std::string>                             phase_keys;
-    const std::vector<std::pair<std::string, std::string>>  code_keys;
+    e.assembly.est_index_of = est_idx;
+    e.clock = EpochClock{};   // carry_warm false, pl_now_s 0
 
     // carry_warm = false, and no carry knob is armed, so every walk ahead of the
-    // census short-circuits before touching `est` or any station's StateManager.
-    networkHarvestLocalCarries(ctx, cfg, est, x_s, stations, est_idx, asm_res,
-                               plan, nullptr, nullptr, carry_vce, prires,
-                               /*carry_warm=*/false, /*pl_now_s=*/0.0,
-                               clock_sats, phase_keys, code_keys);
-    return ctx.counters.n_rxcb_gauges;
+    // census short-circuits before touching the estimator or any station's StateManager.
+    networkHarvestLocalCarries(fx.run(), e, e.events);
+    return fx.ctx().counters.n_rxcb_gauges;
 }
 
 }  // namespace

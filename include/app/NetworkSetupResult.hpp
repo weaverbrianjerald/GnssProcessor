@@ -143,7 +143,7 @@ namespace GnssProcessor {
         /// (RTA-10 gap fix).  Without them, a leg that opens inside a withhold era
         /// writes nothing for the whole era, which leaves "withheld" and "producer
         /// stopped" indistinguishable, the ambiguity the H line exists to resolve.
-        /// The three withhold sites (rank gate, A4 σ̂0 ceiling, SH health gate)
+        /// The two withhold sites (rank gate, A4 σ̂0 ceiling)
         /// append here while product_writer is null and a deferred v2 open is
         /// pending (contract_pending); the buffer is flushed in tow order right after
         /// the writer opens at the first emit.  A run that never emits logs a warning
@@ -209,5 +209,20 @@ struct NetworkRunEndView;
 int networkMarkerArpRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+struct NetworkRunContext;
+
+/**
+ * @brief Copies the marker -> ARP roster census measured by networkSetup_ into the run's service counters.
+ *
+ * The run-end readout and the run manifest read the counters, and both report the census in
+ * either knob state (card UPO).  Setup builder (card NOM3 step EP4): called once from
+ * Application::runNetwork, in the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param ctx The run context; its service counters are filled.
+ * @param config_ The configuration (the marker -> ARP knob's arming state).
+ * @param setup The setup result that measured the census.
+ */
+void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup);
 
 } // namespace GnssProcessor

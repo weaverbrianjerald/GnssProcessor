@@ -66,6 +66,10 @@
 #include "filter/NetworkRunEnd.hpp"
 #include <limits>
 #include <memory>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkSetupResult.hpp"
+#include "rinex/MultiRinexSync.hpp"
 
 namespace GnssProcessor {
 
@@ -467,6 +471,7 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
 
 /// One family's build at this search, held until it becomes the family's memory after the search.
 struct ArCycleFamilyEpoch {
+    System                            sys{System::Unknown};  ///< The family's constellation (its memory's row).
     ArFamilyKey                       key;       ///< The family's bands.
     ArCycleBuild                      build;     ///< Its graph, forest and basis.
     std::map<ArcId, ArcLifeTrack>     arcs;      ///< Its band-arcs' tracks after this search.
@@ -483,7 +488,7 @@ struct ArCycleFamilyEpoch {
 ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fam, const std::string& cons,
                             const ArPools& pools, const ArBasisMemory& mem, long long now_ep,
                             std::map<ArcId, ArcLifeTrack>& tracks, ArCycleBasisCounters& c,
-                            std::map<ArcId, ArArcReading>* readings) {
+                            std::map<ArcId, ArArcReading>* readings, const RelevelEpochState& relevel) {
     ArCycleInput in;
     in.family = arcgraph::ArcFamily{fam.sys, fam.bands};
     std::set<std::size_t>      station_set;
@@ -525,7 +530,7 @@ ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fa
                 const ArcId arc{StationId{static_cast<int>(i)}, sat_id, fam.bands[k]};
                 const ArcLifeKeys keys{std::make_tuple(static_cast<int>(i), sat, fam.signals[k]),
                                        {static_cast<int>(i), StateKeys::makeAmbiguityKey(sat, fam.signals[k])}};
-                const bool freed = ctx.carry.relevel.free_ambs.count(keys.amb) > 0;
+                const bool freed = relevel.free_ambs.count(keys.amb) > 0;
                 const auto last = mem.arcs.find(arc);
                 const ArcLifeStep step =
                     arcLifeStep(last == mem.arcs.end() ? nullptr : &last->second, mem.last_search_ep,
@@ -533,9 +538,9 @@ ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fa
                 arCycleTallyLife(c, step);
                 tracks.emplace_hint(tracks.end(), arc, step.track);
                 if (readings) {
-                    const auto fc = ctx.carry.relevel.free_cause.find(keys.amb);
+                    const auto fc = relevel.free_cause.find(keys.amb);
                     readings->emplace(arc, ArArcReading{step.edge, step.change,
-                                                        fc == ctx.carry.relevel.free_cause.end()
+                                                        fc == relevel.free_cause.end()
                                                             ? std::uint8_t{0} : fc->second});
                 }
                 arcgraph::ArcRow& row =
@@ -627,7 +632,7 @@ ArCycleEpochFigures arCycleEpochFiguresOf(const ArCycleBasisCounters& c) {
 int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, long long now_ep,
                      const std::vector<NetStation>& stations, const ArRequestOf& reqOf,
                      std::vector<DDrow>& dds, std::vector<ArCycleFamilyEpoch>& epoch,
-                     std::string& clause, std::map<ArcId, ArArcReading>* readings) {
+                     std::string& clause, std::map<ArcId, ArArcReading>* readings, const RelevelEpochState& relevel) {
     using Clock = std::chrono::steady_clock;
     using Ms    = std::chrono::duration<double, std::milli>;
     ArCycleBasisCounters& c = ctx.counters.netar_cycle;
@@ -651,11 +656,17 @@ int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, 
     for (const auto& [cons, sigs] : signals_of) {
         for (const ArFamilySpec& fam : arCycleFamilies(systemFromName(cons), sigs)) {
             ArCycleFamilyEpoch fe;
+            fe.sys = systemFromName(cons);
             fe.key = fam.bands;
-            const auto mit = ctx.carry.ar_basis.find(fe.key);
-            const ArBasisMemory& mem = (mit == ctx.carry.ar_basis.end()) ? none : mit->second;
+            const ArBasisMemory* memp = &none;   // the family's memory in its constellation's row
+            if (const auto cit = ctx.entities.constellations.find(fe.sys);
+                cit != ctx.entities.constellations.end()) {
+                const auto mit = cit->second.ar_basis.find(fe.key);
+                if (mit != cit->second.ar_basis.end()) memp = &mit->second;
+            }
+            const ArBasisMemory& mem = *memp;
             const auto t0 = Clock::now();
-            const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings);
+            const ArCycleInput in = arCycleInputOf(ctx, fam, cons, pools, mem, now_ep, fe.arcs, c, readings, relevel);
             const auto t1 = Clock::now();
             stamp_ms += t1 - t0;
             if (in.stations.size() < 2) continue;
@@ -687,10 +698,10 @@ int arCycleBasisRows(NetworkRunContext& ctx, bool sticky, const ArPools& pools, 
 }
 
 /// Each family built at this search becomes its memory for the next search (after the search).
-void arCycleBasisStore(std::map<ArFamilyKey, ArBasisMemory>& memory, std::vector<ArCycleFamilyEpoch>& epoch,
+void arCycleBasisStore(net::ConstellationTable& memory, std::vector<ArCycleFamilyEpoch>& epoch,
                        long long now_ep) {
     for (ArCycleFamilyEpoch& fe : epoch) {
-        ArBasisMemory& m = memory[fe.key];
+        ArBasisMemory& m = memory[fe.sys].ar_basis[fe.key];
         m.last_search_ep = now_ep;
         m.links          = arcgraph::incumbentLinksOf(fe.build.graph, fe.build.forest);
         m.basis          = std::move(fe.build.basis);
@@ -743,18 +754,24 @@ std::vector<SearchedCycle> arSearchedCycles(const std::vector<DDrow>& dds, const
 
 }  // namespace
 
-ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
-                               const GnssConfig& config_,
-                               const std::shared_ptr<spdlog::logger>& log,
-                               NetworkRunTraces& traces,
-                               const SyncedEpoch& se,
-                               const NetworkEstimator& est,
-                               const Eigen::VectorXd& x_s,
-                               const std::vector<NetStation>& stations,
-                               const std::vector<int>& est_index_of,
-                               const std::vector<StationAssembly>& asm_res,
-                               const NetworkSbasis::Plan& plan,
-                               const std::filesystem::path& log_dir_) {
+ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
+    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    NetworkRunTraces& traces = run.traces;
+    const SyncedEpoch& se = ep.se;
+    const NetworkEstimator& est = run.engines.est;
+    const Eigen::VectorXd& x_s = ep.solve.x_s;
+    const std::vector<NetStation>& stations = run.setup.stations;
+    const std::vector<int>& est_index_of = ep.assembly.est_index_of;
+    const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
+    const NetworkSbasis::Plan& plan = ep.solve.plan;
+    const std::filesystem::path& log_dir_ = run.log_dir;
+    const RelevelEpochState& relevel = ep.events.slip.relevel;
+    // ---- End of the bindings ----
     // --- Alias preamble: byte-copies of the former Application::runNetwork aliases,
     //     so the relocated SB_NETAR body below reads the original names. ----------
     const auto& nc        = config_.getNetworkConfig();
@@ -780,7 +797,7 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
     if (suspect_window > 0)
         arSuspectFoldEpoch(ctx.carry.ar_suspect, suspect_now_ep,
                            TimeUtils::continuousGpsSeconds(se.time), suspect_window,
-                           ctx.carry.relevel, ctx.carry.local_carry,
+                           relevel, ctx.entities.arcs,
                            &ctx.counters.netar_suspect);
 
     // --- Producer-side network AR (Phase 2: DD fixability attempt, log only) ---
@@ -860,7 +877,7 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
             netar.cycle_basis
                 ? arCycleBasisRows(ctx, netar.cycle_basis_sticky, ar_pool, suspect_now_ep, stations,
                                    reqOf, dds, cycle_epoch, cycle_text,
-                                   handover ? &lattice_fixes.arcs : nullptr)
+                                   handover ? &lattice_fixes.arcs : nullptr, relevel)
                 : arSignalBasisRows(netar.tree_basis, ar_pool, se, stations, reqOf, dds, log);
         lattice_fixes.searched = handover;
         if (!dds.empty() && reqs.size() >= 2) {
@@ -1198,7 +1215,8 @@ ArEpochFixes networkProducerAr(NetworkRunContext& ctx,
         }
         // Card AGT: each family's build becomes its memory for the next search, whether or not
         // this one ran (no covariance, no row): stickiness follows the basis, not the search.
-        if (netar.cycle_basis) arCycleBasisStore(ctx.carry.ar_basis, cycle_epoch, suspect_now_ep);
+        if (netar.cycle_basis)
+            arCycleBasisStore(ctx.entities.constellations, cycle_epoch, suspect_now_ep);
     }
 
     // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------

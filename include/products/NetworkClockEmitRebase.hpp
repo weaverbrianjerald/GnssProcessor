@@ -16,10 +16,10 @@
  * outliers > 0.5 m) under a single wire mark.  The FC-1 shadow measurement is the
  * design input: about 98 % of the emitted clock's epoch-to-epoch motion is producer frame
  * churn (the physical change is about 2 cm per 30 s, correlation ≈ 0), so nearly all of
- * that wire motion carries no information.  The phase-bias channel has both an
- * emission-frame re-base (@ref NetworkEmitRebase) and a continuity filter
- * (@ref NetworkPbEmitFilter), which keep the P channel quasi-static on the same wire;
- * this class supplies the equivalent for the clock channel.
+ * that wire motion carries no information.  The phase-bias channel has an
+ * emission-frame re-base (@ref NetworkEmitRebase), which keeps the P channel
+ * quasi-static on the same wire; this class supplies the equivalent for the clock
+ * channel.
  *
  * ## What it does (independent stages, each behind its own knob, off by default)
  *
@@ -72,7 +72,7 @@
  *
  * ## Scope and conventions
  *
- * Pure numeric leaf (like @ref NetworkEmitRebase and @ref NetworkPbEmitFilter), with no
+ * Pure numeric leaf (like @ref NetworkEmitRebase), with no
  * dependency on the estimator or the emitter.  The caller (networkEmitStore) builds one
  * Entry per emitted clock satellite, calls @ref rebaseEpoch before @c emitToStore and
  * the on-disk write (the transform is baked into the product; replay never re-runs it),
@@ -115,7 +115,6 @@ public:
         bool        forced{false}; ///< A per-satellite retro-bump or constellation datum change is already pending for this satellite this epoch, so it is excluded from the μ vote and the step test (marked upstream; its step must not be marked twice or drag the frame).
         bool        marked{false}; ///< OUT: the stage-2 (or stage-2b) step test fired; the caller routes this satellite to markSatDiscontinuity and the R-record set.
         double      step_m{0.0};   ///< OUT: the common-removed step (m) when @ref marked, the event-row statistic; 0 otherwise.
-        double      level_step_m{0.0}; ///< IN (card CLV): the satellite's declared level step since its previous emission (m), removed from its innovation before the frame vote and the step tests.  A level re-base moves both the clock and the phase biases, so it is neither a frame move nor a discontinuity.  0 unless network.clock_level_carry (byte-identical).
     };
 
     /// Running tallies for the run-end telemetry line (invariant #4).

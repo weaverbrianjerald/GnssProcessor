@@ -7,7 +7,7 @@
 
 #include "filter/NetworkArcLife.hpp"
 
-#include "app/NetworkRunContext.hpp"     // ctx.arc_ledger, ctx.carry.local_carry, ctx.carry.amb_flag_ep
+#include "app/NetworkRunContext.hpp"     // ctx.arc_ledger, ctx.entities.arcs (the leveling carry), the station table (amb_flag_ep)
 #include "filter/ArcLedger.hpp"          // ArcRecord, ArcState
 #include "filter/NetworkRunTypes.hpp"    // LocalCarry
 #include "filter/StateKeySchema.hpp"     // StateKeys::makeAmbiguityKey
@@ -86,11 +86,14 @@ ArcLifeKeys arcLifeKeys(const ArcId& arc) {
 }
 
 ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcLifeKeys& keys) {
-    const ArcRecord* ledger = ctx.arc_ledger.find(keys.arc);
-    const auto lc = ctx.carry.local_carry.find(keys.arc);
-    const auto fl = ctx.carry.amb_flag_ep.find(keys.amb);
-    return arcLifeStampOf(ledger, lc == ctx.carry.local_carry.end() ? nullptr : &lc->second,
-                          fl == ctx.carry.amb_flag_ep.end() ? nullptr : &fl->second);
+    // One row (step N4f2): the arc's ledger record and its leveling carry.
+    const std::optional<ArcId> id = net::arcKey(keys.arc);
+    const auto it = id ? ctx.entities.arcs.find(*id) : ctx.entities.arcs.end();
+    const net::ArcState* row = (it == ctx.entities.arcs.end()) ? nullptr : &it->second;
+    const ArcRecord*  ledger = (row && row->ledger) ? &*row->ledger : nullptr;
+    const LocalCarry* lc     = (row && row->amb) ? &*row->amb : nullptr;
+    const long long* fl = net::getAmbFlagEp(ctx.entities.stations, keys.amb.first, keys.amb.second);
+    return arcLifeStampOf(ledger, lc, fl);
 }
 
 ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcId& arc) {

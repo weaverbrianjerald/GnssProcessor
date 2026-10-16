@@ -574,7 +574,6 @@ TEST(NetworkParamInventoryTest, ReasonTableNamesEveryGateAndWhatTakesItUp) {
     using AR = AbsorbedReason;
     const std::vector<std::pair<AR, std::string>> names = {
         {AR::GlonassCodeOnlyScope,  "glonass_code_only_scope"},
-        {AR::UnmatchedAntenna,      "unmatched_antenna"},
         {AR::CoverageGate,          "coverage_gate"},
         {AR::Allowlist,             "allowlist"},
         {AR::CodeCensusCogate,      "code_census_cogate"},
@@ -600,8 +599,8 @@ TEST(NetworkParamInventoryTest, ReasonTableNamesEveryGateAndWhatTakesItUp) {
     }
     EXPECT_NE(std::string(absorbedBy(AR::GlonassCodeOnlyScope, PK::SatCodeBias)).find("per-slot IFB"),
               std::string::npos);
-    // The sites: five at allocation, two after it.
-    EXPECT_EQ(std::string(absorbedReasonSpec(AR::UnmatchedAntenna).site),
+    // The sites: four at allocation, two after it.
+    EXPECT_EQ(std::string(absorbedReasonSpec(AR::CoverageGate).site),
               "MeasurementModel::ensureNetworkSharedStates");
     EXPECT_EQ(std::string(absorbedReasonSpec(AR::AnchoredUnionCoverage).site),
               "networkBuildPhaseDatumCandidates");
@@ -612,7 +611,7 @@ TEST(NetworkParamInventoryTest, NoteAbsorbedClassifiesTheWithheldKey) {
     // The gate notes the raw (container, key, reason); the inventory classifies the note.
     StationAbsorbed a;
     noteAbsorbed(a, SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"),
-                 AbsorbedReason::UnmatchedAntenna);
+                 AbsorbedReason::Allowlist);
     noteAbsorbed(a, SC::SatBiasStates, K::makeSatBiasKey("R07", "C1C"),
                  AbsorbedReason::GlonassCodeOnlyScope);
     noteAbsorbed(a, SC::SatPhaseBiasStates, "not-a-key", AbsorbedReason::CoverageGate);
@@ -626,7 +625,7 @@ TEST(NetworkParamInventoryTest, NoteAbsorbedClassifiesTheWithheldKey) {
     EXPECT_EQ(pb.id.cls.sys, System::GPS);
     EXPECT_EQ(pb.id.sat.str(), "G05");
     EXPECT_EQ(pb.id.cls.signal, sig(System::GPS, "L1W"));
-    EXPECT_EQ(pb.reason, AbsorbedReason::UnmatchedAntenna);
+    EXPECT_EQ(pb.reason, AbsorbedReason::Allowlist);
     const AbsorbedInstance& cb = *cb_opt;
     EXPECT_EQ(cb.id.cls.kind, PK::SatCodeBias);
     EXPECT_EQ(cb.id.cls.sys, System::GLONASS);
@@ -690,15 +689,15 @@ TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbing
 }
 
 TEST(NetworkParamInventoryTest, TableNoteAndReasonLinesStateTheAbsorbedCounts) {
-    // GPS L1W: the border carries 3 satellite phase-bias columns; 2 more were withheld from
-    // an unmatched-antenna station and 3 by the anchored-union coverage gate, so the
-    // ambiguity count (8) equals border plus absorbed.
+    // GPS L1W: the border carries 3 satellite phase-bias columns; 2 more were withheld by
+    // the coverage gate and 3 by the anchored-union coverage gate, so the ambiguity count
+    // (8) equals border plus absorbed.
     const ParamInstanceId pb = classify(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"));
     const ParamInstanceId amb = classify(SC::Ambiguities, K::makeAmbiguityKey("G05", "L1W"));
     StationParamSlot s;
     s.filled = true;
     for (int k = 0; k < 3; ++k) s.records.push_back({pb, PD::EstimatedBorder});
-    for (int k = 0; k < 2; ++k) s.records.push_back({pb, PD::Absorbed, AbsorbedReason::UnmatchedAntenna});
+    for (int k = 0; k < 2; ++k) s.records.push_back({pb, PD::Absorbed, AbsorbedReason::CoverageGate});
     for (int k = 0; k < 3; ++k) s.records.push_back({pb, PD::Absorbed, AbsorbedReason::AnchoredUnionCoverage});
     for (int k = 0; k < 8; ++k) s.records.push_back({amb, PD::EstimatedLocal});
     ParamInventoryTally t;
@@ -713,13 +712,13 @@ TEST(NetworkParamInventoryTest, TableNoteAndReasonLinesStateTheAbsorbedCounts) {
     }
     ASSERT_FALSE(pb_line.empty());
     ASSERT_FALSE(amb_line.empty());
-    EXPECT_NE(pb_line.find("absorbed: unmatched antenna 2, anchored-union coverage 3"), std::string::npos)
+    EXPECT_NE(pb_line.find("absorbed: coverage allowlist 2, anchored-union coverage 3"), std::string::npos)
         << pb_line;
     EXPECT_EQ(amb_line.find("absorbed:"), std::string::npos) << amb_line;   // no note without absorbed
     // One reason line per gate that withheld something, after the classes.
     EXPECT_TRUE(anyLineHas(lines,
-        "absorbed, unmatched antenna: 2 instance(s), withheld when the station's receiver antenna "
-        "has no ATX model"));
+        "absorbed, coverage allowlist: 2 instance(s), withheld when the signal is outside the "
+        "coverage allowlist built from network.phase_bias_min_station_fraction"));
     EXPECT_TRUE(anyLineHas(lines,
         "absorbed, anchored-union coverage: 3 instance(s), withheld when fewer than "
         "network.phase_datum_min_stations stations hold the key this epoch "
@@ -732,7 +731,7 @@ TEST(NetworkParamInventoryTest, TableNoteAndReasonLinesStateTheAbsorbedCounts) {
     // the reason table.
     const std::string j = paramInventoryJson(t, RxIfbRule{}, "first_emitted_epoch");
     EXPECT_NE(j.find("\"label\":\"satellite phase bias, GPS L1W\",\"counts\":[3,0,0,5,0,0,0],"
-                     "\"absorbed_reasons\":{\"unmatched_antenna\":2,\"anchored_union_coverage\":3}"),
+                     "\"absorbed_reasons\":{\"coverage_gate\":2,\"anchored_union_coverage\":3}"),
               std::string::npos) << j;
     EXPECT_NE(j.find("\"reasons\":[{\"reason\":\"glonass_code_only_scope\""), std::string::npos) << j;
     EXPECT_NE(j.find("{\"reason\":\"anchor_hygiene_block\""), std::string::npos) << j;

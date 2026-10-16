@@ -55,7 +55,7 @@ namespace {
 struct ZwdBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    std::map<std::tuple<SharedParamKind, std::string, std::string>, double> tu_reinit_hist;
+    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 
@@ -71,8 +71,8 @@ struct ZwdBlockFixture {
 
     CouplingRowBuilder make() {
         return CouplingRowBuilder{est, shc, /*q_clock=*/1e-4, /*q_cb=*/1e-4, /*q_pb=*/1e-4,
-                                  /*joint=*/false, /*tu=*/false, /*shmarg=*/false,
-                                  /*gauge=*/false, /*reinit=*/false, tu_reinit_hist, R};
+                                  /*tu=*/false, /*gauge=*/false, /*reinit=*/false,
+                                  tu_reinit_hist, R};
     }
 };
 
@@ -276,10 +276,9 @@ TEST(CarryZwdInBlockTest, IsZwdFlagChangesTelemetryOnlyNotTheAlgebra) {
 //     ingredients of the unarmed path.
 // =============================================================================
 //
-// Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles, as in the
-// LosScaledVariance tests): the off-path ZWD row's weight, RHS, primary column and
-// border coefficient equal what buildCplRow emits standalone, and the row is a
-// scalar row (empty `local`), not a block row.
+// Byte-identical ingredients are asserted bitwise (EXPECT_EQ on doubles): the off-path
+// ZWD row's weight, RHS, primary column and border coefficient equal what buildCplRow
+// emits standalone, and the row is a scalar row (empty `local`), not a block row.
 TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};   // 3 ambiguities; ZWD not in C
     auto blk = makeHarvestBlock(cdiag, 0.0060);
@@ -287,7 +286,7 @@ TEST(CarryZwdInBlockTest, KnobOffLeavesKBlockRowsAndTheZwdAsTheDiagonalB9Row) {
     LocalCarry a1 = makeCarry(2.25, cdiag[1], blk, 1);
     LocalCarry a2 = makeCarry(1.75, cdiag[2], blk, 2);
     // Off: the ZWD carry is harvested without a block (the unarmed
-    // `harvestCoupling(est_idx, R.pl_zwd.col, nullptr, nullptr)` call).
+    // `networkHarvestColumn(..., est_idx, R.pl_zwd.col, nullptr, nullptr)` call).
     LocalCarry zw = makeCarry(0.16, 0.0090, /*blk=*/nullptr, /*idx=*/-1);
     const double zvar_eff = 0.0090 + 1e-9 * 30.0;   // var + zwd_q·gap, the B9 expression
 
@@ -484,8 +483,6 @@ TEST(CarryZwdInBlockTest, ArmedHappyPathSurvivesLoadAndLeavesQAtItsDefault) {
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
     // The card changes the vehicle, not the process-noise model.
     EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
-    // Nor does it subject the ZWD to the F3 young-column age gate.
-    EXPECT_EQ(cfg.networkPhaseLevelingLocalBlockMinAgeEp(), 0);
 }
 
 // The ledger's recommend branch (SPEC_amb_iono_split_overcount §6.16.7d arm F2):

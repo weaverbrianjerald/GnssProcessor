@@ -104,29 +104,21 @@ struct Harness {
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
     std::set<std::string>                                code_bias_sat_seen;
 
-    std::map<std::string, Pair> held_clock_ref;
-    std::map<std::string, Pair> if_pin_sel, if_pin_real, family_gf_pin_real, cb_ifpin;
-    std::set<std::string>       gf_pin_real, cb_reseed, relatch;
+    std::map<std::string, Pair> if_pin_sel, if_pin_real, cb_ifpin;
+    std::set<std::string>       cb_reseed;
 
     NetworkSbasis::CodeBiasDatumRows build(const NetworkEstimator& est,
                                            const std::vector<Pair>& keys) {
-        if_pin_sel.clear(); if_pin_real.clear(); gf_pin_real.clear();
-        family_gf_pin_real.clear(); cb_ifpin.clear(); cb_reseed.clear();
+        if_pin_sel.clear(); if_pin_real.clear(); cb_ifpin.clear(); cb_reseed.clear();
         const std::set<std::string> none;
         return NetworkSbasis::buildCodeBiasDatumRows(
-            est, keys, codeFreq, cb_time_linked,
-            /*clock_signal_basis_hold=*/false, /*emit_clock_disc=*/false,
-            /*gf_datum=*/false, sat_gf_datum, sat_gf_target_m,
-            /*sat_if_level_datum=*/false, sat_gf_datum_time_linked,
+            est, keys, codeFreq, cb_time_linked, /*emit_clock_disc=*/false,
+            sat_gf_datum, sat_gf_target_m, sat_gf_datum_time_linked,
             /*sat_isc_state=*/false, none,
             /*sat_gf_extra_band_free=*/false, none,
-            /*gf_family_constellations=*/none, code_bias_prev, code_bias_ifpin_pair,
-            code_bias_sat_seen, /*code_bias_datum_resumed=*/false, held_clock_ref,
-            if_pin_sel, if_pin_real, gf_pin_real, family_gf_pin_real, cb_ifpin,
-            cb_reseed, relatch,
-            [](const char*, const char*, const std::string&, const std::string&,
-               std::optional<double>, std::optional<double>, const char*,
-               const std::string&) {});
+            code_bias_prev, code_bias_ifpin_pair,
+            code_bias_sat_seen, /*code_bias_datum_resumed=*/false,
+            if_pin_sel, if_pin_real, cb_ifpin, cb_reseed);
     }
 };
 

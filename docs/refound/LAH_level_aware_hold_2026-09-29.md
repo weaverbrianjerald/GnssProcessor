@@ -4,14 +4,14 @@
 
 - **id:** LAH
 - **topic:** network-vehicle
-- **status:** open
-- **summary:** The zero-motion phase-clock hold (`network.emit_pb_hold_phase_clock`, `pbhold=2`) removes the exact update's consumer loss; ARMED on the goldens by card EXL as an interim hold; its C1W regressions stay owed.
+- **status:** closed
+- **summary:** The phase-clock hold (`network.emit_pb_hold_phase_clock`, `pbhold=2`) removes the exact update's consumer loss; ARMED by card EXL as an interim hold (precise a priori clock only); the C1W regressions are owed.
 - **source:** [CTU2](CTU2_level_recursion_followup_2026-09-29.md) section 9; [CTU](CTU_coupling_time_update_2026-09-28.md) sections 9.4 and 13.4 (h); [PBH](PBH_phase_bias_hold_2026-09-19.md); [PBF](PBF_pb_hold_presence_edges_2026-09-28.md)
 - **knobs / posture:** `network.emit_pb_hold_phase_clock` (default false; requires `network.emit_pb_hold`, refuses `network.clock_level_carry`); emit-side only, the solve and the C and B records unchanged; no golden, ledger or posture change by this card; armed on the goldens 2026-10-01 by card EXL (ledger A15, RECOMMEND_SCOPED: a precise a priori clock, not `brdc_rts`)
 - **dates in the text:** 2026-09-29; annotation 2026-10-01
 - **hashes / run dirs:** exe `gnss_processor_lah2.exe` sha256 prefix `eb8eb29edbb08458` (`_lah1` `2f30a5fb38cfdbd8`); arms `runs/_rap_s8_*`, `runs/_rap_s9_*`; offline wires `runs/_rpl_*`, `runs/_lah_*`; census keys `lahfrzP`, `lahcfrzP`, `msc6_*_{ctl,frz,cfrz,ex}`; section 6
 
-**Outcome.** The question: which phase-bias hold keeps the exact coupling update's level motion off the wire's phase side. Holding the phase-visible clock at its generation-start value takes the 6 h census from 2.27 / 0.75 m to 0.59 / 0.17 m in hours 1 / 2 (control 0.67 / 0.17), with C1W regressions at KOKB, ARHT and QUIN (at ARHT and QUIN carried by the L1W phase, section 9). Card [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) ARMED it as an interim hold; card [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) closed the smoothed members with this hold as the wire. The regressions stay owed: [MDR](MDR_multiday_replay_2026-10-05.md) reads ARHT00ATA diverging (166 m) on DOY 131.
+**Outcome.** Question: which phase-bias hold keeps the exact update's level motion off the wire's phase side. Holding the phase-visible clock at its generation-start value takes the 6 h census from 2.27 / 0.75 m to 0.59 / 0.17 m in hours 1 / 2 (control 0.67 / 0.17); C1W sites regress (ARHT, QUIN through the L1W phase; KOKB in hour 2). [EXL](EXL_exact_update_lah_promotion_2026-10-01.md) ARMED it as an interim hold (precise a priori clock only); [SMC](SMC_smoothed_hold_common_step_removed_2026-10-01.md) closed the smoothed members. Owed ([OPEN_ITEMS](../status/OPEN_ITEMS.md)): the regressions' mechanism; ARHT00ATA's divergence is [MDR](MDR_multiday_replay_2026-10-05.md)'s. Status reviewed 2026-10-13.
 
 ## 1. The question
 

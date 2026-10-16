@@ -948,7 +948,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
     // (same operations, same sorted by_station reduction order) and the accumulation
     // order is the same, so the reduced system is bit-identical to the serial path
     // (n_threads ≤ 1, with station_threads ≤ 1) for any thread count, unlike the
-    // FP-reassociating parallel_reduce.  The serial fold below (the default) does not
+    // FP-reassociating threaded reduce().  The serial fold below (the default) does not
     // depend on this path; keep the two block-algebra bodies in step.
     if (n_threads > 1) {
         const std::size_t NB = blocks.size();
@@ -992,7 +992,7 @@ void NetworkNormalEquations::foldReducedDdPriors(
         // drifts by a ULP at large n_shared, because Eigen's blocked GEMM rounds a
         // beta = 0 product-then-add differently from the beta = 1 fused accumulate, and
         // the network's ill-conditioning amplifies that over the carry-forward epochs
-        // (the parallel_reduce failure mode).  Only the block-local work (the
+        // (the threaded reduce() failure mode).  Only the block-local work (the
         // per-station B/G/z_free solves and the K×K middle inverse) runs in the
         // parallel region.
         std::vector<FoldedDdPrior>   fd_slot(NB);

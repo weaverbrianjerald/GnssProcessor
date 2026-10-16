@@ -126,7 +126,9 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
-RUNS = ROOT + "/runs"
+# The arm directories live under RUNS.  RAPID_RUNS_ROOT moves them (for example to a data
+# drive with more room); unset, they are the repository's runs/ as before.
+RUNS = (os.environ.get("RAPID_RUNS_ROOT") or (ROOT + "/runs")).replace("\\", "/").rstrip("/")
 LABEL = "SYS / # / OBS TYPES"
 C = 299792458.0
 FREQ = {"G": {"1": 1575.42e6, "2": 1227.60e6, "5": 1176.45e6},

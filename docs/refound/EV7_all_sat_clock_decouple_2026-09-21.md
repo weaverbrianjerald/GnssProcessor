@@ -4,14 +4,14 @@
 
 - **id:** EV7
 - **topic:** clock
-- **status:** open
-- **summary:** DEFECT of the coverage gate, FIXED 2026-09-21 and ARMED 2026-09-22: a dropped phase-bias column's carried survivor absorbed the bias; the drop-edge erase passes every frozen gate, clock-anchor trips 50 to 1.
+- **status:** closed
+- **summary:** Coverage-gate DEFECT: a dropped phase-bias column's carried survivor absorbed the bias; the drop-edge erase passed every gate (clock-anchor trips 50 to 1) and is ARMED in both goldens.
 - **source:** [RXP](RXP_rinex3_blank_prn_2026-09-21.md) section 3 (the loss of the corrected baseline is this episode); [EV6](EV6_hour6_decouple_event_2026-09-15.md) (the same mechanism class on the older posture); [PBH](PBH_phase_bias_hold_2026-09-19.md) section 7 item 4 (with the phase bias held, the decouple excursion is the largest remaining wire term on the field)
 - **knobs / posture:** the fix `network.phase_datum_gate_drop_erase` (default OFF, armed in the working bases 2026-09-22); config-only discriminators `network.clock_anchor_resolve`, `network.clock_anchor_k`, `network.clock_anchor_recouple_epochs`
 - **dates in the text:** 2026-09-21, 2026-09-22
 - **hashes / run dirs:** `runs/_rap_r6_dual`, `runs/_rf0hv5_field6`, `runs/_rap_r7_*`, `runs/_rap_r6_drop4_new`; exe `build/x64-Release/gnss_processor_rxp.exe`; fix main `1935079`, exe `gnss_processor_ev7.exe`; baseline pair `runs/_rf0hv6_{field,sim}6`
 
-**Outcome.** The card asked what triggers the all-satellite decouple of TOW 278520. The coverage gate removes G30's L1W column with one tracker left, and VOIM00MDG's carried ambiguity absorbs the bias (+15.8 m); 13 such edges in 6 h hold nearly every trip. The erase takes post-fit refloats 183 to 69 and the census last-half-hour median 0.171 to 0.099 m, sim identical. Pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md); the Up offset of section 7.7 went to [UPO](UPO_consumer_up_offset_2026-09-22.md), the gross code rows to [RF-3](RF-3_code_row_qc_2026-09-22.md); the false G19 reset at URUM00CHN and code rows without their column stay open (section 7.7).
+**Outcome.** The question: what triggers the all-satellite clock-anchor decouple of TOW 278520. The coverage gate removes G30's L1W column with one tracker left and VOIM00MDG's carried ambiguity absorbs the bias (+15.8 m); 13 such edges in 6 h hold nearly every trip. The drop-edge erase passes every frozen gate: trips 50 to 1, refloats 183 to 69, sim identical. ARMED via [GRB](GRB_golden_rebase_2026-09-22.md); the Up offset went to [UPO](UPO_consumer_up_offset_2026-09-22.md), gross code rows to [RF-3](RF-3_code_row_qc_2026-09-22.md), the code-row analogue to [OPEN_ITEMS](../status/OPEN_ITEMS.md); the rest of section 7.7 is dropped (no measurable cost). Status reviewed 2026-10-13.
 
 ## 1. What the existing runs already say (read by the manager, no new run)
 

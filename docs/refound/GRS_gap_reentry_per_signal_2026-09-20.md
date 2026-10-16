@@ -4,14 +4,14 @@
 
 - **id:** GRS
 - **topic:** slip
-- **status:** open
-- **summary:** BUILT and ARMED 2026-09-20: the per-signal gap re-entry rider repairs the sim fault completely and passes B2, B3 and the 12 h dual arm; the field triple bar B1 FAILS.
+- **status:** closed
+- **summary:** Per-signal gap re-entry rider BUILT and ARMED 2026-09-20: sim fault repaired, B2, B3 and the 12 h dual arm pass, field triple bar B1 failed (the triple posture is card L5B's); closed, pinned in the goldens.
 - **source:** [AB2](AB2_l5_third_frequency_2026-09-20.md) sections 10 to 12; `docs/SPEC_slip_qc_hardening.md` card G (the instrument and the satellite-level response); standing invariants 1, 4, 6, 7
 - **knobs / posture:** new `network.cycle_slip.gap_reentry_per_signal` (default false), rider of `network.cycle_slip.gap_reentry_relevel`; RF-0hv working bases, dual and triple
 - **dates in the text:** 2026-09-20
 - **hashes / run dirs:** build main `9edc0ea`, exe `gnss_processor_grs.exe`; evidence arms `runs/_rap_{dC_gapre,fM_gapre,dD_holes_gapre,fN_holes_gapre}`; sim fault arms `runs/_rap_{sI_ds_dual_off,sJ_ds_dual_on,sK_ds_tri_off,sL_ds_tri_on}`
 
-**Outcome.** The card asked whether a re-entry keyed on the signal catches a primary-pair loss of lock while band 5 or a fallback signal tracks through. It does: field dual `T4_attrib` 228 to 92, the sim fault's clock wire 0.0670 to 0.0030 m. B1 misses on the consumer (6 epochs below a decimetre against 250) and is superseded as a question by the latch of [CSL](CSL_canonical_signal_latch_2026-09-20.md); section 8 withdraws the emulation attributions. Pinned in the goldens by [GRB](GRB_golden_rebase_2026-09-22.md), ledger RECOMMEND_SCOPED; still owed: a reading of the rider-only drop in epochs below a decimetre, 203 to 162 ([OPEN_ITEMS_A](../status/OPEN_ITEMS_A_current_program.md)).
+**Outcome.** Question: does a re-entry keyed on the signal catch a primary-pair loss of lock that band 5 or a fallback signal hides? Yes: field dual `T4_attrib` 228 to 92, sim fault clock wire 0.0670 to 0.0030 m, the 12 h dual arm passes. Missed: field triple bar B1 (6 epochs below a decimetre, bar 250); the triple posture is card [L5B](L5B_band5_receiver_delay_2026-10-10.md)'s (L5 is SEQUENCED, not closed). ARMED 2026-09-20 and pinned in the [goldens](../../config/golden/golden_manifest.json); the rider-only count drop (203 to 162) is moot on today's baseline. Status reviewed 2026-10-13.
 
 ## 1. The defect
 

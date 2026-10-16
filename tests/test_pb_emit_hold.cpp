@@ -164,7 +164,7 @@ TEST(PbEmitHoldTest, KnobOffLeavesEveryValueAndGenerationUntouched) {
     }
     EXPECT_EQ(h.ctx->counters.n_pbh_keys, 0);
     EXPECT_EQ(h.ctx->counters.n_pbh_held_emissions, 0);
-    EXPECT_TRUE(h.ctx->carry.pb_hold.empty());
+    EXPECT_TRUE((net::present(h.ctx->entities.sat_signals, &net::SatSignalState::pb_hold) == 0));
     EXPECT_TRUE(h.ctx->carry.pb_hold_dev_abs_m.empty());
     // And the entry the consumer receives carries no generation either.
     const auto pb = store.getPhaseBias("G32", "L1W");
@@ -217,9 +217,9 @@ TEST(PbEmitHoldTest, FirstSightingStartsGenerationOne) {
     EXPECT_DOUBLE_EQ(pbOf(sol, "G32"), 0.33) << "nothing is hidden on the seeding epoch";
     EXPECT_EQ(h.ctx->counters.n_pbh_gen_first, 2);
     EXPECT_TRUE(h.ctx->carry.pb_hold_dev_abs_m.empty());
-    ASSERT_EQ(h.ctx->carry.pb_hold.count("G32|L1W"), 1u);
-    EXPECT_EQ(h.ctx->carry.pb_hold.at("G32|L1W").generation, 1u);
-    EXPECT_DOUBLE_EQ(h.ctx->carry.pb_hold.at("G32|L1W").held_m, 0.33);
+    ASSERT_EQ((net::getSig(h.ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::pb_hold) ? 1u : 0u), 1u);
+    EXPECT_EQ((*net::getSig(h.ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::pb_hold)).generation, 1u);
+    EXPECT_DOUBLE_EQ((*net::getSig(h.ctx->entities.sat_signals, "G32|L1W", &net::SatSignalState::pb_hold)).held_m, 0.33);
 }
 
 TEST(PbEmitHoldTest, AGapBeyondMaxGapStartsANewGenerationAndOneBelowDoesNot) {

@@ -623,14 +623,14 @@ TEST(PhaseDatumHandover, CarryRerefNullOutIsUntouched) {
 /// a station-scoped erase would leave stale floats in conflict with the new frame at
 /// every station it skipped.  An unrelated family survives unchanged.
 TEST(PhaseDatumHandover, CarryRerefEraseDropsEveryStationOfTheFamily) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
-    lc[{0, "G01", "L1C"}] = LocalCarry{-3.2, 1e-4, 100.0, {}};
-    lc[{1, "G01", "L1C"}] = LocalCarry{ 7.1, 2e-4, 100.0, {}};
-    lc[{0, "G02", "L1C"}] = LocalCarry{ 0.5, 1e-4, 100.0, {}};
+    net::ArcTable lc;
+    net::putArcIn(lc, {0, "G01", "L1C"}, &net::ArcState::amb) = LocalCarry{-3.2, 1e-4, 100.0, {}};
+    net::putArcIn(lc, {1, "G01", "L1C"}, &net::ArcState::amb) = LocalCarry{ 7.1, 2e-4, 100.0, {}};
+    net::putArcIn(lc, {0, "G02", "L1C"}, &net::ArcState::amb) = LocalCarry{ 0.5, 1e-4, 100.0, {}};
     const std::set<std::pair<std::string, std::string>> reref{{"G01", "L1C"}};
     EXPECT_EQ(networkApplyPhaseAnchorCarryReref(reref, lc), 2);
-    EXPECT_EQ(lc.size(), 1u);
-    EXPECT_TRUE(lc.count({0, "G02", "L1C"})) << "an unrelated family must survive";
+    EXPECT_EQ(net::present(lc, &net::ArcState::amb), 1u);
+    EXPECT_TRUE((net::getArc(lc, {0, "G02", "L1C"}, &net::ArcState::amb) != nullptr)) << "an unrelated family must survive";
     EXPECT_EQ(networkApplyPhaseAnchorCarryReref({}, lc), 0)
         << "an empty set is the no-op fast path";
 }
@@ -701,16 +701,6 @@ TEST(PhaseDatumHandoverLoader, DisabledWithoutThePrioritizedElection) {
     EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
 }
 
-/// The ensemble datum holds no pin at all (its gauge is the kernel sum-to-zero
-/// fold), so there is nothing to hand over.
-TEST(PhaseDatumHandoverLoader, DisabledUnderTheEnsembleDatum) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadNet("ensemble",
-                        "    \"phase_datum_ensemble\": true,\n"
-                        "    \"phase_datum_handover_continuous\": true,\n", cfg));
-    EXPECT_FALSE(cfg.networkPhaseDatumHandoverContinuous());
-}
-
 /// Off by default: the byte-identity contract (invariant #6; QUEUE item 1(d)).
 TEST(PhaseDatumHandoverLoader, CarryRerefDefaultsOff) {
     GnssConfig cfg;
@@ -755,15 +745,6 @@ TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderEq34Alone) {
     GnssConfig cfg;
     ASSERT_TRUE(loadNet("reref_eq34only",
                         "    \"phase_datum_eq34\": true,\n"
-                        "    \"phase_anchor_carry_reref\": true,\n", cfg));
-    EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
-}
-
-/// The ensemble datum elects no anchor: the same disarm as for the handover knob.
-TEST(PhaseDatumHandoverLoader, CarryRerefDisabledUnderTheEnsembleDatum) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadNet("reref_ensemble",
-                        "    \"phase_datum_ensemble\": true,\n"
                         "    \"phase_anchor_carry_reref\": true,\n", cfg));
     EXPECT_FALSE(cfg.networkPhaseAnchorCarryReref());
 }

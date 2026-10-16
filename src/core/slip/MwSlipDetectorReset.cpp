@@ -66,14 +66,6 @@ namespace GnssProcessor {
             }
         }
 
-        // Refloat every bridge arc of this satellite (M5 card WL-2): a slip on any of the
-        // three bands invalidates GF_b's constant-ambiguity assumption.  No rollback: the
-        // bridge re-warms fresh, and its σ guard keeps a mid-warm arc from arming a fix.
-        if (!bridge_stats_.empty())
-            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); )
-                if (bit->first.rfind(prefix, 0) == 0) bit = bridge_stats_.erase(bit);
-                else ++bit;
-
         // An external reset invalidates any demoted-level stash for the
         // sat: a rolled-back arc's mean reverts to the pre-event level, so
         // (mean − stash) would read ~0 with full rollback confidence, a
@@ -156,27 +148,6 @@ namespace GnssProcessor {
                          satellite, signal, n_rolled, n_erased);
         }
 
-        // Refloat any bridge arc whose triple ("sat_s1_s2_s5") involves the slipped
-        // signal (M5 card WL-2): a slip on band 1, 2 or 5 jumps GF_b.  This mirrors the
-        // per-pair erase above, extended to the third band.
-        if (!bridge_stats_.empty())
-            for (auto bit = bridge_stats_.begin(); bit != bridge_stats_.end(); ) {
-                bool involves = false;
-                if (bit->first.rfind(prefix, 0) == 0) {
-                    const std::string rest = bit->first.substr(prefix.size());  // "s1_s2_s5"
-                    std::size_t p = 0;
-                    while (p < rest.size()) {
-                        const std::size_t q = rest.find('_', p);
-                        const std::string tok = rest.substr(p, q == std::string::npos ? q : q - p);
-                        if (tok == signal) { involves = true; break; }
-                        if (q == std::string::npos) break;
-                        p = q + 1;
-                    }
-                }
-                if (involves) bit = bridge_stats_.erase(bit);
-                else ++bit;
-            }
-
         // Invalidate demoted-level stashes touching this signal (same
         // rationale as resetSatellite: a rollback corrupts the settle
         // estimate's post-restart mean).
@@ -210,7 +181,6 @@ namespace GnssProcessor {
         cross_sat_devs_.clear();
         arc_snapshots_.clear();
         demoted_levels_.clear();
-        bridge_stats_.clear();   // a hard restart drops the bridge accumulators too (M5 card WL-2)
         if (n_arcs > 0 || n_pivots > 0 || n_biases > 0 || n_xsat > 0 || n_snaps > 0) {
             logger->info("MW detector resetAll: cleared {} arc(s), {} SD pivot(s), {} stored bias(es), {} cross-sat σ entries, {} arc snapshot(s)",
                          n_arcs, n_pivots, n_biases, n_xsat, n_snaps);

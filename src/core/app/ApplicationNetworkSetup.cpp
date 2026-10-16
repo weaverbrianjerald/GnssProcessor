@@ -89,7 +89,6 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
-#include "products/NetworkPbEmitFilter.hpp" // PB emission-continuity filter (M5 prereq)
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot and warm resume (RTB-7)
@@ -100,16 +99,13 @@
 #include "filter/NetworkSbasis.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "filter/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "filter/NetworkIonoDeweightGate.hpp" // Station-adaptive SH-VTEC-constraint deweight (iono deweight card)
 #include "filter/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
-#include "filter/NetworkMwWlLayer.hpp"             // MW-seeded wide-lane pseudo-obs layer (M5 card WL-1)
 #include "filter/StateKeySchema.hpp"
 #include "filter/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "filter/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
 #include "logging/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
 #include "app/NetworkRunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
-#include "slip/MwLaneTiers.hpp"         // per-constellation lane-tier band table (UWL-1)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
@@ -154,6 +150,9 @@
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkRunEnd.hpp"
 #include <spdlog/spdlog.h>
+#include "app/NetworkRun.hpp"
+#include "app/NetworkRunContext.hpp"
+#include "logging/NetworkRunTraces.hpp"
 
 namespace GnssProcessor {
 
@@ -580,8 +579,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // exclusive and are tested in this order:
     //   - network.estimate_iono_sh: the network co-estimates its own SH-VTEC field
     //     and loads no GIM.
-    //   - network.estimate_sat_code_bias with network.code_bias_gf_datum (slant
-    //     posture): no ionosphere constraint; the geometry-free biases are the datum.
     //   - network.estimate_sat_code_bias with network.w6_iono_constraint = none
     //     (self-contained posture): no ionosphere constraint; the sum-to-zero rows
     //     carry the code-bias datum.
@@ -613,33 +610,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                       shc.a00_warn_low_tecu, shc.a00_warn_high_tecu);
         else
             log->info("Network (SH-iono): a₀₀ physical-band WARN disabled (low ≥ high).");
-    } else if (config_.estimateNetworkSatCodeBias() && config_.networkCodeBiasGfDatum()) {
-        // Slant posture (Odijk 2016 §5.1): the ionosphere stays free per-LOS slant and
-        // is not constrained at all (no SH field, no GIM).  The satellite code bias is
-        // made observable by the third frequency, not by an ionosphere constraint:
-        // rank deficiencies 2b/3b are removed by pinning the geometry-free biases as
-        // datum (the GF pin and the receiver DCB gauge), which absorbs the GF lump into
-        // the slant ionosphere (their Table 8) and leaves the modernized DCB
-        // d^s_1 - d^s_j (j >= 3) as the estimable content.  No GIM is loaded and no
-        // error is raised; this branch exists so that the combination is reachable.
-        log->info("Network (W6/slant): NO ionosphere constraint by design — free per-LOS "
-                  "slant delays with the geometry-free code biases pinned as datum "
-                  "(network.code_bias_gf_datum).  The estimable satellite code bias is the "
-                  "MODERNIZED DCB from the third frequency onward; the geometry-free lump "
-                  "is absorbed by the ionosphere, so the emitted ionosphere and code biases "
-                  "must be applied by a consumer AS A PAIR.");
     } else if (config_.estimateNetworkSatCodeBias()
                && config_.getNetworkConfig().w6_iono_constraint
                       == NetworkW6IonoConstraint::None) {
         // Self-contained W6 posture (RF-0b; docs/refound/RF-0_baseline_2026-09-14.md
-        // Finding 2).  It has the same "no ionosphere constraint" shape as the slant
-        // branch above and is kept as a separate branch, not a widened condition on it,
-        // because the two differ in the satellite code-bias datum.  The slant branch pins
-        // each satellite's geometry-free bias to zero (estimable content only from the
-        // third frequency); this one leaves it free and lets the per-(constellation,
-        // signal) sum-to-zero rows realize the IGS convention, which makes the posture
-        // reachable under processing.frequency_mode = dual, where the loader refuses the
-        // GF pin.
+        // Finding 2).  It leaves each satellite's geometry-free bias free and lets the
+        // per-(constellation, signal) sum-to-zero rows realize the IGS convention, which
+        // makes the posture reachable under processing.frequency_mode = dual.
         //
         // No GIM is loaded and no error is raised.  `gim_` stays null, so
         // networkAppendGimIonoRows_ returns immediately and the per-LOS slant ionosphere
@@ -1015,13 +992,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // (empty map).  Matters only under enableGlonassNetwork().
         st.mm->setGlonassSlots(parser->getGlonassFreqSlots());
 
-        // Receiver-antenna ATX match check (startup diagnostic and optional phase-bias
-        // exclusion).  A receiver antenna type that matches no loaded ANTEX entry gets
-        // zero receiver PCO/PCV (getAntennaCorrection returns only the satellite-side
-        // terms): a cm-level, elevation-dependent phase-centre error that is otherwise
-        // visible only at trace level (antenna.log is empty at default verbosity).
-        // Checked once per station here; the per-observation trace still fires.  Only
-        // meaningful when a receiver correction would actually be applied.
+        // Receiver-antenna ATX match check (startup diagnostic and the optional station
+        // exclusion, network.exclude_unmodeled_antenna_stations).  A receiver antenna
+        // type that matches no loaded ANTEX entry gets zero receiver PCO/PCV
+        // (getAntennaCorrection returns only the satellite-side terms): a cm-level,
+        // elevation-dependent phase-centre error that is otherwise visible only at trace
+        // level (antenna.log is empty at default verbosity).  Checked once per station
+        // here; the per-observation trace still fires.  Only meaningful when a receiver
+        // correction would actually be applied.
         const auto& mc = config_.getModelCorrections();
         const bool rx_corr_on = (mc.enable_receiver_pco || mc.enable_receiver_pcv);
         if (rx_corr_on && !st.model->hasReceiverAntennaMatch()) {
@@ -1054,24 +1032,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // Kept (not excluded) but unmatched: recorded for the loaded-station summary
             // warning below.
             unmatched_antenna_stations.push_back(cfg.name);
-            // Optional (network.phase_bias_exclude_unmatched_antenna): keep this station's
-            // uncalibrated carrier phase out of the emitted satellite phase biases.  The
-            // clock-datum pivot is never excluded: it realizes the phase-bias datum, and in
-            // the legacy single-pivot gauge its states are the shared set, so excluding it
-            // would zero all emission.  Its antenna model has to be fixed instead.
-            if (config_.networkPhaseBiasExcludeUnmatchedAntenna()) {
-                if (is_pivot) {
-                    log->warn("Network: clock-datum station '{}' has the unmatched antenna "
-                              "but realizes the phase-bias datum — NOT excluded "
-                              "(network.phase_bias_exclude_unmatched_antenna); supply its "
-                              "ATX model to remove the receiver phase-centre bias.",
-                              cfg.name);
-                } else {
-                    st.mm->setPhaseBiasEmissionExcluded(true);
-                    log->info("Network: station '{}' excluded from phase-bias emission "
-                              "contributions (unmatched receiver antenna).", cfg.name);
-                }
-            }
         } else if (rx_corr_on) {
             // Matched.  A match that came only through the always-on type-preserving
             // radome→NONE fallback (mm-level radome-agnostic calibration) is logged once
@@ -1149,33 +1109,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // GnssCorrections) engages the BIA-corrected wide-lane path (integer dN) where
         // biases are available; arc state lives on the detector and is station-local
         // (parallel-safe).
-        //
-        // The MW-seeded wide-lane layer also needs the per-station MW detector running
-        // (its per-arc Welford means feed the WL fold), including in the 3card lineage
-        // where phase_leveling is off, so network.mw_wl.enable builds the detector on
-        // every station independent of phase_leveling / turbo_edit / mw_detect.  With
-        // mw_wl disabled the path is unchanged.  (M5 card WL-1)
         const bool build_slip_for_pl =
             (config_.networkPhaseDatumPrioritized() || !is_pivot
              || config_.networkCycleSlipDatumStationDetect())
             && config_.networkPhaseLeveling()
             && (config_.networkCycleSlipTurboEdit() || config_.networkCycleSlipMwDetect());
-        // Adaptive iono q (network.adaptive_iono_q): per-station GF-TD2 variability
-        // monitor.  Station-local: fed in the parallel PASS A produce (the same
-        // contract as st.mw_slip below) and consumed serially by the T5v2 GM deviation
-        // aging.  On the network path the per-(station, satellite) deviation channel is
-        // the only time-linked slant-iono element, so the storm response scales its
-        // innovation term, not a slant q.  Off: null pointer, byte-identical.
-        if (config_.getNetworkConfig().adaptive_iono_q)
-            st.iono_var = std::make_unique<IonoVariabilityMonitor>(config_, log_manager_);
 
-        // The EWL/WL lanes also need the per-station MW detector running (its per-arc
-        // Welford means feed the EWL/MW(1,2) statistics).  With all lanes disabled the
-        // path is unchanged.  (M5 card WL-2, SPEC_ewl_wl_cascade_card.md §4)
-        const auto& mwc = config_.getNetworkConfig().mw_wl;
-        const auto& lcc = config_.getNetworkConfig().lane_carry;   // lane carry (M5 WL-3)
-        if (build_slip_for_pl || config_.networkMwWlSeed()
-            || mwc.ewl_enable || mwc.wl_inject_enable || lcc.enable) {
+        if (build_slip_for_pl) {
             st.mw_slip = std::make_unique<MwSlipDetector>(config_, log_manager_);
             // Every station's detector shares one logger, whose records are keyed
             // only by <sat>_<sig1>_<sig2>; the label is what lets the MWDEC / MWSKIP
@@ -1183,37 +1123,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // the label.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.mw_slip->setStationLabel(st.name);
             st.mw_slip->setCorrections(&st.model->getCorrections());
-            // Arm the tri-frequency GF_b phase bridge accumulator only when a consumer of
-            // the bridge exists (the WL-2 inject path or the WL-3 lane bridge increments)
-            // together with the EWL integers it bridges from.  Off: the detector never
-            // touches a bridge arc (byte-identical).  (M5 card WL-2, SPEC §3.4)
-            st.mw_slip->setBridgeEnabled(
-                (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable);
-            // Per-sample estimable-iono de-bias of the bridge accumulator
-            // (network.mw_wl.bridge_sample_debias), which removes the bridge's age bias
-            // (the 60-epoch fix); the frame contract is in the setter's Doxygen.  Armed
-            // only with the bridge itself; the per-epoch ı̃ push rides the iono_of build
-            // in NetworkDdPriorBuild.cpp.
-            st.mw_slip->setBridgePerSampleDebias(
-                (mwc.wl_inject_enable || (lcc.enable && lcc.bridge_meas)) && mwc.ewl_enable
-                && mwc.bridge_sample_debias);
-            // Push the per-constellation lane-tier band digits for the bridge band pick
-            // (network.mw_wl.uwl_enable).  Unarmed, nothing is pushed and every
-            // constellation keeps the legacy {1,2,5} scan, byte-identical, including under
-            // multi-GNSS active_systems (§6.1(b)).  With the table pushed, a constellation
-            // absent from it (BDS-3, deferred on its clock divergence) forms no bridge arc,
-            // and the wiring warns instead of skipping it silently.
-            // (M5 card UWL-1, SPEC_uwl_card.md §3.1)
-            if (mwc.uwl_enable) {
-                std::map<char, MwLaneTier> tiers;
-                for (const System sys : { System::GPS, System::Galileo }) {
-                    const char cons = rinexLetter(sys);   // the lane-tier table is keyed by letter
-                    if (const auto t = mwLaneTierOf(cons, mwc.uwl_gal_top_band,
-                                                    mwc.uwl_mid_enable, mwc.uwl_dual_top))
-                        tiers[cons] = *t;
-                }
-                st.mw_slip->setLaneTiers(std::move(tiers));
-            }
             // The TurboEdit MW+GF integer repair resolver is built only for turbo_edit
             // (higher-rate 1 s data, where the geometry-free ionospheric drift over the
             // epoch gap is small enough to trust an integer).  mw_detect uses the same MW
@@ -1321,12 +1230,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             names += unmatched_antenna_stations[i];
         }
         log->warn("Network: {} of {} loaded station(s) have NO receiver antenna ATX match "
-                  "(receiver PCO/PCV zeroed there): {}{}",
-                  unmatched_antenna_stations.size(), stations.size(), names,
-                  config_.networkPhaseBiasExcludeUnmatchedAntenna()
-                      ? " — non-pivot ones excluded from phase-bias emission"
-                      : " — supply their ATX models, or set "
-                        "network.phase_bias_exclude_unmatched_antenna to withhold them");
+                  "(receiver PCO/PCV zeroed there): {} — supply their ATX models, or set "
+                  "network.exclude_unmodeled_antenna_stations to exclude them",
+                  unmatched_antenna_stations.size(), stations.size(), names);
     }
     // Join a name vector into a comma-separated list for the summaries below.
     auto joinNames = [](const std::vector<std::string>& v) {
@@ -1458,8 +1364,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // Deterministic-parallel post-solve seam (network.parallel_seam): the per-block
     // DD carry fold and the D5 innovation-gate readouts.  It rides on the per-station
     // parallel path (same thread budget, Eigen already pinned to one thread for the
-    // epoch) and, unlike network.parallel_reduce, is byte-identical at any thread
-    // count: blocks are computed in parallel and accumulated/installed serially in
+    // epoch) and is byte-identical at any thread count: blocks are computed in parallel and accumulated/installed serially in
     // fixed block order.  With seam_threads == 1 the seam runs its original serial
     // path, so with the knob off the run is byte-for-byte the run without the seam.
     const bool seam_on      = parallel_on && nc.parallel_seam;
@@ -1474,9 +1379,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // blocks; this un-pins Eigen so each block's O(K²–K³) matmul spreads across
     // cores.  Those stages then run serially over blocks (n_threads = 1), so Eigen
     // threading does not nest inside the seam's OpenMP.  The dense products are
-    // reassociated, which drifts from the serial result at the ~1e-X ULP level (as
-    // network.parallel_reduce does); the default (off) keeps Eigen pinned and the
-    // seam/serial path byte-identical.
+    // reassociated, which drifts from the serial result at the ~1e-X ULP level; the
+    // default (off) keeps Eigen pinned and the seam/serial path byte-identical.
     setup.carry_par = parallel_on && nc.parallel_carry;
     const bool carry_par = setup.carry_par;
     if (carry_par)
@@ -1532,7 +1436,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           config_.networkCodeBiasDiscJumpTest(),
                           config_.networkClockDiscOnSetChange(),
                           config_.networkDiscThresholdFracCycles(),
-                          nc.disc_jump_test_decommon,    // de-commoned phase jump test (Card JT)
                           nc.disc_mark_scope == "channel");  // per-channel mark scope (Card MS)
     NetworkProductEmitter& emitter = *setup.emitter;
 
@@ -1560,37 +1463,28 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // The S-basis contract is part of the wire and is always stamped.  A replay of a
         // wire without it rebuilds the default emitter (no clock-discontinuity channel,
         // the flat default phase-bias threshold) and misses every declared clock
-        // re-reference, so the declaration cannot depend on an output option.
-        // network.serialize_sbasis_contract is accepted and inert.  The records are the
-        // same byte for byte as a contract-less writer's; only the header gains the
-        // S line.  (Card OWD, O1)
+        // re-reference, so the declaration cannot depend on an output option.  The
+        // records are the same byte for byte as a contract-less writer's; only the
+        // header gains the S line.  (Card OWD, O1)
         {
             // Stamp the S-basis contract into a v2 header (B6).  The declaration semantics
             // are the A3-corrected per-constellation satellite-clock-pin basis.
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
-            // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under the
-            // anchor-free ensemble datum the emitted bias references the receiver ensemble,
-            // not a pivot receiver; under phase_datum_eq34 it references a single-receiver
-            // chain (Card 3).  The per-solve decl in NetworkSolveGlue.cpp makes the same
-            // choice, but that object feeds only buildSharedDatum: the serialized
-            // declaration is this one.  Without these branches the product would declare
+            // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under
+            // phase_datum_eq34 the emitted bias references a single-receiver chain
+            // (Card 3), not a pivot receiver.  The per-solve decl in NetworkSolveGlue.cpp
+            // makes the same choice, but that object feeds only buildSharedDatum: the
+            // serialized declaration is this one.  Without this branch the product would declare
             // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
             // does not use, and an eq34 wire would contradict itself by also carrying pdr=
             // (stamped only under eq34) two fields later.  A consumer trusting field 5 would
             // build its between-satellite reference on the wrong frame; the enumerator
             // exists so that such a consumer can refuse on "amb_datum differs".  Older eq34
             // wires, written before the eq34 branch, carry that contradiction.  The branch
-            // mirrors the isb_datum self-description that follows; with both knobs off the
+            // mirrors the isb_datum self-description that follows; with the knob off the
             // default stays (byte-identical).
-            //
-            // The precedence must mirror NetworkSolveGlue.cpp (ensemble first, then eq34),
-            // or the declaration and the realized datum disagree when both are armed.  It is
-            // an `else if` there and an `else if` here.
-            if (config_.networkPhaseDatumEnsemble())
-                pending_contract.decl.amb_datum =
-                    SbasisDeclaration::AmbDatum::SumToZeroPerReceiver;
-            else if (config_.networkPhaseDatumEq34())
+            if (config_.networkPhaseDatumEq34())
                 pending_contract.decl.amb_datum =
                     SbasisDeclaration::AmbDatum::SingleReceiverChain;
             if (config_.networkClockDatumBroadcastAnchored()) {
@@ -1689,15 +1583,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
             pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // per-λ jump gate, discfrac= (H3)
-            pending_contract.disc_jump_test_decommon = nc.disc_jump_test_decommon;  // de-commoned phase jump test, discdecom= (Card JT)
             pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
             pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
             pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held (Card LAH)
                 nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
             pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold (Card SMH)
                 nc.emit_pb_hold && nc.emit_pb_hold_smoothed;
-            pending_contract.emit_pb_hold_smoothed_block =    // pbhold=4: its phase-visible member (Card SMD)
-                nc.emit_pb_hold && nc.emit_pb_hold_smoothed && nc.emit_pb_hold_smoothed_block;
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
             // off (or agek = 0) writes a byte-identical v2 header (no agek= token).
@@ -1869,5 +1760,21 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 }
 
 // ---- End of the run-end reports ----
+
+// Setup builder (card NOM3 step EP4); documented at its declaration in app/NetworkSetupResult.hpp.
+void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
+    // ---- End of the bindings ----
+    // The marker → ARP roster census is measured in networkSetup_, which runs
+    // before this context exists.  It is copied into the counters because the
+    // run-end readout and the run manifest read ctx.counters, and both report it
+    // in either knob state (card UPO).
+    ctx.counters.marker_arp_armed         = config_.networkStationMarkerToArp();
+    ctx.counters.n_marker_arp_ecc         = setup.n_marker_arp_ecc;
+    ctx.counters.n_marker_arp_reduced     = setup.n_marker_arp_reduced;
+    ctx.counters.n_marker_arp_over_1cm    = setup.n_marker_arp_over_1cm;
+    ctx.counters.n_marker_arp_no_record   = setup.n_marker_arp_no_record;
+    ctx.counters.marker_arp_max_h         = setup.marker_arp_max_h;
+    ctx.counters.marker_arp_max_h_station = setup.marker_arp_max_h_station;
+}
 
 } // namespace GnssProcessor

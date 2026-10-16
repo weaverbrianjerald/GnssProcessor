@@ -136,7 +136,6 @@ namespace GnssProcessor {
         stats.M2           = 0.0;
         stats.count        = 1;
         stats.prev_mw      = mw_m;
-        stats.prev_epoch_s = epoch_s;   // prev_mw's sample stamp (arcZdLast alignment, WL-3)
         stats.last_epoch_s = epoch_s;
         stats.diff_window.clear();
         stats.bia_corrected = bia_corrected;
@@ -1062,15 +1061,11 @@ namespace GnssProcessor {
         // mean past kWlLockDriftMaxCyc and trips drift demotion below; for
         // a noise outlier the 1/n weighting keeps the mean shift negligible.
         // Lagged snapshot before this epoch's value folds in: arcZdMean serves
-        // these so the MW-WL layer's same-epoch read never re-ingests the
-        // current observations (SPEC_mw_wl_card §3.3 double-count guard).
+        // these so a same-epoch read (the SD pre-reduce EWL rows) never re-ingests
+        // the current observations (SPEC_mw_wl_card §3.3 double-count guard).
         stats.mean_lag  = stats.mean;
         stats.M2_lag    = stats.M2;
         stats.count_lag = stats.count;
-        // Raw-sample lag for arcZdLast (WL-3), taken the same way: prev_mw still
-        // holds the previous processed epoch's raw value here.
-        stats.prev_mw_lag     = stats.prev_mw;
-        stats.prev_epoch_lag_s = stats.prev_epoch_s;
         stats.count++;
         {
             const double eff_n  = static_cast<double>(std::min(stats.count, kMaxHatchCount));
@@ -1122,7 +1117,6 @@ namespace GnssProcessor {
         // neither case arises.
         stats.prev_diff    = mw_diff;
         stats.prev_mw      = mw_m;
-        stats.prev_epoch_s = epoch_s;   // prev_mw's sample stamp (arcZdLast alignment, WL-3)
         stats.last_epoch_s = epoch_s;
     }
 

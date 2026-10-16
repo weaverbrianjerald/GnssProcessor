@@ -62,7 +62,9 @@
  *                                           #   stream is internally consistent in)
  *     [,gfpin=<const>:<s1>-<s2>...]         #   Odijk rd 3b: the geometry-free datum
  *                                           #   pair, present only in the slant
- *                                           #   posture (network.code_bias_gf_datum).
+ *                                           #   posture (the retired
+ *                                           #   network.code_bias_gf_datum; read,
+ *                                           #   no longer written by the producer).
  *                                           #   When present, the pinned pair's
  *                                           #   B records are the datum (0) and the
  *                                           #   GF lump lives in the ionosphere
@@ -136,19 +138,10 @@ struct SbasisContract {
     /// Serialized as an optional trailing @c discfrac= S-line field only when > 0,
     /// so a flat-metre producer writes the S line byte-for-byte as before.
     double            disc_threshold_frac_cycles{0.0};
-    /// Whether the producer's phase jump test screened the de-commoned step (raw ΔPB
-    /// minus the median ΔPB over the satellites emitted on that signal at both
-    /// epochs) rather than the raw one (@c network.disc_jump_test_decommon, card JT).
-    /// Seventh replay-emitter construction parameter.  A consumer replaying with the
-    /// other setting miscounts discontinuities on the cells where a frame move hid or
-    /// created a step, so @c makeReplayEmitter applies it and @c checkContract
-    /// compares it.  Serialized as an optional trailing @c discdecom=1 S-line field
-    /// only when armed, so a producer without it writes the S line byte-for-byte.
-    bool              disc_jump_test_decommon{false};
     /// Whether a per-satellite discontinuity mark bumped only the generations of the
     /// channels the marking site reported, rather than the satellite's clock,
     /// code-bias and phase-bias generations together (@c network.disc_mark_scope,
-    /// card MS).  Eighth replay-emitter construction parameter.  Serialized as an
+    /// card MS).  Seventh replay-emitter construction parameter.  Serialized as an
     /// optional trailing @c discscope=channel S-line field only when armed, so a
     /// producer without it writes the S line byte-for-byte.
     /// The @c R record carries satellite ids and no channel set, so a replay
@@ -180,12 +173,6 @@ struct SbasisContract {
     /// passed motion within a generation.  Serialized as @c pbhold=3; @c checkContract compares it.  Never true
     /// without @c emit_pb_hold.
     bool              emit_pb_hold_smoothed{false};
-    /// Whether the smoothed hold is its phase-visible member
-    /// (@c network.emit_pb_hold_smoothed_block, card SMD): the held @c bias_m follows the
-    /// phase-clock transfer minus the block clone's phase-visible passed motion.  Serialized
-    /// as @c pbhold=4 (which also sets @c emit_pb_hold_smoothed on read);
-    /// @c checkContract compares it.  Never true without @c emit_pb_hold_smoothed.
-    bool              emit_pb_hold_smoothed_block{false};
     /// Whether the producer's emitter maintained the per-satellite clock
     /// discontinuity counter (A2).  Second replay-emitter construction parameter;
     /// with the others in this struct it determines the @c NetworkProductEmitter
@@ -271,16 +258,16 @@ struct SbasisContract {
     /// only for constellations the consumer declares (the @c clock_pivot_sat
     /// semantics).
     std::map<std::string, std::string> cb_pin_pair;
-    /// Per-constellation geometry-free datum pair (@c network.code_bias_gf_datum,
-    /// Odijk rd 3b).  Present only when the producer folded a GF row per satellite in
-    /// addition to the IF pin (the "slant posture": free per-LOS ionosphere, no SH
-    /// field, no GIM).  The value is @c "<s1>-<s2>" and is currently always the same
-    /// pair as @ref cb_pin_pair (the GF row is built on the IF pin's post-hold
-    /// @c sig1/@c sig2).  It is carried explicitly rather than implied so the token is
-    /// self-contained and so the per-channel-family form (@c "C1C-C5Q+C1X-C5X", see
-    /// @c docs/SPEC_family_gf_datum.md) is a value extension rather than a new token.
-    /// The parser already accepts that '+'-joined form; this producer writes one pair
-    /// per constellation.
+    /// Per-constellation geometry-free datum pair (the retired
+    /// @c network.code_bias_gf_datum, Odijk rd 3b).  Present only in a product whose
+    /// producer folded a GF row per satellite in addition to the IF pin (the "slant
+    /// posture": free per-LOS ionosphere, no SH field, no GIM).  The producer no longer
+    /// builds that row and leaves the field empty; the writer, the parser and
+    /// @c checkContract keep it for products written before the retirement.  The value
+    /// is @c "<s1>-<s2>", the same pair as @ref cb_pin_pair (the GF row was built on
+    /// the IF pin's @c sig1/@c sig2), or the per-channel-family form
+    /// (@c "C1C-C5Q+C1X-C5X", see @c docs/SPEC_family_gf_datum.md), which the parser
+    /// accepts as a value extension rather than a new token.
     ///
     /// Why the pair is on the wire: under the GF datum, IF+GF together span the
     /// pinned pair's whole 2-D subspace, so those two channels' B records are
@@ -359,21 +346,6 @@ struct NetworkProductRecord {
         bool any() const { return !clock.empty() || !code.empty() || !phase.empty(); }
     };
     SerializedDiscCounters serialized_disc;
-    /// True when this record came from an @c F marker: a split-cadence fast epoch
-    /// carrying satellite clock values only, measured by a clocks-only tick between
-    /// full solves (FC-1).  A fast record never carries biases, URA, datum changes or
-    /// discontinuity information, and @c replay routes it to a clock-value-and-age-only
-    /// store refresh instead of the whole-epoch @c emitToStore path (which would
-    /// advance discontinuity counters and re-stamp the shared per-satellite header).
-    bool     is_fast{false};
-    /// The last emitted full solve these fast values are referenced to (FC-1).  A
-    /// consumer can compare it with its own most recent full epoch and ignore the
-    /// record if they disagree: the fast values are a delta on that anchor and have
-    /// no meaning against a different one.
-    GnssTime fast_anchor{};
-    /// Fast clocks, sat -> {clock_c0_m, sigma_m} (FC-1).  sigma is 0 when the producer
-    /// omitted @c sigk=.
-    std::map<std::string, std::pair<double, double>> fast_clocks;
     /// The S-contract state as of this epoch (RTA-5): set (present=true) when an
     /// S line immediately preceded this epoch's E line (the deferred v2 header S
     /// counts for the first epoch; a mid-file re-broadcast counts for the epoch it
@@ -445,34 +417,6 @@ public:
                const std::set<std::string>& retro_sats = {},
                const NetworkProductEmitter* disc_source = nullptr);
 
-    /// Append one split-cadence fast epoch: satellite clock values only, measured by
-    /// a clocks-only tick between full solves (FC-1,
-    /// docs/SPEC_fast_clock_split_cadence.md).
-    ///
-    /// Written as an @c F marker plus one @c K line per satellite; an empty @p sats
-    /// writes nothing.  Both tags are new on purpose.  A pre-FC-1 reader skips a line
-    /// with an unknown tag (NetworkProductIO.cpp, the `ok = false` default branch:
-    /// the sticky ok flag is cleared and parsing continues), so reusing the existing
-    /// @c C tag would attach the payload to the previous @c E epoch and misread the
-    /// frame without any error.  With a private tag for both the marker and the
-    /// payload, an old reader drops the entire record and falls back to its pre-FC-1
-    /// behaviour (ZOH between full epochs), which is correct, only not improved.
-    ///
-    /// @note SPEC section 8 asks instead for a banner version bump that makes old
-    ///       consumers fail with an error.  That is not achievable: the banner is a
-    ///       @c # comment and no C++ reader inspects it, so a bump is invisible to
-    ///       every consumer already built.  Self-skipping records provide the property
-    ///       the requirement protects (no silent misinterpretation), which an unread
-    ///       version cannot.
-    ///
-    /// @param epoch     the fast tick's epoch.
-    /// @param anchor    the last emitted full solve the values are referenced to; a
-    ///                  consumer can check it against its own last full epoch and ignore
-    ///                  the record if they disagree.
-    /// @param sats      (sat, clock_c0_m, sigma_m) triples; a sigma <= 0 (or non-finite)
-    ///                  omits the @c sigk= token.
-    void writeFastClock(const GnssTime& epoch, const GnssTime& anchor,
-                        const std::vector<std::tuple<std::string, double, double>>& sats);
 
     /// Append a current machine-parseable "S" contract line mid-file (the periodic /
     /// datum-change contract re-broadcast, RTA-5).  Same grammar as the header S line,
@@ -577,11 +521,10 @@ public:
     static std::string csvSanitize(const std::string& s);
 
     /// Construct an emitter configured as the producer that wrote @p contract, from
-    /// the eight replay-emitter construction parameters the contract carries
+    /// the seven replay-emitter construction parameters the contract carries
     /// (@c disc_threshold_m, @c emit_clock_disc, @c staleness_horizon_s,
     /// @c code_bias_jump_test, @c clock_disc_on_set_change,
-    /// @c disc_threshold_frac_cycles, @c disc_jump_test_decommon,
-    /// @c disc_mark_scope_channel), so a replay reproduces every discontinuity
+    /// @c disc_threshold_frac_cycles, @c disc_mark_scope_channel), so a replay reproduces every discontinuity
     /// counter, the clock channel included, byte-for-byte with no out-of-band
     /// knowledge of the producer's config.  A v1 file (@c contract.present false)
     /// yields the default emitter, reproducing the pre-B6 replay behavior.  Feed the

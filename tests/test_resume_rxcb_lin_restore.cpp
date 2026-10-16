@@ -11,7 +11,7 @@
  * Purpose.  RS-6 restores the rx-CB carry's numerator (@c value_abs / @c var /
  * @c last_seen_s).  The gate that decides whether that prior is folded tests it
  * against the station's code-bias linearization point:
- * @c cb_innov_raw = @c value_abs − @c x_lin(cb), against a fixed 5.13 m bar.
+ * @c cb_innov = @c value_abs − @c x_lin(cb), against a fixed 5.13 m bar.
  * @c x_lin is a one-shot seed that @c StateInitializer::initializeCodeBiases
  * writes on the station's first processed epoch and never revises.  On a warm
  * resume with the restore off, that reference is re-derived from the resume

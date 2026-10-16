@@ -113,7 +113,7 @@ public:
      * tests the flag.  The driver registers clones after every other column, so no
      * existing column index moves and the clones occupy the last
      * @ref numClockClones columns.  A clone is never emitted (@ref toSolutionEpoch),
-     * never counted as a satellite clock by the gauge-free closure, and never
+     * never grouped as a satellite clock of the gauge-free downdate, and never
      * marginalized by card Q3's clock refloat (@ref refoldSharedPriorDenseDroppingClocks).
      * @throws std::logic_error after @ref beginEpoch, like every registration.
      */
@@ -251,8 +251,7 @@ public:
      * For the layout and the per-epoch state the effect equals default-constructing
      * a new @c NetworkEstimator.  Everything else is kept: the settings made
      * through the setters and passthroughs (thread budgets, rank-gate tolerance,
-     * kernel options), the attribution recorder, and the run-cumulative
-     * @ref gaugeFreePartialSkipped tally.
+     * kernel options) and the attribution recorder.
      */
     void reset();
 
@@ -294,28 +293,13 @@ public:
                                NetworkNormalEquations::StationPrior{});
 
     /**
-     * @brief Set the per-station fan-out used by the Schur reduction (@ref
-     *        NetworkNormalEquations::reduce), the dominant per-epoch serial cost.
-     *
-     * Default 1 (serial, byte-identical output).  The network driver sets this to
-     * its per-station thread budget when station-parallelism is enabled so the
-     * reduction runs across cores; values > 1 make reduce()'s output
-     * reproducible-but-ULP-dependent on the thread count (see that method).  Takes
-     * effect on the next @ref solve / @ref reducedSharedNormals.
-     *
-     * @param n_threads Thread count (clamped to ≥ 1).
-     */
-    void setReduceThreads(int n_threads) {
-        reduce_threads_ = n_threads > 1 ? n_threads : 1;
-    }
-
-    /**
      * @brief Set the thread budget for the deterministic-parallel DD carry-fold
      *        (@c network.parallel_seam): the per-block fan-out of
      *        @ref NetworkNormalEquations::foldReducedDdPriors.
      *
-     * Default 1 (serial fold, byte-identical).  Unlike @ref setReduceThreads, this
-     * keeps the output byte-identical at any thread count: the per-block algebra
+     * Default 1 (serial fold, byte-identical).  Unlike the threaded branch of
+     * @ref NetworkNormalEquations::reduce, this keeps the output byte-identical at any
+     * thread count: the per-block algebra
      * is computed in parallel but accumulated serially in block-index order.
      * Takes effect on the next @ref solve.
      *
@@ -979,18 +963,10 @@ public:
     ///        and the rationale).  Applied to the joint Λ, so the clock↔code-bias
     ///        off-diagonals that the C1 dense carry exists to retain are preserved;
     ///        only the gauge direction's information is removed.
-    /// @param require_closure Apply the downdate along a direction only when every
-    ///        column of its support is in this fold's key set (Card C-GF).  A
-    ///        partially carried direction is skipped and counted
-    ///        (@ref gaugeFreePartialSkipped): restricted to a subset, it is no
-    ///        longer the datum's functional, and downdating it would delete the
-    ///        estimable carried-vs-uncarried contrast instead of gauge.  Default
-    ///        false keeps the Q3 behaviour, byte-identical.
     std::size_t addSharedPriorDense(const std::vector<SharedPrior>& keys,
                                     const Eigen::MatrixXd& cov,
                                     Eigen::VectorXd* lambda_diag = nullptr,
-                                    bool clock_gauge_free = false,
-                                    bool require_closure = false);
+                                    bool clock_gauge_free = false);
 
     /// One clone's walk factor (card SCL; card BCL for a bias): the pseudo-observation
     /// @f$x(t) - x(t-1) = \text{mean}@f$ with variance @c q, between the key's own column
@@ -1125,17 +1101,7 @@ public:
      * @return Number of clock keys whose information was downdated (0 ⇒ the
      *         gauge-free step was inert for this fold).
      */
-    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors,
-                                             bool require_closure = false);
-
-    /// Directions skipped because their support was not fully carried, accumulated
-    /// over the whole run (Card C-GF).  Not cleared by @ref reset: the withdraw and
-    /// within-epoch replay folds run after the driver's per-epoch read point, so an
-    /// epoch-scoped tally would under-report the paths whose fold/withdraw symmetry
-    /// matters most.  The count makes the decoupling edge visible (invariant #7):
-    /// without it, a downdate that ran and one that was declined look identical in
-    /// a run log.
-    std::size_t gaugeFreePartialSkipped() const { return gf_partial_skipped_; }
+    std::size_t addSharedPriorClockGaugeFree(const std::vector<SharedPrior>& priors);
 
     /**
      * @brief Gauge-free diagonal analogue of
@@ -1152,15 +1118,9 @@ public:
      *                the re-solve throws and the anchored solve must survive.
      * @return Number of clock keys refloated (0 ⇒ nothing folded).
      */
-    /// @param require_closure Must match the flag the original fold used
-    ///        (Card C-GF).  Closure decides per constellation whether the group was
-    ///        folded gauge-free or plainly (@ref addSharedPriorClockGaugeFree), and
-    ///        this call withdraws a plainly folded group key by key; with a
-    ///        different value it withdraws a block that was never applied.
     std::size_t refoldSharedPriorClockGaugeFreeDropping(
         const std::vector<SharedPrior>& priors,
-        const std::set<std::string>& drop_sats, bool restore = false,
-        bool require_closure = false);
+        const std::set<std::string>& drop_sats, bool restore = false);
 
     /**
      * @brief Withdraw already-folded diagonal shared priors (Card Q3,
@@ -1228,13 +1188,10 @@ public:
      */
     /// @param clock_gauge_free Must match the flag the original fold used, or the
     ///        withdrawn block is not the block that was applied.
-    /// @param require_closure  Must match as well (Card C-GF): closure changes which
-    ///        directions U spans, so a mismatched withdraw un-folds a different
-    ///        subspace and leaves a negative-semidefinite residue in the normals.
     std::size_t refoldSharedPriorDenseDroppingClocks(
         const std::vector<SharedPrior>& keys, const Eigen::MatrixXd& cov,
         const std::set<std::string>& drop_sats, bool restore = false,
-        bool clock_gauge_free = false, bool require_closure = false);
+        bool clock_gauge_free = false);
 
     /**
      * @brief Fold an explicit linear gauge constraint onto the shared border.
@@ -1264,7 +1221,8 @@ public:
 
     /**
      * @brief Set the anchor-free sum-to-zero phase-bias gauges for this epoch
-     *        (Fix A, @c network.phase_datum_ensemble).
+     *        (Fix A; kept as a tested kernel after the removal of
+     *        @c network.phase_datum_ensemble, its only production caller).
      *
      * The ensemble realization of the phase-bias↔ambiguity datum: instead of
      * pinning one anchor receiver's ambiguity per (satellite, signal), the gauge
@@ -1527,14 +1485,6 @@ public:
      * @param x_s        The shared estimate from @ref solve.
      * @param epoch_time SSR content reference epoch stamped on the solution.
      * @param iod_ssr / provider_id / solution_id IGS-SSR stamps (pass-through).
-     * @param ambiguity_datum_ensemble True when the phase-bias gauge is the
-     *        anchor-free receiver ensemble (@c network.phase_datum_ensemble,
-     *        @c SbasisDeclaration::AmbDatum::SumToZeroPerReceiver; T3a).  The
-     *        ensemble references the satellite phase bias to the mean of the
-     *        tracking receivers' float ambiguities, so the emitted bias is not
-     *        integer, and the @c signal_integer flag is forced false so no consumer
-     *        treats it as an AR candidate.  Default false = the pivot-receiver
-     *        datum (byte-identical).
      * @return One epoch of satellite-side solutions (clock C0 + per-signal code /
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      *         SH-VTEC columns are not mapped, nor are clock clone columns (card SCL:
@@ -1543,8 +1493,7 @@ public:
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
-                                         int provider_id = 0, int solution_id = 0,
-                                         bool ambiguity_datum_ensemble = false) const;
+                                         int provider_id = 0, int solution_id = 0) const;
 
     // --- Per-constellation σ̂0 carve-out decision (RTA-10) -------------------
 
@@ -1635,16 +1584,12 @@ private:
                          std::vector<Eigen::Index>& in_idx,
                          Eigen::MatrixXd& Lambda, Eigen::VectorXd& eta,
                          bool clock_gauge_free = false,
-                         std::size_t* gauge_free_keys = nullptr,
-                         bool require_closure = false) const;
+                         std::size_t* gauge_free_keys = nullptr) const;
 
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch (card SCL); cleared by reset()
     Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch (card SCL2 X2); cleared by reset()
-    /// Partial-support skip tally (Card C-GF).  @c mutable because @ref denseFoldTerms_
-    /// is const and observational: the skip decision reads the layout, it does not change it.
-    mutable std::size_t gf_partial_skipped_{0};
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
@@ -1691,7 +1636,6 @@ private:
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
-    int reduce_threads_{1};                       ///< per-station Schur-loop fan-out for reduce() (1 = serial; set by the driver)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = off; > 1 gives ULP-level differences on the reduction and stays byte-identical on the middle inverse; set by the driver)
     double dense_fold_kappa_{1e-6};               ///< relative-pivot bound of the dense border fold (network.dense_fold_kappa, card CTU section 14); 1e-6 = the historical constant, byte-identical (@ref setDenseFoldKappa)
@@ -1703,25 +1647,6 @@ private:
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
-
-/**
- * @brief Run-end report: the observability rank gate and the datum-direction ratio.
- *
- * The observability rank gate (card DG): its calibration line when the tolerance is not
- * the default, the two causes of an over-specified withhold, and the invariant-#7
- * datum-direction information ratio that tells them apart (measured in
- * NetworkFrameDiag).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol`;
- * `ctx.counters.n_gate_withheld_over > 0`; `ctx.counters.ddi_epochs > 0 &&
- * ctx.counters.ddi_dirs == 0`; `ctx.counters.ddi_epochs > 0 && ctx.counters.ddi_dirs >
- * 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkRankGateRunEnd(const NetworkRunEndView& v);
 
 /**
  * @brief Run-end report: the carry-aware covariance mode.
@@ -1737,5 +1662,21 @@ int networkRankGateRunEnd(const NetworkRunEndView& v);
 int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+struct NetworkRun;
+struct NetworkEngineSpec;
+
+/**
+ * @brief Configures the joint estimator once for the run.
+ *
+ * Thread counts, rank-gate tolerance, dense-fold kappa, the station PD guard and its
+ * null-direction trace, and the PD-safe DD fold; the estimator keeps them across its per-epoch
+ * reset().  Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in
+ * the order scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.est.
+ * @param engine_spec The engine specification the run was built from (its carry-driver configuration).
+ */
+void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_spec);
 
 } // namespace GnssProcessor

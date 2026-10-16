@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"     // knobs, the per-LOS states, the act lists, the tallies
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkGrossLos.hpp"
 #include "filter/NetworkRunTypes.hpp"    // NetStation / StationAssembly / LocalCarry
@@ -216,6 +217,7 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
                          "    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "act"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
     ASSERT_DOUBLE_EQ(ctx.knobs.gl_cold_bound_m, 12.0);
 
     std::vector<NetStation> stations(1);
@@ -225,20 +227,20 @@ TEST(NetworkGrossLosColdBound, TheColdEraseSweepsEveryCarriedAmbiguityOfTheLineO
     const auto l1 = std::make_tuple(0, std::string("G07"), std::string("L1C"));
     const auto l2 = std::make_tuple(0, std::string("G07"), std::string("L2W"));
     const auto other = std::make_tuple(0, std::string("G05"), std::string("L1C"));
-    ctx.carry.local_carry[l1]    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
-    ctx.carry.local_carry[l2]    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
-    ctx.carry.local_carry[other] = LocalCarry{ 12.0, 1.0e-4, 100.0 };
-    ctx.carry.iono_carry[{ 0, "G07" }] = LocalCarry{ -91.0, 1.0e-2, 100.0 };
+    net::putArc(ctx.entities, l1, &net::ArcState::amb)    = LocalCarry{ 178.0, 1.0e-4, 100.0 };
+    net::putArc(ctx.entities, l2, &net::ArcState::amb)    = LocalCarry{ -3.0, 1.0e-4, 100.0 };   // not tracked this epoch
+    net::putArc(ctx.entities, other, &net::ArcState::amb) = LocalCarry{ 12.0, 1.0e-4, 100.0 };
+    net::putLos(ctx.entities, 0, "G07", &net::LosState::iono) = LocalCarry{ -91.0, 1.0e-2, 100.0 };
 
-    ctx.carry.gl_act_cold_refloat.push_back({ 0, "G07" });
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    events.gross.gl_act_cold_refloat.push_back({ 0, "G07" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
 
-    EXPECT_EQ(ctx.carry.local_carry.count(l1), 0u);
-    EXPECT_EQ(ctx.carry.local_carry.count(l2), 0u);
-    EXPECT_EQ(ctx.carry.local_carry.count(other), 1u);
-    EXPECT_EQ(ctx.carry.iono_carry.count({ 0, "G07" }), 0u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, l1, &net::ArcState::amb) != nullptr), 0u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, l2, &net::ArcState::amb) != nullptr), 0u);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, other, &net::ArcState::amb) != nullptr), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, 0, "G07", &net::LosState::iono) != nullptr), 0u);
     EXPECT_EQ(ctx.counters.gross_los.cold_amb_erased, 2);
-    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty()) << "the cold path never holds";
+    EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0)) << "the cold path never holds";
 }
 
 // A cold declaration folds the line of sight's code rows exactly as a σ-bar one does,
@@ -248,10 +250,11 @@ TEST(NetworkGrossLosColdBound, AColdDeclarationFoldsTheCodeRows) {
     ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
                          "    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "publish"));
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
     std::vector<NetStation> stations(1);
     stations[0].name = "STA1";
 
-    GrossLosState& st = ctx.carry.gl_state[{ 0, "G07" }];
+    GrossLosState& st = net::putLos(ctx.entities, 0, "G07", &net::LosState::gross_los);
     ASSERT_EQ(networkGrossLosColdStep(st, verdict(24.2), ctx.knobs.gl_cold_bound_m, true, true,
                                       259410.0),
               GrossLosColdEdge::Declare);
@@ -274,6 +277,7 @@ TEST(NetworkGrossLosColdBound, ParsesClampsAndResolves) {
         ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n", cfg, log, "def"));
         EXPECT_DOUBLE_EQ(cfg.networkGrossLosColdBoundM(), 0.0);
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         EXPECT_DOUBLE_EQ(ctx.knobs.gl_cold_bound_m, 0.0);
     }
     {   // armed
@@ -283,6 +287,7 @@ TEST(NetworkGrossLosColdBound, ParsesClampsAndResolves) {
         EXPECT_DOUBLE_EQ(cfg.networkGrossLosColdBoundM(), 12.0);
         EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().gross_los_cold_bound_m, 12.0);
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         EXPECT_DOUBLE_EQ(ctx.knobs.gl_cold_bound_m, 12.0);
     }
     {   // the screen off: parsed, resolved off
@@ -290,6 +295,7 @@ TEST(NetworkGrossLosColdBound, ParsesClampsAndResolves) {
         ASSERT_TRUE(loadWith("    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "noscreen"));
         EXPECT_DOUBLE_EQ(cfg.networkGrossLosColdBoundM(), 12.0);
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         EXPECT_FALSE(ctx.knobs.gl_on);
         EXPECT_DOUBLE_EQ(ctx.knobs.gl_cold_bound_m, 0.0);
     }
@@ -299,6 +305,7 @@ TEST(NetworkGrossLosColdBound, ParsesClampsAndResolves) {
                              "    \"gross_los_bound\": true,\n"
                              "    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "hold"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         EXPECT_TRUE(ctx.knobs.gl_bound);
         EXPECT_DOUBLE_EQ(ctx.knobs.gl_cold_bound_m, 0.0);
     }
@@ -321,6 +328,7 @@ TEST(NetworkGrossLosColdBound, RunEndReadoutSaysInertOrNamesTheLineOfSight) {
         LogManager log; GnssConfig cfg;
         ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n", cfg, log, "re_off"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         std::ostringstream oss;
         networkGrossLosColdBoundRunEnd(ctx, cfg, captureLogger(oss));
         EXPECT_TRUE(oss.str().empty());
@@ -330,6 +338,7 @@ TEST(NetworkGrossLosColdBound, RunEndReadoutSaysInertOrNamesTheLineOfSight) {
         ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
                              "    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "re_inert"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         ctx.counters.gross_los.cold_los_screened = 57000;
         ctx.counters.gross_los.cold_v_under_max_m = 6.7;
         std::ostringstream oss;
@@ -344,6 +353,7 @@ TEST(NetworkGrossLosColdBound, RunEndReadoutSaysInertOrNamesTheLineOfSight) {
         ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n"
                              "    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "re_on"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         auto& g = ctx.counters.gross_los;
         g.cold_los_screened = 57000;
         g.cold_los_over = 8;
@@ -360,6 +370,7 @@ TEST(NetworkGrossLosColdBound, RunEndReadoutSaysInertOrNamesTheLineOfSight) {
         LogManager log; GnssConfig cfg;
         ASSERT_TRUE(loadWith("    \"gross_los_cold_bound_m\": 12.0,\n", cfg, log, "re_miswired"));
         NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
         std::ostringstream oss;
         auto lg = captureLogger(oss);
         networkGrossLosColdBoundRunEnd(ctx, cfg, lg);

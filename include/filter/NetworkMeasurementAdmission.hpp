@@ -23,10 +23,10 @@
  * value is then released when a topology valve opens (the 25° tie admission),
  * which discharges it into the ionosphere and starts a long withhold era.
  *
- * Layers of defense, in order of engagement: this seam (layer 0, at the origin);
- * the INC-3b admission validation (the valve, `network.iono_dw_admit_validate_k`);
- * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`); the SH
- * health gate (the backstop).
+ * Layers of defense, in order of engagement: this seam (layer 0, at the origin) and
+ * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`).  The card's
+ * other two layers, the INC-3b admission validation (the valve) and the SH health
+ * gate (the backstop), were retired with their keys.
  *
  * ## The screen statistic: absolute, coarse, clock-free and state-free
  *
@@ -62,7 +62,7 @@
  *    terms lie inside the healthy spread the threshold must tolerate (at BSHM,
  *    -12.5…+19.1 m across eleven satellites, storm conditions included).  This is
  *    a structural fault detector for the @f$10^5@f$ m regime, not a residual test;
- *    Huber weighting, the deweight gate and RAIM cover the 3-10σ regime.
+ *    Huber weighting and RAIM cover the 3-10σ regime.
  *  - The station median stands in for the receiver clock at this precision, so
  *    ms-scale clock offsets and steps cancel exactly (URUM00CHN and INEG00MEX take
  *    clean 1 ms steps in the FT63 leg window; the prefit census's negative gate
@@ -164,7 +164,7 @@
  *   * after `networkSignalIntegrity` (see below); and
  *   * before the phase-datum census and election, the shared-column registration
  *     and PASS B.  It is layer 0 of the card's §1 defense in depth (this seam, the
- *     INC-3b tie admission, the prefit fuse, the SH gate), and every later layer,
+ *     prefit fuse), and every later layer,
  *     the election, the prefit census and RAIM observe the admitted set rather
  *     than the raw one.
  *
@@ -358,54 +358,46 @@ struct NetworkMeasurementAdmissionTallies {
     long long over_bound = 0;         ///< channel-epochs with |z| over adm_bound_m, whether or not the response is armed: the measure-only census's headline.
 };
 
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
+struct EpochPassA;              // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkSlipFunnel;       // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
 /**
  * @brief Screen this epoch's code observables against the products, withhold the
  *        channels that fail, heal the ones that recover, and census the rest.
  *        The file banner describes the statistic and the ordering contract.
  *
- * @param ctx                [in/out] admission records, counters, knobs, and the
- *                           per-epoch census scalars the epoch-status writer reads.
- * @param config_            unused (every mode predicate is already resolved into
- *                           `ctx.knobs`); kept in the signature for seam-contract
- *                           uniformity.
- * @param log                producer logger (debug).
- * @param traces             ADMISSION-tier `trace_events` rows.
- * @param t                  this epoch's time (event stamps).
- * @param epoch_idx          the monotonic processed-epoch index.  The same counter
- *                           Card G and the flicker classifier use, so the three
- *                           instruments' per-epoch totals are directly comparable.
- * @param stations           [in/out] non-const: a withheld band's satellite
- *                           phase-bias and code-bias states, and the clock state of a
- *                           satellite left with no observable, are pruned as the
- *                           coverage gate prunes a thin key's.
- * @param present            this epoch's presence mask.
- * @param modeled            [in/out] per-station observations.  Read for the
- *                           statistic; on a rejection the failing band's entries are
- *                           erased from `observed`, never from `raw_observed`, which
- *                           the slip detectors own and which must keep reporting the
- *                           true tracking state.
- * @param carry_slipped_ambs [in/out] the epoch's slip funnel, written by every
- *                           withhold (rejection, hold, station guard) and by a heal.
- * @param carry_slipped_raw  [in/out] the raw-detector provenance subset (Iono-2 v3k).
- *                           A withheld band is a raw observable event (the channel
- *                           leaves the model set), so it is recorded here too;
- *                           otherwise the deviation carry would D5-keep a level
- *                           across the hole this seam made.
- * @param carry_invariant    the Card-4 funnel is live (gates the funnel insertion).
- * @param carry_warm         the phase-leveling carry is warm (gates pending-reseed).
+ * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+ * retired in card NOM3 step EP2 (the unit tests call this form through
+ * tests/support/NetworkTestRun.hpp).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+ *            run.traces (traces), run.setup.stations (stations). Read: run.config (config_),
+ *            run.log (log), run.engines.slip_qc.epoch_idx (epoch_idx),
+ *            run.ctx.knobs.carry_invariant (carry_invariant).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se.time (t),
+ *           ep.pass_a.present (present), ep.clock.carry_warm (carry_warm).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: [in/out] admission records, counters, knobs, and the per-epoch census scalars the epoch-status writer reads.
+ *   - @p config_ = run.config: unused (every mode predicate is already resolved into `ctx.knobs`); kept in the signature for seam-contract uniformity.
+ *   - @p log = run.log: producer logger (debug).
+ *   - @p traces = run.traces: ADMISSION-tier `trace_events` rows.
+ *   - @p t = ep.se.time: this epoch's time (event stamps).
+ *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  The same counter Card G and the flicker classifier use, so the three instruments' per-epoch totals are directly comparable.
+ *   - @p stations = run.setup.stations: [in/out] non-const: a withheld band's satellite phase-bias and code-bias states, and the clock state of a satellite left with no observable, are pruned as the coverage gate prunes a thin key's.
+ *   - @p present = ep.pass_a.present: this epoch's presence mask.
+ *   - @p modeled = pass_a.modeled: [in/out] per-station observations.  Read for the statistic; on a rejection the failing band's entries are erased from `observed`, never from `raw_observed`, which the slip detectors own and which must keep reporting the true tracking state.
+ *   - @p carry_slipped_ambs = funnel.carry_slipped_ambs: [in/out] the epoch's slip funnel, written by every withhold (rejection, hold, station guard) and by a heal.
+ *   - @p carry_slipped_raw = funnel.carry_slipped_raw: [in/out] the raw-detector provenance subset (Iono-2 v3k). A withheld band is a raw observable event (the channel leaves the model set), so it is recorded here too; otherwise the deviation carry would D5-keep a level across the hole this seam made.
+ *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the Card-4 funnel is live (gates the funnel insertion).
+ *   - @p carry_warm = ep.clock.carry_warm: the phase-leveling carry is warm (gates pending-reseed).
+ * @param events The epoch's events; written: admission.
  */
-void networkMeasurementAdmission(NetworkRunContext& ctx,
-                                 const GnssConfig& config_,
-                                 const std::shared_ptr<spdlog::logger>& log,
-                                 NetworkRunTraces& traces,
-                                 const GnssTime& t,
-                                 long long epoch_idx,
-                                 std::vector<NetStation>& stations,
-                                 const std::vector<bool>& present,
-                                 std::vector<std::vector<PppObservation>>& modeled,
-                                 std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                                 std::set<std::pair<int, std::string>>& carry_slipped_raw,
-                                 bool carry_invariant, bool carry_warm);
+void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
+                                 NetworkSlipFunnel& funnel, EpochEvents& events);
 
 /**
  * @brief The RINEX-3 band digit of an observable key ("C1C" -> '1'), or 0 when the

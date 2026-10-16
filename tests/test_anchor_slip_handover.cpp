@@ -34,8 +34,7 @@
  *      branch it took, cold outcomes included (a cold outcome is a gauge
  *      re-realization, and the counters exist so that it is not hidden inside a
  *      continuous total);
- *   7. the knob defaults off, survives a round trip through the loader, and is
- *      disarmed under the ensemble phase datum.
+ *   7. the knob defaults off and survives a round trip through the loader.
  *
  * The election is exercised directly: it reads only station names, the candidate
  * census and the handover ledger, never a StateManager (see
@@ -501,15 +500,5 @@ TEST(AnchorSlipHandoverConfig, DefaultsOffAndArmsFromJson) {
         Loaded on("on", "    \"cycle_slip\": { \"anchor_slip_handover\": true },\n");
         EXPECT_TRUE(on.cfg.networkCycleSlipAnchorSlipHandover());
         EXPECT_TRUE(on.cfg.getNetworkConfig().cycle_slip_anchor_slip_handover);
-    }
-    {
-        // The card acts inside networkElectPhaseAnchors, which is the `else` arm of
-        // the phase-datum mode dispatch.  Under the ensemble datum there is no
-        // per-family anchor to hand over, so the loader disarms the knob rather than
-        // let an inert knob be graded as a null result (invariant #4).
-        Loaded ens("ens",
-                   "    \"phase_datum_ensemble\": true,\n"
-                   "    \"cycle_slip\": { \"anchor_slip_handover\": true },\n");
-        EXPECT_FALSE(ens.cfg.networkCycleSlipAnchorSlipHandover());
     }
 }

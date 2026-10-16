@@ -33,8 +33,8 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [D5-A](../cards/slip/D5A-RETAP-ATTRIBUTION.md) | the D5 re-tap instrument: 3.0 % raw-step coincidence, re-tap count a third overstated | closed | 2026-08-15 |
 | [slip-QC follow-ups](../cards/slip/SLIPQC-FOLLOWUPS.md) | slip-QC follow-ups: D5-A, H1/H2 landed; Card W never launched, OP untriggered, H3 deferred | closed | 2026-08-15 |
 | [lane slip response](../cards/slip/LANE-SLIP-RESPONSE.md) | lane-integer slip cost 100 % response-inflicted; both retap keeps FALSIFIED, KEEP_OFF | closed | 2026-08-22 |
-| [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore of the pre-erase carry after a T4 erase: specified, not built | open | 2026-08-23 |
-| [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | seed-site snap deleted (solve no-op); observatory solve-inert; apply leg re-scoped to T4 | open | 2026-08-23 |
+| [T4 lane restore](../cards/slip/T4-LANE-RESTORE-SPEC.md) | pend-and-restore after a T4 erase: specified, never built; superseded by RF-1's bounded drop | superseded | 2026-08-23 |
+| [rung 3](../cards/slip/LANE-SNAP-RUNG3.md) | seed-site lane snap deleted (exact solve no-op); observatory solve-inert; apply leg moot under RF-1; closed | closed | 2026-08-23 |
 | [wind-up census](../cards/slip/WINDUP-FRACTIONAL-CENSUS.md) | 20 gaps in 4 h between the wind-up and carry horizons; restart response ARMED by card WUP | closed | 2026-08-23 |
 | [IF-TD ref gate](../cards/slip/IFTD-REF-GATE.md) | the IF-TD ref gate is 100 % false on the sim bed; Card R takes acting refloats 546 to 0 | closed | 2026-09-08 |
 | [Card G response](../cards/slip/CARD-G-GAP-REENTRY-RELEVEL.md) | gap re-entry re-level: bridged arcs 88 to 0, consumer +56 %; KEEP_OFF; armed on float | closed | 2026-09-09 |
@@ -48,7 +48,7 @@ Status is one of `open`, `closed`, `parked`, `superseded`, `reference`; the verd
 | [Study 6](../cards/slip/STUDY-6-common-band-scope.md) | common-band scope KEEP_OFF (consumer +3.3 cm); superseded by Study 7's RECOMMEND_ON | superseded | 2026-09-11 |
 | [Study 7](../cards/slip/STUDY-7-common-band-narrowing.md) | common-band scope + IF-TD on every pair RECOMMEND_ON together, sim p50 0.174 to 0.120 m | closed | 2026-09-11 |
 | [REF-ARC](../cards/slip/REF-ARC-CLAUSE.md) | ref-arc clause PROMOTED: an untested reference pair cannot exonerate; sim storm neutral | closed | 2026-09-13 |
-| [REF-FAN](../cards/slip/REF-FAN.md) | reference-slip fan-out: RECOMMEND_SCOPED, collateral refloats 6 to 0; field pin still owed | open | 2026-09-13 |
+| [REF-FAN](../cards/slip/REF-FAN.md) | reference-slip fan-out: collateral refloats 6 to 0; armed on both goldens, inert at dual frequency; closed | closed | 2026-09-13 |
 | [RULE F2](../cards/slip/IFTD-F2-lli-shadow.md) | the LLI shadow: a pair holding a band flagged last epoch cannot exonerate; S1 storm closed | closed | — |
 | [RULE F3](../cards/slip/IFTD-F3-lli-epoch.md) | the LLI-epoch verdict: S3 residual 0.335 to 0.005 cyc; its anchor clause keeps references | closed | — |
 

@@ -261,7 +261,6 @@ void solveFixture(Fixture& f, bool pins, int zero_sta = -1, Eigen::Index zero_ro
             g.shared_col = pbc[a];
             gauges.push_back(std::move(g));
         }
-        f.est.contributionKind(CK::EnsemblePhaseGauge);
         f.est.setPhaseSumZeroGauges(std::move(gauges));
     }
     NetworkEstimator::SharedPrior p;

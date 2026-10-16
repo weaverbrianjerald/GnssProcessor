@@ -43,9 +43,8 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
         ConstCounters& cc = const_counters_[cst];   // per-constellation tallies (card GAL)
 
         // --- μ vote: median innovation of fresh, unforced keys against the
-        //     previous emitted values (after removing each key's declared level
-        //     step).  Computed whichever stages are armed, because stage 2 alone
-        //     needs the same common-removed statistic the census uses
+        //     previous emitted values.  Computed whichever stages are armed,
+        //     because stage 2 alone needs the same common-removed statistic the census uses
         //     (dev = step − median step).  With fewer than min_common votes μ = 0.
         std::vector<double> innos;
         innos.reserve(group.size());
@@ -56,7 +55,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
             if (cfg_.max_gap_s > 0.0
                 && (epoch_time_s - it->second.last_seen_s) > cfg_.max_gap_s)
                 continue;
-            innos.push_back((e->c0_m - acc) - it->second.last_held_m - e->level_step_m);
+            innos.push_back((e->c0_m - acc) - it->second.last_held_m);
         }
         double mu = 0.0;
         if (static_cast<int>(innos.size()) >= cfg_.min_common) {
@@ -103,7 +102,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
                 // dev = (held step) − μ: with frame_hold on, the accumulator has
                 // already advanced by μ, so the held innovation is the
                 // common-removed step; with it off, μ is subtracted explicitly.
-                const double innov = held - it->second.last_held_m - e->level_step_m;
+                const double innov = held - it->second.last_held_m;
                 const double dev   = cfg_.frame_hold ? innov : (innov - mu);
                 if (std::abs(dev) > cfg_.jump_m) {
                     e->marked = true;
@@ -124,7 +123,7 @@ void NetworkClockEmitRebase::rebaseEpoch(std::vector<Entry>& entries,
                 // legitimate motion over a long gap exceeds a one-epoch step, and
                 // the caller sets the band.  These marks count in gap_marks only,
                 // not in marks or the per-constellation tallies.
-                const double innov = held - it->second.last_held_m - e->level_step_m;
+                const double innov = held - it->second.last_held_m;
                 const double dev   = cfg_.frame_hold ? innov : (innov - mu);
                 if (std::abs(dev) > cfg_.gap_jump_m) {
                     e->marked = true;

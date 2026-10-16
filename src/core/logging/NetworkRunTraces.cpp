@@ -26,6 +26,9 @@
 #include <cmath>
 #include <string>
 #include <system_error>
+#include "app/NetworkRun.hpp"
+#include "app/NetworkRunContext.hpp"
+#include "app/NetworkSetupResult.hpp"
 
 namespace GnssProcessor {
 
@@ -51,7 +54,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       slip_raw_trace_path(log_dir_ / "network_slip_raw.csv"),
       epoch_status_trace_path(log_dir_ / "network_epoch_status.csv"),
       health_trace_path(log_dir_ / "network_service_health.csv"),
-      fast_clock_trace_path(log_dir_ / "network_fast_clock.csv"),
       events_trace_path(log_dir_ / "network_events.csv"),
       zwd_trace_path(log_dir_ / "network_zwd.csv"),
       sat_bias_states_trace_path(log_dir_ / "network_sat_bias_states.csv"),
@@ -73,7 +75,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       sh_spectrum_mode_trace_path(log_dir_ / "network_sh_spectrum_mode.csv"),
       pf_keyed_trace_path(log_dir_ / "network_pf_keyed.csv"),
       pf_rows_trace_path(log_dir_ / "network_pf_rows.csv"),
-      clock_level_trace_path(log_dir_ / "network_clock_level.csv"),
       level_bound_trace_path(log_dir_ / "network_level_bound.csv"),
       anchor_guard_trace_path(log_dir_ / "network_anchor_guard.csv"),
       level_innov_trace_path(log_dir_ / "network_level_innov.csv"),
@@ -89,8 +90,6 @@ NetworkRunTraces::NetworkRunTraces(std::filesystem::path log_dir)
       phase_anchor_trace_path(log_dir_ / "network_phase_anchor.csv"),
       sd_ewl_trace_path(log_dir_ / "network_sd_ewl.csv"),
       sd_ewl_ar_trace_path(log_dir_ / "network_sd_ewl_ar.csv"),
-      d5_flags_trace_path(log_dir_ / "network_d5_flags.csv"),
-      wl_lane_trace_path(log_dir_ / "network_wl_lane_trace.csv"),
       manifest_path(log_dir_ / "network_run_manifest.json") {}
 
 void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& nc,
@@ -407,7 +406,9 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // P1-1/P1-2/P1-4 (SPEC_day129_frame_guards) append four carry-churn, four
             // iono-deweight and four post-fit σ̂0 columns after n_arc_refloat.  Every
             // earlier column keeps its position (as with T2d), so an old reader keeps
-            // working and a new one gets the trigger channels.
+            // working and a new one gets the trigger channels.  The four iono-deweight
+            // columns stay as permanently blank fields since the station deweight gate
+            // was retired, so every later column keeps its position too.
             epoch_status_trace << "week,tow,disposition,sigma0,n_adapt,n_present,"
                                   "n_clock_sats,clock_median_m,clock_std_m,worst_sat,"
                                   "worst_dev_m,n_refloat_sats,n_retro_applied,datum_changed,"
@@ -604,16 +605,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open pb-hold clone trace {}",
                       pb_hold_clone_trace_path.string());
     }
-    if (config_.networkClockLevelCarry() && nc.trace_events) {
-        // The per-satellite level filter (card CLV); the header documents the columns.
-        clock_level_trace.open(clock_level_trace_path);
-        if (clock_level_trace)
-            clock_level_trace << "week,tow,sat,v_level_m2,i_level,n_rows_epoch,e_level_m,"
-                                 "d_level_m,event\n";
-        else
-            log->warn("Network: failed to open clock-level trace {}",
-                      clock_level_trace_path.string());
-    }
     if (nc.trace_station_block) {
         // Per-station local-block audit (SPEC_event_harness §24.10, card ZP).  One `#`
         // provenance line naming the object and its conditioning, then the column
@@ -674,8 +665,8 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                    "var_first_m2 is the arc's unfloored first-stash variance and "
                    "var_birth_m2 the same floored by network.amb_float_birth_var_m2 "
                    "(equal when the floor is 0). fold_var_m2 is the variance the PASS-B "
-                   "inject ACTUALLY folded with (after q*gap, the F1 B_eff scale, the "
-                   "var floor and the M2 VCE factor), 0 when folded=0; route is the "
+                   "inject ACTUALLY folded with (after q*gap, the var floor and the M2 "
+                   "VCE factor), 0 when folded=0; route is the "
                    "route the inject took (diag | block | coupling-scalar), empty when "
                    "folded=0. n_folds counts only epochs a prior ACTED, so it is not "
                    "age_ep: age_ep counts loop epochs since the first stash (-1 = "
@@ -839,18 +830,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       "sentinel for this run.",
                       config_.networkEmitUra(), config_.networkRaim(),
                       config_.networkPhaseLeveling());
-    }
-    if (nc.fast_clock.enable && nc.fast_clock.trace) {
-        // Per-tick fast-clock trace (FC-1), gated on the tier master as well as its own
-        // knob: the tick tier runs on epochs the full pipeline skips, so a trace armed
-        // without the tier would produce an empty file that reads as a quiet run
-        // rather than an unarmed one (standing invariant #4).
-        fast_clock_trace.open(fast_clock_trace_path);
-        if (fast_clock_trace)
-            fast_clock_trace << kFastClockHeader;
-        else
-            log->warn("Network (FC-1): failed to open fast-clock trace {}",
-                      fast_clock_trace_path.string());
     }
     if (config_.networkCarryVce()) {
         carry_vce_trace.open(carry_vce_trace_path);
@@ -1070,8 +1049,10 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             // FLEET rows: level = the two-tier reduction (per-station
             // information-weighted means, then the fleet median), disp =
             // 1.4826·MAD across station means (never a formal σ; the kernel
-            // variances are documented as optimistic), a00 filled only when the
-            // SH channel exists.  STA rows: the tier-1 station mean and its LOS
+            // variances are documented as optimistic), a00 a constant 0.0000
+            // placeholder under the SH channel (kept for the column layout; its
+            // producer, the SH health gate, is retired) and blank without it.
+            // STA rows: the tier-1 station mean and its LOS
             // count (level column reused; disp/n_sta/a00 blank).  All values are
             // vertical TECU in the pair-exact conversion.
             level_authority_trace << "week,tow,kind,station,level_tecu,"
@@ -1098,54 +1079,6 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
     // Capture the L1/L15 config echoes once (pure getter reads; INC-4).
     es_sigma0_trigger_   = config_.networkRaimSigma0Trigger();
     es_withhold_ceiling_ = config_.networkRaimWithholdSigma0();
-}
-
-// The openAll tail for the two MW/WL dumps.  It is a separate function because their
-// arming expressions are derived in the run TU from the WL zone-2 booleans
-// (carry_invariant, ewl_on, wl_inject_on, lane_fix_on, carry_innov_gate), which are
-// established well after openAll runs; re-deriving that chain here would drift out of
-// step with the driver.  The lifecycle matches every other stream: one truncating
-// open with the header, once per run, before the epoch loop, closed in closeAll.
-void NetworkRunTraces::openMwWlDumps(bool d5_armed, bool lane_trace_armed,
-                                     const std::shared_ptr<spdlog::logger>& log) {
-    std::error_code ec;
-    std::filesystem::create_directories(log_dir_, ec);
-    if (d5_armed) {
-        d5_flags_trace.open(d5_flags_trace_path);
-        if (d5_flags_trace)
-            // raw_stepped is tri-state (1 / 0 / blank); see the writer banner in
-            // NetworkInstallCarry.cpp.  Blank means "no evidence", which is a different
-            // claim from 0 ("a step could be formed and it was flat").
-            // The five algebra columns after raw_stepped are the churn card's instrument:
-            // std_innov alone cannot say whether a standing large value means the
-            // innovation is large or the formal Cov(v) is small.  z_post differenced across
-            // epochs for one chord is the estimate's measured wander; var_v is the formal
-            // claim about that quantity, so the ratio can be read per chord without
-            // re-running anything.  dw_w is the station's SH-constraint deweight weight
-            // (ctx.carry.topo_prev_w, this epoch; blank unless network.trace_topology is
-            // armed), carried here because the chronic-flagger roster overlaps the
-            // deweight gate's chronic >3σ SH-misfit roster (measured), and the
-            // correlation should be gradeable from one file.
-            d5_flags_trace << "week,tow,group,chord_u,chord_v,station,amb_key,std_innov,"
-                              "ewl_stasat,hold_chord,injected_prev,raw_stepped,"
-                              // warmup_suppressed (RS-2b): 1 where the trip fell inside the
-                              // post-resume D5 warm-up and was counted without being acted
-                              // on.  Appended, not inserted, so an existing reader's
-                              // positional columns are unchanged.
-                              "zhat,v,var_v,sigma0,z_post,dw_w,warmup_suppressed\n";
-        else
-            log->warn("Network: failed to open D5 flag dump {}",
-                      d5_flags_trace_path.string());
-    }
-    if (lane_trace_armed) {
-        wl_lane_trace.open(wl_lane_trace_path);
-        if (wl_lane_trace)
-            wl_lane_trace << "week,tow,chord_u,chord_v,station,sat,lane_cyc,frac_cyc,"
-                             "w,decided,held,injected\n";
-        else
-            log->warn("Network: failed to open WL lane trace {}",
-                      wl_lane_trace_path.string());
-    }
 }
 
 void NetworkRunTraces::writeStationRoster(const std::filesystem::path& log_dir,
@@ -1233,14 +1166,9 @@ void NetworkRunTraces::emitEpochStatus(const GnssTime& t, const char* dispositio
         o << ',';
         if (r.n_slip_refloats) o << *r.n_slip_refloats;
         o << ',';
-        if (r.n_dw_engaged)    o << *r.n_dw_engaged;
-        o << ',';
-        if (r.n_dw_zero)       o << *r.n_dw_zero;
-        o << ',';
-        if (r.dw_min_w)        o << fmt::format("{:.4f}", *r.dw_min_w);
-        o << ',';
-        if (r.dw_mean_w)       o << fmt::format("{:.4f}", *r.dw_mean_w);
-        o << ',';
+        // n_dw_engaged, n_dw_zero, dw_min_w, dw_mean_w: always blank (the station
+        // deweight gate that filled them was retired; the columns keep the layout).
+        o << ",,,,";
         if (r.sigma0_pf)       o << fmt::format("{:.4f}", *r.sigma0_pf);
         o << ',';
         if (r.sigma0_pf_code)  o << fmt::format("{:.4f}", *r.sigma0_pf_code);
@@ -1500,11 +1428,6 @@ void NetworkRunTraces::rotateServiceCsvs(const NetworkConfig& nc,
             {&trace,        &trace_path,        kTraceHeader},
             {&soln,         &soln_path,         kSolnHeader},
             {&health_trace, &health_trace_path, kHealthHeader},
-            // A fast tick writes a row per decimated-out epoch (FC-1), so at an RT 1 s
-            // cadence this stream grows faster than any other here and belongs in the
-            // rotation set.  maybeRotateCsv is a strict no-op while the stream is
-            // closed (unarmed tier).
-            {&fast_clock_trace, &fast_clock_trace_path, kFastClockHeader},
         };
         for (const auto& r : rotating)
             if (maybeRotateCsv(*r.os, *r.path, r.header,
@@ -1613,17 +1536,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
     const bool   pivot_vr_signal = knobs.pivot_vr_signal;
     const bool   emit_clock_disc = knobs.emit_clock_disc;
     const bool   sticky_pivot = knobs.sticky_pivot;
-    const bool   clock_signal_basis_hold = knobs.clock_signal_basis_hold;
     const bool   scoped_handover = knobs.scoped_handover;
-    const bool   pb_excl_unmatched = knobs.pb_excl_unmatched;
     const bool   emit_gen_id = knobs.emit_gen_id;
     const bool   ser_disc_ctrs = knobs.ser_disc_ctrs;
     const bool   emit_epoch_status = knobs.emit_epoch_status;
-    const bool   emit_clock_rate_on = knobs.emit_clock_rate_on;
     const double pl_q_amb = knobs.pl_q_amb;
     const double pl_max_gap_s = knobs.pl_max_gap_s;
     const double pl_var_floor = knobs.pl_var_floor;
-    const bool   pl_los_scale = knobs.pl_los_scale;   // per-LOS B_eff scale at inject (F1)
     const bool   pl_local_block = knobs.pl_local_block; // station-wide whitened local block at inject (F3)
     const double pb_var_floor = knobs.pb_var_floor;
     const double cb_var_floor = knobs.cb_var_floor;
@@ -1735,7 +1654,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"parallel_stations\":" << (nc.parallel_stations ? "true" : "false") << ','
                << "\"parallel_min_stations\":" << nc.parallel_min_stations << ','
                << "\"parallel_max_threads\":" << nc.parallel_max_threads << ','
-               << "\"parallel_reduce\":" << (nc.parallel_reduce ? "true" : "false") << ','
                << "\"parallel_seam\":" << (nc.parallel_seam ? "true" : "false") << ','
                << "\"parallel_carry\":" << (nc.parallel_carry ? "true" : "false") << ','
                << "\"n_threads\":" << n_threads << ','
@@ -1788,12 +1706,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // unarmed run's manifest bytes are unchanged.
                << (nc.trace_consumer_sat
                        ? std::string("\"trace_consumer_sat\":true,") : std::string())
-               // The de-commoned phase jump test (card JT) changes the R records on the
-               // wire, so an archived logs/ folder must be able to say which declaration
-               // test produced the product's discontinuity counters.  Emitted only when
-               // armed, so an unarmed run's manifest bytes are unchanged.
-               << (nc.disc_jump_test_decommon
-                       ? std::string("\"disc_jump_test_decommon\":true,") : std::string())
                // station_prior_before_pd (card RF-PD-fix) affects the solve: it decides
                // which stations are in the network, so an archived logs/ folder has to be
                // able to say which side of it produced the products.  Emitted only when
@@ -1865,34 +1777,21 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        : std::string())
                // The ambiguity vehicle is part of the product's provenance, so the
                // manifest records it (RF-1; docs/refound/RF-1_float_ambiguities_design.md
-               // §3.5 / §7.1).  Per §3.5, the q knob exists so that its 0.0 default is
-               // stated here explicitly rather than implied.  Emitted only when the
-               // posture is non-default (as for trace_postfit_rows and
-               // trace_station_block above), so an unarmed run's manifest bytes are
-               // unchanged.
+               // §7.1).  Emitted only when the posture is non-default (as for
+               // trace_postfit_rows and trace_station_block above), so an unarmed run's
+               // manifest bytes are unchanged.
                << ((nc.ambiguity_vehicle != NetworkAmbiguityVehicle::Level
                     || nc.trace_amb_state || nc.amb_float_birth_var_m2 > 0.0
-                    || nc.amb_float_q_m2s > 0.0 || nc.amb_float_declared_handover)
+                    || nc.amb_float_declared_handover)
                        ? fmt::format("\"ambiguity_vehicle\":\"{}\","
                                      "\"amb_float_birth_var_m2\":{},"
-                                     "\"amb_float_q_m2s\":{},"
                                      "\"amb_float_declared_handover\":{},"
                                      "\"trace_amb_state\":{},",
                                      nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                                          ? "float_kf" : "level",
-                                     nc.amb_float_birth_var_m2, nc.amb_float_q_m2s,
+                                     nc.amb_float_birth_var_m2,
                                      nc.amb_float_declared_handover ? "true" : "false",
                                      nc.trace_amb_state ? "true" : "false")
-                       : std::string())
-               // The level re-base (card CLV) affects the solve, so the manifest records
-               // the knob and its two parameters when armed.  Emitted only when armed,
-               // so an unarmed run's manifest bytes are unchanged.
-               << (config_.networkClockLevelCarry()
-                       ? fmt::format("\"clock_level_carry\":true,"
-                                     "\"clock_level_sigma_floor_m\":{},"
-                                     "\"clock_level_horizon_s\":{},",
-                                     config_.networkClockLevelSigmaFloorM(),
-                                     config_.networkClockLevelHorizonS())
                        : std::string())
                // The drop-only floor affects the solve, so the manifest records it
                // when armed (RF-3a).  Emitted only when armed, so an unarmed run's
@@ -2000,20 +1899,9 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      "\"mdb_event_holdoff_ep\":{},",
                                      nc.mdb_event_m, nc.mdb_event_holdoff_ep)
                        : std::string())
-               // Band-scoped responses (§Z): both affect the solve, so the arm
-               // provenance belongs in the manifest; a grader must be able to see that
-               // two arms are not like for like without re-reading the config.
-               // Emitted only when armed (as for mdb and adm_screen; the decomposition
-               // golden hashes this file).
-               << (nc.raim_erase_band_scope == NetworkRaimEraseBandScope::MinKeepOne
-                       ? std::string("\"raim_erase_band_scope\":\"min_keep_one\",")
-                       : std::string())
-               << (nc.cycle_slip_refloat_band_scope == NetworkRefloatBandScope::Implicated
-                       ? std::string("\"cycle_slip_refloat_band_scope\":\"implicated\",")
-                       : std::string())
                // Anchor-slip handover (§12.7): affects the solve when armed (it moves
                // which station realizes a family's gauge), so the arm provenance
-               // belongs in the manifest; armed-only, as for the band scopes.
+               // belongs in the manifest; armed-only, as for mdb.
                << (nc.cycle_slip_anchor_slip_handover
                        ? std::string("\"cycle_slip_anchor_slip_handover\":true,")
                        : std::string())
@@ -2031,17 +1919,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"health_interval_s\":{},", nc.health_interval_s)
                << fmt::format("\"trace_rotate_mb\":{},", nc.trace_rotate_mb)
                << "\"trace_rotate_keep\":" << nc.trace_rotate_keep << ','
-               // Split-cadence fast clock (FC-1).  The manifest is how a grader tells a
-               // split arm from a full-rate reference arm without re-reading the config.
-               << "\"fast_clock_enable\":" << (nc.fast_clock.enable ? "true" : "false") << ','
-               << "\"fast_clock_shadow\":" << (nc.fast_clock.shadow ? "true" : "false") << ','
-               << "\"fast_clock_emit\":" << (nc.fast_clock.emit ? "true" : "false") << ','
-               << "\"fast_clock_min_stations_per_sat\":" << nc.fast_clock.min_stations_per_sat << ','
-               << "\"fast_clock_min_sats_per_station\":" << nc.fast_clock.min_sats_per_station << ','
-               << fmt::format("\"fast_clock_screen_k_sigma\":{},", nc.fast_clock.screen_k_sigma)
-               << "\"fast_clock_allow_single_band\":" << (nc.fast_clock.allow_single_band ? "true" : "false") << ','
-               << fmt::format("\"fast_clock_emit_max_gap_s\":{},", nc.fast_clock.emit_max_gap_s)
-               << "\"fast_clock_trace\":" << (nc.fast_clock.trace ? "true" : "false") << ','
                // Startup quality ramp and state snapshot / warm resume (RTB-7).
                << fmt::format("\"warmup_ura_floor_m\":{},", nc.warmup_ura_floor_m)
                << "\"warmup_epochs\":" << nc.warmup_epochs << ','
@@ -2054,20 +1931,15 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"state_snapshot_carry\":" << (nc.state_snapshot_carry ? "true" : "false") << ','
                << "\"state_snapshot_carry_diagonal\":"
                    << (nc.state_snapshot_carry_diagonal ? "true" : "false") << ','
-               // The linearization-frame halves (RS-2), recorded for the same reason as the
-               // diagonal knob: the write half changes only snapshot bytes and the read
-               // half only a resume, so the manifest is the one place an arm describes
-               // itself.  Emitted only when armed, so an unarmed run's manifest bytes are
-               // unchanged (as for inject and adm_screen; the decomposition golden hashes
-               // this file).
-               << ((nc.state_snapshot_carry_lin || config_.networkResumeCarryRebase())
-                       ? fmt::format("\"state_snapshot_carry_lin\":{},"
-                                     "\"resume_carry_rebase\":{},",
-                                     nc.state_snapshot_carry_lin ? "true" : "false",
-                                     config_.networkResumeCarryRebase() ? "true" : "false")
-                       : std::string())
+               // The linearization-frame carry (RS-2), recorded for the same reason as the
+               // diagonal knob: it changes only snapshot bytes, so the manifest is the one
+               // place an arm describes itself.  Emitted only when armed, so an unarmed
+               // run's manifest bytes are unchanged (as for inject and adm_screen; the
+               // decomposition golden hashes this file).
+               << (nc.state_snapshot_carry_lin ? std::string("\"state_snapshot_carry_lin\":true,")
+                                               : std::string())
                // The datum-continuity halves (RS-3, SPEC_event_harness §21.7), armed-only
-               // like the RS-2 pair directly above: the write half changes only snapshot
+               // like the RS-2 field directly above: the write half changes only snapshot
                // bytes and the read half only a resume, so an unarmed run's manifest bytes
                // are unchanged (the decomposition golden hashes this file) while an armed
                // arm describes itself.
@@ -2086,18 +1958,16 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkResumeEmitRestore() ? "true" : "false")
                        : std::string())
                // The station-layer continuity halves (RS-6, SPEC_event_harness §21.13)
-               // plus the two diagnostic sub-switches, so that an attribution leg
+               // plus the diagnostic rx-CB sub-switch, so that an attribution leg
                // describes itself; armed-only like the pairs above.
                << ((nc.state_snapshot_station_capture
                     || config_.networkResumeStationRestore())
                        ? fmt::format("\"state_snapshot_station_capture\":{},"
                                      "\"resume_station_restore\":{},"
-                                     "\"resume_station_restore_rxcb\":{},"
-                                     "\"resume_station_restore_shdev\":{},",
+                                     "\"resume_station_restore_rxcb\":{},",
                                      nc.state_snapshot_station_capture ? "true" : "false",
                                      config_.networkResumeStationRestore() ? "true" : "false",
-                                     config_.networkResumeStationRestoreRxCb() ? "true" : "false",
-                                     config_.networkResumeStationRestoreShDev() ? "true" : "false")
+                                     config_.networkResumeStationRestoreRxCb() ? "true" : "false")
                        : std::string())
                // The canonical-signal latch halves (RS-8, SPEC_event_harness §21.16),
                // armed-only like the pairs above.
@@ -2119,47 +1989,14 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      config_.networkResumeRxCbLinRestore() ? "true" : "false")
                        : std::string())
                << "\"state_snapshot_require\":" << (nc.state_snapshot_require ? "true" : "false") << ','
-               << fmt::format("\"state_snapshot_resume_shock_m\":{},",
-                              nc.state_snapshot_resume_shock_m)
-               << "\"serialize_sbasis_contract\":" << (nc.serialize_sbasis_contract ? "true" : "false") << ','
                << "\"estimate_sat_code_bias\":" << (config_.estimateNetworkSatCodeBias() ? "true" : "false") << ','
                << "\"estimate_iono_sh\":" << (config_.estimateNetworkIonoSh() ? "true" : "false") << ','
-               << fmt::format("\"iono_constraint_deweight_factor\":{},",
-                              config_.getIonoConstraintDeweightConfig().factor)
-               << "\"iono_constraint_deweight_adaptive\":"
-                   << (config_.getIonoConstraintDeweightConfig().adaptive ? "true" : "false") << ','
-               << "\"iono_constraint_deweight_stations\":["
-                   << [&] {
-                          std::string s; bool f = true;
-                          for (const auto& nm : config_.getIonoConstraintDeweightConfig().stations) {
-                              if (!f) s += ','; s += '"'; s += jesc(nm); s += '"'; f = false;
-                          }
-                          return s;
-                      }()
-                   << "],"
                << "\"phase_leveling\":" << (pl_on ? "true" : "false") << ','
                << fmt::format("\"phase_leveling_q_amb\":{},", pl_q_amb)
                << "\"phase_leveling_warmup_epochs\":" << pl_warmup << ','
                << fmt::format("\"phase_leveling_max_gap_s\":{},", pl_max_gap_s)
                << fmt::format("\"phase_leveling_var_floor_m2\":{},", pl_var_floor)
-               << "\"phase_leveling_los_scale\":" << (pl_los_scale ? "true" : "false") << ','
                << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
-               << fmt::format("\"phase_leveling_local_block_min_age_ep\":{},", config_.networkPhaseLevelingLocalBlockMinAgeEp())
-               << "\"phase_leveling_local_block_young_mode\":\"" << config_.networkPhaseLevelingLocalBlockYoungMode() << "\","
-               // The age-aware young-arc inflate (SPEC_amb_iono_split_overcount
-               // §6.17–§6.18) affects the solve, so an archived logs/ folder has to be
-               // able to say which side of it produced the products; the two shape knobs
-               // are recorded too because the prior's weight cannot be recovered without
-               // them.  Emitted only when armed (the adm_screen / I-in-block rule), so an
-               // unarmed run's manifest bytes are unchanged.
-               << (config_.networkPhaseLevelingYoungInflateVarM2() > 0.0
-                       ? fmt::format("\"phase_leveling_young_inflate_var_m2\":{},"
-                                     "\"phase_leveling_young_inflate_tau_ep\":{},"
-                                     "\"phase_leveling_young_inflate_max_age_ep\":{},",
-                                     config_.networkPhaseLevelingYoungInflateVarM2(),
-                                     config_.networkPhaseLevelingYoungInflateTauEp(),
-                                     config_.networkPhaseLevelingYoungInflateMaxAgeEp())
-                       : std::string{})
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
                // Card PFQ: solve-affecting and fingerprinted, so an archived logs/ folder
@@ -2287,7 +2124,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"signal_roster\":{{\"built\":true,\"trace\":{},{}"
                               "\"horizon_s\":{},"
                               "\"phase_leveling_max_gap_s\":{},"
-                              "\"iono_carry_max_gap_s\":{},"
                               "\"emit_pb_hold_max_gap_s\":{},"
                               "\"readmit_seed_horizon_s\":{},"
                               "\"forget_ep\":{},\"event_holdoff_ep\":{},"
@@ -2302,12 +2138,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                               config_.networkSignalRoster() ? "true" : "false",
                               config_.networkSignalRoster()
                                   ? "\"trace_file\":\"network_arc_ledger.csv\"," : "",
-                              std::max(std::max(config_.networkPhaseLevelingMaxGapS(),
-                                                config_.networkIonoCarryMaxGapS()),
+                              std::max(config_.networkPhaseLevelingMaxGapS(),
                                        std::max(nc.emit_pb_hold_max_gap_s,
                                                 config_.networkReadmitSeedHorizonS())),
                               config_.networkPhaseLevelingMaxGapS(),
-                              config_.networkIonoCarryMaxGapS(),
                               nc.emit_pb_hold_max_gap_s,
                               config_.networkReadmitSeedHorizonS(),
                               kArcLedgerForgetEp, kArcLedgerEventHoldoffEp,
@@ -2372,7 +2206,6 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"clock_model_k_sigma\":{},", clk_model_k)
                << fmt::format("\"clock_model_meas_std_m\":{},", config_.networkClockModelMeasStdM())
                << fmt::format("\"clock_model_max_gap_s\":{},", clk_model_max_gap)
-               << "\"emit_clock_rate\":" << (config_.networkEmitClockRate() ? "true" : "false") << ','
                << "\"emit_ura\":" << (ura_on ? "true" : "false") << ','
                << fmt::format("\"ura_ewma_alpha\":{},", ura_alpha)
                << "\"consume_ura\":" << (config_.networkConsumeUra() ? "true" : "false") << ','
@@ -2390,30 +2223,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"carry_invariant_qz\":{},", config_.networkCarryInvariantQz())
                << "\"carry_invariant_emit_rebase\":"
                << (config_.networkCarryInvariantEmitRebase() ? "true" : "false") << ','
-               << "\"carry_invariant_honesty\":"
-               << (config_.networkCarryInvariantHonesty() ? "true" : "false") << ','
                << "\"carry_invariant_innov_gate\":"
                << (config_.networkCarryInvariantInnovGate() ? "true" : "false") << ','
                << fmt::format("\"carry_invariant_innov_k\":{},", config_.networkCarryInvariantInnovK())
                << "\"carry_invariant_innov_calibrate\":"
                << (config_.networkCarryInvariantInnovCalibrate() ? "true" : "false") << ','
-               << "\"mw_wl_enable\":" << (config_.networkMwWlSeed() ? "true" : "false") << ','   // MW-WL seed (card WL-1, M5)
-               << fmt::format("\"mw_wl_min_arc_epochs\":{},", config_.getNetworkConfig().mw_wl.min_arc_epochs)
-               << fmt::format("\"mw_wl_sigma_floor_cyc\":{},", config_.getNetworkConfig().mw_wl.sigma_floor_cyc)
-               << fmt::format("\"mw_wl_max_rows_per_epoch\":{},", config_.getNetworkConfig().mw_wl.max_rows_per_epoch)
-               << "\"emit_pb_filter\":" << (config_.networkEmitPbFilter() ? "true" : "false") << ','
-               << fmt::format("\"emit_pb_filter_q\":{},", config_.networkEmitPbFilterQ())
-               << fmt::format("\"emit_pb_filter_jump_k\":{},", config_.networkEmitPbFilterJumpK())
-               << fmt::format("\"emit_pb_filter_meas_sigma_m\":{},", config_.networkEmitPbFilterMeasSigmaM())
-               << fmt::format("\"emit_pb_filter_max_gap_s\":{},", config_.networkEmitPbFilterMaxGapS())
-               << fmt::format("\"emit_pb_filter_window_epochs\":{},", config_.networkEmitPbFilterWindowEpochs())
-               << "\"emit_pb_filter_emit_sigma\":"
-               << (config_.networkEmitPbFilterEmitSigma() ? "true" : "false") << ','
-               << "\"emit_pb_filter_gate_v2\":"   // PB-gate-v2 merge point (config echo)
-               << (config_.networkEmitPbFilterGateV2() ? "true" : "false") << ','
-               << "\"clock_signal_basis_hold\":" << (clock_signal_basis_hold ? "true" : "false") << ','
                << "\"scoped_handover_response\":" << (scoped_handover ? "true" : "false") << ','
-               << "\"phase_bias_exclude_unmatched_antenna\":" << (pb_excl_unmatched ? "true" : "false") << ','
                << "\"exclude_unmodeled_antenna_stations\":"
                << (config_.networkExcludeUnmodeledAntennaStations() ? "true" : "false") << ','
                << "\"emit_generation_id\":" << (emit_gen_id ? "true" : "false") << ','
@@ -2532,29 +2347,6 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"carry_gap_2_30\":" << counters.sid.carry_gap_2_30 << ','
                << "\"carry_gap_2_30_answered\":" << counters.sid.carry_gap_2_30_answered
                << "},"
-               // The level re-base's on-path counters (card CLV), present only on an armed
-               // run (clv_epochs counts the kept epochs it ran on), so an unarmed run's
-               // completion record is byte-identical.
-               << ((counters.clv_epochs > 0)
-                       ? fmt::format("\"clock_level\":{{\"epochs\":{},\"skip_datum\":{},"
-                                     "\"twoway_failed\":{},\"pairs\":{},\"pairs_clipped\":{},"
-                                     "\"sat_few\":{},\"sat_tripped\":{},\"sat_unarmed\":{},"
-                                     "\"arms\":{},\"breaks\":{},\"updates\":{},\"at_floor\":{},"
-                                     "\"shift_mean_abs_m\":{:.6f},\"shift_max_abs_m\":{:.6f},"
-                                     "\"refs_shifted\":{},\"held_moved\":{}}},",
-                                     counters.clv_epochs, counters.clv_skip_datum,
-                                     counters.clv_twoway_failed, counters.clv_pairs,
-                                     counters.clv_pairs_clipped, counters.clv_sat_few,
-                                     counters.clv_sat_tripped, counters.clv_sat_unarmed,
-                                     counters.clv_arms, counters.clv_breaks, counters.clv_updates,
-                                     counters.clv_at_floor,
-                                     counters.clv_updates > 0
-                                         ? counters.clv_shift_sum_abs
-                                               / static_cast<double>(counters.clv_updates)
-                                         : 0.0,
-                                     counters.clv_shift_max_abs, counters.clv_refs_shifted,
-                                     counters.clv_held_moved)
-                       : std::string())
                // The inter-system bias census (card GAL), present only when a second
                // constellation is active (an empty member writes nothing).
                << (extra_member.empty() ? std::string() : extra_member + ",")
@@ -2697,10 +2489,6 @@ void NetworkRunTraces::closeAll() {
     if (fixed_cycle_events_trace.is_open()) fixed_cycle_events_trace.close(); // card FCF, FCF-3
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
-    // Closed explicitly, not left to the destructor, because the stream rotates (FC-1):
-    // rotation reads tellp() on a live handle, so the stream's lifetime is already tied to
-    // the rotation set, and an unflushed tail here is the only record of the tick tier.
-    if (fast_clock_trace.is_open()) fast_clock_trace.close();
     if (events_trace.is_open()) events_trace.close();
     if (zwd_trace.is_open()) zwd_trace.close();
     if (station_res_trace.is_open()) station_res_trace.close();
@@ -2715,15 +2503,10 @@ void NetworkRunTraces::closeAll() {
     // an unflushed tail would lose the deliverable the card was armed for.
     if (congruence_trace.is_open()) congruence_trace.close();
     if (estimability_trace.is_open()) estimability_trace.close();   // estimability dump (card DG5)
-    // The two MW/WL dumps were added after INC-4; the relocation did not leave them to
-    // the destructor, so the rule above does not cover them.  They are closed here so
-    // their tails are flushed at teardown rather than at scope exit: they are the graded
-    // artifacts of a D5/lane arm, and a crash after teardown should not cost the last
-    // rows.
-    if (d5_flags_trace.is_open()) d5_flags_trace.close();
-    if (wl_lane_trace.is_open()) wl_lane_trace.close();
-    // Same reason as the two dumps above: added after INC-4, and the MDB
-    // distribution is the graded artifact of a reliability arm.
+    // Added after INC-4; the relocation did not leave it to the destructor, so the rule
+    // above does not cover it.  It is closed here so its tail is flushed at teardown
+    // rather than at scope exit: the MDB distribution is the graded artifact of a
+    // reliability arm.
     if (mdb_trace.is_open()) mdb_trace.close();
     // Same reason: added after INC-4, and the contingency is the graded artifact
     // of a datum-graph arm.
@@ -2734,7 +2517,6 @@ void NetworkRunTraces::closeAll() {
     // Same reason: added after INC-4, and the per-row residual dump is the graded
     // artifact of a §24.6 attribution leg, so its tail must be flushed at teardown.
     if (pf_rows_trace.is_open()) pf_rows_trace.close();
-    if (clock_level_trace.is_open()) clock_level_trace.close();
     if (level_bound_trace.is_open()) level_bound_trace.close();
     if (level_innov_trace.is_open()) level_innov_trace.close();
     if (anchor_guard_trace.is_open()) anchor_guard_trace.close();
@@ -2747,6 +2529,33 @@ void NetworkRunTraces::closeAll() {
     if (amb_state_trace.is_open()) amb_state_trace.close();
     if (phase_colour_trace.is_open()) phase_colour_trace.close();   // card LGM
     if (amb_if_trace.is_open()) amb_if_trace.close();               // card AIL
+}
+
+// Setup builder (card NOM3 step EP4); documented at its declaration in logging/NetworkRunTraces.hpp.
+void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& config_path_) {
+    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    //      checked by scripts/nom_ep4_verify.py). ----
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const NetworkConfig& nc = run.nc;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    NetworkRunTraces& traces = run.traces;
+    std::vector<NetStation>& stations = run.setup.stations;
+    const int n_threads = run.setup.n_threads;
+    // ---- End of the bindings ----
+    // Run-provenance manifest, startup record (L15).  The body lives in
+    // NetworkRunTraces (INC-4), where manifest_path is a member.
+    traces.writeRunManifestStartup(config_, nc, ctx.knobs, config_path_,
+                                   stations.size(), n_threads, log);
+    // The parameter model as armed (card PRM phase 1, section 6): one line per kind, read
+    // from the registry, the same rows into the manifest.  Trace class: always written,
+    // never read by the solve.
+    for (const auto& line : ctx.params.modelTable())
+        log->info("Network (param model): {}", line);
+    // Card PRM phase 3a: each kind's armed response policies per event.
+    for (const auto& line : ctx.params.responseTable())
+        log->info("Network (param responses): {}", line);
+    traces.appendRunManifestRecord(nc, ctx.params.modelJson());
 }
 
 } // namespace GnssProcessor

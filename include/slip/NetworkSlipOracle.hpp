@@ -118,6 +118,7 @@
  * @ref NetworkSlipOracle::fa_kept instead.
  */
 
+#include "app/NetworkEntities.hpp"   // net::ArcTable (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry (PppUtils fwd via PppModel)
 
 #include <spdlog/spdlog.h>
@@ -195,13 +196,13 @@ struct NetworkSlipOracle {
     struct ArcState { double last_applied_s{-1.0e18}; };
     std::map<std::tuple<int, std::string, std::string>, ArcState> arcs;
 
-    /// The leveling carry this oracle actuates on: `ctx.carry.local_carry`.
+    /// The leveling carry this oracle actuates on: `ctx.entities.arcs`.
     /// A bare pointer because the map is a sibling member of the same
     /// @ref NetworkRunContext that owns this object, so it outlives the oracle
     /// and is never reallocated.  The oracle writes @ref LocalCarry::value_abs
     /// and nothing else: an `x_lin` shift is an exact solve no-op
     /// (docs/SPEC_lane_slip_response.md §7.2).
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>* carry{nullptr};
+    net::ArcTable* carry{nullptr};   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
 
     /// Wavelength provider for the cycles->metres conversion (FDMA-correct via
     /// the satellite id).  Owned here so the oracle does not depend on whether
@@ -337,5 +338,20 @@ struct NetworkRunEndView;
 int networkSlipOracleRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+struct NetworkRun;
+class LogManager;
+
+/**
+ * @brief Loads the oracle slip response (simulation only) when network.cycle_slip.oracle_relevel is armed.
+ *
+ * Throws on a missing or mis-pointed fixture, before any trace file opens.  Setup builder (card
+ * NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.ctx.carry.slip_oracle.
+ * @param log_manager_ The application's logging manager (Application::log_manager_).
+ */
+void networkSlipOracleArm(NetworkRun& run, LogManager& log_manager_);
 
 } // namespace GnssProcessor

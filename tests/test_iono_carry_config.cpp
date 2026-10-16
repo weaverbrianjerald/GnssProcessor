@@ -1,15 +1,12 @@
 /**
  * @file test_iono_carry_config.cpp
- * @brief Config-contract tests for the slant-iono carry knob set
- *        (@c network.carry_iono and riders; QUEUE-8b).
+ * @brief The bridge v3 rider interlocks and the CS-GF authority kernel.
  *
- * The carry is solve-affecting and off by default.  These tests cover the
- * loader's side: the defaults, the four warn-and-disarm interlocks
- * (carry_invariant / no phase_leveling / estimate_iono_sh / mech-B
- * rep_error_tau_s), the scope=relevel ↔ relevel_free_epoch dependency, the
- * load failures (negative q / negative floor / unknown scope), and the
- * @c NetworkQClass::IonoCarry table routing.  The estimator-side behavior is
- * graded on the sim fixture, not here.
+ * The file held the config contract of the diagonal slant-iono carry
+ * (@c network.carry_iono, QUEUE 8b), which was retired with its keys.  What stays:
+ * the loader's bridge v3 rider interlocks (parked here, beside the kernel) and the
+ * pure CS-GF recursion that the LV-6 level-authority census
+ * (@c network.level_authority_csgf) advances.
  */
 
 #include <gtest/gtest.h>
@@ -65,176 +62,34 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     return ok;
 }
 
-// The armed happy-path network block: leveling + the relevel response + carry.
-const char* kArmedBlock =
-    "    \"phase_leveling\": true,\n"
-    "    \"cycle_slip\": { \"mw_detect\": true, \"relevel_free_epoch\": true },\n"
-    "    \"carry_iono\": true,\n";
-
 }  // namespace
-
-TEST(IonoCarryConfig, DefaultsAreOffWithDocumentedRiders) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("defaults", networkConfig(), cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(), 1e-4);
-    EXPECT_EQ(cfg.networkIonoCarryScope(), "relevel");
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryVarFloor(), 0.04);
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryMaxGapS(), 300.0);
-}
-
-TEST(IonoCarryConfig, ArmedHappyPathSurvivesLoad) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("armed", networkConfig(kArmedBlock), cfg));
-    EXPECT_TRUE(cfg.networkCarryIono());
-    EXPECT_TRUE(cfg.networkPhaseLeveling());
-    EXPECT_TRUE(cfg.networkCycleSlipRelevelFreeEpoch());
-}
-
-TEST(IonoCarryConfig, ScopeAlwaysParsesAndSurvivesWithoutRelevelFreeEpoch) {
-    // scope=always does not key on the free set, so it must stay armed with the
-    // relevel response off (the interlock is scope=relevel-specific).
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("always",
-        networkConfig("    \"phase_leveling\": true,\n"
-                      "    \"carry_iono\": true,\n"
-                      "    \"iono_carry_scope\": \"always\",\n"), cfg));
-    EXPECT_TRUE(cfg.networkCarryIono());
-    EXPECT_EQ(cfg.networkIonoCarryScope(), "always");
-}
-
-TEST(IonoCarryConfig, ScopeRelevelDisarmsWithoutRelevelFreeEpoch) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("norelevel",
-        networkConfig("    \"phase_leveling\": true,\n"
-                      "    \"carry_iono\": true,\n"), cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-}
-
-TEST(IonoCarryConfig, DisarmedWithoutPhaseLeveling) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("nopl",
-        networkConfig("    \"cycle_slip\": { \"mw_detect\": true, \"relevel_free_epoch\": true },\n"
-                      "    \"carry_iono\": true,\n"), cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-}
-
-TEST(IonoCarryConfig, DisarmedUnderCarryInvariant) {
-    GnssConfig cfg;
-    // carry_invariant is defined only on the eq34 chain datum (loader hard
-    // requirement), so the interlock is exercised on that valid pairing.
-    ASSERT_TRUE(loadInto("cinv",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"phase_datum_eq34\": true,\n"
-                      "    \"carry_invariant\": true,\n"), cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-}
-
-TEST(IonoCarryConfig, DisarmedUnderEstimateIonoSh) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("sh",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"estimate_iono_sh\": true,\n"), cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-}
-
-TEST(IonoCarryConfig, MutexWithMechBDeviationCarry) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("mechb",
-        networkConfig(std::string(kArmedBlock),
-                      "  \"estimation\": { \"global_vtec_sh\": { \"rep_error_tau_s\": 900.0 } },\n"),
-        cfg));
-    EXPECT_FALSE(cfg.networkCarryIono());
-}
-
-TEST(IonoCarryConfig, NegativeQRejected) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("negq",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"iono_carry_q\": -1e-4,\n"), cfg));
-}
-
-TEST(IonoCarryConfig, NegativeFloorRejected) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("negfloor",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"iono_carry_var_floor\": -0.04,\n"), cfg));
-}
-
-TEST(IonoCarryConfig, UnknownScopeRejected) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("badscope",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"iono_carry_scope\": \"sometimes\",\n"), cfg));
-}
-
-TEST(IonoCarryConfig, QResolvesThroughProcessNoiseTable) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("qtable",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"process_noise\": { \"iono_carry\": 5e-4 },\n"), cfg));
-    EXPECT_TRUE(cfg.networkCarryIono());
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(), 5e-4);
-}
-
-TEST(IonoCarryConfig, ExplicitLegacyKeyBeatsTable) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("legacywins",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"process_noise\": { \"iono_carry\": 5e-4 },\n"
-                      "    \"iono_carry_q\": 2e-4,\n"), cfg));
-    EXPECT_DOUBLE_EQ(cfg.networkIonoCarryQ(), 2e-4);
-}
 
 // --- Bridge v3 rider interlocks (same loader region; parked here rather than
 // --- in the kernel file to keep that file's include set pure).
-TEST(IonoCarryConfig, BridgeV3RidersRequireDeltaBridge) {
+TEST(BridgeV3RiderConfig, BridgeV3RidersRequireDeltaBridge) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3nodb",
         networkConfig("    \"phase_leveling\": true,\n"
                       "    \"cycle_slip\": { \"mw_detect\": true, \"if_phase_td\": true,\n"
                       "                      \"relevel_free_epoch\": true,\n"
-                      "                      \"relevel_bridge_gf\": true,\n"
-                      "                      \"relevel_bridge_ewl\": true },\n"), cfg));
+                      "                      \"relevel_bridge_gf\": true },\n"), cfg));
     EXPECT_FALSE(cfg.networkCycleSlipRelevelBridgeGf());
-    EXPECT_FALSE(cfg.networkCycleSlipRelevelBridgeEwl());
 }
 
-TEST(IonoCarryConfig, BridgeV3RidersSurviveWithDeltaBridge) {
+TEST(BridgeV3RiderConfig, BridgeV3RidersSurviveWithDeltaBridge) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3ok",
         networkConfig("    \"phase_leveling\": true,\n"
                       "    \"cycle_slip\": { \"mw_detect\": true, \"if_phase_td\": true,\n"
                       "                      \"relevel_free_epoch\": true,\n"
                       "                      \"relevel_delta_bridge\": true,\n"
-                      "                      \"relevel_bridge_gf\": true,\n"
-                      "                      \"relevel_bridge_ewl\": true },\n"), cfg));
+                      "                      \"relevel_bridge_gf\": true },\n"), cfg));
     EXPECT_TRUE(cfg.networkCycleSlipRelevelBridgeGf());
-    EXPECT_TRUE(cfg.networkCycleSlipRelevelBridgeEwl());
     EXPECT_DOUBLE_EQ(cfg.networkCycleSlipRelevelBridgeGfSigmaFloorM(), 0.01);
-    EXPECT_DOUBLE_EQ(cfg.networkCycleSlipRelevelBridgeEwlSigmaFloorCyc(), 0.05);
 }
 
-// --- CS-GF authority: the source knob and the pure recursion (successor to QUEUE 8b).
+// --- CS-GF authority: the pure recursion (network.level_authority_csgf).
 #include "slip/NetworkRawObservables.hpp"
-
-TEST(IonoCarryConfig, SourceDefaultsToSolveAndParsesSmoothed) {
-    GnssConfig cfg;
-    ASSERT_TRUE(loadInto("srcdef", networkConfig(kArmedBlock), cfg));
-    EXPECT_EQ(cfg.networkIonoCarrySource(), "solve");
-    GnssConfig cfg2;
-    ASSERT_TRUE(loadInto("srcsm",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"iono_carry_source\": \"smoothed_gf\",\n"), cfg2));
-    EXPECT_EQ(cfg2.networkIonoCarrySource(), "smoothed_gf");
-}
-
-TEST(IonoCarryConfig, UnknownSourceRejected) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("srcbad",
-        networkConfig(std::string(kArmedBlock) +
-                      "    \"iono_carry_source\": \"oracle\",\n"), cfg));
-}
 
 TEST(IonoCsKernel, FirstSightingSeedsFromCodeAtHonestVariance) {
     IonoCsState cs;

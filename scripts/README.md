@@ -61,6 +61,7 @@ Goldens, arm generators, posture checks.
 | `guards_cont_anchor_config.py` | Continuous GUARDS-ARMED run 13:00 -> 21:29:30 with full snapshot history. Follow-on to runs/raim_cold_event (Jul-28), which proved the 20:47:00 epoch… | ⚠ 0 |
 | `make_agu305_configs.py` | Generate the 305-station AGU scaling configs (GPS-only, then GPS+Galileo). Same experiment as ``make_agu_configs.py`` at 5x the stations. The roster … | ⚠ 0 |
 | `make_agu_configs.py` | Generate the AGU-abstract network configs from the FT63 pdfix_v3 lineage. The abstract needs ONE producer run whose emitted products a held-out consu… | 1 |
+| `ledger_render.py` | Render docs/CONFIG_promotion_ledger.md from the ledger JSON (one verdict per config key); `--check` exits 1 when the view is stale. | 3 |
 | `make_agu_replay_arms.py` | Generate consumer-replay arms against an already-written network product file. ``Application::runConsumerReplay`` (armed by ``network.closed_loop.rep… | ⚠ 0 |
 | `make_golden_config.py` | make_golden_config.py -- generate and VERIFY the golden network configs. WHY. The project ships new work default-OFF and byte-identity-gated, and the… | 101 |
 | `overnight_make_arms.py` | Generate the overnight follow-on arm configs for the FT63 convergence lineage. Every arm is derived from the validated `_ft63_24h_conv.json` posture … | 1 |
@@ -207,10 +208,10 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `clkr_run_arm.ps1` | Card CLK-R arm runner: serialized producer run + trace harvest. Usage: .\clkr_run_arm.ps1 -Config <config.json> -RunDir <runs/name> Redirects console… | ⚠ 0 |
 | `clock_decompose.py` | Decompose a run's emitted satellite-clock series into drift / residual / step noise. python scripts/clock_decompose.py <run_dir> [tail_seconds=3600] … | 1 |
 | `clock_hadamard_calib.py` | Two-state clock-model q1/q2 recalibration instrument (Phase A of the ``network.clock_model`` revival card; write-up ``docs/SPEC_c1_clock_rate_validat… | 7 |
-| `fc1_grade.py` | Grade the FC-1 split-cadence fast clock against the full solve. Two modes, both grading DATUM-INVARIANT quantities only (standing invariant #5 — raw … | 7 |
-| `q3_clock_structure_function.py` | Card Q3 — floor-vs-walk split of the phase-measured (TDCP) satellite clock correction, from the FC-1 shadow trace (network_fast_clock.csv). The per-t… | 6 |
+| `fc1_grade.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). Grade the FC-1 split-cadence fast clock against the full solve. Two modes, both grading DATUM-INVARIANT quantities only (standing invariant #5 — raw … | 7 |
+| `q3_clock_structure_function.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). Card Q3 — floor-vs-walk split of the phase-measured (TDCP) satellite clock correction, from the FC-1 shadow trace (network_fast_clock.csv). The per-t… | 6 |
 | `q3_consumer_hours.py` | Hourly LEVEL bands of the in-process closed-loop consumer, for Card Q3 A/B arms. Grades ``logs/closed_loop_trace.csv`` (the live WTZZ holdout) as hou… | ⚠ 0 |
-| `q3_fc1_hours.py` | The FC-1 SHADOW HOUR TABLE — the score for Card Q3 work. ``project_fast_clock_card``: *"KEEP network.fast_clock.shadow as a standing instrument ... i… | 2 |
+| `q3_fc1_hours.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). The FC-1 SHADOW HOUR TABLE — the score for Card Q3 work. ``project_fast_clock_card``: *"KEEP network.fast_clock.shadow as a standing instrument ... i… | 2 |
 | `q3_ladder_grade.py` | Card Q3 ladder leg — one table per arm, scraped from the run console (SPEC §8). Everything here is an ON-PATH COUNTER or a run-end statistic the prod… | 4 |
 | `q3_ladder_queue.ps1` | Card Q3 ladder leg — the serialized 3 h arm queue (SPEC §8). | 2 |
 | `q3_ladder_queue2.ps1` | Card Q3 ladder leg — phase 2: the §3 k-CALIBRATION arms, then the consumer REPLAY of every graded arm (SPEC §8.4 gates 3 and 6). | 2 |
@@ -266,17 +267,16 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `ewl_bridge_oracle.py` | Estimator-free oracle of the WL-2 bridge arc (SPEC_ewl_wl_cascade_card §3.4). Chain, per station-pair/sat-pair DD, straight from raw RINEX (GPS, W/Q … | 1 |
 | `ewl_census.py` | Estimator-free EWL/WL integer census (WL-2 spec eyeball). Extends scripts/mw_census.py to the tri-frequency lanes: for each pair the MW combination i… | 1 |
 | `field_lane_frac.py` | field_lane_frac.py -- TRUTH-FREE lane-fraction grade for field (and sim) runs. The per-band DD fraction is iono-limited and uniform on every field li… | 7 |
-| `field_lane_obs_grade.py` | Grade a lane-observatory run's per-event LANE_OBS rows against the SPEC_lane_slip_response §7.6 pre-registered field rule. Input: a run directory who… | 4 |
+| `field_lane_obs_grade.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). Grade a lane-observatory run's per-event LANE_OBS rows against the SPEC_lane_slip_response §7.6 pre-registered field rule. Input: a run directory who… | 4 |
 | `grade_dd_spillway.py` | Spillway forensics on network_dd_fractional.csv — the 2026-08-02 root-cause kit. Four analyses on the traced between-station DDs (all datum-invariant… | 13 |
 | `grade_ddfrac.py` | Grade a network producer run's DATUM-INVARIANT double-differenced ambiguities. This is the go/no-go instrument for producer-side (and downstream user… | 41 |
 | `grade_ddfrac_perhour.py` | Per-hour + per-bucket DD-step breakdown for the Card-4 D5 acceptance. Reuses grade_ddfrac's EXACT methodology (epoch-adjacent \|ΔDD\| within a fixed … | 7 |
 | `grade_ddfrac_sigma_conditioned.py` | Condition the DD fractional part on its FORMAL sigma — the payoff test of ``docs/SPEC_carry_aware_covariance.md``. WHY THIS SCRIPT EXISTS -----------… | 6 |
-| `grade_lane_trace.py` | Grade the WL-2 lane trace (F-B instrument): injected/held-cycle circR vs control. Input: logs/network_wl_lane_trace.csv from a run with network.mw_wl… | 7 |
+| `grade_lane_trace.py` | **Archive-only** (card RKD deleted the mechanism it grades; it reads archived runs). Grade the WL-2 lane trace (F-B instrument): injected/held-cycle circR vs control. Input: logs/network_wl_lane_trace.csv from a run with network.mw_wl… | 7 |
 | `grade_slip_agreement.py` | Grade the network slip layer by CROSS-CHECKING its two detectors against each other and against the raw observables. The network producer runs two in… | 12 |
 | `lane_spectrometer.py` | Lane-ladder spectrometer — project the network's own float DDs onto the MW/EWL lane ladder and grade them against the MW integers (docs/SPEC_lane_spe… | 24 |
 | `mw_census.py` | Estimator-free WL integer census: MW combination from raw RINEX, first N epochs. Median MW per (station,sat) arc -> star-basis DD within same band-2 … | 15 |
 | `mw_census_allpairs.py` | Estimator-free ALL-PAIRS MW census (UWL-1 ladder survey, Jul-16 2026). Every channel combination across DISTINCT frequency bands, per constellation (… | 7 |
-| `mwwl_cond_arm.py` | Build MW/WL-cascade CONDITIONING arms on the DOY-129 305-station shape. Question: can the EWL->WL cascade stiffen the code/CB/iono system against the… | 3 |
 | `mwwl_event_census.py` | Estimator-free lane-information census across an EVENT WINDOW (DOY-129 19:26 detonation). Settles one question that needs NO estimator run: when the … | 3 |
 | `spectro_grade_vfold.py` | Grade the S2 VIRTUAL FOLD — the between-leg state delta per state class. docs/SPEC_lane_spectrometer.md §4 / §12.4. Reads the four legs emitted by ``… | 1 |
 | `spectro_make_vfold.py` | Generate the S2 VIRTUAL-FOLD legs of the lane-spectrometer campaign. docs/SPEC_lane_spectrometer.md §4: from the S1 run's snapshot, resume paired leg… | 6 |
@@ -389,24 +389,18 @@ Cross-checks for the model code; not part of any run.
 | `solid_tide_reference.py` | Standalone reference for the solid Earth tide (IERS 2010 dehanttideinel). This is an INDEPENDENT Python port of the same IERS Conventions dehanttidei… | 3 |
 | `vmf3_reference.py` | Standalone Python port of vmf3.m used to generate reference values for the C++ Vmf3 unit test. Reads coefficients directly from the generated header … | 1 |
 
-## Ledger passes and campaign one-offs
+## Campaign one-offs
 
-Each was written for one card. The `_*_ledger_oneoff.py` family opens `docs/CONFIG_promotion_ledger.md` **by path** and patches or appends a row, in step with `docs/CONFIG_promotion_ledger.json`. That is why the ledger is a LIVING REGISTER and was deliberately left whole by the 2026-09-14 docs reorganisation — do not split it, and keep new ledger passes on this pattern.
+Each was written for one card. Ledger changes are edits to `docs/CONFIG_promotion_ledger.json` followed by `scripts/ledger_render.py`; the `_*_ledger_oneoff.py` patch scripts were retired on 2026-10-13 with the prose ledger they patched (git history keeps them).
 
 | script | purpose | refs |
 | --- | --- | --- |
 | `_arm_compare.py` | Extract the Card-1f/1g A/B metrics from a set of run logs. | ⚠ 0 |
 | `_arm_run.sh` | Run one arm and snapshot the shared trace CSVs into the run dir. | 5 |
-| `_coldfb_ledger_oneoff.py` | COLD ANCHOR-FALLBACK ledger pass (SPEC_event_harness §15), parameterised by verdict. python scripts/_coldfb_ledger_oneoff.py <RECOMMEND_ON\|KEEP_OFF>… | 1 |
-| `_fieldharness_ledger_oneoff.py` | FIELD HARNESS ledger pass (SPEC_event_harness s20) -- one command per outcome. Records, for each of the three sim-validated slip cards, what the FIEL… | 2 |
 | `_ifg_ab.sh` | §6.14.6 three-arm validation. Captures CWD-relative ./logs/ with a SOURCE-mtime freshness assertion (the stale-trace-dir trap, SPEC_amb_iono §6.13.4). | ⚠ 0 |
 | `_ifref_ab.sh` | Card-R ref-gate A/B: capture CWD-relative ./logs/ with SOURCE-mtime freshness assertion. | ⚠ 0 |
 | `_ifsc_ab.sh` | SPEC_amb_iono_split_overcount §6.14.5 defect 2 A/B: does excluding the reference satellite's structural zero from the IF-TD pool scale change the FLA… | 2 |
 | `_ifsc_ab_compare.py` | Compare the two IF-TD pool-scale arms (SPEC_amb_iono_split_overcount §6.14.5 defect 2). old = reference satellite's structural zero INCLUDED in the r… | 2 |
-| `_rs2_refarc_ledger_oneoff.py` | Ledger pass for the two 2026-09-12 cards that share a session (SPEC_event_harness s21, s22). python scripts/_rs2_refarc_ledger_oneoff.py refarc -> NE… | 5 |
-| `_scopedpromo_ledger_oneoff.py` | PROMOTION PASS for network.scoped_handover_response (SPEC_event_harness §19.5). python scripts/_scopedpromo_ledger_oneoff.py Does, in order, the four… | 2 |
-| `_stspromo_ledger_oneoff.py` | ONE-OFF promotion pass for `network.handover_stransform` (queue 1(b), increment 1 of the pivot-departure card, SPEC_event_harness §19.6). Mirrors scr… | 1 |
-| `_study7_ledger_oneoff.py` | Study 7 ledger pass: (1) new row network.cycle_slip.if_phase_td_pairs, (2) update the network.cycle_slip.common_band_scope row (verdict, F2/F3, storm… | 4 |
 
 ## Loose notes
 

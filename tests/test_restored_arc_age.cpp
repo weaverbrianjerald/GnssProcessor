@@ -40,6 +40,11 @@
  *    site performs (@ref GnssProcessor::makeRestoredLocalCarry).  This pins the
  *    file-format half of the contract end to end: the snapshot carries no birth
  *    field, so the reader applies the sentinel.
+ * 4. The re-level stamp (@ref GnssProcessor::localCarryStampRelevel), the rule of
+ *    @ref LocalCarry::relevel_s: set when the entry is created and when the arc is
+ *    freed, kept on every other re-stash.  It needs no restore sentinel: a restored
+ *    entry's 0 reads as unstamped, and an ordinary re-stash keeps it (suite
+ *    @c LocalCarryRelevelStamp).
  *
  * Out of scope: the per-epoch harvest loop itself (inside `runNetwork`, certified by
  * the same-build byte-identity A/B and the harness leg pair in SPEC_event_harness
@@ -140,14 +145,14 @@ TEST(RestoredArcAge, ANewEntryIsStampedAtCreationAndKeptAcrossRestashes) {
 // previous entry.  The case fails any change that keeps the sentinel across an
 // erase.
 TEST(RestoredArcAge, AnErasedAndRebornEntryIsRestamped) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     const auto key = std::make_tuple(0, std::string(kSat), std::string(kSig));
-    carry[key] = restored();
+    net::putArcIn(carry, key, &net::ArcState::amb) = restored();
 
-    ASSERT_EQ(carry.erase(key), 1u);          // the T4 attribution erase
-    const auto it = carry.find(key);
+    ASSERT_EQ(net::dropArc(carry, key, &net::ArcState::amb), 1u);          // the T4 attribution erase
+    const auto it = net::getArc(carry, key, &net::ArcState::amb);
     LocalCarry reborn{7.5, 3e-3, kW + 280000.0};
-    localCarryStampBirth(reborn, (it == carry.end() ? nullptr : &it->second),
+    localCarryStampBirth(reborn, (it == nullptr ? nullptr : it),
                          /*now_ep=*/42, kW + 280000.0);
     EXPECT_EQ(reborn.birth_ep, 42)
         << "a re-born arc carries its code-level birth error and must read YOUNG";
@@ -225,8 +230,7 @@ struct Outcome {
 /// One election with the incumbent retired this epoch (the handover the
 /// candidacy pass screens for), against the given carry view.
 Outcome elect(Roster& r, int min_age_ep, long long now_ep,
-              const std::map<std::tuple<int, std::string, std::string>,
-                             LocalCarry>* lc) {
+              const net::ArcTable* lc) {
     AnchorHandoverLedger ledger;
     // BBBB (rank 1, the top non-incumbent) and CCCC (rank 2) both have clean ledger
     // values, so only the maturity bar can move the election off BBBB.  CCCC makes a
@@ -267,9 +271,9 @@ Outcome elect(Roster& r, int min_age_ep, long long now_ep,
 // current epoch's sweep.  With the sentinel the restored candidate is screened on
 // its ledger value.
 TEST(RestoredArcAge, ARestoredCandidateIsNotRefusedByTheMaturityBar) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
-    lc[{1, kSat, kSig}] = restored();
-    lc[{2, kSat, kSig}] = stamped(/*birth_ep=*/1, kW + 270000.0);
+    net::ArcTable lc;
+    net::putArcIn(lc, {1, kSat, kSig}, &net::ArcState::amb) = restored();
+    net::putArcIn(lc, {2, kSat, kSig}, &net::ArcState::amb) = stamped(/*birth_ep=*/1, kW + 270000.0);
 
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     const Outcome o = elect(r, /*min_age_ep=*/60, /*now_ep=*/1, &lc);
@@ -284,9 +288,9 @@ TEST(RestoredArcAge, ARestoredCandidateIsNotRefusedByTheMaturityBar) {
 
 // The bar still refuses a young arc: the sentinel does not switch the screen off.
 TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> lc;
-    lc[{1, kSat, kSig}] = stamped(/*birth_ep=*/980, kW + 279150.0);   // 20 ep old
-    lc[{2, kSat, kSig}] = stamped(/*birth_ep=*/100, kW + 270000.0);   // 900 ep old
+    net::ArcTable lc;
+    net::putArcIn(lc, {1, kSat, kSig}, &net::ArcState::amb) = stamped(/*birth_ep=*/980, kW + 279150.0);   // 20 ep old
+    net::putArcIn(lc, {2, kSat, kSig}, &net::ArcState::amb) = stamped(/*birth_ep=*/100, kW + 270000.0);   // 900 ep old
 
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     const Outcome o = elect(r, /*min_age_ep=*/60, /*now_ep=*/1000, &lc);
@@ -306,7 +310,7 @@ TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
 struct OracleHarness {
     LogManager        log_manager;
     NetworkSlipOracle oracle;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
 
     OracleHarness() {
         oracle.carry = &carry;
@@ -314,7 +318,7 @@ struct OracleHarness {
         oracle.window_s = 90.0;          // the default three-epoch latency bound
     }
     void put(const LocalCarry& lc) {
-        carry[std::make_tuple(0, std::string(kSat), std::string(kSig))] = lc;
+        net::putArcIn(carry, std::make_tuple(0, std::string(kSat), std::string(kSig)), &net::ArcState::amb) = lc;
     }
     void addTruth(double tow_s, int delta) {
         oracle.truth[std::make_tuple(0, std::string(kSat), std::string(kSig))]
@@ -416,6 +420,41 @@ TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
     EXPECT_DOUBLE_EQ(back.local_carry.at({0, "G10", "L1C"}).var_first, 0.0);
 
     std::filesystem::remove(path, ec);
+}
+
+// ===========================================================================
+// 4: the re-level stamp (localCarryStampRelevel): LocalCarry::relevel_s moves on
+//    two events only
+// ===========================================================================
+
+// A created entry: a first stash, or the re-stash after a T4 attribution erase or gap
+// prune deleted the entry (the erase needs no clause of its own because it deletes, so
+// the next harvest creates).  Its level came from one epoch of code.
+TEST(LocalCarryRelevelStamp, StampIsSetWhenTheEntryIsCreated) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/0.0, /*created=*/true,
+                                            /*freed=*/false, /*now_s=*/1'234'567.0),
+                     1'234'567.0);
+}
+
+// A freed arc: it was in this epoch's latched relevel.free_ambs set, so this harvest
+// re-levelled it from one epoch of code although the entry already existed.
+TEST(LocalCarryRelevelStamp, StampIsSetWhenTheArcWasFreedThisEpoch) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/1'000'000.0, /*created=*/false,
+                                            /*freed=*/true, /*now_s=*/1'234'567.0),
+                     1'234'567.0);
+}
+
+// Every other re-stash preserves the stamp; otherwise the age would reset every epoch
+// and no arc could mature out of the inflation.
+TEST(LocalCarryRelevelStamp, StampIsPreservedOnAnOrdinaryRestash) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(/*prev=*/1'000'000.0, /*created=*/false,
+                                            /*freed=*/false, /*now_s=*/1'234'567.0),
+                     1'000'000.0);
+}
+
+TEST(LocalCarryRelevelStamp, StampIsSetWhenBothEventsCoincide) {
+    EXPECT_DOUBLE_EQ(localCarryStampRelevel(0.0, /*created=*/true, /*freed=*/true, 500.0),
+                     500.0);
 }
 
 }  // namespace

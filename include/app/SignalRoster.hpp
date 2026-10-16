@@ -290,6 +290,86 @@ namespace GnssProcessor {
                                            const RosterSiteCounts& start);
 
     // =====================================================================
+    // The site census of card NOM step N3b (app/SignalRosterSites.cpp)
+    // =====================================================================
+
+    /**
+     * @brief A site of card NOM section 18 (groups A to G) that N3b measures against the
+     *        roster or the arc ledger, beyond the eleven sites of @ref RosterSite.
+     *
+     * Two kinds.  A RULE site (the first six) is a selection rule the census evaluates
+     * at the end of each audited epoch on that epoch's roster, through the site's own
+     * function where it has one (@c networkPinBandsFor,
+     * @c NetworkSbasis::broadcastGroupDelayDescribesPair, @c channelFamilyOf,
+     * @c netDatumGraphFamily), so the count is the rule's disagreement with the roster
+     * whether or not the posture reaches the site's caller.  A READ site (the last
+     * three) is counted at the site, on every read, against the answer the site would
+     * have given before it read the roster or the ledger: its counter is exactly the
+     * number of reads at which the switched site answers differently.
+     *
+     * The table, its order and its texts are @ref signalRosterN3bSpecs.  The census is an
+     * observatory: it prints at run end in its own trace-class lines and writes no
+     * trace, product or manifest record.
+     */
+    enum class RosterN3bSite {
+        BiaPinBands,        ///< A5 to A9, A12, B3, B5, B7: the BIA clock-reference pin bands.
+        BiaPinSignals,      ///< the pin-pair decision: the BIA reference code per band.
+        GdPairBands,        ///< A2: the pair the broadcast group delay describes.
+        CanonicalPair,      ///< A10: the canonical pair is band digits 1 and 2.
+        TraitsPairBands,    ///< A13: the first two constellation-traits bands.
+        ChannelFamily,      ///< F1 against F2: "X against the rest" or the attribute letter.
+        LatchReadTracker,   ///< E10: the arc-level tracker's band signal (read site).
+        LatchReadSecondPhase, ///< the second-phase census's band signal (read site).
+        WindupRestartArcs,  ///< the wind-up restart's arcs of a (station, satellite) (read site).
+        kCount              ///< number of sites (not a site).
+    };
+
+    /// @brief Number of sites in @ref RosterN3bSite.
+    inline constexpr std::size_t kRosterN3bSites =
+        static_cast<std::size_t>(RosterN3bSite::kCount);
+
+    /// @brief The declared text of one N3b site (plain data, read by the run-end lines).
+    struct RosterN3bSpec {
+        RosterN3bSite site;        ///< the site this row declares (its index in the table).
+        const char* name;          ///< stable identifier.
+        const char* sites;         ///< the card NOM section 18 items the counter stands for.
+        const char* compared;      ///< the unit of the compared count.
+        const char* disagreement;  ///< what is counted as a disagreement.
+    };
+
+    /**
+     * @brief The declared N3b site texts, in @ref RosterN3bSite order (checked by
+     *        @c static_assert).
+     * @return One @ref RosterN3bSpec per site, with static storage duration.
+     */
+    const std::array<RosterN3bSpec, kRosterN3bSites>& signalRosterN3bSpecs();
+
+    /**
+     * @brief The N3b census over a run: per site its compared and disagreeing counts,
+     *        the reads the roster could not answer, and the disagreements by identity.
+     */
+    struct RosterN3bCensus {
+        std::array<RosterSiteCount, kRosterN3bSites> count{};  ///< per site.
+        /// Per read site: reads the roster (or the ledger) could not answer, so the site's
+        /// own rule answered (the first epoch of a constellation, before its latch; at the
+        /// wind-up restart, a restart with a carried arc admitted before a warm resume).
+        std::array<long long, kRosterN3bSites> fallback{};
+        /// Per site: "what disagreed" -> occurrences (the run-end lines print the largest).
+        std::array<std::map<std::string, long long>, kRosterN3bSites> detail{};
+    };
+
+    /**
+     * @brief Count one compared case of an N3b site.  Pure bookkeeping.
+     *
+     * @param c       The census.
+     * @param site    The site.
+     * @param agree   Whether the site's answer and the roster's agree.
+     * @param what    The identity of a disagreement (ignored when @p agree).
+     */
+    void signalRosterN3bCount(RosterN3bCensus& c, RosterN3bSite site, bool agree,
+                              const std::string& what);
+
+    // =====================================================================
     // The plan: what the roster says one epoch modelled (card NOM step N3a)
     // =====================================================================
 
@@ -571,7 +651,6 @@ namespace GnssProcessor {
         /// Resolved horizon inputs, reported at run end so the number is auditable.
         double horizon_s{ 0.0 };
         double horizon_pl_s{ 0.0 };
-        double horizon_iono_s{ 0.0 };
         double horizon_pbhold_s{ 0.0 };
         double horizon_readmit_s{ 0.0 };
     };
@@ -818,6 +897,8 @@ namespace GnssProcessor {
 
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
+        /// The site census of card NOM step N3b (app/SignalRosterSites.cpp).
+        RosterN3bCensus n3b{};
     };
 
     /**
@@ -853,8 +934,8 @@ namespace GnssProcessor {
      *        every network run calls it).
      *
      * Resolves the ledger's horizon as the maximum of the readers' gap windows
-     * (@c network.phase_leveling_max_gap_s, @c network.iono_carry_max_gap_s,
-     * @c network.emit_pb_hold_max_gap_s, @c network.readmit_seed_horizon_s), sizes
+     * (@c network.phase_leveling_max_gap_s, @c network.emit_pb_hold_max_gap_s,
+     * @c network.readmit_seed_horizon_s), sizes
      * the per-station caches, records the station names, and reads
      * @c network.signal_roster as the trace switch.
      *
@@ -868,6 +949,9 @@ namespace GnssProcessor {
                                 const std::shared_ptr<spdlog::logger>& log,
                                 const std::vector<NetStation>& stations);
 
+    struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
     /**
      * @brief Build this epoch's roster and advance the arc ledger (the single call
      *        site per epoch).
@@ -876,18 +960,25 @@ namespace GnssProcessor {
      * (@c SignalRoster::site_epoch_start).  The trace rows are written only under
      * @c network.signal_roster; the ledger and the counters advance either way.
      *
-     * @param ctx      Run context (the roster, the ledger and the counters).
-     * @param config_  The run's config.
-     * @param log      Producer logger.
-     * @param traces   Trace bundle; the @c ARC event rows and the per-transition CSV.
-     * @param se       The epoch as it reaches the seam (post canonical-pair admission).
-     * @param stations The producer roster and the source of each station's latch.
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.traces (traces). Read: run.config (config_), run.log (log),
+     *            run.setup.stations (stations).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     *
+     * The former parameters, by binding:
+     *   - @p ctx = run.ctx: Run context (the roster, the ledger and the counters).
+     *   - @p config_ = run.config: The run's config.
+     *   - @p log = run.log: Producer logger.
+     *   - @p traces = run.traces: Trace bundle; the @c ARC event rows and the per-transition CSV.
+     *   - @p se = ep.se: The epoch as it reaches the seam (post canonical-pair admission).
+     *   - @p stations = run.setup.stations: The producer roster and the source of each station's
+     *     latch.
      */
-    void networkBuildSignalRoster(NetworkRunContext& ctx, const GnssConfig& config_,
-                                  const std::shared_ptr<spdlog::logger>& log,
-                                  NetworkRunTraces& traces,
-                                  const SyncedEpoch& se,
-                                  const std::vector<NetStation>& stations);
+    void networkBuildSignalRoster(NetworkRun& run, const NetworkEpoch& ep);
 
     /**
      * @brief The roster's answer to "which phase represents this band?" (phase 2).
@@ -1042,34 +1133,38 @@ namespace GnssProcessor {
      * appends its record to the run manifest.  That is the only output it writes
      * outside the counters and the trace.
      *
-     * @param ctx       Run context.
-     * @param config_   The run's config (the run manifest switch).
-     * @param log       Producer logger (the first-epoch table).
-     * @param traces    Trace bundle (the admitted-side rows of network_arc_ledger.csv,
-     *                  and the run manifest).
-     * @param se        This epoch.
-     * @param stations  The producer roster.
-     * @param modeled   Per-station modelled observations of this epoch: the admitted
-     *                  row set that feeds the admitted lifecycle.
-     * @param present   Per-station PASS-A presence.
-     * @param raw       This epoch's raw slip observables, or nullptr when the
-     *                  tracker did not run (the class then reports a zero
-     *                  denominator instead of a zero count).
-     * @param freed     Ambiguity keys freed this epoch, as (station index, key).
-     * @param sol       The emitted solution epoch.
-     * @param emitted   True when this epoch reached the wire.
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.traces (traces). Read: run.config (config_), run.log (log),
+     *            run.setup.stations (stations), run.engines.slip_qc.epoch.computed ?
+     *            &run.engines.slip_qc.epoch : nullptr (raw).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     *           ep.pass_a.modeled (modeled), ep.pass_a.present (present),
+     *           ep.funnel.carry_slipped_ambs (freed), ep.prep.sol (sol), ep.emitted (emitted).
+     *
+     * The former parameters, by binding:
+     *   - @p ctx = run.ctx: Run context.
+     *   - @p config_ = run.config: The run's config (the run manifest switch).
+     *   - @p log = run.log: Producer logger (the first-epoch table).
+     *   - @p traces = run.traces: Trace bundle (the admitted-side rows of network_arc_ledger.csv,
+     *     and the run manifest).
+     *   - @p se = ep.se: This epoch.
+     *   - @p stations = run.setup.stations: The producer roster.
+     *   - @p modeled = ep.pass_a.modeled: Per-station modelled observations of this epoch: the
+     *     admitted row set that feeds the admitted lifecycle.
+     *   - @p present = ep.pass_a.present: Per-station PASS-A presence.
+     *   - @p raw = run.engines.slip_qc.epoch.computed ? &run.engines.slip_qc.epoch : nullptr: This
+     *     epoch's raw slip observables, or nullptr when the tracker did not run (the class then
+     *     reports a zero denominator instead of a zero count).
+     *   - @p freed = ep.funnel.carry_slipped_ambs: Ambiguity keys freed this epoch, as (station
+     *     index, key).
+     *   - @p sol = ep.prep.sol: The emitted solution epoch.
+     *   - @p emitted = ep.emitted: True when this epoch reached the wire.
      */
-    void networkSignalRosterAudit(NetworkRunContext& ctx, const GnssConfig& config_,
-                                  const std::shared_ptr<spdlog::logger>& log,
-                                  NetworkRunTraces& traces,
-                                  const SyncedEpoch& se,
-                                  const std::vector<NetStation>& stations,
-                                  const std::vector<std::vector<PppObservation>>& modeled,
-                                  const std::vector<bool>& present,
-                                  const RawSlipEpoch* raw,
-                                  const std::set<std::pair<int, std::string>>& freed,
-                                  const NetworkSolutionEpoch& sol,
-                                  bool emitted);
+    void networkSignalRosterAudit(NetworkRun& run, const NetworkEpoch& ep);
 
     /**
      * @brief Count one coverage-gate drop edge against the ledger (class h).
@@ -1143,33 +1238,79 @@ namespace GnssProcessor {
     struct NetworkRunEndView;
 
     /**
-     * @brief Run-end report: signals as planned (NOM N3a).
+     * @brief Run-end report: the signal roster: signals as planned (NOM N3a), the roster and the
+     *        arc ledger (SID phase 1).
      *
-     * The table's row for "signals as planned" (card NOM N3a) and its manifest record; the
-     * report is the overload above.
-     *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
-     *
-     * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
-     */
-    int networkSignalRosterPlanRunEnd(const NetworkRunEndView& v);
-
-    /**
-     * @brief Run-end report: the signal roster and the arc ledger (SID phase 1).
-     *
-     * The table's row for the signal roster's run end (SID phase 1); the report is the
-     * overload above.
-     *
-     * Gate: none of its own: the row calls the report above on every run, as the teardown
-     * did, and that report applies its own.
+     * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+     * beside it in SignalRoster.cpp, print in this order, each gated on its own knob:
+     *   - networkSignalRosterPlanRunEnd: signals as planned (NOM N3a).
+     *   - networkSignalRosterLedgerRunEnd: the signal roster and the arc ledger (SID phase 1).
      *
      * @param v The run at its end (filter/NetworkRunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
+     * @return 0, or the last non-zero verdict of its sections.
      */
     int networkSignalRosterRunEnd(const NetworkRunEndView& v);
 
+    /**
+     * @brief Run-end report: the N3b site census (app/SignalRosterSites.cpp).
+     *
+     * One header line and one line per @ref RosterN3bSite: the site's compared and
+     * disagreeing counts over the run, its fallback reads, and its most frequent
+     * disagreements.  Trace class (no trace file, product or manifest record).
+     *
+     * @param v The run at its end (filter/NetworkRunEnd.hpp).
+     * @return 0 (this report does not set the exit code).
+     */
+    int networkSignalRosterSitesRunEnd(const NetworkRunEndView& v);
+
     // ---- End of the run-end reports ----
+
+    // =====================================================================
+    // The N3b site census and the roster reads (app/SignalRosterSites.cpp)
+    // =====================================================================
+
+    /**
+     * @brief The rule sites of the N3b census, evaluated on this epoch's roster.
+     *
+     * Called by @ref networkSignalRosterAudit once per audited epoch, after the IF pin
+     * wrote the roster's datum role.  For each constellation with a datum this epoch:
+     * the BIA clock-reference pin bands and codes, the group-delay pair of every pinned
+     * satellite and the first two traits bands, each against the datum the roster
+     * holds; for each station and constellation with modelled phases on two bands or
+     * more, the canonical pair (digits 1 and 2) against the two lowest modelled bands;
+     * for each constellation, every pair of modelled signals of one observation type
+     * under the two channel-family definitions.  Reads the roster only.
+     *
+     * @param rs The roster of the epoch.
+     * @param c  The census to add to.
+     */
+    void signalRosterSiteCensus(const SignalRoster& rs, RosterN3bCensus& c);
+
+    /**
+     * @brief The signal that stands for a (station, constellation, band) in one
+     *        observation type, as the roster's Modelled role names it, else as the
+     *        station's canonical latch names it (card NOM step N3b).
+     *
+     * The read of the latch readers moved onto the roster.  The roster is built at the
+     * top of the epoch, upstream of the latch decision inside computeModels, so at a
+     * constellation's first epoch a cell has no modelled role yet; there the latch
+     * answers (counted as a fallback), and nowhere else.  Where both answer, the read
+     * is compared with the latch and counted under @p site, so the census states at
+     * every read whether the roster's answer differs from the rule the site used.
+     *
+     * @param rs       The roster.
+     * @param latch    The station's latched signal on this band ("" when undecided).
+     * @param station  Station index.
+     * @param cons     Constellation name ("GPS", the roster's key).
+     * @param band     RINEX band digit.
+     * @param obs_type 'L' (the modelled phase) or 'C' (the modelled code).
+     * @param c        The census (nullptr: not counted).
+     * @param site     The read site counted.
+     * @return The roster's signal, else @p latch.
+     */
+    std::string signalRosterModelledOr(const SignalRoster& rs, const std::string& latch,
+                                       int station, const std::string& cons, char band,
+                                       char obs_type, RosterN3bCensus* c,
+                                       RosterN3bSite site);
 
 } // namespace GnssProcessor

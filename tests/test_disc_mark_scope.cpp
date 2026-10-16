@@ -76,7 +76,6 @@ NetworkProductEmitter makeEmitter(bool channel_scope) {
                                  /*code_bias_jump_test=*/false,
                                  /*clock_disc_on_set_change=*/false,
                                  /*disc_threshold_frac_cycles=*/0.0,
-                                 /*disc_jump_test_decommon=*/false,
                                  /*disc_mark_scope_channel=*/channel_scope);
 }
 

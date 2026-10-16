@@ -5,7 +5,6 @@
  *
  * Folded by networkSolveGlue (filter/NetworkSolveGlue.cpp) before the null-space rank gate:
  *   networkInjectShVtecPrior      the SH-VTEC prior (Kaula bound and temporal random walk);
- *   networkInjectPhaseHoldPrior   the Fix-A held satellite phase-bias datum;
  *   networkInjectPinBridgePrior   the eq34 pin-bridge rows.
  * Folded by networkSolveGlue after the gate:
  *   networkInjectD2CarryPrior     the border carry fold (D2 diagonal or C1 dense), with
@@ -15,12 +14,12 @@
  *   networkCouplingExactPrepare   card CTU: the exact coupling update's inputs, built from
  *                                 the stash the D2 fold reads and the fold's own per-key
  *                                 decision.
- * File order: SH-VTEC, phase hold, pin bridge, readmitNoteSeed, D2, coupling preparation,
- * clock model.  The stash the D2 fold reads is written by networkStashCarry
+ * File order: SH-VTEC, pin bridge, readmitNoteSeed, D2, coupling preparation, clock
+ * model.  The stash the D2 fold reads is written by networkStashCarry
  * (NetworkBorderStash.cpp).
  *
- * networkInjectShVtecPrior, networkInjectPhaseHoldPrior, networkInjectD2CarryPrior and
- * networkInjectClockOscPrior open with an alias block (decomposition INC-4) that binds the
+ * networkInjectShVtecPrior, networkInjectD2CarryPrior and networkInjectClockOscPrior open
+ * with an alias block (decomposition INC-4) that binds the
  * driver's former local names to members of the context, so the relocated code keeps those
  * names.
  *
@@ -50,6 +49,10 @@
 #include <limits>
 #include <optional>
 #include <set>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkSetupResult.hpp"
+#include "rinex/MultiRinexSync.hpp"
 
 namespace GnssProcessor {
 
@@ -164,76 +167,30 @@ void networkInjectShVtecPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
 }
 
-void networkInjectPhaseHoldPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
-                                 NetworkEstimator& est, bool within_epoch_armed) {
-    // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
-    // their original names.
-    auto& prev_carry = ctx.carry.prev_carry;
-    const bool   phase_hold_on = ctx.knobs.phase_hold_on;
-    const double phase_hold_var = ctx.knobs.phase_hold_var;
-    auto& cap_priors = ws.cap_priors;
-
-    // --- Fix A hold: held satellite phase-bias datum (seed once, then time-locked) ---
-    // Inject the held b_s priors before the null-space gate, like the SH-VTEC prior
-    // above and unlike the clock/code D2 carry below (which stays after the gate so
-    // the gate sees the data-only clock-gauge structure).  A held (sat,signal) has its
-    // Σz=0 fold skipped in buildEnsembleGauges (a hard w→∞ fold would override a
-    // finite prior), so this stiff fixed-variance prior is that column's datum.  It
-    // has to be in the reduced normals the gate inspects, or the held column reads as
-    // a near-null gauge and triggers the O(n³) null-space repair or a withhold every
-    // epoch.  (The tight local ambiguity carry usually lifts it above the cutoff
-    // already, but this makes the datum explicit and robust to a weak or cold carry on
-    // a fresh arc.)  The phase-ensemble datum is orthogonal to the clock-pivot
-    // datum_changed handover, so it is injected every epoch regardless.  Under hold,
-    // phase biases are excluded from the clock-frame D2 carry loops below, so this is
-    // the only injection (no double fold).  No-op unless phase_hold_on
-    // (byte-identical).
-    if (phase_hold_on && !prev_carry.empty()) {
-        std::vector<NetworkEstimator::SharedPrior> hp;
-        hp.reserve(prev_carry.size());
-        for (const CarryPrior& cp : prev_carry) {
-            if (cp.kind != SharedParamKind::PhaseBias) continue;
-            if (!(cp.var > 0.0)) continue;
-            NetworkEstimator::SharedPrior p;
-            p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
-            p.value = cp.value; p.info = 1.0 / cp.var;
-            hp.push_back(p);
-        }
-        est.contributionKind(ContributionKind::PhaseHold);   // card NOM N2a
-        est.addSharedPrior(hp);  // skips keys absent from this epoch's layout
-        if (within_epoch_armed)
-            networkCapturePriors(cap_priors, ws.cap_prior_kinds, hp,
-                                 ContributionKind::PhaseHold);
-    }
-}
-
 void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                  NetworkEstimator& est, bool within_epoch_armed,
                                  const std::shared_ptr<spdlog::logger>& log) {
     // --- eq34 reattach hygiene (INC-2): the time-linked phase datum ----------
     // The header explains why this is folded before the gate.  Inert (no allocation,
     // no row) unless a bridge is open, which requires network.phase_datum_time_linked.
-    auto& bridges = ctx.carry.pin_bridge;
-    if (!ctx.knobs.pin_bridge_on || bridges.empty()) return;
+    net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge (card NOM step N4d)
+    const std::size_t n_bridges = net::present(sigs, &net::SatSignalState::pin_bridge);
+    if (!ctx.knobs.pin_bridge_on || n_bridges == 0) return;
     std::vector<NetworkEstimator::SharedPrior> bp;
-    bp.reserve(bridges.size());
-    for (auto& [amb, br] : bridges) {
-        // "sat_signal" → (sat, signal).  The satellite id never contains '_', so the
-        // first underscore splits it (an iono-free combination keeps its own
-        // underscores inside `signal`).
-        const auto parts = StateKeys::parseAmbiguityKey(amb);
-        if (!parts) continue;
-        if (!std::isfinite(br.value)) continue;
+    bp.reserve(n_bridges);
+    // In (satellite, signal) order, the order of the old "sat_signal" keys (O1).
+    net::forEach(sigs, &net::SatSignalState::pin_bridge, [&](const SatSignalId& id, net::PinBridge& br) {
+        if (!std::isfinite(br.value)) return;
         NetworkEstimator::SharedPrior p;
         p.kind   = SharedParamKind::PhaseBias;
-        p.sat    = parts->satellite;
-        p.signal = parts->signal;
+        p.sat    = net::satKey(id.sat);
+        p.signal = net::signalKey(id.signal);
         p.value  = br.value;
         p.info   = ctx.knobs.pin_bridge_info;
         bp.push_back(p);
         ++br.folds;                       // staleness clock (bounded by bridge_max_ep)
         ++ctx.counters.hyg.bridge_folds;
-    }
+    });
     if (bp.empty()) return;
     est.contributionKind(ContributionKind::PinBridge);   // card NOM N2a
     est.addSharedPrior(bp);   // skips keys absent from this epoch's layout
@@ -288,16 +245,16 @@ namespace {
 /// records the edge's identity, its evidence gap, and the variance it re-coupled at).
 void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
                      const CarryPrior& cp, double seed_gap, double horizon_s,
-                     double var_eff, bool anchored) {
+                     double var_eff, bool anchored, EpochEvents& events) {
     const bool clk = cp.kind == SharedParamKind::Clock;
     if (clk) {
         ++ctx.counters.n_readmit_seeded_clk;
         if (anchored) ++ctx.counters.n_readmit_seeded_anch;
-        ctx.carry.readmit_seeded_s[cp.sat] = ctx.carry.readmit_now_s;
+        net::putSat(ctx.entities, cp.sat, &net::SatelliteState::readmit_seeded_s) = ctx.carry.readmit_now_s;
     } else {
         ++ctx.counters.n_readmit_seeded_cb;
     }
-    ctx.carry.readmit_seed_check.push_back({cp.kind, cp.sat, cp.signal, cp.value, var_eff});
+    events.solve.readmit_seed_check.push_back({cp.kind, cp.sat, cp.signal, cp.value, var_eff});
     traces.emitEvent(t, "READMIT", clk ? "seed_clock" : "seed_code_bias", cp.sat, cp.signal,
                      seed_gap, horizon_s, "seed",
                      fmt::format("value={:.4f};var_eff={:.3e};anchored={}", cp.value, var_eff,
@@ -311,16 +268,16 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                NetworkEstimator& est, bool datum_changed,
                                const std::set<char>& changed_consts, double dt,
                                bool within_epoch_armed,
-                               const std::shared_ptr<spdlog::logger>& log) {
+                               const std::shared_ptr<spdlog::logger>& log, EpochEvents& events) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     const bool   scoped_handover = ctx.knobs.scoped_handover;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
-    // The per-key rules (the phase hold, the eq34 and anchored-election re-reference sets,
-    // the clock oscillator, the registry's process noise, the reinit variance, the B4
-    // floors and the VCE apply factor) are in the decision made before PASS B
+    // The per-key rules (the eq34 and anchored-election re-reference sets, the clock
+    // oscillator, the registry's process noise, the reinit variance, the B4 floors and the
+    // VCE apply factor) are in the decision made before PASS B
     // (filter/NetworkCarryDisposition, card PRM phase 1b), whose carryFoldVarEff is the one
     // chain both branches below fold through, so the diagonal and the C1 dense fold cannot
     // drift apart: the dense branch's diagonal is var_eff, and the marginal prior on any one
@@ -356,7 +313,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             && datumChangeAffectsKey(sat, changed_consts, scoped_handover);
     };
     // The half of the S-transform (queue 1(b), INC-1) that changes the solve.  When the
-    // transform re-expressed this constellation's carry (ctx.carry.sts_consts, filled by
+    // transform re-expressed this constellation's carry (events.handover.sts_consts, filled by
     // networkHandoverStransform earlier this epoch), the prior is valid in the incoming
     // datum and folds: the retired-datum skip below is released for exactly those keys,
     // and the retained rows are counted (invariant #4: transforms applied with
@@ -364,8 +321,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // epoch without a handover and whenever the knob is off, so the off path is
     // byte-identical.
     const auto sts_released = [&](const std::string& sat) {
-        return !ctx.carry.sts_consts.empty() && !sat.empty()
-            && ctx.carry.sts_consts.count(letterOfSat(sat)) > 0;
+        return !events.handover.sts_consts.empty() && !sat.empty()
+            && events.handover.sts_consts.count(letterOfSat(sat)) > 0;
     };
     // READMIT continuity (E2 seed-first re-admission, network.readmit_seed_horizon_s).
     // Set up the epoch clock that the stash (which has none of its own) and the guard
@@ -377,7 +334,6 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     const double now_s = (readmit_h > 0.0) ? TimeUtils::continuousGpsSeconds(t) : 0.0;
     if (readmit_h > 0.0) {
         ctx.carry.readmit_now_s = now_s;
-        ctx.carry.readmit_seed_check.clear();
         if (datum_changed) {
             const auto before = prev_carry.size();
             const auto parked_retired = [&](const CarryPrior& cp) {
@@ -403,8 +359,8 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     }
     // Card PRM phase 1b: both branches read each entry's fold decision, made once before
     // PASS B by networkCarryDecide (filter/NetworkCarryDisposition) and read by the coupling
-    // rows too: the clauses in the fold's order (the SH prior and the phase hold fold their
-    // keys elsewhere; a frame re-reference, the clock oscillator and a park do not fold; a
+    // rows too: the clauses in the fold's order (the SH prior folds its keys elsewhere; a
+    // frame re-reference, the clock oscillator and a park do not fold; a
     // monitor-flagged clock folds at the reinit variance; a seed at q over the gap since its
     // park; a clock under the Q3 anchor at the anchor's increment), the B4 floors, the VCE
     // factor and the switch-on seam's level noise (dense branch).  The fold adds the clause
@@ -418,14 +374,10 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 bool& seed_anchored) -> bool {
         if (cp.fold.disposition == CarryDisposition::Undecided) {   // no pass this epoch
             ++ctx.counters.prm_undecided_at_fold;
-            cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, now_s);
+            cp.fold = carryFoldDecide(ctx, est, cp, dt, cta_now_s, now_s, events);
         }
         const CarryFoldDecision& d = cp.fold;
-        // Fix A hold / the SH prior: folded elsewhere, before the gate.  The phase-ensemble
-        // datum is orthogonal to the clock pivot handover this clock-frame carry is gated
-        // on, so a clock datum change does not drop a held phase bias (otherwise a held
-        // satellite, whose sum-to-zero fold buildEnsembleGauges skipped, would be left
-        // without a datum and the epoch would withhold).
+        // The SH prior: folded elsewhere, before the gate.
         if (d.disposition == CarryDisposition::Held) {
             prmTally(cp, CarryDisposition::Held);
             return false;
@@ -513,7 +465,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 clk_prior_info[cp.sat] = p.info;   // scalar clock carry info on this column (B7)
             priors.push_back(p);
             if (seed_gap > 0.0)
-                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored, events);
         }
         // With the gauge-free fold armed (card Q3 §2.1), the clock entries are folded
         // with the per-constellation common direction marginalized out, so the anchor
@@ -525,8 +477,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                                 : ContributionKind::BorderCarryDiagonal;
         est.contributionKind(carry_kind);   // card NOM N2a
         if (ctx.knobs.carry_gauge_free) {
-            const std::size_t gf = est.addSharedPriorClockGaugeFree(
-                priors, ctx.knobs.carry_gauge_free_closure);
+            const std::size_t gf = est.addSharedPriorClockGaugeFree(priors);
             ctx.counters.cta_gf_keys += static_cast<long long>(gf);
             if (gf == 0) ++ctx.counters.cta_gf_inert;
         } else {
@@ -577,7 +528,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             p.kind = cp.kind; p.sat = cp.sat; p.signal = cp.signal;
             p.value = cp.value; p.info = 1.0 / var_eff;  // used on the diagonal paths only
             if (seed_gap > 0.0)
-                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored);
+                readmitNoteSeed(ctx, traces, t, cp, seed_gap, readmit_h, var_eff, seed_anchored, events);
             const auto rit = prev_carry_cov.row.find(sharedCarryKey(cp.kind, cp.sat, cp.signal));
             if (rit == prev_carry_cov.row.end()) {
                 if (anchor_info_trace.is_open() && cp.kind == SharedParamKind::Clock)
@@ -672,13 +623,12 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                 // Off, the clone fold returns false at once and the fold below is unchanged.
                 const bool ccl_fold = networkClockCloneDenseFold(
                     ctx, ws, est, dkeys, drow, dvar_eff, dinflate, dreexp, cov_eff,
-                    within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr);
+                    within_epoch_armed, anchor_info_trace.is_open() ? &clk_prior_info : nullptr, events);
                 if (!ccl_fold) {
                     est.contributionKind(ContributionKind::BorderCarryDense);   // card NOM N2a
                     est.addSharedPriorDense(dkeys, cov_eff,
                                             anchor_info_trace.is_open() ? &lam : nullptr,
-                                            ctx.knobs.carry_gauge_free,
-                                            ctx.knobs.carry_gauge_free_closure);
+                                            ctx.knobs.carry_gauge_free);
                     if (anchor_info_trace.is_open())
                         for (std::size_t a = 0; a < kd; ++a)
                             if (dkeys[a].kind == SharedParamKind::Clock)
@@ -723,7 +673,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         // asymmetry lasts one epoch; the census measures its size instead of assuming
         // it.  It is read here, before the gauge-free / plain addSharedPrior branch
         // below, so the count covers the same population on both fold routes.
-        if (ctx.carry.resume_cpl_census_pending)
+        if (ctx.carry.resume.cpl_census)
             ctx.counters.n_resume_cpl_diag_border =
                 static_cast<long long>(leftovers.size());
         // Leftovers are the keys the dense fold could not take (no matrix row after a
@@ -739,8 +689,7 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
         est.contributionKind(leftover_kind);
         if (ctx.knobs.carry_gauge_free)
             ctx.counters.cta_gf_keys +=
-                static_cast<long long>(est.addSharedPriorClockGaugeFree(
-                    leftovers, ctx.knobs.carry_gauge_free_closure));
+                static_cast<long long>(est.addSharedPriorClockGaugeFree(leftovers));
         else
             est.addSharedPrior(leftovers);  // no-op when empty; skips absent keys
         if (within_epoch_armed)
@@ -765,18 +714,20 @@ void networkInjectD2CarryPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // Card SCL2 X2: the registered shared-history columns' N(0, 1) priors, independent of
     // the border (filter/NetworkSharedHistory).  No-op off.
     networkSharedHistoryFold(ctx, ws, est, within_epoch_armed);
-    // The partial-support skip tally (card C-GF) is run-scoped on the estimator and is
-    // read once at teardown; reading it here would miss the withdraw and
-    // within-epoch-replay folds, which run after this point in the epoch.
-
-    // (Fix A hold: the held phase-bias datum is injected before the gate by
-    // networkInjectPhaseHoldPrior, next to the SH-VTEC prior; it is a datum, so the
-    // gate has to see it.)
 }
 
-void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator& est,
-                                 const GnssTime& t, double dt,
-                                 const std::shared_ptr<spdlog::logger>& log) {
+void networkCouplingExactPrepare(NetworkRun& run, const NetworkEpoch& nep) {
+    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    // The frozen body declares or uses `ep`, so this definition names the parameter nep
+    // (specification 3.2).
+    NetworkRunContext& ctx = run.ctx;
+    const NetworkEstimator& est = run.engines.est;
+    const GnssTime& t = nep.se.time;
+    double dt = nep.clock.dt;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    // ---- End of the bindings ----
     CouplingExactEpoch& ep = ctx.carry.cxu_epoch;
     ep = CouplingExactEpoch{};
     if (!ctx.knobs.carry_cpl_exact) return;
@@ -947,12 +898,13 @@ void networkCouplingExactPrepare(NetworkRunContext& ctx, const NetworkEstimator&
     // no entry, and the rows count the deficit as an orphan.
     bool any_clk = false;
     for (int p = 0; p < np; ++p) any_clk = any_clk || ep.clk_p[static_cast<std::size_t>(p)];
-    for (const auto& [cc, pv] : ctx.carry.cxu_pivot) {
-        try {
-            const Eigen::Index col = est.clockColumn(pv.first);
-            if (col >= 0) ep.pivot[cc] = {col, pv.second};
-        } catch (...) {}
-    }
+    net::forEach(ctx.entities.constellations, &net::ConstellationState::cxu_pivot,
+                 [&](System sys, const std::pair<std::string, double>& pv) {
+                     try {
+                         const Eigen::Index col = est.clockColumn(pv.first);
+                         if (col >= 0) ep.pivot[rinexLetter(sys)] = {col, pv.second};
+                     } catch (...) {}
+                 });
     if (any_clk && ep.pivot.empty()) ++ctx.counters.cxu_pivot_missing;
     if (!couplingExactFactor(ep)) {
         ++ctx.counters.cxu_epochs_unfactored;
@@ -977,7 +929,6 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                                 double pl_now_s, double dt, bool within_epoch_armed) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
-    auto& clock_osc = ctx.carry.clock_osc;
     const double clk_model_q1 = ctx.knobs.clk_model_q1;
     const double clk_model_q2 = ctx.knobs.clk_model_q2;
     const double clk_model_max_gap = ctx.knobs.clk_model_max_gap;
@@ -1008,11 +959,11 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
     // it).
     if (clk_model_warm && (!datum_changed || scoped_handover)) {
         std::vector<NetworkEstimator::SharedPrior> clkp;
-        clkp.reserve(clock_osc.size());
+        clkp.reserve(net::present(ctx.entities.sats, &net::SatelliteState::clock_osc));
         for (const std::string& sat : registered_clock_sats) {
             if (handover_affects(sat)) continue;  // retired-datum satellite, scoped mode only (RTA-2)
-            auto it = clock_osc.find(sat);
-            if (it == clock_osc.end() || !it->second.init) continue;
+            const ClockOsc* it = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::clock_osc);
+            if (!it || !it->init) continue;
             // Predict over this satellite's true elapsed time, not the global epoch dt
             // (P0-3).  A satellite absent for several epochs (eclipse exclusion is on in
             // the clock-model config) would otherwise get an hours-old state predicted
@@ -1021,8 +972,8 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             // data and the a-priori anchor instead of an old value.  (Within the bound,
             // the Q·dt inflation over the true gap de-weights the prior, which limits
             // itself.)
-            const double sat_dt = (it->second.t_last > 0.0)
-                                      ? (pl_now_s - it->second.t_last) : std::max(0.0, dt);
+            const double sat_dt = (it->t_last > 0.0)
+                                      ? (pl_now_s - it->t_last) : std::max(0.0, dt);
             if (!(sat_dt >= 0.0) || sat_dt > clk_model_max_gap) {
                 // Event for the stale-carry reseed, which is otherwise not reported (T5,
                 // V2 blind spot).  It is edge-triggered by construction: the update
@@ -1031,7 +982,7 @@ void networkInjectClockOscPrior(NetworkRunContext& ctx, EpochWorkspace& ws,
                           clk_model_max_gap, "reseed", "carry past gap");
                 continue;   // stale → no prior, reseed (R11)
             }
-            const ClockOscPred pr = clockOscPredict(it->second, sat_dt,
+            const ClockOscPred pr = clockOscPredict(*it, sat_dt,
                                                     clk_model_q1, clk_model_q2);
             if (!(pr.p00 > 0.0) || !std::isfinite(pr.x0)) continue;
             clk_pred[sat] = pr;

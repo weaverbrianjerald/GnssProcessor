@@ -8,7 +8,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "filter/NetworkPivotHandover.hpp"   // pivotHandoverSignalled
-#include "filter/NetworkSolveGlue.hpp"       // networkClockDatumDeclaration
+#include "filter/NetworkClockDatum.hpp"       // networkClockDatumDeclaration
 #include "math/TimeUtils.hpp"
 
 #include <algorithm>
@@ -25,11 +25,14 @@
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "rinex/MultiRinexSync.hpp"
 
 namespace GnssProcessor {
 
 ClockStransformResult applyClockStransform(
-    NetworkCarryState& carry,
+    NetworkCarryState& carry, net::NetworkEntities& entities,
     const std::vector<std::pair<std::string, double>>& v_c,
     const std::string& q, CarryMechanism mech, CarrySiteCounts* counts) {
     ClockStransformResult out;
@@ -46,7 +49,7 @@ ClockStransformResult applyClockStransform(
     // x_q_pre / var_q: the incoming pivot's carried level in the outgoing frame (the first
     // carried clock entry of q).  Absent: nothing to re-reference from.
     const CarryPrior* qrow = nullptr;
-    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+    forEachCarriedReference(carry, entities, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
         if (!qrow && r.kind == SharedParamKind::Clock && r.sat == q) qrow = r.prior;
         return false;
     });
@@ -73,7 +76,7 @@ ClockStransformResult applyClockStransform(
     CarrySiteCounts& c = counts ? *counts : local;
     const long long before = c.moved[static_cast<int>(CarrySite::PrevCarry)];
     forEachCarriedReference(
-        carry, carryMechanismSites(mech),
+        carry, entities, carryMechanismSites(mech),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock) return false;
             double vi = 0.0;
@@ -90,7 +93,7 @@ ClockStransformResult applyClockStransform(
 
     // Exactness self-check (§8.4 INC-3).
     bool q_seen = false;
-    forEachCarriedReference(carry, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
+    forEachCarriedReference(carry, entities, carrySiteBit(CarrySite::PrevCarry), [&](const CarriedRef& r) {
         if (!q_seen && r.kind == SharedParamKind::Clock && r.sat == q) {
             out.x_q_post = *r.value;
             q_seen = true;
@@ -102,7 +105,7 @@ ClockStransformResult applyClockStransform(
     return out;
 }
 
-ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, char c,
+ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, net::NetworkEntities& entities, char c,
                                                      const std::string& q,
                                                      const std::string& p_out) {
     ClockStransformDenseResult out;
@@ -186,7 +189,7 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     long long n_rows = 0, n_parked = 0;
     double var_saved = 0.0;
     forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::Handover),
+        carry, entities, carryMechanismSites(CarryMechanism::Handover),
         [&](const CarriedRef& ref) -> bool {
             if (ref.kind != SharedParamKind::Clock || ref.site != CarrySite::PrevCarry) return false;
             if (ref.sat.empty() || systemOfSat(ref.sat) != sys) return false;
@@ -274,10 +277,11 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, c
     return out;
 }
 
-long long undoClockStransform(NetworkCarryState& carry, char constellation, double c0,
+long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& entities,
+                              char constellation, double c0,
                               double var_q, CarrySiteCounts* counts) {
     return forEachCarriedReference(
-        carry, carryMechanismSites(CarryMechanism::HandoverBeforeRows),
+        carry, entities, carryMechanismSites(CarryMechanism::HandoverBeforeRows),
         [&](const CarriedRef& r) -> bool {
             if (r.kind != SharedParamKind::Clock || r.sat.empty()) return false;
             if (systemOfSat(r.sat) != systemFromLetter(constellation)) return false;
@@ -289,19 +293,24 @@ long long undoClockStransform(NetworkCarryState& carry, char constellation, doub
         counts);
 }
 
-void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
-                                         const GnssConfig& config_,
-                                         const std::shared_ptr<spdlog::logger>& log,
-                                         NetworkRunTraces& traces,
-                                         const NetworkSbasis::SatHealth& sat_health,
-                                         const NetworkEstimator& est,
-                                         const GnssTime& t,
-                                         const std::vector<std::string>& registered_clock_sats,
-                                         double clk_anchor_sigma) {
+void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
+    // ---- From the run and the epoch (card NOM3 step EP2; generated by
+    //      scripts/nom_ep2_adapters.py: the explicit form's parameters, each bound to the
+    //      argument the retired adapter forwarded). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    NetworkRunContext& ctx = run.ctx;
+    const GnssConfig& config_ = run.config;
+    const std::shared_ptr<spdlog::logger>& log = run.log;
+    NetworkRunTraces& traces = run.traces;
+    const NetworkSbasis::SatHealth& sat_health = run.setup.sat_health;
+    const NetworkEstimator& est = run.engines.est;
+    const GnssTime& t = ep.se.time;
+    const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
+    EpochEvents::Handover& handover_ev = events.handover;   // written
+    // ---- End of the bindings ----
     (void)log;   // seam signature is uniform across the run loop
-    // The record is per-epoch state: cleared first, so the solve glue never reads an earlier
-    // epoch's preview, and empty with the knob off.
-    ctx.carry.sts_pre.clear();
+    const double clk_anchor_sigma = ctx.knobs.clk_anchor_sigma;   // was a parameter (card NOM3 step EP0)
+    // The record is an epoch event: empty with the knob off, and never an earlier epoch's.
     if (!ctx.knobs.handover_stransform_before_rows) return;
 
     // The election and the handover test the solve glue will make after PASS B, previewed
@@ -314,18 +323,23 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
         for (const std::string& s : registered_clock_sats)
             if (sat_health.unhealthyAt(s, t_s)) hlt_ineligible.insert(s);
     }
+    // The constellation pivots as the election reads them (one-letter key -> satellite).
+    const std::map<std::string, std::string> prev_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::prev_pivot);
+    const std::map<std::string, std::string> last_pivot =
+        net::letterMap(ctx.entities.constellations, &net::ConstellationState::last_pivot);
     NetworkSbasis::Plan plan;
     try {
         NetworkSbasis sb;
         plan = sb.buildSharedDatum(est, registered_clock_sats, decl,
-                                   ctx.knobs.sticky_pivot ? &ctx.carry.last_pivot : nullptr,
+                                   ctx.knobs.sticky_pivot ? &last_pivot : nullptr,
                                    ctx.knobs.sat_health != 0 ? &hlt_ineligible : nullptr);
     } catch (const std::exception&) {
         return;   // the solve glue's election fails the same way and skips the epoch
     }
     std::set<char> changed;
     const bool datum_changed = pivotHandoverSignalled(
-        plan.clock_pivot, ctx.carry.prev_pivot, ctx.carry.last_pivot,
+        plan.clock_pivot, prev_pivot, last_pivot,
         ctx.knobs.pivot_vr_signal, changed);
     // A transform an earlier preview applied and no stash has re-expressed since (the stash
     // clears the record): the epoch that applied it was skipped.  Kept when this epoch elects
@@ -338,7 +352,7 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
             continue;
         }
         CarrySiteCounts undo_cc;
-        const long long n = undoClockStransform(ctx.carry, it->first, it->second.c0,
+        const long long n = undoClockStransform(ctx.carry, ctx.entities, it->first, it->second.c0,
                                                 it->second.var_q, &undo_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, undo_cc);
@@ -359,7 +373,7 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
         const std::string& q = pit->second;   // the incoming pivot
         const auto v_c = NetworkSbasis::clockNullDirection(registered_clock_sats, key);
         if (v_c.empty()) continue;
-        NetworkCarryState::StsBeforeRows& pre = ctx.carry.sts_pre[c];
+        EpochEvents::Handover::StsBeforeRows& pre = handover_ev.sts_pre[c];
         pre.pivot = q;
         const auto held = ctx.carry.sts_carry_pivot.find(c);
         if (held != ctx.carry.sts_carry_pivot.end() && held->second.pivot == q) {
@@ -374,7 +388,7 @@ void networkHandoverStransformBeforeRows(NetworkRunContext& ctx,
         // the stash's pivot value.
         CarrySiteCounts prm_cc;
         const ClockStransformResult r = applyClockStransform(
-            ctx.carry, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
+            ctx.carry, ctx.entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, prm_cc);
         pre.applied      = r.applied;
@@ -398,17 +412,14 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const NetworkSbasis::Plan& plan,
                                bool datum_changed,
                                const std::set<char>& changed_consts,
-                               const std::vector<std::string>& registered_clock_sats) {
+                               const std::vector<std::string>& registered_clock_sats,
+                               EpochEvents& events) {
     (void)config_;   // seam signature is uniform across the run loop
 
-    // The release set is per-epoch state.  Clear it unconditionally and first, so a
-    // handover epoch's release cannot reach the next epoch's folds (which would
-    // un-skip a retired datum without any signal).  Every non-handover epoch, and
-    // every epoch with the knob off, therefore leaves an empty set: the off path is
-    // byte-identical regardless of call order.
-    ctx.carry.sts_consts.clear();
-    ctx.carry.sts_c0.clear();
-    ctx.carry.sts_dense.clear();   // card SCL B2: empty unless a dense edge applies below
+    // The release set is an epoch event: a handover epoch's release cannot reach the next
+    // epoch's folds, and every non-handover epoch, and every epoch with the knob off, has
+    // an empty set.  The dense record is empty unless a dense edge applies below.
+    EpochEvents::Handover& handover_ev = events.handover;
 
     if (!datum_changed || changed_consts.empty()) return;
 
@@ -436,8 +447,8 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         ClockStransformResult r;
         bool before_rows = false;
         if (ctx.knobs.handover_stransform_before_rows) {
-            const auto pre = ctx.carry.sts_pre.find(c);
-            if (pre != ctx.carry.sts_pre.end() && pre->second.pivot == q) {
+            const auto pre = handover_ev.sts_pre.find(c);
+            if (pre != handover_ev.sts_pre.end() && pre->second.pivot == q) {
                 if (pre->second.already) {
                     // The carry is already in the incoming datum (a re-detection after a
                     // skipped epoch): release the fold, transform nothing.  Counted as an edge
@@ -446,8 +457,8 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     // clause read alike.
                     ++ctx.counters.sts_edges;
                     ctx.counters.sts_last_c0 = 0.0;
-                    ctx.carry.sts_c0[c] = 0.0;
-                    ctx.carry.sts_consts.insert(c);
+                    handover_ev.sts_c0[c] = 0.0;
+                    handover_ev.sts_consts.insert(c);
                     traces.emitEvent(t, "STRANSFORM", "sts_already", q, "", std::nullopt,
                                      std::nullopt, "release",
                                      fmt::format("const={};reason=carry_in_incoming_datum", key));
@@ -475,12 +486,13 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             // The outgoing pivot is the frame the stashed block is in: the stash's pinned clock
             // (card CTU's record), else the last pivot the wire declared.
             std::string p_out;
-            const auto cx = ctx.carry.cxu_pivot.find(c);
-            if (cx != ctx.carry.cxu_pivot.end()) {
-                p_out = cx->second.first;
-            } else {
-                const auto lp = ctx.carry.last_pivot.find(key);
-                if (lp != ctx.carry.last_pivot.end()) p_out = lp->second;
+            if (const std::optional<System> csys = net::constellationOfLetter(ctx.entities, c)) {
+                const net::ConstellationTable& cons_rows = ctx.entities.constellations;
+                if (const auto* cx = net::get(cons_rows, *csys, &net::ConstellationState::cxu_pivot))
+                    p_out = cx->first;
+                else if (const std::string* lp =
+                             net::get(cons_rows, *csys, &net::ConstellationState::last_pivot))
+                    p_out = *lp;
             }
             // The constellation's carried clocks that nothing moved between their fold decision
             // (before PASS B, the carry the rows were built on) and this transform.
@@ -491,7 +503,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     && cp.fold.disposition != CarryDisposition::Undecided
                     && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
                     clean.insert(cp.sat);
-            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, c, q, p_out);
+            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, ctx.entities, c, q, p_out);
             if (d.applied) {
                 ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
                 carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, d.counts);
@@ -501,7 +513,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                 r.rows         = d.rows + d.parked;
                 r.x_q_post     = d.x_q_post;
                 r.selfcheck_ok = std::abs(d.x_q_post) <= kStsExactTolM;
-                NetworkCarryState::StsDense& rec = ctx.carry.sts_dense[c];
+                EpochEvents::Handover::StsDense& rec = handover_ev.sts_dense[c];
                 rec.q            = q;
                 rec.p            = p_out;
                 rec.c0           = d.c0;
@@ -550,7 +562,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             // Every carried clock of the constellation through the one traversal (card PRM
             // phase 2).
             CarrySiteCounts prm_cc;
-            r = applyClockStransform(ctx.carry, v_c, q, CarryMechanism::Handover, &prm_cc);
+            r = applyClockStransform(ctx.carry, ctx.entities, v_c, q, CarryMechanism::Handover, &prm_cc);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
         }
@@ -567,8 +579,8 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         ++ctx.counters.sts_edges;
         ctx.counters.sts_last_c0 = r.c0;
         ctx.counters.sts_max_abs_c0 = std::max(ctx.counters.sts_max_abs_c0, std::abs(r.c0));
-        ctx.carry.sts_c0[c] = r.c0;
-        ctx.carry.sts_consts.insert(c);   // release the fold skip for this constellation (INC-1)
+        handover_ev.sts_c0[c] = r.c0;
+        handover_ev.sts_consts.insert(c);   // release the fold skip for this constellation (INC-1)
 
         if (!r.selfcheck_ok) {
             ++ctx.counters.sts_selfcheck_fail;
@@ -595,8 +607,18 @@ void networkHandoverStransform(NetworkRunContext& ctx,
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
-// Run-end report: broadcast satellite health (HLT).
-int networkSatHealthRunEnd(const NetworkRunEndView& v) {
+/**
+ * @brief Run-end section: broadcast satellite health (HLT).
+ *
+ * Broadcast satellite health on the network path (card HLT): flagged satellites, the
+ * pivot election's skips and fallbacks, and the observations the setup door removed.
+ *
+ * Gate: returns 0 at once unless `ctx.knobs.sat_health != 0`.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkSatHealthRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const NetworkSetupResult& setup = v.setup;
@@ -627,8 +649,18 @@ int networkSatHealthRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-// Run-end report: clock-pivot handovers and their S-transform.
-int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
+/**
+ * @brief Run-end section: clock-pivot handovers and their S-transform.
+ *
+ * The clock-pivot handovers and their S-transform (PRM 2, SCL B2).
+ *
+ * Gate: returns 0 at once unless `!ctx.counters.pivot_handovers.empty() ||
+ * ctx.knobs.handover_stransform`.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
@@ -714,6 +746,15 @@ int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
         }
     }
     return 0;
+}
+
+// Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
+// declared in filter/NetworkHandoverStransform.hpp).
+int networkHandoverStransformRunEnd(const NetworkRunEndView& v) {
+    return networkRunEndSections(v, {
+        networkSatHealthRunEnd,
+        networkPivotHandoverRunEnd
+    });
 }
 
 // ---- End of the run-end reports ----

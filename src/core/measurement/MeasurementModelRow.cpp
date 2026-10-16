@@ -96,7 +96,8 @@ namespace GnssProcessor {
         const size_t us = signal.find('_');
         const bool is_if = (us != std::string::npos && us > 0 && us + 1 < signal.size());
         // Veto AR eligibility when the covering network phase bias declares
-        // signal_integer=false (the anchor-free ensemble datum emits non-integer biases).
+        // signal_integer=false (a product of the retired anchor-free ensemble datum carries
+        // non-integer biases).
         // Only a bias present in the store (age-gated when the staleness gate is on) can
         // veto, and only with the toggle on, so an absent bias, a .BIA-only path and the
         // toggle off are byte-identical.  For an IF combination, both component biases

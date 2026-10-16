@@ -147,9 +147,6 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, o] : snap.clock_osc)
         put(fmt::format("K,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
                         o.t_last, o.init ? 1 : 0));
-    for (const auto& [sat, o] : snap.clock_rate_est)   // network.emit_clock_rate decoupled C1 state
-        put(fmt::format("O,{},{},{},{},{},{},{},{}", sat, o.x0, o.x1, o.p00, o.p01, o.p11,
-                        o.t_last, o.init ? 1 : 0));
     for (const auto& [sat, vp] : snap.prev_clk)
         put(fmt::format("J,{},{},{}", sat, vp.first, vp.second));
     for (const auto& [key, l] : snap.local_carry)
@@ -231,8 +228,7 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, pr] : snap.code_bias_ifpin_pair)
         put(fmt::format("CBI,{},{},{}", sat, pr.first, pr.second));
     // Emit-layer records (SPEC_event_harness §21.10; RS-5): the eq34 emit re-base's
-    // emission frame, then the PB emission filter's per-key posterior and its
-    // per-constellation step-noise accumulators.  Written only under
+    // emission frame.  Written only under
     // network.state_snapshot_emit_capture (the driver leaves the containers empty
     // otherwise, so a run without it writes the previous bytes unchanged), under the
     // existing header like the RS-3 group, and before the CARRY / EMITTER blobs so the
@@ -240,12 +236,6 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     // splits on ',' alone, so they need no escaping.
     for (const auto& [key, v] : snap.emit_rebase_last)
         put(fmt::format("ER,{},{}", key, v));
-    for (const auto& [key, st] : snap.pb_filter_state)
-        put(fmt::format("PF,{},{},{},{}", key, st.mean, st.var, st.last_seen_s));
-    // The pooled bucket's constellation field is empty (Config::split_by_const false);
-    // "PS,,<sum>,<n>" is a legal row and the parser accepts it.
-    for (const auto& [cst, ac] : snap.pb_filter_step)
-        put(fmt::format("PS,{},{},{}", cst, ac.sum_log_e2, ac.n_eff));
     // Station-layer records (SPEC_event_harness §21.13; RS-6): the rx-CB carry, then
     // the T5 per-LOS deviation carry.  Written only under
     // network.state_snapshot_station_capture (the driver leaves both containers empty
@@ -462,16 +452,6 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("malformed K fields");
             o.init = b;
             s.clock_osc[f[1]] = o;
-        } else if (tag == "O") {   // network.emit_clock_rate decoupled C1 rate state
-            if (f.size() != 9) return fail("malformed O line");
-            NetworkStateSnapshot::Osc o;
-            bool b = false;
-            if (!parseD(f[2], o.x0) || !parseD(f[3], o.x1) || !parseD(f[4], o.p00)
-                || !parseD(f[5], o.p01) || !parseD(f[6], o.p11) || !parseD(f[7], o.t_last)
-                || !parseB(f[8], b))
-                return fail("malformed O fields");
-            o.init = b;
-            s.clock_rate_est[f[1]] = o;
         } else if (tag == "J") {
             if (f.size() != 4) return fail("malformed J line");
             if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed J fields");
@@ -681,22 +661,6 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             // emitted bias for that key (same screen as CBP).
             if (!std::isfinite(d1)) return fail("ER value not finite");
             s.emit_rebase_last[f[1]] = d1;
-        } else if (tag == "PF") {   // PB emit filter per-key posterior (RS-5)
-            if (f.size() != 5 || f[1].empty()) return fail("malformed PF line");
-            if (!parseD(f[2], d1) || !parseD(f[3], d2) || !parseD(f[4], d3))
-                return fail("malformed PF fields");
-            if (!std::isfinite(d1) || !std::isfinite(d2) || !std::isfinite(d3)
-                || d2 < 0.0)
-                return fail("PF field not finite (or a negative variance)");
-            s.pb_filter_state[f[1]] = NetworkStateSnapshot::PbFilterKey{d1, d2, d3};
-        } else if (tag == "PS") {   // PB filter per-constellation step accumulator (RS-5)
-            // f[1] is empty for the pooled bucket (split_by_const false); this is the
-            // one record in the format whose key field may be blank.
-            if (f.size() != 4) return fail("malformed PS line");
-            if (!parseD(f[2], d1) || !parseD(f[3], d2)) return fail("malformed PS fields");
-            if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
-                return fail("PS field not finite (or a negative row count)");
-            s.pb_filter_step[f[1]] = NetworkStateSnapshot::PbFilterStep{d1, d2};
         } else if (tag == "RC") {   // receiver code-bias (rx-CB) carry entry (RS-6)
             if (f.size() != 6 || f[2].empty()) return fail("malformed RC line");
             if (!parseI(f[1], i1)) return fail("malformed RC station index");

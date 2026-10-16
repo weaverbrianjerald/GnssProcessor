@@ -57,6 +57,8 @@ namespace spdlog { class logger; }
 
 namespace GnssProcessor {
 
+struct EpochEvents;   // app/NetworkEpoch.hpp
+
     class GnssConfig;
     struct NetworkRunContext;
     struct NetworkRunTraces;
@@ -183,16 +185,16 @@ namespace GnssProcessor {
      * Runs after PASS A's slip scans (which fill @c ctx.carry.relevel.free_ambs) and
      * before the PASS-B assembly, so when the parallel inject reads an entry the drop
      * has already happened and the inject folds it at birth strength instead of
-     * skipping it.  Serial because it mutates @c ctx.carry.local_carry, which the
+     * skipping it.  Serial because it mutates @c ctx.entities.arcs, which the
      * produce phase then reads.
      *
      * Two causes, both of which skip an inject on the leveling vehicle:
      *  - @c relevel_free: every @c (station, amb key) the detectors latched this epoch.
-     *    The latched set itself is left in place, because the lane observatory, the
+     *    The latched set itself is left in place, because the
      *    phase-datum candidacy screen, the anchor-slip handover staging and the
      *    harvest's statistics guards all read it (§4.1: "keep the latched-set
      *    plumbing").  With @c network.phase_datum_held_basis armed, every latched arc
-     *    is also stamped in @c ctx.carry.amb_flag_ep with this epoch, whether or not it
+     *    is also stamped in @c the station table's amb_flag_ep with this epoch, whether or not it
      *    has a carry (RF-2 items 3 and 4).
      *  - @c stale_gap: every carried arc whose sighting gap already exceeds
      *    @c phase_leveling_max_gap_s.  The post-harvest prune still erases arcs that are
@@ -213,13 +215,14 @@ namespace GnssProcessor {
      * @param week      GPS week of this epoch (the trace rows' stamp).
      * @param tow       GPS time of week (s) of this epoch.
      * @param pl_now_s  Continuous-GPS seconds of this epoch.
+     * @param events The epoch's events; writes slip (the relevel free-epoch latch).
      */
     void networkAmbFloatApplyDrops(
         NetworkRunContext& ctx, const GnssConfig& config_,
         const std::shared_ptr<spdlog::logger>& log,
         const std::vector<NetStation>& stations,
         const std::vector<std::map<std::string, double>>& elev_of,
-        long long week, double tow, double pl_now_s);
+        long long week, double tow, double pl_now_s, EpochEvents& events);
 
     /**
      * @brief The declared anchor handover's transform of one (satellite, signal) family
@@ -242,6 +245,7 @@ namespace GnssProcessor {
      * phase bias and code bias, card LGM's phase colour) by @f$+\Delta@f$.  The phase hold's
      * held value is an emitted value and is not moved.
      * @param carry    the run's carried state.
+     * @param entities the run's entity tables (the station carries, card NOM step N4a).
      * @param sat      the family's satellite.
      * @param sig      the family's signal.
      * @param delta    the incoming anchor's carried level (m), read before anything moves.
@@ -253,7 +257,8 @@ namespace GnssProcessor {
      * @param counts   optional out: per-site tallies (accumulated).
      * @param complete also move the owed sites (false = the walk of card PRM phase 2).
      */
-    void declaredHandoverShiftCarry(NetworkCarryState& carry, const std::string& sat,
+    void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                                    const std::string& sat,
                                     const std::string& sig, double delta,
                                     long long& n_shift, long long& n_pb, long long& n_cpl,
                                     CarrySiteCounts* counts = nullptr, bool complete = false);
@@ -324,6 +329,24 @@ namespace GnssProcessor {
         long long week, double tow,
         std::set<std::pair<std::string, std::string>>& handled_out);
 
+    struct NetworkRun;      // app/NetworkRun.hpp
+    struct NetworkEpoch;    // app/NetworkEpoch.hpp
+
+    /**
+     * @brief The epoch form of the bounded drop (card NOM3 step EP2): builds this epoch's LOS
+     *        elevation map when the birth floor is armed, tallies the response latch per cause
+     *        (card PRM phase 3a), then runs networkAmbFloatApplyDrops.
+     *
+     * Serial, after PASS A's slip scans have latched relevel.free_ambs and before the parallel
+     * PASS-B inject reads the carry.  A no-op unless the vehicle is float_kf.  The body is the
+     * frozen driver text, moved by scripts/nom_ep2_cut.py.
+     *
+     * @param run The run: ctx (the carry, the counters, the trace buffer), the configuration,
+     *            the logger, the stations.
+     * @param ep  The epoch, read: se (week, tow), pass_a.modeled (elevations), clock.pl_now_s.
+     * @param events The epoch's events; written: slip (relevel).
+     */
+    void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
     // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
     struct NetworkRunEndView;

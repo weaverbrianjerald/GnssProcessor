@@ -4,15 +4,15 @@
 
 - **id:** T4 lane restore
 - **topic:** slip
-- **status:** open
-- **summary:** Specified 2026-08-23, NOT BUILT: one epoch after a T4 erase, restore the pre-erase carried value where the lane observatory's δ corroborates the lane survived; sim-first gates G0 to G6.
+- **status:** superseded
+- **summary:** Pend-and-restore of the pre-erase carry after a T4 erase: specified 2026-08-23, never built; superseded by RF-1's bounded drop (value kept, birth variance restored). Lanes return only via AB3.
 - **dates in the text:** 2026-08-23
 - **knobs / posture:** `network.cycle_slip.relevel_t4_lane_restore` (default OFF, conditionally fingerprinted; rider on `relevel_lane_snap`, requires `phase_leveling` and `relevel_free_epoch`)
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** none
 - **source:** `docs/archive/SPEC_lane_slip_response.md` §8
 
-**Outcome.** The card specifies how to recover the one piece of information a T4 refloat discards, the arc's pre-erase carry, after the decide-time keep-gates were FALSIFIED below refloat-always. The erase stands; one epoch later the pre-erase value returns, at variance max(pre, free), only where δ is within min(2σ_null(el), 1.0 cyc) and the MW, GF and per-band checks pass. A breach of G2 (settled sim EWL at-own-integer must exceed refloat-always's 70.2 %) or G5 closes it DO-NOT-PROMOTE in favour of the 8(b) displacement drain. Not built ([OPEN_ITEMS](../../status/OPEN_ITEMS.md) section D); the re-founding has since cut lanes from scope ([slip topic](../../topics/slip.md)).
+**Outcome.** Question: can the carried value a T4 refloat discards return one epoch later where the lane observatory's δ says the lane survived, beating refloat-always (settled sim EWL 70.2 %, bar G2) without re-erase churn (G5)? Specified, never built, so no gate ran. The float vehicle made it moot: a T4 refloat is now [RF-1](../../refound/RF-1_float_ambiguities_design.md)'s bounded drop, which keeps `value_abs` and restores the birth variance; the EWL bars rode the retired lane layer, and lanes return only as card [AB3](../../refound/AB3_lanes_2026-09-20.md)'s new build. Superseded. Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

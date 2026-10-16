@@ -113,33 +113,6 @@ public:
     /// already stamped that header with the real IOD-SSR / provider for the same
     /// satellite.
     void pushSlantIono(const SsrSlantIono& rec);
-    /**
-     * @brief Refresh an existing clock record from a fast split-cadence tick
-     *        (FC-1).  Takes no @c SsrHeader, for the same reason
-     *        @ref pushSlantIono does not.
-     *
-     * A fast tick re-measures the satellite clock between full solves; the rest of
-     * the correction set belongs to the last full epoch and stays as that epoch
-     * stamped it.  The method writes three fields of the clock record: @c c0,
-     * @c received_time (the age) and @c epoch_time (the extrapolation base).  It
-     * leaves untouched:
-     *  - @c SatRecord::header, the shared IOD-SSR / provider / SSR epoch stamped by
-     *    @c emitToStore.  Overwriting it would age the code-bias, phase-bias, URA and
-     *    slant-iono channels off one clock refresh.
-     *  - @c disc_counter.  A fast row continues the same clock and is not a
-     *    discontinuity; advancing the counter would make every consumer reset its
-     *    filter at the fast cadence.
-     *  - @c c1, @c c2, @c iod_ssr, @c iode, the orbit linkage,
-     *    @c combined_code_sigma_m and @c code_phase_corr.
-     *
-     * The method does not create a record: a fast row only refreshes a clock that a
-     * full epoch already established, so a consumer is never handed a satellite that
-     * exists only on the fast channel and has no bias set to go with it.
-     *
-     * @return true if an existing clock record was refreshed; false if the satellite
-     *         had no clock record yet (the row is then ignored).
-     */
-    bool pushFastClock(const SsrClockCorrection& rec);
     void pushHighRateClock(const SsrHighRateClock& rec, const SsrHeader& header);
 
     /**

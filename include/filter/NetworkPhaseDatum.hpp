@@ -2,7 +2,7 @@
 /**
  * @file NetworkPhaseDatum.hpp
  * @brief Phase-bias datum seam of the PPP-RTK network producer: the prioritized
- *        candidate census and coverage gate, the ensemble datum, the anchor election
+ *        candidate census and coverage gate, the anchor election
  *        with its handover, held S-basis, candidacy, gate-drop and re-entry options,
  *        the anchor-slip handover staging, the re-reference carry erase, and the
  *        near-null phase-bias soft-anchor.
@@ -22,23 +22,23 @@
  * increments when the proper ambiguity anchor returns.
  *
  * The functions were relocated unchanged out of ApplicationNetwork.cpp at
- * decomposition INC-8 (the soft-anchor) and INC-8b (the census, the ensemble datum
- * and the anchor election; the eq34 chain election went to the sibling
+ * decomposition INC-8 (the soft-anchor) and INC-8b (the census and the anchor
+ * election; the eq34 chain election went to the sibling
  * @ref NetworkChainDatum).  See docs/SPEC_inc8b_election_split.md.  They own no
  * state: every carry and workspace object is an explicit reference into the
  * caller's NetworkRunContext / EpochWorkspace.
  *
- * The three elections realize the phase-bias gauge in three different ways.  The run
- * TU's `if/else-if/else` mode dispatch is the contract: one election runs per epoch,
- * over a census built once:
+ * The two elections realize the phase-bias gauge in two different ways.  The run
+ * TU's `if/else` mode dispatch is the contract: one election runs per epoch, over a
+ * census built once:
  *
  *   networkBuildPhaseDatumCandidates   (always, under phase_datum_prioritized)
- *     ├── networkElectEnsembleDatum    network.phase_datum_ensemble
  *     ├── networkElectChainDatum       network.phase_datum_eq34  [NetworkChainDatum]
  *     └── networkElectPhaseAnchors     otherwise (the anchor election)
  */
 
 #include "filter/NetworkEstimator.hpp"
+#include "app/NetworkEntities.hpp"        // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "filter/NetworkAnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
 #include "filter/NetworkPhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule (card EV7 §6)
@@ -50,6 +50,7 @@
 #include <tuple>    // the local-carry key (station, sat, signal)
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace GnssProcessor {
 
@@ -129,7 +130,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  *        the network.phase_datum_min_stations coverage gate.
  *
  * Relocated unchanged from Application::runNetwork (INC-8b).  Runs for every
- * prioritized realization (ensemble, eq34 chain, anchor election), once per epoch,
+ * prioritized realization (eq34 chain, anchor election), once per epoch,
  * before the mode dispatch picks an election.
  *
  * Timing: the ambiguity states are allocated later, in PASS B's
@@ -140,7 +141,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  * Side effect: when the coverage gate excludes keys, it prunes those keys'
  * phase-bias states at every present station
  * (StateManager::pruneSatPhaseBiasStatesExcept), so the per-station column sets stay
- * consistent with the gated union.  All three elections depend on that prune having
+ * consistent with the gated union.  Both elections depend on that prune having
  * happened.  This function is also the sole writer of the two run-end gate
  * counters, so computing the census twice would double-count them (standing
  * invariant #4 telemetry).
@@ -163,27 +164,6 @@ void networkBuildPhaseDatumCandidates(
         PhaseDatumCandidates& cnd,
         std::size_t& n_gated_epochs,
         std::size_t& n_gated_key_epochs);
-
-/**
- * @brief Anchor-free ensemble datum (Fix A): the shared phase-bias set is the
- *        coverage-gated union, every station's pins are cleared and no anchor
- *        is elected.  Relocated unchanged at INC-8b.
- *
- * The gauge is realized instead by the kernel sum-to-zero fold, built from every
- * tracking station's ambiguity column after the reduce (buildEnsembleGauges, which
- * stays in the run TU because it runs after beginEpoch and PASS B).  With no station
- * holding a pinned_amb_targets entry, do_fold stays false and isGaugePinned false,
- * so every station carries all its arcs and there is no anchor to hand over.
- *
- * @param this_epoch_anchor  [out] cleared; the ensemble elects no anchor.  Must
- *                           be the run's ctx.carry instance (the emit-site
- *                           handover loop is its sole consumer).
- */
-void networkElectEnsembleDatum(
-        std::vector<NetStation>& stations,
-        const PhaseDatumCandidates& cnd,
-        std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys);
 
 /// Held S-basis bundle for the anchor election, and the counters the election writes
 /// back (RF-2).
@@ -229,7 +209,7 @@ struct PhaseHeldBasis {
     /// restored-arc convention (@ref localCarryYoung), so a warm-resume-restored entry
     /// reads mature instead of being refused for min_age epochs after every resume.
     /// An arc with no carry entry is refused as newborn.  Null: no age gate.
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* carry = nullptr;
+    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
     // ---- write-back (per call; the driver sums them into the run-end readout) ----
     long long n_held = 0;             ///< families re-pinned at their frozen basis value this epoch.
     /// New basis entries written: every election that did not re-pin a retained
@@ -338,14 +318,13 @@ struct AnchorCandidacyUsable {
     /// This epoch's DD invariant-carry slip funnel, same encoding; the vehicle on
     /// carry_invariant lineages.  Both sets are consulted.
     const std::set<std::pair<int, std::string>>* slipped_ambs = nullptr;
-    /// `ctx.carry.local_carry`, keyed (station index, sat, signal), read only for
+    /// `ctx.entities.arcs`, keyed (station index, sat, signal), read only for
     /// @c birth_ep through @ref localCarryYoung.  An unknown age counts as mature (the
     /// restored-entry convention): a null map, no entry for the arc, or a
     /// non-positive @c birth_ep, meaning never stashed (0) or warm-resume-restored
     /// (@ref LocalCarry::kBirthEpRestored).  The age test then passes and the ledger
     /// verdict and the freed test decide.
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>*
-        local_carry = nullptr;
+    const net::ArcTable* local_carry = nullptr;   ///< The arc table (its @c ArcState::amb, N4f1).
 };
 
 /**
@@ -612,7 +591,7 @@ int networkStageAnchorSlipHandovers(
  *
  * @param reref        This epoch's re-referenced (sat, signal) families
  *                     (ctx.carry.phase_anchor_reref).  Empty: returns 0 immediately.
- * @param local_carry  ctx.carry.local_carry: the phase-leveling per-station
+ * @param arcs         ctx.entities.arcs: the phase-leveling per-station
  *                     ambiguity carry, keyed (station idx, sat, signal).  Inert
  *                     (empty map) unless network.phase_leveling.
  * @param erased_out   [out, optional] RF-1 §7.4; null on every unarmed run.  Receives
@@ -627,7 +606,7 @@ int networkStageAnchorSlipHandovers(
  */
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        net::ArcTable& arcs,
         std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
             erased_out = nullptr);
 
@@ -636,44 +615,72 @@ int networkApplyPhaseAnchorCarryReref(
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the held S-basis (RF-2).
+ * @brief Run-end report: the phase datum: the held S-basis (RF-2), the prioritized drop and heal,
+ *        the anchored-union gate and its drop edge.
  *
- * The held S-basis (RF-2): elections against holds, declared handovers, the retired
- * erase and the held property's drift.
- *
- * Gate: returns 0 at once unless `ctx.knobs.pd_held_basis`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkHeldSbasisRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the prioritized-datum drop-and-heal.
- *
- * The prioritized-datum drop-and-heal: the recoveries and the attempts (card PA).
- *
- * Gate: each section under its own condition, as in the teardown: `n_healed_epochs > 0`;
- * `ctx.counters.n_heal_attempt_epochs > 0`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkPhaseDatum.cpp, print in this order, each gated on its own knob:
+ *   - networkHeldSbasisRunEnd: the held S-basis (RF-2).
+ *   - networkDropHealRunEnd: the prioritized-datum drop-and-heal.
+ *   - networkPhaseDatumGatesRunEnd: the anchored-union coverage gate and its drop edge.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkDropHealRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: the anchored-union coverage gate and its drop edge.
- *
- * The anchored-union coverage gate and its drop edge (card EV7).
- *
- * Gate: each section under its own condition, as in the teardown: `n_gated_epochs > 0`;
- * `ctx.counters.n_pd_gate_drop_edges > 0`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v);
+int networkPhaseDatumRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+// ---- PASS B station steps, declarations (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py) ----
+
+struct StationBuild;                       // filter/NetworkStationBuild.hpp (card NOM3 step PB1b)
+struct StationCarryFrame;                  // filter/NetworkStationBuild.hpp
+enum class StationStep : std::uint8_t;     // filter/NetworkStationBuild.hpp
+class GnssConfig;
+class NetworkEstimator;
+class SphericalHarmonicIonosphere;
+class GlobalIonosphereMap;
+struct GlobalVtecShConfig;
+
+/**
+ * @brief The phase-datum pins of the station's anchored ambiguities and the eq34 receiver
+ *        phase-bias rows.
+ *
+ * Step `phase_datum_pins` of kStationBuildSteps (filter/NetworkStationBuild.hpp); its kinds:
+ * AmbiguityPin, Eq34RpbPin, Eq34RpbRankFloor, Eq34RpbTimeLink. Records: np, pin_audit,
+ * pin_seed_targets, pl_rpb, prm_rpb_gap_skip. The frozen text of networkPassB_'s produce loop
+ * below its bindings (card NOM3 step PB1b).
+ * @param build One station's build: the station and its slot writable, the run read only.
+ * @return StationStep::Next.
+ */
+StationStep networkPhaseDatumPinRows(StationBuild& build);
+
+/**
+ * @brief True when station @p i's (sat, signal) ambiguity is gauge-pinned,
+ *        that is, part of the phase datum rather than a free (carriable)
+ *        ambiguity (decomposition INC-7).
+ *
+ * Legacy datum: every pivot-station ambiguity.  Prioritized datum: exactly
+ * the elected @c pinned_amb_targets entries.  Implemented in
+ * @c ApplicationNetworkAssembly.cpp.
+ *
+ * The single test that replaced the scattered is_pivot gauge tests: under the
+ * legacy datum it returns is_pivot, so every rewritten site stayed byte-identical;
+ * under the prioritized datum the "sat_signal" key form matches the pin fold and
+ * the ambiguity-state key, and the pin is folded into the station's own local
+ * block.  The Eq-34 / de Jonge single-receiver-chain datum drives the same
+ * prioritized machinery (no pivot-first, every station carries its arcs,
+ * per-(sat,signal) shared set) and diverges only at the election (a spanning-tree
+ * chain election) and the pin fold (per-tree-edge ambiguity pins with a target,
+ * plus a datum-receiver RPB pin).  (Moved here from runNetwork at card NOM3 step
+ * EP1, where it had stayed beside the phase-datum aliases.)
+ *
+ * Card NOM3 step PB1b: a free function (formerly Application::networkIsGaugePinned_), so the station
+ * steps in the family files can call it.
+ */
+bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_datum_prioritized,
+                          size_t i, const std::string& sat, const std::string& signal);
+
+// ---- End of the PASS B station steps, declarations (card NOM3 step PB1b) ----
 
 } // namespace GnssProcessor

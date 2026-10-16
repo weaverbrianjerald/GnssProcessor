@@ -51,11 +51,17 @@ enum class GimRowsOutcome : std::uint8_t;  // filter/NetworkContributions.hpp (c
 struct ShDevCarry;           // filter/NetworkRunTypes.hpp (decomposition INC-7)
 struct SyncedEpoch;          // rinex/MultiRinexSync.hpp, namespace scope (decomposition INC-7)
 class  NetworkEstimator;     // filter/NetworkEstimator.hpp (decomposition INC-7)
-class  NetworkIonoDeweightGate;      // filter/NetworkIonoDeweightGate.hpp (decomposition INC-7)
 class  SphericalHarmonicIonosphere;  // atmosphere/SphericalHarmonicIonosphere.hpp (decomposition INC-7)
 class  PppUtils;             // common/PppUtils.hpp (decomposition INC-7)
 struct SlipQcChannel;        // slip/NetworkRawObservables.hpp (slip-QC hardening)
 enum class EpochAction;      // filter/NetworkRunTypes.hpp, opaque enum declaration (decomposition INC-7)
+struct NetworkRun;           // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochEvents;             // app/NetworkEpoch.hpp
+struct EpochPassA;           // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct NetworkSlipFunnel;    // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochColumns;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
+struct EpochAssembly;        // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
 struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share (card UOM U7b)
 struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read (card UOM U7b)
@@ -1115,6 +1121,31 @@ private:
      */
     int runNetwork();
 
+    /// What one epoch tells the epoch source (formerly runNetwork's local enum).
+    enum class LoopSignal { Next, Stop };
+
+    /**
+     * @brief One synced epoch through the network producer (card NOM3 step EP1).
+     *
+     * The admission (start offset, event injector, canonical-pair screen), the NetworkEpoch,
+     * then the stages in spine order: roster, admission tail (broadcast feed, maximum
+     * duration, decimation), epoch top, the slip funnel, PASS A and the screens, the phase
+     * datum, the columns, pre-assembly, PASS B, the DD build, the solve, the
+     * install, AR and fixed cycles, solution prep, emit, the post-fit diagnostics, RAIM,
+     * clock QC, the measure-only instruments, the stash, the D0 readout and the snapshot.
+     * Four stages end the epoch early (networkPassAHead_, networkAssemblyRegisterColumns_,
+     * networkPassB_, networkSolveGlue), the admission three ways.
+     * Implemented in ApplicationNetworkEpoch.cpp: written by scripts/nom_ep1_cut.py at card
+     * NOM3 step EP1, maintained by hand since, guarded by scripts/nom_epoch_lint.py.
+     *
+     * @param run    The run, built once by runNetwork after the traces.
+     * @param se_raw The synced epoch as the source delivered it.
+     * @return LoopSignal::Stop at the maximum-duration cutoff, else LoopSignal::Next.
+     */
+    LoopSignal networkProcessEpoch_(NetworkRun& run, const SyncedEpoch& se_raw);
+
+    friend struct NetworkEpochContractProbe;   // tests/test_network_epoch_contract.cpp reads the five private seam types
+
     /**
      * @brief Consumer-only replay (Q5): drive the held-out PPP-RTK consumer from
      *        a network product file written earlier (no producer solve).
@@ -1164,212 +1195,6 @@ private:
     int networkSetup_(NetworkSetupResult& setup);
 
     /**
-     * @brief True when station @p i's (sat, signal) ambiguity is gauge-pinned,
-     *        that is, part of the phase datum rather than a free (carriable)
-     *        ambiguity (decomposition INC-7).
-     *
-     * Legacy datum: every pivot-station ambiguity.  Prioritized datum: exactly
-     * the elected @c pinned_amb_targets entries.  Implemented in
-     * @c ApplicationNetworkAssembly.cpp.
-     */
-    bool networkIsGaugePinned_(const std::vector<NetStation>& stations,
-                               bool phase_datum_prioritized, size_t i,
-                               const std::string& sat,
-                               const std::string& signal) const;
-
-    /**
-     * @brief Column-split helper: split station @p st's H into the shared
-     *        border @p A_s (clock/phase-bias/code-bias columns) and the local
-     *        nuisance block @p A_r (decomposition INC-7).
-     *
-     * Fills the H-column → A_r-column map @p h2local and, per state column, the
-     * disposition it took (@p col_disp: border, local block, held coordinate,
-     * held at its seed by @p ifb_rule, or unobserved), which the parameter
-     * inventory records (card NOM N1).  Throws (linearity invariant) if a
-     * position column ever survives into A_r; the per-station try/catch of the
-     * PASS-B produce loop catches the throw.  Implemented in
-     * @c ApplicationNetworkAssembly.cpp.
-     *
-     * @param ifb_rule The run's receiver IFB rule (@c ctx.param_inventory.rx_ifb,
-     *                 built once per run by @c networkRxIfbRule): which receiver
-     *                 IFB columns are left out of the local block.
-     * @param[out] tags One contribution tag per data row (card NOM N2a): @c DataCode or
-     *                 @c DataPhase with the row's satellite and signal
-     *                 (@c tagDataRows), changed to @c DataCodeCompanion or
-     *                 @c DataPhaseSecond by the weight pass that scales the row, so a
-     *                 tag and a weight cannot disagree.
-     */
-    void networkSplitStation_(NetStation& st, const NetworkEstimator& est,
-                              const EpochMeasurement& em,
-                              const RxIfbRule& ifb_rule,
-                              Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                              Eigen::VectorXd& w, Eigen::VectorXd& y,
-                              std::map<int, int>& h2local,
-                              std::vector<ParamDisposition>& col_disp,
-                              std::vector<RowTag>& tags) const;
-
-    /**
-     * @brief GIM ionosphere pseudo-observation rows (W6 satellite code-bias
-     *        prerequisite), folded into station @p st's own block with the
-     *        per-constellation common-mode-free R (decomposition INC-7).
-     *        Implemented in @c ApplicationNetworkAssembly.cpp.
-     *
-     * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
-     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c GimIono tag per
-     *                      appended row, in row order.
-     * @return What the builder did (card NOM section 16, suspect 4): no GIM loaded, the
-     *         ionosphere weighting off, no qualifying line of sight, or rows appended.
-     */
-    GimRowsOutcome networkAppendGimIonoRows_(NetStation& st,
-                                   const std::vector<PppObservation>& sta_obs,
-                                   const std::map<int, int>& h2local,
-                                   const GnssTime& t,
-                                   Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                   Eigen::VectorXd& w, Eigen::VectorXd& y,
-                                   std::vector<RowTag>& tags) const;
-
-    /**
-     * @brief Co-estimated SH-VTEC ionosphere pseudo-observation rows: the
-     *        joint slant-iono ↔ SH-field constraint, including the T5 deviation
-     *        carry treatment and the station-adaptive deweight scaling
-     *        (decomposition INC-7).
-     *
-     * The run-loop state it reads arrives as explicit parameters: @p sh_model /
-     * @p sh_model2 (the Iono-2 dual-layer second shell, null on the single-layer
-     * path), @p iono_deweight (const, a read-only weight lookup), @p shc,
-     * @p sh_dev_on, @p sh_dev_carry (const: the serial pre-pass ages it, and
-     * this function only looks entries up).  Implemented in
-     * @c ApplicationNetworkAssembly.cpp.
-     *
-     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c ShIonoTie tag per
-     *                      appended row (its line of sight's satellite), in row order.
-     */
-    void networkAppendShIonoRows_(NetStation& st, const NetworkEstimator& est,
-                                  const std::vector<PppObservation>& sta_obs,
-                                  const std::map<int, int>& h2local,
-                                  const GnssTime& t,
-                                  const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model,
-                                  const std::unique_ptr<SphericalHarmonicIonosphere>& sh_model2,
-                                  const NetworkIonoDeweightGate& iono_deweight,
-                                  const GlobalVtecShConfig& shc, bool sh_dev_on,
-                                  const std::map<std::string, ShDevCarry>& sh_dev_carry,
-                                  const std::set<std::string>& dw_row_held,
-                                  const std::set<std::string>* dw_tie_admitted,
-                                  Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                  Eigen::VectorXd& w, Eigen::VectorXd& y,
-                                  std::vector<RowTag>& tags) const;
-
-    /**
-     * @brief Append the SD pre-reduce EWL constraint rows to one station's own block.
-     *        See docs/SPEC_sd_ewl_prereduce.md.
-     *
-     * For each satellite @f$s@f$ paired against a pivot satellite @f$p@f$ on the
-     * constellation's extra-wide-lane band pair @f$(b_1,b_2)@f$ (GPS 2/5, Galileo 7/5),
-     * one pseudo-observation row
-     * @f[
-     *   z_{SD}=\overline{MW}(r,s)-\overline{MW}(r,p)
-     *         =\lambda_{EWL}\big[N_{EWL}(r,s)-N_{EWL}(r,p)\big]+\big[B^s_{EWL}-B^p_{EWL}\big]
-     * @f]
-     * The pivot is elected here, per constellation: the arc with the most samples, ties
-     * broken by ascending satellite name.  The receiver EWL bias is common to both arcs at
-     * the same station and cancels identically, so the row carries only the SD ambiguity
-     * combination and the SD satellite bias lump.  That lump is the reason for the row: it
-     * reaches the shared satellite phase and code bias columns, which DD-chord rows barely
-     * reach (about 80 % of them are eq34 tree pins; measured effect: +0.6 % on the
-     * soft-end eigenvalue).
-     *
-     * Local coefficients (@p A_r), on the metre-valued per-band ambiguity states:
-     * @f$+\lambda_{EWL}/\lambda_{b1}@f$, @f$-\lambda_{EWL}/\lambda_{b2}@f$ for @f$s@f$ and
-     * negated for @f$p@f$.  Shared coefficients (@p A_s), from
-     * @f$MW=\varphi_{WL}-P_{NL}@f$: @f$+f_1/(f_1-f_2)@f$ on @c PB|s|b1,
-     * @f$-f_2/(f_1-f_2)@f$ on @c PB|s|b2, @f$-f_1/(f_1+f_2)@f$ on @c CB|s|b1,
-     * @f$-f_2/(f_1+f_2)@f$ on @c CB|s|b2, negated for @f$p@f$.
-     *
-     * All rows of a group (one constellation at this station, split in two under
-     * increment 2b below) share the pivot arc's noise, so
-     * @f$R=\mathrm{diag}(\mathrm{var}_s)+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$,
-     * structurally the GIM common-mode R.  R is whitened by @f$L^{-1}@f$
-     * (@f$LL^\top=R@f$) into unit-information rows, as
-     * @ref networkAppendGimIonoRows_ does.
-     *
-     * @par Why pre-reduce
-     * These rows enter the station block that reaches @c addStationObservations, so they
-     * fold into @f$N_{rr}/N_{sr}/N_{ss}@f$ before @c reduce() and therefore compose
-     * exactly with the post-reduce Card-4 DD fold.  Two post-reduce Woodbury folds over
-     * coupled local columns drop the cross term (see the warning on
-     * @c NetworkNormalEquations::foldReducedDdPriors in NetworkNormalEquations.hpp).
-     * @c addStationPrior cannot be used: it is diagonal-only
-     * (@f$N_{rr}(c,c)\mathrel{+}=\Lambda@f$) and cannot express this cross-column row.
-     *
-     * @par Which signal pair
-     * The MW arc key carries the two phase signal names, and the tracking channel the
-     * detector holds an arc on is the detector's choice (@c collectUncombinedPairs'
-     * KF-chosen / attribute-priority pick).  This function therefore searches every
-     * candidate (band1, band2) phase pair that has both ambiguities in the station's local
-     * block, in ascending signal name (a strict total order, for byte-identity), and takes
-     * the first with a usable arc, rather than electing one channel and reporting the arc
-     * absent when the detector picked the other.  The satellite code-bias columns come
-     * from @c MwArcZdMean::code1/code2, the channels the observable actually consumed, so
-     * the OSB attribution is not a guess.
-     *
-     * @par Thread safety
-     * Runs inside the parallel produce phase.  It only reads @p est, through the const
-     * @c phaseBiasColumn / @c codeBiasColumn lookups (never @c register*, which would
-     * race and is illegal after @c beginEpoch()); both lookups use @c map::at and throw
-     * on an absent key, so both are wrapped.  It writes only this station's own blocks,
-     * @c st.sd_ewl_ctr and @p trace_rows; no shared state is mutated.
-     *
-     * @param st        This station (provides @c mw_slip, @c sm, @c name, the counters).
-     * @param est       Shared-column lookup only (const).
-     * @param sta_obs   This station's modeled observations this epoch.
-     * @param h2local   Global state index → local column within @p A_r.
-     * @param t         Epoch time (trace stamp only).
-     * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
-     * @param[in,out] tags  The station's row tags (card NOM N2a): one @c SdEwl tag per
-     *                      appended row (its satellite), in row order.
-     * @param[out] trace_rows  Pre-formatted @c network_sd_ewl.csv lines for this
-     *                  station-epoch, drained by PASS B's serial consume.  Untouched
-     *                  unless @c network.sd_ewl.trace.
-     *
-     * @par Increment 2b: folding the fixed integer
-     * When @c network.sd_ewl.fix_enable published an integer for an arc (@p fix, decided
-     * serially before assembly by @ref networkSdEwlAr and read-only here), the row folds
-     * @f$\lambda_{EWL}\nabla N^{fixed}@f$ out of the RHS and drops its four local
-     * ambiguity coefficients: the local degree of freedom is removed, not constrained.
-     * A tight prior on a gauge-adjacent local column would be a stiff prior, not a rank
-     * reduction; increment 2 exists so that the local nuisance stops absorbing the row's
-     * information and the shared satellite bias receives it.  @c pred_m loses its
-     * ambiguity terms in step with the design, because a row whose H changed while its
-     * linearization point did not would be folded in a mixed frame.
-     *
-     * Fixed and float rows coexist at one station, but in separate whitened groups, each
-     * with its own pivot and its own common-mode noise.  They cannot share one:
-     * @f$R=\mathrm{diag}+\mathrm{var}_p\mathbf{1}\mathbf{1}^\top@f$ is whitened by a dense
-     * @f$L^{-1}@f$, which would re-populate a fixed row's zeroed local columns from its
-     * float siblings, and the pivot arc's ambiguity columns appear in every row of a
-     * group, so a mixed group would both remove and estimate the pivot ambiguity.  Two
-     * groups keep both halves exact and make "a fixed row has zero local coefficients"
-     * true of the whitened block as well as of H.
-     *
-     * @param fix  The published integers for this epoch, keyed by (station index,
-     *             constellation) and then satellite; this station's entries are read at
-     *             @p station_index.  @c nullptr, @c network.sd_ewl.fix_enable off, or no
-     *             usable entry for an arc => that row takes the increment-1 float path.
-     * @param station_index  This station's index into @p fix.
-     */
-    void networkAppendSdEwlRows_(NetStation& st, const NetworkEstimator& est,
-                                 const std::vector<PppObservation>& sta_obs,
-                                 const std::map<int, int>& h2local,
-                                 const GnssTime& t,
-                                 Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
-                                 Eigen::VectorXd& w, Eigen::VectorXd& y,
-                                 std::vector<RowTag>& tags,
-                                 std::vector<std::string>& trace_rows,
-                                 const std::map<std::pair<std::size_t, char>,
-                                                std::map<std::string, SdEwlFix>>* fix,
-                                 std::size_t station_index) const;
-
-    /**
      * @brief PASS-A head: under the legacy datum, model the pivot station first and
      *        seed the shared phase-bias key set from its states (decomposition INC-7).
      *
@@ -1381,15 +1206,29 @@ private:
      * pivot is not a single point of failure).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
      *
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.setup (setup), run.traces (traces).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
+     *     pass_a.present (present), pass_a.shared_phase_keys (shared_phase_keys).
+     *
+     * The former parameters, by binding:
+     *   - @p se = ep.se.
+     *   - @p ctx = run.ctx.
+     *   - @p setup = run.setup.
+     *   - @p traces = run.traces.
+     *   - @p modeled = pass_a.modeled.
+     *   - @p present = pass_a.present.
+     *   - @p shared_phase_keys = pass_a.shared_phase_keys.
+     *
      * @return Proceed, or SkipEpoch when the legacy datum station is absent
      *         or fails to model (the caller then ends the epoch).
      */
-    EpochAction networkPassAHead_(const SyncedEpoch& se, NetworkRunContext& ctx,
-                                  NetworkSetupResult& setup,
-                                  NetworkRunTraces& traces,
-                                  std::vector<std::vector<PppObservation>>& modeled,
-                                  std::vector<bool>& present,
-                                  std::set<std::string>& shared_phase_keys);
+    EpochAction networkPassAHead_(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a);
 
     /**
      * @brief PASS-A parallel tail and slip scans: per-station geometry
@@ -1400,7 +1239,7 @@ private:
      *        repair, MW / LLI refloat, IF-TD driver, wind-up restart, gap re-entry
      *        and injected-arc free (decomposition INC-7).
      *
-     * The caller brackets the call with subBegin/subEnd(SB_SLIP), the D0b section
+     * The caller brackets the call with networkSubBegin/End(SB_SLIP), the D0b section
      * timer for the slip scans.  @p carry_slipped_ambs receives, by non-const
      * reference, the (station index, ambiguity key) pairs the drains flag this
      * epoch.  The driver passes its raw-detector set carry_slipped_raw here and
@@ -1408,16 +1247,38 @@ private:
      * right after the call; a copy would drop the drains' inserts and leave the DD
      * carry without its slip events (standing invariant #1).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.setup (setup), run.traces (traces), run.engines.slip_qc (qc).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se), ep.clock.dt
+     *           (dt), ep.clock.pl_now_s (pl_now_s), ep.clock.carry_warm (carry_warm),
+     *           ep.pass_a.shared_phase_keys (shared_phase_keys).
+     * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
+     *     pass_a.present (present).
+     * @param funnel [in/out] The slip funnel (ep.funnel), written: funnel.carry_slipped_raw
+     *     (carry_slipped_ambs).
+     *
+     * The former parameters, by binding:
+     *   - @p se = ep.se.
+     *   - @p ctx = run.ctx.
+     *   - @p setup = run.setup.
+     *   - @p traces = run.traces.
+     *   - @p dt = ep.clock.dt.
+     *   - @p pl_now_s = ep.clock.pl_now_s.
+     *   - @p carry_warm = ep.clock.carry_warm.
+     *   - @p modeled = pass_a.modeled.
+     *   - @p present = pass_a.present.
+     *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
+     *   - @p carry_slipped_ambs = funnel.carry_slipped_raw.
+     *   - @p qc = run.engines.slip_qc.
+     * @param events The epoch's events; written: slip (relevel, sid_reentry_outcome).
      */
-    void networkPassASlipScan_(const SyncedEpoch& se, NetworkRunContext& ctx,
-                               NetworkSetupResult& setup,
-                               NetworkRunTraces& traces,
-                               double dt, double pl_now_s, bool carry_warm,
-                               std::vector<std::vector<PppObservation>>& modeled,
-                               std::vector<bool>& present,
-                               const std::set<std::string>& shared_phase_keys,
-                               std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                               SlipQcChannel& qc);
+    void networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
+                               NetworkSlipFunnel& funnel, EpochEvents& events);
 
     /**
      * @brief Raw slip-observable trace rows and the cross-station observability
@@ -1426,15 +1287,29 @@ private:
      *        single-station satellites from @p modeled and from the per-station
      *        shared states; @p n_dropped_sats receives their count for the epoch.
      *        Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.setup (setup), run.traces (traces). Read: run.engines.slip_qc (qc).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     *           ep.pass_a.present (present).
+     * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
+     *     pass_a.n_dropped_sats (n_dropped_sats).
+     *
+     * The former parameters, by binding:
+     *   - @p se = ep.se.
+     *   - @p ctx = run.ctx.
+     *   - @p setup = run.setup.
+     *   - @p traces = run.traces.
+     *   - @p qc = run.engines.slip_qc.
+     *   - @p modeled = pass_a.modeled.
+     *   - @p present = ep.pass_a.present.
+     *   - @p n_dropped_sats = pass_a.n_dropped_sats.
      */
-    void networkAssemblyPrefilter_(const SyncedEpoch& se,
-                                   NetworkRunContext& ctx,
-                                   NetworkSetupResult& setup,
-                                   NetworkRunTraces& traces,
-                                   const SlipQcChannel& qc,
-                                   std::vector<std::vector<PppObservation>>& modeled,
-                                   const std::vector<bool>& present,
-                                   int& n_dropped_sats);
+    void networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a);
 
     /**
      * @brief Shared-column registration: est.reset(), the clock / phase-bias /
@@ -1445,21 +1320,41 @@ private:
      * Ends with @c est.beginEpoch() on the Proceed path.  The skip does its
      * bookkeeping here (n_skipped, the trace row with n_present, the status row,
      * the prev_week/prev_tow advance); on SkipEpoch the caller ends the epoch
-     * without calling subEnd(SB_PREASM).  The epoch counts are the int&
-     * out-parameters.  Implemented in @c ApplicationNetworkAssembly.cpp.
+     * without calling networkSubEnd(SB_PREASM).  The epoch counts are members of
+     * @p columns (the int& out-parameters until card NOM3 step EP1).  Implemented in
+     * @c ApplicationNetworkAssembly.cpp.
+     *
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.setup (setup), run.traces (traces), run.engines.est (est).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     *           ep.pass_a.present (present), ep.pass_a.shared_phase_keys (shared_phase_keys).
+     * @param columns [in/out] The shared columns (ep.columns), written:
+     *     columns.registered_clock_sats (registered_clock_sats), columns.registered_code_keys
+     *     (registered_code_keys), columns.col_desc (col_desc), columns.n_clock (n_clock),
+     *     columns.n_pb (n_pb), columns.n_cb (n_cb), columns.n_present (n_present).
+     *
+     * The former parameters, by binding:
+     *   - @p se = ep.se.
+     *   - @p ctx = run.ctx.
+     *   - @p setup = run.setup.
+     *   - @p traces = run.traces.
+     *   - @p est = run.engines.est.
+     *   - @p present = ep.pass_a.present.
+     *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
+     *   - @p registered_clock_sats = columns.registered_clock_sats.
+     *   - @p registered_code_keys = columns.registered_code_keys.
+     *   - @p col_desc = columns.col_desc.
+     *   - @p n_clock = columns.n_clock.
+     *   - @p n_pb = columns.n_pb.
+     *   - @p n_cb = columns.n_cb.
+     *   - @p n_present = columns.n_present.
      */
-    EpochAction networkAssemblyRegisterColumns_(const SyncedEpoch& se,
-                                   NetworkRunContext& ctx,
-                                   NetworkSetupResult& setup,
-                                   NetworkRunTraces& traces,
-                                   NetworkEstimator& est,
-                                   const std::vector<bool>& present,
-                                   const std::set<std::string>& shared_phase_keys,
-                                   std::vector<std::string>& registered_clock_sats,
-                                   std::vector<std::pair<std::string, std::string>>& registered_code_keys,
-                                   std::vector<std::string>& col_desc,
-                                   int& n_clock, int& n_pb, int& n_cb,
-                                   int& n_present);
+    EpochAction networkAssemblyRegisterColumns_(NetworkRun& run, const NetworkEpoch& ep,
+                                                EpochColumns& columns);
 
     /**
      * @brief PASS B: the D0 assembly wall timer (a raw chrono pair), the T5 SH-dev
@@ -1472,32 +1367,63 @@ private:
      * The failed/empty-epoch skip does its bookkeeping here (n_skipped, the trace
      * row with n_present/n_clock/n_pb/total_pins, the status row, the
      * prev_week/prev_tow advance).  @p asm_res, @p est_index_of and @p total_pins
-     * are the driver's epoch locals, filled here for the solve, RAIM and emit
+     * are members of the epoch's assembly group (ep.assembly; the driver's epoch
+     * locals until card NOM3 step EP1), filled here for the solve, RAIM and emit
      * seams downstream; @p sec_asm_ms_epoch / @p sec_asm_wall_ms receive the D0
-     * wall time, which accumulates even when the epoch skips.
+     * wall time, which accumulates even when the epoch skips.  The SH-deviation carry's
+     * switches (sh_dev_tau, sh_dev_on, sh_dev_demean, sh_dev_d5_keep) are read from
+     * @c ctx.knobs (card NOM3 step EP0).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
+     *
+     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * replace the explicit parameters; the definition binds each former parameter in its preamble,
+     * under its former name.
+     *
+     * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     *            run.setup (setup), run.traces (traces), run.engines.est (est),
+     *            run.timing.asm_wall_ms (sec_asm_wall_ms).
+     * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     *           ep.funnel.carry_slipped_ambs (carry_slipped_ambs), ep.funnel.carry_slipped_raw
+     *           (carry_slipped_raw), ep.clock.carry_warm (carry_warm), ep.clock.pl_now_s
+     *           (pl_now_s), ep.pass_a.shared_phase_keys (shared_phase_keys),
+     *           ep.columns.registered_clock_sats (registered_clock_sats),
+     *           ep.columns.registered_code_keys (registered_code_keys), ep.columns.n_clock
+     *           (n_clock), ep.columns.n_pb (n_pb), ep.columns.n_present (n_present).
+     * @param pass_a [in/out] The layout (ep.pass_a), written: pass_a.modeled (modeled),
+     *     pass_a.present (present).
+     * @param assembly [in/out] The station blocks (ep.assembly), written: assembly.asm_res
+     *     (asm_res), assembly.est_index_of (est_index_of), assembly.total_pins (total_pins),
+     *     assembly.sec_asm_ms_epoch (sec_asm_ms_epoch).
+     *
+     * The former parameters, by binding:
+     *   - @p se = ep.se.
+     *   - @p ctx = run.ctx.
+     *   - @p setup = run.setup.
+     *   - @p traces = run.traces.
+     *   - @p est = run.engines.est.
+     *   - @p carry_slipped_ambs = ep.funnel.carry_slipped_ambs.
+     *   - @p carry_slipped_raw = ep.funnel.carry_slipped_raw.
+     *   - @p carry_warm = ep.clock.carry_warm.
+     *   - @p pl_now_s = ep.clock.pl_now_s.
+     *   - @p modeled = pass_a.modeled.
+     *   - @p present = pass_a.present.
+     *   - @p shared_phase_keys = ep.pass_a.shared_phase_keys.
+     *   - @p registered_clock_sats = ep.columns.registered_clock_sats.
+     *   - @p registered_code_keys = ep.columns.registered_code_keys.
+     *   - @p n_clock = ep.columns.n_clock.
+     *   - @p n_pb = ep.columns.n_pb.
+     *   - @p n_present = ep.columns.n_present.
+     *   - @p asm_res = assembly.asm_res.
+     *   - @p est_index_of = assembly.est_index_of.
+     *   - @p total_pins = assembly.total_pins.
+     *   - @p sec_asm_ms_epoch = assembly.sec_asm_ms_epoch.
+     *   - @p sec_asm_wall_ms = run.timing.asm_wall_ms.
      *
      * @return Proceed, or SkipEpoch when the epoch failed assembly or has an
      *         empty shared system (the caller then ends the epoch).
      */
-    EpochAction networkPassB_(const SyncedEpoch& se, NetworkRunContext& ctx,
-                              NetworkSetupResult& setup, NetworkRunTraces& traces,
-                              NetworkEstimator& est,
-                              const NetworkIonoDeweightGate& iono_deweight,
-                              double sh_dev_tau, bool sh_dev_on, bool sh_dev_demean,
-                              bool sh_dev_d5_keep,
-                              const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                              const std::set<std::pair<int, std::string>>& carry_slipped_raw,
-                              bool carry_warm, double pl_now_s,
-                              std::vector<std::vector<PppObservation>>& modeled,
-                              std::vector<bool>& present,
-                              const std::set<std::string>& shared_phase_keys,
-                              const std::vector<std::string>& registered_clock_sats,
-                              const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
-                              int n_clock, int n_pb, int n_present,
-                              std::vector<StationAssembly>& asm_res,
-                              std::vector<int>& est_index_of, int& total_pins,
-                              double& sec_asm_ms_epoch, double& sec_asm_wall_ms);
+    EpochAction networkPassB_(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
+                              EpochAssembly& assembly);
 
     /**
      * @brief Generate the end-of-run HTML report via the bundled pyviz tool.

@@ -12,9 +12,8 @@
  * `network_raim.csv` filed zero rows, and a station driven to a 54 m code rms.
  *
  * This suite exercises what can be exercised without a network: the two
- * decision rules, which are pure functions for this reason (the
- * `networkRaimEraseBandScope` precedent), the act half on hand-built station
- * assemblies, and the loader.  What a declaration does to a real line of sight
+ * decision rules, which are pure functions for this reason, the act half on
+ * hand-built station assemblies, and the loader.  What a declaration does to a real line of sight
  * is graded by the 6 h arm the SPEC records, not here (the suite guards
  * structure and non-regression; it does not validate estimation accuracy).
  *
@@ -31,6 +30,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"     // the act half's carry + counters (RF-3b)
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkGrossLos.hpp"
 #include "filter/NetworkRunTypes.hpp"    // NetStation / StationAssembly / LocalCarry (RF-3b)
@@ -596,6 +596,7 @@ TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
     // is the arm under test; a test that set ctx.knobs directly could pass with a
     // loader that never sets them.
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
     ASSERT_TRUE(ctx.knobs.gl_on);
     ASSERT_TRUE(ctx.knobs.gl_bound);
 
@@ -608,43 +609,43 @@ TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
     LocalCarry lc{ 42.5, 1.0e-6, 100.0 };
     lc.coupling = { CoupledShared{ SharedParamKind::Clock, "G13", "", 0, 0, 'C',
                                    0, 0.8, 1.5, 0.2 } };
-    ctx.carry.local_carry[lk] = lc;
-    ctx.carry.iono_carry[ik] = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+    net::putArc(ctx.entities, lk, &net::ArcState::amb) = lc;
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
 
-    ctx.carry.gl_act_declare.push_back({ 0, "G13" });
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    events.gross.gl_act_declare.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
 
     // The entry is still present, at its pre-declaration value and variance, with the
     // border regression cleared (clearing it is the decoupling).
-    ASSERT_EQ(ctx.carry.local_carry.count(lk), 1u);
-    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 42.5);
-    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].var, 1.0e-6);
-    EXPECT_TRUE(ctx.carry.local_carry[lk].coupling.empty());
-    ASSERT_EQ(ctx.carry.gl_hold_amb.count(lk), 1u);
-    EXPECT_EQ(ctx.carry.iono_carry.count(ik), 1u);
+    ASSERT_EQ((net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb) != nullptr), 1u);
+    EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs, 42.5);
+    EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).var, 1.0e-6);
+    EXPECT_TRUE(net::putArc(ctx.entities, lk, &net::ArcState::amb).coupling.empty());
+    ASSERT_EQ((net::getArc(ctx.entities.arcs, lk, &net::ArcState::gl_hold_amb) != nullptr), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono) != nullptr), 1u);
     EXPECT_EQ(ctx.counters.gross_los.bound_amb_held, 1);
     EXPECT_EQ(ctx.counters.gross_los.bound_iono_held, 1);
 
     // A harvest moves the carried value; the next act pass puts it back, otherwise the
     // "fixed prior with zero process noise" would be nominal only.
-    ctx.carry.local_carry[lk].value_abs = 999.0;
-    ctx.carry.iono_carry[ik].value_abs = -7.0;
-    ctx.carry.gl_act_declare.clear();
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
-    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 42.5);
-    EXPECT_DOUBLE_EQ(ctx.carry.iono_carry[ik].value_abs, 3.25);
+    net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs = 999.0;
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono).value_abs = -7.0;
+    events.gross.gl_act_declare.clear();
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
+    EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs, 42.5);
+    EXPECT_DOUBLE_EQ(net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono).value_abs, 3.25);
     EXPECT_GE(ctx.counters.gross_los.bound_los_epochs, 1);
 
     // The release edge drops the hold, and the states continue from where they were
     // held (invariant #7's re-coupling edge).
-    ctx.carry.gl_act_release.push_back({ 0, "G13" });
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
-    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty());
-    EXPECT_TRUE(ctx.carry.gl_hold_iono.empty());
-    ctx.carry.local_carry[lk].value_abs = 11.0;
-    ctx.carry.gl_act_release.clear();
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
-    EXPECT_DOUBLE_EQ(ctx.carry.local_carry[lk].value_abs, 11.0);
+    events.gross.gl_act_release.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
+    EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0));
+    EXPECT_TRUE((net::present(ctx.entities.los, &net::LosState::gl_hold_iono) == 0));
+    net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs = 11.0;
+    events.gross.gl_act_release.clear();
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
+    EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs, 11.0);
 }
 
 // With the bound unarmed the response is the legacy erase, unchanged: the same call
@@ -654,6 +655,7 @@ TEST(NetworkGrossLosRf3b, WithoutTheBoundTheResponseIsStillTheErase) {
     ASSERT_TRUE(loadWith("    \"gross_los_screen\": true,\n", cfg, log, "nobound"));
     EXPECT_FALSE(cfg.getNetworkConfig().gross_los_bound);
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
     ASSERT_TRUE(ctx.knobs.gl_on);
     ASSERT_FALSE(ctx.knobs.gl_bound);
     std::vector<NetStation> stations(1);
@@ -661,13 +663,13 @@ TEST(NetworkGrossLosRf3b, WithoutTheBoundTheResponseIsStillTheErase) {
     std::vector<StationAssembly> asm_res{ oneLosAssembly("G13", "L1C") };
     const auto lk = std::make_tuple(0, std::string("G13"), std::string("L1C"));
     const std::pair<int, std::string> ik{ 0, "G13" };
-    ctx.carry.local_carry[lk] = LocalCarry{ 42.5, 1.0e-6, 100.0 };
-    ctx.carry.iono_carry[ik] = LocalCarry{ 3.25, 1.0e-4, 100.0 };
-    ctx.carry.gl_act_declare.push_back({ 0, "G13" });
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
-    EXPECT_EQ(ctx.carry.local_carry.count(lk), 0u);
-    EXPECT_EQ(ctx.carry.iono_carry.count(ik), 0u);
-    EXPECT_TRUE(ctx.carry.gl_hold_amb.empty());
+    net::putArc(ctx.entities, lk, &net::ArcState::amb) = LocalCarry{ 42.5, 1.0e-6, 100.0 };
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+    events.gross.gl_act_declare.push_back({ 0, "G13" });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
+    EXPECT_EQ((net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono) != nullptr), 0u);
+    EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0));
     EXPECT_EQ(ctx.counters.gross_los.iono_erased, 1);
 }
 
@@ -680,6 +682,7 @@ TEST(NetworkGrossLosRf3b, StationTierRespondsOnceForTheWholeStation) {
                          "    \"gross_los_station_tier\": true,\n", cfg, log, "statier"));
     EXPECT_TRUE(cfg.getNetworkConfig().gross_los_station_tier);
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
+    EpochEvents events;
     ASSERT_TRUE(ctx.knobs.gl_on);
     ASSERT_TRUE(ctx.knobs.gl_station_tier);
     ASSERT_DOUBLE_EQ(ctx.knobs.gl_deweight, 100.0);
@@ -692,17 +695,17 @@ TEST(NetworkGrossLosRf3b, StationTierRespondsOnceForTheWholeStation) {
     R.pl_amb.push_back(pa2);
     std::vector<StationAssembly> asm_res{ R };
 
-    ctx.carry.local_carry[std::make_tuple(0, std::string("G13"), std::string("L1C"))] =
+    net::putArc(ctx.entities, std::make_tuple(0, std::string("G13"), std::string("L1C")), &net::ArcState::amb) =
         LocalCarry{ 1.0, 1e-6, 0.0 };
-    ctx.carry.local_carry[std::make_tuple(0, std::string("G22"), std::string("L1C"))] =
+    net::putArc(ctx.entities, std::make_tuple(0, std::string("G22"), std::string("L1C")), &net::ArcState::amb) =
         LocalCarry{ 2.0, 1e-6, 0.0 };
-    auto& sst = ctx.carry.gl_sta_state[0];
+    auto& sst = net::put(ctx.entities.stations, StationId{0}, &net::StationState::gross_los);
     sst.gross = true;
     sst.sats = { "G13", "G22" };
-    ctx.carry.gl_act_station.push_back({ 0, true });
-    networkGrossLosAct(ctx, nullptr, stations, asm_res);
+    events.gross.gl_act_station.push_back({ 0, true });
+    networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
     // One verdict answers both lines of sight, not two sequential declarations.
-    EXPECT_EQ(ctx.carry.local_carry.size(), 0u);
+    EXPECT_EQ(net::present(ctx.entities.arcs, &net::ArcState::amb), 0u);
     EXPECT_EQ(ctx.counters.gross_los.amb_refloated, 2);
     // The publish half folds every satellite the station tracks.
     networkGrossLosPublishScales(ctx, stations);

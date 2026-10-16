@@ -3,7 +3,7 @@
  * @file NetworkSlipQcRunEnd.hpp
  * @brief Run-end reports of slip QC: detections, the re-level responses, wind-up, MW scope, the gap instrument and the reference gate.
  *
- * The run-end reports defined in NetworkSlipQcRunEnd.cpp; each is a row of kNetworkRunEndReports
+ * The run-end report defined in NetworkSlipQcRunEnd.cpp, one row of kNetworkRunEndReports
  * (filter/NetworkRunEnd.hpp).
  */
 
@@ -14,120 +14,28 @@ namespace GnssProcessor {
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: slip QC: MW and LLI detections, the re-level response, the statistical retap.
+ * @brief Run-end report: slip QC: MW and LLI detections, re-level, wind-up, anchor-slip handovers,
+ *        MW admission, IF-TD pairs and re-seed, datum stations, gaps, re-entry and the IF-TD
+ *        reference gate.
  *
- * Slip QC: card E's MW and LLI detections, the slip re-level response (free epoch,
- * bridge v2 and v3) and the statistical retap.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipMwDetect()`; `config_.networkCycleSlipRelevelFreeEpoch()`;
- * `config_.networkCycleSlipRelevelRetapStatistical()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope.
- *
- * Slip QC: the phase wind-up census, the wind-up restart response, the anchor-slip
- * handovers, the MW detect-only admission (every run) and the MW pair scope.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.traceWindUpCensus()`; `config_.networkCycleSlipWindupRestartRefloat()`;
- * `config_.networkCycleSlipAnchorSlipHandover()`; always (a block);
- * `config_.networkCycleSlipMwDetectPairs() == NetworkMwDetectPairs::Primary`.
+ * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * beside it in NetworkSlipQcRunEnd.cpp, print in this order, each gated on its own knob:
+ *   - networkSlipMwRelevelRunEnd: slip QC: MW and LLI detections, the re-level response.
+ *   - networkSlipWindupMwRunEnd: slip QC: wind-up census and restart, anchor-slip handover, MW
+ *     admission and scope.
+ *   - networkSlipBandResponsesRunEnd: slip QC: IF-TD pairs.
+ *   - networkIfTdReseedRunEnd: slip QC: the IF-TD post-flag re-seed (card ARL, slip-ladder defect
+ *     2).
+ *   - networkSlipDatumStationRunEnd: slip QC: datum-station detection and LLI corroboration.
+ *   - networkSlipGapRefGateRunEnd: slip QC: the gap instrument, re-entry, GRS, the IF-TD reference
+ *     gate.
+ *   - networkSlipGapCoresumedShareRunEnd: the co-resumed share of the per-signal gap re-entry tier.
  *
  * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
+ * @return 0, or the last non-zero verdict of its sections.
  */
-int networkSlipWindupMwRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: slip QC: IF-TD pairs, band-scoped responses, the lane observatory, retap corroboration.
- *
- * Slip QC: the IF-TD pair width, the band-scoped responses, the carry-domain lane
- * observatory (rung 3 v3) and the retap corroboration.
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipIfPhaseTd()`; always (a block);
- * `config_.networkCycleSlipRelevelLaneSnap()`;
- * `config_.networkCycleSlipRelevelRetapCorroborate()`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSlipBandResponsesRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: slip QC: datum-station detection and LLI corroboration.
- *
- * Slip QC: the datum-station slip detection and the LLI corroboration (card L).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `config_.networkCycleSlipDatumStationDetect()`; `nc.slip_qc.lli_corroborate`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSlipDatumStationRunEnd(const NetworkRunEndView& v);
-
-/**
- * @brief Run-end report: slip QC: the gap instrument, re-entry, GRS, the IF-TD reference gate.
- *
- * Slip QC: the gap instrumentation, the GRK tracker key, the SID-3 ledger re-entry and
- * the GRS per-signal re-entry (card G), then the IF-TD reference gate per chain (card
- * R).
- *
- * Gate: each section under its own condition, as in the teardown:
- * `nc.slip_qc.gap_instrument || nc.slip_qc.gap_reentry ||
- * nc.slip_qc.gap_reentry_per_signal`; `nc.slip_qc.ref_gate`.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v);
+int networkSlipQcRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
-
-// ---- Run-end reports added after the cut (hand-written) ----
-
-/**
- * @brief Run-end report: slip QC: the IF-TD post-flag re-seed (card ARL, slip-ladder
- *        defect 2).
- *
- * The ON-path telemetry (invariant #4) of
- * @c network.cycle_slip.if_phase_td_reseed_on_flag, summed over the IF-TD pair kinds
- * (IfTdPairTally): flags whose flag-epoch gradient was kept, flags with none to keep,
- * the post-flag evaluations that the reset used to leave out, and how many of those
- * flagged.  Warns when flags were re-seeded and no post-flag evaluation followed.
- *
- * Gate: @c network.cycle_slip.if_phase_td and the re-seed knob both armed; prints
- * nothing otherwise, so an unarmed run's log is unchanged.
-
-/**
- * @brief Run-end report: the co-resumed share of the per-signal gap re-entry tier.
- *
- * States the population the share can act on (lines of sight re-acquired with at
- * least two co-resumed signals at a station the tier answers), the lines of sight it
- * answered and how many of those had a trigger with no leveling carry, and the closed
- * disposition of the shared signals (@c CoresumedShareLedger: already freed, skipped,
- * no carry, freed by the trigger's cause, cold, not acted, funnel only), plus the
- * ledger arcs given a shared verdict under @c network.ledger_reentry.  Logs an
- * error when the disposition does not close, and flags the share as inert by
- * configuration when it is armed without the per-signal tier.  A row added after
- * the cut, placed right after @ref networkSlipGapRefGateRunEnd, whose per-signal
- * line it qualifies.
- *
- * Gate: `nc.slip_qc.gap_reentry_coresumed_share`; with the knob off it prints
- * nothing, so an unarmed run's run end is unchanged.
- *
- * @param v The run at its end (filter/NetworkRunEnd.hpp).
- * @return 0 (this report does not set the exit code).
- */
-int networkIfTdReseedRunEnd(const NetworkRunEndView& v);
-
-int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v);
 
 } // namespace GnssProcessor

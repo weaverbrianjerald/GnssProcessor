@@ -34,6 +34,7 @@
 // edge when a vertex popped twice before it (pass 2 re-pushes the whole visited set).
 
 #include "filter/NetworkArcGraph.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "filter/NetworkZStore.hpp"      // ZComponent, the live phase-B oracle
 #include "filter/NetworkArSuspect.hpp"   // ArSuspectCornerState, arSuspectCombine (the frozen DDrow)
 #include "filter/NetworkDatumGraph.hpp"  // netDatumGraphComponents and its types (the census, AGT-3)
@@ -2066,7 +2067,83 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 // components and spanning forest now come from the module, against the whole frozen function.
 // =====================================================================================
 
-// The frozen election compiles against the real run context: nothing in it is stood in.
+/// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
+/// from NetworkCarryState into the station table (app/NetworkEntities.hpp).  The frozen body
+/// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
+/// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
+/// eq34 datum receivers into the constellation table's channels, and N4c the eq34 arc elevations
+/// into the line-of-sight table; the shim carries their maps too.
+struct FrozenStationMaps {
+    NetworkRunContext& ctx;
+    std::map<std::string, std::string> eq34_datum_rx;                  ///< "<c>|<sigma>" -> receiver (N4b)
+    std::map<std::pair<size_t, std::string>, double> eq34_prev_el;     ///< (station, sat) -> elevation (N4c)
+    std::map<std::string, std::string> eq34_rx_parent;                 ///< "<name>|<c>|<sigma>" -> sat
+    std::map<std::pair<int, std::string>, LocalCarry> rpb_carry;        ///< (station, rpb key)
+    std::map<std::string, std::string> anchor_incumbent;               ///< "sat_signal" -> station (N4d)
+    std::map<std::string, std::string> eq34_sat_root;                  ///< "sat_signal" -> station (N4e2)
+    std::map<net::ArcTuple, LocalCarry> local_carry;                   ///< (station, sat, signal) (N4f1)
+    std::map<std::pair<int, std::string>, double> eq34_prev_target;    ///< (station, "sat_signal") (N4f1)
+    std::set<std::pair<int, std::string>> eq34_retained_edges;         ///< (station, "sat_signal") (N4f1)
+    explicit FrozenStationMaps(NetworkRunContext& c) : ctx(c) { load(); }
+    ~FrozenStationMaps() { store(); }
+    FrozenStationMaps(const FrozenStationMaps&) = delete;
+    FrozenStationMaps& operator=(const FrozenStationMaps&) = delete;
+    void load() {
+        eq34_rx_parent.clear();
+        rpb_carry.clear();
+        const net::NetworkEntities& e = ctx.entities;
+        eq34_datum_rx = net::channelMap(e.constellations, &net::ChannelState::datum_rx);
+        anchor_incumbent = net::sigMap(e.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+        eq34_sat_root = net::sigMap(e.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
+        local_carry = net::arcMap(e.arcs, &net::ArcState::amb);
+        eq34_prev_target = net::arcAmbMap(e.arcs, &net::ArcState::eq34_prev_target);
+        eq34_retained_edges = net::arcAmbSet(e.arcs, &net::ArcState::eq34_retained_edge);
+        eq34_prev_el.clear();
+        net::forEach(e.los, &net::LosState::eq34_prev_el, [&](const LosId& id, double el) {
+            eq34_prev_el[{static_cast<size_t>(id.station.index), net::satKey(id.sat)}] = el;
+        });
+        net::byStationName(e.stations, e.names, [&](const StationId& id, const net::StationState& row) {
+            for (const auto& [family, cell] : row.signals)
+                if (cell.eq34_rx_parent)
+                    eq34_rx_parent[e.names.names[id.index] + "|" + family] = *cell.eq34_rx_parent;
+        });
+        net::forEach(e.stations, &net::StationState::signals, &net::StationSignalState::rpb,
+                     [&](const StationId& id, const std::string& key, const LocalCarry& lc) {
+                         rpb_carry[{id.index, key}] = lc;
+                     });
+    }
+    void store() {
+        net::NetworkEntities& e = ctx.entities;
+        net::assignSig(e, &net::SatSignalState::anchor_incumbent, anchor_incumbent);
+        net::assignSig(e, &net::SatSignalState::eq34_sat_root, eq34_sat_root);
+        net::assignArc(e, &net::ArcState::amb, local_carry);
+        net::assignArcAmb(e, &net::ArcState::eq34_prev_target, eq34_prev_target);
+        net::assignArcAmbFlags(e, &net::ArcState::eq34_retained_edge, eq34_retained_edges);
+        net::dropAll(e.los, &net::LosState::eq34_prev_el);
+        for (const auto& [key, el] : eq34_prev_el)
+            net::putLos(e, static_cast<int>(key.first), key.second, &net::LosState::eq34_prev_el) = el;
+        net::dropAll(e.constellations, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
+        for (const auto& [key, rx] : eq34_datum_rx) {
+            const auto ch = net::channelOfKey(e, key);
+            net::put(e.constellations, ch->first, &net::ConstellationState::channels, ch->second,
+                     &net::ChannelState::datum_rx) = rx;
+        }
+        net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::eq34_rx_parent);
+        net::dropAll(e.stations, &net::StationState::signals, &net::StationSignalState::rpb);
+        for (const auto& [rxkey, sat] : eq34_rx_parent) {
+            const auto p1 = rxkey.rfind('|', rxkey.rfind('|') - 1);
+            net::put(e.stations, *net::stationOfName(e, rxkey.substr(0, p1)),
+                     &net::StationState::signals,
+                     rxkey.substr(p1 + 1), &net::StationSignalState::eq34_rx_parent) = sat;
+        }
+        for (const auto& [key, lc] : rpb_carry)
+            net::put(e.stations, StationId{key.first}, &net::StationState::signals, key.second,
+                     &net::StationSignalState::rpb) = lc;
+    }
+};
+
+// The frozen election compiles against the real run context: nothing in it is stood in but the
+// station maps of FrozenStationMaps (card NOM step N4a).
 namespace frozen_eq34 {
 // ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
 void networkElectChainDatum(NetworkRunContext& ctx,
@@ -2077,26 +2154,27 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const PhaseDatumCandidates& cnd,
                             const AnchorHygiene& hyg,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
-                            std::set<std::string>& shared_phase_keys) {
+                            std::set<std::string>& shared_phase_keys,
+                            EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-auto& anchor_incumbent = ctx.carry.anchor_incumbent;
-auto& this_epoch_anchor = ctx.carry.this_epoch_anchor;
-auto& eq34_datum_rx = ctx.carry.eq34_datum_rx;
-auto& eq34_rx_parent = ctx.carry.eq34_rx_parent;
-auto& eq34_sat_root = ctx.carry.eq34_sat_root;
-auto& eq34_prev_el = ctx.carry.eq34_prev_el;
-auto& eq34_reref_total = ctx.carry.eq34_reref_total;
-auto& eq34_erase_total = ctx.carry.eq34_erase_total;
-auto& eq34_shift_total = ctx.carry.eq34_shift_total;
-auto& eq34_cpl_sprev_total = ctx.carry.eq34_cpl_sprev_total;
-auto& eq34_gap_repin_total = ctx.carry.eq34_gap_repin_total;
-auto& eq34_mismatch_epochs = ctx.carry.eq34_mismatch_epochs;
-auto& eq34_retained_edges = ctx.carry.eq34_retained_edges;
-auto& eq34_prev_target = ctx.carry.eq34_prev_target;
-auto& eq34_reref = ctx.carry.eq34_reref;
-auto& local_carry = ctx.carry.local_carry;
-auto& rpb_carry = ctx.carry.rpb_carry;
-auto& zwd_carry = ctx.carry.zwd_carry;
+auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
+FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
+auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
+auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
+auto& eq34_rx_parent = station_maps.eq34_rx_parent;
+auto& eq34_sat_root = station_maps.eq34_sat_root;   // card NOM step N4e2 shim
+auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
+auto& eq34_reref_total = ctx.counters.eq34_reref_total;
+auto& eq34_erase_total = ctx.counters.eq34_erase_total;
+auto& eq34_shift_total = ctx.counters.eq34_shift_total;
+auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
+auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
+auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
+auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
+auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
+auto& eq34_reref = events.phase_datum.eq34_reref;
+auto& local_carry = station_maps.local_carry;   // card NOM step N4f1 shim
+auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
 const bool eq34_longevity = ctx.knobs.eq34_longevity;
@@ -2153,8 +2231,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): this epoch's per-group
     // declared gauge dimension + shared-side bridge pins, replaced wholesale
     // exactly like the tree maps.  Read after PASS B's serial consume.
-    ctx.carry.eq34_epoch_declared.clear();
-    ctx.carry.eq34_epoch_bridged.clear();
+    events.phase_datum.eq34_epoch_declared.clear();
+    events.phase_datum.eq34_epoch_bridged.clear();
     shared_phase_keys.clear();
     for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
     // This epoch's receiver-side parent edges + per-sat component roots;
@@ -2402,7 +2480,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             ++eq34_n_pins;
             eq34_gauge_dim += static_cast<int>(rx_list.size()
                             + comp_sat[root].size());   // n_c + m_c
-            ctx.carry.eq34_epoch_declared[dr_key] +=
+            events.phase_datum.eq34_epoch_declared[dr_key] +=
                 static_cast<int>(rx_list.size() + comp_sat[root].size());
 
             // Sticky spanning tree (two-queue BFS from r1).  The
@@ -2656,7 +2734,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     ++eq34_n_pins;
                     // Audit: a bridge pin is realized on the shared side, so the
                     // station-side fold expectation is declared − bridged.
-                    ++ctx.carry.eq34_epoch_bridged[dr_key];
+                    ++events.phase_datum.eq34_epoch_bridged[dr_key];
                 }
             }
             // A new tree edge is grown only onto an arc whose ambiguity has converged
@@ -2920,20 +2998,20 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+        station_maps.store();   // card NOM step N4a shim, not in the frozen source
+        eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
+        station_maps.load();    // card NOM step N4a shim
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
         // frame (PbHold is exempt from the shift).  Measure-only.
-        for (const auto& [hk, hv] : ctx.carry.pb_hold) {
-            (void)hv;
-            const auto bar = hk.find('|');
-            if (bar == std::string::npos) continue;
-            const auto sh = shift_sat.find({hk.substr(0, bar), hk.substr(bar + 1)});
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_hold,   // N4d shim
+                     [&](const SatSignalId& id, const net::PbHoldKey&) {
+            const auto sh = shift_sat.find({net::satKey(id.sat), net::signalKey(id.signal)});
             if (sh != shift_sat.end() && sh->second != 0.0)
                 ++ctx.counters.prm_pbhold_unmoved_at_shift;
-        }
+        });
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Eq34Shift)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Eq34Shift, prm_cc);
     }
@@ -3114,6 +3192,7 @@ struct ChainEpoch {
     PhaseDatumCandidates                       cnd;
     std::set<std::pair<int, std::string>>      slipped;
     std::map<std::pair<int, std::string>, int> age;
+    net::ArcTable                              age_arcs;   ///< @ref age as the arc table (N4f1)
     AnchorHygiene                              hyg;
 };
 
@@ -3167,6 +3246,10 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
         f(a.carry);
         f(b.carry);
     };
+    const auto bothEnt = [&](const std::function<void(net::NetworkEntities&)>& f) {
+        f(a.entities);
+        f(b.entities);
+    };
     for (std::size_t i = 0; i < w.names.size(); ++i) {
         for (const auto& [amb, pbkey] : e.cnd.usable_keys[i]) {
             const auto parts = StateKeys::parseAmbiguityKey(amb);
@@ -3175,22 +3258,28 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                 LocalCarry lc{};
                 lc.value_abs = std::uniform_real_distribution<double>(-3.0, 3.0)(rng);
                 lc.var       = 1e-4;
-                both([&](NetworkCarryState& c) { c.local_carry[key] = lc; });
+                bothEnt([&](net::NetworkEntities& c) { net::putArc(c, key, &net::ArcState::amb) = lc; });
             } else if (chance(rng, 0.08)) {
-                both([&](NetworkCarryState& c) { c.local_carry.erase(key); });
+                bothEnt([&](net::NetworkEntities& c) { net::dropArc(c.arcs, key, &net::ArcState::amb); });
             }
             if (chance(rng, 0.1)) {
                 const double t = chance(rng, 0.5) ? 0.19 * uniform(rng, -3, 3)
                                                   : std::uniform_real_distribution<double>(-1.0, 1.0)(rng);
-                both([&](NetworkCarryState& c) { c.eq34_prev_target[{static_cast<int>(i), amb}] = t; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putArcAmb(c, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = t;
+                });
             }
             if (chance(rng, 0.03)) {
                 const std::string sta = chance(rng, 0.9) ? w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))] : "ZZZZ";
-                both([&](NetworkCarryState& c) { c.anchor_incumbent[amb] = sta; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putSig(c, amb, &net::SatSignalState::anchor_incumbent) = sta;
+                });
             }
             if (chance(rng, 0.04)) {
                 const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
-                both([&](NetworkCarryState& c) { c.eq34_sat_root[amb] = sta; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::putSig(c, amb, &net::SatSignalState::eq34_sat_root) = sta;
+                });
             }
         }
         for (const auto& [cons, sig] : kChainSignals) {
@@ -3200,18 +3289,27 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
                 LocalCarry lc{};
                 lc.value_abs = std::uniform_real_distribution<double>(-0.5, 0.5)(rng);
                 lc.var       = 1e-4;
-                both([&](NetworkCarryState& c) { c.rpb_carry[{static_cast<int>(i), rpb_key}] = lc; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                             rpb_key, &net::StationSignalState::rpb) = lc;
+                });
             }
             if (chance(rng, 0.04) && !w.pool.empty()) {
                 const std::string sat = w.pool[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.pool.size()) - 1))];
                 const std::string rxkey = w.names[i] + "|" + constellationKey(sys) + "|" + sig;
-                both([&](NetworkCarryState& c) { c.eq34_rx_parent[rxkey] = sat; });
+                bothEnt([&](net::NetworkEntities& c) {
+                    net::put(c.stations, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                             constellationKey(sys) + "|" + sig, &net::StationSignalState::eq34_rx_parent) = sat;
+                });
             }
         }
     }
     if (chance(rng, 0.05)) {
         const std::string sta = w.names[static_cast<std::size_t>(uniform(rng, 0, static_cast<int>(w.names.size()) - 1))];
-        both([&](NetworkCarryState& c) { c.eq34_datum_rx["G|L1C"] = sta; });
+        bothEnt([&](net::NetworkEntities& c) {
+            net::put(c.constellations, System::GPS, &net::ConstellationState::channels, "L1C",
+                     &net::ChannelState::datum_rx) = sta;
+        });
     }
     const bool first = chance(rng, 0.1);
     both([&](NetworkCarryState& c) { c.resume_datum_first_ep = first; });
@@ -3219,6 +3317,7 @@ void perturbChainCarry(std::mt19937& rng, const ChainWorld& w, const ChainEpoch&
 
 /// Every output of the election, from both runs, compared.  Returns the first difference (empty: none).
 std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContext& l,
+                              const EpochEvents& ef, const EpochEvents& el,
                               const std::vector<NetStation>& sf, const std::vector<NetStation>& sl,
                               const std::set<std::string>& shf, const std::set<std::string>& shl) {
     for (std::size_t i = 0; i < sf.size(); ++i) {
@@ -3230,29 +3329,58 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
     if (shf != shl) return "shared_phase_keys";
     const NetworkCarryState& a = f.carry;
     const NetworkCarryState& b = l.carry;
-    if (a.anchor_incumbent != b.anchor_incumbent) return "anchor_incumbent";
-    if (a.this_epoch_anchor != b.this_epoch_anchor) return "this_epoch_anchor";
-    if (a.eq34_datum_rx != b.eq34_datum_rx) return "eq34_datum_rx (best_datum_rx)";
-    if (a.eq34_rx_parent != b.eq34_rx_parent) return "eq34_rx_parent";
-    if (a.eq34_sat_root != b.eq34_sat_root) return "eq34_sat_root";
-    if (a.eq34_prev_el != b.eq34_prev_el) return "eq34_prev_el";
-    if (a.eq34_reref != b.eq34_reref) return "eq34_reref";
-    if (a.eq34_prev_target != b.eq34_prev_target) return "eq34_prev_target";
-    if (a.eq34_retained_edges != b.eq34_retained_edges) return "eq34_retained_edges";
-    if (a.eq34_epoch_declared != b.eq34_epoch_declared) return "eq34_epoch_declared";
-    if (a.eq34_epoch_bridged != b.eq34_epoch_bridged) return "eq34_epoch_bridged";
-    if (a.eq34_reref_total != b.eq34_reref_total) return "eq34_reref_total";
-    if (a.eq34_erase_total != b.eq34_erase_total) return "eq34_erase_total";
-    if (a.eq34_shift_total != b.eq34_shift_total) return "eq34_shift_total";
-    if (a.eq34_cpl_sprev_total != b.eq34_cpl_sprev_total) return "eq34_cpl_sprev_total";
-    if (a.eq34_gap_repin_total != b.eq34_gap_repin_total) return "eq34_gap_repin_total";
-    if (a.eq34_mismatch_epochs != b.eq34_mismatch_epochs) return "eq34_mismatch_epochs";
-    if (a.local_carry.size() != b.local_carry.size()) return "local_carry size";
-    for (auto ia = a.local_carry.begin(), ib = b.local_carry.begin(); ia != a.local_carry.end(); ++ia, ++ib)
+    if (net::sigMap(f.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_')
+        != net::sigMap(l.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_'))
+        return "anchor_incumbent";
+    if (ef.phase_datum.this_epoch_anchor != el.phase_datum.this_epoch_anchor) return "this_epoch_anchor";
+    if (net::channelMap(f.entities.constellations, &net::ChannelState::datum_rx)
+        != net::channelMap(l.entities.constellations, &net::ChannelState::datum_rx))
+        return "eq34_datum_rx (best_datum_rx)";
+    const auto cells = [](const NetworkRunContext& c, auto field) {
+        std::vector<std::tuple<int, std::string, double, std::string>> out;
+        net::forEach(c.entities.stations, &net::StationState::signals, field,
+                     [&](const StationId& id, const std::string& k, const auto& v) {
+                         if constexpr (std::is_same_v<std::decay_t<decltype(v)>, std::string>)
+                             out.emplace_back(id.index, k, 0.0, v);
+                         else
+                             out.emplace_back(id.index, k, v.value_abs, std::string());
+                     });
+        return out;
+    };
+    if (cells(f, &net::StationSignalState::eq34_rx_parent)
+        != cells(l, &net::StationSignalState::eq34_rx_parent)) return "eq34_rx_parent";
+    if (net::sigMap(f.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_')
+        != net::sigMap(l.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_'))
+        return "eq34_sat_root";
+    const auto prevEl = [](const NetworkRunContext& c) {
+        std::map<LosId, double> out;
+        net::forEach(c.entities.los, &net::LosState::eq34_prev_el,
+                     [&](const LosId& id, double el) { out[id] = el; });
+        return out;
+    };
+    if (prevEl(f) != prevEl(l)) return "eq34_prev_el";
+    if (ef.phase_datum.eq34_reref != el.phase_datum.eq34_reref) return "eq34_reref";
+    if (net::arcAmbMap(f.entities.arcs, &net::ArcState::eq34_prev_target)
+        != net::arcAmbMap(l.entities.arcs, &net::ArcState::eq34_prev_target))
+        return "eq34_prev_target";
+    if (net::arcAmbSet(f.entities.arcs, &net::ArcState::eq34_retained_edge)
+        != net::arcAmbSet(l.entities.arcs, &net::ArcState::eq34_retained_edge))
+        return "eq34_retained_edges";
+    if (ef.phase_datum.eq34_epoch_declared != el.phase_datum.eq34_epoch_declared) return "eq34_epoch_declared";
+    if (ef.phase_datum.eq34_epoch_bridged != el.phase_datum.eq34_epoch_bridged) return "eq34_epoch_bridged";
+    if (f.counters.eq34_reref_total != l.counters.eq34_reref_total) return "eq34_reref_total";
+    if (f.counters.eq34_erase_total != l.counters.eq34_erase_total) return "eq34_erase_total";
+    if (f.counters.eq34_shift_total != l.counters.eq34_shift_total) return "eq34_shift_total";
+    if (f.counters.eq34_cpl_sprev_total != l.counters.eq34_cpl_sprev_total) return "eq34_cpl_sprev_total";
+    if (f.counters.eq34_gap_repin_total != l.counters.eq34_gap_repin_total) return "eq34_gap_repin_total";
+    if (f.counters.eq34_mismatch_epochs != l.counters.eq34_mismatch_epochs) return "eq34_mismatch_epochs";
+    const auto lca = net::arcMap(f.entities.arcs, &net::ArcState::amb);
+    const auto lcb = net::arcMap(l.entities.arcs, &net::ArcState::amb);
+    if (lca.size() != lcb.size()) return "local_carry size";
+    for (auto ia = lca.begin(), ib = lcb.begin(); ia != lca.end(); ++ia, ++ib)
         if (ia->first != ib->first || ia->second.value_abs != ib->second.value_abs) return "local_carry entry";
-    if (a.rpb_carry.size() != b.rpb_carry.size()) return "rpb_carry size";
-    for (auto ia = a.rpb_carry.begin(), ib = b.rpb_carry.begin(); ia != a.rpb_carry.end(); ++ia, ++ib)
-        if (ia->first != ib->first || ia->second.value_abs != ib->second.value_abs) return "rpb_carry entry";
+    if (cells(f, &net::StationSignalState::rpb) != cells(l, &net::StationSignalState::rpb))
+        return "rpb_carry entry";
     const auto& ca = f.counters;
     const auto& cb = l.counters;
     if (ca.eq34_slip_deseeded != cb.eq34_slip_deseeded) return "eq34_slip_deseeded";
@@ -3332,6 +3460,8 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         ASSERT_TRUE(cfg) << "lineage " << lineage;
         NetworkRunContext ctx_f(*cfg, cfg->getNetworkConfig());
         NetworkRunContext ctx_l(*cfg, cfg->getNetworkConfig());
+        ctx_f.entities.names.assign(w.names);   // the name keys of the station table (N4a)
+        ctx_l.entities.names.assign(w.names);
         ASSERT_EQ(ctx_l.knobs.eq34_longevity, kn.longevity);
         ASSERT_EQ(ctx_l.knobs.eq34_slip_aware, kn.slip_aware);
         ASSERT_EQ(ctx_l.knobs.eq34_extend_only, kn.extend_only);
@@ -3349,16 +3479,18 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         }
         for (int ep = 0; ep < 40; ++ep) {
             ChainEpoch e = nextChainEpoch(rng, w, hyg_shape);
-            e.hyg.age = e.hyg.active ? &e.age : nullptr;
+            e.age_arcs = net::arcAmbTableOf(e.age, &net::ArcState::anchor_arc_age);
+            e.hyg.age = e.hyg.active ? &e.age_arcs : nullptr;
             perturbChainCarry(rng, w, e, ctx_f, ctx_l);
             std::vector<NetStation> st_f(w.names.size()), st_l(w.names.size());
             for (std::size_t i = 0; i < w.names.size(); ++i) st_f[i].name = st_l[i].name = w.names[i];
             std::set<std::string> sh_f, sh_l;
             const long long demoted_f = ctx_f.counters.eq34_slip_demoted;
             const long long demoted_l = ctx_l.counters.eq34_slip_demoted;
-            frozen_eq34::networkElectChainDatum(ctx_f, *cfg, quiet, st_f, e.present, e.cnd, e.hyg, e.slipped, sh_f);
-            networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l);
-            ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, st_f, st_l, sh_f, sh_l), "")
+            EpochEvents ev_f, ev_l;   // fresh every epoch, as the epoch builds them
+            frozen_eq34::networkElectChainDatum(ctx_f, *cfg, quiet, st_f, e.present, e.cnd, e.hyg, e.slipped, sh_f, ev_f);
+            networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l, ev_l);
+            ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, ev_f, ev_l, st_f, st_l, sh_f, sh_l), "")
                 << "lineage " << lineage << " epoch " << ep;
             // The declared move (card AGT section 5): one count per slipped graph arc and epoch.
             const long long want_demoted = (kn.longevity && kn.slip_aware) ? slippedGraphArcs(e) : 0;
@@ -3366,7 +3498,7 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
             n_frozen_demoted += ctx_f.counters.eq34_slip_demoted - demoted_f;
             n_live_demoted += ctx_l.counters.eq34_slip_demoted - demoted_l;
             for (const NetStation& st : st_l) n_pins += static_cast<long long>(st.pinned_amb_targets.size());
-            for (const auto& [group, nb] : ctx_l.carry.eq34_epoch_bridged) n_bridged += nb;
+            for (const auto& [group, nb] : ev_l.phase_datum.eq34_epoch_bridged) n_bridged += nb;
             tallyChainComponents(e, n_multi, n_size_ties);
             ++n_epochs;
         }
@@ -3375,9 +3507,9 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
         std::cout << "[ NetworkArcGraphOracle ] chain lineage " << lineage << " (longevity " << kn.longevity
                   << ", slip-aware " << kn.slip_aware << ", extend-only " << kn.extend_only << ", shift "
                   << kn.carry_shift << ", round " << kn.pin_round << ", hygiene " << hyg_shape.active << "/"
-                  << hyg_shape.min_arc_ep << "): reref " << ctx_l.carry.eq34_reref_total << ", erased "
-                  << ctx_l.carry.eq34_erase_total << ", shifted " << ctx_l.carry.eq34_shift_total << ", gap re-pins "
-                  << ctx_l.carry.eq34_gap_repin_total << ", deseeded " << c.eq34_slip_deseeded << ", readmitted "
+                  << hyg_shape.min_arc_ep << "): reref " << ctx_l.counters.eq34_reref_total << ", erased "
+                  << ctx_l.counters.eq34_erase_total << ", shifted " << ctx_l.counters.eq34_shift_total << ", gap re-pins "
+                  << ctx_l.counters.eq34_gap_repin_total << ", deseeded " << c.eq34_slip_deseeded << ", readmitted "
                   << c.eq34_slip_readmitted << ", cold " << c.hyg.cold_fallback_pins << ", reattaches "
                   << c.hyg.reattaches << ", ramps " << c.hyg.fresh_pin_ramps << "\n";
     }

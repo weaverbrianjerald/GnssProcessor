@@ -71,56 +71,40 @@ struct Harness {
     using Pair = std::pair<std::string, std::string>;
 
     bool cb_time_linked{true};        ///< on in RF-0h lineages (code_datum_time_linked).
-    bool clock_signal_basis_hold{false};
     bool emit_clock_disc{false};
-    bool gf_datum{false};
     NetworkSatGfDatum sat_gf_datum{NetworkSatGfDatum::BroadcastTgd};
     std::map<std::string, double> sat_gf_target_m;
-    bool sat_if_level_datum{false};
     bool sat_gf_datum_time_linked{true};   ///< and sat_gf_datum_time_linked (RF-0e e2).
     bool sat_isc_state{false};
     std::set<std::string> isc_bridged;
     bool sat_gf_extra_band_free{false};
     std::set<std::string> extra_band_determined;
-    std::set<std::string> gf_family_constellations;
 
     std::map<std::string, std::map<std::string, double>> code_bias_prev;
     std::map<std::string, Pair>                          code_bias_ifpin_pair;
     std::set<std::string>                                code_bias_sat_seen;
     bool                                                 code_bias_datum_resumed{false};
 
-    std::map<std::string, Pair> held_clock_ref;
     std::map<std::string, Pair> this_epoch_if_pin_sel;
     std::map<std::string, Pair> this_epoch_if_pin_real;
-    std::set<std::string>       this_epoch_gf_pin_real;
-    std::map<std::string, Pair> this_epoch_family_gf_pin_real;
     std::map<std::string, Pair> this_epoch_cb_ifpin;
     std::set<std::string>       this_epoch_cb_reseed;
-    std::set<std::string>       basis_relatch_disc_pending;
 
     NetworkSbasis::CodeBiasDatumRows build(
         const NetworkEstimator& est, const std::vector<Pair>& registered_code_keys) {
         this_epoch_if_pin_sel.clear();
         this_epoch_if_pin_real.clear();
-        this_epoch_gf_pin_real.clear();
-        this_epoch_family_gf_pin_real.clear();
         this_epoch_cb_ifpin.clear();
         this_epoch_cb_reseed.clear();
         return NetworkSbasis::buildCodeBiasDatumRows(
-            est, registered_code_keys, gpsCodeFreq, cb_time_linked,
-            clock_signal_basis_hold, emit_clock_disc, gf_datum,
-            sat_gf_datum, sat_gf_target_m,
-            sat_if_level_datum, sat_gf_datum_time_linked,
+            est, registered_code_keys, gpsCodeFreq, cb_time_linked, emit_clock_disc,
+            sat_gf_datum, sat_gf_target_m, sat_gf_datum_time_linked,
             sat_isc_state, isc_bridged,
             sat_gf_extra_band_free, extra_band_determined,
-            gf_family_constellations, code_bias_prev, code_bias_ifpin_pair,
-            code_bias_sat_seen, code_bias_datum_resumed, held_clock_ref,
-            this_epoch_if_pin_sel, this_epoch_if_pin_real, this_epoch_gf_pin_real,
-            this_epoch_family_gf_pin_real, this_epoch_cb_ifpin, this_epoch_cb_reseed,
-            basis_relatch_disc_pending,
-            [](const char*, const char*, const std::string&, const std::string&,
-               std::optional<double>, std::optional<double>, const char*,
-               const std::string&) {});
+            code_bias_prev, code_bias_ifpin_pair,
+            code_bias_sat_seen, code_bias_datum_resumed,
+            this_epoch_if_pin_sel, this_epoch_if_pin_real,
+            this_epoch_cb_ifpin, this_epoch_cb_reseed);
     }
 };
 

@@ -182,7 +182,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.gap_horizon_s = k.pl_max_gap_s;
         if (!s.carried)
             s.route = ParamRoute::NotCarried;
-        else if (k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint)
+        else if (k.pl_local_block && k.carry_cpl_cond)
             s.route = ParamRoute::LocalBlock;
         else
             s.route = localRowRoute(k);
@@ -208,14 +208,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         set(NetworkParamKind::Zwd, std::move(s));
     }
     {
-        // The two slant-ionosphere carries are exclusive (the loader refuses both); the
-        // horizon declared here is the one carry in force, and both prunes read it.
-        if (k.iono_blk && k.iono_on)
-            throw std::logic_error("NetworkParamRegistry: carry_iono and carry_iono_in_block "
-                                   "are both armed; the loader refuses this configuration");
+        // The horizon declared here is the in-block carry's; its prune reads it.
         ParamSpec s;
         s.estimated = true;
-        s.carried = k.iono_blk || k.iono_on;
+        s.carried = k.iono_blk;
         if (k.iono_blk) {
             s.q = k.iono_blk_q_m2;
             s.q_units = "m^2/epoch";
@@ -225,21 +221,13 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
             s.route = ParamRoute::LocalBlock;
             s.source = "network.carry_iono_in_block_q_m2 (L1 slant delay); "
                        "gap network.carry_iono_in_block_max_gap_s";
-        } else if (k.iono_on) {
-            s.q = k.iono_q;
-            s.q_rule = ParamQRule::RandomWalk;
-            s.var_floor_m2 = k.iono_var_floor;
-            s.gap_horizon_s = k.iono_max_gap_s;
-            s.route = ParamRoute::DiagonalStationPrior;
-            s.source = "network.iono_carry_q; floor network.iono_carry_var_floor; "
-                       "gap network.iono_carry_max_gap_s";
         } else {
             s.q = 0.0;
             s.q_rule = ParamQRule::None;
             s.var_floor_m2 = 0.0;
             s.gap_horizon_s = kNaN;
             s.route = ParamRoute::NotCarried;
-            s.source = "network.carry_iono, network.carry_iono_in_block (both off)";
+            s.source = "network.carry_iono_in_block (off)";
         }
         s.birth_var_m2 = kNaN;
         set(NetworkParamKind::SlantIono, std::move(s));
@@ -320,7 +308,7 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
         s.birth_var_m2 = kNaN;
         s.gap_horizon_s = kNaN;
         s.route = ParamRoute::NotCarried;
-        s.source = "held at the roster coordinate (networkSplitStation_; network.station_marker_to_arp "
+        s.source = "held at the roster coordinate (networkSplitStation; network.station_marker_to_arp "
                    "reduces it to the antenna reference point)";
         set(NetworkParamKind::RxPosition, std::move(s));
     }
@@ -465,10 +453,16 @@ int networkParamModelRunEnd(const NetworkRunEndView& v) {
               "rx_code_bias {}",
               nb[SharedParamKind::Clock], nb[SharedParamKind::PhaseBias],
               nb[SharedParamKind::CodeBias], nb[SharedParamKind::VtecSh],
-              ctx.carry.local_carry.size(), ctx.carry.zwd_carry.size(),
-              ctx.carry.iono_carry.size(), ctx.carry.iono_blk_carry.size(),
-              ctx.carry.rx_clk_carry.size(), ctx.carry.rpb_carry.size(),
-              ctx.carry.rx_cb_carry.size());
+              net::present(ctx.entities.arcs, &net::ArcState::amb),
+              net::present(ctx.entities.stations, &net::StationState::zwd),
+              net::present(ctx.entities.los, &net::LosState::iono),
+              net::present(ctx.entities.los, &net::LosState::iono_blk),
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rx_clk),
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rpb),
+              net::present(ctx.entities.stations, &net::StationState::signals,
+                           &net::StationSignalState::rx_cb));
     return 0;
 }
 

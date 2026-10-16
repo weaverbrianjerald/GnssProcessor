@@ -12,7 +12,7 @@
 #include "filter/NetworkEstimator.hpp"      // NetworkEstimator::sharedFoldLog
 #include "filter/NetworkParamRegistry.hpp"  // NetworkParamKind, paramKindName
 #include "filter/NetworkRowClassify.hpp"    // rowClassOfKind (the unclassified rows)
-#include "filter/NetworkRunTypes.hpp"       // StationAssembly, CplRowRaw
+#include "filter/NetworkRunTypes.hpp"       // StationAssembly
 #include "filter/StateKeySchema.hpp"
 #include "logging/NetworkRunTraces.hpp"     // appendRunManifestRecord
 
@@ -27,6 +27,10 @@
 // The run-end reports at the end of this file (card NOM step TD1b):
 #include "filter/NetworkRunEnd.hpp"
 #include <memory>
+#include "app/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "app/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "app/NetworkSetupResult.hpp"
+#include "rinex/MultiRinexSync.hpp"
 
 namespace GnssProcessor {
 
@@ -65,16 +69,21 @@ constexpr ParamKindSet kBlkRxClk = kBlkIono | bit(PK::RxClock);
 constexpr ParamKindSet kBlkRxCb  = kBlkRxClk | bit(PK::RxCodeBias);
 constexpr ParamKindSet kBlkPc    = kBlkRxCb | bit(PK::PhaseColour);
 
-constexpr const char* kSplit   = "MeasurementModel::computeMeasurementUpdate, "
-                                 "Application::networkSplitStation_ (ApplicationNetworkAssembly.cpp)";
-constexpr const char* kPinFold = "Application::networkPassB_, phase-datum pin fold "
-                                 "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kGloFold = "Application::networkPassB_, GLONASS anchors "
-                                 "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kCarryWalk = "Application::networkPassB_, carry walk "
-                                   "(ApplicationNetworkAssembly.cpp)";
-constexpr const char* kLgmRows = "Application::networkPassB_, card LGM rows "
-                                 "(ApplicationNetworkAssembly.cpp)";
+constexpr const char* kSplit = "MeasurementModel::computeMeasurementUpdate, networkSplitStation (NetworkStationSplit.cpp), station step data_rows";
+constexpr const char* kPinFold = "networkPhaseDatumPinRows (NetworkPhaseDatum.cpp), station step phase_datum_pins";
+constexpr const char* kGloFold = "networkGlonassAnchorRows (NetworkStationAnchors.cpp), station step glonass_anchors";
+constexpr const char* kLgmRows = "networkPhaseColourRows (NetworkPhaseColourCarry.cpp), station step phase_colour_rows";
+// The builder column of the station kinds, from the step rows of card NOM3 step PB1b
+// (scripts/nom_pb1/rows_pb1b.py, decision 3): the function and file that create the
+// kind's rows, and the station step that calls it.
+constexpr const char* kSimZeroIono = "networkSimZeroIonoRows (NetworkStationAnchors.cpp), station step sim_zero_iono";
+constexpr const char* kShIonoRows = "networkAppendShIonoRows (NetworkIonoConstraintRows.cpp), station step iono_constraint";
+constexpr const char* kGimIonoRows = "networkAppendGimIonoRows (NetworkIonoConstraintRows.cpp), station step iono_constraint";
+constexpr const char* kSdEwlRows = "networkAppendSdEwlRows (NetworkSdEwlAr.cpp), station step sd_ewl";
+constexpr const char* kAmbCarryRow = "networkAmbCarryEmitRow (NetworkLevelingCarry.cpp), station step ambiguity";
+constexpr const char* kZwdCarryRow = "networkZwdCarryPrior (NetworkZwdCarry.cpp), station step zwd";
+constexpr const char* kRxCbRows = "networkRxCbPriors (NetworkRxCodeBiasCarry.cpp), station step rx_cb";
+constexpr const char* kOraclePinRows = "networkOraclePinPriors (NetworkOraclePin.cpp), station step oracle_pin";
 constexpr const char* kCplRows = "CouplingRowBuilder::buildCplRow, appendCouplingRows "
                                  "(NetworkCoupling.cpp)";
 constexpr const char* kBlock   = "CouplingRowBuilder::buildLocalBlock, appendCouplingRows "
@@ -139,33 +148,30 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::SimZeroIono, "sim_zero_iono", CC::StationRows, CG::BeforeGate, CS::StationLos,
      CU::Rows, bit(PK::SlantIono),
      "1/network.sim_zero_iono_sigma_m^2 (test-only; a fixture simulated without ionosphere)",
-     kGloFold, false, nullptr},
+     kSimZeroIono, false, nullptr},
     {CK::ShIonoTie, "sh_iono_tie", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono) | bit(PK::VtecSh),
      "unit (whitened); R from estimation.global_vtec_sh.representation_sigma_tecu, floored at "
      "estimation.ionosphere_weighting.floor_m, with the common mode "
      "estimation.ionosphere_weighting.common_mode_sigma_m, x "
-     "estimation.global_vtec_sh.row_decimation_epochs, / the station's iono deweight",
-     "Application::networkAppendShIonoRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     "estimation.global_vtec_sh.row_decimation_epochs",
+     kShIonoRows, false, nullptr},
     {CK::GimIono, "gim_iono", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::SlantIono),
      "unit (whitened); R from estimation.ionosphere_weighting.std_scale x the GIM sigma, floored "
      "at estimation.ionosphere_weighting.floor_m, with the common mode "
      "estimation.ionosphere_weighting.common_mode_sigma_m",
-     "Application::networkAppendGimIonoRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     kGimIonoRows, false, nullptr},
     {CK::SdEwl, "sd_ewl", CC::StationRows, CG::BeforeGate, CS::StationLos, CU::Rows,
      bit(PK::Ambiguity) | bit(PK::SatPhaseBias) | bit(PK::SatCodeBias),
      "unit (whitened); R = diag(arc variance) + the pivot arc's variance (network.sd_ewl)",
-     "Application::networkAppendSdEwlRows_ (ApplicationNetworkAssembly.cpp)", false, nullptr},
+     kSdEwlRows, false, nullptr},
     // --- Station coupling and block rows (the coupling region) ---
     {CK::CouplingScalar, "coupling_scalar", CC::StationRows, CG::BeforeGate, CS::StationLosSignal,
      CU::Rows, kBorder | bit(PK::Ambiguity) | bit(PK::Zwd) | bit(PK::PhaseColour),
      "1/sigma^2: carried variance + departed and time-update terms "
      "(network.carry_conditional_coupling)",
-     kCplRows, false, "includes card 1b's per-row fallback when the joint factor is not SPD"},
-    {CK::CouplingJoint, "coupling_joint", CC::StationRows, CG::BeforeGate, CS::StationLosSignal,
-     CU::Rows, kBorder | bit(PK::Ambiguity) | bit(PK::Zwd),
-     "unit (whitened jointly; network.carry_coupling_joint_whiten)", kCplRows, false, nullptr},
+     kCplRows, false, nullptr},
     {CK::BlockAmbiguityCarry, "block_ambiguity_carry", CC::StationRows, CG::BeforeGate,
      CS::StationLosSignal, CU::Rows, kBlkAmb, kBlockW, kBlock, false, nullptr},
     {CK::BlockZwdCarry, "block_zwd_carry", CC::StationRows, CG::BeforeGate, CS::Station, CU::Rows,
@@ -192,26 +198,22 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      CS::StationLosSignal, CU::Entries, bit(PK::Ambiguity),
      "1/(var + network.phase_leveling_q_amb * gap), floored by "
      "network.phase_leveling_var_floor_m2, x the carry VCE factor",
-     kCarryWalk, false, nullptr},
+     kAmbCarryRow, false, nullptr},
     {CK::PriorZwdCarry, "prior_zwd_carry", CC::StationPriorPostPd, CG::BeforeGate, CS::Station,
-     CU::Entries, bit(PK::Zwd), "1/(var + network.zwd_carry_q * gap)", kCarryWalk, false, nullptr},
-    {CK::PriorIonoCarry, "prior_iono_carry", CC::StationPriorPostPd, CG::BeforeGate,
-     CS::StationLos, CU::Entries, bit(PK::SlantIono),
-     "1/max(var + network.iono_carry_q * gap, network.iono_carry_var_floor)", kCarryWalk, false,
-     nullptr},
+     CU::Entries, bit(PK::Zwd), "1/(var + network.zwd_carry_q * gap)", kZwdCarryRow, false, nullptr},
     {CK::PriorRxCbCarry, "prior_rx_cb_carry", CC::StationPriorPostPd, CG::BeforeGate, CS::Station,
      CU::Entries, bit(PK::RxCodeBias),
      "1/(var + network.rx_cb_carry_q * gap); inject gate k = 10, guard 0.25 (literals)",
-     kCarryWalk, false, nullptr},
+     kRxCbRows, false, nullptr},
     {CK::PriorAmbiguityOraclePin, "prior_ambiguity_oracle_pin", CC::StationPriorPostPd,
      CG::BeforeGate, CS::StationLosSignal, CU::Entries, bit(PK::Ambiguity),
-     "1/sigma^2 of the oracle_pin event (simulation only)", kCarryWalk, false, nullptr},
+     "1/sigma^2 of the oracle_pin event (simulation only)", kOraclePinRows, false, nullptr},
     {CK::PriorRxCbDatum, "prior_rx_cb_datum", CC::StationPriorPostPd, CG::BeforeGate,
      CS::Station, CU::Entries, bit(PK::RxCodeBias), "1/network.rx_code_bias_datum_sigma_m^2",
-     kCarryWalk, false, nullptr},
+     kRxCbRows, false, nullptr},
     {CK::PriorRxCbDatumPrePd, "prior_rx_cb_datum_pre_pd", CC::StationPriorPrePd, CG::BeforeGate,
      CS::Station, CU::Entries, bit(PK::RxCodeBias),
-     "1/network.rx_code_bias_datum_sigma_m^2 (network.station_prior_before_pd)", kCarryWalk,
+     "1/network.rx_code_bias_datum_sigma_m^2 (network.station_prior_before_pd)", kRxCbRows,
      false, nullptr},
     // --- Shared rows ---
     {CK::CbIfPin, "cb_if_pin", CC::SharedRows, CG::BeforeGate, CS::Satellite, CU::Rows,
@@ -221,12 +223,6 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::CbExtraBandHeld, "cb_extra_band_held", CC::SharedRows, CG::BeforeGate,
      CS::SatelliteSignal, CU::Rows, bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
     {CK::CbExtraGf, "cb_extra_gf", CC::SharedRows, CG::BeforeGate, CS::SatelliteSignal, CU::Rows,
-     bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
-    {CK::CbGfPin, "cb_gf_pin", CC::SharedRows, CG::BeforeGate, CS::Satellite, CU::Rows,
-     bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
-    {CK::CbFamilyGf, "cb_family_gf", CC::SharedRows, CG::BeforeGate, CS::Satellite, CU::Rows,
-     bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
-    {CK::CbIfLevel, "cb_if_level", CC::SharedRows, CG::BeforeGate, CS::None, CU::Rows,
      bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
     {CK::CbSumToZero, "cb_sum_to_zero", CC::SharedRows, CG::BeforeGate, CS::None, CU::Rows,
      bit(PK::SatCodeBias), kCbW, kCbDatum, false, nullptr},
@@ -257,9 +253,6 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
     {CK::ShPrior, "sh_prior", CC::SharedPrior, CG::BeforeGate, CS::None, CU::Keys, bit(PK::VtecSh),
      "the carried SH information, aged by its process noise",
      "networkInjectShVtecPrior (NetworkBorderPrior.cpp)", false, nullptr},
-    {CK::PhaseHold, "phase_hold", CC::SharedPrior, CG::BeforeGate, CS::SatelliteSignal, CU::Keys,
-     bit(PK::SatPhaseBias), "1/var of the held phase bias (network.phase_datum_hold_sigma_m)",
-     "networkInjectPhaseHoldPrior (NetworkBorderPrior.cpp)", false, nullptr},
     {CK::PinBridge, "pin_bridge", CC::SharedPrior, CG::BeforeGate, CS::SatelliteSignal, CU::Keys,
      bit(PK::SatPhaseBias), "1/network.phase_datum_bridge_sigma_m^2",
      "networkInjectPinBridgePrior (NetworkBorderPrior.cpp)", false, nullptr},
@@ -304,16 +297,12 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "1/sigma^2, sigma = network.apriori_clock_anchor_sigma_m when set, else 3 m on the "
      "brdc_rts a priori or filter.initial_std.sat_clock; folded when sigma < 100 m, not on the "
      "broadcast-anchored clock datum",
-     "networkSolveGlue, a-priori clock anchor (NetworkSolveGlue.cpp)", false, nullptr},
+     "networkFoldColdClockAnchor (NetworkClockAnchor.cpp)", false, nullptr},
     // --- Pins, gauges, DD blocks ---
     {CK::ClockPivotPin, "clock_pivot_pin", CC::Pins, CG::InSolve, CS::Satellite, CU::Pins,
      bit(PK::SatClock), "exact (Dirichlet elimination at the reduced normals' scale)",
      "NetworkSbasis::buildSharedDatum (NetworkSbasis.cpp), NetworkEstimator::solve", false,
      "the last primary solve's pins, one fold per epoch"},
-    {CK::EnsemblePhaseGauge, "ensemble_phase_gauge", CC::Gauges, CG::BeforeGate,
-     CS::SatelliteSignal, CU::Gauges, bit(PK::SatPhaseBias) | bit(PK::Ambiguity),
-     "exact (post-reduce Woodbury fold; network.phase_datum_ensemble)",
-     "networkBuildEnsembleGauges (NetworkDdPriorBuild.cpp)", false, nullptr},
     {CK::DdPriorBlock, "dd_prior_block", CC::DdBlocks, CG::InSolve, CS::None, CU::Blocks,
      bit(PK::Ambiguity), "the carried DD covariance P^z (network.carry_invariant)",
      "networkBuildCarryDdPriors (NetworkDdPriorBuild.cpp)", false, nullptr},
@@ -448,7 +437,6 @@ bool contributionTouches(const ContributionSpec& spec, NetworkParamKind k) {
 bool contributionInCouplingRegion(ContributionKind k) {
     switch (k) {
         case CK::CouplingScalar:
-        case CK::CouplingJoint:
         case CK::BlockAmbiguityCarry:
         case CK::BlockZwdCarry:
         case CK::BlockIonoCarry:
@@ -530,23 +518,6 @@ void tagDataRows(std::vector<RowTag>& tags, Eigen::Index m,
         const CK kind = obsTypeOf(sigs[ru]) == ObsType::Phase ? CK::DataPhase : CK::DataCode;
         tags.push_back(makeRowTag(kind, sats[ru], sigs[ru]));
     }
-}
-
-std::vector<RowTag> rowTagsAfterJointRewhiten(const std::vector<RowTag>& tags, Eigen::Index nd,
-                                              const std::vector<CplRowRaw>& raw,
-                                              const std::vector<Eigen::Index>& kept,
-                                              Eigen::Index nk) {
-    std::vector<RowTag> out;
-    const std::size_t head = static_cast<std::size_t>(std::max<Eigen::Index>(nd, 0));
-    const std::size_t tail = static_cast<std::size_t>(std::max<Eigen::Index>(nk, 0));
-    out.reserve(head + tail);
-    for (std::size_t r = 0; r < head && r < tags.size(); ++r) out.push_back(tags[r]);
-    for (std::size_t k = 0; k < tail && k < kept.size(); ++k) {
-        const Eigen::Index i = kept[k];
-        if (i >= 0 && static_cast<std::size_t>(i) < raw.size())
-            out.push_back(raw[static_cast<std::size_t>(i)].tag);
-    }
-    return out;
 }
 
 long long untaggedRows(const StationAssembly& R) {
@@ -642,8 +613,6 @@ void ContributionTally::merge(const ContributionTally& o) {
     replay_builds += o.replay_builds;
     replay_folds += o.replay_folds;
     replay_dim += o.replay_dim;
-    replay_realigned += o.replay_realigned;
-    replay_misaligned += o.replay_misaligned;
     gim_calls += o.gim_calls;
     gim_no_gim += o.gim_no_gim;
     gim_weighting_off += o.gim_weighting_off;
@@ -710,16 +679,22 @@ void networkContributionsStationDrain(NetworkContributionLedger& led,
     led.mismatches_all     += t.counter_mismatches;
     led.unclassified_all   += t.unclassified_rows;
     led.checked_all        += t.station_epochs_checked;
-    led.replay_realigned  = 0;
-    led.replay_misaligned = 0;
-    led.replay_row_tags.clear();
     led.pending = std::move(t);
 }
 
-void networkContributionsEpochTail(NetworkRunContext& ctx, const NetworkEstimator& est,
-                                   const std::shared_ptr<spdlog::logger>& log,
-                                   NetworkRunTraces& traces, const NetworkConfig& nc,
-                                   bool emitted) {
+void networkContributionsEpochTail(NetworkRun& nrun, const NetworkEpoch& ep) {
+    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
+    //      through the output parameters and are marked `// written`. ----
+    // The frozen body declares or uses `run`, so this definition names the parameter nrun
+    // (specification 3.2).
+    NetworkRunContext& ctx = nrun.ctx;
+    const NetworkEstimator& est = nrun.engines.est;
+    const std::shared_ptr<spdlog::logger>& log = nrun.log;
+    NetworkRunTraces& traces = nrun.traces;
+    const NetworkConfig& nc = nrun.nc;
+    bool emitted = ep.emitted;
+    // ---- End of the bindings ----
     NetworkContributionLedger& L = ctx.contributions;
     ContributionTally t = std::move(L.pending);
     L.pending = ContributionTally{};
@@ -736,8 +711,6 @@ void networkContributionsEpochTail(NetworkRunContext& ctx, const NetworkEstimato
     t.replay_builds     = f.replay_builds;
     t.replay_folds      = f.replay_folds;
     t.replay_dim        = f.replay_dim;
-    t.replay_realigned  = L.replay_realigned;
-    t.replay_misaligned = L.replay_misaligned;
     t.epochs = 1;
     L.whole_run.merge(t);
     L.last_epoch = std::move(t);
@@ -839,12 +812,9 @@ std::vector<std::string> contributionsTable(const ContributionTally& epoch,
         epoch.coalesced_entries, epoch_scope, run.coalesced_entries));
     out.push_back(fmt::format(
         "within-epoch replay (counted apart from the kinds): {} build(s), {} shared re-fold(s) "
-        "of dimension {}, {} station block(s) re-aligned after a joint re-whiten, {} "
-        "misaligned ({}); over the run {} build(s), {} re-fold(s) of dimension {}, {} "
-        "re-aligned, {} misaligned",
-        epoch.replay_builds, epoch.replay_folds, epoch.replay_dim, epoch.replay_realigned,
-        epoch.replay_misaligned, epoch_scope, run.replay_builds, run.replay_folds,
-        run.replay_dim, run.replay_realigned, run.replay_misaligned));
+        "of dimension {} ({}); over the run {} build(s), {} re-fold(s) of dimension {}",
+        epoch.replay_builds, epoch.replay_folds, epoch.replay_dim, epoch_scope,
+        run.replay_builds, run.replay_folds, run.replay_dim));
     return out;
 }
 
@@ -891,8 +861,8 @@ std::string contributionsJson(const ContributionTally& epoch, const Contribution
         "\"unclassified_rows\":[{},{}],"
         "\"station_blocks_checked\":[{},{}],\"folds_without_kind\":[{},{}],"
         "\"coalesced_entries\":[{},{}]}},"
-        "\"replay\":{{\"builds\":[{},{}],\"folds\":[{},{}],\"dim\":[{},{}],\"realigned\":[{},{}],"
-        "\"misaligned\":[{},{}]}},\"gim\":{{\"calls\":[{},{}],\"no_gim\":[{},{}],"
+        "\"replay\":{{\"builds\":[{},{}],\"folds\":[{},{}],\"dim\":[{},{}]}},"
+        "\"gim\":{{\"calls\":[{},{}],\"no_gim\":[{},{}],"
         "\"weighting_off\":[{},{}]}}}}",
         epoch.untagged_rows, run.untagged_rows, epoch.unset_tags, run.unset_tags,
         epoch.misplaced_rows, run.misplaced_rows, epoch.counter_mismatches,
@@ -900,8 +870,7 @@ std::string contributionsJson(const ContributionTally& epoch, const Contribution
         epoch.station_epochs_checked, run.station_epochs_checked,
         epoch.folds_without_kind, run.folds_without_kind, epoch.coalesced_entries,
         run.coalesced_entries, epoch.replay_builds, run.replay_builds, epoch.replay_folds,
-        run.replay_folds, epoch.replay_dim, run.replay_dim, epoch.replay_realigned,
-        run.replay_realigned, epoch.replay_misaligned, run.replay_misaligned, epoch.gim_calls,
+        run.replay_folds, epoch.replay_dim, run.replay_dim, epoch.gim_calls,
         run.gim_calls, epoch.gim_no_gim, run.gim_no_gim, epoch.gim_weighting_off,
         run.gim_weighting_off);
     return j;

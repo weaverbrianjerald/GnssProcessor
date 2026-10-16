@@ -130,6 +130,7 @@ DIFFERENT under --whole, while a swap of two lines inside one canonical run and 
 backlog lag read IDENTICAL.
 """
 import argparse
+import collections
 import glob
 import json
 import os
@@ -139,6 +140,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE).replace(os.sep, '/')
 RUNS = ROOT + '/runs'
+# A second place to look for a run named without a path: rapid_arm.py's RAPID_RUNS_ROOT.
+RUNS_ALT = (os.environ.get('RAPID_RUNS_ROOT') or '').replace(os.sep, '/').rstrip('/')
 sys.path.insert(0, HERE)
 import prm_ab  # noqa: E402  (the products and traces comparison)
 
@@ -159,6 +162,20 @@ LINE_DROPS = [re.compile(p) for p in (
     r'Network \(FC-1\)   tick wall',
     r'Network \(FC-1\): slowest tick',
 )]
+# Opt-in (NOM_GATE_DROP_POSTURE=1): the loader's POSTURE lines print the ledger JSON read from the
+# main tree at run time, so a reference run made before a ledger commit differs there without any
+# code difference (card NOM3, 2026-10-15).
+if os.environ.get('NOM_GATE_DROP_POSTURE') == '1':
+    LINE_DROPS.append(re.compile(r'\[gnss_config\] \[\w+\] .*(POSTURE|\^ CHAIN:)'))
+# Opt-in (NOM_GATE_DROP_RE=<regex>): a step's declared new log lines (trace class), dropped from both
+# sides so every other line is still compared.
+if os.environ.get('NOM_GATE_DROP_RE'):
+    LINE_DROPS.append(re.compile(os.environ['NOM_GATE_DROP_RE']))
+# Opt-in (NOM_GATE_LOG_MULTISET=1, card NOM2 gate G-TD2): stdout.txt and main_log are compared
+# as multisets of masked lines (time prefix masked) instead of line by line, for a step that
+# moves run-end lines between reports.  Every other comparison (configs, CSVs, products, the
+# manifest record by record, rt_engine.log, the exit code) is unchanged and stays in order.
+LOG_MULTISET = os.environ.get('NOM_GATE_LOG_MULTISET') == '1'
 _NUM = r'-?\d+(?:\.\d+)?'
 # Value masks that apply only on the lines of one family: (family, [(value, replacement)]).
 FAMILY_MASKS = [
@@ -201,7 +218,8 @@ MANIFEST_MASKS = [
 
 
 def resolve(run):
-    for cand in (run, f'{RUNS}/{run}', f'{RUNS}/_rap_{run}'):
+    roots = [RUNS] + ([RUNS_ALT] if RUNS_ALT else [])
+    for cand in [run] + [c for r in roots for c in (f'{r}/{run}', f'{r}/_rap_{run}')]:
         if os.path.isdir(cand):
             return cand.replace(os.sep, '/')
     sys.exit(f'no run directory for {run}')
@@ -281,7 +299,23 @@ def first_differences(a, b):
     return diffs
 
 
-def report(name, a, b, show):
+def report_multiset(name, a, b, show):
+    """G-TD2: the same lines in any order (time prefix masked); the excess of each side is listed."""
+    ca = collections.Counter(PREFIX_TIME.sub('[<TIME>]', l, count=1) for l in a)
+    cb = collections.Counter(PREFIX_TIME.sub('[<TIME>]', l, count=1) for l in b)
+    only_a, only_b = sorted((ca - cb).elements()), sorted((cb - ca).elements())
+    n = len(only_a) + len(only_b)
+    status = 'IDENTICAL (multiset)' if not n else f'DIFFER ({n} line(s), multiset)'
+    print(f'  {name:44s} {len(a):6d} / {len(b):6d} lines  {status}')
+    for side, rows in (('A', only_a), ('B', only_b)):
+        for l in rows[:show]:
+            print(f'     only in {side}: {l[:220]}')
+    return not n
+
+
+def report(name, a, b, show, multiset=False):
+    if multiset:
+        return report_multiset(name, a, b, show)
     diffs = first_differences(a, b)
     status = 'IDENTICAL' if not diffs else f'DIFFER ({len(diffs)} line(s))'
     print(f'  {name:44s} {len(a):6d} / {len(b):6d} lines  {status}')
@@ -341,13 +375,13 @@ def compare_main_log(da, db, na, nb, a, whole):
     name = 'main_log whole (rotation set)' if whole else 'main_log block (rotation set)'
     if not la or not lb:
         print('  main_log: no', 'lines' if whole else 'block start', 'in', 'A' if not la else 'B')
-        return report(name, la, lb, a.show) and False
+        return report(name, la, lb, a.show, LOG_MULTISET) and False
     if whole and (main_log_rotation_full(da) or main_log_rotation_full(db)):
         n = min(len(la), len(lb))
         print(f'  main_log: main_log.{MAIN_LOG_ROTATED_KEEP}.log present, the head may have been '
               f'rotated out; the common tail of {n} lines is compared (stdout.txt is whole)')
         la, lb, name = la[-n:], lb[-n:], 'main_log common tail (rotation set)'
-    return report(name, la, lb, a.show)
+    return report(name, la, lb, a.show, LOG_MULTISET)
 
 
 def main():
@@ -416,7 +450,7 @@ def main():
         if not sa or not sb:
             print('  stdout.txt: no lines in', 'A' if not sa else 'B')
             ok = False
-        ok = report('stdout.txt whole', sa, sb, a.show) and ok
+        ok = report('stdout.txt whole', sa, sb, a.show, LOG_MULTISET) and ok
     else:
         print("(3) run-end log block from '" + START + "'")
         sa = mask_lines(from_start(read_lines(f'{da}/stdout.txt')), na, a.mask_time)
@@ -424,7 +458,7 @@ def main():
         if not sa or not sb:
             print('  stdout.txt: no block start in', 'A' if not sa else 'B')
             ok = False
-        ok = report('stdout.txt block', sa, sb, a.show) and ok
+        ok = report('stdout.txt block', sa, sb, a.show, LOG_MULTISET) and ok
     ok = compare_main_log(da, db, na, nb, a, a.whole) and ok
 
     print('(4) rt_engine.log and the exit code')

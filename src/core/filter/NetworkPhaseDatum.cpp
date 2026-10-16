@@ -1,7 +1,7 @@
 /**
  * @file NetworkPhaseDatum.cpp
  * @brief Prioritized phase-bias datum: the near-null phase-bias heal, the candidate
- *        census, the ensemble datum, the anchor election, anchor-slip handover
+ *        census, the anchor election, anchor-slip handover
  *        staging and the re-reference carry erase (see the header).
  *
  * The bodies were moved unchanged out of ApplicationNetwork.cpp (INC-8, INC-8b);
@@ -28,6 +28,20 @@
 #include "filter/NetworkRunEnd.hpp"
 #include <memory>
 #include <spdlog/spdlog.h>
+#include "filter/NetworkStationBuild.hpp"   // StationBuild, StationCarryFrame (card NOM3 step PB1b)
+#include "app/NetworkEpoch.hpp"
+#include "app/NetworkSetupResult.hpp"
+#include "filter/NetworkEstimator.hpp"
+#include "filter/NetworkRunTypes.hpp"
+#include "filter/NetworkContributions.hpp"
+#include "filter/NetworkCoupling.hpp"
+#include "filter/NetworkParamInventory.hpp"
+#include "rinex/MultiRinexSync.hpp"
+#include <Eigen/Dense>
+#include <limits>
+#include <set>
+#include <string>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -237,30 +251,6 @@ void networkBuildPhaseDatumCandidates(
     cnd.gated_keys  = std::move(gated_amb);
 }
 
-void networkElectEnsembleDatum(
-        std::vector<NetStation>& stations,
-        const PhaseDatumCandidates& cnd,
-        std::map<std::string, std::string>& this_epoch_anchor,
-        std::set<std::string>& shared_phase_keys) {
-    const auto& union_keys = cnd.union_keys;
-
-    // Anchor-free ensemble datum (Fix A): the shared phase-bias set is the
-    // coverage-gated union, with no anchor election and no pins.  The gauge is
-    // realized by the kernel sum-to-zero fold, built from every tracking
-    // station's ambiguity column after the reduce, so no station gets a
-    // pinned_amb_targets entry (do_fold stays false, isGaugePinned is false,
-    // every station carries all its arcs) and there is no anchor to hand over.
-    // The candidate ranking and the anchor election do not run on this path.
-    for (auto& st : stations) {
-        st.pinned_amb_targets.clear();
-        st.pinned_rpb_keys.clear();
-        st.pinned_amb_sigma_scale.clear();   // eq34 hygiene INC-3 (never set here)
-    }
-    this_epoch_anchor.clear();
-    shared_phase_keys.clear();
-    for (const auto& [amb, pbkey] : union_keys) shared_phase_keys.insert(pbkey);
-}
-
 void networkElectPhaseAnchors(
         bool sticky,
         std::vector<NetStation>& stations,
@@ -324,13 +314,12 @@ void networkElectPhaseAnchors(
         if (held->min_age_ep > 0 && held->carry) {
             const auto p = StateKeys::parseAmbiguityKey(amb);
             if (!p) return false;
-            const auto it = held->carry->find(
-                std::make_tuple(static_cast<int>(i), p->satellite, p->signal));
+            const auto it = net::getArc(*held->carry, std::make_tuple(static_cast<int>(i), p->satellite, p->signal), &net::ArcState::amb);
             // An arc with no carry is newborn by definition and is refused.  An
             // entry with a non-positive birth stamp reads as mature (the
             // restored-arc convention).
-            if (it == held->carry->end()
-                || localCarryYoung(it->second, held->now_ep, held->min_age_ep)) {
+            if (it == nullptr
+                || localCarryYoung((*it), held->now_ep, held->min_age_ep)) {
                 ++held->n_refused_young;
                 return false;
             }
@@ -402,22 +391,20 @@ void networkElectPhaseAnchors(
     };
     // Cold anchor fallback: whether arc (i, amb) is mature.  Age is
     // n_loop_epochs − birth_ep of the station's own phase-leveling carry, tested
-    // through localCarryYoung, the definition shared with the F3 block admission
+    // through localCarryYoung, the definition shared with the held S-basis age
     // gate.  An unknown age (no carry entry, an unstamped entry, or a
     // warm-resume-restored entry carrying LocalCarry::kBirthEpRestored,
-    // SPEC_event_harness §15.4) counts as mature, the restored-entry convention
-    // that the F3 block gate and the young-arc inflation also use.  That leaves
-    // the decision to the variance ceiling instead of refusing a candidate the
-    // ledger reports as converged.
+    // SPEC_event_harness §15.4) counts as mature, the restored-entry convention.
+    // That leaves the decision to the variance ceiling instead of refusing a
+    // candidate the ledger reports as converged.
     auto candMature = [&](size_t i, const std::string& amb) {
         if (!cand_usable || cand_usable->min_age_ep <= 0 || !cand_usable->local_carry)
             return true;
         const auto parts = StateKeys::parseAmbiguityKey(amb);
         if (!parts) return true;
-        const auto it = cand_usable->local_carry->find(
-                {static_cast<int>(i), parts->satellite, parts->signal});
-        if (it == cand_usable->local_carry->end()) return true;   // never carried ⇒ unknown
-        return !localCarryYoung(it->second, cand_usable->now_ep,
+        const auto it = net::getArc(*cand_usable->local_carry, {static_cast<int>(i), parts->satellite, parts->signal}, &net::ArcState::amb);
+        if (it == nullptr) return true;   // never carried ⇒ unknown
+        return !localCarryYoung((*it), cand_usable->now_ep,
                                 cand_usable->min_age_ep);
     };
 
@@ -1219,35 +1206,41 @@ int networkStageAnchorSlipHandovers(
 
 int networkApplyPhaseAnchorCarryReref(
         const std::set<std::pair<std::string, std::string>>& reref,
-        std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+        net::ArcTable& arcs,
         std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
             erased_out) {
-    if (reref.empty() || local_carry.empty()) return 0;
+    if (reref.empty()) return 0;
     // Same erase as eq34 D4 (NetworkChainDatum.cpp): drop the family's per-station
     // ambiguity carries at every station.  The frame stepped, so the carried floats
     // are stale; they refloat next epoch.
     int n_erased = 0;
-    for (auto it = local_carry.begin(); it != local_carry.end();) {
-        const auto& key = it->first;   // (station idx, sat, signal)
-        if (reref.count({std::get<1>(key), std::get<2>(key)})) {
-            // Capture the entry before the erase (RF-1 §7.4, D3).  This whole-family,
-            // every-station refloat is what design §3.6 replaces with a declared,
-            // exact S-transformation (step 5); the captured inventory is the
-            // before/after that arm is graded on.
-            if (erased_out) erased_out->emplace_back(key, it->second);
-            it = local_carry.erase(it);
-            ++n_erased;   // returned; the caller folds it into the retirement census
-        } else {
-            ++it;
-        }
-    }
+    net::eraseIf(arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry& lc) {
+        if (!reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) return false;
+        // Capture the entry before the erase (RF-1 §7.4, D3).  This whole-family,
+        // every-station refloat is what design §3.6 replaces with a declared,
+        // exact S-transformation (step 5); the captured inventory is the
+        // before/after that arm is graded on.
+        if (erased_out) erased_out->emplace_back(net::arcTuple(id), lc);
+        ++n_erased;   // returned; the caller folds it into the retirement census
+        return true;
+    });
     return n_erased;
 }
 
 // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
 
-// Run-end report: the held S-basis (RF-2).
-int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
+/**
+ * @brief Run-end section: the held S-basis (RF-2).
+ *
+ * The held S-basis (RF-2): elections against holds, declared handovers, the retired
+ * erase and the held property's drift.
+ *
+ * Gate: returns 0 at once unless `ctx.knobs.pd_held_basis`.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
@@ -1260,7 +1253,7 @@ int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
     if (!ctx.knobs.pd_held_basis) return 0;
     const auto& C = ctx.counters;
     const bool clean = C.n_pb_basis_value_drift == 0
-                       && ctx.carry.pa_reref_erase_total == 0;
+                       && ctx.counters.pa_reref_erase_total == 0;
     log->log(clean ? spdlog::level::info : spdlog::level::err,
              "Network (RF-2 held S-basis): {} family-epoch(s) re-pinned at their "
              "FROZEN basis value; {} new basis value(s) elected, {} of them COLD (the "
@@ -1276,7 +1269,7 @@ int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
              C.n_pb_basis_refuse_young, ctx.knobs.pa_min_age_ep,
              C.n_pb_basis_refuse_flagged, ctx.knobs.pa_flag_quiet_ep,
              C.n_pb_basis_rank_changed,
-             ctx.carry.pa_reref_erase_total, C.n_pb_basis_value_drift);
+             ctx.counters.pa_reref_erase_total, C.n_pb_basis_value_drift);
     // Why the datum moved (RF-2b); the line above says only how often.  The three
     // deposition causes partition the incumbent losses; `refuse_unusable` and
     // `elev_fallback` are the composed rank's own evidence: a large fallback count
@@ -1295,8 +1288,18 @@ int networkHeldSbasisRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-// Run-end report: the prioritized-datum drop-and-heal.
-int networkDropHealRunEnd(const NetworkRunEndView& v) {
+/**
+ * @brief Run-end section: the prioritized-datum drop-and-heal.
+ *
+ * The prioritized-datum drop-and-heal: the recoveries and the attempts (card PA).
+ *
+ * Gate: each section under its own condition, as in the teardown: `n_healed_epochs > 0`;
+ * `ctx.counters.n_heal_attempt_epochs > 0`.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkDropHealRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const auto& n_healed_epochs = v.ctx.counters.n_healed_epochs;
@@ -1332,8 +1335,18 @@ int networkDropHealRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-// Run-end report: the anchored-union coverage gate and its drop edge.
-int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
+/**
+ * @brief Run-end section: the anchored-union coverage gate and its drop edge.
+ *
+ * The anchored-union coverage gate and its drop edge (card EV7).
+ *
+ * Gate: each section under its own condition, as in the teardown: `n_gated_epochs > 0`;
+ * `ctx.counters.n_pd_gate_drop_edges > 0`.
+ *
+ * @param v The run at its end (filter/NetworkRunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
@@ -1370,6 +1383,254 @@ int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+// Run-end report of this subsystem: its sections in print order (card NOM2 step TD2;
+// declared in filter/NetworkPhaseDatum.hpp).
+int networkPhaseDatumRunEnd(const NetworkRunEndView& v) {
+    return networkRunEndSections(v, {
+        networkHeldSbasisRunEnd,
+        networkDropHealRunEnd,
+        networkPhaseDatumGatesRunEnd
+    });
+}
+
 // ---- End of the run-end reports ----
+
+// ---- PASS B station steps (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py) ----
+
+StationStep networkPhaseDatumPinRows(StationBuild& build) {
+    // ---- From the station build (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py,
+    //      each line checked by scripts/nom_pb1b_verify.py). ----
+    const NetworkRunContext& ctx = build.ctx;
+    double pl_now_s = build.clock.pl_now_s;
+    const std::set<std::string>& shared_phase_keys = build.pass_a.shared_phase_keys;
+    const int i = build.i;
+    NetStation& st = build.st;
+    StationAssembly& R = build.R;
+    std::map<int, int>& h2local = R.h2local;
+    // The alias lines of networkPassB_ this function reads, verbatim (card NOM3 step PB1b).
+    const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
+    const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
+    const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
+    const double eq34_rpb_prior_w = ctx.knobs.eq34_rpb_prior_w;
+    const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
+    const net::StationTable& sta_rows = ctx.entities.stations;   // rpb: read-only in the parallel build
+    // ---- End of the bindings ----
+
+    // The anchor station(s) fold tight-prior pins on the ambiguities they
+    // gauge (the local half of the S-basis): each pinned ambiguity's absolute
+    // value is driven to its integer target, so the estimable phase bias
+    // absorbs this receiver's ambiguity lump (Odijk Eq. 4).  Built into the
+    // anchor's own block, no shared write.  Legacy: the single pivot pins the
+    // whole shared_phase_keys set (target 0).  Prioritized: each station pins
+    // exactly its elected pinned_amb_targets (target 0); the load-bearing
+    // invariant is that the pin lives in the block whose local ambiguity
+    // column it constrains.  eq34 (Card 3): the spanning-tree edge pins
+    // (target 0 or the pin-to-round integer) plus the datum receiver's single
+    // RPB pin (δ_{r1,σ}=0), both in this station's own block.
+    const bool do_fold = phase_datum_prioritized
+        ? (!st.pinned_amb_targets.empty() || !st.pinned_rpb_keys.empty())
+        : st.is_pivot;
+    if (do_fold) {
+        const Eigen::VectorXd piv_x = st.sm->getStateVector();
+        std::vector<int> pin_col;       // A_r column of each pin
+        std::vector<double> pin_y;       // innovation = target - current absolute value
+        std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
+        std::vector<RowTag> pin_tag;     // one contribution tag per pin row (card NOM N2a)
+        // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): each fold
+        // lambda reports its outcome, so the eq34 call sites below can tally
+        // the otherwise silent early returns per (constellation,signal), the
+        // count standing invariant #4 requires.  0 = folded, 1 = state index
+        // absent, 2 = no live phase row (h2local miss).  The legacy path
+        // ignores the return value.
+        enum : int { kPinFolded = 0, kPinMissState = 1, kPinMissRow = 2 };
+        auto foldAmb = [&](const std::string& amb_key, double target) -> int {
+            const int amb_idx = st.sm->getAmbiguityIndex(amb_key);
+            if (amb_idx < 0) return kPinMissState;   // no usable phase row for it this epoch
+            const auto hit = h2local.find(amb_idx);
+            if (hit == h2local.end()) return kPinMissRow;  // column dropped (all-zero H)
+            // Seed-round fold-deferred target (docs/SPEC_eq34_seed_round.md
+            // §3.3): the election could not read a state that did not exist
+            // yet; by now the pre-pass has seeded it, so it is rounded here
+            // and the realized target is reported back for next epoch's
+            // pinmove baseline (§3.4).  |y| ≤ λ/2 by construction of
+            // std::round.  The map is empty unless the knob is armed, so
+            // there is no cost otherwise.
+            if (!st.pinned_amb_seed_lambda.empty()) {
+                const auto sl = st.pinned_amb_seed_lambda.find(amb_key);
+                if (sl != st.pinned_amb_seed_lambda.end()) {
+                    const double lam = sl->second;
+                    target = lam * std::round(piv_x(amb_idx) / lam);
+                    R.pin_seed_targets.emplace_back(
+                        amb_key, target, target - piv_x(amb_idx));
+                }
+            }
+            pin_col.push_back(hit->second);
+            if (const auto ap = StateKeys::parseAmbiguityKey(amb_key))
+                pin_tag.push_back(makeRowTag(ContributionKind::AmbiguityPin,
+                                             ap->satellite, ap->signal));
+            else
+                pin_tag.push_back(RowTag{ContributionKind::AmbiguityPin, {}, {}});
+            // Keep the exact legacy expression (−piv_x) when pinning to 0:
+            // "0.0 − x" flips the sign of a zero x, which would perturb the
+            // off-path golden hash.  A nonzero eq34 re-pin target uses the
+            // general form.
+            pin_y.push_back(target == 0.0 ? -piv_x(amb_idx)
+                                          : target - piv_x(amb_idx));
+            // eq34 reattach hygiene (INC-3): a pin the election could not
+            // avoid placing on a fresh host is folded with an inflated sigma
+            // (weight /= scale²) that decays to the hard pin as the arc
+            // matures.  The gauge is still fixed, but the data can pull the
+            // code-seeded ambiguity instead of the whole component
+            // re-levelling onto it.  The map is empty unless the ramp is
+            // armed, so the lookup misses and the weight is the exact legacy
+            // 1e10 (byte-identical).
+            double w = 1e10;         // hard pin (exact gauge)
+            if (!st.pinned_amb_sigma_scale.empty()) {
+                const auto sc = st.pinned_amb_sigma_scale.find(amb_key);
+                if (sc != st.pinned_amb_sigma_scale.end() && sc->second > 1.0)
+                    w /= (sc->second * sc->second);
+            }
+            pin_w.push_back(w);
+            return kPinFolded;
+        };
+        // eq34: r1's RPB pin, δ_{r1,σ}=0 on the RPB column in this
+        // station's own block (the receiver half of the chain gauge).
+        auto foldRpb = [&](const std::string& rpb_key) -> int {
+            const int rpb_idx = st.sm->getReceiverPhaseBiasIndex(rpb_key);
+            if (rpb_idx < 0) return kPinMissState;
+            const auto hit = h2local.find(rpb_idx);
+            if (hit == h2local.end()) return kPinMissRow;  // no phase row on σ this epoch
+            pin_col.push_back(hit->second);
+            pin_y.push_back(-piv_x(rpb_idx));
+            pin_w.push_back(1e10);   // hard pin (exact gauge)
+            pin_tag.push_back(rxPhaseBiasTag(ContributionKind::Eq34RpbPin, rpb_key));
+            return kPinFolded;
+        };
+        if (phase_datum_prioritized) {
+            // Audit group key = the election's dr_key, "<cons>|<signal>".
+            // The RPB key carries the system name ("GPS_RPB_L2W"), so it is
+            // read back to the constellation the election grouped by.
+            for (const auto& [amb_key, target] : st.pinned_amb_targets) {
+                const int out = foldAmb(amb_key, target);
+                if (phase_datum_eq34)
+                    if (const auto p = StateKeys::parseAmbiguityKey(amb_key))
+                        ++R.pin_audit[constellationKey(systemOfSat(p->satellite))
+                                      + "|" + p->signal]
+                                     [static_cast<std::size_t>(out)];
+            }
+            for (const auto& rpb_key : st.pinned_rpb_keys) {
+                const int out = foldRpb(rpb_key);
+                if (phase_datum_eq34)
+                    if (const auto p =
+                            StateKeys::parseReceiverPhaseBiasKey(rpb_key))
+                        ++R.pin_audit[constellationKey(systemFromName(p->system))
+                                      + "|" + p->signal]
+                                     [static_cast<std::size_t>(out)];
+            }
+        } else {
+            for (const auto& pk : shared_phase_keys) {
+                const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
+                if (!parts) continue;
+                foldAmb(StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                        0.0);
+            }
+        }
+        const int n_hard = static_cast<int>(pin_col.size());
+        // eq34: loose zero-mean prior (w = 1/σ², default σ = 1 m; 0
+        // disables) on every unpinned RPB column with a live phase row.
+        // The tree pins fix the gauge exactly, but the estimable
+        // RPB↔ambiguity↔iono separation inside a block can be nearly
+        // rank-deficient (few sats / one signal): without this floor the
+        // W5 gate withholds the epoch, or, under station_pd_pin_aware, the
+        // near-singular block stays in and degrades the shared solve (in a
+        // field A/B the datum-invariant DD step went from 0.085 to 36–118
+        // cyc/ep).  This is not a second datum: the gauge is already fixed,
+        // and the pull toward 0 is ≪ one phase row (the GLONASS local-anchor
+        // precedent).  The datum receiver's pinned RPB is skipped (already
+        // hard-pinned to 0).
+        if (phase_datum_eq34
+            && (eq34_rpb_prior_w > 0.0 || eq34_rpb_q > 0.0)) {
+            for (const auto& [rpb_key, rpb_idx] :
+                     st.sm->getReceiverPhaseBiasStates()) {
+                if (st.pinned_rpb_keys.count(rpb_key)) continue;
+                const auto hit = h2local.find(static_cast<int>(rpb_idx));
+                if (hit == h2local.end()) continue;  // no phase row on σ
+                const double x0 =
+                    piv_x(static_cast<Eigen::Index>(rpb_idx));
+                if (eq34_rpb_prior_w > 0.0) {   // rank floor (zero-mean)
+                    pin_col.push_back(hit->second);
+                    pin_y.push_back(-x0);
+                    pin_w.push_back(eq34_rpb_prior_w);
+                    pin_tag.push_back(
+                        rxPhaseBiasTag(ContributionKind::Eq34RpbRankFloor, rpb_key));
+                }
+                if (eq34_rpb_q > 0.0) {
+                    // Local δ_{r,σ} time-linking (D6 v2, local form):
+                    // prior toward the carried previous estimate with
+                    // variance var + q·gap, the continuity the fresh
+                    // per-epoch re-estimate lacks.  The carry map is
+                    // read-only here (parallel build); stash happens
+                    // post-solve, erase at the election dirty walk.
+                    const LocalCarry* rc = net::get(
+                        sta_rows, StationId{static_cast<int>(i)}, &net::StationState::signals,
+                        rpb_key, &net::StationSignalState::rpb);
+                    if (rc != nullptr) {
+                        const double gap =
+                            pl_now_s - rc->last_seen_s;
+                        if (gap >= 0.0 && gap <= pl_max_gap_s) {
+                            const double v = rc->var
+                                           + eq34_rpb_q * gap;
+                            if (v > 0.0 && std::isfinite(v)) {
+                                pin_col.push_back(hit->second);
+                                pin_y.push_back(
+                                    rc->value_abs - x0);
+                                pin_w.push_back(1.0 / v);
+                                pin_tag.push_back(rxPhaseBiasTag(
+                                    ContributionKind::Eq34RpbTimeLink, rpb_key));
+                            }
+                        } else if (carryPastHorizon(pl_now_s, rc->last_seen_s,
+                                                    pl_max_gap_s)) {
+                            // Card PRM phase 3a: a carried receiver phase
+                            // bias past the horizon, not time-linked this
+                            // epoch (per station: the parallel produce).
+                            ++R.prm_rpb_gap_skip;
+                        }
+                    }
+                    R.pl_rpb.emplace_back(
+                        rpb_key,
+                        static_cast<Eigen::Index>(hit->second), x0);
+                }
+            }
+        }
+        const int np = static_cast<int>(pin_col.size());
+        if (np > 0) {
+            const Eigen::Index m0 = R.A_s.rows();
+            R.A_s.conservativeResize(m0 + np, Eigen::NoChange);
+            R.A_s.bottomRows(np).setZero();
+            R.A_r.conservativeResize(m0 + np, Eigen::NoChange);
+            R.A_r.bottomRows(np).setZero();
+            R.w.conservativeResize(m0 + np);
+            R.y.conservativeResize(m0 + np);
+            for (int k = 0; k < np; ++k) {
+                R.A_r(m0 + k, pin_col[k]) = 1.0;
+                R.w(m0 + k) = pin_w[k];   // 1e10 pins / 1/σ² RPB priors
+                R.y(m0 + k) = pin_y[k];
+            }
+            R.row_tags.insert(R.row_tags.end(), pin_tag.begin(), pin_tag.end());
+            // Hard pins only: pd_pin_aware and the total_pins ledger
+            // must not count the soft RPB prior rows as gauge pins.
+            R.np = n_hard;
+        }
+    }
+    return StationStep::Next;
+}
+
+bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_datum_prioritized,
+                          size_t i, const std::string& sat, const std::string& signal) {
+    if (!phase_datum_prioritized) return stations[i].is_pivot;
+    return stations[i].pinned_amb_targets.count(StateKeys::makeAmbiguityKey(sat, signal)) != 0;
+}
+
+// ---- End of the PASS B station steps (card NOM3 step PB1b) ----
 
 } // namespace GnssProcessor

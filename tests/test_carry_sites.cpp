@@ -20,7 +20,6 @@
 #include "filter/NetworkAmbFloat.hpp"
 #include "filter/NetworkCarrySites.hpp"
 #include "filter/NetworkChainDatum.hpp"
-#include "filter/NetworkClockLevel.hpp"
 #include "filter/NetworkCoupling.hpp"
 #include "filter/NetworkHandoverStransform.hpp"
 #include "filter/NetworkRelevel.hpp"
@@ -68,41 +67,44 @@ LocalCarry local(double value, std::vector<CoupledShared> coupling) {
 /// One reference in every site, each with its own value, for the satellite G01 (signal
 /// L1C, station 0); the receiver-side local values on their own keys.  The carried border
 /// value and every coupling term are of @p kind (a clock, or the phase bias of G01 L1C).
-void populateEverySite(NetworkCarryState& c, SharedParamKind kind = SharedParamKind::Clock) {
+void populateEverySite(NetworkCarryState& c, net::NetworkEntities& c_ent, SharedParamKind kind = SharedParamKind::Clock) {
     double v = 1.0;
     const auto next = [&v]() { v += 1.0; return v; };
     const std::string sig = (kind == SharedParamKind::Clock) ? "" : "L1C";
     c.prev_carry = {prior(kind, "G01", sig, next())};
-    c.cxu_pivot['G'] = {"G01", next()};
-    c.clock_osc["G01"].x0 = next();
-    c.clock_osc["G01"].init = true;
-    c.prev_clk["G01"] = {next(), 100.0};
-    c.cb_exc_prev_clk["G01"] = next();
-    c.pb_hold_prev_clock_m["G01"] = next();
-    c.pb_level_prev["G01_L1C"] = next();
-    c.pin_bridge["G01_L1C"].value = next();
-    c.pb_hold["G01|L1C"].held_m = next();
-    c.code_bias_prev_["G|C1C"]["G01"] = next();
+    net::put(c_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G01", next()};
+    net::putSat(c_ent, "G01", &net::SatelliteState::clock_osc).x0 = next();
+    net::putSat(c_ent, "G01", &net::SatelliteState::clock_osc).init = true;
+    net::putSat(c_ent, "G01", &net::SatelliteState::prev_clk) = {next(), 100.0};
+    net::putSat(c_ent, "G01", &net::SatelliteState::cb_exc_prev_clk) = next();
+    net::putSat(c_ent, "G01", &net::SatelliteState::pb_hold_prev_clock_m) = next();
+    net::putSig(c_ent, "G01_L1C", &net::SatSignalState::pb_level_prev) = next();
+    net::putSig(c_ent, "G01_L1C", &net::SatSignalState::pin_bridge).value = next();
+    net::putSig(c_ent, "G01|L1C", &net::SatSignalState::pb_hold).held_m = next();
+    net::put(c_ent.constellations, System::GPS, &net::ConstellationState::channels, "C1C", &net::ChannelState::code_bias_prev)["G01"] = next();
     const auto t = [&]() { return std::vector<CoupledShared>{
         term(kind, "G01", sig, 1.0, next(), 1e-5)}; };
-    c.local_carry[{0, "G01", "L1C"}] = local(next(), t());
-    c.zwd_carry[0] = local(next(), t());
-    c.iono_carry[{0, "G01"}] = local(next(), t());
-    c.iono_blk_carry[{0, "G01"}] = local(next(), t());
-    c.gl_hold_amb[{0, "G01", "L1C"}] = local(next(), t());
-    c.gl_hold_iono[{0, "G01"}] = local(next(), t());
-    c.gl_hold_iono_blk[{0, "G01"}] = local(next(), t());
-    c.rx_clk_carry[{0, ""}] = local(next(), t());
-    c.rpb_carry[{0, "GPS_RPB_L1C"}] = local(next(), t());
-    c.rx_cb_carry[{0, "GPS_DCB"}] = local(next(), t());
-    c.pc_carry[{0, "G01"}] = local(next(), t());
+    net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::amb) = local(next(), t());
+    net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(next(), t());
+    net::putArc(c_ent, {0, "G01", "L1C"}, &net::ArcState::gl_hold_amb) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::gl_hold_iono_blk) = local(next(), t());
+    net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "",
+             &net::StationSignalState::rx_clk) = local(next(), t());
+    net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "GPS_RPB_L1C",
+             &net::StationSignalState::rpb) = local(next(), t());
+    net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "GPS_DCB",
+             &net::StationSignalState::rx_cb) = local(next(), t());
+    net::putLos(c_ent, 0, "G01", &net::LosState::pc) = local(next(), t());
 }
 
 /// Every referenced double (and its variance) in the traversal's order: the bitwise
 /// comparison of two carried states.
-std::vector<double> referencedDoubles(NetworkCarryState& c) {
+std::vector<double> referencedDoubles(NetworkCarryState& c, net::NetworkEntities& c_ent) {
     std::vector<double> out;
-    forEachCarriedReference(c, kAllCarrySites, [&](const CarriedRef& r) {
+    forEachCarriedReference(c, c_ent, kAllCarrySites, [&](const CarriedRef& r) {
         out.push_back(*r.value);
         if (r.var) out.push_back(*r.var);
         return false;
@@ -159,11 +161,11 @@ TEST(CarrySites, TableIsInOrderAndComplete) {
 // Card PRM section 5: every site populated for one satellite, a shift of 1 m applied through
 // the traversal, and every site moved by 1 m (one reference each, each visited once).
 TEST(CarrySites, EverySiteMovesByOneMetre) {
-    NetworkCarryState c;
-    populateEverySite(c);
-    const std::vector<double> before = referencedDoubles(c);
+    NetworkCarryState c; net::NetworkEntities c_ent;
+    populateEverySite(c, c_ent);
+    const std::vector<double> before = referencedDoubles(c, c_ent);
     CarrySiteCounts counts;
-    const long long n = forEachCarriedReference(c, kAllCarrySites, [](const CarriedRef& r) {
+    const long long n = forEachCarriedReference(c, c_ent, kAllCarrySites, [](const CarriedRef& r) {
         *r.value += 1.0;
         return true;
     }, &counts);
@@ -173,10 +175,10 @@ TEST(CarrySites, EverySiteMovesByOneMetre) {
         EXPECT_EQ(counts.moved[i], 1) << carrySiteSpec(static_cast<CarrySite>(i)).name;
     }
     // Each reference visited once, in the traversal's order: compare value by value.
-    const std::vector<double> after = referencedDoubles(c);
+    const std::vector<double> after = referencedDoubles(c, c_ent);
     ASSERT_EQ(after.size(), before.size());
     std::size_t k = 0;
-    forEachCarriedReference(c, kAllCarrySites, [&](const CarriedRef& r) {
+    forEachCarriedReference(c, c_ent, kAllCarrySites, [&](const CarriedRef& r) {
         EXPECT_EQ(after[k], before[k] + 1.0) << carrySiteSpec(r.site).name;
         ++k;
         if (r.var) {
@@ -186,23 +188,23 @@ TEST(CarrySites, EverySiteMovesByOneMetre) {
         return false;
     });
     // The walk itself writes nothing: a second counting walk sees the same doubles.
-    EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), after));
+    EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), after));
 }
 
 // The walk reads only the sites it is given, and a site mask selects exactly them.
 TEST(CarrySites, MaskSelectsSites) {
-    NetworkCarryState c;
-    populateEverySite(c);
+    NetworkCarryState c; net::NetworkEntities c_ent;
+    populateEverySite(c, c_ent);
     for (int i = 0; i < kCarrySites; ++i) {
         CarrySiteCounts counts;
-        forEachCarriedReference(c, carrySiteBit(static_cast<CarrySite>(i)),
+        forEachCarriedReference(c, c_ent, carrySiteBit(static_cast<CarrySite>(i)),
                                 [](const CarriedRef&) { return false; }, &counts);
         for (int j = 0; j < kCarrySites; ++j)
             EXPECT_EQ(counts.visited[j], j == i ? 1 : 0)
                 << carrySiteSpec(static_cast<CarrySite>(i)).name;
     }
     long long held[kCarrySites]{};
-    carrySiteHeld(c, held);
+    carrySiteHeld(c, c_ent, held);
     for (int i = 0; i < kCarrySites; ++i) EXPECT_EQ(held[i], 1);
 }
 
@@ -226,6 +228,21 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
         ++maps;
         EXPECT_TRUE(containers.count((*it)[1].str()))
             << "the local carry map " << (*it)[1].str() << " has no site in NetworkCarrySites";
+    }
+    // The station carries moved to the entity tables (card NOM step N4a): each LocalCarry
+    // field of an entity row is a site under the member it was (its FieldDecl row's `was`).
+    const std::string ent_h = readFile(root / "include" / "app" / "NetworkEntities.hpp");
+    ASSERT_FALSE(ent_h.empty());
+    const std::regex field(R"(std::optional<LocalCarry>\s+(\w+)\s*;)");
+    for (std::sregex_iterator it(ent_h.begin(), ent_h.end(), field), end; it != end; ++it) {
+        ++maps;
+        std::string was;
+        for (const net::EntityFields& t : net::kEntityFieldTables)
+            for (const net::FieldDecl& d : *t.fields)
+                if ((*it)[1].str() == d.name) was = d.was;
+        EXPECT_TRUE(containers.count(was))
+            << "the entity field " << (*it)[1].str() << " (was " << was
+            << ") has no site in NetworkCarrySites";
     }
     EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02 (card PRM section 16)";
     // A carried container of LocalCarry by any other shape (a vector, a pointer) is a site
@@ -254,12 +271,6 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
                            S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
                            S::HoldIonoBlockCoupling, S::RxClockCoupling,
                            S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling};
-    // Card CLV: the ten local carries of its list, not card LGM's later one.
-    for (S s : couplings) EXPECT_TRUE(moves(M::ClockLevel, s));
-    EXPECT_FALSE(moves(M::ClockLevel, S::PhaseColourCoupling));
-    EXPECT_TRUE(exempt(M::ClockLevel, S::PhaseColourCoupling));
-    EXPECT_TRUE(moves(M::ClockLevel, S::PinBridge));
-    EXPECT_TRUE(exempt(M::ClockLevel, S::PbHold));
     // The ephemeris re-level: two of the local carries (card CLV section 6.4 item 6).
     EXPECT_TRUE(moves(M::EphRelevel, S::AmbiguityCoupling));
     EXPECT_TRUE(moves(M::EphRelevel, S::ZwdCoupling));
@@ -297,75 +308,38 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
         }
 }
 
-// Card CLV's re-base through the traversal: every site of its row moves by the satellite's
-// level shift, every other site stays, and the transfer and declaration follow (the rule
-// written out over a state with every site populated; step 1 checked the walk against the
-// hand-written one bit for bit, card PRM section 16).
-TEST(CarrySites, ClockLevelReBaseMovesItsSitesAndNothingElse) {
-    NetworkCarryState c, e;   // not copyable: built twice
-    populateEverySite(c);
-    populateEverySite(e);
-    CarrySiteCounts counts;
-    const long long n = clockLevelShiftCarry(c, {{"G01", 1.0}}, nullptr, nullptr, nullptr,
-                                             nullptr, &counts);
-    // Expected: the sites of the row hold G01 clock or phase-bias references (moved by 1);
-    // the code-bias datum reference moves only with the follow or a direct step; the hold's
-    // held value is read for its signal and not moved.
-    long long n_expect = 0;
-    std::vector<double> want;
-    forEachCarriedReference(e, kAllCarrySites, [&](const CarriedRef& r) {
-        const bool moves = carryMechanismSite(CarryMechanism::ClockLevel, r.site).moves
-                        && r.site != CarrySite::CodeBiasPrev
-                        && (r.kind == SharedParamKind::Clock || r.kind == SharedParamKind::PhaseBias);
-        want.push_back(*r.value + (moves ? 1.0 : 0.0));
-        if (r.var) want.push_back(*r.var);
-        if (moves) ++n_expect;
-        return false;
-    });
-    EXPECT_EQ(n, n_expect);
-    EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want));
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PhaseColourCoupling)], 0);
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::CxuPivot)], 0);
-    EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PbHold)], 0);
-    EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 1);
-    // The held signal's emit-side transfer and the declared step.
-    EXPECT_EQ(c.clk_level.sat.at("G01").xfer.at("L1C"), 1.0);
-    EXPECT_EQ(c.clk_level.sat.at("G01").pending_step, 1.0);
-    EXPECT_EQ(clockLevelShiftCarry(c, {}), 0);
-}
-
 // The ephemeris re-level through the traversal: the rule written out (the oscillator's offset
 // when initialized, every carried clock entry of the satellite, parked included, the jump
 // baseline, and the clock terms of the ambiguity and wet-delay carries under the coupling).
 TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
     for (const bool cpl : {true, false}) {
-        const auto build = [](NetworkCarryState& c) {
-            populateEverySite(c);
+        const auto build = [](NetworkCarryState& c, net::NetworkEntities& c_ent) {
+            populateEverySite(c, c_ent);
             c.prev_carry.push_back(prior(SharedParamKind::Clock, "G01", "", 0.4));
             c.prev_carry.back().t_park_s = 1000.0;              // parked: moves too
             c.prev_carry.push_back(prior(SharedParamKind::Clock, "G02", "", -0.9));
-            c.clock_osc["G02"].x0 = 0.5;                        // not initialized: stays
+            net::putSat(c_ent, "G02", &net::SatelliteState::clock_osc).x0 = 0.5;                        // not initialized: stays
         };
-        NetworkCarryState c, e;   // not copyable: built twice
-        build(c);
-        build(e);
+        NetworkCarryState c, e; net::NetworkEntities c_ent, e_ent;   // not copyable: built twice
+        build(c, c_ent);
+        build(e, e_ent);
         const double d = 0.25;
-        e.clock_osc["G01"].x0 -= d;
+        net::putSat(e_ent, "G01", &net::SatelliteState::clock_osc).x0 -= d;
         for (CarryPrior& cp : e.prev_carry)
             if (cp.kind == SharedParamKind::Clock && cp.sat == "G01") cp.value -= d;
-        e.prev_clk["G01"].first -= d;
+        net::putSat(e_ent, "G01", &net::SatelliteState::prev_clk).first -= d;
         long long n_expect = 4;   // the oscillator, two carried entries, the baseline
         if (cpl) {
-            e.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))]
+            net::putArc(e_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb)
                 .coupling[0].s_prev -= d;
-            e.zwd_carry[0].coupling[0].s_prev -= d;
+            net::put(e_ent.stations, StationId{0}, &net::StationState::zwd).coupling[0].s_prev -= d;
             n_expect += 2;
         }
         CarrySiteCounts counts;
-        EXPECT_EQ(ephCutoverShiftCarry(c, "G01", d, cpl, &counts), n_expect);
+        EXPECT_EQ(ephCutoverShiftCarry(c, c_ent, "G01", d, cpl, &counts), n_expect);
         EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::ClockOsc)], 1);
-        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), referencedDoubles(e))) << "cpl=" << cpl;
-        EXPECT_EQ(c.clock_osc["G02"].x0, 0.5);
+        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), referencedDoubles(e, e_ent))) << "cpl=" << cpl;
+        EXPECT_EQ(net::putSat(c_ent, "G02", &net::SatelliteState::clock_osc).x0, 0.5);
     }
 }
 
@@ -375,7 +349,7 @@ TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
 // clock reference of the constellation the rows read.
 TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     const std::vector<std::pair<std::string, double>> v_c{{"G01", 1.0}, {"G02", 1.0}, {"G03", 1.0}};
-    NetworkCarryState b;
+    NetworkCarryState b; net::NetworkEntities b_ent;
     b.prev_carry = {
         prior(SharedParamKind::Clock, "G01", "", 1.2, 2e-4),
         prior(SharedParamKind::Clock, "G02", "", -0.5, 3e-4),
@@ -385,11 +359,11 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
         prior(SharedParamKind::Clock, "E11", "", 0.1, 1e-4),
     };
     b.prev_carry[4].t_park_s = 500.0;
-    b.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))] = local(3.0, {
+    net::putArc(b_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb) = local(3.0, {
         term(SharedParamKind::Clock, "G01", "", 0.5, 1.2, 2e-4)});
     CarrySiteCounts counts;
     const ClockStransformResult rb =
-        applyClockStransform(b, v_c, "G02", CarryMechanism::Handover, &counts);
+        applyClockStransform(b, b_ent, v_c, "G02", CarryMechanism::Handover, &counts);
     ASSERT_TRUE(rb.applied);
     const double c0 = -0.5 / 1.0, vq = 3e-4;
     EXPECT_EQ(rb.c0, c0);
@@ -405,27 +379,27 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(b.prev_carry[3].value, 0.7 - 1.0 * c0);
     EXPECT_EQ(b.prev_carry[4].value, 0.9) << "after the rows, an unregistered clock stays";
     EXPECT_EQ(b.prev_carry[5].value, 0.1);
-    EXPECT_EQ(b.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))]
+    EXPECT_EQ(net::putArc(b_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb)
                   .coupling[0].s_prev, 1.2) << "after the rows, the terms are re-harvested";
     EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PrevCarry)], 3);
     EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::AmbiguityCoupling)], 0);
 
     // Before the rows: the unregistered clock of the constellation, the coupling terms on its
     // clocks (s_prev; p_prev of a free term), and the stash's pivot move; E11 does not.
-    NetworkCarryState w;
+    NetworkCarryState w; net::NetworkEntities w_ent;
     w.prev_carry = {prior(SharedParamKind::Clock, "G01", "", 1.2, 2e-4),
                     prior(SharedParamKind::Clock, "G02", "", -0.5, 3e-4),
                     prior(SharedParamKind::Clock, "G05", "", 0.9, 5e-4),
                     prior(SharedParamKind::Clock, "E11", "", 0.1, 1e-4)};
     w.prev_carry[2].t_park_s = 500.0;
-    w.cxu_pivot['G'] = {"G04", 0.0};
-    w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))] = local(3.0, {
+    net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot) = {"G04", 0.0};
+    net::putArc(w_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb) = local(3.0, {
         term(SharedParamKind::Clock, "G01", "", 0.5, 1.2, 2e-4),
         term(SharedParamKind::Clock, "G04", "", -0.5, 0.0, 0.0),     // the pinned pivot
         term(SharedParamKind::Clock, "E11", "", 0.2, 0.1, 1e-4),
         term(SharedParamKind::PhaseBias, "G01", "L1C", 1.0, 0.3, 1e-4)});
     const ClockStransformResult rw =
-        applyClockStransform(w, v_c, "G02", CarryMechanism::HandoverBeforeRows);
+        applyClockStransform(w, w_ent, v_c, "G02", CarryMechanism::HandoverBeforeRows);
     ASSERT_TRUE(rw.applied);
     EXPECT_EQ(rw.c0, c0);
     EXPECT_EQ(rw.rows, 3);
@@ -435,9 +409,9 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     EXPECT_EQ(w.prev_carry[2].value, 0.9 - c0);
     EXPECT_EQ(w.prev_carry[2].var, 5e-4 + vq);
     EXPECT_EQ(w.prev_carry[3].value, 0.1);
-    EXPECT_EQ(w.cxu_pivot['G'].second, -c0);
+    EXPECT_EQ(net::put(w_ent.constellations, System::GPS, &net::ConstellationState::cxu_pivot).second, -c0);
     const auto& cpl =
-        w.local_carry[std::make_tuple(0, std::string("G01"), std::string("L1C"))].coupling;
+        net::putArc(w_ent, std::make_tuple(0, std::string("G01"), std::string("L1C")), &net::ArcState::amb).coupling;
     EXPECT_EQ(cpl[0].s_prev, 1.2 - c0);
     EXPECT_EQ(cpl[0].p_prev, 2e-4 + vq);
     EXPECT_EQ(cpl[1].s_prev, -c0);
@@ -448,7 +422,7 @@ TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
 
 // The eq34 D4 shift through the traversal: the rule written out.
 TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
-    NetworkCarryState c;
+    NetworkCarryState c; net::NetworkEntities c_ent;
     c.prev_carry = {prior(SharedParamKind::PhaseBias, "G01", "L1C", 0.4),
                     prior(SharedParamKind::PhaseBias, "G02", "L1C", -0.2),
                     prior(SharedParamKind::Clock, "G01", "", 1.0)};
@@ -458,39 +432,42 @@ TEST(CarrySites, Eq34ShiftThroughSitesFollowsTheRule) {
     const auto amb = [](int sta) {
         return std::make_tuple(sta, std::string("G01"), std::string("L1C"));
     };
-    c.local_carry[amb(0)] = local(5.0, {pbTerm("G01", 0.4), pbTerm("G02", -0.2)});
-    c.local_carry[amb(1)] = local(7.0, {pbTerm("G01", 0.4)});
-    c.rpb_carry[{0, "G_RPB_L1C"}] = local(0.6, {});
-    c.zwd_carry[0] = local(0.1, {pbTerm("G01", 0.4)});
-    c.iono_blk_carry[{0, "G01"}] = local(9.0, {pbTerm("G01", 0.4)});   // exempt: stays
+    net::putArc(c_ent, amb(0), &net::ArcState::amb) = local(5.0, {pbTerm("G01", 0.4), pbTerm("G02", -0.2)});
+    net::putArc(c_ent, amb(1), &net::ArcState::amb) = local(7.0, {pbTerm("G01", 0.4)});
+    net::put(c_ent.stations, StationId{0}, &net::StationState::signals, "G_RPB_L1C",
+             &net::StationSignalState::rpb) = local(0.6, {});
+    net::put(c_ent.stations, StationId{0}, &net::StationState::zwd) = local(0.1, {pbTerm("G01", 0.4)});
+    net::putLos(c_ent, 0, "G01", &net::LosState::iono_blk) = local(9.0, {pbTerm("G01", 0.4)});   // exempt: stays
     const std::map<std::pair<std::string, std::string>, double> shift_sat{{{"G01", "L1C"}, 0.3}};
     const std::map<std::tuple<int, char, std::string>, double> shift_rxg{
         {std::make_tuple(0, 'G', std::string("L1C")), 0.1}};
     const std::map<std::pair<int, std::string>, double> shift_rpb{{{0, "G_RPB_L1C"}, 0.1}};
     long long nv = 0, nt = 0;
-    eq34ShiftCarry(c, shift_sat, shift_rxg, shift_rpb, nv, nt);
+    eq34ShiftCarry(c, c_ent, shift_sat, shift_rxg, shift_rpb, nv, nt);
     EXPECT_EQ(nv, 4);   // two ambiguities, the receiver phase bias, the G01 phase bias
     EXPECT_EQ(nt, 3);   // the G01 terms of the two ambiguities and of the wet delay
-    EXPECT_EQ(c.local_carry[amb(0)].value_abs, 5.0 + ((0.0 - 0.3) - 0.1));
-    EXPECT_EQ(c.local_carry[amb(1)].value_abs, 7.0 + (0.0 - 0.3));
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).value_abs, 5.0 + ((0.0 - 0.3) - 0.1));
+    EXPECT_EQ(net::putArc(c_ent, amb(1), &net::ArcState::amb).value_abs, 7.0 + (0.0 - 0.3));
     const std::pair<int, std::string> rpb_key{0, "G_RPB_L1C"};
-    EXPECT_EQ(c.rpb_carry[rpb_key].value_abs, 0.6 + 0.1);
+    EXPECT_EQ(net::put(c_ent.stations, StationId{rpb_key.first}, &net::StationState::signals,
+                       rpb_key.second, &net::StationSignalState::rpb).value_abs, 0.6 + 0.1);
     EXPECT_EQ(c.prev_carry[0].value, 0.4 + 0.3);
     EXPECT_EQ(c.prev_carry[1].value, -0.2);
     EXPECT_EQ(c.prev_carry[2].value, 1.0);
-    EXPECT_EQ(c.local_carry[amb(0)].coupling[0].s_prev, 0.4 + 0.3);
-    EXPECT_EQ(c.local_carry[amb(0)].coupling[1].s_prev, -0.2);
-    EXPECT_EQ(c.zwd_carry[0].coupling[0].s_prev, 0.4 + 0.3);
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).coupling[0].s_prev, 0.4 + 0.3);
+    EXPECT_EQ(net::putArc(c_ent, amb(0), &net::ArcState::amb).coupling[1].s_prev, -0.2);
+    EXPECT_EQ(net::put(c_ent.stations, StationId{0},
+                       &net::StationState::zwd).coupling[0].s_prev, 0.4 + 0.3);
     const std::pair<int, std::string> iono_key{0, "G01"};
-    EXPECT_EQ(c.iono_blk_carry[iono_key].coupling[0].s_prev, 0.4);
+    EXPECT_EQ(net::putLos(c_ent, iono_key.first, iono_key.second, &net::LosState::iono_blk).coupling[0].s_prev, 0.4);
     // No satellite or receiver step: nothing moves.
-    eq34ShiftCarry(c, {}, {}, shift_rpb, nv, nt);
+    eq34ShiftCarry(c, c_ent, {}, {}, shift_rpb, nv, nt);
     EXPECT_EQ(nv + nt, 0);
 }
 
 // The declared anchor handover through the traversal: the rule written out.
 TEST(CarrySites, DeclaredHandoverThroughSitesFollowsTheRule) {
-    NetworkCarryState c;
+    NetworkCarryState c; net::NetworkEntities c_ent;
     const auto pbTerm = [](const std::string& sig, double s) {
         return term(SharedParamKind::PhaseBias, "G23", sig, 1.0, s, 1e-4);
     };
@@ -499,24 +476,25 @@ TEST(CarrySites, DeclaredHandoverThroughSitesFollowsTheRule) {
     };
     c.prev_carry = {prior(SharedParamKind::PhaseBias, "G23", "L2W", 0.4),
                     prior(SharedParamKind::PhaseBias, "G23", "L1C", -0.2)};
-    c.local_carry[amb(0, "L2W")] = local(2.5, {pbTerm("L2W", 0.4)});
-    c.local_carry[amb(1, "L2W")] = local(4.0, {pbTerm("L1C", -0.2)});
-    c.local_carry[amb(1, "L1C")] = local(6.0, {});
-    c.zwd_carry[0] = local(0.1, {pbTerm("L2W", 0.4)});   // exempt: stays
+    net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb) = local(2.5, {pbTerm("L2W", 0.4)});
+    net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb) = local(4.0, {pbTerm("L1C", -0.2)});
+    net::putArc(c_ent, amb(1, "L1C"), &net::ArcState::amb) = local(6.0, {});
+    net::put(c_ent.stations, StationId{0},
+             &net::StationState::zwd) = local(0.1, {pbTerm("L2W", 0.4)});   // exempt: stays
     const double delta = 2.5;
     long long a = 0, b = 0, t = 0;
-    declaredHandoverShiftCarry(c, "G23", "L2W", delta, a, b, t);
+    declaredHandoverShiftCarry(c, c_ent, "G23", "L2W", delta, a, b, t);
     EXPECT_EQ(a, 2);
     EXPECT_EQ(b, 1);
     EXPECT_EQ(t, 1);
-    EXPECT_EQ(c.local_carry[amb(0, "L2W")].value_abs, 0.0);
-    EXPECT_EQ(c.local_carry[amb(1, "L2W")].value_abs, 4.0 - delta);
-    EXPECT_EQ(c.local_carry[amb(1, "L1C")].value_abs, 6.0);
+    EXPECT_EQ(net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb).value_abs, 0.0);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb).value_abs, 4.0 - delta);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L1C"), &net::ArcState::amb).value_abs, 6.0);
     EXPECT_EQ(c.prev_carry[0].value, 0.4 + delta);
     EXPECT_EQ(c.prev_carry[1].value, -0.2);
-    EXPECT_EQ(c.local_carry[amb(0, "L2W")].coupling[0].s_prev, 0.4 + delta);
-    EXPECT_EQ(c.local_carry[amb(1, "L2W")].coupling[0].s_prev, -0.2);
-    EXPECT_EQ(c.zwd_carry[0].coupling[0].s_prev, 0.4);
+    EXPECT_EQ(net::putArc(c_ent, amb(0, "L2W"), &net::ArcState::amb).coupling[0].s_prev, 0.4 + delta);
+    EXPECT_EQ(net::putArc(c_ent, amb(1, "L2W"), &net::ArcState::amb).coupling[0].s_prev, -0.2);
+    EXPECT_EQ(net::put(c_ent.stations, StationId{0}, &net::StationState::zwd).coupling[0].s_prev, 0.4);
 }
 
 // ===========================================================================
@@ -529,10 +507,10 @@ namespace {
 /// the traversal's order, moved by @p delta (0 = not moved), with its variance unchanged.
 /// @p n_moved counts the references the rule moves.
 template <class Rule>
-std::vector<double> expectedDoubles(NetworkCarryState& e, Rule delta, long long& n_moved) {
+std::vector<double> expectedDoubles(NetworkCarryState& e, net::NetworkEntities& e_ent, Rule delta, long long& n_moved) {
     std::vector<double> want;
     n_moved = 0;
-    forEachCarriedReference(e, kAllCarrySites, [&](const CarriedRef& r) {
+    forEachCarriedReference(e, e_ent, kAllCarrySites, [&](const CarriedRef& r) {
         const double d = delta(r);
         want.push_back(*r.value + d);
         if (r.var) want.push_back(*r.var);
@@ -577,8 +555,6 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
         for (S s : sites) bits |= carrySiteBit(s);
         return bits;
     };
-    EXPECT_EQ(carryMechanismOwedSites(M::ClockLevel),
-              mask({S::CxuPivot, S::PhaseColourCoupling}));
     EXPECT_EQ(carryMechanismOwedSites(M::EphRelevel),
               mask({S::CxuPivot, S::CbExcPrevClk, S::PbHoldPrevClock, S::IonoCoupling,
                     S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
@@ -613,56 +589,17 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
     }
     // The phase hold's held value stays exempt, with its reason, wherever a direction reaches
     // it; the two phase-bias shifts state that the knob leaves it.
-    for (M m : {M::ClockLevel, M::Eq34Shift, M::DeclaredHandover})
+    for (M m : {M::Eq34Shift, M::DeclaredHandover})
         EXPECT_NE(carryMechanismSite(m, S::PbHold).reason, nullptr) << carryMechanismName(m);
     for (M m : {M::Eq34Shift, M::DeclaredHandover})
         EXPECT_NE(std::string(carryMechanismSite(m, S::PbHold).reason).find("carry_rebase_complete"),
                   std::string::npos) << carryMechanismName(m);
-    // By design, with the knob too: the oscillator under card CLV, the D4 shift's bridged root,
-    // and every handover exemption (the receiver clock's included).
-    EXPECT_FALSE(carryMechanismMoves(M::ClockLevel, S::ClockOsc, true));
+    // By design, with the knob too: the D4 shift's bridged root and every handover exemption
+    // (the receiver clock's included).
     EXPECT_FALSE(carryMechanismMoves(M::Eq34Shift, S::PinBridge, true));
     for (M m : {M::Handover, M::HandoverBeforeRows})
         for (S s : {S::ClockOsc, S::PrevClk, S::CbExcPrevClk, S::PbHoldPrevClock, S::RxClockValue})
             EXPECT_FALSE(carryMechanismMoves(m, s, true)) << carryMechanismName(m);
-}
-
-// Card CLV's re-base with the owed sites: the stash's pinned pivot value and card LGM's
-// phase-colour terms move by the satellite's level shift like the rest of its row; the hold's
-// held value is read for the transfer and not moved; without the knob the walk is phase 2's.
-TEST(CarrySites, ClockLevelReBaseCompleteMovesTheOwedSites) {
-    for (const bool complete : {false, true}) {
-        NetworkCarryState c, e;   // not copyable: built twice
-        populateEverySite(c);
-        populateEverySite(e);
-        CarrySiteCounts counts;
-        const long long n = clockLevelShiftCarry(c, {{"G01", 1.0}}, nullptr, nullptr, nullptr,
-                                                 nullptr, &counts, complete);
-        const std::uint32_t mask = carryMechanismSiteMask(CarryMechanism::ClockLevel, complete);
-        long long n_expect = 0;
-        const std::vector<double> want = expectedDoubles(e, [&](const CarriedRef& r) {
-            const bool moves = inMask(mask, r.site) && r.site != CarrySite::CodeBiasPrev
-                && (r.kind == SharedParamKind::Clock || r.kind == SharedParamKind::PhaseBias);
-            return moves ? 1.0 : 0.0;
-        }, n_expect);
-        EXPECT_EQ(n, n_expect) << "complete=" << complete;
-        EXPECT_EQ(movedTotal(counts), n_expect) << "complete=" << complete;
-        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want)) << "complete=" << complete;
-        expectOwedMoved(CarryMechanism::ClockLevel, counts, complete,
-                        [](CarrySite) { return false; });
-        EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 1);
-        EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
-        EXPECT_EQ(counts.moved[static_cast<int>(CarrySite::ClockOsc)], 0);
-        EXPECT_EQ(c.clk_level.sat.at("G01").xfer.at("L1C"), 1.0);   // the transfer, either way
-    }
-    // Off is the default: no knob argument is complete = false.
-    NetworkCarryState a, b;
-    populateEverySite(a);
-    populateEverySite(b);
-    clockLevelShiftCarry(a, {{"G01", 0.5}});
-    clockLevelShiftCarry(b, {{"G01", 0.5}}, nullptr, nullptr, nullptr, nullptr, nullptr, false);
-    EXPECT_TRUE(bitwiseEqual(referencedDoubles(a), referencedDoubles(b)));
 }
 
 // The ephemeris re-level with the owed sites (card CLV section 6.4 item 6): the stash's pivot
@@ -672,34 +609,34 @@ TEST(CarrySites, ClockLevelReBaseCompleteMovesTheOwedSites) {
 TEST(CarrySites, EphRelevelCompleteMovesTheOwedSites) {
     for (const bool complete : {false, true})
         for (const bool cpl : {true, false}) {
-            NetworkCarryState c, e;   // not copyable: built twice
-            populateEverySite(c);
-            populateEverySite(e);
+            NetworkCarryState c, e; net::NetworkEntities c_ent, e_ent;   // not copyable: built twice
+            populateEverySite(c, c_ent);
+            populateEverySite(e, e_ent);
             const double d = 0.25;
             CarrySiteCounts counts;
-            const long long n = ephCutoverShiftCarry(c, "G01", d, cpl, &counts, complete);
+            const long long n = ephCutoverShiftCarry(c, c_ent, "G01", d, cpl, &counts, complete);
             const std::uint32_t mask =
                 carryMechanismSiteMask(CarryMechanism::EphRelevel, complete);
             long long n_expect = 0;
-            const std::vector<double> want = expectedDoubles(e, [&](const CarriedRef& r) {
+            const std::vector<double> want = expectedDoubles(e, e_ent, [&](const CarriedRef& r) {
                 if (!inMask(mask, r.site) || r.kind != SharedParamKind::Clock || r.sat != "G01")
                     return 0.0;
                 if (carrySiteSpec(r.site).role == CarryRefRole::Regression && !cpl) return 0.0;
                 return -d;
             }, n_expect);
             EXPECT_EQ(n, n_expect) << "complete=" << complete << " cpl=" << cpl;
-            EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want))
+            EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), want))
                 << "complete=" << complete << " cpl=" << cpl;
             expectOwedMoved(CarryMechanism::EphRelevel, counts, complete, [&](CarrySite s) {
                 return carrySiteSpec(s).role == CarryRefRole::Regression && !cpl;
             });
             EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-            EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
+            EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
             if (!complete) {
-                NetworkCarryState f;
-                populateEverySite(f);
-                ephCutoverShiftCarry(f, "G01", d, cpl);
-                EXPECT_TRUE(bitwiseEqual(referencedDoubles(f), referencedDoubles(c)));
+                NetworkCarryState f; net::NetworkEntities f_ent;
+                populateEverySite(f, f_ent);
+                ephCutoverShiftCarry(f, f_ent, "G01", d, cpl);
+                EXPECT_TRUE(bitwiseEqual(referencedDoubles(f, f_ent), referencedDoubles(c, c_ent)));
             }
         }
 }
@@ -715,15 +652,15 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
         {std::make_tuple(0, 'G', std::string("L1C")), dr}};
     const std::map<std::pair<int, std::string>, double> shift_rpb{{{0, "GPS_RPB_L1C"}, drpb}};
     for (const bool complete : {false, true}) {
-        NetworkCarryState c, e;   // not copyable: built twice
-        populateEverySite(c, SharedParamKind::PhaseBias);
-        populateEverySite(e, SharedParamKind::PhaseBias);
+        NetworkCarryState c, e; net::NetworkEntities c_ent, e_ent;   // not copyable: built twice
+        populateEverySite(c, c_ent, SharedParamKind::PhaseBias);
+        populateEverySite(e, e_ent, SharedParamKind::PhaseBias);
         long long nv = 0, nt = 0;
         CarrySiteCounts counts;
-        eq34ShiftCarry(c, shift_sat, shift_rxg, shift_rpb, nv, nt, &counts, complete);
+        eq34ShiftCarry(c, c_ent, shift_sat, shift_rxg, shift_rpb, nv, nt, &counts, complete);
         const std::uint32_t mask = carryMechanismSiteMask(CarryMechanism::Eq34Shift, complete);
         long long n_expect = 0;
-        const std::vector<double> want = expectedDoubles(e, [&](const CarriedRef& r) {
+        const std::vector<double> want = expectedDoubles(e, e_ent, [&](const CarriedRef& r) {
             if (!inMask(mask, r.site) || r.kind != SharedParamKind::PhaseBias) return 0.0;
             switch (r.site) {
                 case CarrySite::AmbiguityValue:
@@ -732,7 +669,7 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
                 default:                            return db;   // the phase bias, its baseline, a term
             }
         }, n_expect);
-        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want)) << "complete=" << complete;
+        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), want)) << "complete=" << complete;
         EXPECT_EQ(movedTotal(counts), n_expect) << "complete=" << complete;
         // The legacy counters keep their meaning: the carried values, and every coupling term.
         EXPECT_EQ(nv, 3) << "complete=" << complete;
@@ -740,13 +677,13 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
         expectOwedMoved(CarryMechanism::Eq34Shift, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
-        EXPECT_EQ(c.pin_bridge.at("G01_L1C").value, e.pin_bridge.at("G01_L1C").value);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01_L1C", &net::SatSignalState::pin_bridge)).value, (*net::getSig(e_ent.sat_signals, "G01_L1C", &net::SatSignalState::pin_bridge)).value);
         if (!complete) {
-            NetworkCarryState f;
-            populateEverySite(f, SharedParamKind::PhaseBias);
-            eq34ShiftCarry(f, shift_sat, shift_rxg, shift_rpb, nv, nt);
-            EXPECT_TRUE(bitwiseEqual(referencedDoubles(f), referencedDoubles(c)));
+            NetworkCarryState f; net::NetworkEntities f_ent;
+            populateEverySite(f, f_ent, SharedParamKind::PhaseBias);
+            eq34ShiftCarry(f, f_ent, shift_sat, shift_rxg, shift_rpb, nv, nt);
+            EXPECT_TRUE(bitwiseEqual(referencedDoubles(f, f_ent), referencedDoubles(c, c_ent)));
         }
     }
 }
@@ -759,23 +696,23 @@ TEST(CarrySites, Eq34ShiftCompleteMovesTheOwedSites) {
 TEST(CarrySites, DeclaredHandoverCompleteMovesTheOwedSites) {
     const double delta = 0.5;
     for (const bool complete : {false, true}) {
-        NetworkCarryState c, e;   // not copyable: built twice
-        populateEverySite(c, SharedParamKind::PhaseBias);
-        populateEverySite(e, SharedParamKind::PhaseBias);
+        NetworkCarryState c, e; net::NetworkEntities c_ent, e_ent;   // not copyable: built twice
+        populateEverySite(c, c_ent, SharedParamKind::PhaseBias);
+        populateEverySite(e, e_ent, SharedParamKind::PhaseBias);
         long long a = 0, b = 0, t = 0;
         CarrySiteCounts counts;
-        declaredHandoverShiftCarry(c, "G01", "L1C", delta, a, b, t, &counts, complete);
+        declaredHandoverShiftCarry(c, c_ent, "G01", "L1C", delta, a, b, t, &counts, complete);
         const std::uint32_t mask =
             carryMechanismSiteMask(CarryMechanism::DeclaredHandover, complete);
         long long n_expect = 0;
-        const std::vector<double> want = expectedDoubles(e, [&](const CarriedRef& r) {
+        const std::vector<double> want = expectedDoubles(e, e_ent, [&](const CarriedRef& r) {
             if (!inMask(mask, r.site) || r.kind != SharedParamKind::PhaseBias || r.sat != "G01"
                 || r.signal != "L1C")
                 return 0.0;
             return (r.site == CarrySite::AmbiguityValue || r.site == CarrySite::HoldAmbiguityValue)
                        ? -delta : delta;
         }, n_expect);
-        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c), want)) << "complete=" << complete;
+        EXPECT_TRUE(bitwiseEqual(referencedDoubles(c, c_ent), want)) << "complete=" << complete;
         EXPECT_EQ(movedTotal(counts), n_expect) << "complete=" << complete;
         // The legacy counters keep their meaning: the live ambiguities, the carried phase
         // biases, and every coupling term.
@@ -785,12 +722,12 @@ TEST(CarrySites, DeclaredHandoverCompleteMovesTheOwedSites) {
         expectOwedMoved(CarryMechanism::DeclaredHandover, counts, complete,
                         [](CarrySite) { return false; });
         EXPECT_EQ(counts.visited[static_cast<int>(CarrySite::PbHold)], 0);
-        EXPECT_EQ(c.pb_hold.at("G01|L1C").held_m, e.pb_hold.at("G01|L1C").held_m);
+        EXPECT_EQ((*net::getSig(c_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m, (*net::getSig(e_ent.sat_signals, "G01|L1C", &net::SatSignalState::pb_hold)).held_m);
         if (!complete) {
-            NetworkCarryState f;
-            populateEverySite(f, SharedParamKind::PhaseBias);
-            declaredHandoverShiftCarry(f, "G01", "L1C", delta, a, b, t);
-            EXPECT_TRUE(bitwiseEqual(referencedDoubles(f), referencedDoubles(c)));
+            NetworkCarryState f; net::NetworkEntities f_ent;
+            populateEverySite(f, f_ent, SharedParamKind::PhaseBias);
+            declaredHandoverShiftCarry(f, f_ent, "G01", "L1C", delta, a, b, t);
+            EXPECT_TRUE(bitwiseEqual(referencedDoubles(f, f_ent), referencedDoubles(c, c_ent)));
         }
     }
 }

@@ -30,6 +30,7 @@
 #include <gtest/gtest.h>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkAnchorHygiene.hpp"
 #include "filter/NetworkChainDatum.hpp"
@@ -182,7 +183,7 @@ GnssTime epochAt(double tow) {
 /// scenario therefore establishes this first, which also matches the field case: the
 /// network was emitting the key seconds before it re-hosted.
 void markRealizedAt(NetworkRunContext& ctx, const std::string& amb, double tow) {
-    ctx.carry.emitted_anchor_s[amb] = TimeUtils::continuousGpsSeconds(epochAt(tow));
+    net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor_s) = TimeUtils::continuousGpsSeconds(epochAt(tow));
 }
 
 /// Which station (if any) holds the tree-edge pin for @p amb?
@@ -256,7 +257,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     // absent station; its loss is what forces the reattach (a live incumbent is exempt
     // from the age test, since keeping it is not a reattach).
     ageArcs(ctx, *cfg, c, 6);
-    ctx.carry.anchor_incumbent["G29_" + std::string(kSig)] = "GONE";
+    net::putSig(ctx.entities, "G29_" + std::string(kSig), &net::SatSignalState::anchor_incumbent) = "GONE";
     const AnchorHygiene hyg =
         runHygiene(ctx, *cfg, c, 2000.0, { { 0, "G29_" + std::string(kSig) } });
 
@@ -269,8 +270,9 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_EQ(pinnedHost(c, "G29_L1C"), "MATR")
         << "the election took the FRESH host despite a converged one being available "
            "— this is the DOY-129 19:25:30 mechanism";
@@ -293,7 +295,7 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     // The incumbent is a station that is not present at all (its arc ended), which
     // forces a reattach.  Both live arcs are one epoch old.
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);   // emitted one epoch ago: warm memory exists
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
 
@@ -311,8 +313,9 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     }
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_TRUE(pinnedHost(c, "G29_L1C").empty()) << "a held-out key must not be pinned";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 0u);
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G01", kSig)), 1u);
@@ -339,7 +342,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     Census c = makeCensus(spec);
     attachStateManagers(c, spec, log, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 1000.0);
 
     // Epoch 1 blocks.  The key then stays out, epoch after epoch, until the arcs reach
@@ -353,7 +356,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
         EXPECT_EQ(hyg.arcAge(0, "G29_L1C"), ep);
         // The incumbent entry still names the absent station "GONE": the election,
         // which replaces the incumbent map, does not run inside this loop.
-        EXPECT_EQ(ctx.carry.anchor_incumbent.count("G29_L1C"), 1u);
+        EXPECT_EQ((net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::anchor_incumbent) ? 1u : 0u), 1u);
     }
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 1) << "one HOLD, not one per epoch";
     EXPECT_EQ(ctx.counters.hyg.blocked_key_epochs, kMin - 1);
@@ -369,8 +372,9 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     EXPECT_EQ(ctx.carry.anchor_blocked.count("G29_L1C"), 0u);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), cr.stations,
-                           cr.present, cr.cnd, hyg, kNoSlips, shared);
+                           cr.present, cr.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_FALSE(pinnedHost(cr, "G29_L1C").empty()) << "the key must come back";
 }
 
@@ -397,7 +401,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";   // an incumbent, but never emitted
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";   // an incumbent, but never emitted
         runHygiene(ctx, *cfg, c, 1000.0);
         EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
         EXPECT_GT(ctx.counters.hyg.reattach_cold_allowed_no_prior, 0);
@@ -413,7 +417,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 1000.0 - 900.0);   // 900 s ago > 600 s horizon
         runHygiene(ctx, *cfg, c, 1000.0);
         EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
@@ -461,27 +465,28 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.pin_bridge_on);
     ASSERT_GT(ctx.knobs.pin_bridge_info, 0.0);
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);
-    ctx.carry.pb_level_prev["G29_L1C"] = -1.234;   // the harvested solved level
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::pb_level_prev) = -1.234;   // the harvested solved level
 
     AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
     ASSERT_EQ(ctx.counters.hyg.bridges_opened, 1);
     EXPECT_TRUE(hyg.isBridged("G29_L1C"));
-    EXPECT_EQ(ctx.carry.pin_bridge.at("G29_L1C").value, -1.234);
+    EXPECT_EQ((*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).value, -1.234);
     // Bridging replaces the drop: the key stays in the shared set (its column is solved)
     // and is not pinned.
     EXPECT_EQ(c.cnd.union_keys.count("G29_L1C"), 1u);
     EXPECT_EQ(ctx.counters.hyg.reattach_blocked_cold, 0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     // No host is elected for a bridged key: its datum is the shared row, and it enters
     // the walk as a spanning-forest root.  (Receivers reached through it still pin their
     // own z^s_r on that satellite; that edge determines δ_r and is subject to the same
     // eligibility test.)
-    EXPECT_EQ(ctx.carry.this_epoch_anchor.count("G29_L1C"), 0u)
+    EXPECT_EQ(ev.phase_datum.this_epoch_anchor.count("G29_L1C"), 0u)
         << "a bridged key must not be re-hosted";
     EXPECT_EQ(shared.count(StateKeys::makeSatPhaseBiasKey("G29", kSig)), 1u);
 
@@ -489,13 +494,13 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     // been folded max_ep times.  (The row injection increments the fold counter; this
     // test sets it directly because it covers the lifetime rule, not the fold plumbing.)
     for (int k = 0; k < 3; ++k) {
-        ctx.carry.pin_bridge.at("G29_L1C").folds = k;
+        (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = k;
         Census c2 = makeCensus(spec);
         attachStateManagers(c2, spec, log, *cfg);
         hyg = runHygiene(ctx, *cfg, c2, 1030.0 + 30.0 * k);
         EXPECT_TRUE(hyg.isBridged("G29_L1C")) << "dropped early at folds=" << k;
     }
-    ctx.carry.pin_bridge.at("G29_L1C").folds = 3;   // == phase_datum_bridge_max_ep
+    (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = 3;   // == phase_datum_bridge_max_ep
     Census c3 = makeCensus(spec);
     attachStateManagers(c3, spec, log, *cfg);
     hyg = runHygiene(ctx, *cfg, c3, 1200.0);
@@ -529,9 +534,9 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         Census c = makeCensus(spec);
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-        ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 970.0);
-        ctx.carry.pb_level_prev["G29_L1C"] = 0.5;
+        net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::pb_level_prev) = 0.5;
         ASSERT_TRUE(runHygiene(ctx, *cfg, c, 1000.0).isBridged("G29_L1C"));
 
         Census c2 = makeCensus(spec);
@@ -548,7 +553,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         EXPECT_EQ(ctx.counters.hyg.bridge_drop_slip, 1) << "feed " << feed;
         // ...and it does not immediately re-open on the slipped level.
         EXPECT_EQ(ctx.counters.hyg.bridges_opened, 1) << "feed " << feed;
-        EXPECT_EQ(ctx.carry.pin_bridge.count("G29_L1C"), 0u) << "feed " << feed;
+        EXPECT_EQ((net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge) ? 1u : 0u), 0u) << "feed " << feed;
     }
 }
 
@@ -571,7 +576,7 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
     Census c = makeCensus(spec);
     attachStateManagers(c, spec, log, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);
     ctx.carry.anchor_age_resume_seed = true;      // set by networkTryWarmResume
 
@@ -612,13 +617,13 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     EXPECT_EQ(ctx.knobs.eq34_min_arc_ep, 0);
     EXPECT_FALSE(ctx.knobs.pin_bridge_on);
 
-    ctx.carry.anchor_incumbent["G29_L1C"] = "GONE";
+    net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
 
     // No state allocated, no counter touched, no key removed.
     EXPECT_FALSE(hyg.active);
-    EXPECT_TRUE(ctx.carry.anchor_arc_age.empty());
-    EXPECT_TRUE(ctx.carry.pin_bridge.empty());
+    EXPECT_EQ(net::present(ctx.entities.arcs, &net::ArcState::anchor_arc_age), 0u);
+    EXPECT_TRUE((net::present(ctx.entities.sat_signals, &net::SatSignalState::pin_bridge) == 0));
     EXPECT_EQ(ctx.counters.hyg.epochs, 0);
     EXPECT_EQ(ctx.counters.hyg.arcs_tracked, 0);
     EXPECT_EQ(c.cnd.union_keys.size(), 2u);
@@ -628,8 +633,9 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
     EXPECT_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 
     std::set<std::string> shared;
+    EpochEvents ev;
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, kNoSlips, shared);
+                           c.present, c.cnd, hyg, kNoSlips, shared, ev);
     EXPECT_FALSE(pinnedHost(c, "G29_L1C").empty());
     for (const auto& st : c.stations)
         EXPECT_TRUE(st.pinned_amb_sigma_scale.empty())
@@ -640,7 +646,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 // observable is a weight deep inside the parallel assembly).  It decays monotonically
 // to exactly 1 and never tightens a pin beyond the hard-pin weight.
 TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
-    std::map<std::pair<int, std::string>, int> age;
+    net::ArcTable age;   // the arcs' anchor ages (card NOM step N4f1)
     AnchorHygiene hyg;
     hyg.active = true;
     hyg.min_arc_ep = 5;
@@ -650,16 +656,16 @@ TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
 
     double prev = 1e300;
     for (int a = 0; a <= 12; ++a) {
-        age[{ 0, "G29_L1C" }] = a;
+        age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = a;
         const double s = hyg.pinSigmaScale(0, "G29_L1C");
         EXPECT_GE(s, 1.0) << "age " << a << ": the ramp may only LOOSEN a datum pin";
         EXPECT_LE(s, 10.0) << "age " << a;
         EXPECT_LE(s, prev) << "age " << a << ": the ramp must be monotone";
         prev = s;
     }
-    age[{ 0, "G29_L1C" }] = 5;   // at the threshold: still fully fresh
+    age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = 5;   // at the threshold: still fully fresh
     EXPECT_DOUBLE_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 10.0);
-    age[{ 0, "G29_L1C" }] = 10;  // ramp end: fully hard again
+    age[*net::arcKey(0, "G29_L1C")].anchor_arc_age = 10;  // ramp end: fully hard again
     EXPECT_DOUBLE_EQ(hyg.pinSigmaScale(0, "G29_L1C"), 1.0);
 }
 
@@ -679,7 +685,8 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
         auto cfg = loadCfg(log, "neg_min", "    \"eq34_anchor_min_arc_ep\": -3,\n");
         EXPECT_EQ(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);
     }
-    {   // the ensemble datum elects no anchor, so there is nothing to guard: disarm with a warning
+    {   // the legacy pivot datum elects no per-(sat,signal) anchor, so there is nothing to
+        // guard: disarm with a warning
         auto cfg = std::make_unique<GnssConfig>();
         const std::string body =
             std::string("{\n")
@@ -688,14 +695,13 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
               "    \"signal_priorities\": { \"GPS\": \"WC\" } },\n"
               "  \"network\": {\n"
               "    \"clock_datum_station\": \"AAAA\",\n"
-              "    \"phase_datum_ensemble\": true,\n"
               "    \"eq34_anchor_min_arc_ep\": 5,\n"
               "    \"phase_datum_time_linked\": true,\n"
               "    \"stations\": [\n"
               "      { \"name\": \"AAAA\", \"position_ecef\": [ -2493304.99, -4655214.79, 3565497.67 ] },\n"
               "      { \"name\": \"BBBB\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n"
               "    ]\n  }\n}\n";
-        const fs::path p = writeTempConfig("ensemble", body);
+        const fs::path p = writeTempConfig("legacy_datum", body);
         ASSERT_TRUE(cfg->loadFromJson(p, log));
         std::error_code ec; fs::remove(p, ec);
         EXPECT_EQ(cfg->getNetworkConfig().eq34_anchor_min_arc_ep, 0);
@@ -744,15 +750,16 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
         attachStateManagers(c, spec, log, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         std::set<std::string> shared;
+        EpochEvents ev;
         AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0);
         networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                               c.present, c.cnd, hyg, kNoSlips, shared);
+                               c.present, c.cnd, hyg, kNoSlips, shared, ev);
         tree1 = treeEdges(c);
         // Second epoch, same census, one incumbent tree edge now slipped.
         shared.clear();
         hyg = runHygiene(ctx, *cfg, c, 1030.0, slip);
         networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                               c.present, c.cnd, hyg, slip, shared);
+                               c.present, c.cnd, hyg, slip, shared, ev = EpochEvents{});
         tree2 = treeEdges(c);
         deseeded   = ctx.counters.eq34_slip_deseeded;
         readmitted = ctx.counters.eq34_slip_readmitted;
@@ -817,9 +824,10 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionReadmitsAnUnavoidableSlippedTreeEdge)
 
     const std::set<std::pair<int, std::string>> slip{ { 0, "G09_L1C" } };
     std::set<std::string> shared;
+    EpochEvents ev;
     AnchorHygiene hyg = runHygiene(ctx, *cfg, c, 1000.0, slip);
     networkElectChainDatum(ctx, *cfg, spdlog::default_logger(), c.stations,
-                           c.present, c.cnd, hyg, slip, shared);
+                           c.present, c.cnd, hyg, slip, shared, ev);
 
     EXPECT_EQ(treeEdges(c).count({ 0, "G09_L1C" }), 1u)
         << "the only route to G09 must still be elected — dropping it would cost the "

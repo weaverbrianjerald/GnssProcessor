@@ -409,10 +409,10 @@ def _leg_common(args, event_json):
     net["state_snapshot_interval_s"] = 1.0e9
     net["resume_frame_restore"] = True
     # Coupling restore (§18.12, Card 1).  The loader throws on it unless the lineage
-    # also carries the Card-1f interlocks (GnssConfigLoadNetwork.cpp, the four
+    # also carries the Card-1f interlocks (GnssConfigLoadNetwork.cpp, the three
     # throws under `if (network_resume_coupling_restore_)`): resume_frame_restore
-    # (set just above, always satisfied here), carry_conditional_coupling,
-    # carry_coupling_gauge_project, and amb_seam_reinflate_var_m2 == 0.  The sim
+    # (set just above, always satisfied here), carry_conditional_coupling and
+    # carry_coupling_gauge_project.  The sim
     # golden carries 1f and the field golden does not, so an unconditional arm
     # would make every field leg fail to load.  The same keys are read off the
     # flattened seed config and the restore is armed only when they hold; --extra
@@ -424,17 +424,7 @@ def _leg_common(args, event_json):
         cpl_missing.append("network.carry_conditional_coupling")
     if not net.get("carry_coupling_gauge_project", False):
         cpl_missing.append("network.carry_coupling_gauge_project (Card 1f)")
-    if float(net.get("amb_seam_reinflate_var_m2") or 0.0) > 0.0:
-        cpl_missing.append("network.amb_seam_reinflate_var_m2 == 0 (seed has "
-                           f"{net.get('amb_seam_reinflate_var_m2')})")
     net["resume_coupling_restore"] = not cpl_missing
-    # Re-base the restored invariant DD branch onto this run's linearization at the
-    # first post-resume DD prior build (ẑ += W·zl_writer − zl_now).  Against a seed
-    # written without state_snapshot_carry_lin it is inert, and the producer logs
-    # that instead of keeping the writer's frame silently.  Same forward-only
-    # resume-response exemption class as the two restores above.
-    # (RS-2, SPEC_event_harness §21.4)
-    net["resume_carry_rebase"] = True
     # Hold the restored branch through the first post-resume epoch: the D5 gate is
     # diagnostic-only for K = 1 epoch, so the cold station layer's one-epoch
     # disagreement (|v| ~11 m on 301 of 701 chords) does not erase a branch the data

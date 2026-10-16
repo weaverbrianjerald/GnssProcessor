@@ -46,10 +46,9 @@
  *     of a row is the card 1e amputation (@f$M^Tg_s\neq-g_r(c)@f$ ⇒ every coupling
  *     row observes the clock gauge ⇒ the W5 null-space gate withholds the epoch),
  *     which is strictly worse than no coupling at all;
- * (7) the loader interlocks, including the rung-3 mutual exclusion with
- *     @c network.amb_seam_reinflate_var_m2.  That knob changes the row's weight
- *     and walked the consumer by metres (invariant #1, the slip-relevel-walk
- *     family); this card changes the direction only and never modifies @c var.
+ * (7) the loader interlocks.  This card changes the direction only and never
+ *     modifies @c var: a weight change (the retired seam variance re-inflation)
+ *     walked the consumer by metres (invariant #1, the slip-relevel-walk family).
  *
  * The seam mechanics (the first PASS-B inject building a conditional row, the
  * present/departed split, the first-harvest M-vs-M_d census) are graded on the
@@ -356,7 +355,7 @@ TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
 }
 
 // 5. The dictionary key is (identity, ŝ_prev, P_prev), not the identity alone.
-//    harvestCoupling assigns both values from the shared column, so the rows of one
+//    networkHarvestColumn assigns both values from the shared column, so the rows of one
 //    harvest epoch agree, but a station whose harvest failed `continue`s before the
 //    stash and keeps an older coupling (observed on the branch-point snapshot file).
 //    An identity-only key would restore those rows against the wrong frame.
@@ -660,27 +659,6 @@ TEST(ResumeCouplingConfig, RestoreRequiresGaugeProject) {
                       "    \"carry_coupling_gauge_project\": false,\n"
                       "    \"resume_frame_restore\": true,\n"
                       "    \"resume_coupling_restore\": true,\n"), cfg));
-}
-
-// 26. Rung-3 regression test.  amb_seam_reinflate_var_m2 changes the row's weight
-//     and, by letting the level re-float on the cold station layer, walked the
-//     consumer by metres (standing invariant #1, the slip-relevel-walk family).
-//     Under conditional coupling `var` is the row's pure conditional variance, so
-//     inflating it loosens the row the regressors make border-neutral while the
-//     row still asserts Σ M_j·ŝ_prev,j.  No continuous epoch produces that
-//     combination, and the in-tree precedent runs the other way (the relevel
-//     re-tap in networkPostFitRaim, NetworkRaim.cpp, clears the regression when it
-//     loosens the variance).  The loader therefore makes the two knobs mutually
-//     exclusive.
-TEST(ResumeCouplingConfig, RestoreRefusesSeamReinflate) {
-    GnssConfig cfg;
-    EXPECT_FALSE(loadInto("cpl_restore_reinflate",
-        networkConfig(std::string("    \"phase_leveling\": true,\n"
-                                  "    \"state_snapshot_path\": \"state_snapshot.snap\",\n")
-                      + kCard1 +
-                      "    \"resume_frame_restore\": true,\n"
-                      "    \"resume_coupling_restore\": true,\n"
-                      "    \"amb_seam_reinflate_var_m2\": 0.0025,\n"), cfg));
 }
 
 // 27. The full arm-C validation posture loads clean and both knobs read true.

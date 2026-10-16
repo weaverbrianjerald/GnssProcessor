@@ -329,8 +329,8 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
                 // When the pair changed, the two MW values sit on different
                 // wide-lane wavelengths: d_mw is still a level change, but it has
                 // no meaning in cycles of the current pair's lane.  The step is
-                // flagged, not suppressed: the slip cards use it and the lane
-                // observatory rejects it.
+                // flagged, not suppressed: the slip cards use it, and a consumer that
+                // converts d_mw into cycles of one lane refuses it (RawVerdict::pair_changed).
                 v.pair_changed = (pit->second.obs.sig1 != r.sig1)
                               || (pit->second.obs.sig2 != r.sig2);
                 v.d_mw = r.mw_m - pit->second.obs.mw_m;
@@ -426,7 +426,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // GRS).  It is filled only when gap_reentry_per_signal is on, so a run
         // without it pays for one empty container.
         std::set<std::string> row_resumed;
-        if (p.gap_instrument || p.gap_reentry) {
+        if (p.collectsResumptions()) {
             for (const auto& r : rows) {
                 const auto pit = h.prev.find(r.satellite);
                 if (pit == h.prev.end()) continue;                       // first sighting
@@ -475,7 +475,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // whole-satellite gap would be reported by both tiers and answered
         // twice.  The loader warns about the combination; here the tier does
         // not run.
-        if (p.gap_reentry_per_signal && (p.gap_instrument || p.gap_reentry)) {
+        if (p.gap_reentry_per_signal && p.collectsResumptions()) {
             const double gate_gf_sig = std::max(p.k_gf * s_gf, p.gf_floor_m);
             for (const auto& r : rows) {
                 if (row_resumed.count(r.satellite)) continue;   // (5) owns this break
@@ -555,7 +555,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // re-entry always differences a level taken at its own last-seen epoch.
         // The history advances under the same prerequisite as the detection, so
         // the two agree on which epochs the history covers.
-        if (p.gap_reentry_per_signal && (p.gap_instrument || p.gap_reentry)) {
+        if (p.gap_reentry_per_signal && p.collectsResumptions()) {
             for (const auto& r : rows) {
                 if (r.sigs.empty()) continue;
                 auto& smap = h.sig_prev[r.satellite];

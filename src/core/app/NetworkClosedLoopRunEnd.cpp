@@ -19,7 +19,6 @@
 #include "filter/NetworkRunGroups.hpp"
 #include "logging/NetworkRunTraces.hpp"
 #include "math/Coordinates.hpp"
-#include "products/NetworkProductEmitter.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -126,22 +125,6 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   ctx.counters.n_cst_rows, ctx.counters.n_cst_epochs,
                   (log_dir_ / "closed_loop_sat_trace.csv").string());
     }
-    // The four declaration classes of the de-commoned phase jump test (card JT), the
-    // ON-path telemetry (invariant #4).  Printed only when armed, so a run with it off
-    // keeps a byte-identical summary.  `decommon_only` is the population the raw test
-    // missed and `raw_only` the population only the raw test declared (suppressed
-    // here): 0 in both means the knob is inert on this lineage however clean the run
-    // reads.
-    if (config_.getNetworkConfig().disc_jump_test_decommon) {
-        const auto& k = ctx.counters;
-        log->info("  pb jump de-common (JT)    : decl_decommon_only {} (the raw test MISSED "
-                  "these) / decl_both {} / raw_only_suppressed {} (the raw test MINTED "
-                  "these) / fallback_raw {} (signal population < {}); declared by this test "
-                  "{}",
-                  k.n_jt_decommon_only, k.n_jt_both, k.n_jt_raw_only, k.n_jt_fallback_raw,
-                  NetworkProductEmitter::kDiscDecommonMinSats,
-                  k.n_jt_decommon_only + k.n_jt_both);
-    }
     // Emit-side phase-bias hold (card PBH): the ON-path telemetry (invariant #4) and
     // both edges (invariant #7), printed only when armed so a run with it off keeps a
     // byte-identical summary.  `held_emissions 0` means the hold never wrote, however
@@ -191,8 +174,11 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
             const double t50 = q(tt, 0.50), t90 = q(tt, 0.90);
             const double tmax = tt.empty() ? 0.0 : *std::max_element(tt.begin(), tt.end());
             std::string m_final;
-            for (const auto& [cc, m] : ctx.carry.pb_hold_frz_M)
-                m_final += fmt::format("{}{} {:.4f}", m_final.empty() ? "" : ", ", cc, m);
+            net::forEach(ctx.entities.constellations, &net::ConstellationState::pb_hold_frz_M,
+                         [&](System sys, double m) {
+                             m_final += fmt::format("{}{} {:.4f}", m_final.empty() ? "" : ", ",
+                                                    rinexLetter(sys), m);
+                         });
             log->info("  pb hold, phase clock (LAH): {} held emission(s) moved by the clock "
                       "transfer (> 1 um), {} on an epoch without the satellite's clock (last "
                       "transfer reused), {} of a generation started without one (held "
@@ -291,9 +277,8 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                           cc.smh_reg_checked - cc.smh_reg_mismatch, cc.smh_reg_checked,
                           cc.smh_reg_maxdiff);
             }
-            // Card SMD: the block clones (carried whenever the smoothed hold is armed).
-            // `0 update(s)` under network.emit_pb_hold_smoothed_block means the wire was the
-            // phase-clock transfer throughout.
+            // Card SMD: the block clones (carried whenever the smoothed hold is armed), an
+            // instrument of the smoothed hold: the wire never reads them.
             {
                 auto pa = k.smh_pv_phi_abs;   // copies: run-end readout
                 auto la = k.smh_pv_lvl_abs;
@@ -313,30 +298,24 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                 for (const auto& [h, n] : k.smh_pv_steps_unmarked_hour)
                     ush += fmt::format("{}h{} {}", ush.empty() ? "" : ", ", h, n);
                 const auto fol = [&k](PbHoldFollow f) { return k.smh_pv_follow[static_cast<int>(f)]; };
-                log->info("  pb hold, smoothed, block clones (SMD){}: {} born ({} on a pinned clock, "
+                log->info("  pb hold, smoothed, block clones (SMD), instrument: {} born ({} on a pinned clock, "
                           "{} again within a generation); pending births waited {} stash(es) on the "
                           "anchor, {} on a stashed clock, {} for phase biases on two bands, {} "
                           "dropped with their generation; pairs [{}]; {} update(s); deaths [{}]; "
                           "steps followed: {} re-reference(s), {} new anchor tenure(s), {} emitter "
                           "mark(s); {} re-reference(s) with no phase-channel mark; {} unmarked "
                           "step(s) of D above the pair's smallest emitter bar (largest {:.4f} m; by "
-                          "hour [{}]); {} held emission(s) "
-                          "written; |Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| "
+                          "hour [{}]); "
+                          "|Phi_D| p50 {:.4f} / p90 {:.4f} m, level part |Phi_c - Phi_D| "
                           "p50 {:.4f} / p90 {:.4f} m over {}; r_D by hour [{}]",
-                          config_.getNetworkConfig().emit_pb_hold_smoothed_block ? ", the wire"
-                                                                                : ", instrument",
                           k.smh_pv_births + k.smh_pv_births_pinned, k.smh_pv_births_pinned,
                           k.smh_pv_rebirths, k.smh_pv_defer_anchor, k.smh_pv_defer_nostash,
                           k.smh_pv_defer_nopair, k.smh_pv_pending_dropped, pairs,
                           k.smh_pv_updates, pdeaths, fol(PbHoldFollow::Reref),
                           fol(PbHoldFollow::Tenure), fol(PbHoldFollow::Mark),
                           k.smh_pv_reref_unmarked, k.smh_pv_steps_unmarked,
-                          k.smh_pv_step_unmarked_max, ush, k.smh_pv_held, q(pa, 0.50), q(pa, 0.90),
+                          k.smh_pv_step_unmarked_max, ush, q(pa, 0.50), q(pa, 0.90),
                           q(la, 0.50), q(la, 0.90), k.smh_pv_lvl_abs.size(), rds);
-                if (config_.getNetworkConfig().emit_pb_hold_smoothed_block && k.smh_pv_updates == 0)
-                    log->warn("Network (card SMD): network.emit_pb_hold_smoothed_block is ARMED "
-                              "but no block clone was advanced: every held key wrote the "
-                              "phase-clock transfer.");
             }
         }
     }

@@ -14,11 +14,10 @@
  * (NetworkKnobs, NetworkServiceCounters) or as explicit values.  The rotation
  * primitive is in logging/CsvRotator.hpp; the epoch loop calls rotateServiceCsvs().
  *
- * P1 rotation policy: the four service CSVs that grow without bound rotate by size
+ * P1 rotation policy: the three service CSVs that grow without bound rotate by size
  * when network.trace_rotate_mb > 0.  They are the always-on network_trace.csv and
- * network_solution.csv, the RTB-6 health heartbeat (network_service_health.csv)
- * and the FC-1 fast-clock trace (network_fast_clock.csv).  Their header lines are
- * the named constants below, so a rotation reopen writes the same header as the
+ * network_solution.csv and the RTB-6 health heartbeat (network_service_health.csv).
+ * Their header lines are the named constants below, so a rotation reopen writes the same header as the
  * startup open and every rolled generation parses on its own.  The pyviz viewers
  * read only the live file name and do not discover the rolled generations
  * (file.csv.1 … file.csv.N, N = network.trace_rotate_keep); reading those means
@@ -71,13 +70,6 @@ namespace GnssProcessor {
         "week,tow,n_emitted,n_skipped,n_gate_withheld,n_sigma0_withheld,"
         "n_runaway_epochs,sigma0_ewma,n_present,n_clock_sats,"
         "ms_per_epoch_window,last_emit_age_s,pivot,cold_start_grade_s\n";
-    /// network_fast_clock.csv header (re-written verbatim on every P1 rotation reopen).
-    /// Two row kinds share the stream, discriminated by @c kind: "T" = one per fast tick
-    /// (the summary), "S" = per-satellite detail, written only every
-    /// @c network.fast_clock.trace_sat_stride ticks.  Per-satellite rows on every tick
-    /// at a 1 s RT cadence would grow without bound, hence the stride and the rotation.
-    inline constexpr const char* kFastClockHeader =
-        "week,tow,kind,dt_s,shadow,n_los,n_screened,n_sat_est,emitted,sat,dc_m,sigma_m\n";
     /// network_carry_vce.csv header (M2/LS-VCE hourly rows).
     inline constexpr const char* kCarryVceHeader =
         "week,tow,hour,family,const,n_rows,n_eff,robust_floor_m2,mean_floor_m2,"
@@ -481,9 +473,9 @@ namespace GnssProcessor {
      * on-disk path.  Member names match the former runNetwork() locals, so the run
      * loop binds `auto& X = traces.X;` references and every writer use-site stays
      * textually unchanged (the INC-3 migration mechanic).  network_trace.csv and
-     * network_solution.csv always open; every other stream opens in openAll() (the
-     * two MW/WL dumps in openMwWlDumps()) only when its arming toggle is set, and a
-     * toggle left off opens nothing and writes nothing (byte-identical when off).
+     * network_solution.csv always open; every other stream opens in openAll() only when
+     * its arming toggle is set, and a toggle left off opens nothing and writes nothing
+     * (byte-identical when off).
      */
     struct NetworkRunTraces {
         /// @param log_dir The run's log directory (streams live directly in it).
@@ -635,16 +627,6 @@ namespace GnssProcessor {
         /// no rows written).  Column semantics: docs/rt_service_operations.md.
         std::ofstream health_trace;
         const std::filesystem::path health_trace_path;
-        /// Per-tick split-cadence fast-clock trace (FC-1; network.fast_clock.trace,
-        /// opened only when network.fast_clock.enable is also set): one summary row per
-        /// fast tick plus strided per-satellite detail rows.  The tick tier runs on
-        /// epochs the full pipeline skips, so this stream and the run-end counters are
-        /// the only evidence that the tier ran; in shadow mode it is also the grading
-        /// instrument, carrying fast-vs-full deltas on full epochs.  Rotates (P1)
-        /// because a 1 s real-time tick makes it grow without bound.  Off by default
-        /// (byte-identical when off: no file opened, no rows written).
-        std::ofstream fast_clock_trace;
-        const std::filesystem::path fast_clock_trace_path;
         /// Structured per-event QC log (L2; network.trace_events): one long-format row
         /// per discrete QC action across all tiers, the machine-readable alternative to
         /// scraping the spdlog text.  Off by default (byte-identical when off).
@@ -810,19 +792,6 @@ namespace GnssProcessor {
         /// cannot: they pool per STA / SAT / SIG separately and drop the sign.
         std::ofstream pf_rows_trace;
         const std::filesystem::path pf_rows_trace_path;
-        /// Per-satellite level-filter trace (card CLV; @c network.clock_level_carry,
-        /// written under @c network.trace_events): one row per satellite per kept epoch
-        /// the level filter acted on, with columns
-        /// @c week,tow,sat,v_level_m2,i_level,n_rows_epoch,e_level_m,d_level_m,event.
-        /// @c v_level_m2 = max(1 / I_L, floor^2) after the update (the level's code-only
-        /// variance), @c i_level the filter's information I_L (1/m^2), @c n_rows_epoch
-        /// the (station) ionosphere-free pairs of the update, @c e_level_m the level
-        /// residual (the satellite's two-way effect in the post-fit ionosphere-free code
-        /// residuals, positive when the clock is high), @c d_level_m the shift applied
-        /// along the level direction, @c event one of arm / break / update.  Trace-class
-        /// and fingerprint-safe.
-        std::ofstream clock_level_trace;
-        const std::filesystem::path clock_level_trace_path;
         /// The level monitor of card CTU (@c network.clock_level_monitor under
         /// @c network.trace_events): one row per satellite per kept epoch, @c p_level_m2
         /// the stashed block's variance along the satellite's level direction,
@@ -880,8 +849,8 @@ namespace GnssProcessor {
         /// variance of c - p_j at birth and the clock's share of it (they carry the
         /// float-ambiguity datum and are not G3's prediction inputs, card SMH section 9;
         /// empty on a pinned clock).  @c phi_m, @c w_m2, @c vpost_m2, @c var_m2 and @c r are the
-        /// writing member's: @c member @c clk (card SMH's clock clone) or @c pv (card SMD's
-        /// block clone, whose Phi_D writes).  The @c b_* columns are the key's block clone
+        /// writing member's: @c member is always @c clk (card SMH's clock clone writes; the
+        /// column stays for the trace format).  The @c b_* columns are the key's block clone
         /// (card SMD) when it is live, on its own birth: its age, its clock row's Phi_c, Phi_D,
         /// the level part Phi_c - Phi_D, the fold inflation along D, the posterior variance of
         /// the D increment, r_D = Phi_D^2 / (W_D - V_D) and the band pair ("L1C+L2W").
@@ -969,29 +938,6 @@ namespace GnssProcessor {
         /// place from a serial seam, so no per-station buffering is needed.
         std::ofstream sd_ewl_ar_trace;
         const std::filesystem::path sd_ewl_ar_trace_path;
-        /// Attribution dump of the D5 innovation flags (@c network.mw_wl.d5_dump with the
-        /// D5 innovation gate; card 4, F-A): one row per D5 innovation flag per epoch with
-        /// its adjacency tags (EWL-fixed (station, sat) membership, hold-cycle chord,
-        /// injected-last-epoch chord) and the D2 tri-state @c raw_stepped tag.
-        /// Log-only: the solve never reads it.  Written from @ref networkInstallCarry
-        /// through this handle.
-        ///
-        /// Opened by @ref openMwWlDumps, not openAll(): its arming expression
-        /// (@c (ewl_on||wl_inject_on||lane_on) && nmw.d5_dump && carry_innov_gate) is
-        /// derived in the run TU after openAll() runs, and re-deriving it here would
-        /// drift out of step with the driver.  The lifecycle matches every other
-        /// stream: one truncating open with the header per run, before the epoch loop.
-        std::ofstream d5_flags_trace;
-        const std::filesystem::path d5_flags_trace_path;
-        /// WL lane trace (@c network.mw_wl.lane_trace; cards WL-2/WL-3, F-B): per epoch,
-        /// the post-install carried WL lane value of every primary cycle carried in both
-        /// bands, with the decided/held/injected tags.  The constrained and
-        /// unconstrained populations share one file, so an injected cycle's circular R
-        /// can be graded (@c scripts/grade_lane_trace.py).  Log-only.  Opened by
-        /// @ref openMwWlDumps for the same reason as @ref d5_flags_trace (arming
-        /// expression @c (wl_inject_on||lane_fix_on) && nmw.lane_trace).
-        std::ofstream wl_lane_trace;
-        const std::filesystem::path wl_lane_trace_path;
         /// Arc lifecycle trace (card SID phase 1; @c network.signal_roster): one row per
         /// (station, satellite, signal) transition, written through
         /// @ref writeArcLedgerRow from @c networkBuildSignalRoster (raw rows) and
@@ -1077,28 +1023,6 @@ namespace GnssProcessor {
                      const std::shared_ptr<spdlog::logger>& log);
 
         /**
-         * @brief Open the two MW/WL diagnostic dumps (@ref d5_flags_trace,
-         *        @ref wl_lane_trace) with their headers: the openAll() tail for the
-         *        streams whose arming expression is known only later in setup.
-         *
-         * Call once from the run TU, before the epoch loop and after the WL zone-2
-         * arming booleans are derived.  Both open truncating, like every other trace
-         * stream, so re-running a config into a used log directory replaces the file.
-         * Appending would join consecutive runs in one file, and an A/B whose arms had
-         * been re-run a different number of times would then show a false D5 row-count
-         * divergence.  An unarmed dump opens nothing and writes nothing.
-         *
-         * @param d5_armed         @c mw_d5_dump && carry_innov_gate, the condition the
-         *                         per-epoch writer tests, so an armed run with zero
-         *                         flags yields a header-only file rather than an
-         *                         absent one, and an inert gate yields neither.
-         * @param lane_trace_armed @c mw_lane_trace.
-         * @param log              main_log logger for open-failure warnings.
-         */
-        void openMwWlDumps(bool d5_armed, bool lane_trace_armed,
-                           const std::shared_ptr<spdlog::logger>& log);
-
-        /**
          * @brief Write the one-shot station-roster CSV (network_stations.csv).
          *
          * A tiny static CSV of the stations that actually loaded (id, role, ECEF)
@@ -1151,11 +1075,10 @@ namespace GnssProcessor {
                                       std::size_t n_synced, double loop_ms,
                                       const std::string& extra_member = std::string());
 
-        /// Size-based rotation (P1) of the four unbounded service CSVs (network_trace,
-        /// network_solution, network_service_health, network_fast_clock; a closed
-        /// stream is skipped).  Call once per processed epoch, before the epoch's rows
-        /// are written.  With network.trace_rotate_mb at 0 (the default) nothing is
-        /// touched.
+        /// Size-based rotation (P1) of the three unbounded service CSVs (network_trace,
+        /// network_solution, network_service_health; a closed stream is skipped).  Call
+        /// once per processed epoch, before the epoch's rows are written.  With
+        /// network.trace_rotate_mb at 0 (the default) nothing is touched.
         void rotateServiceCsvs(const NetworkConfig& nc,
                                const std::shared_ptr<spdlog::logger>& log);
 
@@ -1289,5 +1212,19 @@ namespace GnssProcessor {
         /// at scope exit.  The remaining streams close in the destructor.
         void closeAll();
     };
+
+struct NetworkRun;
+
+/**
+ * @brief Writes the run manifest's startup record and logs the parameter model as armed.
+ *
+ * The parameter-model table also goes to the manifest (card PRM).  Setup builder (card NOM3
+ * step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.traces (the manifest's startup records).
+ * @param config_path_ The configuration file's path (Application::config_path_).
+ */
+void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& config_path_);
 
 } // namespace GnssProcessor

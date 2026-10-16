@@ -44,6 +44,7 @@
 #include <vector>
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "filter/NetworkNormalEquations.hpp"
 #include "filter/NetworkRedundancyCensus.hpp"
@@ -490,11 +491,13 @@ TEST(RedundancyCensusTest, OffIsStructurallyInert) {
 
     // A fresh carry state allocates nothing for the census.
     NetworkCarryState carry;
-    EXPECT_EQ(carry.redun_epochs, 0);
+    EXPECT_EQ(NetworkServiceCounters{}.redun_epochs, 0);   // instrument state (card NOM step N4g)
     EXPECT_TRUE(carry.redun_escalate_pending.empty());
-    EXPECT_TRUE(carry.redun_event_last.empty());
-    EXPECT_TRUE(carry.redun_unobs_active.empty());
-    EXPECT_DOUBLE_EQ(carry.redun_ep_tow, -1.0);
+    EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::events,
+                           &net::LosEventState::redun_event_last), 0u);
+    EXPECT_EQ(net::present(net::NetworkEntities{}.stations,
+                           &net::StationState::redun_unobs_active), 0u);
+    EXPECT_DOUBLE_EQ(EpochEvents{}.census.redun_ep_tow, -1.0);
 
     // The epoch-status row leaves the four census columns blank, so a run with the
     // census off is byte-identical in network_epoch_status.csv apart from the

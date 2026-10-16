@@ -121,14 +121,6 @@ int networkRunTimingRunEnd(const NetworkRunEndView& v) {
                       dp.post_mean_ms, pct(dp.post_mean_ms),
                       dp.post_cov_ms, pct(dp.post_cov_ms),
                       dp.d5_gate_ms, pct(dp.d5_gate_ms), dp.time_update_ms);
-            // Split of the WL-3 lane fold: the ~10³ per-epoch rank-1/rank-2 covariance updates,
-            // which SB_DDBUILD lumps into basis-project (LF-1 INC-0).
-            log->info("Network (D0/LF-1) lane-fold per-op: applyLaneMeasurement {:>8.0f} ms ({:4.1f}%) "
-                      "over {} row(s) | applyLaneFix {:>8.0f} ms ({:4.1f}%) over {} row(s)  "
-                      "[measurement = irreducible O(K²)/row dense downdate; fix = the ~65%-decided "
-                      "SET INC-1 makes O(K)].",
-                      dp.lane_meas_ms, pct(dp.lane_meas_ms), dp.lane_meas_calls,
-                      dp.lane_fix_ms, pct(dp.lane_fix_ms), dp.lane_fix_calls);
             const auto& cc = carry_driver.counters();
             const long long marg_total = cc.chords_marginalized + cc.chords_marg_perchord;
             const long long chords_folded = cc.chords_carried + cc.chords_born;

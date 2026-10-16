@@ -172,7 +172,7 @@ struct FitBed {
     LogManager log_manager;
     NetworkOraclePin pin;
     std::vector<NetStation> stations;
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry> carry;
+    net::ArcTable carry;
     std::map<std::string, std::string> anchor_of;
     double lam[2]{0.0, 0.0};
 
@@ -249,7 +249,7 @@ struct FitBed {
                     lc.var         = 1.0e-5;
                     lc.last_seen_s = kW + 279270.0;
                     lc.birth_s     = kW + 270000.0;
-                    carry[{r, sat(s), kBand[j]}] = lc;
+                    net::putArcIn(carry, {r, sat(s), kBand[j]}, &net::ArcState::amb) = lc;
                 }
 
         NetworkOraclePin::Armed a;
@@ -559,7 +559,7 @@ TEST(OraclePinFit, ArcsAbsentFromTheCarryAreStillPinned) {
     bed.fit();
     for (const int s : {4, 5}) {
         const auto key = std::make_tuple(3, FitBed::sat(s), std::string(FitBed::kBand[0]));
-        EXPECT_EQ(bed.carry.count(key), 0u) << "the bed must not carry this arc";
+        EXPECT_EQ(net::getArc(bed.carry, key, &net::ArcState::amb), nullptr) << "the bed must not carry this arc";
         EXPECT_EQ(bed.pin.table.count(key), 1u) << "…and the pin must still hold it";
     }
 }

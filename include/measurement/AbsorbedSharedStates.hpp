@@ -61,13 +61,12 @@ namespace GnssProcessor {
      * observation still builds its row, and another parameter of the station takes the
      * withheld term up.  The reason table @c absorbedReasonSpec
      * (filter/NetworkParamInventory.hpp) gives each value its rule, its code site and what
-     * takes the state up.  The first five gates sit in
+     * takes the state up.  The first four gates sit in
      * @c MeasurementModel::ensureNetworkSharedStates (PASS A, at allocation), the last two
      * prune states the station had allocated (serial, before PASS B).
      */
     enum class AbsorbedReason : std::uint8_t {
         GlonassCodeOnlyScope = 0,  ///< GLONASS on the network's code-only scope: no satellite phase or code bias under FDMA.
-        UnmatchedAntenna,          ///< The station's receiver antenna has no ATX model (network.phase_bias_exclude_unmatched_antenna).
         CoverageGate,              ///< The signal is outside the coverage allowlist (network.phase_bias_min_station_fraction).
         Allowlist,                 ///< Legacy single-pivot datum: the key is not among the pivot station's phase-bias keys.
         CodeCensusCogate,          ///< The CB-ADM census quarantined the signal's companion code pair (network.cb_admission).
@@ -76,7 +75,7 @@ namespace GnssProcessor {
     };
 
     /// Number of @ref AbsorbedReason values.
-    inline constexpr std::size_t kAbsorbedReasons = 7;
+    inline constexpr std::size_t kAbsorbedReasons = 6;
 
     /**
      * @brief One shared satellite state a gate withheld from a station, as the gate saw

@@ -25,32 +25,22 @@ namespace {
 
 /// The entry a handle names, or null when it is gone.
 LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Handle& hd) {
-    auto& c = ctx.carry;
     switch (hd.map) {
-        case SharedHistoryMap::Amb: {
-            const auto it = c.local_carry.find(std::make_tuple(hd.sta, hd.sat, hd.sig));
-            return it != c.local_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::Zwd: {
-            const auto it = c.zwd_carry.find(hd.sta);
-            return it != c.zwd_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::Iono: {
-            const auto it = c.iono_blk_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.iono_blk_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::RxClk: {
-            const auto it = c.rx_clk_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.rx_clk_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::RxCb: {
-            const auto it = c.rx_cb_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.rx_cb_carry.end() ? &it->second : nullptr;
-        }
-        case SharedHistoryMap::Pc: {
-            const auto it = c.pc_carry.find(std::make_pair(hd.sta, hd.sat));
-            return it != c.pc_carry.end() ? &it->second : nullptr;
-        }
+        case SharedHistoryMap::Amb:
+            return net::getArc(ctx.entities.arcs, std::make_tuple(hd.sta, hd.sat, hd.sig),
+                               &net::ArcState::amb);
+        case SharedHistoryMap::Zwd:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::zwd);
+        case SharedHistoryMap::Iono:
+            return net::getLos(ctx.entities.los, hd.sta, hd.sat, &net::LosState::iono_blk);
+        case SharedHistoryMap::RxClk:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
+                            hd.sat, &net::StationSignalState::rx_clk);
+        case SharedHistoryMap::RxCb:
+            return net::get(ctx.entities.stations, StationId{hd.sta}, &net::StationState::signals,
+                            hd.sat, &net::StationSignalState::rx_cb);
+        case SharedHistoryMap::Pc:
+            return net::getLos(ctx.entities.los, hd.sta, hd.sat, &net::LosState::pc);
     }
     return nullptr;
 }
@@ -58,13 +48,20 @@ LocalCarry* shxFindEntry(NetworkRunContext& ctx, const SharedHistoryHarvest::Han
 /// Visit every entry of the six carry maps that can hold history coefficients.
 template <typename Fn>
 void shxForEachEntry(const NetworkRunContext& ctx, Fn&& fn) {
-    const auto& c = ctx.carry;
-    for (const auto& kv : c.local_carry) fn(kv.second);
-    for (const auto& kv : c.zwd_carry) fn(kv.second);
-    for (const auto& kv : c.iono_blk_carry) fn(kv.second);
-    for (const auto& kv : c.rx_clk_carry) fn(kv.second);
-    for (const auto& kv : c.rx_cb_carry) fn(kv.second);
-    for (const auto& kv : c.pc_carry) fn(kv.second);
+    net::forEach(ctx.entities.arcs, &net::ArcState::amb,
+                 [&](const ArcId&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.stations, &net::StationState::zwd,
+                 [&](const StationId&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.los, &net::LosState::iono_blk,
+                 [&](const LosId&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::rx_clk,
+                 [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.stations, &net::StationState::signals,
+                 &net::StationSignalState::rx_cb,
+                 [&](const StationId&, const std::string&, const LocalCarry& lc) { fn(lc); });
+    net::forEach(ctx.entities.los, &net::LosState::pc,
+                 [&](const LosId&, const LocalCarry& lc) { fn(lc); });
 }
 
 /// The p50 and the maximum of a sample (0 when empty).
@@ -234,13 +231,16 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
         for (std::size_t j = 0; j < n; ++j)
             if (sh.coef[j] != 0.0) ref[j] = 1;
     };
-    for (const auto& kv : ctx.carry.smh_clone)
-        if (kv.second.alive) holdRef(kv.second.shx);
-    for (const auto& kv : ctx.carry.smh_block)
-        if (kv.second.alive) {
-            holdRef(kv.second.shx);
-            holdRef(kv.second.pv_shx);
-        }
+    // The hold rows live in the satellite-signal table (card NOM step N4d), in key order.
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,
+                 [&](const SatSignalId&, const PbHoldClone& c) { if (c.alive) holdRef(c.shx); });
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
+                 [&](const SatSignalId&, const PbHoldClone& c) {
+                     if (c.alive) {
+                         holdRef(c.shx);
+                         holdRef(c.pv_shx);
+                     }
+                 });
     S.col.assign(static_cast<std::size_t>(S.kt), Eigen::Index{-1});
     long long n = 0;
     for (int j = 0; j < S.kt; ++j) {
@@ -456,13 +456,15 @@ namespace {
 /// Every live hold row's shared-history record (card SMH's clock rows; card SMD's two rows).
 template <typename Fn>
 void shxForEachHoldRow(NetworkRunContext& ctx, Fn&& fn) {
-    for (auto& kv : ctx.carry.smh_clone)
-        if (kv.second.alive) fn(kv.second.shx, kv.second.var);
-    for (auto& kv : ctx.carry.smh_block)
-        if (kv.second.alive) {
-            fn(kv.second.shx, kv.second.var);
-            fn(kv.second.pv_shx, kv.second.pv_var);
-        }
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,   // N4d
+                 [&](const SatSignalId&, PbHoldClone& c) { if (c.alive) fn(c.shx, c.var); });
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
+                 [&](const SatSignalId&, PbHoldClone& c) {
+                     if (c.alive) {
+                         fn(c.shx, c.var);
+                         fn(c.pv_shx, c.pv_var);
+                     }
+                 });
 }
 
 /// A pending hold row's per-row term (B1's form): its whole shared term on its own variance,

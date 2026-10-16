@@ -24,6 +24,7 @@
  */
 
 #include "app/NetworkRunContext.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, constellationKey
@@ -49,9 +50,6 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                 bool retro_feed) {
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
-    auto& ura_refloat_horizon = ctx.carry.ura_refloat_horizon;
-    auto& ura_retro_sats = ctx.carry.ura_retro_sats;
-    auto& retro_active = ctx.carry.retro_active;
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate;
     const int    pl_warmup = ctx.knobs.pl_warmup;
     const bool   ura_retro = ctx.knobs.ura_retro;
@@ -70,7 +68,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
             if (!sat.empty()) flagged_now.insert(sat);
 
         if (ura_refloat_inflate > 1.0 && pl_warmup > 0)
-            for (const std::string& sat : flagged_now) ura_refloat_horizon[sat] = pl_warmup;
+            for (const std::string& sat : flagged_now) net::putSat(ctx.entities, sat, &net::SatelliteState::ura_refloat_horizon) = pl_warmup;
 
         // The retro-bump is edge-triggered (P1-3): queue only a satellite that just
         // became flagged (not already in retro_active), so a satellite that stays
@@ -79,22 +77,20 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         // re-flag re-arms the bump.  ura_retro_sats is consumed at the next emit.
         if (ura_retro) {
             for (const std::string& sat : flagged_now)
-                if (!retro_active.count(sat)) ura_retro_sats.insert(sat);
-            retro_active = std::move(flagged_now);
+                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(ctx.entities, sat, net::Disc::UraRetro);
+            net::assignSatFlags(ctx.entities, &net::SatelliteState::retro_active, flagged_now);
         }
 
         // Age out the post-refloat inflation horizon one epoch at a time.
         if (ura_refloat_inflate > 1.0)
-            for (auto it = ura_refloat_horizon.begin(); it != ura_refloat_horizon.end();) {
-                if (--it->second <= 0) it = ura_refloat_horizon.erase(it);
-                else ++it;
-            }
+            net::eraseIf(ctx.entities.sats, &net::SatelliteState::ura_refloat_horizon,
+                         [](const SatId&, int& left) { return --left <= 0; });
     }
 }
 
 void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        NetworkRunTraces& traces, const GnssTime& t,
-                       NetworkEstimator& est, const Eigen::VectorXd& x_s,
+                       const NetworkEstimator& est, const Eigen::VectorXd& x_s,
                        const NetworkSbasis::Plan& plan,
                        const SphericalHarmonicIonosphere* sh_model,
                        const SphericalHarmonicIonosphere* sh_model2,
@@ -102,6 +98,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        const std::vector<std::string>& registered_clock_sats,
                        const std::set<std::string>& shared_phase_keys,
                        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                       const EpochEvents& events,
                        const std::shared_ptr<spdlog::logger>& log) {
     // Card PRM phase 2: the stash re-expresses the carry in the solve's datum, so a transform
     // the handover preview applied before PASS B is no longer a pending record (empty with
@@ -111,17 +108,12 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // their original names.
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
-    auto& prev_clock_refloat_sats = ctx.carry.prev_clock_refloat_sats;
-    auto& code_bias_prev_ = ctx.carry.code_bias_prev_;
-    auto& code_bias_ifpin_pair_ = ctx.carry.code_bias_ifpin_pair_;
-    auto& code_bias_sat_seen_ = ctx.carry.code_bias_sat_seen_;
-    auto& this_epoch_cb_ifpin = ctx.carry.this_epoch_cb_ifpin;
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;
+    const auto& this_epoch_cb_ifpin = events.code_datum.this_epoch_cb_ifpin;
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
     const bool   clk_model_on = ctx.knobs.clk_model_on;
     const bool   carry_invariant = ctx.knobs.carry_invariant;
-    const bool   phase_hold_on = ctx.knobs.phase_hold_on;
-    const double phase_hold_var = ctx.knobs.phase_hold_var;
     const bool   cb_time_linked = ctx.knobs.cb_time_linked;
     const bool   fullcov_on = ctx.knobs.fullcov_on;
 
@@ -134,44 +126,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     prev_carry.clear();
     prev_carry_cov.clear();   // rebuilt below when the dense carry (C1) is on
     std::vector<Eigen::Index> fc_cols;  // shared-border column per dense row (C1)
-    // Fix A: covariance-carry consistency, the companion to the point-solve fold that
-    // the solve depends on.  Under the anchor-free ensemble phase-bias datum the gauge
-    // is realized after the reduction by the rank-1 correction Ñ_ss += g gᵀ/β
-    // (@ref NetworkNormalEquations::foldReducedSumZeroGauges), not by a local pin before
-    // the reduction as in the anchor mode.  A satellite phase-bias column is the gauge
-    // (null) direction of the unfolded reduced normals: the fold makes the system
-    // invertible but leaves that column's slot of the reduced covariance carrying the
-    // fold's artificial gauge-direction variance (an over-tight value that reinforces
-    // itself epoch by epoch, set by the sum-to-zero reference rather than by a physical
-    // uncertainty, since the ensemble reference is re-realized exactly every epoch),
-    // plus its phase↔clock / phase↔code cross terms.  Feeding that column into the D2
-    // carry would propagate the fold into next epoch's prior: the stiff,
-    // gauge-referenced phase-bias prior biases the coupled satellite clock through
-    // N_ss[clk,pb], clock_model amplifies it, and the pair diverges exponentially from
-    // epoch 2 (about 7× per epoch).  Therefore every ensemble phase-bias gauge column
-    // is treated as an exact datum (variance 0) in the covariance the carry harvests,
-    // the analogue of how conditionalLocalCovariance / conditionalLocalVarianceDiag
-    // zero the datum-pinned shared columns before reconstructing a conditional
-    // covariance ("datum-pinned rows/cols zeroed → treat as exact").  Zeroing the row
-    // and column drops both the over-tight diagonal (the diagonal stash's var>0 guard
-    // then skips the key) and the phase↔clock/code cross-covariance (the key is then
-    // excluded from the C1 dense block too), while the gauge-invariant clock and
-    // code-bias variances (which the S-transform leaves identical to the anchor datum)
-    // pass through untouched.  Continuity of the emitted phase bias comes from the
-    // local ambiguity carry (phase_leveling) and the stable ensemble constraint, not
-    // from this shared carry, which under the fold would double-count that information
-    // and add the contamination.  Anchor mode or off: cov aliases
-    // est.sharedCovariance() unchanged → byte-identical.  Zeroing the g direction
-    // instead (g = λ·N_ss·e_pb, which has clock components) would corrupt the correct
-    // clock covariance: the contaminated direction is the phase-bias column e_pb, not g.
-    const Eigen::MatrixXd& cov_src = est.sharedCovariance();
-    Eigen::MatrixXd cov_ens;   // ensemble-only: the gauge-exact copy
-    const bool ens_phase_gauge = config_.networkPhaseDatumEnsemble();
-    if (ens_phase_gauge) {
-        cov_ens = cov_src;
-        est.zeroPhaseGaugeColumns(cov_ens);   // treat each folded gauge column as exact
-    }
-    const Eigen::MatrixXd& cov = ens_phase_gauge ? cov_ens : cov_src;
+    const Eigen::MatrixXd& cov = est.sharedCovariance();
     std::set<Eigen::Index> pinned_cols;
     for (const auto& p : plan.shared_datum) pinned_cols.insert(p.column);
     auto stash = [&](SharedParamKind kind, const std::string& sat,
@@ -211,7 +166,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // alone would leave the clock-QC half of the feed empty, and the widening would cover
     // only the reref sources without any indication.
     if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
-        prev_clock_refloat_sats = clock_refloat_sats;
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::prev_clock_refloat, clock_refloat_sats);
     // The satellite clock is stashed to prev_carry only in scalar-carry mode.  Under
     // network.clock_model the clock is carried by clock_osc and is not stashed here; the
     // two-state model is its only cross-epoch memory.
@@ -234,7 +189,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // is armed.
     const bool harvest_pb_levels =
         ctx.knobs.pin_bridge_on || ctx.knobs.sbasis_complete_on;
-    if (harvest_pb_levels) ctx.carry.pb_level_prev.clear();
+    if (harvest_pb_levels) net::dropAll(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev);
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts) continue;
@@ -242,12 +197,12 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // network.cycle_slip.datum_station_detect): a slip at the gauge-pinned datum
         // receiver moved the level that every phase bias of this satellite references.
         // Skip the stash entirely for one kept epoch, before the pb_level_prev harvest (a
-        // bridge must not re-open on the stale level) and before both stash branches
-        // (plain and phase_hold), so the next solve re-seeds the bias at the new pivot
+        // bridge must not re-open on the stale level) and before the phase-bias stash,
+        // so the next solve re-seeds the bias at the new pivot
         // level, in lock-step with the network-wide ambiguity reseed that the slip drain
         // defers until this skip has been consumed.  The set is empty unless the toggle
         // is armed ⇒ byte-identical.
-        if (ctx.carry.datum_reref_pb_sats.count(parts->satellite)) continue;
+        if (net::hasSat(ctx.entities.sats, parts->satellite, &net::SatelliteState::datum_reref_pb)) continue;
         if (harvest_pb_levels) {
             // Guarded: this runs before the carry_invariant skip below, so it is the one
             // site that queries a phase-bias column for every shared key on a path that
@@ -257,45 +212,19 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 const double v =
                     x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
                 if (std::isfinite(v))
-                    ctx.carry.pb_level_prev[StateKeys::makeAmbiguityKey(parts->satellite,
-                                                                        parts->signal)] = v;
+                    net::putSig(ctx.entities, StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                                &net::SatSignalState::pb_level_prev) = v;
             } catch (...) {}
         }
         // The DD invariant carry is the phase time-link, so the S-dependent shared
         // PhaseBias carry is not stashed as well (it would double-count in next epoch's
-        // D2 / hold / dense fold).  Clock / code / SH / ZWD carries are unaffected.
+        // D2 / dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
         const bool flagged = clock_refloat_sats.count(parts->satellite) > 0;
         if (flagged && full_refloat) continue;
         const Eigen::Index col =
             est.phaseBiasColumn(parts->satellite, parts->signal);
-        if (phase_hold_on) {
-            // Seed once, then time-lock: carry b_s toward its realized value with the
-            // fixed hold variance, the temporal datum that stops the metre-per-epoch
-            // re-realization.  Not cov(col,col), on purpose: the ensemble fold leaves that
-            // column carrying an artificial gauge variance (carrying it causes the epoch-2
-            // runaway that the Fix A family guards against).  A stiff, hand-set variance
-            // makes the carried value the datum reference next epoch (buildEnsembleGauges
-            // then skips the Σz=0 fold for it).  Datum-pinned columns (none for PB) and
-            // non-finite values are still excluded.
-            if (pinned_cols.count(col)) continue;
-            const double v = x_s(col);
-            if (!std::isfinite(v)) continue;
-            CarryPrior cp;
-            cp.kind = SharedParamKind::PhaseBias;
-            cp.sat = parts->satellite; cp.signal = parts->signal;
-            // inflate_q is always false: a clock-monitor soft refloat of this satellite
-            // (the loose-reinit path the legacy stash applies) does not loosen the
-            // phase-bias hold, on purpose, because the phase-ensemble datum is orthogonal
-            // to a clock fault, so the bias stays time-locked.  (A hard refloat is still
-            // handled: `flagged && full_refloat` skip-stashes above, so the satellite
-            // re-seeds next epoch.)
-            cp.value = v; cp.var = phase_hold_var; cp.inflate_q = false;
-            prev_carry.push_back(cp);
-        } else {
-            stash(SharedParamKind::PhaseBias, parts->satellite, parts->signal,
-                  col, flagged);
-        }
+        stash(SharedParamKind::PhaseBias, parts->satellite, parts->signal, col, flagged);
     }
     // The datum re-reference skip-stash queue (§9.7.10) is consumed exactly once per
     // kept epoch (a withheld epoch never reaches this stash, so the queue, and the
@@ -303,7 +232,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // Cleared wholesale: a queued satellite with no phase-bias key this epoch had nothing
     // stashed to skip, and prev_carry is rebuilt from scratch above, so no stale carry is
     // left to guard against.
-    if (!ctx.carry.datum_reref_pb_sats.empty()) ctx.carry.datum_reref_pb_sats.clear();
+    if (net::present(ctx.entities.sats, &net::SatelliteState::datum_reref_pb) > 0)
+        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, {});
     // Refresh the time-linked previous-value map from this kept epoch's solved code
     // biases.  Cleared and rebuilt (a departed satellite drops out, so its return
     // re-seeds that satellite alone) in lock-step with the D2 carry, with the same
@@ -312,11 +242,12 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // only under network.state_snapshot_datum_capture (RS-3).  Empty and untouched when
     // off.
     if (cb_time_linked) {
-        code_bias_prev_.clear();
+        net::dropAll(cons_rows, &net::ConstellationState::channels,
+                     &net::ChannelState::code_bias_prev);
         // Advance the IF-pin comparison baseline to this kept epoch's pairs (a pair
         // recorded on an epoch that was then withheld never reaches here, so the
         // baseline tracks emitted / kept datum realizations only).
-        code_bias_ifpin_pair_ = this_epoch_cb_ifpin;
+        net::assignSat(ctx.entities, &net::SatelliteState::code_bias_ifpin_pair, this_epoch_cb_ifpin);
     }
     for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
@@ -330,15 +261,15 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // measurably (≤ 4 mm at the DOY-129 event).  The near-static code bias is the
         // state that ratchets, so it is the state the guard resets.  The set is empty
         // unless network.cb_excursion_reinit is on ⇒ byte-identical when off.
-        const bool cb_excursion = ctx.carry.cb_excursion_sats.count(kv.first) > 0;
+        const bool cb_excursion = events.qc.cb_excursion_sats.count(kv.first) > 0;
         stash(SharedParamKind::CodeBias, kv.first, kv.second, col,
               flagged || cb_excursion);
         if (cb_time_linked) {
             const double v = x_s(col);
             if (std::isfinite(v)) {
-                code_bias_prev_[constellationKey(systemOfSat(kv.first)) + "|" + kv.second]
-                               [kv.first] = v;
-                code_bias_sat_seen_.insert(kv.first);
+                net::put(cons_rows, systemOfSat(kv.first), &net::ConstellationState::channels,
+                         kv.second, &net::ChannelState::code_bias_prev)[kv.first] = v;
+                net::markSat(ctx.entities, kv.first, &net::SatelliteState::code_bias_seen);
             }
         }
     }
@@ -368,24 +299,27 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     if (ctx.knobs.carry_cpl_exact) {
         ctx.carry.cxu_stash_s     = TimeUtils::continuousGpsSeconds(t);
         ctx.carry.cxu_stash_valid = prev_carry_cov.P.rows() > 0;
-        ctx.carry.cxu_pivot.clear();
+        net::dropAll(ctx.entities.constellations, &net::ConstellationState::cxu_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
-                ctx.carry.cxu_pivot[letterOfSat(sat)] = {sat, x_s(col)};
+                net::put(ctx.entities.constellations, systemOfSat(sat),
+                         &net::ConstellationState::cxu_pivot) = {sat, x_s(col)};
         }
     }
     // Card PFQ: the clock pivot this stash was pinned on, the frame of the carried clocks
     // the next epoch's fold applies the pivot-frame process noise in.
     if (ctx.knobs.pfq_on) {
-        ctx.carry.pfq_pivot.clear();
+        net::dropAll(ctx.entities.constellations, &net::ConstellationState::pfq_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
-            if (col >= 0 && pinned_cols.count(col)) ctx.carry.pfq_pivot[letterOfSat(sat)] = sat;
+            if (col >= 0 && pinned_cols.count(col))
+                net::put(ctx.entities.constellations, systemOfSat(sat),
+                         &net::ConstellationState::pfq_pivot) = sat;
         }
     }
     if (config_.estimateNetworkIonoSh() && sh_model) {   // SH-VTEC coefficients
@@ -423,7 +357,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         //     column is registered now but was last stashed >= kReadmitMinGapEp loop
         //     epochs ago.
         for (const std::string& sat : registered_clock_sats) {
-            long long& last = ctx.carry.readmit_last_seen_ep[sat];   // 0 on first sight
+            long long& last = net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_last_seen_ep);   // 0 on first sight
             const long long gap_ep = (last > 0) ? ep - last : 0;
             const bool readmitted = last > 0 && gap_ep >= kReadmitMinGapEp;
             last = ep;
@@ -431,7 +365,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             ++ctx.counters.n_readmit_events;
             std::string marg;
             if (ctx.knobs.readmit_marg_ep > 0) {
-                ctx.carry.readmit_marg[sat] = ep + ctx.knobs.readmit_marg_ep;
+                net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_marg) = ep + ctx.knobs.readmit_marg_ep;
                 ++ctx.counters.n_readmit_marg_windows;
                 marg = fmt::format(";marg_until_ep={}", ep + ctx.knobs.readmit_marg_ep);
             }
@@ -441,16 +375,13 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         // Expired windows: the block's re-coupling edge (the returned satellite's
         // columns fold as present terms again), traced per satellite.
-        for (auto it = ctx.carry.readmit_marg.begin(); it != ctx.carry.readmit_marg.end();) {
-            if (ep >= it->second) {
-                traces.emitEvent(t, "READMIT", "marg_expired", it->first, "",
-                                 static_cast<double>(it->second), std::nullopt, "recouple",
-                                 "coupling terms on this satellite fold as PRESENT again");
-                it = ctx.carry.readmit_marg.erase(it);
-            } else {
-                ++it;
-            }
-        }
+        net::eraseIf(ctx.entities.sats, &net::SatelliteState::readmit_marg, [&](const SatId& id, long long until) {
+            if (ep < until) return false;
+            traces.emitEvent(t, "READMIT", "marg_expired", net::satKey(id), "",
+                             static_cast<double>(until), std::nullopt, "recouple",
+                             "coupling terms on this satellite fold as PRESENT again");
+            return true;
+        });
         // (2) Park departures; retire consumed or expired parks (the seed knob only).
         if (readmit_h > 0.0) {
             const double now_s = ctx.carry.readmit_now_s;
@@ -524,7 +455,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             // (3) Seed-vs-solve check: mark-if-moved telemetry for every seeded kind (the
             //     clock's authoritative mark is the Q3 guard's own trip, counted separately).
-            for (const auto& sd : ctx.carry.readmit_seed_check) {
+            for (const auto& sd : events.solve.readmit_seed_check) {
                 Eigen::Index col = -1;
                 try {
                     col = (sd.kind == SharedParamKind::Clock)
@@ -546,7 +477,6 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                                                                                : "code_bias",
                                              e, std::sqrt(S)));
             }
-            ctx.carry.readmit_seed_check.clear();
             ctx.carry.readmit_prev_stash_s = now_s;
         }
     }

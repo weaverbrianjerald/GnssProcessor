@@ -4,15 +4,15 @@
 
 - **id:** DEC-day129-gate-policy
 - **topic:** raim-qc
-- **status:** open
-- **summary:** The six rulings (D-G1 to D-G6): degrade rather than withhold under a 120-epoch cap, gate on the rms_ho RATIO, a state-coupled CB window; none built, the grace-floor magnitude un-derived.
+- **status:** superseded
+- **summary:** Six rulings (degrade, not withhold, under a 120-epoch cap; rms_ho ratio gate; state-coupled CB window), none built. Superseded: the re-founding drops SH from the producer and cuts seams and the D5 chain.
 - **dates in the text:** none (the source's Part D preamble dates the six rulings 2026-07-28)
 - **knobs / posture:** `network.resume_grace_epochs` (cap, 0 = off), `network.resume_grace_ura_floor_m` (un-derived), `sh_gate_ratio_engage` / `_release` / `_median_tecu`, the `cb_excursion_suppressed_resume` action; none exists in `src/` or `include/`, and the D-G4 conditional fingerprint append is not implemented
 - **hashes named in the text** (commit / exe / byte-cert): none
 - **run dirs named in the text:** `runs/day129_guards`, `runs/day129_cont`, `runs/bytecheck`
 - **source:** `docs/archive/SPEC_day129_frame_guards.md`: Part D (D-G1 to D-G6), Part E (E1, E2, E3, E4)
 
-**Outcome.** The question: what the SH health gate should do at a warm-resume seam, after its a₀₀ band withheld 239 consecutive epochs ([DOY-129 defects](../cards/raim-qc/DAY129-DEFECTS-ABC.md)). An absolute a₀₀ band does not transfer between realizations (about 25 TECU apart), while the rms_ho median agrees to 22 %, so the gate is ruled a ratio (CANDIDATE 4.0 engage / 2.5 release). Nothing is built: the E1 gates have not run, the E4 floor magnitude is un-derived ([OPEN_ITEMS](../status/OPEN_ITEMS.md)) and Phase 2.1 gate (iii) is still unmet (Part F). The [ledger](../CONFIG_promotion_ledger.md) holds `network.sh_health_gate` KEEP_OFF, and the [re-founding posture](../refound/NETWORK_REFOUNDING_2026-09-14.md) drops SH from the producer.
+**Outcome.** What should the SH health gate do at a warm-resume seam, after its a₀₀ band withheld 239 consecutive epochs ([DOY-129 defects](../cards/raim-qc/DAY129-DEFECTS-ABC.md))? An absolute a₀₀ band does not transfer between realizations (about 25 TECU apart), so the rulings degrade instead of withholding under a 120-epoch cap and gate on an rms_ho ratio. Nothing was built (E4 floor un-derived). Superseded: [the re-founding](../refound/NETWORK_REFOUNDING_2026-09-14.md) drops SH from the producer and cuts seams and the D5 carry chain, so the rulings and Part F are moot; `network.sh_health_gate` stays KEEP_OFF in the [ledger](../CONFIG_promotion_ledger.md). Status reviewed 2026-10-13.
 
 > Results are appended TO THIS FILE, below the verbatim text. The archived monolith is frozen; never append there.
 

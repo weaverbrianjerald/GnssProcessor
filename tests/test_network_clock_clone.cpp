@@ -536,7 +536,4 @@ TEST(NetworkClockCloneTest, LoaderDefaultOffRequiresAndRefuses) {
     EXPECT_FALSE(sclLoads(sclConfig(true, true, true, "    \"clock_anchor_gauge_free\": true,\n"),
                           "gaugefree"))
         << "the gauge-free direction would have to include the clones";
-    EXPECT_FALSE(sclLoads(sclConfig(true, true, true, "    \"shared_carry_gauge_free\": true,\n"),
-                          "sharedgf"))
-        << "the same downdate, armed by the dense carry";
 }

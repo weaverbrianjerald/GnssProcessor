@@ -86,11 +86,6 @@ namespace GnssProcessor {
     void MwSlipDetector::collectLaneSamples_(MwEpochWork& w, const PppObservation& obs) {
         const bool has_lli = hasAnyPhaseLockLoss(obs);
 
-        // Fold this satellite's tri-frequency phase into its GF_b bridge arc
-        // (M5 card WL-2, SPEC §3.4); a no-op unless armed via setBridgeEnabled,
-        // so byte-identical when off.
-        updateBridgeArc(obs, has_lli);
-
         // Try combined (PPP) path first
         const auto if_pairs = collectIonoFreePairs(obs);
         const bool has_if = !if_pairs.empty();
@@ -500,7 +495,7 @@ namespace GnssProcessor {
         // change to first order, because the new and old pivot have
         // similar BIA-corrected MW noise levels.  The transform below
         // shifts the level quantities (mean, mean_lag, prev_mw,
-        // prev_mw_lag, the local ring, a demoted-level stash),
+        // the local ring, a demoted-level stash),
         // re-references prev_diff, shifts the locked integer
         // (rounded_wl) and drops a pending TD confirmation.
         auto prev_pivot_it = sd_pivot_sat_.find(group_key);
@@ -519,8 +514,6 @@ namespace GnssProcessor {
         bool   can_s_transform = false;
         double piv_old_mean    = 0.0;
         double piv_old_prev_mw = 0.0;
-        double piv_old_prev_mw_lag =
-            std::numeric_limits<double>::quiet_NaN();   // shifts prev_mw_lag alongside (WL-3)
         double piv_old_prev_diff =
             std::numeric_limits<double>::quiet_NaN();
         int    piv_old_int     = 0;
@@ -530,7 +523,6 @@ namespace GnssProcessor {
             can_s_transform = true;
             piv_old_mean    = new_piv_arc_it->second.mean;
             piv_old_prev_mw = new_piv_arc_it->second.prev_mw;
-            piv_old_prev_mw_lag = new_piv_arc_it->second.prev_mw_lag;
             piv_old_prev_diff = new_piv_arc_it->second.prev_diff;
             piv_old_int     = new_piv_arc_it->second.rounded_wl;
         }
@@ -592,14 +584,6 @@ namespace GnssProcessor {
                     arc.mean     -= piv_old_mean;
                     arc.mean_lag -= piv_old_mean;   // lagged snapshot rides the same frame (MwArcStats doc)
                     arc.prev_mw  -= piv_old_prev_mw;
-                    // The lagged raw sample (WL-3) re-references by the new pivot's
-                    // own old-frame lagged sample (exact through the shared terms);
-                    // when that is not yet formed, it is invalid for one epoch.
-                    arc.prev_mw_lag =
-                        (std::isfinite(arc.prev_mw_lag)
-                         && std::isfinite(piv_old_prev_mw_lag))
-                            ? arc.prev_mw_lag - piv_old_prev_mw_lag
-                            : std::numeric_limits<double>::quiet_NaN();
                     // A demoted-level stash for this arc lives in
                     // the same SD frame; shift it by the same
                     // constant so the across-gap difference

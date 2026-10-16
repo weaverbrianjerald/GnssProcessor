@@ -24,6 +24,7 @@
  */
 
 #include "common/Constants.hpp"
+#include "app/NetworkEntities.hpp"     // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
 #include "filter/NetworkRunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
 #include "filter/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap (card SID phase 3)
 #include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey (parseIfPairResetKey)
@@ -48,6 +49,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct SyncedEpoch;
+struct RosterN3bCensus;   // app/SignalRoster.hpp (card NOM step N3b)
 
 /// Elevation mapping for the IF-phase slip stochastic model: the multiplicative
 /// factor by which between-epoch double-differenced carrier-phase noise grows
@@ -133,92 +135,6 @@ inline double ifTdShrunkScale(long count, double ewma_scale,
     if (!(s_eff > 0.0)) s_eff = s_pool;  // degenerate all-equal pool
     return s_eff;
 }
-
-/**
- * @brief Outcome of the band-scoped detector refloat decision for one arc
- *        (docs/SPEC_event_harness.md §Z).
- *
- * Freeing every band of a line of sight lets (ρ, I, N₁..N₃) re-draw together
- * from one epoch of code, and the station-common iono error that enters the
- * fresh zero-q level stays there (Study 1: a persistent level floor of about
- * 0.45 cycles).  With one band left pinned, that band anchors the LOS
- * ionosphere while the freed bands re-tap, and the floor drops 9–29× on every
- * band, including the bands never freed.
- */
-struct BandScopeDecision {
-    bool        scoped{false};        ///< The scope acted: this drain's bands plus those already freed this epoch cover the arc, and one survivor was spared.
-    bool        single_band{false};   ///< The arc has one live band.  Never spared on the detector path (see @ref networkSlipBandScope).
-    bool        measured{false};      ///< The kept band was chosen on raw evidence (not the lexical fallback).
-    bool        too_late{false};      ///< Every live band was already freed by an earlier drain this epoch, so nothing is left to pin.  A nonzero count indicates a wiring defect: an earlier freeing site not routed through the scope (see @ref networkSlipBandScope).
-    std::string keep;                 ///< The band left pinned; empty when the scope did not act.
-    double      keep_dn_cyc{0.0};     ///< |ΔN| of the kept band in cycles from the MW/GF decomposition; 0 when !@ref measured.
-};
-
-/**
- * @brief Decide which band of an arc stays pinned when a detector implicated all
- *        of them (docs/SPEC_event_harness.md §Z).  Pure (no state, no I/O): the
- *        unit-testable core of the band scope.
- *
- * Returns a no-op decision (@c scoped false) whenever some live band is neither
- * implicated nor already freed: the natural scope of MW, of a 3-band arc's IF-TD
- * pair, or of a single-band LLI already leaves an anchor, and the knob must not
- * perturb it.
- *
- * The anchor invariant holds per epoch, not per drain (§Z.2).  A per-drain scope
- * is undone by a later drain: an LLI on all three bands makes the MW/LLI drain
- * keep L1C, and the IF-TD driver, whose pair (L1C, L2W) does not cover a 3-band
- * arc and so correctly takes no scoped action, then frees L1C, and the arc ends
- * the epoch with every band freed.  @p already_freed closes that gap: the
- * decision is taken against this drain's bands together with what earlier drains
- * have already latched this epoch, and the survivor is chosen from the bands still
- * pinned.  Pass the epoch's freed set (`relevel->free_ambs` and/or the Card-4
- * `carry_slipped_ambs`, restricted to this arc); an empty set is the correct input
- * for the first drain.
- *
- * When the implicated set does cover the arc, the band with the smallest raw
- * per-band evidence is kept.  That evidence is the MW/GF decomposition of the
- * arc's primary pair: with ΔMW in wide-lane cycles equal to Δ(N₁−N₂) and ΔGF in
- * metres equal to λ₁ΔN₁ − λ₂ΔN₂ (the one-epoch Δiono term is neglected, as the GF
- * detector already assumes), the two band deltas separate exactly:
- * ΔN₁ = (ΔGF − λ₂ΔMW)/(λ₁−λ₂), ΔN₂ = (ΔGF − λ₁ΔMW)/(λ₁−λ₂).  Bands outside that
- * pair have no evidence and never outrank a measured band, since missing evidence
- * does not show that a band is clean (standing invariant #1).  With no usable
- * evidence the pin falls back to the lexically lowest surviving band.  That choice
- * is deterministic, and for GPS it is also the shortest wavelength, i.e. the
- * smallest metric level error per retained cycle.  (This does not hold in general:
- * for Galileo and BeiDou, band 5 sorts before bands 6–8 but has the longest
- * wavelength of them.)
- *
- * This is the one place where a band that truly slipped can stay pinned: a
- * receiver loss of lock on the whole satellite correctly implicates every band,
- * and the scope still keeps one.  That is a deliberate trade against the measured
- * cost of freeing them all, not a claim that the kept band is clean.  The proper
- * handling of that case is the lane-preserving refloat (an EWL-MW snap that
- * re-levels the band instead of keeping or freeing it) named in
- * docs/SPEC_lane_slip_response.md §7, which the band scope does not implement.
- * The @c bscope_all_band_fallback counter records this population.
- *
- * A single-band arc is never spared here: with one band there is no LOS anchor to
- * preserve (the (ρ, I, N) split is already unidentifiable from that arc alone),
- * and refusing a detector's positive slip evidence would leave the step standing
- * with no observable able to catch it again.  @ref BandScopeDecision::single_band
- * reports it so the run-end census can separate that population.
- *
- * @param live_bands    Every signal of this (station, satellite) with a live ambiguity.
- * @param implicated    The signals this detector named.
- * @param already_freed The signals of this arc an earlier drain already freed this
- *                      epoch (empty for the first drain).  They cannot be un-freed,
- *                      so they count toward covering the arc but are never chosen
- *                      as the survivor.
- * @param obs           The arc's raw row this epoch, or nullptr when none exists.
- * @param verdict       The arc's raw step adjudication, or nullptr.
- * @return The decision; @c scoped false means "do exactly what an unscoped run does".
- */
-BandScopeDecision networkSlipBandScope(const std::set<std::string>& live_bands,
-                                       const std::set<std::string>& implicated,
-                                       const std::set<std::string>& already_freed,
-                                       const RawSlipObs* obs,
-                                       const RawSlipVerdict* verdict);
 
 /// Parse an IfPhaseSlipDetector reset key ("G01_L1C_L2W") into the satellite and
 /// the two band signals of the IF pair it was formed from.  Returns false on a
@@ -334,7 +250,7 @@ struct PassABuffers {
     /// serially.
     std::vector<std::string> a_err;
     /// Phase-leveling T0: per-station integer slip repairs, produced in the
-    /// parallel loop into a private slot and applied to the shared carry map in
+    /// parallel loop into a private slot and applied to the shared carry (the arc table) in
     /// the serial, station-ordered drain (networkSlipDrainT0Repairs).
     std::vector<std::vector<TurboEditResolver::SignalRepair>> sta_repairs;
     /// IF-phase slip detector output: per-station flagged IF-pair reset keys
@@ -477,9 +393,9 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
  * @param present      Per-station PASS-A presence (absent stations skipped).
  * @param i_lo         First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total  Station count.
- * @param local_carry  Phase-leveling carry map, modified in place (value_abs
+ * @param arcs  Phase-leveling carry (the arc table), modified in place (value_abs
  *                     shifted by dN·λ on each accepted repair).  Pass the
- *                     ctx.carry.local_carry instance itself, not a copy.
+ *                     ctx.entities.arcs table itself, not a copy.
  * @param se           Current synced epoch (TOW for log lines).
  * @param log          Run logger.
  */
@@ -487,8 +403,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
                                const std::vector<NetStation>& stations,
                                const std::vector<bool>& present,
                                int i_lo, int n_sta_total,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>& local_carry,
+                               net::ArcTable& arcs,
                                const SyncedEpoch& se,
                                const std::shared_ptr<spdlog::logger>& log);
 
@@ -571,13 +486,13 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * per-satellite disc mark at the next emit, and emits the `datum_reref` event.
  *
  * @param datum_pb_reref_sats  Per-satellite PhaseBias skip-stash queue
- *                             (ctx.carry.datum_reref_pb_sats); nullptr: off.
+ *                             (net::SatelliteState::datum_reref_pb, copied in); nullptr: off.
  * @param datum_amb_reref_sats Per-satellite deferred all-station ambiguity reseed
- *                             queue (ctx.carry.datum_reref_amb_sats).
+ *                             queue (net::SatelliteState::datum_reref_amb, copied in).
  * @param datum_mark_sats      Per-satellite disc-mark queue at the next emit
  *                             (ctx.carry.refsat_mark_sats, the Edge-1 piece-2
  *                             mark-and-serialize path).
- * @param datum_local_carry    Phase-leveling carry map (the ctx.carry.local_carry
+ * @param datum_arcs    Phase-leveling carry (the arc table) (the ctx.entities.arcs
  *                             instance) for the local-carry erase on
  *                             re-reference, counted in datum_slip_carry_erases.
  */
@@ -596,13 +511,11 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                std::set<std::string>* datum_pb_reref_sats = nullptr,
                                std::set<std::string>* datum_amb_reref_sats = nullptr,
                                std::set<std::string>* datum_mark_sats = nullptr,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* datum_local_carry = nullptr,
+                               net::ArcTable* datum_arcs = nullptr,
                                RelevelEpochState* relevel = nullptr,
                                std::map<std::tuple<int, std::string, std::string>,
                                         RelevelPend>* relevel_pend = nullptr,
-                               std::map<std::tuple<int, std::string, std::string>,
-                                        LocalCarry>* bridge_local_carry = nullptr,
+                               net::ArcTable* bridge_arcs = nullptr,
                                NetworkSlipOracle* oracle = nullptr,
                                /// Common-band scope verdicts for this epoch (§14).
                                /// Null (the knob off): @ref commonBandMayFree answers
@@ -615,24 +528,33 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  *
  * The satellite's live ambiguity columns in @p sm, in the map's order, when it
  * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
- * the (station, satellite)'s leveling carry entries in @p local_carry whose age
+ * the (station, satellite)'s leveling carry entries in @p arcs whose age
  * (@p pl_now_s minus @c last_seen_s) lies in [0, @p pl_max_gap_s], on the
  * synthesised key (@c StateKeys::makeAmbiguityKey) the PASS-B inject reads.
  * Empty when neither exists, which is the restart with nothing to free.
  *
  * @param sm            The station's state manager (read-only).
- * @param i             App station index (the carry map's first key).
+ * @param i             App station index (the carry (the arc table)'s first key).
  * @param sat           Satellite id.
- * @param local_carry   The leveling carry map; null reaches live columns only.
+ * @param arcs   The leveling carry (the arc table); null reaches live columns only.
  * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  * @param via_carry     Set to true when the targets came from the carry (may be null).
+ * @param arc_ledger    The run's arc ledger, or null.  Given, the carry targets are named
+ *                      by the ledger (card NOM step N3b): the carry entries of the
+ *                      (station, satellite) inside the horizon, in signal order, whose
+ *                      ledger record is admitted and not dead.  A carried arc the ledger
+ *                      holds no admission for (one admitted before a warm resume, which
+ *                      restores the carry and not the ledger) is named by the carry, as
+ *                      the census's fallback.  The carry walk is still formed and compared.
+ * @param n3b           The N3b census (site @c windup_restart_arcs), or null.
  * @return The targets, live columns first-and-only when any exist.
  */
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
         const StateManager& sm, int i, const std::string& sat,
-        const std::map<std::tuple<int, std::string, std::string>, LocalCarry>* local_carry,
-        double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr);
+        const net::ArcTable* arcs,
+        double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr,
+        const ArcLedger* arc_ledger = nullptr, RosterN3bCensus* n3b = nullptr);
 
 /**
  * @brief Drain the wind-up accumulator-restart ledgers and refloat the stepped
@@ -643,14 +565,13 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * (MW-blind: the step is band-common, so ΔWL = 0), while the carried ambiguity
  * and the zero-q leveling level survive at their pre-gap values.  The response
  * is the free-epoch refloat the raw-slip drains use: under a warm carry, mark
- * pending-reseed, latch @c free_ambs (cause @c kCauseWindup, so the lane
- * observatory grades this response like any other) and void the outstanding
- * bridge pends of the (station, satellite); under carry_invariant, feed the C3c
- * funnel.
+ * pending-reseed, latch @c free_ambs (cause @c kCauseWindup) and void the
+ * outstanding bridge pends of the (station, satellite); under carry_invariant,
+ * feed the C3c funnel.
  *
  * Runs serially in station order, after the per-station model evaluations have
- * filled the ledgers and before the lane observatory's PASS-A half, which needs
- * the complete freed set.  Each present station's ledger is cleared after the
+ * filled the ledgers, so the freed set is complete for the PASS-B inject.  Each
+ * present station's ledger is cleared after the
  * drain; an absent station is skipped and keeps its ledger.  An entry stamped
  * with an earlier epoch (one that no drain consumed at the time) is refused and
  * counted (@c wu_restart_stale): its step has been absorbed since, and a
@@ -668,15 +589,15 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * has usually left the model set: its ambiguity column was pruned with the gap and
  * PASS B re-creates it only after this drain.  The live columns of the satellite
  * are the target when they exist; otherwise the target is the (station, satellite)'s
- * leveling carry entries inside the carry horizon (@p local_carry, @p pl_now_s,
+ * leveling carry entries inside the carry horizon (@p arcs, @p pl_now_s,
  * @p pl_max_gap_s), freed on the synthesised key the PASS-B inject reads, as
  * @ref networkSlipDrainGapReentry does.  Only a live column takes the
  * pending-reseed mark.  Counted: @c wu_restart_carry_arcs (arcs reached through the
  * carry) and @c wu_restart_no_arc (a warm, in-horizon restart with nothing to
- * free), which is outside @c wu_restart_refloated.  Without @p local_carry the
+ * free), which is outside @c wu_restart_refloated.  Without @p arcs the
  * drain reaches live columns only, the behaviour before the card.
  *
- * @param local_carry   The leveling carry map, read-only; null reaches live columns only.
+ * @param arcs   The leveling carry (the arc table), read-only; null reaches live columns only.
  * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  */
@@ -693,10 +614,10 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                    std::map<std::tuple<int, std::string, std::string>,
                                             RelevelPend>* relevel_pend = nullptr,
                                    NetworkSlipOracle* oracle = nullptr,
-                                   const RawSlipEpoch* bscope_raw = nullptr,
-                                   const std::map<std::tuple<int, std::string, std::string>,
-                                                  LocalCarry>* local_carry = nullptr,
-                                   double pl_now_s = 0.0, double pl_max_gap_s = 0.0);
+                                   const net::ArcTable* arcs = nullptr,
+                                   double pl_now_s = 0.0, double pl_max_gap_s = 0.0,
+                                   const ArcLedger* arc_ledger = nullptr,
+                                   RosterN3bCensus* n3b = nullptr);
 
 /**
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking
@@ -733,8 +654,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * station's other carried phases of those two bands) are treated as a detected
  * slip: the C3c funnel insert under @p carry_invariant; the pending-reseed mark
  * (where the ambiguity column already exists) and a @c free_ambs latch (cause
- * @c RelevelEpochState::kCauseGap, so the lane observatory grades this response
- * like any other) under a warm leveling carry.  Nothing is repaired and no
+ * @c RelevelEpochState::kCauseGap) under a warm leveling carry.  Nothing is
+ * repaired and no
  * integer is applied: across a loss of lock the slip magnitude is unbounded and
  * unknown, so the re-entry is treated as a fresh, code-anchored arc.
  *
@@ -771,10 +692,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * widened together.
  *
  * Runs serially in station order (deterministic).  Called in the slip-drain band
- * of PASS A, after the wind-up restart drain and before the lane observatory's
- * PASS-A half, so the freed set is complete for the observatory and visible to
- * the PASS-B inject in the same epoch; a response one epoch late would let the
- * stale level fold once.
+ * of PASS A, after the wind-up restart drain, so the freed set is visible to the
+ * PASS-B inject in the same epoch; a response one epoch late would let the stale
+ * level fold once.
  *
  * On the legacy datum (i_lo = 1), resumptions at station 0, the gauge-pinned
  * pivot, are skipped and counted (pivot_skipped): its ambiguities are pinned, so
@@ -802,7 +722,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param carry_slipped_ambs   C3c funnel, inserted into under @p carry_invariant.
  * @param raw                  This epoch's raw-observable evidence (reads @c resumptions).
  * @param qc                   Knob snapshot (the @c gap_reentry_* fields).
- * @param local_carry          The leveling carry map, read-only: what a re-entry
+ * @param arcs          The leveling carry (the arc table), read-only: what a re-entry
  *                             threatens, and the source of the drain's "anything
  *                             to protect?" test (see above).
  * @param pl_now_s             This epoch's continuous-GPS seconds (the inject site's
@@ -850,8 +770,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 bool carry_invariant, bool carry_warm,
                                 std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                                 const RawSlipEpoch& raw, const SlipQcParams& qc,
-                                const std::map<std::tuple<int, std::string, std::string>,
-                                               LocalCarry>& local_carry,
+                                const net::ArcTable& arcs,
                                 double pl_now_s, double pl_max_gap_s,
                                 SlipQcCounters& qc_cnt,
                                 const SyncedEpoch& se, NetworkRunTraces& traces,
@@ -898,7 +817,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
  *    response-inflicted slip cost that SPEC_lane_slip_response measures.
  *
  * Everything else is shared with the row-level tier through the same per-arc
- * responder: the `pl_bridged` protectable test on @p local_carry, the synthesized
+ * responder: the `pl_bridged` protectable test on @p arcs, the synthesized
  * @c StateKeys::makeAmbiguityKey, the pending-reseed mark, the @c free_ambs latch
  * with @c RelevelEpochState::kCauseGap, and the bridge-pend void.  Counters land
  * in @c SlipQcCounters::gap_sig, so the two tiers stay separately auditable and
@@ -948,7 +867,7 @@ void networkSlipDrainGapReentryPerSignal(
     int i_lo, int n_sta_total, bool carry_invariant, bool carry_warm,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const RawSlipEpoch& raw, const SlipQcParams& qc,
-    const std::map<std::tuple<int, std::string, std::string>, LocalCarry>& local_carry,
+    const net::ArcTable& arcs,
     double pl_now_s, double pl_max_gap_s, SlipQcCounters& qc_cnt,
     const SyncedEpoch& se, NetworkRunTraces& traces,
     const std::shared_ptr<spdlog::logger>& log,
@@ -999,7 +918,7 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
 
 /**
  * @brief Bridge v2 (pend-and-replace): execute one pended replace against the
- *        live carry map.  Depends only on its arguments (unit-test seam).
+ *        live carry (the arc table).  Depends only on its arguments (unit-test seam).
  *
  * Solves the 2×2 from the pend's (δIF, σIF) and its arrived MW integer, then
  * applies the corroboration gate of the §8.1 bridge truth audit
@@ -1016,7 +935,7 @@ DeltaBridgeSolve networkSlipDeltaBridgeSolve(double dn_wl_cyc, double sigma_wl_c
 enum class BridgeReplaceOutcome { Applied, KernelReject, NoCarry, CorrobReject };
 BridgeReplaceOutcome networkSlipBridgeReplace(
     const RelevelPend& pd, int sta, const std::string& sat,
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+    net::ArcTable& carry,
     double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
     DeltaBridgeSolve* solved = nullptr);
 
@@ -1047,20 +966,17 @@ BridgeReplaceOutcome networkSlipBridgeReplace(
  *    dangerous direction.  The shipped 0.6 (@ref kBridgeGfIfRho) is a
  *    conservative middle.
  *
- * Stage 2 (@c has_ewl) chains band 3: ΔN3 = ΔN_shared + dn_ewl_b3 (the pend
- * normalized the candidate's frequency-sorted sign at fill), var3 = var_shared +
- * σ_EWL² (cycles), with λ3 derived from (λ_shared, λ_EWL) alone.  The kernel
+ * The band-3 chain from the EWL-MW integer (stage 2, bridge v3 E3) is retired
+ * with @c network.cycle_slip.relevel_bridge_ewl.  The kernel
  * works in floats throughout and never rounds: rounding its output would bring
  * back the wrong-integer risk of the mw_only variant behind a small propagated σ.
  */
 struct BridgeV3Solve {
     bool   ok{false};
-    bool   has3{false};            ///< Band-3 chained (EWL slot present + stage 1 ok).
     bool   used_gf{false};         ///< Stage 1 took the E1+E4 route (no MW integer).
-    double dn1_cyc{0}, dn2_cyc{0}, dn3_cyc{0};
-    double shift1_m{0}, shift2_m{0}, shift3_m{0};
-    double var1_m2{0}, var2_m2{0}, var3_m2{0};
-    double lam3_m{0};              ///< Band-3 wavelength (for the corroboration).
+    double dn1_cyc{0}, dn2_cyc{0};
+    double shift1_m{0}, shift2_m{0};
+    double var1_m2{0}, var2_m2{0};
     double plane_resid_sigma{-1.0};///< E2-vs-E4 overdetermination residual (σ); <0 = not formed.
 };
 /// Conservative E1/E4 error correlation (shared band-TD content; phase limit 0.97).
@@ -1071,39 +987,19 @@ BridgeV3Solve networkSlipBridgeV3Solve(const RelevelPend& pd, double rho_if_gf,
                                        double max_abs_cyc, double max_sigma_cyc);
 
 /**
- * @brief Bridge v3 replace: the v2 outcome ladder over up to three bands.
+ * @brief Bridge v3 replace: the v2 outcome ladder over the IF pair's two bands.
  *
  * Same discipline as @ref networkSlipBridgeReplace: kernel caps, then per-band
- * free-level corroboration (band 3 included when it was solved and its pre-slip
- * carry was captured at the flag epoch), then a value-and-var-only mutation.
- * There is no partial apply: a corroboration failure on any solved band rejects
- * the whole bridge, because a half-replaced LOS would mix pre-slip and free
- * re-level frames.
+ * free-level corroboration, then a value-and-var-only mutation.  There is no
+ * partial apply: a corroboration failure on either band rejects the whole
+ * bridge, because a half-replaced LOS would mix pre-slip and free re-level
+ * frames.
  */
 BridgeReplaceOutcome networkSlipBridgeV3Replace(
     const RelevelPend& pd, int sta, const std::string& sat,
-    std::map<std::tuple<int, std::string, std::string>, LocalCarry>& carry,
+    net::ArcTable& carry,
     double rho_if_gf, double max_abs_cyc, double max_sigma_cyc, double corrob_cyc,
     BridgeV3Solve* solved = nullptr);
-
-/**
- * @brief Bridge v3 E3: fill a pend's EWL slot from a confident MW candidate
- *        whose pair shares exactly one band with the pend's IF pair.
- *
- * Normalizes the integer to ΔN(band3) − ΔN(shared band) whatever the
- * candidate's frequency-sorted pair order.  A missed sign flip would pass every
- * σ cap: the Galileo EWL arrives as (L7Q, L5Q) = ΔN3 − ΔN2, while GPS's
- * (L2W, L5Q) = ΔN2 − ΔN3.  Also derives the shared-band index (1 or 2 within
- * the IF pair) and whether band 3 sits on the EWL pair's high-frequency side
- * (the λ3 derivation needs the sign of 1/λ_EWL).  @p sigma_floor_eff_cyc is the
- * floor already mapped to the elevation, because the v2 frac proxy understates
- * the single-epoch EWL σ by about 100× at low elevation.  Returns false (pend
- * untouched) when the pair does not share exactly one band, the pend already
- * holds an EWL, the linked third band contradicts the pend's recorded sig3, or
- * the candidate's wide-lane wavelength is not positive.
- */
-bool networkSlipFillEwlSlot(RelevelPend& pd, const MwBridgeCand& cand,
-                            double sigma_floor_eff_cyc);
 
 /**
  * @brief IF-phase triple-difference slip driver: pool the PASS-A deferred
@@ -1179,8 +1075,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            const std::shared_ptr<spdlog::logger>& log,
                            std::set<std::string>* refsat_mark_sats = nullptr,
                            RelevelEpochState* relevel = nullptr,
-                           std::map<std::tuple<int, std::string, std::string>,
-                                    LocalCarry>* bridge_local_carry = nullptr,
+                           net::ArcTable* bridge_arcs = nullptr,
                            SlipQcCounters* bridge_cnt = nullptr,
                            std::map<std::tuple<int, std::string, std::string>,
                                     RelevelPend>* relevel_pend = nullptr,
@@ -1189,7 +1084,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                            NetworkSlipOracle* oracle = nullptr,
                            /// Common-band scope verdicts for this epoch (§14).  Null
                            /// (the knob off): this scope refuses no band, and the pair
-                           /// refloat frees both bands unless the §Z band scope keeps one.
+                           /// refloat frees both bands.
                            const CommonBandEpoch* common_band = nullptr,
                            /// Pair-width tally sink (§14.10): run-end counts per pair
                            /// kind (evaluated / flagged / refloated).  Filled whatever
@@ -1257,5 +1152,34 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                                   RelevelEpochState* relevel = nullptr,
                                   std::map<std::tuple<int, std::string, std::string>,
                                            RelevelPend>* relevel_pend = nullptr);
+
+struct NetworkRun;
+
+/**
+ * @brief Fills the slip-QC channel's parameters from the configuration and sizes its per-station history.
+ *
+ * The channel (run.engines.slip_qc) carries the knobs, the per-station cross-epoch state, the
+ * epoch's raw evidence and the run-end counters into the PASS-A slip seam and the assembly
+ * pre-filter; it is sized once so the per-station EWMAs survive the whole run.  Setup builder
+ * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.slip_qc.params and run.engines.slip_qc.hist.
+ */
+void networkSlipQcConfigure(NetworkRun& run);
+
+class LogManager;
+
+/**
+ * @brief Builds the raw-slip path's wavelength provider when any of its consumers is armed.
+ *
+ * Called after NetworkRunTraces::openAll: the raw-slip trace it opens is one of the consumers.
+ * Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * scripts/nom3_designs/EP4_design.md section 2 states.
+ *
+ * @param run The network run; fills run.engines.slip_qc.utils.
+ * @param log_manager_ The application's logging manager (Application::log_manager_).
+ */
+void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager_);
 
 } // namespace GnssProcessor

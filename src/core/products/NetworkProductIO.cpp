@@ -179,10 +179,7 @@ struct LineAssembler {
                 }
                 if (!signalDeclarationParseRecord(f, decl_block)) ok = false;
             } else if (tag == "C") {
-                // A fast record carries K lines and nothing else (FC-1).  A C/B/P/U
-                // line inside one means the writer mixed a full epoch into a fast
-                // marker, which would put slow-cadence values on the fast path.
-                if (!have_cur || cur.is_fast || f.size() < 3) { ok = false; return completed; }
+                if (!have_cur || f.size() < 3) { ok = false; return completed; }
                 NetworkSatSolution& s = satSolution(f[1]);
                 s.has_clock  = true;
                 s.clock_c0_m = std::stod(f[2]);
@@ -302,33 +299,6 @@ struct LineAssembler {
                 pending_h       = st;
                 pending_h_valid = true;
                 if (track_statuses) statuses.push_back(st);
-            } else if (tag == "F") {   // split-cadence fast epoch marker (FC-1)
-                if (f.size() < 5) { ok = false; return completed; }
-                // Like H, an F line always begins a new unit: a fast epoch is its own
-                // record, never a continuation of the full epoch under assembly.  Flush
-                // first so the previous epoch reaches the consumer intact.
-                if (have_cur) {
-                    completed = std::move(cur);
-                    cur       = NetworkProductRecord{};
-                    sat_index.clear();
-                    have_cur = false;
-                }
-                cur = NetworkProductRecord{};
-                sat_index.clear();
-                cur.is_fast               = true;
-                cur.epoch.epoch_time.week = std::stoi(f[1]);
-                cur.epoch.epoch_time.tow  = std::stod(f[2]);
-                cur.fast_anchor.week      = std::stoi(f[3]);
-                cur.fast_anchor.tow       = std::stod(f[4]);
-                // A pending S or H does not attach to a fast record: both describe a
-                // full solve's contract and status, and a fast epoch re-declares neither.
-                have_cur = true;
-            } else if (tag == "K") {   // fast satellite clock, value and age only (FC-1)
-                if (!have_cur || !cur.is_fast || f.size() < 3) { ok = false; return completed; }
-                double sig = 0.0;
-                for (std::size_t i = 3; i < f.size(); ++i)
-                    if (f[i].rfind("sigk=", 0) == 0) sig = std::stod(f[i].substr(5));
-                cur.fast_clocks[f[1]] = {std::stod(f[2]), sig};
             } else if (tag == "S") {   // S-basis contract: v2 header (B6) or re-broadcast (RTA-5)
                 if (f.size() >= 11) {
                     SbasisContract c;
@@ -370,16 +340,15 @@ struct LineAssembler {
                             c.age_scale_k = std::stod(f[k].substr(5));      // age-scaling coeff (M4)
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // per-λ jump gate (H3)
-                        } else if (f[k].rfind("discdecom=", 0) == 0) {
-                            c.disc_jump_test_decommon = (std::stoi(f[k].substr(10)) != 0);  // de-commoned jump test (Card JT)
                         } else if (f[k].rfind("discscope=", 0) == 0) {
                             c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope (Card MS)
                         } else if (f[k].rfind("pbhold=", 0) == 0) {
                             const int ph = std::stoi(f[k].substr(7));
                             c.emit_pb_hold = (ph != 0);               // phase-bias hold (Card PBH)
                             c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode (Card LAH)
+                            // pbhold=4 (the removed block member, card SMD) still reads as a
+                            // smoothed hold, so an older product file keeps its meaning.
                             c.emit_pb_hold_smoothed    = (ph == 3 || ph == 4);   // smoothed mode (Card SMH)
-                            c.emit_pb_hold_smoothed_block = (ph == 4);   // its phase-visible member (Card SMD)
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // sigma0 statistic id (H-rider)
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -488,9 +457,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     //     disc_thresh_m,emit_clock_disc,apriori_product_id[,<const>:<pivot_sat>...]
     //     [,gid=<generation_id>][,stale=<staleness_horizon_s>]
     //     [,frame=<frame_id>][,cepoch=<coord_epoch>][,atx=<atx_id>][,oref=<orbit_ref>]
-    // The replay emitter's eight construction parameters all come from this line:
+    // The replay emitter's seven construction parameters all come from this line:
     // disc_thresh_m, emit_clock_disc, the optional stale= horizon (RTA-11), cbjump=,
-    // clkset=, discfrac=, discdecom= and discscope=.  A consumer therefore replays
+    // clkset=, discfrac= and discscope=.  A consumer therefore replays
     // the counters with no out-of-band producer config
     // (NetworkProductReader::makeReplayEmitter).  Trailing fields 12+ are
     // distinguished by shape: a field with ':' is a realized pivot entry, and
@@ -564,14 +533,15 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // for constellations the consumer declares (clock_pivot_sat semantics).
     for (const auto& [cst, pair] : contract.cb_pin_pair)
         out_ << ",cbpin=" << cst << ':' << pair;
-    // The geometry-free datum pair (network.code_bias_gf_datum, Odijk rd 3b).  Its
-    // presence is the payload: it states that the emitted code biases are the
-    // slant-posture estimable function (pinned pair ≡ datum, content only from
-    // j >= 3, each satellite's GF bias absorbed by the ionosphere per Table 8) rather
-    // than the single-layer one, on an otherwise identical record layout.  Written
-    // only when non-empty, so a single-layer producer writes the S line
-    // byte-for-byte.  It is an interpretation hint, not a replay-emitter parameter:
-    // makeReplayEmitter ignores it, and checkContract compares it only for
+    // The geometry-free datum pair (the retired network.code_bias_gf_datum, Odijk rd
+    // 3b; the producer no longer fills it, so it is written only for a contract read
+    // from such a product).  Its presence is the payload: it states that the emitted
+    // code biases are the slant-posture estimable function (pinned pair ≡ datum,
+    // content only from j >= 3, each satellite's GF bias absorbed by the ionosphere per
+    // Table 8) rather than the single-layer one, on an otherwise identical record
+    // layout.  Written only when non-empty, so a single-layer producer writes the S
+    // line byte-for-byte.  It is an interpretation hint, not a replay-emitter
+    // parameter: makeReplayEmitter ignores it, and checkContract compares it only for
     // constellations the consumer declares.
     for (const auto& [cst, pair] : contract.gf_pin_pair)
         out_ << ",gfpin=" << cst << ':' << pair;
@@ -584,18 +554,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // it, so the addition is forward-compatible.
     if (!contract.sat_gf_datum.empty())
         out_ << ",sat_gf_datum=" << contract.sat_gf_datum;
-    // The phase jump test screened the de-commoned step, not the raw one
-    // (network.disc_jump_test_decommon, Card JT).  A replay-emitter parameter like
-    // discfrac=, not an interpretation hint: a consumer replaying with the other
-    // setting reproduces different discontinuity counters on the cells where a frame
-    // move hid or created a jump.  Written only when armed, so a producer without it
-    // writes the S line byte-for-byte and a reader that skips unknown fields stays
-    // forward-compatible.
-    if (contract.disc_jump_test_decommon)
-        out_ << ",discdecom=1";
     // A per-satellite discontinuity mark bumped only the channels the marking site
     // reported (network.disc_mark_scope, Card MS).  A replay-emitter parameter in the
-    // same sense as discdecom=, with one limit: the R record carries no channel set,
+    // same sense as discfrac=, with one limit: the R record carries no channel set,
     // so a replay re-marks with the full satellite scope regardless.  The token lets
     // checkContract report that divergence.  Written only when armed, so a producer
     // without it writes the S line byte-for-byte.
@@ -613,10 +574,9 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // pbhold=2: the hold keeps the phase-visible clock instead (card LAH), so a held
     // bias_m moves with the satellite's common-removed clock within a generation.
     // pbhold=3: the smoothed hold (card SMH), a held bias_m follows the clock clone.
-    // pbhold=4: its phase-visible member (card SMD), the block clone's Phi_D.
+    // (pbhold=4, the removed block member of card SMD, is no longer written.)
     if (contract.emit_pb_hold)
-        out_ << (contract.emit_pb_hold_smoothed
-                     ? (contract.emit_pb_hold_smoothed_block ? ",pbhold=4" : ",pbhold=3")
+        out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"
                  : contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
     out_ << '\n';
 }
@@ -624,27 +584,6 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
 void NetworkProductWriter::writeContract(const SbasisContract& contract) {
     if (!out_) return;
     writeSLine_(contract);   // mid-file re-broadcast in the header grammar (RTA-5)
-}
-
-void NetworkProductWriter::writeFastClock(
-    const GnssTime& epoch, const GnssTime& anchor,
-    const std::vector<std::tuple<std::string, double, double>>& sats) {
-    if (!out_ || sats.empty()) return;
-    // F marker plus one K line per satellite.  Both tags exist only for the fast
-    // clock (FC-1), so a reader that predates them drops the whole record (see
-    // writeFastClock's header doc) rather than attaching a C line to the previous
-    // full epoch.  The tow uses the same shortest-round-trip formatting as E/H so a
-    // consumer can compare epochs exactly.  sigk= is written only when the σ is
-    // finite and positive.
-    out_ << "F," << epoch.week << ',' << fmt::format("{}", epoch.tow)
-         << ',' << anchor.week << ',' << fmt::format("{}", anchor.tow)
-         << ',' << sats.size() << '\n';
-    for (const auto& s : sats) {
-        out_ << "K," << std::get<0>(s) << ',' << fmt::format("{}", std::get<1>(s));
-        const double sig = std::get<2>(s);
-        if (sig > 0.0 && std::isfinite(sig)) out_ << ",sigk=" << fmt::format("{}", sig);
-        out_ << '\n';
-    }
 }
 
 void NetworkProductWriter::writeEpochStatus(const NetworkProducerStatus& status) {
@@ -694,14 +633,11 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "# R,retro_sat[,retro_sat...]    (B1 per-satellite discontinuity bump)\n"
             "# U,sat,clock_ura_m             (B1 per-satellite URA quality, 1-sigma m)\n"
             "# H,week,tow,status,sigma0,n_sats_published,withheld   (RTA-10 epoch-status heartbeat)\n"
-            "# F,week,tow,anchor_week,anchor_tow,n_sats   (FC-1 split-cadence FAST epoch marker)\n"
-            "# K,sat,clock_c0_m[,sigk=<m>]   (FC-1 fast satellite clock; refreshes clock VALUE and AGE"
-            " only — never a bias, never a discontinuity)\n"
             "# S,ref_rx,bias_sign,windup_id,amb_datum,isb_datum,emit_cb,cb_datum,disc_thresh_m,"
             "emit_clock_disc,apriori_id[,<const>:<pivot_sat>...][,gid=<n>][,stale=<s>][,cbjump=1]"
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
-            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>][,discdecom=1]"
+            "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
             "[,discscope=channel][,pbhold=1]"
             "   (B6 S-basis contract)\n"
             "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
@@ -906,28 +842,6 @@ std::vector<NetworkProductRecord> NetworkProductReader::read(const std::string& 
 void NetworkProductReader::replay(const NetworkProductRecord& rec,
                                   SsrCorrectionStore& store,
                                   NetworkProductEmitter& emitter) {
-    // A split-cadence fast record refreshes the satellite clock value and age and
-    // nothing else, so it does not go through emitToStore (FC-1).  Per the emitter's
-    // documented behaviour, that path would replace the code-satset / band-tuple
-    // trackers with empty maps (suppressing the next full epoch's structural
-    // code-datum triggers), register a satellite subset as a clock-set change and
-    // step every remaining satellite's discontinuity counter, consume a pending
-    // markDatumChange onto the fast record, and re-stamp the shared per-satellite
-    // header, which would age the bias, URA and slant-iono channels on a clock
-    // refresh.  Each of those belongs to the full-epoch cadence, not to a fast tick.
-    if (rec.is_fast) {
-        for (const auto& kv : rec.fast_clocks) {
-            SsrClockCorrection c;
-            c.sat           = kv.first;
-            c.c0            = kv.second.first;
-            c.received_time = rec.epoch.epoch_time;
-            c.epoch_time    = rec.epoch.epoch_time;
-            // pushFastClock does not create a record, so a fast row for a satellite that
-            // no full epoch has established is ignored rather than half-supplied.
-            store.pushFastClock(c);
-        }
-        return;
-    }
     // Discontinuity counters (phase and code) are serialized only under
     // network.serialize_disc_counters (RTA-4, handled below).  The emitter
     // recomputes them deterministically from inputs reproduced here: (1) the
@@ -1092,12 +1006,6 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
         note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
                          file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
-    // The de-commoned phase jump test (Card JT): a mismatch makes the consumer's
-    // replay emitter declare a different cell population (the frame-hidden steps the
-    // de-commoned test flags, and the common-mode steps it suppresses).
-    if (file.disc_jump_test_decommon != expected.disc_jump_test_decommon)
-        note(fmt::format("disc_jump_test_decommon: file {} vs expected {}",
-                         file.disc_jump_test_decommon, expected.disc_jump_test_decommon));
     // The per-channel mark scope (Card MS).  A mismatch means the producer declared
     // a different channel population from the one the replay reconstructs.  Even a
     // match does not make the replay exact, because the R record carries no channel
@@ -1122,9 +1030,6 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.emit_pb_hold_smoothed != expected.emit_pb_hold_smoothed)
         note(fmt::format("emit_pb_hold_smoothed: file {} vs expected {}",
                          file.emit_pb_hold_smoothed, expected.emit_pb_hold_smoothed));
-    if (file.emit_pb_hold_smoothed_block != expected.emit_pb_hold_smoothed_block)
-        note(fmt::format("emit_pb_hold_smoothed_block: file {} vs expected {}",
-                         file.emit_pb_hold_smoothed_block, expected.emit_pb_hold_smoothed_block));
     if (file.emit_clock_disc != expected.emit_clock_disc)
         note(fmt::format("emit_clock_disc: file {} vs expected {}",
                          file.emit_clock_disc, expected.emit_clock_disc));
@@ -1173,7 +1078,6 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.code_bias_jump_test,
                                  contract.clock_disc_on_set_change,
                                  contract.disc_threshold_frac_cycles,
-                                 contract.disc_jump_test_decommon,    // de-commoned jump test (Card JT)
                                  contract.disc_mark_scope_channel);   // disc mark scope (Card MS)
 }
 

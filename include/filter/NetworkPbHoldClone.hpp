@@ -42,8 +42,8 @@
  * The row form equals the first stage of a clone column in the estimator (a zero-noise
  * column informed only by its prior correlation with the border).
  *
- * Card SMD (@c network.emit_pb_hold_smoothed_block): a block clone carries, on one
- * lifetime, a clock row and the row of the ionosphere-free phase-visible clock
+ * Card SMD (an instrument of the smoothed hold; its wire selection was removed): a block
+ * clone carries, on one lifetime, a clock row and the row of the ionosphere-free phase-visible clock
  * @f$D = c - \sum_j w_j p_j@f$ over one phase bias per band, the pair fixed at birth.  The
  * exact rule is linear in a row's coefficients, so the D row is the functional of the
  * (c, p_1, p_2) block with every cross term (@ref couplingExactCross).  Its passed motion
@@ -459,6 +459,9 @@ std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
     const std::map<std::string, double>& pinned,
     const std::function<std::pair<double, double>(Eigen::Index)>& fallback);
 
+struct NetworkRun;              // app/NetworkRun.hpp (card NOM3 step EP1)
+struct NetworkEpoch;            // app/NetworkEpoch.hpp (card NOM3 step EP1)
+
 /**
  * @brief Card SMH, before emit: advance every live clone over this epoch.
  *
@@ -492,19 +495,25 @@ std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
  * compares its own regression with this one, counted).  A row with clone terms and no
  * regression dies @c RowFailed.  Off, or with no clone stood in, the update is the one
  * above, byte for byte.
- * @param ctx   the run context.
- * @param log   the network logger.
- * @param est   the estimator after this epoch's final solve.
- * @param x_s   the shared-border solution.
- * @param ws    the epoch's workspace (the fold's capture).
- * @param datum the datum the final solve applied (card SCL's regression; unread otherwise,
- *              so a caller without the knob may leave it empty).
+ *
+ * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+ * retired in card NOM3 step EP2 (the unit tests call this form through
+ * tests/support/NetworkTestRun.hpp).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ *            Read: run.log (log), run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s), ep.ws
+ *           (ws), ep.solve.plan.shared_datum (datum).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: the run context.
+ *   - @p log = run.log: the network logger.
+ *   - @p est = run.engines.est: the estimator after this epoch's final solve.
+ *   - @p x_s = ep.solve.x_s: the shared-border solution.
+ *   - @p ws = ep.ws: the epoch's workspace (the fold's capture).
+ *   - @p datum = ep.solve.plan.shared_datum: the datum the final solve applied (card SCL's regression; unread otherwise, so a caller without the knob may leave it empty).
  */
-void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
-                              const std::shared_ptr<spdlog::logger>& log,
-                              const NetworkEstimator& est, const Eigen::VectorXd& x_s,
-                              const EpochWorkspace& ws,
-                              const NetworkEstimator::Datum& datum = NetworkEstimator::Datum{});
+void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Card SMH, after the stash: re-harvest the advanced clones on the new stash and
@@ -520,13 +529,23 @@ void networkPbHoldCloneUpdate(NetworkRunContext& ctx,
  * (card SMD) is re-harvested row by row and born under the same rule, when the stash also
  * holds a phase bias of the satellite on two bands (@ref pbHoldClonePickPair; otherwise it
  * waits, counted).  No-op unless @c network.emit_pb_hold_smoothed.
- * @param ctx  the run context.
- * @param est  the estimator after this epoch's final solve.
- * @param x_s  the shared-border solution.
- * @param now_s this epoch's continuous GPS seconds.
+ *
+ * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
+ * retired in card NOM3 step EP2 (the unit tests call this form through
+ * tests/support/NetworkTestRun.hpp).
+ *
+ * @param run The run (app/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx).
+ *            Read: run.engines.est (est).
+ * @param ep The epoch (app/NetworkEpoch.hpp), read only. Bindings: ep.solve.x_s (x_s),
+ *           TimeUtils::continuousGpsSeconds(ep.se.time) (now_s).
+ *
+ * The former parameters, by binding:
+ *   - @p ctx = run.ctx: the run context.
+ *   - @p est = run.engines.est: the estimator after this epoch's final solve.
+ *   - @p x_s = ep.solve.x_s: the shared-border solution.
+ *   - @p now_s = TimeUtils::continuousGpsSeconds(ep.se.time): this epoch's continuous GPS seconds.
  */
-void networkPbHoldCloneHarvest(NetworkRunContext& ctx, const NetworkEstimator& est,
-                               const Eigen::VectorXd& x_s, double now_s);
+void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
  * @brief Card SMD, at the hold: one held key's block clone against the emitter's marks.

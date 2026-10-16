@@ -21,13 +21,17 @@
 
 #include <gtest/gtest.h>
 
+#include "app/SignalRoster.hpp"
 #include "config/GnssConfig.hpp"
+#include "app/NetworkEntities.hpp"
+#include "filter/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 #include "slip/NetworkSlipQc.hpp"
 
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -41,7 +45,7 @@ constexpr const char* kSat  = "G22";
 constexpr const char* kSig1 = "L1C";
 constexpr const char* kSig2 = "L2W";
 
-using CarryMap = std::map<std::tuple<int, std::string, std::string>, LocalCarry>;
+using CarryMap = net::ArcTable;
 
 struct Harness {
     LogManager                    log_manager;
@@ -61,7 +65,7 @@ struct Harness {
         lc.value_abs   = 0.0;
         lc.var         = 1.0e-5;
         lc.last_seen_s = now_s - age_s;
-        carry[std::make_tuple(station, std::string(sat), std::string(sig))] = lc;
+        net::putArcIn(carry, std::make_tuple(station, std::string(sat), std::string(sig)), &net::ArcState::amb) = lc;
     }
     std::vector<std::pair<std::string, std::string>> targets(const CarryMap* c, bool* via) const {
         return networkWindupRestartTargets(*sm, 0, kSat, c, now_s, max_gap_s, via);
@@ -133,6 +137,47 @@ TEST(WindupRestartTargets, OtherStationsAndSatellitesAreNotTargets) {
     h.addCarry(0, kSat, kSig2, 60.0);
     EXPECT_EQ(h.targets(&h.carry, &via), keys({ kSig2 }));
     EXPECT_TRUE(via);
+}
+
+// Card NOM step N3b: with the arc ledger given, the ledger rules on each carried arc.
+// An admitted arc that is dead is not a target; a carried arc the ledger holds no
+// admission for (one admitted before a warm resume, which restores the carry and not
+// the ledger) is named by the carry and counted as the site's fallback.
+TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) {
+    Harness h;
+    h.addCarry(0, kSat, kSig1, 420.0);
+    h.addCarry(0, kSat, kSig2, 420.0);
+    net::NetworkEntities ents;
+    ents.arcs = h.carry;   // one arc table: the carry and the ledger's records (step N4f2)
+    ArcLedger ledger{ ents };
+    ledger.configure(/*horizon_s=*/3600.0, /*forget_ep=*/0);
+    ledger.beginEpoch(0, h.now_s);
+    const ArcLedger::Key k1{ 0, kSat, kSig1 };
+    ledger.observe(k1, true);
+    std::vector<std::pair<ArcLedger::Key, ArcStep>> edges;
+    ledger.admitEpoch(std::set<ArcLedger::Key>{ k1 }, edges);
+    RosterN3bCensus census;
+    const auto site = static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs);
+    bool via = false;
+    // L1C admitted in the ledger; L2W carried with no ledger record: both named.
+    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+                                          &via, &ledger, &census),
+              keys({ kSig1, kSig2 }));
+    EXPECT_TRUE(via);
+    EXPECT_EQ(census.count[site].compared, 1);
+    EXPECT_EQ(census.count[site].disagree, 0);
+    EXPECT_EQ(census.fallback[site], 1);
+    // Both admitted: the ledger answers alone, no fallback.
+    const ArcLedger::Key k2{ 0, kSat, kSig2 };
+    ledger.beginEpoch(1, h.now_s + 30.0);
+    ledger.observe(k1, true);
+    ledger.observe(k2, true);
+    ledger.admitEpoch(std::set<ArcLedger::Key>{ k1, k2 }, edges);
+    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+                                          &via, &ledger, &census),
+              keys({ kSig1, kSig2 }));
+    EXPECT_EQ(census.count[site].compared, 2);
+    EXPECT_EQ(census.fallback[site], 1);
 }
 
 }  // namespace

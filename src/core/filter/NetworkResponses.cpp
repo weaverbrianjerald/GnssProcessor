@@ -4,6 +4,7 @@
  *        NetworkResponses.hpp).
  */
 #include "filter/NetworkResponses.hpp"
+#include "app/NetworkEpoch.hpp"   // EpochEvents
 
 #include "app/NetworkRunContext.hpp"   // NetworkKnobs, NetworkServiceCounters, the carry
 #include "config/GnssConfig.hpp"
@@ -45,23 +46,21 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::AmbDropStaleGap, "amb_drop_stale_gap", K::Ambiguity, E::Gap, P::Drop, Src::Increment, kNoDisp,
      "NetworkAmbFloat.cpp networkAmbFloatApplyDrops (2)", "arcs past the gap horizon whose prior the drop changed"},
     {R::AmbFreeEpochLatch, "amb_free_epoch_latch", K::Ambiguity, E::Slip, P::FreeEpoch, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject", "carried arcs not folded (latched by anything but a re-entry response alone)"},
+     "NetworkLevelingCarry.cpp PASS B inject", "carried arcs not folded (latched by anything but a re-entry response alone)"},
     {R::AmbFreeEpochLatchReentry, "amb_free_epoch_latch_reentry", K::Ambiguity, E::Gap, P::FreeEpoch, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject", "carried arcs not folded (latched by gap re-entry or wind-up restart only)"},
+     "NetworkLevelingCarry.cpp PASS B inject", "carried arcs not folded (latched by gap re-entry or wind-up restart only)"},
     {R::AmbPendingReseedSkip, "amb_pending_reseed_skip", K::Ambiguity, E::Slip, P::FreeEpoch, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject", "carried arcs not folded (a pending-reseed mark at the inject)"},
+     "NetworkLevelingCarry.cpp PASS B inject", "carried arcs not folded (a pending-reseed mark at the inject)"},
     {R::AmbT2ReplayFree, "amb_t2_replay_free", K::Ambiguity, E::Slip, P::FreeEpoch, Src::Increment, kNoDisp,
-     "NetworkSolveGlue.cpp within-epoch replay", "carried arcs whose prior the replay withheld"},
+     "NetworkRaimWithinEpoch.cpp within-epoch replay", "carried arcs whose prior the replay withheld"},
     {R::AmbGapSkip, "amb_gap_skip", K::Ambiguity, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject", "carried arcs past the gap horizon not folded"},
+     "NetworkLevelingCarry.cpp PASS B inject", "carried arcs past the gap horizon not folded"},
     {R::AmbGapPrune, "amb_gap_prune", K::Ambiguity, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "arcs erased"},
+     "NetworkLevelingCarry.cpp harvest prune", "arcs erased"},
     {R::AmbRaimDrop, "amb_raim_drop", K::Ambiguity, E::Slip, P::Drop, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4) and consensus (T3)", "arcs whose prior the drop changed"},
     {R::AmbRaimErase, "amb_raim_erase", K::Ambiguity, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4) and consensus (T3)", "arcs erased"},
-    {R::AmbRaimRetap, "amb_raim_retap", K::Ambiguity, E::Slip, P::Retap, Src::Increment, kNoDisp,
-     "NetworkRaim.cpp attribution (T4)", "arcs whose variance the retap raised or whose regression it cleared"},
     {R::AmbDatumSlipErase, "amb_datum_slip_erase", K::Ambiguity, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkSlipQc.cpp datum-station slip re-reference", "arcs erased"},
     {R::AmbGrossErase, "amb_gross_erase", K::Ambiguity, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
@@ -69,16 +68,12 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::AmbGrossHold, "amb_gross_hold", K::Ambiguity, E::Decouple, P::Hold, Src::Increment, kNoDisp,
      "NetworkGrossLos.cpp the declaration's response", "arcs held"},
     {R::AmbWithholdErase, "amb_withhold_erase", K::Ambiguity, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkSolveGlue.cpp a withheld epoch's free response", "arcs erased"},
+     "NetworkRaimWithinEpoch.cpp a withheld epoch's free response", "arcs erased"},
     {R::AmbAnchorRerefErase, "amb_anchor_reref_erase", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkPhaseDatum.cpp networkApplyPhaseAnchorCarryReref", "arcs erased"},
     {R::AmbEq34Erase, "amb_eq34_erase", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkChainDatum.cpp eq34 re-reference", "arcs erased"},
-    {R::AmbFleetFlush, "amb_fleet_flush", K::Ambiguity, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLeveling.cpp SH convergence flush", "arcs erased"},
     // --- Slant ionosphere --------------------------------------------------------------
-    {R::IonoSlipErase, "iono_slip_erase", K::SlantIono, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp the iono carry's slip scope", "carried ionospheres erased"},
     {R::IonoRaimErase, "iono_raim_erase", K::SlantIono, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4)", "carried ionospheres erased"},
     {R::IonoGrossErase, "iono_gross_erase", K::SlantIono, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
@@ -86,46 +81,44 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
     {R::IonoGrossHold, "iono_gross_hold", K::SlantIono, E::Decouple, P::Hold, Src::Increment, kNoDisp,
      "NetworkGrossLos.cpp the declaration's response (bounded)", "hold declarations (a diagonal carry's hold acts only while a carried level is held)"},
     {R::IonoGapSkip, "iono_gap_skip", K::SlantIono, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject (block and diagonal)", "carried ionospheres not folded"},
+     "NetworkSlantIonoCarry.cpp PASS B in-block inject", "carried ionospheres not folded"},
     {R::IonoGapPrune, "iono_gap_prune", K::SlantIono, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune (diagonal and block carries)", "carried ionospheres erased"},
+     "NetworkSlantIonoCarry.cpp harvest prune (block carry)", "carried ionospheres erased"},
     // --- Phase colour ------------------------------------------------------------------
     {R::PcRaimErase, "pc_raim_erase", K::PhaseColour, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkRaim.cpp attribution (T4)", "phase colours erased"},
     {R::PcGrossErase, "pc_gross_erase", K::PhaseColour, E::Decouple, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkGrossLos.cpp the declaration's response", "phase colours erased"},
     {R::PcGapPrune, "pc_gap_prune", K::PhaseColour, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "phase colours erased"},
+     "NetworkPhaseColourCarry.cpp harvest prune", "phase colours erased"},
     // --- Receiver code bias ------------------------------------------------------------
     {R::RxcbStepErase, "rxcb_step_erase", K::RxCodeBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp in-block harvest step test", "receiver code biases erased"},
-    {R::RxcbPeerStepErase, "rxcb_peer_step_erase", K::RxCodeBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp peer-relative step gate (LV-4)", "receiver code biases erased"},
+     "NetworkRxCodeBiasCarry.cpp in-block harvest step test", "receiver code biases erased"},
     {R::RxcbJumpSkip, "rxcb_jump_skip", K::RxCodeBias, E::Slip, P::FreeEpoch, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp diagonal route innovation test", "receiver code biases not folded"},
+     "NetworkRxCodeBiasCarry.cpp diagonal route innovation test", "receiver code biases not folded"},
     {R::RxcbGapSkip, "rxcb_gap_skip", K::RxCodeBias, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject gap gates (block and diagonal)", "receiver code biases not folded"},
+     "NetworkRxCodeBiasCarry.cpp PASS B inject gap gates (block and diagonal)", "receiver code biases not folded"},
     {R::RxcbGapPrune, "rxcb_gap_prune", K::RxCodeBias, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "receiver code biases erased"},
+     "NetworkRxCodeBiasCarry.cpp harvest prune", "receiver code biases erased"},
     // --- Receiver clock ----------------------------------------------------------------
     {R::RxclkJumpErase, "rxclk_jump_erase", K::RxClock, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp in-block harvest prediction test", "receiver clocks erased"},
+     "NetworkRxClockCarry.cpp in-block harvest prediction test", "receiver clocks erased"},
     {R::RxclkGapSkip, "rxclk_gap_skip", K::RxClock, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject (block)", "receiver clocks not folded"},
+     "NetworkRxClockCarry.cpp PASS B inject (block)", "receiver clocks not folded"},
     {R::RxclkGapPrune, "rxclk_gap_prune", K::RxClock, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "receiver clocks erased"},
+     "NetworkRxClockCarry.cpp harvest prune", "receiver clocks erased"},
     // --- Receiver phase bias -----------------------------------------------------------
     {R::RpbEq34Erase, "rpb_eq34_erase", K::RxPhaseBias, E::Handover, P::EraseAndRebirth, Src::Increment, kNoDisp,
      "NetworkChainDatum.cpp eq34 re-reference", "receiver phase biases erased"},
     {R::RpbGapSkip, "rpb_gap_skip", K::RxPhaseBias, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp the eq34 receiver phase-bias gap gate", "receiver phase biases not folded"},
+     "NetworkPhaseDatum.cpp the eq34 receiver phase-bias gap gate", "receiver phase biases not folded"},
     {R::RpbGapPrune, "rpb_gap_prune", K::RxPhaseBias, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "receiver phase biases erased"},
+     "NetworkChainDatum.cpp harvest prune", "receiver phase biases erased"},
     // --- Wet delay ---------------------------------------------------------------------
     {R::ZwdGapSkip, "zwd_gap_skip", K::Zwd, E::Gap, P::GapSkip, Src::Increment, kNoDisp,
-     "ApplicationNetworkAssembly.cpp PASS B inject gap gates", "wet delays not folded"},
+     "NetworkZwdCarry.cpp PASS B inject gap gates", "wet delays not folded"},
     {R::ZwdGapPrune, "zwd_gap_prune", K::Zwd, E::Gap, P::GapPrune, Src::Increment, kNoDisp,
-     "NetworkLocalCarryHarvest.cpp harvest prune", "wet delays erased"},
+     "NetworkZwdCarry.cpp harvest prune", "wet delays erased"},
     // --- Satellite clock ---------------------------------------------------------------
     {R::ClkDeparted, "clk_departed", K::SatClock, E::Gap, P::Marginalize, Src::Departed, kNoDisp,
      "NetworkBorderPrior.cpp the D2 fold (departed flag)", "key-epochs folded with the column departed"},
@@ -218,7 +211,6 @@ const char* responsePolicyName(ResponsePolicy p) {
         case ResponsePolicy::Loosen:            return "loosen";
         case ResponsePolicy::Recouple:          return "recouple";
         case ResponsePolicy::Reinit:            return "reinit";
-        case ResponsePolicy::Retap:             return "retap";
         case ResponsePolicy::Hold:              return "hold";
         case ResponsePolicy::ReanchorAtTarget:  return "reanchor_at_target";
     }
@@ -239,7 +231,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
     const bool reinitFlags = k.clk_mon_on || k.clk_model_on;
     const bool cbEst = config.estimateNetworkSatCodeBias();
     const bool clkCarried = !k.clk_model_on;
-    const bool pbCarried = !k.carry_invariant && !k.phase_hold_on;   // not stashed / Held first
+    const bool pbCarried = !k.carry_invariant;   // not stashed under the DD carry
     // A clock-pivot datum change is possible only with a pivot clock datum.
     const bool pivotDatum = !k.clock_sum_to_zero && !k.clock_brdc_anchored;
     const bool relevelFree = config.networkCycleSlipRelevelFreeEpoch();
@@ -284,7 +276,7 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::PbReref:
             return pbCarried
                 && ((k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release))
-                    || (k.phase_datum_eq34 && !k.phase_datum_ensemble));
+                    || k.phase_datum_eq34);
 
         // --- The ambiguity: the float vehicle's drop, the leveling vehicle's skips.  The
         // latch exists only under relevel_free_epoch (the loader disarms it without
@@ -301,49 +293,42 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::AmbGapPrune:          return ambCarried;
         case R::AmbRaimDrop:          return k.raim_on && k.pl_on && k.amb_float_kf;
         case R::AmbRaimErase:         return k.raim_on && ambCarried && !k.amb_float_kf;
-        case R::AmbRaimRetap:
-            return k.raim_on && k.pl_on && t4 && config.networkCycleSlipRelevelRetapStatistical();
         case R::AmbDatumSlipErase:    return k.datum_station_detect && k.pl_on;   // forced off without mw_detect and under the prioritized datum
         case R::AmbGrossErase:        return k.gl_on && !k.gl_bound && ambCarried;
         case R::AmbGrossHold:         return k.gl_on && k.gl_bound && ambCarried;
         case R::AmbWithholdErase:     return k.wh_free_erase && k.raim_withhold > 0.0 && k.pl_on;
         case R::AmbAnchorRerefErase:
             return k.pl_on && k.pa_carry_reref && (!k.pd_held_basis || k.pd_held_cold_release);
-        case R::AmbEq34Erase:         return k.phase_datum_eq34 && !k.phase_datum_ensemble && ambCarried;
-        case R::AmbFleetFlush:
-            return ambCarried && k.pl_refloat_on_conv && config.estimateNetworkIonoSh();
+        case R::AmbEq34Erase:         return k.phase_datum_eq34 && ambCarried;
         // --- The slant ionosphere and the phase colour (erased with their line of sight).
-        case R::IonoSlipErase:        return k.iono_on;
-        case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && (k.iono_on || k.iono_blk);
-        case R::IonoGrossErase:       return k.gl_on && !k.gl_bound && (k.iono_on || k.iono_blk);
-        case R::IonoGrossHold:        return k.gl_bound && (k.iono_on || k.iono_blk);
+        case R::IonoRaimErase:        return k.raim_on && k.pl_on && t4 && k.iono_blk;
+        case R::IonoGrossErase:       return k.gl_on && !k.gl_bound && k.iono_blk;
+        case R::IonoGrossHold:        return k.gl_bound && k.iono_blk;
         case R::IonoGapSkip:
-            return k.pl_on && (k.iono_on || (k.iono_blk && k.pl_local_block && k.carry_cpl_cond
-                                             && !k.carry_cpl_joint));
+            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::IonoGapPrune:
-            return k.pl_on && (k.iono_on || (k.iono_blk && k.pl_local_block && k.carry_cpl_cond));
+            return k.pl_on && k.iono_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::PcRaimErase:          return k.raim_on && k.pl_on && t4 && k.pc_on;
         case R::PcGrossErase:         return k.gl_on && !k.gl_bound && k.pc_on;
         case R::PcGapPrune:           return k.pl_on && k.pc_on;
         // --- The receiver-side carries.
         case R::RxcbStepErase:
             return k.pl_on && k.rx_cb_on && k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond;
-        case R::RxcbPeerStepErase:    return k.rx_cb_on && k.rx_cb_step_gate && !k.rxcb_blk;
         case R::RxcbJumpSkip:
-            return k.rx_cb_on && !k.rx_cb_step_gate
-                && !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint);
+            return k.rx_cb_on
+                && !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond);
         case R::RxcbGapSkip:   // the in-block route, or the diagonal route when the block is not armed
             return k.rx_cb_on
                 && ((k.pl_on && !k.carry_invariant)
-                    || !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint));
+                    || !(k.rxcb_blk && k.pl_local_block && k.carry_cpl_cond));
         case R::RxcbGapPrune:         return k.rx_cb_on;
         case R::RxclkJumpErase:
         case R::RxclkGapPrune:
             return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::RxclkGapSkip:
-            return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond && !k.carry_cpl_joint;
+            return k.pl_on && k.rxclk_blk && k.pl_local_block && k.carry_cpl_cond;
         case R::RpbEq34Erase:
-            return k.phase_datum_eq34 && !k.phase_datum_ensemble && k.pl_on && k.eq34_rpb_q > 0.0;
+            return k.phase_datum_eq34 && k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapSkip:           return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::RpbGapPrune:          return k.pl_on && k.eq34_rpb_q > 0.0;
         case R::ZwdGapSkip:           return k.pl_on && (k.zwd_on || k.zwd_seam_on);
@@ -374,7 +359,6 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
 
 bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConfig& config) {
     switch (m) {
-        case CarryMechanism::ClockLevel:         return k.clv_on;
         case CarryMechanism::EphRelevel:
             return config.networkAprioriSource() == NetworkAprioriSource::BrdcRts;
         case CarryMechanism::Handover:           return k.handover_stransform;
@@ -393,9 +377,6 @@ bool carryMechanismArmed(CarryMechanism m, const NetworkKnobs& k, const GnssConf
 std::uint32_t carryMechanismBorderKinds(CarryMechanism m, const NetworkKnobs& k) {
     const auto bit = [](SharedParamKind x) { return std::uint32_t{1} << static_cast<int>(x); };
     switch (m) {
-        case CarryMechanism::ClockLevel:
-            return bit(SharedParamKind::Clock) | bit(SharedParamKind::PhaseBias)
-                 | ((k.clv_cb_follow > 0 || k.clv_free_cb_rebase) ? bit(SharedParamKind::CodeBias) : 0u);
         case CarryMechanism::EphRelevel:
         case CarryMechanism::Handover:
         case CarryMechanism::HandoverBeforeRows: return bit(SharedParamKind::Clock);
@@ -438,16 +419,16 @@ long long responseSiteCount(const NetworkServiceCounters& C, ResponseSite s) {
     return 0;
 }
 
-void networkResponseLatchTally(NetworkRunContext& ctx) {
-    const RelevelEpochState& lat = ctx.carry.relevel;
+void networkResponseLatchTally(NetworkRunContext& ctx, const EpochEvents& events) {
+    const RelevelEpochState& lat = events.slip.relevel;
     if (lat.free_ambs.empty()) return;
     auto& C = ctx.counters;
     ++C.prm_latch_epochs;
     for (const auto& key : lat.free_ambs) {
         const auto parts = StateKeys::parseAmbiguityKey(key.second);
         const bool carried = parts
-            && ctx.carry.local_carry.count(std::make_tuple(key.first, parts->satellite,
-                                                           parts->signal)) > 0;
+            && (net::getArc(ctx.entities.arcs, std::make_tuple(key.first, parts->satellite,
+                                                           parts->signal), &net::ArcState::amb) != nullptr) > 0;
         const auto c = lat.free_cause.find(key);
         const unsigned cause = (c != lat.free_cause.end()) ? c->second : 0u;
         ++C.prm_latch_unique;
