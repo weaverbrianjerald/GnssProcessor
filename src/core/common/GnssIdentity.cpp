@@ -78,6 +78,14 @@ namespace GnssProcessor {
 
     double nominalWavelengthM(FrequencyBand band) { return wavelengthM(band, 0); }
 
+    double nominalCarrierFrequencyOfDigitHz(System sys, char digit) {
+        return nominalCarrierFrequencyHz(bandOfDigit(sys, digit));
+    }
+
+    double nominalWavelengthOfDigitM(System sys, char digit) {
+        return nominalWavelengthM(bandOfDigit(sys, digit));
+    }
+
     double ionoDelayMetresPerTecu(double carrier_hz) {
         // Term for term as the call sites wrote it, so the double is the same bit for bit.
         return 40.3 * 1.0e16 / (carrier_hz * carrier_hz);

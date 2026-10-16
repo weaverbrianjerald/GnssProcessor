@@ -53,8 +53,8 @@ StateInitializer::StateInitializer(const GnssConfig& config,
 // ===========================================================================
 
 std::string StateInitializer::systemToIsbName(System system) {
-    // GPS is the time reference and has no ISB state; an unknown system has none either.
-    if (system == System::GPS || system == System::Unknown) return "";
+    // The time reference has no ISB state; an unknown system has none either.
+    if (isTimeReference(system) || system == System::Unknown) return "";
     return systemName(system);
 }
 
@@ -417,13 +417,13 @@ bool StateInitializer::initializeInterSystemBiases(const std::vector<PppObservat
 
             const double residual = computeRawResidual(obs, ref_type, x);
             const std::string sys_name = systemToIsbName(obs.system);
-            const std::string key = sys_name.empty() ? systemName(System::GPS) : sys_name;
+            const std::string key = sys_name.empty() ? systemName(timeReferenceSystem()) : sys_name;
             system_residuals[key].push_back(residual);
             break;  // one code obs per satellite
         }
     }
 
-    const std::string gps_key = systemName(System::GPS);   // the reference system's key
+    const std::string gps_key = systemName(timeReferenceSystem());   // the reference system's key
     if (system_residuals.find(gps_key) == system_residuals.end() ||
         system_residuals[gps_key].empty()) {
         log_manager_.getLogger("state_initializer")->warn(
@@ -493,7 +493,7 @@ bool StateInitializer::seedColdReceiverClock(const std::vector<PppObservation>& 
 
     std::vector<double> gps_residuals;
     for (const auto& obs : observations) {
-        if (obs.system != System::GPS) continue;   // GPS defines the clock datum
+        if (!isTimeReference(obs.system)) continue;   // the time reference defines the clock datum
         if (obs.elevation < config_.getElevationMaskDeg()) continue;
 
         for (const auto& [ref_type, observed] : obs.observed) {

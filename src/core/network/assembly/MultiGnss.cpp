@@ -29,14 +29,14 @@ namespace GnssProcessor {
 bool networkMultiGnssActive(const GnssConfig& config) {
     const auto& prio = config.getSignalPriorities();
     for (const std::string& sys : config.getActiveSystems())
-        if (sys != "GPS" && prio.count(sys) != 0) return true;
+        if (sys != systemName(timeReferenceSystem()) && prio.count(sys) != 0) return true;
     return false;
 }
 
 bool networkStationNonGpsOnly(const std::vector<PppObservation>& modeled) {
     bool has_gps = false, has_other = false;
     for (const PppObservation& ob : modeled) {
-        if (ob.system == System::GPS)             has_gps   = true;
+        if (isTimeReference(ob.system))           has_gps   = true;
         else if (ob.system != System::Unknown)    has_other = true;
     }
     return has_other && !has_gps;
@@ -81,8 +81,8 @@ void networkMultiGnssEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             const std::string letter = constellationKey(systemOfSat(ob.satellite));
             ++M.sat_rows[letter];
             sats[letter].insert(ob.satellite);
-            // Every constellation but GPS (the time reference) holds an inter-system bias.
-            if (ob.system != System::GPS && ob.system != System::Unknown)
+            // Every constellation but the time reference holds an inter-system bias.
+            if (!isTimeReference(ob.system) && ob.system != System::Unknown)
                 systems_here.insert(systemName(ob.system));
         }
         for (const std::string& s : systems_here) ++M.isb_station_epochs[s];
