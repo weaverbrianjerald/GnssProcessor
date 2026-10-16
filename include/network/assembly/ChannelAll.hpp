@@ -2,15 +2,15 @@
 /**
  * @file ChannelAll.hpp
  * @brief `processing.channel_mode: all` on the network path and its telemetry,
- *        card SID phase 6b (docs/refound/SID_signal_identity_2026-09-22.md).
+ *        (docs/refound/SID_signal_identity_2026-09-22.md).
  *
  * ### Mechanism
  *
  * The widening in @c PppModel::selectUncombinedSignals is the single entry point:
  * every admitted code and phase attribute of every selected band becomes its own
- * row at every station.  It subsumes card SCC (the second code channel) and card
- * SID phase 6a (the second phase channel) instead of being refused beside them:
- * the rows it adds are reported through the same two sets those cards fill
+ * row at every station.  It subsumes the second code channel and
+ * the second phase channel instead of being refused beside them:
+ * the rows it adds are reported through the same two sets those channels fill
  * (@c PppObservation::companion_codes and @c second_phases), so the receiver
  * inter-signal code state, the two sigma scales, the Melbourne-Wubbena guard, the
  * cell telemetry and both edges of standing invariant 7 work unchanged.  Their
@@ -20,10 +20,10 @@
  * Three questions the widening alone does not settle, and where they are handled:
  *
  *  - the receiver inter-signal code bias of an extra code on any band, in
- *    @c StateInitializer::resolveReceiverBias (card SCC's state, with its band-1
+ *    @c StateInitializer::resolveReceiverBias (the second code channel's state, with its band-1
  *    restriction and its allow-list dropped under the widening);
  *  - the satellite inter-signal correction of an extra code on band 2 or above,
- *    which card RF-0f's @c network.sat_isc_state frees where a station bridges
+ *    which @c network.sat_isc_state frees where a station bridges
  *    both signals of that satellite.  Under the widening every station bridges,
  *    so the knob acts on every widened station, and the run-end readout states
  *    whether it is armed;
@@ -91,7 +91,7 @@ namespace GnssProcessor {
         long long isc_signals_max{ 0 };
         /// Peak distinct band digits carrying an extra code channel in one epoch, and
         /// the same peak over band digits 2 and above: the population whose satellite
-        /// inter-signal correction card RF-0f's knob decides.
+        /// inter-signal correction the @c network.sat_isc_state knob decides.
         long long extra_code_bands_max{ 0 };
         long long extra_code_bands_ge2_max{ 0 };
     };
@@ -140,7 +140,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Fold one epoch into the census.  No-op unless the widening or a second
-     *        constellation (@c networkMultiGnssActive, card GAL) is active.
+     *        constellation (@c networkMultiGnssActive) is active.
      *
      * Called from the driver after @c present[] is final and after the per-epoch
      * second-code and second-phase bookkeeping has republished its cell sets; at

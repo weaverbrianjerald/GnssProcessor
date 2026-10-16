@@ -2,8 +2,7 @@
 /**
  * @file ArcLife.hpp
  * @brief The life stamp of one band-tagged arc: the interim identity of an arc's integer
- *        ambiguity until card NOM step N4 puts a generation on @ref ArcId (step
- *        AGT-5).
+ *        ambiguity until a generation is put on @ref ArcId.
  *
  * ## What a life is
  *
@@ -29,7 +28,7 @@
  *
  * ## One reader of the carry stamps
  *
- * Card AGT section 3 binds the life stamp and the search's suspect-corner mask
+ * The arc-graph design binds the life stamp and the search's suspect-corner mask
  * (network/ar/ArSuspect.hpp) to one reader of the @c LocalCarry life fields, so that
  * neither keeps a second record of an arc's life.  That reader is @ref carryLifeOf: the
  * stamp reads it here, and the mask's per-epoch fold reads it for its drop and re-level

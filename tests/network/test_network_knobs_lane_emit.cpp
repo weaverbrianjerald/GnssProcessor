@@ -1,9 +1,9 @@
 /**
  * @file test_network_knobs_lane_emit.cpp
- * @brief The invariant-carry gate and emit-layer switches of NetworkKnobs (card NOM step
- *        TD1a) equal the conjunctions runNetwork computed before they moved.
+ * @brief The invariant-carry gate and emit-layer switches of NetworkKnobs
+ *        equal the conjunctions runNetwork computed before they moved.
  *
- * Card NOM step TD1a moved 24 derived switches (carry_innov_gate, the WL/EWL/UWL lane
+ * 24 derived switches moved (carry_innov_gate, the WL/EWL/UWL lane
  * flags, the dump flags, emit_rebase_on, and the two PB emission-filter switches) out of
  * the driver and into NetworkKnobs::snapshot, so the driver, the DD-prior build, the
  * install, the emit store and the run end read one bool each.  The lane and dump flags
@@ -72,8 +72,8 @@ const char* kCarryInvariant =
     "    \"phase_leveling\": true,\n"
     "    \"cycle_slip\": { \"mw_detect\": true },\n";
 
-/// The switches still in the snapshot, as the driver computed them before card NOM step
-/// TD1a (the MW/WL lane and dump switches and the two PB emission-filter switches went
+/// The switches still in the snapshot, as the driver computed them before they moved
+/// (the MW/WL lane and dump switches and the two PB emission-filter switches went
 /// with their keys).
 struct DriverSwitches {
     bool carry_innov_gate, emit_rebase_on;

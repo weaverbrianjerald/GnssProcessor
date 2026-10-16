@@ -5,7 +5,7 @@
  *        (@c network.rank_gate_tol → NetworkEstimator::setRankGateTol).
  *
  * The gate decides whether a whole epoch is emitted or withheld.  This file pins
- * the three properties the card relies on (docs/SPEC_beidou_w6_datum.md §2):
+ * the three properties the design relies on (docs/SPEC_beidou_w6_datum.md §2):
  *
  *  - The default is NetworkEstimator::kNullSpaceTol and the gate semantics are
  *    unchanged: exact equality against the declared S-basis dimension, throwing
@@ -73,7 +73,7 @@ constexpr int kStormDeclaredDim = 2;
 
 /// A registered single-station system carrying a second phase-bias column that is
 /// either genuinely null or weakly observable: the two below-cutoff classes of
-/// the card's §0.1 decomposition, which have different owners.
+/// the design's §0.1 decomposition, which have different owners.
 ///
 ///  - @p weak_w == 0 : PB(G02,L1) gets no rows at all (its only anchor station
 ///    has dropped).  It is structurally null, so its eigenvalue is exactly 0 and
@@ -286,7 +286,7 @@ TEST(NetworkRankGateTest, DumpReportsTheGatesOwnCutoffAndCount) {
 }
 
 // ---------------------------------------------------------------------------
-// The class boundary the card rests on (§0.1): a genuinely null direction is
+// The class boundary the design rests on (§0.1): a genuinely null direction is
 // null at every tolerance, so no gate calibration can clear it.  A structurally
 // absent column (no rows) has eigenvalue exactly 0, which is below any positive
 // cutoff by construction.  The four-class decomposition therefore assigns the
@@ -306,7 +306,7 @@ TEST(NetworkRankGateTest, GenuinelyNullDirectionSurvivesEveryTolerance) {
                      std::runtime_error) << "tol=" << tol;
         EXPECT_GE(observed, 1) << "tol=" << tol;
 
-        // The heal resolves it at every tolerance: the card PA half of the
+        // The heal resolves it at every tolerance: the soft-anchor half of the
         // division of labour.
         std::vector<NetworkEstimator::SharedPrior> cap;
         std::vector<PhaseHealEvent> events;
@@ -561,7 +561,7 @@ TEST(NetworkRankGateTest, KaulaPriorLiftsACodeDominatedNullDirection) {
 }
 
 // The margin inequality, stated as arithmetic so a later sigma or tolerance
-// change cannot recreate unnoticed the configuration card CB-ADM rejected (prior
+// change cannot recreate unnoticed the configuration the CB-ADM study rejected (prior
 // information sitting at the rank cutoff) (K2).  With sigma 10 m, info = 0.01,
 // which clears the 6.0218e-06 cutoff below by about 3.2 decades.
 TEST(NetworkRankGateTest, KaulaPriorClearsTheCutoffByTwoDecades) {
@@ -643,7 +643,7 @@ TEST(NetworkRankGateTest, ConfigParsesArmsValidatesAndClamps) {
         // Below the 1e-16 floor: accepted but clamped, never honoured as given.
         {"floor",  "    \"rank_gate_tol\": 1e-30,\n", true,  1e-16},
     };
-    // The loader contract of card KP is checked here too: off by default at the
+    // The loader contract of the physical-bound prior is checked here too: off by default at the
     // documented sigma, and a non-positive sigma is refused rather than folded as
     // info = inf.
     {

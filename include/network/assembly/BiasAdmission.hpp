@@ -11,7 +11,7 @@
  * station-local nuisance.  With BeiDou many (sat,signal) pairs are held by only
  * 1–2 stations and cross that instantaneous threshold back and forth.  The pair
  * then alternates between registered and datumed, and pruned and leaking, with
- * prune / warm-restore and Card-2 datum re-seed churn; and a datum-orphan
+ * prune / warm-restore and code-bias time-link datum re-seed churn; and a datum-orphan
  * near-null direction withholds the whole epoch through the null-space rank gate.
  *
  * This seam replaces the per-epoch count with a one-shot census over the first
@@ -155,8 +155,8 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the KP prior and the CB-ADM code-pair admission.
  *
- * The card KP admitted-OSB physical-bound prior and the CB-ADM code-pair admission
- * census with its card H2 orphan window.
+ * The admitted-OSB physical-bound prior and the CB-ADM code-pair admission
+ * census with its orphan window.
  *
  * Gate: each section under its own condition, as in the teardown:
  * `config_.networkCbKaulaPrior()`; `config_.networkCbAdmission()`.
@@ -175,7 +175,7 @@ struct NetworkEpoch;
 struct EpochWorkspace;   // network/driver/RunTypes.hpp
 
 /**
- * @brief The card KP physical-bound prior on the admitted OSB columns: folded after the W6 gauge
+ * @brief The physical-bound prior on the admitted OSB columns: folded after the W6 gauge
  *        rows and before the rank gate, through the diagonal prior channel (K3), and captured
  *        for the within-epoch replay.  No-op with network.cb_kaula_prior off.
  * @param run The run: the estimator is folded; ctx counters (n_kp_epochs, n_kp_cols) are written.

@@ -1,6 +1,6 @@
 /**
  * @file test_network_knobs_station_assembly.cpp
- * @brief The six NetworkKnobs fields of card NOM3 step PB1a against the expressions that
+ * @brief The six NetworkKnobs fields against the expressions that
  *        networkPassB_ (and, for four of them, the harvest) derived before the step.
  *
  * networkPassB_ computed the live F3 block predicate and the four in-block predicates from

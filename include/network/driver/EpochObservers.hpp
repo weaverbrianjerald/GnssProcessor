@@ -93,8 +93,8 @@
  *     - networkRhsAttribution, then networkRhsAttribTrip last: the flight recorder consumes a
  *       trip raised anywhere earlier this epoch and retains this epoch as the next trip's
  *       "before" frame, so a trip dump sees the kernel state every other row just read.
- * Every observer's output is byte-identical to the explicit calls it replaced (card NOM3
- * step EP3, gate G-EP), so a row moves only with a gate of its own.
+ * Every observer's output is byte-identical to the explicit calls it replaced,
+ * so a row moves only with a gate of its own.
  */
 
 #include <array>

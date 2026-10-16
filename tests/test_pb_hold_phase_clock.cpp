@@ -51,7 +51,7 @@ namespace GnssProcessor {
 namespace {
 
 /// The value behind an entity-table lookup, throwing like std::map::at when it is absent
-/// (card NOM step N4b moved the map the test read into the constellation table).
+/// (the map the test reads is in the constellation table).
 template <class V>
 const V& netAt(const V* p) {
     if (p == nullptr) throw std::out_of_range("netAt: absent");

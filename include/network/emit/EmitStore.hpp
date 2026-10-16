@@ -7,11 +7,11 @@
  *
  * Consumes the prepared @ref NetworkSolutionEpoch (and the datum-bump / withheld /
  * retro state @ref networkSolPrep returned) and finalizes the epoch:
- *   - the Card-4 phase-D emit-layer frame re-base on the emitted phase biases, the
+ *   - the emit-layer frame re-base on the emitted phase biases, the
  *     CLK-R clock emission re-base, the RS-4 warm-resume phase-bias seam mark and the
  *     PBH phase-bias hold, all baked into @c sol before the store push so a
  *     NetworkProductIO replay reproduces the emitter disc counters;
- *   - @c emitToStore, the card SID signal-roster declaration, the JT and MS event
+ *   - @c emitToStore, the signal-roster declaration, the JT and MS event
  *     drains, and the RTA-5 periodic S-contract re-broadcast;
  *   - the RTA-10 per-epoch heartbeat + the on-disk product write (+ RTA-6 flush);
  *   - the emitted-epoch bookkeeping (n_emitted, grade-metric / last-emit anchors,
@@ -36,7 +36,7 @@
 #include "common/PppObservation.hpp"         // PppObservation (modeled)
 #include "network/solve/Estimator.hpp"       // NetworkEstimator
 #include "network/driver/RunGroups.hpp"       // NetworkEmitEngines, ClosedLoopTally
-#include "network/emit/ClockEmitRebase.hpp" // NetworkClockEmitRebase (Card CLK-R)
+#include "network/emit/ClockEmitRebase.hpp" // NetworkClockEmitRebase
 #include "network/emit/EmitRebase.hpp"    // NetworkEmitRebase
 #include "products/NetworkProductEmitter.hpp"// NetworkSolutionEpoch
 #include "rinex/MultiRinexSync.hpp"          // SyncedEpoch

@@ -172,8 +172,8 @@ std::string bandColumns(const SignalId& sig) {
     return constellationKey(sig.sys) + "," + sig.obsCode(ObsType::Phase);
 }
 
-/// The epoch's row of network_ar_lattice.csv (kArLatticeHeader: AGT-6's columns, then card
-/// FCF's).
+/// The epoch's row of network_ar_lattice.csv (kArLatticeHeader: the base columns, then the fixed-cycle
+/// columns).
 void writeEpochRow(std::ofstream& os, const SyncedEpoch& se, const ArEpochFixes& fixes, const ArLatticeEpoch& e) {
     auto rel = [&](ArLatticeRelease r) { return e.released_by[releaseIndex(r)]; };
     os << fmt::format("{},{:.1f},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.3f},"

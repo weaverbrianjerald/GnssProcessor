@@ -385,7 +385,7 @@ namespace GnssProcessor {
             double last_update_epoch_s{ 0.0 }; /**< Continuous GPS seconds of the most recent update. */
         };
 
-        // --- Network-only: the phase bridge, owned with card NOM ------------------
+        // --- Network-only: the phase bridge, owned by the network side ------------------
 
     } // namespace mw
 

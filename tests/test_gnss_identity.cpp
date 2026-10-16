@@ -1,13 +1,13 @@
 /**
  * @file test_gnss_identity.cpp
- * @brief Card NOM step N0a: the identity types of common/GnssIdentity.hpp.
+ * @brief The identity types of common/GnssIdentity.hpp.
  *
  * The types replace string keys whose order is numerically load-bearing (the network's
  * rank-1 inject order and fold order iterate string-keyed maps), so the first contract
  * tested is that every comparator reproduces the @c std::string order of the key it will
  * replace, over every satellite of the RINEX constellations and every signal the
  * classifier knows.  Then the parse and render round trips (the blank-padded satellite
- * forms of card RXP included), the letter, name and key maps against the existing
+ * forms included), the letter, name and key maps against the existing
  * helpers, and the one frequency function against @c PppUtils::getFrequency.
  *
  * The frequency comparison records, and does not fix, the places the two sources
@@ -215,7 +215,7 @@ TEST(GnssIdentityTest, SatIdParseRoundTripsAndNormalizesPaddedForms) {
             EXPECT_EQ(*back, sat);
             EXPECT_TRUE(back->valid());
         }
-    // The three spellings of card RXP.
+    // The three spellings of one satellite.
     for (const char* t : {"G05", "G 5", "G5"}) {
         const auto p = SatId::parse(t);
         ASSERT_TRUE(p.has_value()) << t;
@@ -377,7 +377,7 @@ TEST(GnssIdentityTest, FrequencyAgreesWithPppUtilsExceptTheRecordedCases) {
     // Recorded for step N0b, not fixed here: BeiDou digit 1 with an I or Q attribute
     // (the RINEX 3.02 spelling of B1I).  classifySignal and this function give B1I,
     // 1561.098 MHz; PppUtils::getFrequency matches the digit alone and gives B1C,
-    // 1575.42 MHz (card NOM section 7 item 7).
+    // 1575.42 MHz (docs/refound/NOM_network_object_model_2026-10-08.md section 7 item 7).
     const std::set<std::string> expected = {"CC1I", "CC1Q"};
     EXPECT_EQ(disagree, expected);
     EXPECT_DOUBLE_EQ(nominalCarrierFrequencyHz(FrequencyBand::BdsB1I), 1561.098e6);

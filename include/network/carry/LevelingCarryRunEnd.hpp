@@ -3,7 +3,7 @@
  * @file LevelingCarryRunEnd.hpp
  * @brief Run-end report of the phase-leveling carry: the retirement census and the F3 local
  *        block (its phase-colour and receiver-clock jump-gate lines moved beside their
- *        harvests in card NOM2 step TD2).
+ *        harvests).
  *
  * The run-end report defined in LevelingCarryRunEnd.cpp, one row of kNetworkRunEndReports
  * (network/runend/RunEnd.hpp).

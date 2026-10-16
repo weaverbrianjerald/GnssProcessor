@@ -22,7 +22,7 @@ namespace GnssProcessor {
      * @brief One value per family of contribution to the normal equations, in the order of
      *        the declaration table (@c contributionSpecs in network/assembly/Contributions.hpp).
      *
-     * The families are the inventory of card NOM sections 3.4 and 17, split wherever a
+     * The families are the inventory of row contributions, split wherever a
      * reader has to tell two cases apart (for example the whitened local block, one kind
      * per family of its primary column).  The run-start table "contributions as armed"
      * prints every family with its declaration, so the table is the inventory.
@@ -44,7 +44,7 @@ namespace GnssProcessor {
         DataCode = 0,             ///< Code rows of the latched code signal.
         DataCodeCompanion,        ///< Code rows routed through a receiver inter-signal state: the second code channel's companion rows and its fallback rows (an allow-listed band-1 code that arrived without the canonical code beside it).
         DataPhase,                ///< Phase rows of the latched phase signal.
-        DataPhaseSecond,          ///< Phase rows of a second phase channel (card SID phase 6a).
+        DataPhaseSecond,          ///< Phase rows of a second phase channel.
         // --- Station constraint rows -------------------------------------------------
         AmbiguityPin,             ///< Phase-datum pins on the station's anchored ambiguities (legacy pivot, prioritized, eq34 tree edges).
         Eq34RpbPin,               ///< The eq34 datum receiver's receiver phase-bias pin.
@@ -52,12 +52,12 @@ namespace GnssProcessor {
         Eq34RpbTimeLink,          ///< The eq34 receiver phase-bias time link toward the carried value.
         GloIfbAnchor,             ///< Zero-mean anchor rows on the GLONASS per-slot receiver IFB columns.
         GloIonoAnchor,            ///< Zero-mean anchor rows on the GLONASS slant-ionosphere columns.
-        SimZeroIono,              ///< Test-only rows tying every slant ionosphere to absolute zero (network.sim_zero_iono_sigma_m; card ARL, a fixture simulated without ionosphere).
+        SimZeroIono,              ///< Test-only rows tying every slant ionosphere to absolute zero (network.sim_zero_iono_sigma_m; a fixture simulated without ionosphere).
         ShIonoTie,                ///< Slant-ionosphere to SH-VTEC tie rows (whitened per constellation).
         GimIono,                  ///< External GIM slant-ionosphere rows (whitened per constellation).
         SdEwl,                    ///< Between-satellite single-differenced EWL rows (whitened per constellation).
         // --- Station coupling and block rows: the coupling region (appendCouplingRows) ---
-        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column (card 1).
+        CouplingScalar,           ///< A carried local column's conditional coupling row, +1 on the column.
         BlockAmbiguityCarry,      ///< Whitened local carry block row whose primary column is an ambiguity (F3).
         BlockZwdCarry,            ///< Whitened local carry block row whose primary column is the wet delay (B9-in-block).
         BlockIonoCarry,           ///< Whitened local carry block row whose primary column is a slant ionosphere (I-in-block).
@@ -89,18 +89,18 @@ namespace GnssProcessor {
         ShPrior,                  ///< Carried SH-VTEC prior.
         PinBridge,                ///< eq34 pin bridge on an unpinned key (reattach hygiene).
         BorderCarryDiagonal,      ///< The border carry, diagonal form (D2, and the dense fold's leftovers).
-        BorderCarryGaugeFree,     ///< The border carry, diagonal with the clock common mode downdated (card Q3 gauge-free fold).
+        BorderCarryGaugeFree,     ///< The border carry, diagonal with the clock common mode downdated (the gauge-free fold).
         BorderCarryDense,         ///< The border carry, dense information block (C1; the clone path's stand-in block included).
         Q3Withdraw,               ///< The clock-anchor guard's withdrawal before its re-solve: each call removes the tripped clocks' share of a carried prior (a refold re-folds the kept part in the same call).
         Q3Restore,                ///< The clock-anchor guard's restore after a re-solve that threw: each call folds the withdrawn share back.
         ClonePrior,               ///< Isolated priors on idle clones.
         CloneWalk,                ///< Clone walk factors.
-        SharedHistory,            ///< N(0, 1) priors on the shared-history columns (card SCL2 X2).
+        SharedHistory,            ///< N(0, 1) priors on the shared-history columns.
         ClockOscillator,          ///< Two-state clock-model prior on the satellite clocks.
         ColdClockAnchor,          ///< A-priori satellite-clock anchor (cold-start conditioning).
         // --- Pins, gauges, DD blocks ---------------------------------------------------
         ClockPivotPin,            ///< Per-constellation clock pivot pins (Dirichlet, in the solve).
-        DdPriorBlock,             ///< Card-4 DD prior blocks (carry_invariant).
+        DdPriorBlock,             ///< DD prior blocks (carry_invariant).
         // --- Not a family ----------------------------------------------------------------
         Unset,                    ///< No site named a kind: the default of every tag and fold record.
     };

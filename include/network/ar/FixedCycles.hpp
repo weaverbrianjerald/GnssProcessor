@@ -7,7 +7,7 @@
  *
  * ## What it does
  *
- * The producer AR search (network/ar/ProducerAr.cpp, on card AGT's cycle basis) fixes about
+ * The producer AR search (network/ar/ProducerAr.cpp, on the arc graph's cycle basis) fixes about
  * half the between-station double differences (DDs) of the settled float, and the float stays
  * float.  This seam folds those integers into a SECOND solve of the shared parameters (clocks,
  * phase biases, code biases), made from a copy of the float solve's own reduced normals
@@ -84,7 +84,7 @@
  * folded at 63, its T at most 8.6 against a bar of 27.6: the search fixes the stale integer for
  * 30 epochs, and the ledger holds it for 34 more after the search stops, with no guard firing,
  * until its arc leaves the pool one epoch before the run ends.  The lapse (step 5) bounds the
- * second part; the guard against the first is the slip fixes of card ARL section 13, which the
+ * second part; the guard against the first is the slip fixes, which the
  * loader requires under Emit and names when missing under Observe.  Block acceptance and an
  * isolated failure blame the unit of largest T, and a stale unit's T stays small, so where the
  * zero-q carry has warped a station they can release innocent units there and keep the stale one

@@ -1,6 +1,6 @@
 /**
  * @file CarryDisposition.cpp
- * @brief Implementation of the decided-once fold disposition (card PRM phase 1b).  The
+ * @brief Implementation of the decided-once fold disposition.  The
  *        design and the order of the clauses are in the header's file comment.
  */
 
@@ -64,7 +64,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
         d.disposition = CarryDisposition::OnOscillator;
         return d;
     }
-    const double q = ctx.params.q(cp.kind);   // the registry (card PRM phase 1)
+    const double q = ctx.params.q(cp.kind);   // the registry
     const double readmit_h = k.readmit_seed_horizon_s;
     double seed_gap = 0.0;
     if (cp.t_park_s > 0.0) {
@@ -97,7 +97,7 @@ CarryFoldDecision carryFoldDecide(const NetworkRunContext& ctx, const NetworkEst
             if (!(seed_gap > 0.0))
                 d.disposition = f.anchored ? CarryDisposition::Anchored : CarryDisposition::Loose;
         }
-        // Card CTU G5: a switch-on seam's level noise (the dense fold adds it).
+        // A switch-on seam's level noise (the dense fold adds it).
         if (!ctx.carry.clm_seam_q.empty()
             && (cp.kind == SharedParamKind::Clock || cp.kind == SharedParamKind::PhaseBias)) {
             const auto sq = ctx.carry.clm_seam_q.find(cp.sat);
@@ -180,7 +180,7 @@ void networkCarryPivotFrame(NetworkRunContext& ctx) {
     };
     // The pivot's rate, per constellation.  The stash skips pinned columns, so the pinned
     // pivot is not carried and has no decision of its own: its rate is the model's physical
-    // per-satellite rate, the anchor's q with the anchor armed (card Q3's measured walk of
+    // per-satellite rate, the anchor's q with the anchor armed (the measured walk of
     // the corrections) and the legacy rate without it.  The legacy rate is not used for an
     // armed anchor: under the anchor it is the LOOSE decoupling bound, not a walk.  A
     // carried pivot (no current posture carries one) uses its own decided rate.
@@ -248,7 +248,7 @@ static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (!ctx.knobs.pfq_on) return 0;
-    // Card PFQ run-end telemetry (invariant 4): how many clocks took the pivot's walk, at
+    // Pivot-frame process-noise run-end telemetry (invariant 4): how many clocks took the pivot's walk, at
     // which rate source, and how many pairs the dense fold and the exact update carried.
     const PivotFrameCounters& P = ctx.counters.pfq;
     log->info("Network (card PFQ / pivot-frame clock noise): {} decision pass(es); {} clock "
@@ -268,7 +268,7 @@ static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
 /**
  * @brief Run-end section: the fold's dispositions of the carried border (PRM 1b).
  *
- * The fold's dispositions of the carried border over the run (card PRM phase 1b), with
+ * The fold's dispositions of the carried border over the run, with
  * the `param_dispositions` manifest record.
  *
  * Gate: each section under its own condition, as in the teardown: always;
@@ -283,7 +283,7 @@ static int networkCarryDispositionTableRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card PRM phase 1b: what the fold applied to the carried border over the run, per
+    // What the fold applied to the carried border over the run, per
     // kind and disposition (key-epochs), decided once before PASS B; the same counts go
     // to the run manifest as a `param_dispositions` record.
     const auto& C = ctx.counters;

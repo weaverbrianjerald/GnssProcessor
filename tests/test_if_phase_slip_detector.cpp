@@ -2,7 +2,7 @@
  * @file test_if_phase_slip_detector.cpp
  * @brief Unit tests for IfPhaseSlipDetector, the between-satellite,
  *        between-epoch IF phase slip detector, focused on the reference-gate
- *        hardening (Card R; docs/SPEC_slip_qc_hardening.md §2, requirement R7).
+ *        hardening (docs/SPEC_slip_qc_hardening.md §2, requirement R7).
  *
  * Spec requirement R7 calls for this dedicated coverage of the chain.
  * Every case drives the public detect() API with synthetic uncombined
@@ -15,12 +15,12 @@
  * designed margin.
  *
  * Unless a case says otherwise the detector runs with setDeferFlagging(true),
- * the network wiring that card R hardens.  In that mode only the
+ * the network wiring that the hardening covers.  In that mode only the
  * reference-slip branch pushes reset keys, so a nonempty return from detect()
  * is evidence about the reference gate alone.  The self-contained
  * (user/kinematic) mode required by R5 has its own case at the end.
  *
- * Card-R cases (the names are those listed in spec R7):
+ * Reference-gate cases (the names are those listed in spec R7):
  *   - legacy / gate-off byte behaviour (the byte-identity guard),
  *   - step-fires-once,
  *   - drift-does-not-refire (the audit's 9-consecutive-epoch pattern),
@@ -71,7 +71,7 @@ std::string refKey(const std::string& sat) { return sat + "_L1C_L2W"; }
 
 /// Deterministic sub-millimetre phase wobble (m).  Keeps the non-reference
 /// family's dispersion non-degenerate (a MAD of exactly zero would make the
-/// card-R coherence test vacuous) while staying two orders of magnitude below
+/// reference-gate coherence test vacuous) while staying two orders of magnitude below
 /// the 5.35 cm physical floor, so it cannot change a verdict.
 constexpr double kWobbleM[8] = { 0.0004, -0.0003, 0.0002,  0.0005,
                                 -0.0006,  0.0001, -0.0002, 0.0003 };
@@ -117,7 +117,7 @@ std::vector<PppObservation> makeEpoch(double tow, std::size_t epoch_idx,
     return epoch;
 }
 
-/// Card-R parameters as the network arms them: spec defaults, gate on.
+/// Reference-gate parameters as the network arms them: spec defaults, gate on.
 /// The header defaults equal the shipped config defaults (pinned by
 /// HeaderDefaultsMatchTheShippedConfigDefaults below), so arming nothing else
 /// keeps every case here testing the gate the field actually runs.
@@ -167,7 +167,7 @@ OmcState sixSatOmc() {
              { "G04", 0.21 }, { "G05", -0.15 }, { "G06", 0.05 } };
 }
 
-/// Every hardened-gate card-R counter is zero (the gate never ran).
+/// Every hardened-gate counter is zero (the gate never ran).
 ///
 /// @warning @c gate_opportunities / @c gate_flags are left out on purpose.
 /// They are the tier-T1r flag-rate pair and count unconditionally: the legacy
@@ -283,7 +283,7 @@ TEST(IfPhaseSlipRefGate, ReferenceSampleIsMarkedAndIsAStructuralZero) {
 
 // The byte-identity guard.  With a default-constructed RefGateParams
 // (enable == false), a common step across the non-reference double differences
-// larger than 0.5·λ_IF still pushes the reference reset key as the pre-card-R
+// larger than 0.5·λ_IF still pushes the reference reset key as the pre-hardening
 // detector did, and no hardened counter moves.  A moving counter with the gate
 // off would mean the hardened path runs on the legacy config.
 TEST(IfPhaseSlipRefGate, LegacyGateOffStillFiresAndLeavesCountersZero) {

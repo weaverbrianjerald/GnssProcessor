@@ -110,7 +110,7 @@ int healNearNullPhaseBias(NetworkEstimator& est,
             healed_out->push_back(PhaseHealEvent{p.sat, p.signal, a.second, a.first});
         }
     }
-    est.contributionKind(ContributionKind::PbHeal);   // card NOM N2a
+    est.contributionKind(ContributionKind::PbHeal);
     est.addSharedPrior(hp);
     if (within_epoch_armed) {
         if (cap_prior_kinds)
@@ -197,7 +197,7 @@ void networkBuildPhaseDatumCandidates(
     // `gated_amb` is declared outside the `pdp_min_sta > 1` branch so it can be
     // handed to the caller in every posture (empty when the gate is off).  The
     // drop-edge rule needs the set, and a second census would double-count the
-    // two gate counters this function owns (card EV7 §6).
+    // two gate counters this function owns.
     std::set<std::string> gated_amb;   // "sat_signal" excluded this epoch
     if (pdp_min_sta > 1) {
         std::map<std::string, int> n_trk;
@@ -223,7 +223,7 @@ void networkBuildPhaseDatumCandidates(
                     const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
                     if (p && gated_amb.count(StateKeys::makeAmbiguityKey(p->satellite, p->signal))) {
                         drop_any = true;
-                        // The parameter inventory's absorbed instance (card NOM N1b).
+                        // The parameter inventory's absorbed instance.
                         if (stations[i].mm)
                             stations[i].mm->noteAbsorbedSharedState(
                                 StateContainer::SatPhaseBiasStates, kv.first,
@@ -247,7 +247,7 @@ void networkBuildPhaseDatumCandidates(
     cnd.cand_set    = std::move(cand_set);
     cnd.union_keys  = std::move(union_keys);
     // The gate's exclusions, read by the drop-edge predicate.  Moved like the
-    // other members so the census stays fresh on every call (card EV7 §6, F1).
+    // other members so the census stays fresh on every call.
     cnd.gated_keys  = std::move(gated_amb);
 }
 
@@ -273,7 +273,7 @@ void networkElectPhaseAnchors(
         PhaseGateDrop* gate_drop,
         AnchorReentry* reentry) {
     const auto& usable_keys = cnd.usable_keys;
-    // Anchor re-entry (card SID phase 4).  `reentry` is null (the default) on every
+    // Anchor re-entry.  `reentry` is null (the default) on every
     // unarmed run, so each branch below that tests it is unreachable and the
     // election is byte-identical.  With only its observe half armed (S2) it reads
     // and counts and changes nothing.
@@ -598,7 +598,7 @@ void networkElectPhaseAnchors(
                         // counts each deposition cause separately so a run shows why
                         // its datum moved, not only how often.
                         if (held_on) {
-                            // Of the three causes the card names (a flag on the basis
+                            // Of the three causes the design names (a flag on the basis
                             // column, arc death, the incumbent's own ledger verdict),
                             // only the flag is tested here.
                             //
@@ -740,7 +740,7 @@ void networkElectPhaseAnchors(
                 first_unusable.clear();
             }
         }
-        // ---- Anchor re-entry: a return is not a birth (card SID phase 4, S2 read, B1)
+        // ---- Anchor re-entry: a return is not a birth (S2 read, B1)
         // Entered only where the election is about to treat this family as a first
         // sighting (no incumbent at the previous epoch), the predicate the audit
         // named (E.2: "a returning key is a first sighting").  The read runs before
@@ -1081,7 +1081,7 @@ void networkElectPhaseAnchors(
         }
         // The re-entry row is completed here, where the elected station is known, so
         // an S2 case names the station that took the family rather than the one the
-        // read suggested (card SID phase 4).
+        // read suggested.
         if (re_row_live) {
             re_row.station = stations[anchor].name;
             reentry->first_sightings.push_back(re_row);
@@ -1090,7 +1090,7 @@ void networkElectPhaseAnchors(
         new_incumbent[amb]     = stations[anchor].name;
         shared_phase_keys.insert(pbkey);
     }
-    // ---- Coverage-gate drop edge (card EV7 §6) -----------------------------------
+    // ---- Coverage-gate drop edge -----------------------------------
     // Detected here because this is the last statement at which `anchor_incumbent`
     // still describes the previous epoch, which the second clause of the edge rule
     // requires.  The loop above never visited these keys (the gate erased them from
@@ -1134,7 +1134,7 @@ void networkElectPhaseAnchors(
                 reref_out->insert({p->satellite, p->signal});
                 ev.handled = true;
             }
-            // Record the drop edge in the re-entry memo (card SID phase 4).  Only
+            // Record the drop edge in the re-entry memo.  Only
             // here are the family's outgoing anchor and its arcs' generations both
             // known: after the swap below the incumbent map describes this epoch and
             // does not contain the family, which is why a later return would
@@ -1146,8 +1146,8 @@ void networkElectPhaseAnchors(
             gate_drop->events.push_back(std::move(ev));
         }
     }
-    // The family's datum history, kept where the election's own memory is swapped
-    // (card SID phase 4).  Each family that holds an incumbent at this epoch stamps
+    // The family's datum history, kept where the election's own memory is swapped.
+    // Each family that holds an incumbent at this epoch stamps
     // the epoch; the stamp lets a later first sighting report how long the family
     // has been without one, which separates a gate-drop return from a new rise.
     if (re_on)
@@ -1358,7 +1358,7 @@ static int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
                   "phase-bias column(s) on {} epoch(s) ({} column-epoch(s) total; their phase "
                   "rows served the satellite clock through the local blocks).",
                   config_.networkPhaseDatumMinStations(), n_gated_epochs, n_gated_key_epochs);
-    // Drop edge of the same gate (card EV7 §6), reported in both knob states
+    // Drop edge of the same gate, reported in both knob states
     // (invariant #4): with the knob off this line gives the size of the class, the number
     // the fix is judged against.
     if (ctx.counters.n_pd_gate_drop_edges > 0) {
@@ -1424,7 +1424,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
     // whole shared_phase_keys set (target 0).  Prioritized: each station pins
     // exactly its elected pinned_amb_targets (target 0); the load-bearing
     // invariant is that the pin lives in the block whose local ambiguity
-    // column it constrains.  eq34 (Card 3): the spanning-tree edge pins
+    // column it constrains.  eq34: the spanning-tree edge pins
     // (target 0 or the pin-to-round integer) plus the datum receiver's single
     // RPB pin (δ_{r1,σ}=0), both in this station's own block.
     const bool do_fold = phase_datum_prioritized
@@ -1435,7 +1435,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         std::vector<int> pin_col;       // A_r column of each pin
         std::vector<double> pin_y;       // innovation = target - current absolute value
         std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
-        std::vector<RowTag> pin_tag;     // one contribution tag per pin row (card NOM N2a)
+        std::vector<RowTag> pin_tag;     // one contribution tag per pin row
         // Chain-pin audit (SPEC_synthetic_minimum_network §14 T1): each fold
         // lambda reports its outcome, so the eq34 call sites below can tally
         // the otherwise silent early returns per (constellation,signal), the
@@ -1590,7 +1590,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
                             }
                         } else if (carryPastHorizon(pl_now_s, rc->last_seen_s,
                                                     pl_max_gap_s)) {
-                            // Card PRM phase 3a: a carried receiver phase
+                            // A carried receiver phase
                             // bias past the horizon, not time-linked this
                             // epoch (per station: the parallel produce).
                             ++R.prm_rpb_gap_skip;

@@ -1,8 +1,8 @@
 /**
  * @file SignalRosterSites.cpp
- * @brief The site census of card NOM step N3b, and the roster reads it measures.
+ * @brief The site census, and the roster reads it measures.
  *
- * Card NOM section 18 lists the sites that decide a band role or a signal choice
+ * Section 18 of docs/refound/NOM_network_object_model_2026-10-08.md lists the sites that decide a band role or a signal choice
  * (groups A to G).  Step N3a gave eleven of them a counter (@ref RosterSite); step N3b
  * measures more of them against the roster and moves a reader onto the roster where
  * its counter is 0 on every census arm.  The census here is the measurement: the rule

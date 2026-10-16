@@ -1,15 +1,15 @@
 #pragma once
 /**
  * @file CarryDisposition.hpp
- * @brief The decided-once fold disposition of the carried border (card PRM phase 1b,
+ * @brief The decided-once fold disposition of the carried border (see
  *        docs/refound/PRM_parameter_registry_2026-09-29.md sections 4.3, 4.4 and 15).
  *
  * The D2 fold (`networkInjectD2CarryPrior`) decides, for every carried border entry, whether
  * it folds, at which process noise, and under which rule: a frame re-reference, the clock
  * oscillator, the READMIT park and seed, the clock monitor's reinit, the Q3 anchor, the B4
  * floors, the VCE factor, the switch-on seam's level noise.  The
- * coupling rows of card CTU's exact update are built in PASS B, before the fold runs, and
- * need the same decision, so until this card they read a mirror of the fold, clause for
+ * coupling rows of the exact coupling update are built in PASS B, before the fold runs, and
+ * need the same decision, so until now they read a mirror of the fold, clause for
  * clause, beside it.  @ref networkCarryDecide makes the decision once, before PASS B, and
  * records it on each entry (@ref CarryPrior::fold); the rows and the fold read the record.
  *
@@ -117,7 +117,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * the fold.
  *
  * Epoch form; the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx).
@@ -134,7 +134,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 void networkCarryDecide(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
- * @brief Card PFQ (@c network.clock_pivot_frame_q): add the pivot's walk to the decided
+ * @brief Pivot-frame process noise (@c network.clock_pivot_frame_q): add the pivot's walk to the decided
  *        increment of every other folding satellite clock of its constellation.
  *
  * A carried clock is the pivot-frame quantity @f$c_j - c_p@f$ (the clock datum pins one

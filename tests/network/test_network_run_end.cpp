@@ -9,7 +9,7 @@
  * before the manifest's complete record, the product contract round trip before the
  * closed-loop summary, the five tail reports last, and the ambiguity-block bar before the
  * injection verdict (the exit code's precedence).  One placement is pinned besides: the
- * culprit withhold of card WCF directly after the within-epoch RAIM report.
+ * culprit withhold directly after the within-epoch RAIM report.
  */
 
 #include "network/runend/RunEnd.hpp"
@@ -103,14 +103,14 @@ TEST(NetworkRunEndTable, TheTailReportsAreTheLastRowsInOrder) {
 }
 
 TEST(NetworkRunEndTable, TheRosterSiteCensusFollowsTheRoster) {
-    // Card NOM step N3b: the site census is read beside the roster's report.
+    // The site census is read beside the roster's report.
     const std::size_t roster = rowOf(networkSignalRosterRunEnd);
     ASSERT_LT(roster, kNetworkRunEndReports.size());
     EXPECT_EQ(rowOf(networkSignalRosterSitesRunEnd), roster + 1);
 }
 
 TEST(NetworkRunEndTable, EachSubsystemHasOneRow) {
-    // Card NOM2 step TD2: one report per subsystem (its home file).  The run artifacts keep
+    // One report per subsystem (its home file).  The run artifacts keep
     // three rows held apart by the order constraints; only the run summary prints.
     std::map<std::string, int> rows;
     for (const NetworkRunEndRow& row : kNetworkRunEndReports) ++rows[row.home];
@@ -170,7 +170,7 @@ TEST(NetworkRunEndHeading, HeldLinesAreWrittenWhenTheReportThrows) {
 }
 
 TEST(NetworkRunEndTable, TheCulpritWithholdFollowsTheWithinEpochRaimReport) {
-    // Card WCF: the hand-off's line is read beside the T2 responses it accounts for.
+    // The hand-off's line is read beside the T2 responses it accounts for.
     const std::size_t we = rowOf(networkWithinEpochRaimRunEnd);
     ASSERT_LT(we, kNetworkRunEndReports.size());
     EXPECT_EQ(rowOf(networkWithinEpochCulpritWithholdRunEnd), we + 1);

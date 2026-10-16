@@ -2,10 +2,10 @@
 /**
  * @file DdPriorBuild.hpp
  * @brief The per-epoch DD-prior build step of the PPP-RTK network producer: the
- *        invariant DD-carry prior blocks (card 4).  Relocated verbatim from
+ *        invariant DD-carry prior blocks.  Relocated verbatim from
  *        Application::runNetwork (decomposition INC-9b).
  *
- * Until card NOM3 step EP1 the run TU kept the lambda as a thin `[&]` wrapper that
+ * Formerly the run TU kept the lambda as a thin `[&]` wrapper that
  * forwarded to this free function, so the initial DD build and the within-epoch RAIM
  * re-solve (`resolve_dropping`) kept byte-identical capture semantics; the epoch
  * function and the solve's replay now call it directly over the run and the epoch.  The function owns no
@@ -40,7 +40,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochDdBuild;            // network/driver/Epoch.hpp
 
 /**
- * @brief Build this epoch's invariant DD-carry prior blocks (card 4) and install them
+ * @brief Build this epoch's invariant DD-carry prior blocks and install them
  *        via NetworkEstimator::setDdPriors.  Returns early unless carry_invariant, so
  *        with it off the output is byte-identical.  GLONASS never enters the carry.
  *
@@ -55,7 +55,7 @@ struct EpochDdBuild;            // network/driver/Epoch.hpp
  *           (asm_res), ep.assembly.est_index_of (est_index_of), ep.pass_a.shared_phase_keys
  *           (shared_phase_keys), ep.funnel.carry_slipped_ambs (carry_slipped_ambs),
  *           ep.funnel.carry_slipped_raw (carry_slipped_raw), ep.ws.we_culprits (we_culprits).
- *           The funnel is read only (card NOM3 step EP1c removed its writable parameter).
+ *           The funnel is read only (it has no writable parameter).
  * @param dd_build [in/out] The DD build's reverse map (ep.dd_build), written:
  *     dd_build.carry_arc_amb_key (carry_arc_amb_key).
  *
@@ -72,13 +72,13 @@ struct EpochDdBuild;            // network/driver/Epoch.hpp
  *   - @p carry_arc_amb_key = dd_build.carry_arc_amb_key.
  *   - @p carry_slipped_ambs = ep.funnel.carry_slipped_ambs.
  *   - @p carry_slipped_raw = ep.funnel.carry_slipped_raw: The raw-detector subset of this
- *     epoch's slip funnel (card 4, M1, D5 v4). Every raw-observable inserter writes both sets
+ *     epoch's slip funnel. Every raw-observable inserter writes both sets
  *     (NetworkSlipQc via the PASS-A binding, networkSignalIntegrity,
  *     networkMeasurementAdmission), so the complement `carry_slipped_ambs \ carry_slipped_raw`
  *     holds the estimation-side entries: the D5 innovation drain. The Iono-2 v3k erase-policy
  *     split uses the same idiom. Read only under network.carry_invariant_innov_retap_only.
- *   - @p we_culprits = ep.ws.we_culprits: The within-epoch RAIM tier's culprit sets (card C3c
- *     §3; card WCF): every carried ambiguity of a culprit satellite or arc is treated as
+ *   - @p we_culprits = ep.ws.we_culprits: The within-epoch RAIM tier's culprit sets:
+ *     every carried ambiguity of a culprit satellite or arc is treated as
  *     slipped. The epoch workspace's member (@ref EpochWorkspace::we_culprits), naming
  *     something only on a T2 re-solve's rebuild; each rebuild that reads a culprit is counted,
  *     with what it withheld, in @c NetworkServiceCounters::we_culprit_withhold.
@@ -90,7 +90,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
  *        once per epoch ahead of the DD build.
  *
  * The build and the fold may re-run on a within-epoch re-solve; this predict does not.  The
- * step is TOW-only (card NOM3 section 2 finding 4) and always clean (D5 v2).  Under
+ * step is TOW-only and always clean (D5 v2).  Under
  * network.carry_invariant, its first line.  The body is the frozen driver text, moved by
  * scripts/nom_ep2_cut.py.
  *

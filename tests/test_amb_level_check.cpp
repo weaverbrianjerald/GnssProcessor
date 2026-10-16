@@ -1,7 +1,7 @@
 /**
  * @file test_amb_level_check.cpp
  * @brief Tests for the consumer's re-validation of its float ambiguities against
- *        their own code level (Card ALC): @c AmbLevelCheck and the
+ *        their own code level: @c AmbLevelCheck and the
  *        @c network.closed_loop.amb_level_check plumbing.
  *
  * Checked here:
@@ -27,7 +27,7 @@
  * The engine-level part (the innovation harvest, the band pairing, the variance
  * half of the restart rule, the refloat through @c StateManager::resetAmbiguity
  * and the CST `refloat_level` kind) needs a full engine and product stream and is
- * validated on the card's field/sim arms, as for cards CC and PBT.
+ * validated on field/sim arms, as for the declared-step carry and the step-translate ledger.
  */
 
 #include <gtest/gtest.h>
@@ -183,20 +183,20 @@ TEST(AmbLevelCheckTest, OneMetreDriftTripsAfterTheWindowFillsAtKFour) {
     // 1.16 WL cycles (negative here).  At code sigma 0.5 m and n = 20 the WL
     // channel's 4-sigma bar is 0.37 cyc and the IF channel's is 1.33 m, so the
     // error is 3.1 WL bars but only 0.75 IF bars; the WL channel is about 4x more
-    // sensitive here and is the one that fires.  The card quotes both bars.
+    // sensitive here and is the one that fires.  The design quotes both bars.
     EXPECT_EQ(chk.counters().trips_wl, 1u);
 }
 
 // The IF channel detects a level error the WL channel cannot see: a drift that
 // is band-common in cycles leaves N1 - N2 unchanged, so only the iono-free
-// level moves.  The WL test does not cover this case; the card pre-registered
+// level moves.  The WL test does not cover this case; the design pre-registered
 // it for the IF test.
 TEST(AmbLevelCheckTest, TheIfTestCarriesAWlSilentLevelDriftOnItsOwn) {
     AmbLevelCheck chk;
     // 120 epochs (1 h at 30 s): the IF channel's 4-sigma bar at code sigma 0.5 m
     // falls to 0.54 m, so a 1.0 m IF-level drift clears it by ~3.4 sigma.  The
     // same drift at the 20-epoch default would not trip: the IF channel's
-    // minimum detectable IF level there is 1.33 m, as the card states.
+    // minimum detectable IF level there is 1.33 m, as the design states.
     chk.configure(cfg(120, 4.0));
 
     std::mt19937 rng(31415926u);

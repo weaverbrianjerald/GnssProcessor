@@ -388,7 +388,7 @@ TEST(NetworkArcGraph, BaselineForestKeepsValidIncumbentLinks) {
 TEST(NetworkArcGraph, BaselineForestReseatsIncumbentLinksByCause) {
     // Station 0 tracks G01 G02 G03 G06; station 1 lacks G01; station 3 tracks G03 G04 G05;
     // stations 2 and 4 track G01..G06.  Incumbent: 0 root; 1 <- 0 via G01 (its arc is gone);
-    // 2 <- 1 via G02 (its parent is re-seated, and then it is kept: card AGT, AGT-5); 3 <- 0 via
+    // 2 <- 1 via G02 (its parent is re-seated, and then it is kept); 3 <- 0 via
     // G03 (one common satellite while station 4 offers three); 4 <- 9 via G04 (the parent left).
     const std::vector<IncumbentLink> inc{
         {sta(0), std::nullopt, SatId{}}, {sta(1), sta(0), gps(1)}, {sta(2), sta(1), gps(2)},
@@ -905,7 +905,7 @@ TEST(NetworkArcGraph, LatticeContradictsAPlantedWrongInteger) {
 }
 
 TEST(NetworkArcGraph, LatticeKeepsEntryEpochsAndAPlantedShift) {
-    // Card FCF's amendments: the entry epoch of each row (a reduced row takes the later one), the
+    // The entry epoch of each row (a reduced row takes the later one), the
     // newest entry behind an implied integer, and a planted shift on one arc.
     const SignalId l1 = sigOf("L1C");
     CycleLattice L;

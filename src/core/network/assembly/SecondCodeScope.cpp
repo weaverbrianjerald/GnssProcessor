@@ -81,7 +81,7 @@ int networkSecondCodeScopeRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const std::vector<NetStation>& stations = v.setup.stations;
 
-    // ---- Second code channel (network.second_code_channel, card SCC) ---------
+    // ---- Second code channel (network.second_code_channel) ---------
     // (docs/refound/SCC_second_code_channel_2026-09-21.md, R7.)  Run-end line, printed
     // only when armed.  No other output records what the channel did: a companion code
     // row looks like a canonical one in every trace and on the wire, and the effect is
