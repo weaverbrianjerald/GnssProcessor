@@ -106,3 +106,19 @@ row's own constellation.
 - The N3a table's last line ("the other sites ... have no counter yet; step N3b") is left as
   printed (a printed-text move left for the card's landing); the N3b census prints after the
   roster's run end.
+
+## 8. Decisions (2026-10-16; the author delegated each, to be revisited if a result asks)
+
+| # | decision | reason |
+| --- | --- | --- |
+| D1 | The pin pair is the BIA clock-reference pair (GPS band 1: C1W, with C2W). The roster's datum role adopts it. | The broadcast T_GD and the clock products are defined on the P(Y) pair; the lexical first pair (C1C) has no physical standing. |
+| D2 | A channel family is "X against the rest" (F1, `channelFamilyOf`). | The attribute letter (F2) splits natural receiver pairs (C1C with C2W, C1C with C5Q) into two families on every constellation. |
+| D3 | The canonical pair comes from the constellation traits: GPS (1, 2), Galileo (1, 5). | Galileo has no band 2, so every Galileo cell is unscreened today. |
+| D4 | The signal that stands for a band is the roster's Modelled role; lexical order never decides. The clock anchor (E1) and the clone pick (E2) keep their variance rules, the roster holding no per-satellite role. | One owner of the band's signal; variance rules stay only where no roster role exists. |
+| D5 | The latch rule is priority with the coverage floor. | It is the goldens' rule and follows the configured signal priorities; the count rule flips with visibility. |
+| D6 | The wire carries one bias per modelled signal, keyed by the signal; a family-level value uses D2's family. | The wire stops depending on family-equivalence assumptions a consumer cannot see. |
+| D7 | The arc ledger owns the arc lifecycle (anchor election, coverage gate, gap re-entry, ambiguity states); `network.ledger_reentry` becomes the default. | A returning arc is never a first sighting (standing invariant 7); on the `rdr` smoke the products were identical and only event text differed. |
+| D8 | GPS is the inter-system-bias and time reference, declared once (constellation traits) and read by the three sites. | Standard practice; today it is implicit in three places. |
+| D9 | BeiDou band digit 1 is B1C (RINEX 3.04), never aliased to B1I (digit 2). | Inert until a BeiDou arm exists. |
+
+Implementing D1 to D7 moves output (the wire for D6, event text for D7, the screened Galileo cells for D3), so it is a graded step of its own (N3c, `docs/status/OPEN_ITEMS.md`): each decision a commit, the products, consumer trace and census of both goldens graded against the base, D8 and D9 as declarations with no output change.
