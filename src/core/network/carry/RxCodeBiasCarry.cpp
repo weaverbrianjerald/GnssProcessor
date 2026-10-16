@@ -41,9 +41,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (INC-7b)
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -168,7 +168,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
     // re-asserts the border along the column's regression on top of the dense
     // border carry that already holds that information (the level
     // information doubled per epoch on the sim bed).  Here the column is a
-    // card 1 coupling row (its regression on the border is harvested with
+    // conditional coupling row (its regression on the border is harvested with
     // it) and its overlap with the station's ambiguities is the harvested
     // cross covariance.  The inject decision is the carry's gap bound
     // (rxCbInjectGate with the innovation test off): the diagonal route's
@@ -288,7 +288,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         // prior channel the satellite OSBs use, not as a
         // post-reduce cross-station SumZeroGauge: NetworkEstimator::solve
         // correctly refuses to compose a post-reduce Woodbury gauge with
-        // the Card-4 DD priors (both fold against the same cached local
+        // the DD priors (both fold against the same cached local
         // factors; ambiguities and code biases are correlated through the
         // observation rows, so "disjoint columns" does not make it exact).
         //

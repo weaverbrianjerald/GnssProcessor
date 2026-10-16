@@ -77,7 +77,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
     auto& carry_innov_retaps_total = ctx.counters.carry_innov_retaps_total;
     auto& carry_innov_map_miss = ctx.counters.carry_innov_map_miss;
     // Tag corroborated-flat flags so next epoch's carry-membership test can spare
-    // them.  The loader already forces the knob false without innov_gate (Card 4 D5 v4).
+    // them.  The loader already forces the knob false without innov_gate (D5 v4).
     const bool retap_only =
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();
 
@@ -85,7 +85,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
     // chords whose underlying arc the raw MW/GF observables measured as continuous.  Built
     // here because this seam holds all three inputs at once: slip_qc (the raw verdicts,
     // computed in PASS A before the solve), carry_arc_amb_key (the group→chord→ambiguity
-    // reverse map rebuilt with the blocks), and carry_driver (Card 4 D5 v3).
+    // reverse map rebuilt with the blocks), and carry_driver (D5 v3).
     //
     // Membership requires "measured and flat": verdict.measured is true and the
     // (station, satellite) is absent from epoch.stepped.  An unmeasured arc is left out so
@@ -380,10 +380,10 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             // Tag the flag with the same tri-state raw verdict the v3 corroboration gate
             // consults, so next epoch's carry-membership test can tell "the arc did not
             // step; this is model tension" from "the arc stepped, or there was no
-            // evidence" (Card 4 D5 v4, network.carry_invariant_innov_retap_only).
+            // evidence" (D5 v4, network.carry_invariant_innov_retap_only).
             //
             // The funnel entry above is unconditional: every side consumer (the Iono-2 v3k
-            // erase classifier, anchor hygiene, Card G's bridge classifier) reads the full
+            // erase classifier, anchor hygiene, the bridge classifier) reads the full
             // union.  This set only
             // decides whether the arc is also excluded from next epoch's A_old membership,
             // i.e. whether the DD the gate just re-tapped in-epoch is also discarded and
@@ -410,7 +410,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
                     }
                 }
             }
-            // Attribute the D5 re-tap counter (Card G(c)): a raw-step coincidence test at
+            // Attribute the D5 re-tap counter: a raw-step coincidence test at
             // the same (station, satellite, epoch) separates "the gate caught a real
             // observable event" from "the gate is firing on model tension".
             // Instrumentation only; the flag is unchanged either way.  Both units are

@@ -96,7 +96,7 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // leave free, not the ionosphere-referenced difference the DCB state carries.
     // The null direction this opens (every receiver inter-signal bias against
     // every satellite one) is closed by the satellite family's own time-linked
-    // sum-to-zero row, so the card changes no datum row (R3).
+    // sum-to-zero row, so this mechanism changes no datum row (R3).
     //
     // Rows covered: both the R1 companions and a fallback code that arrives
     // without its canonical code beside it.  The test compares the signal with the

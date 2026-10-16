@@ -158,8 +158,8 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
             kept.push_back(k);
             continue;
         }
-        // Outside the dense block.  The clone's own clock there is card 1d's route in
-        // all but name, which the card forbids: the clone dies (so does a row whose other
+        // Outside the dense block.  The clone's own clock there is the time-update route in
+        // all but name, which the design forbids: the clone dies (so does a row whose other
         // own key, a phase bias of the block member's pair, is there).
         for (std::size_t i = 0; i < own_key.size(); ++i) {
             if (key == own_key[i]) {

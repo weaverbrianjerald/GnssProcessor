@@ -1,6 +1,6 @@
 /**
  * @file InvariantCarryDriver.cpp
- * @brief Implementation of the DD invariant-carry driver (card 4, M1 phase C3b).
+ * @brief Implementation of the DD invariant-carry driver (M1 phase C3b).
  *        The design rationale is in InvariantCarryDriver.hpp.
  */
 
@@ -675,7 +675,7 @@ NetworkInvariantCarryDriver::buildDdPriors(const std::vector<GroupInput>& groups
                 // chords with w_j = χ_c(arc of old chord j).  A slip shifts the true DD by an
                 // integer, and the q_z = 0 carry would hold a stiff, wrong prior, so a cycle
                 // through a slipped arc is not carried and re-taps fresh (data-only tap-off)
-                // (card 4 C3c).  This is exact with the projection W: a surviving carried
+                // (C3c).  This is exact with the projection W: a surviving carried
                 // chord's cycle avoids the slipped arc, so the slipped-arc terms cancel from
                 // its sum and the zero-weighted old chords need no explicit drop.
                 bool would_carry = n_old > 0;
@@ -1123,7 +1123,7 @@ void NetworkInvariantCarryDriver::installPosterior(
         { ScopedAccum _pc(perf_timing_, &perf_timers_.post_cov_ms);    // dense K×K install (INC-C0)
           cb.Pz = est.ddPriorPosteriorCovariance(b, cov_free); }
 
-        // --- Estimation-side fine-slip innovation gate (card 4 D5) ------------------
+        // --- Estimation-side fine-slip innovation gate (D5) ------------------
         // The carried DD's coarse slip layer (MW/LLI/IF-TD) is deliberately relaxed; a finer
         // slip that the coarse layer missed inflates the carried DD's post-solve innovation
         // v = z_free − Gᵀx_s − ẑ.  A chord whose standardized innovation exceeds k·σ̂₀ is
@@ -1156,7 +1156,7 @@ void NetworkInvariantCarryDriver::installPosterior(
 /**
  * @brief Run-end section: the PD-safe invariant-DD fold.
  *
- * The PD-safe invariant-DD fold (card 4, INC-0 and INC-1/2): folded and inert blocks and
+ * The PD-safe invariant-DD fold (INC-0 and INC-1/2): folded and inert blocks and
  * the block rebirths; on a carry_invariant run that never folded, the zero-fold line.
  *
  * Gate: prints under `ctx.knobs.carry_invariant && ctx.counters.ddfold_epochs > 0`.
@@ -1257,9 +1257,9 @@ static int networkCarryDdFoldRunEnd(const NetworkRunEndView& v) {
 }
 
 /**
- * @brief Run-end section: the card 4/M1 invariant carry.
+ * @brief Run-end section: the M1 invariant carry.
  *
- * The card 4/M1 invariant carry's run line: epochs driven, carried DDs, births,
+ * The M1 invariant carry's run line: epochs driven, carried DDs, births,
  * marginalizations, merges, splits, swaps, slip kills and drops.
  *
  * Gate: prints under `carry_invariant`.

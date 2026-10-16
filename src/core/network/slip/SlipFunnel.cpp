@@ -45,7 +45,7 @@ void networkSlipFunnelOpen(NetworkRun& run, const NetworkEpoch& ep, NetworkSlipF
         carry_slipped_ambs.insert(carry_innov_pending.begin(), carry_innov_pending.end());
         carry_innov_pending.clear();
     }
-    // Retap-only drain (card 4 D5 v4, network.carry_invariant_innov_retap_only): the
+    // Retap-only drain (D5 v4, network.carry_invariant_innov_retap_only): the
     // corroborated-flat subset of those flags is drained in lockstep.  It is a strict
     // subset of what just went into the funnel (the entries stay in the funnel and
     // every side consumer is untouched), and it names the arcs whose raw MW/GF level

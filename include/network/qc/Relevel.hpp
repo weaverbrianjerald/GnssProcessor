@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file Relevel.hpp
- * @brief Ephemeris-cutover clock re-level of the PPP-RTK network producer (card 6,
- *        RTF-2 / plan D3).  When the broadcast IODE rolls (old -> new), the estimable
+ * @brief Ephemeris-cutover clock re-level of the PPP-RTK network producer
+ *        (RTF-2 / plan D3).  When the broadcast IODE rolls (old -> new), the estimable
  *        per-satellite clock Delta-dts jumps by -Delta_eph relative to the a-priori it is
  *        measured against.  This seam re-bases the carried clock state by -Delta_eph, so
  *        the solve runs in the new frame with no discontinuity bump (the consumer
- *        reconstructs brdc(new_iode)+C0, card 7).  When the shift cannot be computed
+ *        reconstructs brdc(new_iode)+C0).  When the shift cannot be computed
  *        (the prior ephemeris version is no longer held), it forces a per-satellite
  *        discontinuity instead.
  *
@@ -72,7 +72,7 @@ long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& e
                                bool complete = false);
 
 /**
- * @brief Apply the ephemeris-cutover re-level for this epoch (card 6).
+ * @brief Apply the ephemeris-cutover re-level for this epoch.
  * @param ctx                   [in/out] carry (relevel_iode / eph_cutover_disc_pending /
  *                              clock_osc / prev_carry / prev_clk / local_carry / zwd_carry)
  *                              and knobs (carry_cpl_cond).  Passed whole so that a missing

@@ -231,7 +231,7 @@ TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
     const Eigen::Matrix3d Spost = Ipost.inverse();
     const Eigen::Vector3d xpost = Spost * (S0.inverse() * z0 + H.transpose() * Rinv * y);
 
-    // Card BCL-d: s on its clone (stand-in, walk once), d on its clone (the stashed row, no walk).
+    // BCL-d: s on its clone (stand-in, walk once), d on its clone (the stashed row, no walk).
     NetworkEstimator est;
     const Eigen::Index cs = est.registerClock("G01");
     const Eigen::Index ks = est.registerClockClone("G01");
@@ -260,7 +260,7 @@ TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
     EXPECT_NEAR(Sx(cs, cs) / Spost(0, 0), 1.0, 1e-9);
     EXPECT_NEAR(x(kd), xpost(2), 1e-9 * std::max(1.0, std::abs(xpost(2))));
 
-    // Card CTU's per-row form on the same rows: S = {s} with Q, D = {d} departed.
+    // The CTU per-row form on the same rows: S = {s} with Q, D = {d} departed.
     CouplingExactEpoch ep;
     ep.P = P;
     ep.p_of_key = {{"s", 0}, {"d", 1}};

@@ -306,7 +306,7 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
         for (auto& d : dds)
             for (int p = 0; p < 4; ++p) d.rq[p] = reqOf(d.amb[p]);
         // Carry-aware readback (docs/SPEC_carry_aware_covariance.md §6).  Off (default), the
-        // expression is the one that predates the card, unchanged.  On, this σ is the σ of
+        // expression is the one that predates the carry-aware readback, unchanged.  On, this σ is the σ of
         // the estimator that ran, so `med|frac|` conditioned on it is a test and not a
         // restatement: a uniform fractional part is the expected reading whenever
         // σ_DD ≳ 0.3 cyc, and a null result needs a σ that reflects the carried state.
@@ -341,7 +341,7 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
                 // The last column records which covariance produced the σ beside it
                 // (1 = carry-aware, 0 = default).  The default σ leaves the carried state
                 // out of the local block, so a σ is interpretable only with this flag
-                // (parent card §11; INC-0).
+                // (docs/SPEC_carry_aware_covariance.md §11; INC-0).
                 << (dd_carry_aware ? 1 : 0) << '\n';
         }
         const auto t_dd_emit = std::chrono::steady_clock::now();

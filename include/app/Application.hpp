@@ -1242,7 +1242,7 @@ private:
      * timer for the slip scans.  @p carry_slipped_ambs receives, by non-const
      * reference, the (station index, ambiguity key) pairs the drains flag this
      * epoch.  The driver passes its raw-detector set carry_slipped_raw here and
-     * unions it into the per-epoch slip-event funnel carry_slipped_ambs (Card-4 C3c)
+     * unions it into the per-epoch slip-event funnel carry_slipped_ambs
      * right after the call; a copy would drop the drains' inserts and leave the DD
      * carry without its slip events (standing invariant #1).
      * Implemented in @c ApplicationNetworkAssembly.cpp.
@@ -1357,7 +1357,7 @@ private:
 
     /**
      * @brief PASS B: the D0 assembly wall timer (a raw chrono pair), the T5 SH-dev
-     *        aging, the Card-1d reinit history, the OpenMP produce loop (per
+     *        aging, the reinit history, the OpenMP produce loop (per
      *        station: computeMeasurementUpdate, networkSplitStation_, pin folds,
      *        iono and SD-EWL rows, the phase-leveling carry build and the
      *        coupling-injection cluster), and the serial consume/scatter

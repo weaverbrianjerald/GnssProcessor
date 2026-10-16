@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file ArCycleBasis.hpp
- * @brief The producer AR search on a sticky, L1/L2-consistent, full-coverage cycle basis (card
- *        AGT, step AGT-5; @c network.ambiguity_resolution.cycle_basis, log-only).
+ * @brief The producer AR search on a sticky, L1/L2-consistent, full-coverage cycle basis
+ *        (@c network.ambiguity_resolution.cycle_basis, log-only).
  *
  * ## What it replaces
  *
- * Card ARL's @c tree_basis (through filter/NetworkArcGraph since AGT-2) grows one Prim tree per
+ * The @c tree_basis (through filter/NetworkArcGraph since AGT-2) grows one Prim tree per
  * (constellation, signal), from scratch at every search, and closes only the chords whose
  * satellite the link parent tracks.  On the AGT-0 references that covers 344 of the 362
  * cycle directions per band at 60 stations and 2 017 of 2 052 at 300, keeps 97.7 and 95.0 %
@@ -247,8 +247,8 @@ struct ArFixedCycle {
     ArDdIdentity    id{};      ///< (signal, sta_r, ref_sta, sat_j, ref_sat).
 };
 
-/// One pooled band-arc's live ambiguity column at this search, as the search placed it (card
-/// FCF: where a fixed cycle's terms land in the estimator).
+/// One pooled band-arc's live ambiguity column at this search, as the search placed it
+/// (where a fixed cycle's terms land in the estimator).
 struct ArcColumn {
     std::size_t    est_station{0};  ///< Estimator station index (the term's @c station).
     std::ptrdiff_t local_col{-1};   ///< Ambiguity column in that station's local block (the assembly's h2local).

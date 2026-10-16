@@ -1,6 +1,6 @@
 /**
  * @file test_phase_colour_state.cpp
- * @brief Card LGM: the per-line-of-sight phase nuisance state's column family, its loader
+ * @brief The per-line-of-sight phase nuisance state's column family, its loader
  *        interlocks and its prior law (docs/refound/LGM_los_phase_nuisance_2026-10-01.md
  *        section 4.1).
  *

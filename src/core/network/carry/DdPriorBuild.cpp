@@ -64,7 +64,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
     const bool carry_invariant = ctx.knobs.carry_invariant;
     // Keep a funnel entry made only by D5 out of the carry-membership exclusion (see
-    // ambSlipped below; card 4, M1, D5 v4).  The loader already forces the knob false
+    // ambSlipped below; M1, D5 v4).  The loader already forces the knob false
     // without carry_innov_gate; the && also covers a context not built by the loader.
     const bool retap_only =
         carry_innov_gate && config_.networkCarryInvariantInnovRetapOnly();

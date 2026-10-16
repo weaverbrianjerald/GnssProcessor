@@ -124,7 +124,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Declare the store the consumer's SSR orbit overlay reads from,
-         *        for the orbit-coherence echo check (Card 7, RTF-2).
+         *        for the orbit-coherence echo check.
          *
          * A @c brdc_rts network clock record echoes the identity (IOD-SSR and
          * content epoch) of the RTS orbit the producer estimated it against
@@ -577,7 +577,7 @@ namespace GnssProcessor {
         const GnssConfig* config_;                        ///< Optional processing configuration (may be nullptr)
         const RinexParser* rinex_parser_;                 ///< Optional reference to a RinexParser (may be nullptr)
         const SsrCorrectionStore* ssr_store_override_{ nullptr }; ///< Non-owning SSR store override; nullptr -> process-wide singleton (see setSsrStore).
-        const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Non-owning orbit-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore; Card 7).
+        const SsrCorrectionStore* orbit_echo_store_override_{ nullptr }; ///< Non-owning orbit-overlay store for the echo check; nullptr -> singleton (see setOrbitEchoStore).
         const BrdcClockApriori* brdc_apriori_{ nullptr }; ///< Non-owning native broadcast clock a priori; nullptr -> the CLK / live-store path (see setBroadcastClockApriori).
 
         /// Resolve the active SSR store: the injected override when set, else the
@@ -585,7 +585,7 @@ namespace GnssProcessor {
         const SsrCorrectionStore& ssrStore() const;
 
         /// Resolve the orbit-overlay store for the echo check: the override when
-        /// set, else the singleton (Card 7).  Defined in the .cpp beside ssrStore().
+        /// set, else the singleton.  Defined in the .cpp beside ssrStore().
         const SsrCorrectionStore& orbitEchoStore() const;
 
         std::unordered_map<std::string, std::vector<const ClockData*>> clock_index_;

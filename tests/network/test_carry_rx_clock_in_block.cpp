@@ -23,7 +23,7 @@
  * a mean error of ~30 σ every epoch (asserted below), which is why the carried state
  * is the (bias, drift) pair.
  *
- * A unit test reaches the seam the card acts on (@c CouplingRowBuilder::buildLocalBlock
+ * A unit test reaches the seam the rx-clock carry acts on (@c CouplingRowBuilder::buildLocalBlock
  * over a real registered @c NetworkEstimator), the shared (bias, drift) kernel both
  * edges call (@c rxClockPredict / @c rxClockRateUpdate), the carry map's key shape,
  * and the loader's interlocks.  It does not reach the harvest (which appends the clock
@@ -161,8 +161,8 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// The posture the card is validated on: the leveling carry as the live vehicle,
-/// folded as Card-1 conditional coupling rows, with F3 armed.
+/// The posture this feature is validated on: the leveling carry as the live vehicle,
+/// folded as conditional coupling rows, with F3 armed.
 const char* kF3Posture =
     "    \"phase_leveling\": true,\n"
     "    \"carry_conditional_coupling\": true,\n"
@@ -184,7 +184,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 //     (k+1+2)-row whitened block whose Σ carries the harvested clock cross terms.
 // =============================================================================
 //
-// The card's main claim: the receiver clock is coupled to the station's ambiguities
+// The main claim: the receiver clock is coupled to the station's ambiguities
 // (and to the ZWD, and to its ISB) through the harvested (N_rr⁻¹) terms rather than
 // treated as independent.  Σ is checked directly, then the whitening is verified the
 // way test_network_coupling checks an ambiguity-only block: L·(emitted) == raw.
@@ -192,7 +192,7 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     RxClkBlockFixture f;
     // 3 ambiguity columns + the ZWD + the receiver clock + one ISB.  Block index order
     // mirrors the harvest's: ambiguities, iono (none here), clock family, ZWD last,
-    // because the ZWD card computes its own row as C.rows()−1 and needs that slot.
+    // because the ZWD-in-block code computes its own row as C.rows()−1 and needs that slot.
     // Strictly diagonally dominant so Σ is PD by inspection: every off-diagonal is the
     // same harvested cross term and 5×cross < the smallest diagonal.  (A carried receiver
     // clock is well determined, σ ~10 cm against the station's whole code+phase set, so
@@ -235,7 +235,7 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     for (int k = 0; k < 6; ++k)
         EXPECT_DOUBLE_EQ(S(k, k), cdiag[static_cast<std::size_t>(k)]);
     // The clock family is coupled to every column the harvest saw: the ambiguities (the
-    // station-common overlap this card subtracts), the ZWD, and each other.
+    // station-common overlap this mechanism subtracts), the ZWD, and each other.
     for (int k = 0; k < 6; ++k)
         for (int j : {3, 4}) {
             if (k == j) continue;
@@ -245,7 +245,7 @@ TEST(CarryRxClockInBlockTest, ClockAndIsbJoinTheWhitenedBlockAndCarryTheirHarves
     EXPECT_EQ(f.R.pl_blk_rxclk_cols, 2);          // clock + ISB, counted exactly once each
     EXPECT_EQ(f.R.pl_blk_rxclk_isb_cols, 1);      // …of which one is the ISB (a sub-count)
     EXPECT_EQ(f.R.pl_blk_rxclk_missing_cross, 0);
-    EXPECT_EQ(f.R.pl_blk_zwd_cols, 1);            // the neighbouring cards are untouched
+    EXPECT_EQ(f.R.pl_blk_zwd_cols, 1);            // the neighbouring column families are untouched
     EXPECT_EQ(f.R.pl_blk_iono_cols, 0);
     EXPECT_EQ(f.R.pl_blk_pair_missing, 0);
     EXPECT_EQ(f.R.pl_blk_blocks, 1);
@@ -313,8 +313,8 @@ TEST(CarryRxClockInBlockTest, IsRxClkFlagChangesTelemetryOnlyNotTheAlgebra) {
 }
 
 // =============================================================================
-// (2) Off: the block is k rows and no clock column exists.  Like the iono card and
-//     unlike the ZWD card, there is no diagonal replacement row.
+// (2) Off: the block is k rows and no clock column exists.  Like the iono-in-block carry and
+//     unlike the ZWD-in-block carry, there is no diagonal replacement row.
 // =============================================================================
 TEST(CarryRxClockInBlockTest, KnobOffLeavesKBlockRowsAndNoClockColumnAtAll) {
     const std::vector<double> cdiag = {0.040, 0.030, 0.050};
@@ -425,7 +425,7 @@ TEST(CarryRxClockInBlockTest, GapScalingIsLinearInEpochsOnTheClockDiagonal) {
 // For the receiver clock this frame does not normally move: the producer never writes
 // its solution back, so x_lin(clock) is constant over the run.  The test moves it
 // anyway, because that constancy is a property of the current driver, not a guarantee.
-// A later card that re-seeds the clock (or a warm resume that restores a state vector)
+// A later change that re-seeds the clock (or a warm resume that restores a state vector)
 // must not silently re-interpret the carry.
 TEST(CarryRxClockInBlockTest, CarriedClockValueIsAbsoluteSoEtaTracksAMovedXLin) {
     const std::vector<double> cdiag = {0.040, 0.0025};
@@ -534,13 +534,13 @@ TEST(CarryRxClockInBlockTest, ClockWithoutAHarvestBlockZeroesItsPairsAndIsCounte
 }
 
 // =============================================================================
-// (7) The drift: the card's main design decision, tested at the kernel both edges
+// (7) The drift: the main design decision, tested at the kernel both edges
 //     share (rxClockPredict / rxClockRateUpdate).
 // =============================================================================
 
 // With the sim bed's measured clock model, a bias-only random walk (carrying the clock
 // like the ZWD) is ~30 σ off every epoch, while the (bias, drift) prediction is within
-// 1 σ.  If this case fails because the drift term was dropped, the card is wrong, not
+// 1 σ.  If this case fails because the drift term was dropped, the design is wrong, not
 // the test.
 TEST(CarryRxClockInBlockTest, PureRandomWalkIsThirtySigmaWrongOnThisDriftButTheDriftedOneIsNot) {
     const double q = 0.09;                       // σ 0.30 m per 30 s epoch
@@ -568,7 +568,7 @@ TEST(CarryRxClockInBlockTest, PureRandomWalkIsThirtySigmaWrongOnThisDriftButTheD
 // An unknown drift injects a nearly free prior, never a stiff wrong one.  With the
 // default rate_var0 = 1 m²/s², a 30 s prediction carries σ ≈ 30 m, about three times
 // the per-epoch clock motion, so the prior constrains almost nothing until the rate
-// filter has seen one increment.  This is the card's cold-start quarantine.
+// filter has seen one increment.  This is the cold-start quarantine.
 TEST(CarryRxClockInBlockTest, UnknownDriftInjectsANearFreePriorNotAStiffWrongOne) {
     const double q = 0.09, var_prev = 1e-4, rate_var0 = 1.0;
     const RxClkPred cold = rxClockPredict(0.0, var_prev, 0.0, rate_var0, kEpochS, 1.0, q);

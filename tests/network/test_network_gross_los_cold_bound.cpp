@@ -15,7 +15,7 @@
  * the act half's erase and sweep on hand-built assemblies, the publish half's fold of a
  * cold declaration, the loader and the knob resolve, and the run-end readout's INERT
  * clause (standing invariant #4).  What a declaration does to the solve is graded by the
- * card's gates on the goldens, not here.
+ * validation gates on the goldens, not here.
  */
 #include <gtest/gtest.h>
 

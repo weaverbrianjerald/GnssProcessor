@@ -78,7 +78,7 @@ TEST(CanonicalSignalLatchRule, CountBreaksATieByPriorityOrder) {
 }
 
 TEST(CanonicalSignalLatchRule, CountLosesTheSemiCodelessPairOnOneSatellite) {
-    // The defect the card names: nine of ten satellites carry L1W/C1W and the
+    // The defect this rule addresses: nine of ten satellites carry L1W/C1W and the
     // tenth does not, so the whole run latches the civil signal.
     const auto p = PppModel::decideCanonicalPicks(band1(9, 10, 9, 10),
                                                   CanonicalSignalRule::Count, 0.5);

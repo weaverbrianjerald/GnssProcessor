@@ -362,7 +362,7 @@ void RealTimeEngine::flush() {
     // End-of-run obs-code attribute-mismatch summary (flush is the engine's
     // end-of-stream hook).  Silent when no mismatch was counted.  (RTA-13)
     logBiasAttrMismatchSummary("end of run");
-    // The same summary for the orbit/clock coherence-echo mismatches (card 7).
+    // The same summary for the orbit/clock coherence-echo mismatches.
     logOrbitEchoMismatchSummary("end of run");
     // The declared-step carry counters, silent unless armed.  The
     // closed-loop harness never calls flush(); its consumer's counters go out on
@@ -565,7 +565,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // Re-validate this epoch's float ambiguities against their own windowed code
     // level and refloat the ones the code rejects: invariant #7's re-coupling
-    // edge for the card-CC carry and the card-PBT translation.  It
+    // edge for the CC carry and the PBT translation.  It
     // sits after the update, constraints and AR (it reads the epoch's committed
     // pre-fit innovations) and before the CST harvest (so the row reports the
     // refloat_level event and the re-inflated amb_var).  The epoch's own
@@ -612,7 +612,7 @@ void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
     // keep precise SP3/CLK for the clock while consuming only the network phase
     // bias (clean integer test).  Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
-    // Remember the clock routing (card 7): the orbit-echo mismatch tallies land
+    // Remember the clock routing: the orbit-echo mismatch tallies land
     // on the store GnssCorrections reads clocks from, so the echo summary must
     // read that store (it differs from the bias-routed override above whenever
     // consume_clock != consume_bias).

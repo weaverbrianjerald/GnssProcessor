@@ -120,7 +120,7 @@ TEST(ConsumerSatTraceSchemaTest, AbsentQuantitiesAreBlankNeverZero) {
 
 TEST(ConsumerSatTraceSchemaTest, MetreColumnsResolveSubMillimetreSteps) {
     // Metre columns carry six decimals, so a 0.5 mm phase-bias step is visible;
-    // three decimals would round it to 0.000.  Card EV6 relied on a +0.0005 m
+    // three decimals would round it to 0.000.  A check (EV6) relied on a +0.0005 m
     // emitted phase-bias move to clear the frame algebra at a +14.36 m S-transform.
     ConsumerSatRow r;
     r.sat = "G22"; r.sig = "L2W";

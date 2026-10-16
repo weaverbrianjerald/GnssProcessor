@@ -278,7 +278,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         // that clears 0.5 is refused and counted (0 expected).  The ZWD, ionosphere and
         // receiver-clock block rows keep their own run-end counts, now read from the tag.
         //
-        // Card RPA (network.raim_pool_data_rows_only, raimPoolAdmitsRow): with the knob on,
+        // network.raim_pool_data_rows_only (raimPoolAdmitsRow): with the knob on,
         // a row enters a column's pool only when it is an observation phase row whose tag
         // names the column's satellite and signal, so the carried-prior and SD-EWL rows are
         // refused (and counted as refused), and every rider below (the MDB feed, the data
@@ -911,7 +911,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                         ++ctx.counters.n_amb_drop_floored;
                                     if (amb_drop_pre_gate_)
                                         ++ctx.counters.n_amb_drop_pre_gate;
-                                    // Card PRM phase 3a: a drop that changed the prior (its
+                                    // A drop that changed the prior (its
                                     // variance moved, or the idempotent branch cleared the
                                     // regression and the block row); a re-drop that changed
                                     // nothing is not a response of this site.
@@ -949,7 +949,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::IonoRaimErase);
                         }
-                        // Card LGM: the line of sight's phase-colour entry with them.  The
+                        // The line of sight's phase-colour entry with them.  The
                         // T4 statistic reads its error in the same sum, so a level that is
                         // no longer trusted cannot vouch for it either; it re-starts from
                         // its birth prior next epoch.
@@ -1122,7 +1122,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                     ++ctx.counters.n_amb_drop_floored;
                                 if (amb_drop_pre_gate_)
                                     ++ctx.counters.n_amb_drop_pre_gate;
-                                // Card PRM phase 3a: a drop that changed the prior; see
+                                // A drop that changed the prior; see
                                 // the attribution site.
                                 if (o_t3.acted || o_t3.decoupled_idem)
                                     prmRespond(ctx.counters.prm_resp,

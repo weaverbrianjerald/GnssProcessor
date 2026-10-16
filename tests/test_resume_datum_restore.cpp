@@ -12,7 +12,7 @@
  * (the eq34 "<station>|<cons>|<signal>" receiver key), a full station name, and doubles
  * at full precision; (2) a snapshot that carries none of the rows is written as before,
  * byte for byte, and parses back with every container empty, so a reader that finds no
- * such rows behaves as it did before the card and the off path stays byte-identical;
+ * such rows behaves as it did before this feature and the off path stays byte-identical;
  * (3) both knobs default off, @c resume_datum_restore requires @c resume_frame_restore,
  * and the warn-only configurations still load; (4) a malformed or non-finite record
  * fails the parse instead of producing a partial restore.
@@ -236,7 +236,7 @@ TEST(ResumeDatumRestore, PreCardFileParsesWithEmptyDatumMaps) {
 }
 
 // A malformed or non-finite datum record fails the parse.  The caller treats a failed
-// parse as the cold-start signal (byte-identical to a run without the card) instead of
+// parse as the cold-start signal (byte-identical to a run without the feature) instead of
 // resuming on half a spanning tree or a corrupt code-bias baseline.
 TEST(ResumeDatumRestore, MalformedDatumRecordsAreHardParseFailures) {
     const std::string head =

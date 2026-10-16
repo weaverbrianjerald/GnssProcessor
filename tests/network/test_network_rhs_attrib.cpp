@@ -1,9 +1,9 @@
 /**
  * @file test_network_rhs_attrib.cpp
- * @brief Card NOM step N2b: the reduced-RHS attribution iterates exactly the channels the
+ * @brief The reduced-RHS attribution iterates exactly the channels the
  *        kernel folds, so its closure holds by construction (network/qc/RhsAttrib.hpp).
  *
- * Card NOM section 16 (suspect 2) found that the attribution read a station's rows and its
+ * The network object-model review (NOM section 16, suspect 2) found that the attribution read a station's rows and its
  * post-PD diagonal prior but not the pre-PD station prior that @c addStation folds with
  * the block (@c network.station_prior_before_pd, the receiver DCB datum on the goldens),
  * so a dump would have left that channel's share of the reduced RHS unattributed.  The

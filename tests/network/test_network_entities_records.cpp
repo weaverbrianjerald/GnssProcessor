@@ -1,6 +1,6 @@
 /**
  * @file test_network_entities_records.cpp
- * @brief Card NOM step N4: the snapshot records of the entity tables, one round trip per
+ * @brief The snapshot records of the entity tables, one round trip per
  *        Record row (scripts/nom3_designs/N4_design.md section 5, identity check 3).
  *
  * Each test fills a table with two present rows and one row where the field is absent,

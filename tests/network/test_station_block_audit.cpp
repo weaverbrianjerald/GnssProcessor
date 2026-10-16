@@ -34,7 +34,7 @@
 //                           the column against every other local state, to the
 //                           digit.  The implementation uses the identity
 //                           1/(N^+)_zz; this gate checks it against the
-//                           definition in the card.
+//                           definition in the design.
 //   Gate 5 (span format)  - the span field is a deterministic function of the
 //                           eigenvector, stops at three entries or the 90 % cover
 //                           (whichever comes first), and cannot emit a CSV

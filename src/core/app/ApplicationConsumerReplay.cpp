@@ -242,7 +242,7 @@ int Application::runConsumerReplay() {
         log->warn("Consumer replay: {}", why);
     }
 
-    // --- Card NBP: a native broadcast-clock wire ------------------------------
+    // --- A native broadcast-clock wire ------------------------------
     // Under an S line "sp3+brdc:<SP3>|<nav>|ttom" every C record refers to the stamped
     // broadcast ephemeris (iode=k), so the consumer must hold record k: the navigation
     // file is staged here and fed to the store by transmission time in the loop, as the
@@ -504,7 +504,7 @@ int Application::runConsumerReplay() {
             ++h_cursor;
         }
         if (replayed_here == 0) ++n_no_products;
-        // Card NBP: the broadcast records transmitted by this epoch, so the stamped record
+        // The broadcast records transmitted by this epoch, so the stamped record
         // of every replayed C record is held (the producer fed the store the same way).
         if (nbp_feed) nbp_feed->feedStore(LiveEphemerisStore::getInstance(), now_s);
         // The engine buffers observations that arrived ahead of their corrections;

@@ -299,7 +299,7 @@ void RealTimeEngine::writeEpochTraces(RtEpochContext& ctx) {
     // 300 processed epochs; silent when no mismatch was ever counted.
     if (epoch_count_ % 300 == 0) {
         logBiasAttrMismatchSummary("periodic");
-        logOrbitEchoMismatchSummary("periodic");   // same cadence and silence rule (Card 7)
+        logOrbitEchoMismatchSummary("periodic");   // same cadence and silence rule
     }
 
     log->info("{}Epoch {}: pos=({:.3f},{:.3f},{:.3f}) clk={:.3f} zwd={:.4f} sats={}",

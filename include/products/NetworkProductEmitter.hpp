@@ -124,14 +124,14 @@ struct NetworkSatSolution {
     std::map<std::string, double>           cb_level_step_m;
     /// Broadcast ephemeris version (IODE, in the IGS-SSR matching convention) that the
     /// estimable clock @c clock_c0_m is a delta against, threaded from the producer
-    /// emission path in @c brdc_rts mode (RTF-2, Card 5).  -1 means sp3 mode or
+    /// emission path in @c brdc_rts mode (RTF-2).  -1 means sp3 mode or
     /// unstamped: @c emitToStore then leaves @c SsrClockCorrection.iode = -1 (so
-    /// @c getOrbitClock's clock gate inherits the orbit anchor, byte-identical;
-    /// Card 3) and the C record serializes no @c iode= field.  Card 4 owns the field,
-    /// its serialization and the store stamping; Card 5 populates it.
+    /// @c getOrbitClock's clock gate inherits the orbit anchor, byte-identical)
+    /// and the C record serializes no @c iode= field.  The SSR store owns the field,
+    /// its serialization and the stamping; the producer emission path populates it.
     int                                     clock_iode{-1};
     /// IOD-SSR of the RTS orbit correction that this clock was estimated against
-    /// (RTF-2, Card 5).  This is an orbit coherence echo: broadcast radial-orbit error
+    /// (RTF-2).  This is an orbit coherence echo: broadcast radial-orbit error
     /// is absorbed 1:1 into the clock, so the consumer verifies that it applied the
     /// same orbit update.  -1 means unstamped (brdc-only replay, sp3).  The orbit echo
     /// is subordinate to the @c iode= anchor: it is serialized as the C-record
@@ -141,7 +141,7 @@ struct NetworkSatSolution {
     /// set; a value set without @c clock_iode is dropped from the wire without notice.
     int                                     orbit_iod_ssr{-1};
     /// SSR content epoch of that referenced RTS orbit, the other operand of the
-    /// consumer orbit/clock age-skew budget (Card 7) (RTF-2, Card 5).  {0,0} means
+    /// consumer orbit/clock age-skew budget (RTF-2).  {0,0} means
     /// unstamped.  Like @c orbit_iod_ssr it is subordinate to the @c iode= anchor:
     /// serialized as the C-record @c oepoch= field only when @c clock_iode >= 0 and
     /// week != 0.
@@ -313,7 +313,7 @@ public:
      * @c constForced / @c satForced lambdas consult, without their side effects
      * (no tally, no @ref MarkScopeEvent row).  A caller can therefore ask what is
      * about to be declared for this satellite before the emit without changing the
-     * card-MS census by a single count.
+     * MS census by a single count.
      *
      * @param sat RINEX satellite id ("G01").
      * @return 0 when nothing is pending; otherwise the OR of @ref DiscChannel bits.
@@ -496,7 +496,7 @@ public:
      * (@c seen_clock_sats_ / @c prev_code_satset_ / @c prev_band_tuple_, and
      * @c prev_clock_satset_ when armed), the RTA-11 last-seen timestamp maps, and the
      * RT0-5 pending forced-bump state (@c force_all_bump_ / @c forced_bump_consts_ /
-     * @c forced_bump_sats_, with each mark's channel mask under the card-MS channel
+     * @c forced_bump_sats_, with each mark's channel mask under the MS channel
      * scope).  Restoring the counters without the baselines, first-sighting sets and
      * pending flags would emit wrong counters after a resume (spurious first-sighting
      * resets, lost deferred datum bumps), which the consumer could not detect as a

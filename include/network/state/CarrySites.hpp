@@ -16,7 +16,7 @@
  * shift, a declared anchor handover) must move every one of those
  * references by the same amount, or the next epoch reads the parameter in two frames.
  *
- * Until this card each such mechanism enumerated the containers by hand, and each list
+ * Until this table each such mechanism enumerated the containers by hand, and each list
  * was a different subset (the ephemeris re-level moved two
  * of the ten local carries; the phase-colour carry, added later, is in
  * no list).  This header declares the containers once (@ref CarrySite, one row per
@@ -117,7 +117,7 @@ enum class CarryRefRole : int {
 };
 
 /**
- * @brief The declaration of one site: the row of the card's section 5 table.
+ * @brief The declaration of one site: the row of the section 5 table.
  *
  * @c record names the warm-resume snapshot record that restores the site (null when the
  * site is cold-started on a resume), and @c snapshot_note the capture knob or the reason

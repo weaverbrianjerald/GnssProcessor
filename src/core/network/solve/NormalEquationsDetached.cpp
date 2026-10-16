@@ -7,7 +7,7 @@
  *
  * A translation unit of its own so that @ref NetworkNormalEquations stays the single
  * owner of the DD-prior algebra while the second fold path (sparse, per block of
- * disjoint stations, read-only on the kernel) is kept apart from the Card-4 dense fold
+ * disjoint stations, read-only on the kernel) is kept apart from the dense fold
  * (@c NormalEquations.cpp), its unit oracle.  This is the first use of Eigen's
  * sparse modules in the producer, and they are included here only.
  *
@@ -211,7 +211,7 @@ NetworkNormalEquations::DetachedFold NetworkNormalEquations::foldCycleRowsDetach
     // throw happens here, before anything is factored.  A station touched by two blocks
     // is refused: the blocks' Woodbury corrections each read the unmodified N_rr, so
     // their sum would drop the cross term between them (the block-Jacobi truncation the
-    // Card-4 fold accepts and this path does not).
+    // dense fold accepts and this path does not).
     std::map<std::size_t, std::size_t> owner;   // station -> the block that touches it
     std::vector<std::map<std::size_t, std::vector<StationTerm>>> by_station(blocks.size());
     for (std::size_t b = 0; b < blocks.size(); ++b) {
