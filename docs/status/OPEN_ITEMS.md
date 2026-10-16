@@ -59,7 +59,7 @@ product). These items are its replacement and the level's open edges.
 - **Prefit census phase column.** It read 1e5 sigma on clean pre-refound data; re-read it on the golden, then fix or drop it before phase joins prefit_event_classes or the fuse. [SPEC_prefit §17](../SPEC_prefit_census_observability.md)
 - **Stash-status mirrors (suspected).** NetworkStashStatus's VCE and census mirrors skip parked readmit seeds that the D2 inject folds; confirm the coverage gap and count those seeds. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 - **Hard clock refloat uncounted.** `clock_monitor_reinit_sigma_m` <= 0 skips the stash and erases the border entry; count it in the PRM response registry. [PRM3](../refound/PRM3_responses_2026-10-02.md)
-- **One carry-response vocabulary.** Unify the clock refloat set, CarryPrior inflate_q, local_carry erase and markAmbiguityPendingReseed into drop, inflate, repair with declared dominance, not code-order dispatch. [NetworkRunContext.hpp](../../include/app/NetworkRunContext.hpp)
+- **One carry-response vocabulary.** Unify the clock refloat set, CarryPrior inflate_q, local_carry erase and markAmbiguityPendingReseed into drop, inflate, repair with declared dominance, not code-order dispatch. [NetworkRunContext.hpp](../../include/network/state/NetworkRunContext.hpp)
 - **GF arc-jump trigger on the field.** A 6 h field arm (k 6, 0.04 m floor) is owed before any promotion; the field's real-slip share is unknown. [ARL](../refound/ARL_integer_ambiguity_ladder_2026-10-09.md)
 - **Gap re-entry GF test.** It differences raw phases, so the wind-up change over the gap (5.4 cm per cycle on L1/L2) and multipath meet a 4 cm floor. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 

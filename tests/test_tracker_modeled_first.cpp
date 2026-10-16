@@ -34,10 +34,10 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
-#include "slip/NetworkRawObservables.hpp"
-#include "slip/NetworkSlipQc.hpp"
+#include "network/slip/NetworkRawObservables.hpp"
+#include "network/slip/NetworkSlipQc.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/null_sink.h>

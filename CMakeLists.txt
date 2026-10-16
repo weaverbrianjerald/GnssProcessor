@@ -65,7 +65,7 @@ add_library(gnss_core STATIC
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
-    src/core/logging/NetworkRunTraces.cpp
+    src/core/network/diag/NetworkRunTraces.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/RinexNavParser.cpp
@@ -130,24 +130,24 @@ add_library(gnss_core STATIC
     src/core/app/PppRunEnd.cpp
     src/core/app/ApplicationBaseline.cpp
     src/core/app/ApplicationRealtime.cpp
-    src/core/app/ApplicationNetwork.cpp
-    src/core/app/ApplicationNetworkEpoch.cpp
-    src/core/app/NetworkRun.cpp
-    src/core/app/NetworkEpochAdmission.cpp
-    src/core/app/ApplicationNetworkSetup.cpp
+    src/core/network/driver/ApplicationNetwork.cpp
+    src/core/network/driver/ApplicationNetworkEpoch.cpp
+    src/core/network/driver/NetworkRun.cpp
+    src/core/network/driver/NetworkEpochAdmission.cpp
+    src/core/network/driver/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
-    src/core/app/ApplicationNetworkAssembly.cpp
-    src/core/app/NetworkKnobs.cpp
-    src/core/app/NetworkSnapshotFingerprint.cpp
-    src/core/app/NetworkWarmResume.cpp
-    src/core/app/NetworkEntities.cpp
-    src/core/app/NetworkRunFields.cpp
-    src/core/app/NetworkStateSnapshotWrite.cpp
-    src/core/app/NetworkBorderPrior.cpp
-    src/core/app/NetworkBorderStash.cpp
-    src/core/app/NetworkLocalCarryHarvest.cpp
-    src/core/app/SignalRoster.cpp
-    src/core/app/SignalRosterSites.cpp
+    src/core/network/driver/ApplicationNetworkAssembly.cpp
+    src/core/network/driver/NetworkKnobs.cpp
+    src/core/network/state/NetworkSnapshotFingerprint.cpp
+    src/core/network/state/NetworkWarmResume.cpp
+    src/core/network/state/NetworkEntities.cpp
+    src/core/network/state/NetworkRunFields.cpp
+    src/core/network/state/NetworkStateSnapshotWrite.cpp
+    src/core/network/state/NetworkBorderPrior.cpp
+    src/core/network/state/NetworkBorderStash.cpp
+    src/core/network/carry/NetworkLocalCarryHarvest.cpp
+    src/core/network/assembly/SignalRoster.cpp
+    src/core/network/assembly/SignalRosterSites.cpp
     src/core/app/EpochUpdateSupport.cpp
 	src/core/slip/MwSlipDetector.cpp
 	src/core/slip/MwSlipDetectorEpoch.cpp
@@ -187,12 +187,12 @@ add_library(gnss_core STATIC
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
-	src/core/slip/NetworkRawObservables.cpp
-	src/core/slip/NetworkSlipQc.cpp
-	src/core/slip/NetworkGapResumeCensus.cpp
-	src/core/slip/NetworkSlipOracle.cpp
-	src/core/slip/NetworkCommonBandScope.cpp
-	src/core/slip/NetworkGfArcJump.cpp
+	src/core/network/slip/NetworkRawObservables.cpp
+	src/core/network/slip/NetworkSlipQc.cpp
+	src/core/network/slip/NetworkGapResumeCensus.cpp
+	src/core/network/slip/NetworkSlipOracle.cpp
+	src/core/network/slip/NetworkCommonBandScope.cpp
+	src/core/network/slip/NetworkGfArcJump.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -204,8 +204,8 @@ add_library(gnss_core STATIC
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/SignalDeclaration.cpp
     src/core/products/NetworkProductEmitter.cpp
-    src/core/products/NetworkEmitRebase.cpp
-    src/core/products/NetworkClockEmitRebase.cpp
+    src/core/network/emit/NetworkEmitRebase.cpp
+    src/core/network/emit/NetworkClockEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -213,8 +213,8 @@ add_library(gnss_core STATIC
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
-    src/core/realtime/NetworkStreamAligner.cpp
-    src/core/realtime/NetworkStreamFrontEnd.cpp
+    src/core/network/driver/NetworkStreamAligner.cpp
+    src/core/network/driver/NetworkStreamFrontEnd.cpp
     src/core/realtime/RealTimeEngine.cpp
     src/core/realtime/RealTimeEngineAdmit.cpp
     src/core/realtime/RealTimeEngineSsrDiag.cpp
@@ -233,118 +233,118 @@ add_library(gnss_core STATIC
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
-    src/core/filter/NetworkNormalEquations.cpp
-    src/core/filter/NetworkNormalEquationsDetached.cpp
-    src/core/filter/NetworkEstimator.cpp
-    src/core/filter/NetworkInvariantCarryDriver.cpp
-    src/core/filter/NetworkSbasis.cpp
-    src/core/filter/NetworkExtraBandScope.cpp
-    src/core/filter/NetworkSecondCodeScope.cpp
-    src/core/filter/NetworkSecondPhaseScope.cpp
-    src/core/filter/NetworkChannelAll.cpp
-    src/core/filter/NetworkMultiGnss.cpp
-    src/core/filter/NetworkPhaseDatum.cpp
-    src/core/filter/NetworkPhaseAnchorEpoch.cpp
-    src/core/filter/NetworkSlipFunnel.cpp
-    src/core/filter/NetworkChainDatum.cpp
-    src/core/filter/NetworkAnchorHygiene.cpp
-    src/core/filter/NetworkSignalIntegrity.cpp
-    src/core/filter/NetworkMeasurementAdmission.cpp
-    src/core/filter/NetworkRaim.cpp
-    src/core/filter/NetworkClockQc.cpp
-    src/core/filter/NetworkClockAnchor.cpp
-    src/core/filter/NetworkCarryDisposition.cpp
-    src/core/filter/NetworkCarrySites.cpp
-    src/core/filter/NetworkResponses.cpp
-    src/core/filter/NetworkClockLevel.cpp
-    src/core/filter/NetworkFrameDiag.cpp
-    src/core/filter/NetworkGrossLos.cpp
-    src/core/filter/NetworkStationBlock.cpp
-    src/core/filter/NetworkHandoverStransform.cpp
-    src/core/filter/NetworkRowClassify.cpp
-    src/core/filter/NetworkRhsAttrib.cpp
-    src/core/filter/NetworkPrefitCensus.cpp
-    src/core/filter/NetworkRedundancyCensus.cpp
-    src/core/filter/NetworkMdb.cpp
-    src/core/filter/NetworkDatumGraph.cpp
-    src/core/filter/NetworkBlockBaarda.cpp
-    src/core/filter/NetworkCongruence.cpp
-    src/core/filter/NetworkCongruenceSetup.cpp
-    src/core/filter/NetworkPriorResidual.cpp
-    src/core/filter/NetworkSolPrep.cpp
-    src/core/filter/NetworkEmitStore.cpp
-    src/core/filter/NetworkPbHold.cpp
-    src/core/filter/NetworkBrdcWire.cpp
-    src/core/filter/NetworkLedgerEmit.cpp
-    src/core/filter/NetworkIonoDiag.cpp
-    src/core/filter/NetworkDdFrac.cpp
-    src/core/filter/NetworkSdEwlAr.cpp
-    src/core/filter/NetworkShDevVtec.cpp
-    src/core/filter/NetworkSolveStations.cpp
-    src/core/filter/NetworkStationBuild.cpp
-    src/core/filter/NetworkIonoConstraintRows.cpp
-    src/core/filter/NetworkLevelingCarry.cpp
-    src/core/filter/NetworkPhaseColourCarry.cpp
-    src/core/filter/NetworkRxClockCarry.cpp
-    src/core/filter/NetworkRxCodeBiasCarry.cpp
-    src/core/filter/NetworkSlantIonoCarry.cpp
-    src/core/filter/NetworkStationAnchors.cpp
-    src/core/filter/NetworkStationCarry.cpp
-    src/core/filter/NetworkStationSplit.cpp
-    src/core/filter/NetworkZwdCarry.cpp
-    src/core/filter/NetworkShHealth.cpp
-    src/core/filter/NetworkLeveling.cpp
-    src/core/filter/NetworkStashStatus.cpp
-    src/core/filter/NetworkProducerAr.cpp
-    src/core/filter/NetworkArSuspect.cpp
-    src/core/filter/NetworkArcGraph.cpp
-    src/core/filter/NetworkArcLife.cpp
-    src/core/filter/NetworkArCycleBasis.cpp
-    src/core/filter/NetworkArLattice.cpp
-    src/core/filter/NetworkFixedCycles.cpp
-    src/core/filter/NetworkInstallCarry.cpp
-    src/core/filter/NetworkDdPriorBuild.cpp
-    src/core/filter/NetworkSolveGlue.cpp
-    src/core/filter/NetworkCodeBiasDatum.cpp
-    src/core/filter/NetworkClockDatum.cpp
-    src/core/filter/NetworkRankGate.cpp
-    src/core/filter/NetworkSbasisCompletion.cpp
-    src/core/filter/NetworkRaimWithinEpoch.cpp
-    src/core/filter/NetworkWithinEpochCulprits.cpp
-    src/core/filter/NetworkLevelAuthority.cpp
-    src/core/filter/NetworkRelevel.cpp
-    src/core/filter/NetworkTeardown.cpp
-    src/core/app/NetworkRunTimingRunEnd.cpp
-    src/core/app/NetworkRunArtifactsRunEnd.cpp
-    src/core/app/NetworkSolveStationsRunEnd.cpp
-    src/core/app/NetworkResumeRunEnd.cpp
-    src/core/app/NetworkReadmitRunEnd.cpp
-    src/core/app/NetworkClosedLoopRunEnd.cpp
-    src/core/filter/NetworkLevelingCarryRunEnd.cpp
-    src/core/filter/NetworkRxCodeBiasCarryRunEnd.cpp
-    src/core/filter/NetworkCarryVceRunEnd.cpp
-    src/core/filter/NetworkCarryVceApply.cpp
-    src/core/slip/NetworkSlipQcRunEnd.cpp
-    src/core/filter/NetworkRunEnd.cpp
-    src/core/filter/NetworkEpochObservers.cpp
-    src/core/filter/NetworkInject.cpp
-    src/core/filter/NetworkCanonicalPairAdmission.cpp
-    src/core/filter/ArcLedger.cpp
-    src/core/filter/NetworkAnchorReentry.cpp
-    src/core/filter/NetworkOraclePin.cpp
-    src/core/filter/NetworkOraclePinSetup.cpp
-    src/core/filter/NetworkCoupling.cpp
-    src/core/filter/NetworkCouplingExact.cpp
-    src/core/filter/NetworkClockClone.cpp
-    src/core/filter/NetworkSharedHistory.cpp
-    src/core/filter/NetworkPhaseVisibleDiag.cpp
-    src/core/filter/NetworkPbHoldClone.cpp
-    src/core/filter/NetworkParamRegistry.cpp
-    src/core/filter/NetworkParamInventory.cpp
-    src/core/filter/NetworkContributions.cpp
-    src/core/filter/NetworkAmbStateTrace.cpp
-    src/core/filter/NetworkAmbFloat.cpp
-    src/core/filter/NetworkBiasAdmission.cpp
+    src/core/network/solve/NetworkNormalEquations.cpp
+    src/core/network/solve/NetworkNormalEquationsDetached.cpp
+    src/core/network/solve/NetworkEstimator.cpp
+    src/core/network/carry/NetworkInvariantCarryDriver.cpp
+    src/core/network/solve/NetworkSbasis.cpp
+    src/core/network/assembly/NetworkExtraBandScope.cpp
+    src/core/network/assembly/NetworkSecondCodeScope.cpp
+    src/core/network/assembly/NetworkSecondPhaseScope.cpp
+    src/core/network/assembly/NetworkChannelAll.cpp
+    src/core/network/assembly/NetworkMultiGnss.cpp
+    src/core/network/solve/NetworkPhaseDatum.cpp
+    src/core/network/solve/NetworkPhaseAnchorEpoch.cpp
+    src/core/network/slip/NetworkSlipFunnel.cpp
+    src/core/network/solve/NetworkChainDatum.cpp
+    src/core/network/solve/NetworkAnchorHygiene.cpp
+    src/core/network/assembly/NetworkSignalIntegrity.cpp
+    src/core/network/assembly/NetworkMeasurementAdmission.cpp
+    src/core/network/qc/NetworkRaim.cpp
+    src/core/network/qc/NetworkClockQc.cpp
+    src/core/network/solve/NetworkClockAnchor.cpp
+    src/core/network/state/NetworkCarryDisposition.cpp
+    src/core/network/state/NetworkCarrySites.cpp
+    src/core/network/assembly/NetworkResponses.cpp
+    src/core/network/solve/NetworkClockLevel.cpp
+    src/core/network/diag/NetworkFrameDiag.cpp
+    src/core/network/qc/NetworkGrossLos.cpp
+    src/core/network/diag/NetworkStationBlock.cpp
+    src/core/network/solve/NetworkHandoverStransform.cpp
+    src/core/network/assembly/NetworkRowClassify.cpp
+    src/core/network/qc/NetworkRhsAttrib.cpp
+    src/core/network/qc/NetworkPrefitCensus.cpp
+    src/core/network/qc/NetworkRedundancyCensus.cpp
+    src/core/network/qc/NetworkMdb.cpp
+    src/core/network/solve/NetworkDatumGraph.cpp
+    src/core/network/qc/NetworkBlockBaarda.cpp
+    src/core/network/qc/NetworkCongruence.cpp
+    src/core/network/qc/NetworkCongruenceSetup.cpp
+    src/core/network/qc/NetworkPriorResidual.cpp
+    src/core/network/emit/NetworkSolPrep.cpp
+    src/core/network/emit/NetworkEmitStore.cpp
+    src/core/network/emit/NetworkPbHold.cpp
+    src/core/network/emit/NetworkBrdcWire.cpp
+    src/core/network/emit/NetworkLedgerEmit.cpp
+    src/core/network/diag/NetworkIonoDiag.cpp
+    src/core/network/diag/NetworkDdFrac.cpp
+    src/core/network/ar/NetworkSdEwlAr.cpp
+    src/core/network/diag/NetworkShDevVtec.cpp
+    src/core/network/solve/NetworkSolveStations.cpp
+    src/core/network/assembly/NetworkStationBuild.cpp
+    src/core/network/assembly/NetworkIonoConstraintRows.cpp
+    src/core/network/carry/NetworkLevelingCarry.cpp
+    src/core/network/carry/NetworkPhaseColourCarry.cpp
+    src/core/network/carry/NetworkRxClockCarry.cpp
+    src/core/network/carry/NetworkRxCodeBiasCarry.cpp
+    src/core/network/carry/NetworkSlantIonoCarry.cpp
+    src/core/network/assembly/NetworkStationAnchors.cpp
+    src/core/network/assembly/NetworkStationCarry.cpp
+    src/core/network/assembly/NetworkStationSplit.cpp
+    src/core/network/carry/NetworkZwdCarry.cpp
+    src/core/network/diag/NetworkShHealth.cpp
+    src/core/network/diag/NetworkLeveling.cpp
+    src/core/network/diag/NetworkStashStatus.cpp
+    src/core/network/ar/NetworkProducerAr.cpp
+    src/core/network/ar/NetworkArSuspect.cpp
+    src/core/network/ar/NetworkArcGraph.cpp
+    src/core/network/ar/NetworkArcLife.cpp
+    src/core/network/ar/NetworkArCycleBasis.cpp
+    src/core/network/ar/NetworkArLattice.cpp
+    src/core/network/ar/NetworkFixedCycles.cpp
+    src/core/network/carry/NetworkInstallCarry.cpp
+    src/core/network/carry/NetworkDdPriorBuild.cpp
+    src/core/network/solve/NetworkSolveGlue.cpp
+    src/core/network/solve/NetworkCodeBiasDatum.cpp
+    src/core/network/solve/NetworkClockDatum.cpp
+    src/core/network/solve/NetworkRankGate.cpp
+    src/core/network/solve/NetworkSbasisCompletion.cpp
+    src/core/network/qc/NetworkRaimWithinEpoch.cpp
+    src/core/network/qc/NetworkWithinEpochCulprits.cpp
+    src/core/network/carry/NetworkLevelAuthority.cpp
+    src/core/network/qc/NetworkRelevel.cpp
+    src/core/network/runend/NetworkTeardown.cpp
+    src/core/network/runend/NetworkRunTimingRunEnd.cpp
+    src/core/network/runend/NetworkRunArtifactsRunEnd.cpp
+    src/core/network/runend/NetworkSolveStationsRunEnd.cpp
+    src/core/network/runend/NetworkResumeRunEnd.cpp
+    src/core/network/runend/NetworkReadmitRunEnd.cpp
+    src/core/network/runend/NetworkClosedLoopRunEnd.cpp
+    src/core/network/carry/NetworkLevelingCarryRunEnd.cpp
+    src/core/network/carry/NetworkRxCodeBiasCarryRunEnd.cpp
+    src/core/network/carry/NetworkCarryVceRunEnd.cpp
+    src/core/network/carry/NetworkCarryVceApply.cpp
+    src/core/network/slip/NetworkSlipQcRunEnd.cpp
+    src/core/network/runend/NetworkRunEnd.cpp
+    src/core/network/driver/NetworkEpochObservers.cpp
+    src/core/network/carry/NetworkInject.cpp
+    src/core/network/assembly/NetworkCanonicalPairAdmission.cpp
+    src/core/network/state/ArcLedger.cpp
+    src/core/network/solve/NetworkAnchorReentry.cpp
+    src/core/network/slip/NetworkOraclePin.cpp
+    src/core/network/slip/NetworkOraclePinSetup.cpp
+    src/core/network/carry/NetworkCoupling.cpp
+    src/core/network/carry/NetworkCouplingExact.cpp
+    src/core/network/carry/NetworkClockClone.cpp
+    src/core/network/carry/NetworkSharedHistory.cpp
+    src/core/network/diag/NetworkPhaseVisibleDiag.cpp
+    src/core/network/emit/NetworkPbHoldClone.cpp
+    src/core/network/assembly/NetworkParamRegistry.cpp
+    src/core/network/assembly/NetworkParamInventory.cpp
+    src/core/network/assembly/NetworkContributions.cpp
+    src/core/network/diag/NetworkAmbStateTrace.cpp
+    src/core/network/ar/NetworkAmbFloat.cpp
+    src/core/network/assembly/NetworkBiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
     src/core/common/GnssIdentity.cpp
@@ -359,29 +359,29 @@ target_include_directories(gnss_core PUBLIC include)
 # per-station Eigen assembly still crosses the limit).
 if(MSVC)
     set_source_files_properties(src/core/filter/KalmanFilter.cpp
-        src/core/app/ApplicationNetworkAssembly.cpp
+        src/core/network/driver/ApplicationNetworkAssembly.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_block_baarda.cpp sits at the Debug section limit through the network
+    # tests/network/test_block_baarda.cpp sits at the Debug section limit through the network
     # run-context headers it includes (card CTU section 14 added a few template members
     # there and tipped it over, C1128).
-    set_source_files_properties(tests/test_block_baarda.cpp
+    set_source_files_properties(tests/network/test_block_baarda.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
+    # tests/network/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
     # covariance against the batch tipped it over the Debug section limit (C1128).
-    set_source_files_properties(tests/test_coupling_exact_update.cpp
+    set_source_files_properties(tests/network/test_coupling_exact_update.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_handover_stransform_dense.cpp (card SCL B2): the run-context headers plus the
+    # tests/network/test_handover_stransform_dense.cpp (card SCL B2): the run-context headers plus the
     # explicit eigen-solve and inverse references cross the Debug section limit (C1128).
-    set_source_files_properties(tests/test_handover_stransform_dense.cpp
+    set_source_files_properties(tests/network/test_handover_stransform_dense.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_network_shared_history.cpp (card SCL2 X2b, gate U5): the smoothed hold's
+    # tests/network/test_network_shared_history.cpp (card SCL2 X2b, gate U5): the smoothed hold's
     # clone types and the projection cases cross the Debug section limit (C1128).
-    set_source_files_properties(tests/test_network_shared_history.cpp
+    set_source_files_properties(tests/network/test_network_shared_history.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
-    # tests/test_network_detached_fold.cpp (card FCF, FCF-1): the dense oracles (LDLT,
+    # tests/network/test_network_detached_fold.cpp (card FCF, FCF-1): the dense oracles (LDLT,
     # pivoted LU, the rank and condition-number references) cross the Debug section
     # limit (C1128).
-    set_source_files_properties(tests/test_network_detached_fold.cpp
+    set_source_files_properties(tests/network/test_network_detached_fold.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/test_pb_hold_block.cpp and tests/test_pb_hold_smoothed.cpp (card NOM3 step EP2): the
     # run fixture (tests/support/NetworkTestRun.hpp) brings the run's engines into the
@@ -477,103 +477,103 @@ add_executable(gnss_tests
     tests/test_antenna_model.cpp
     tests/test_state_key_schema.cpp
     tests/test_covariance_rereference.cpp
-    tests/test_network_emit.cpp
+    tests/network/test_network_emit.cpp
     tests/test_sh_ionosphere.cpp
-    tests/test_network_product_io.cpp
-    tests/test_network_combined_sigma.cpp
+    tests/network/test_network_product_io.cpp
+    tests/network/test_network_combined_sigma.cpp
     tests/test_rinex_nav_parser.cpp
     tests/test_brdc_clock_apriori.cpp
     tests/test_rinex_zero_sentinel.cpp
     tests/test_rinex3_blank_prn.cpp
     tests/test_rinex3_phase_shift.cpp
-    tests/test_network_normal_equations.cpp
-    tests/test_network_detached_fold.cpp
-    tests/test_neq_station_prior_before_pd.cpp
-    tests/test_pd_safe_fold.cpp
-    tests/test_carry_aware_covariance.cpp
+    tests/network/test_network_normal_equations.cpp
+    tests/network/test_network_detached_fold.cpp
+    tests/network/test_neq_station_prior_before_pd.cpp
+    tests/network/test_pd_safe_fold.cpp
+    tests/network/test_carry_aware_covariance.cpp
     tests/test_w6_iono_constraint.cpp
-    tests/test_sat_gf_extra_band_free.cpp
-    tests/test_network_estimator.cpp
-    tests/test_network_carry_vce.cpp
-    tests/test_carry_vce_apply.cpp
+    tests/network/test_sat_gf_extra_band_free.cpp
+    tests/network/test_network_estimator.cpp
+    tests/network/test_network_carry_vce.cpp
+    tests/network/test_carry_vce_apply.cpp
     tests/test_residual_qc_wtest.cpp
-    tests/test_pivot_frame_q.cpp
-    tests/test_border_clone.cpp
-    tests/test_network_zstore.cpp
-    tests/test_network_arc_graph.cpp
-    tests/test_network_arc_graph_oracles.cpp
-    tests/test_network_arc_life.cpp
-    tests/test_producer_ar_cycle_basis.cpp
-    tests/test_ar_cycle_basis_config.cpp
-    tests/test_network_ar_lattice.cpp
-    tests/test_network_fixed_cycles.cpp
-    tests/test_network_fixed_cycle_release.cpp
+    tests/network/test_pivot_frame_q.cpp
+    tests/network/test_border_clone.cpp
+    tests/network/test_network_zstore.cpp
+    tests/network/test_network_arc_graph.cpp
+    tests/network/test_network_arc_graph_oracles.cpp
+    tests/network/test_network_arc_life.cpp
+    tests/network/test_producer_ar_cycle_basis.cpp
+    tests/network/test_ar_cycle_basis_config.cpp
+    tests/network/test_network_ar_lattice.cpp
+    tests/network/test_network_fixed_cycles.cpp
+    tests/network/test_network_fixed_cycle_release.cpp
     tests/test_fixed_cycle_config.cpp
-    tests/test_network_robust_stats.cpp
-    tests/test_network_slip_qc.cpp
+    tests/network/test_network_robust_stats.cpp
+    tests/network/test_network_slip_qc.cpp
     tests/test_gap_reentry_relevel.cpp
-    tests/test_gap_reentry_per_signal.cpp
+    tests/network/test_gap_reentry_per_signal.cpp
     tests/test_gap_reentry_coresumed.cpp
     tests/test_tracker_modeled_first.cpp
-    tests/test_signal_roster.cpp
-    tests/test_signal_roster_plan.cpp
-    tests/test_signal_roster_always_on.cpp
-    tests/test_signal_roster_sites.cpp
-    tests/test_arc_ledger.cpp
-    tests/test_ledger_anchor.cpp
+    tests/network/test_signal_roster.cpp
+    tests/network/test_signal_roster_plan.cpp
+    tests/network/test_signal_roster_always_on.cpp
+    tests/network/test_signal_roster_sites.cpp
+    tests/network/test_arc_ledger.cpp
+    tests/network/test_ledger_anchor.cpp
     tests/test_ledger_reentry.cpp
     tests/test_ledger_emit.cpp
-    tests/test_slip_oracle.cpp
+    tests/network/test_slip_oracle.cpp
     tests/test_if_phase_slip_detector.cpp
     tests/test_if_phase_ref_gate_defaults.cpp
     tests/test_if_td_pair_width.cpp
     tests/test_if_td_reseed_on_flag.cpp
     tests/test_iftd_ref_arm_all.cpp
-    tests/test_network_coupling.cpp
-    tests/test_network_invariant_carry_driver.cpp
-    tests/test_shdev_carry.cpp
-    tests/test_rx_cb_carry.cpp
-    tests/test_network_phase_datum.cpp
+    tests/network/test_network_coupling.cpp
+    tests/network/test_network_invariant_carry_driver.cpp
+    tests/network/test_shdev_carry.cpp
+    tests/network/test_rx_cb_carry.cpp
+    tests/network/test_network_phase_datum.cpp
     tests/test_eq34_reattach_hygiene.cpp
     tests/test_signal_integrity.cpp
     tests/test_measurement_admission.cpp
     tests/test_measurement_model_prepass.cpp
-    tests/test_redundancy_census.cpp
-    tests/test_network_mdb.cpp
-    tests/test_block_baarda.cpp
-    tests/test_network_gross_los.cpp
-    tests/test_network_gross_los_cold_bound.cpp
-    tests/test_station_congruence.cpp
-    tests/test_prior_residual_census.cpp
-    tests/test_producer_ar_trace.cpp
+    tests/network/test_redundancy_census.cpp
+    tests/network/test_network_mdb.cpp
+    tests/network/test_block_baarda.cpp
+    tests/network/test_network_gross_los.cpp
+    tests/network/test_network_gross_los_cold_bound.cpp
+    tests/network/test_station_congruence.cpp
+    tests/network/test_prior_residual_census.cpp
+    tests/network/test_producer_ar_trace.cpp
     tests/test_prefit_census.cpp
-    tests/test_network_bias_admission.cpp
-    tests/test_network_rank_gate.cpp
-    tests/test_network_sbasis_complete.cpp
+    tests/network/test_network_bias_admission.cpp
+    tests/network/test_network_rank_gate.cpp
+    tests/network/test_network_sbasis_complete.cpp
     tests/test_datum_graph_census.cpp
-    tests/test_station_block_audit.cpp
+    tests/network/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp
-    tests/test_clock_emit_rebase.cpp
-    tests/test_clock_anchor.cpp
-    tests/test_network_solprep_disc.cpp
+    tests/network/test_clock_emit_rebase.cpp
+    tests/network/test_clock_anchor.cpp
+    tests/network/test_network_solprep_disc.cpp
     tests/test_eq34_consumer_integer.cpp
-    tests/test_glonass_network_config.cpp
-    tests/test_codebias_network_config.cpp
-    tests/test_rx_cb_datum_gauge.cpp
+    tests/network/test_glonass_network_config.cpp
+    tests/network/test_codebias_network_config.cpp
+    tests/network/test_rx_cb_datum_gauge.cpp
     tests/test_raim_carry_invariant_pool.cpp
     tests/test_phase_datum_handover.cpp
     tests/test_datum_station_slip_config.cpp
     tests/test_d5_corroborate_autoarm.cpp
     tests/test_h_heartbeat_rider.cpp
     tests/test_bia_receiver_records.cpp
-    tests/test_iono_carry_config.cpp
-    tests/test_network_process_noise_config.cpp
+    tests/network/test_iono_carry_config.cpp
+    tests/network/test_network_process_noise_config.cpp
     tests/test_withhold_release_config.cpp
-    tests/test_station_factor_config.cpp
-    tests/test_level_authority.cpp
+    tests/network/test_station_factor_config.cpp
+    tests/network/test_level_authority.cpp
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp
-    tests/test_sd_ewl_integer.cpp
+    tests/network/test_sd_ewl_integer.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
@@ -582,7 +582,7 @@ add_executable(gnss_tests
     tests/test_pb_hold_phase_clock.cpp
     tests/test_pb_hold_smoothed.cpp
     tests/test_pb_hold_block.cpp
-    tests/test_wsx_within_station_cross.cpp
+    tests/network/test_wsx_within_station_cross.cpp
     tests/test_phase_visible_monitor.cpp
     tests/test_pb_hold_presence.cpp
     tests/test_pb_translation_premise.cpp
@@ -595,7 +595,7 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
-    tests/test_network_streaming.cpp
+    tests/network/test_network_streaming.cpp
     tests/test_rtcm_logger_lifetime.cpp
     tests/test_safe_logger.cpp
     tests/test_sbf.cpp
@@ -614,8 +614,8 @@ add_executable(gnss_tests
     tests/test_smoother_frame.cpp
     tests/test_jump_gap_fitter.cpp
     tests/test_slip_bridge_kernel.cpp
-    tests/test_relevel_bridge_v3.cpp
-    tests/test_relevel_delta_bridge.cpp
+    tests/network/test_relevel_bridge_v3.cpp
+    tests/network/test_relevel_delta_bridge.cpp
     tests/test_planetary_cio.cpp
     tests/test_planetary_sun_frame.cpp
     tests/test_orbit_enhancements.cpp
@@ -630,33 +630,33 @@ add_executable(gnss_tests
     tests/test_windup_census_config.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
-    tests/test_network_param_registry.cpp
+    tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
-    tests/test_network_param_inventory.cpp
-    tests/test_network_rx_extra_band_delay.cpp
-    tests/test_network_contributions.cpp
-    tests/test_network_knobs_lane_emit.cpp
-    tests/test_network_knobs_epoch_driver.cpp
-    tests/test_network_knobs_station_assembly.cpp
-    tests/test_network_epoch_contract.cpp
-    tests/test_network_station_build.cpp
-    tests/test_network_harvest_layout.cpp
-    tests/test_network_engine_spec.cpp
-    tests/test_network_row_classify.cpp
-    tests/test_raim_pool_data_rows_only.cpp
-    tests/test_network_rhs_attrib.cpp
+    tests/network/test_network_param_inventory.cpp
+    tests/network/test_network_rx_extra_band_delay.cpp
+    tests/network/test_network_contributions.cpp
+    tests/network/test_network_knobs_lane_emit.cpp
+    tests/network/test_network_knobs_epoch_driver.cpp
+    tests/network/test_network_knobs_station_assembly.cpp
+    tests/network/test_network_epoch_contract.cpp
+    tests/network/test_network_station_build.cpp
+    tests/network/test_network_harvest_layout.cpp
+    tests/network/test_network_engine_spec.cpp
+    tests/network/test_network_row_classify.cpp
+    tests/network/test_raim_pool_data_rows_only.cpp
+    tests/network/test_network_rhs_attrib.cpp
     tests/test_rhs_attrib_columns.cpp
     tests/test_rhs_attrib_local.cpp
     tests/test_phase_colour_state.cpp
-    tests/test_exl_switch_on_resume.cpp
-    tests/test_carry_disposition.cpp
-    tests/test_carry_sites.cpp
+    tests/network/test_exl_switch_on_resume.cpp
+    tests/network/test_carry_disposition.cpp
+    tests/network/test_carry_sites.cpp
     tests/test_param_responses.cpp
     tests/test_zwd_seam_reseed_config.cpp
-    tests/test_zwd_seam_reseed_q.cpp
-    tests/test_carry_zwd_in_block.cpp
-    tests/test_carry_iono_in_block.cpp
-    tests/test_carry_rx_clock_in_block.cpp
+    tests/network/test_zwd_seam_reseed_q.cpp
+    tests/network/test_carry_zwd_in_block.cpp
+    tests/network/test_carry_iono_in_block.cpp
+    tests/network/test_carry_rx_clock_in_block.cpp
     tests/test_resume_frame_restore.cpp
     tests/test_resume_pb_seam_mark.cpp
     tests/test_resume_border_restore.cpp
@@ -669,52 +669,52 @@ add_executable(gnss_tests
     tests/test_kalman_pivot_detectors.cpp
     tests/test_kalman_qc_counters.cpp
     tests/test_ppp_epoch_work.cpp
-    tests/test_network_inject.cpp
-    tests/test_network_run_end.cpp
-    tests/test_network_entities_records.cpp
-    tests/test_network_epoch_observers.cpp
-    tests/test_network_solve_skip.cpp
-    tests/test_network_we_choice.cpp
-    tests/test_network_within_epoch_culprits.cpp
-    tests/test_canonical_pair_admission.cpp
-    tests/test_oracle_pin.cpp
+    tests/network/test_network_inject.cpp
+    tests/network/test_network_run_end.cpp
+    tests/network/test_network_entities_records.cpp
+    tests/network/test_network_epoch_observers.cpp
+    tests/network/test_network_solve_skip.cpp
+    tests/network/test_network_we_choice.cpp
+    tests/network/test_network_within_epoch_culprits.cpp
+    tests/network/test_canonical_pair_admission.cpp
+    tests/network/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp
-    tests/test_phase_gate_drop_edge.cpp
-    tests/test_handover_stransform.cpp
-    tests/test_handover_stransform_dense.cpp
+    tests/network/test_phase_gate_drop_edge.cpp
+    tests/network/test_handover_stransform.cpp
+    tests/network/test_handover_stransform_dense.cpp
     tests/test_mw_evidence_refloat.cpp
     tests/test_mw_pivot_reset.cpp
-    tests/test_network_gf_arc_jump.cpp
-    tests/test_network_ar_suspect.cpp
-    tests/test_common_band_scope.cpp
+    tests/network/test_network_gf_arc_jump.cpp
+    tests/network/test_network_ar_suspect.cpp
+    tests/network/test_common_band_scope.cpp
     tests/test_candidacy_usable.cpp
     tests/test_restored_arc_age.cpp
-    tests/test_resume_carry_rebase.cpp
+    tests/network/test_resume_carry_rebase.cpp
     tests/test_resume_emit_restore.cpp
     tests/test_resume_station_restore.cpp
     tests/test_resume_signal_canon_restore.cpp
     tests/test_resume_rxcb_lin_restore.cpp
-    tests/test_amb_float_vehicle.cpp
+    tests/network/test_amb_float_vehicle.cpp
     tests/test_phase_held_basis.cpp
     tests/test_canonical_signal_latch.cpp
     tests/test_canonical_signal_station_scope.cpp
     tests/test_canonical_signal_code_follow.cpp
-    tests/test_mw_detect_pair_scope.cpp
+    tests/network/test_mw_detect_pair_scope.cpp
     tests/test_mw_detector_steps.cpp
-    tests/test_extra_band_code_sigma.cpp
-    tests/test_network_second_code_scope.cpp
-    tests/test_second_phase_channel.cpp
-    tests/test_channel_mode_all.cpp
-    tests/test_galileo_network.cpp
+    tests/network/test_extra_band_code_sigma.cpp
+    tests/network/test_network_second_code_scope.cpp
+    tests/network/test_second_phase_channel.cpp
+    tests/network/test_channel_mode_all.cpp
+    tests/network/test_galileo_network.cpp
     tests/test_code_datum_family.cpp
     tests/test_clock_level_carry.cpp
-    tests/test_coupling_exact_update.cpp
-    tests/test_coupling_long_horizon.cpp
-    tests/test_network_clock_clone.cpp
-    tests/test_network_shared_history.cpp
-    tests/test_network_column_family.cpp
-    tests/test_ctu_level_guard.cpp
+    tests/network/test_coupling_exact_update.cpp
+    tests/network/test_coupling_long_horizon.cpp
+    tests/network/test_network_clock_clone.cpp
+    tests/network/test_network_shared_history.cpp
+    tests/network/test_network_column_family.cpp
+    tests/network/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp

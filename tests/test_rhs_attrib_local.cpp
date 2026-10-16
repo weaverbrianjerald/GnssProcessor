@@ -2,7 +2,7 @@
  * @file test_rhs_attrib_local.cpp
  * @brief Card L5B: the attribution's station-local readout (`LOC:<station>:<key>` labels in
  *        @c network.rhs_attrib_columns, @c networkRhsAttribLocalShares and the `loc_<tow>.csv`
- *        writer in filter/NetworkRhsAttrib.hpp) and the kernel's
+ *        writer in network/qc/NetworkRhsAttrib.hpp) and the kernel's
  *        @c NetworkNormalEquations::reconstructStationParts.
  *
  * The fixture is a small two-band network solved by the estimator itself: two satellites
@@ -44,12 +44,12 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkContributions.hpp"
-#include "filter/NetworkEstimator.hpp"
-#include "filter/NetworkNormalEquations.hpp"
-#include "filter/NetworkRhsAttrib.hpp"
-#include "filter/NetworkRowClassify.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/assembly/NetworkContributions.hpp"
+#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/qc/NetworkRhsAttrib.hpp"
+#include "network/assembly/NetworkRowClassify.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"

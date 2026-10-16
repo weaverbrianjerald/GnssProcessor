@@ -12,7 +12,7 @@
  * return epoch, and, behind a sub-knob, an unmeasurable re-entry), and for a slipped
  * verdict marks the ambiguities of both bands as a detected slip would.  Every test
  * drives it with hand-built resumptions, so the qualification pass that produces
- * those records is out of scope (it is covered in tests/test_network_slip_qc.cpp,
+ * those records is out of scope (it is covered in tests/network/test_network_slip_qc.cpp,
  * suite SlipQcQualify), and the decision logic is pinned without a network, a solve
  * or a RINEX file.
  *
@@ -47,9 +47,9 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
-#include "slip/NetworkSlipQc.hpp"
+#include "network/slip/NetworkSlipQc.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/null_sink.h>

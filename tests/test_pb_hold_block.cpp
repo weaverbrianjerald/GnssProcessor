@@ -22,16 +22,16 @@
 #include <gtest/gtest.h>
 
 #include "support/NetworkTestRun.hpp"   // the run and epoch the clone seams' epoch forms take
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "common/SignalBand.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "filter/NetworkCouplingExact.hpp"
-#include "filter/NetworkPbHold.hpp"
-#include "filter/NetworkPbHoldClone.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/carry/NetworkCouplingExact.hpp"
+#include "network/emit/NetworkPbHold.hpp"
+#include "network/emit/NetworkPbHoldClone.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"

@@ -25,7 +25,7 @@
  * @c LogManager& and obtains its own logger internally, and a default-constructed
  * @c LogManager returns a fresh console-only logger per call, so there is no registry
  * entry a test could attach a sink to.  The sibling auto-arm test
- * (@c tests/test_block_baarda.cpp, @c BlockBaardaSweepTest) makes the same choice.
+ * (@c tests/network/test_block_baarda.cpp, @c BlockBaardaSweepTest) makes the same choice.
  *
  * Card G (@c gap_instrument) is instrumentation only (counters and trace rows, verified
  * byte-identical), which is why it, and not the @c mw_lli_corroborate decision card,

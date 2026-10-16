@@ -30,7 +30,7 @@ steps only.
 
 ## 1. The model borrowed from the user side (REQUIRED)
 
-`buildStation` (`src\core\app\ApplicationNetworkSetup.cpp`) gives each station a
+`buildStation` (`src\core\network\driver\ApplicationNetworkSetup.cpp`) gives each station a
 `StateManager`, a `PppModel` and a `MeasurementModel`; the producer takes the column layout
 and the linearization point from them. It runs no station Kalman filter and writes no
 solution back, so `filter.process_noise.*` does not apply; time behaviour comes from the
@@ -59,27 +59,27 @@ byte-identical, so each step tests its config value at its first line, as every 
 Three run-start tables describe a parameter; each needs a row.
 
 - **Registry kind** ("Network (param model)"): an enumerator of `NetworkParamKind` and
-  `kNetworkParamKindCount` in `include\filter\NetworkParamRegistry.hpp` (at most 32 kinds);
+  `kNetworkParamKindCount` in `include\network\assembly\NetworkParamRegistry.hpp` (at most 32 kinds);
   a case in `paramKindName` and a block in `NetworkParamRegistry::build` in
-  `src\core\filter\NetworkParamRegistry.cpp`, copied from the `Zwd` block (`estimated`,
+  `src\core\network\assembly\NetworkParamRegistry.cpp`, copied from the `Zwd` block (`estimated`,
   `carried`, `q_rule`, `gap_horizon_s`, `route`, `source`). Uncarried: `carried` false,
   route `NotCarried`.
 - **Inventory class** ("Network (parameters as armed)"): a `StateContainer` value
   (`include\measurement\AbsorbedSharedStates.hpp`; the ZWD's is `TropoIndex`), then in
-  `src\core\filter\NetworkParamInventory.cpp` a `put` line in `listStateColumns`, a case in
+  `src\core\network\assembly\NetworkParamInventory.cpp` a `put` line in `listStateColumns`, a case in
   `classifyStateColumn` (`case SC::TropoIndex: c.kind = PK::Zwd;`) and lines in
   `paramClassLabel` and `stateContainerName`. Otherwise the column is `Unlisted` (the enum
   comment names gradients) and lands on the "unclassified" integrity line, which must read
   0. Two components can be two `ParamForm` values of one kind.
 - **Contribution sets** ("Network (contributions as armed)"): the kind in `kCodeRow` and
-  `kPhaseRow` of `src\core\filter\NetworkContributions.cpp`, where the ZWD is in both.
+  `kPhaseRow` of `src\core\network\assembly\NetworkContributions.cpp`, where the ZWD is in both.
 
 Trace labels: `buildLocalLabels` (`NetworkStationBlock.cpp`) and `localColumnLabels`
 (`NetworkRedundancyCensus.cpp`); an unlabelled column prints positional names.
 
 ## 3. The station split and the local block column (REQUIRED, no edit by default)
 
-`networkSplitStation` (`src\core\filter\NetworkStationSplit.cpp`) gives each column one
+`networkSplitStation` (`src\core\network\assembly\NetworkStationSplit.cpp`) gives each column one
 disposition: position `Pinned`, shared satellite columns `EstimatedBorder`, an all-zero H
 column `Unobserved`, every other column `EstimatedLocal` (entered in `h2local`, state index
 to local column). A new core column becomes a local column with no code. Another
@@ -96,11 +96,11 @@ station; a step gets its own station and slot writable (`StationBuild::st`, `::R
 everything else const. Entity tables are read in a step and written by serial code only
 (`nom_n4_verify.py`, check V5). The normal equations sum in a fixed order, local-block
 columns as ambiguity, wet delay, slant ionosphere, receiver clock, receiver code bias, phase
-colour; `tests\test_network_station_build.cpp` pins it.
+colour; `tests\network\test_network_station_build.cpp` pins it.
 
 ## 4. The carry (WHEN CARRIED)
 
-Template: the diagonal route of `src\core\filter\NetworkZwdCarry.cpp`.
+Template: the diagonal route of `src\core\network\carry\NetworkZwdCarry.cpp`.
 
 **Inject** (PASS B, parallel): `networkZwdCarryPrior`, row `zwd` of `kStationCarrySteps`.
 Copy the gate at the first line; the column through `h2local.find(tropo_idx)`; the record
@@ -112,14 +112,14 @@ Copy the gate at the first line; the column through `h2local.find(tropo_idx)`; t
 the leveling carry's warm-up needs its knob in that predicate, or it is armed and inert there.
 
 **Harvest** (serial, after the solve): `networkHarvestZwd`, one call in
-`networkHarvestLocalCarries` (`src\core\app\NetworkLocalCarryHarvest.cpp`; the call order is
+`networkHarvestLocalCarries` (`src\core\network\carry\NetworkLocalCarryHarvest.cpp`; the call order is
 load-bearing, see its header and `scripts\nom_hv1_verify.py`). Copy
 `est.reconstructStation(est_idx, x_s)`, `value_abs = x_lin + xr(col)`,
 `est.conditionalLocalVarianceDiag(...)`, the stash `net::put(...) = LocalCarry{...}` and
 `carryGapPrune(...)` against `ctx.params.spec(kind).gap_horizon_s`.
 
 **Contribution kind.** An enumerator in `ContributionKind`
-(`include\filter\NetworkContributionKind.hpp`, before `Unset`) and a row of
+(`include\network\assembly\NetworkContributionKind.hpp`, before `Unset`) and a row of
 `contributionSpecs()` (copy `PriorZwdCarry`); the order is checked at compile time. A row
 kind, not a diagonal prior, also needs a case in `rowClassOfKind` (`NetworkRowClassify.cpp`).
 
@@ -138,9 +138,9 @@ the shared-history note; `zwdQEff`.
 ## 5. Cross-epoch state (WHEN CARRIED)
 
 A value that survives an epoch is a field of an entity-table row
-(`include\app\NetworkEntities.hpp`, whose header is the guide): the ZWD carry is
+(`include\network\state\NetworkEntities.hpp`, whose header is the guide): the ZWD carry is
 `std::optional<LocalCarry> zwd` in `net::StationState`, with a `FieldDecl` row in
-`kStationFields` (`src\core\app\NetworkEntities.cpp`) naming its persistence.
+`kStationFields` (`src\core\network\state\NetworkEntities.cpp`) naming its persistence.
 
 - `Persist::ColdStart` (the receiver clock carry): the field and its row. The simplest start.
 - `Persist::Record` (the ZWD, record `Z`): also a member of `NetworkStateSnapshot`
@@ -148,12 +148,12 @@ A value that survives an epoch is a field of an entity-table row
   `src\core\products\NetworkStateSnapshot.cpp`; `zwdToSnapshot` and `zwdFromSnapshot`; the
   tag in `kRestoreOrder`; the calls in `NetworkStateSnapshotWrite.cpp` and
   `NetworkWarmResume.cpp`; a term in `networkSnapshotFingerprint`; a round-trip test naming
-  the tag (`tests\test_network_entities_records.cpp`).
+  the tag (`tests\network\test_network_entities_records.cpp`).
 - A function that binds an entity table non-const has a `kEntityWriters` row (lint check
   V12): `networkHarvestZwd`, `zwdFromSnapshot`.
 
 A per-epoch value a later stage reads is a member of the writing stage's group of
-`EpochEvents` (`include\app\NetworkEpoch.hpp`, its writer list updated), never an
+`EpochEvents` (`include\network\driver\NetworkEpoch.hpp`, its writer list updated), never an
 undeclared `NetworkCarryState` member (which needs a `kRunFields` row); counters go in
 `NetworkServiceCounters`.
 
@@ -165,8 +165,8 @@ Pattern of `CLAUDE.md` ("Config toggles"); network keys load in
 
 1. Member `network_carry_zwd_{false}` and getter `networkCarryZwd()` with Doxygen in
    `include\config\GnssConfig.hpp`; the loader line, default off.
-2. A member of `NetworkKnobs` (`include\app\NetworkRunContext.hpp`) set in
-   `NetworkKnobs::snapshot` (`src\core\app\NetworkKnobs.cpp`); steps and registry read it.
+2. A member of `NetworkKnobs` (`include\network\state\NetworkRunContext.hpp`) set in
+   `NetworkKnobs::snapshot` (`src\core\network\driver\NetworkKnobs.cpp`); steps and registry read it.
 3. A row in `docs\CONFIG_promotion_ledger.json` (`knob`, `verdict`, `area`, `default`,
    `why`; `UNVALIDATED` for a new default-off knob; `fingerprinted` when step 5 added a
    term), then `python scripts\ledger_render.py`.
@@ -181,18 +181,18 @@ An armed knob that acted on nothing must show at run end (standing invariant 4).
 is `int networkXxxRunEnd(const NetworkRunEndView& v)` in the subsystem's file, gated on the
 knob; `networkZwdSeamRunEnd` (`NetworkZwdCarry.cpp`) is a short model that warns on an armed
 knob with a zero counter. Add one row to `kNetworkRunEndReports`
-(`src\core\filter\NetworkRunEnd.cpp`) and raise `kNetworkRunEndReportCount`
+(`src\core\network\runend\NetworkRunEnd.cpp`) and raise `kNetworkRunEndReportCount`
 (`NetworkRunEnd.hpp` states the order rules). A parameter without a knob needs no row: the
 tables of step 2 print it.
 
 ## 8. Checks before a commit
 
 1. `scripts\vs2026_build.ps1 -Config x64-Debug`, then `build\x64-Debug\gnss_tests.exe`,
-   with tests for steps 2 to 5 (`tests\test_network_param_registry.cpp` and
-   `tests\test_network_param_inventory.cpp` as templates).
+   with tests for steps 2 to 5 (`tests\network\test_network_param_registry.cpp` and
+   `tests\network\test_network_param_inventory.cpp` as templates).
 2. `python scripts\nom_epoch_lint.py` after a change to a seam signature or an entity writer.
 3. `python scripts\nom_n4_verify.py --whole` (each field declared once; Record rows complete).
-4. A row in `tests\test_network_epoch_contract.cpp` for a new epoch writer.
+4. A row in `tests\network\test_network_epoch_contract.cpp` for a new epoch writer.
 5. `python scripts\make_golden_config.py --verify`,
    `python scripts\config_posture_check.py --verify-loader`,
    `python scripts\ledger_render.py --check`.

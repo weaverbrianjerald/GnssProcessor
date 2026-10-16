@@ -54,14 +54,14 @@
 
 #include <gtest/gtest.h>
 
-#include "filter/NetworkAnchorHygiene.hpp"
-#include "filter/NetworkInject.hpp"
-#include "filter/NetworkPhaseDatum.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/solve/NetworkAnchorHygiene.hpp"
+#include "network/carry/NetworkInject.hpp"
+#include "network/solve/NetworkPhaseDatum.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkStateSnapshot.hpp"
-#include "slip/NetworkSlipOracle.hpp"
+#include "network/slip/NetworkSlipOracle.hpp"
 
 #include <filesystem>
 #include <map>
@@ -306,7 +306,7 @@ TEST(RestoredArcAge, AGenuinelyYoungCandidateIsStillRefused) {
 // ===========================================================================
 
 /// One oracle wired to a hand-built carry (same construction as
-/// tests/test_slip_oracle.cpp's Harness, reduced to what these cases need).
+/// tests/network/test_slip_oracle.cpp's Harness, reduced to what these cases need).
 struct OracleHarness {
     LogManager        log_manager;
     NetworkSlipOracle oracle;

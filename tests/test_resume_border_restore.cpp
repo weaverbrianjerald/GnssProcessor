@@ -46,9 +46,9 @@
  */
 #include <gtest/gtest.h>
 
-#include "app/NetworkRunContext.hpp"
+#include "network/state/NetworkRunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkRunTypes.hpp"
+#include "network/driver/NetworkRunTypes.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkStateSnapshot.hpp"
 

@@ -645,7 +645,7 @@ parseReceiverPhaseBiasKey(std::string_view key) {
 // prior is gated on parseDcbKey and must not act on this state (it carries no
 // zero-mean prior, R2).  "ISC" contains neither infix, so all three reject the
 // key by construction; the negative parser tests in
-// tests/test_network_second_code_scope.cpp pin the property.
+// tests/network/test_network_second_code_scope.cpp pin the property.
 //
 // Constructed in:  StateInitializer (resolveReceiverBias, SCC branch)
 // Stored in:       StateManager::code_bias_indices_ (beside the IFB/DCB states,

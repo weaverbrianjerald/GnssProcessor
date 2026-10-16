@@ -6,7 +6,7 @@
  *        step HV1 builds on it).
  *
  * Card NOM3 step EP1 gave every per-epoch seam of the network producer one form over the run
- * (app/NetworkRun.hpp) and the epoch (app/NetworkEpoch.hpp).  A unit test that drives a seam
+ * (network/driver/NetworkRun.hpp) and the epoch (network/driver/NetworkEpoch.hpp).  A unit test that drives a seam
  * builds both here instead of keeping an explicit-parameter overload alive for it:
  *
  *   - the configuration is the test's own (copied in), and the run context is built from it, so
@@ -35,13 +35,13 @@
  * Neither copyable nor movable (the run holds references into the fixture).  Build it on the
  * heap (std::make_unique) when a test needs several, since a NetworkRun is large.
  */
-#include "app/NetworkEpoch.hpp"
-#include "app/NetworkRun.hpp"
-#include "app/NetworkRunContext.hpp"
-#include "app/NetworkSetupResult.hpp"
+#include "network/driver/NetworkEpoch.hpp"
+#include "network/driver/NetworkRun.hpp"
+#include "network/state/NetworkRunContext.hpp"
+#include "network/driver/NetworkSetupResult.hpp"
 #include "config/GnssConfig.hpp"
-#include "filter/NetworkEstimator.hpp"
-#include "logging/NetworkRunTraces.hpp"
+#include "network/solve/NetworkEstimator.hpp"
+#include "network/diag/NetworkRunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "rinex/MultiRinexSync.hpp"
 

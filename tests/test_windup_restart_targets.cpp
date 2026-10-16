@@ -21,14 +21,14 @@
 
 #include <gtest/gtest.h>
 
-#include "app/SignalRoster.hpp"
+#include "network/assembly/SignalRoster.hpp"
 #include "config/GnssConfig.hpp"
-#include "app/NetworkEntities.hpp"
-#include "filter/ArcLedger.hpp"
+#include "network/state/NetworkEntities.hpp"
+#include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "slip/NetworkSlipQc.hpp"
+#include "network/slip/NetworkSlipQc.hpp"
 
 #include <map>
 #include <set>
