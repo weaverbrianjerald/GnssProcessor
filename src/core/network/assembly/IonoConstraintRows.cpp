@@ -187,12 +187,7 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
     const double common_var = iw.common_mode_sigma_m * iw.common_mode_sigma_m;
     const Eigen::Index m0     = A_s.rows();
     const Eigen::Index ncol_r = A_r.cols();
-    A_s.conservativeResize(m0 + total, Eigen::NoChange);
-    A_s.bottomRows(total).setZero();
-    A_r.conservativeResize(m0 + total, Eigen::NoChange);
-    A_r.bottomRows(total).setZero();
-    w.conservativeResize(m0 + total);
-    y.conservativeResize(m0 + total);
+    networkGrowBlockRows(A_s, A_r, w, y, total);
 
     Eigen::Index out = m0;
     for (auto& kv : by_const) {
@@ -205,10 +200,7 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
         for (int k = 0; k < mc; ++k) { Hc(k, rws[k].col) = 1.0; zc(k) = rws[k].innov; }
         // Whiten by L⁻¹ (LLᵀ = R) → unit-information rows that contribute exactly
         // Hᵀ R⁻¹ H / Hᵀ R⁻¹ z to the station normals.
-        const Eigen::LLT<Eigen::MatrixXd> llt(R);
-        A_r.middleRows(out, mc) = llt.matrixL().solve(Hc);
-        y.segment(out, mc)      = llt.matrixL().solve(zc);
-        w.segment(out, mc).setOnes();
+        networkWriteWhitenedRows(R, Hc, nullptr, zc, out, A_s, A_r, w, y);
         for (int k = 0; k < mc; ++k)   // one tag per row, in row order
             tags.push_back(makeRowTag(ContributionKind::GimIono, rws[k].sat));
         out += mc;
@@ -349,12 +341,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
     const Eigen::Index m0      = A_s.rows();
     const Eigen::Index ncol_r  = A_r.cols();
     const Eigen::Index nshared = A_s.cols();
-    A_s.conservativeResize(m0 + total, Eigen::NoChange);
-    A_s.bottomRows(total).setZero();
-    A_r.conservativeResize(m0 + total, Eigen::NoChange);
-    A_r.bottomRows(total).setZero();
-    w.conservativeResize(m0 + total);
-    y.conservativeResize(m0 + total);
+    networkGrowBlockRows(A_s, A_r, w, y, total);
 
     Eigen::Index out = m0;
     for (auto& kv : by_const) {
@@ -390,11 +377,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
         // Whiten by L⁻¹ (LLᵀ = R) into unit-information rows; the local +1, the SH
         // partials and the innovation are whitened by the same factor, so the
         // common-mode-free structure carries through to both blocks identically.
-        const Eigen::LLT<Eigen::MatrixXd> llt(R);
-        A_r.middleRows(out, mc) = llt.matrixL().solve(Hr);
-        A_s.middleRows(out, mc) = llt.matrixL().solve(Hs);
-        y.segment(out, mc)      = llt.matrixL().solve(zc);
-        w.segment(out, mc).setOnes();
+        networkWriteWhitenedRows(R, Hr, &Hs, zc, out, A_s, A_r, w, y);
         for (int k = 0; k < mc; ++k)   // one tag per row, in row order
             tags.push_back(makeRowTag(ContributionKind::ShIonoTie, rws[k].sat));
         out += mc;

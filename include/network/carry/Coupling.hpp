@@ -457,4 +457,46 @@ void networkCouplingRegionRows(StationCarryFrame& carry);
 
 // ---- End of the PASS B station steps, declarations ----
 
+struct SyncedEpoch;   // rinex/MultiRinexSync.hpp
+
+/**
+ * @brief Folds the stations' local-block telemetry (block counts and sizes, the per-family
+ *        admitted, unfolded and missing-cross columns, the dimension histogram) into the run
+ *        counters.
+ *
+ * Serial, after the parallel produce. Keyed on the local-block knob, not on whether a block was
+ * built, so an armed but inert posture still prints its zeros at run end. Does nothing when
+ * the knob is off.
+ *
+ * @param ctx     The run context: the counters are written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkLocalBlockTally(NetworkRunContext& ctx,
+                            const std::vector<StationAssembly>& asm_res);
+
+/**
+ * @brief Folds the stations' coupling-term counts into the run totals and dumps the first
+ *        assembled coupling rows (foldAndDumpCouplingRows), then latches the first warm
+ *        epoch's present and departed split for the resume census.
+ *
+ * Serial, after the parallel produce. The census value is a difference of the two run totals
+ * bracketing the fold, because the fold updates them in place and returns nothing.
+ *
+ * @param ctx                   The run context: the coupling totals and the resume census.
+ * @param est                   The estimator (its column layout is read by the dump).
+ * @param asm_res               The stations' assembled blocks, read.
+ * @param registered_clock_sats The epoch's registered clock satellites.
+ * @param shared_phase_keys     The epoch's shared phase-bias keys.
+ * @param registered_code_keys  The epoch's registered code-bias (satellite, signal) pairs.
+ * @param se                    The epoch (its time of week stamps the dump).
+ * @param log                   The run logger.
+ */
+void networkCouplingTermTally(NetworkRunContext& ctx, const NetworkEstimator& est,
+                              const std::vector<StationAssembly>& asm_res,
+                              const std::vector<std::string>& registered_clock_sats,
+                              const std::set<std::string>& shared_phase_keys,
+                              const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                              const SyncedEpoch& se,
+                              const std::shared_ptr<spdlog::logger>& log);
+
 } // namespace GnssProcessor

@@ -379,4 +379,16 @@ void networkOraclePinPriors(StationCarryFrame& carry);
 
 // ---- End of the PASS B station steps, declarations ----
 
+/**
+ * @brief Folds the stations' oracle-pin accounting (rows injected, gauge-pinned skips, missing
+ *        columns) into the run's pin totals.
+ *
+ * Serial, after the parallel produce. Does nothing when no oracle pin is armed.
+ *
+ * @param ctx     The run context: the pin totals are written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkOraclePinStationTally(NetworkRunContext& ctx,
+                                  const std::vector<StationAssembly>& asm_res);
+
 } // namespace GnssProcessor

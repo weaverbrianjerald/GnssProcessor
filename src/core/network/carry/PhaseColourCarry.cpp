@@ -123,7 +123,7 @@ StationStep networkPhaseColourRows(StationBuild& build) {
     // sits in A_r (not the pre-test diagonal prior), so the within-epoch RAIM
     // replay, which re-adds the assembled rows, keeps it.  Off: nothing runs.
     if (!ctx.knobs.pc_on) return StationStep::Next;
-    const Eigen::VectorXd x_lin_pc = st.sm->getStateVector();
+    const Eigen::VectorXd& x_lin_pc = build.postUpdateState();
     std::vector<std::tuple<Eigen::Index, double, double>> brows;   // (col, w, y)
     std::vector<RowTag> brow_tag;   // one contribution tag per row
     for (const auto& [pc_sat, pc_sidx] : st.sm->getPhaseColourStates()) {
@@ -152,12 +152,7 @@ StationStep networkPhaseColourRows(StationBuild& build) {
     const Eigen::Index nb = static_cast<Eigen::Index>(brows.size());
     if (nb > 0) {
         const Eigen::Index m0 = R.A_s.rows();
-        R.A_s.conservativeResize(m0 + nb, Eigen::NoChange);
-        R.A_s.bottomRows(nb).setZero();
-        R.A_r.conservativeResize(m0 + nb, Eigen::NoChange);
-        R.A_r.bottomRows(nb).setZero();
-        R.w.conservativeResize(m0 + nb);
-        R.y.conservativeResize(m0 + nb);
+        networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, nb);
         for (Eigen::Index k = 0; k < nb; ++k) {
             const auto& [bc_col, bc_w, bc_y] = brows[static_cast<std::size_t>(k)];
             R.A_r(m0 + k, bc_col) = 1.0;
@@ -357,5 +352,22 @@ int networkPhaseColourRunEnd(const NetworkRunEndView& v) {
                   "back to the birth prior.", C.n_pc_backstop_rows);
     return 0;
 }
+
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkPhaseColourTally(NetworkRunContext& ctx,
+                            const std::vector<StationAssembly>& asm_res) {
+    // The phase-colour prior edges, counted in the parallel produce and reduced
+    // here.  Off: the loop does not run.
+    if (ctx.knobs.pc_on)
+        for (const StationAssembly& Rc : asm_res) {
+            ctx.counters.n_pc_birth_rows     += Rc.pc_birth_rows;
+            ctx.counters.n_pc_backstop_rows  += Rc.pc_backstop_rows;
+            ctx.counters.n_pc_block_folds    += Rc.pc_block_folds;
+            ctx.counters.n_pc_fallback_folds += Rc.pc_fallback_folds;
+        }
+}
+
+// ---- End of the PASS B serial tallies ----
 
 } // namespace GnssProcessor

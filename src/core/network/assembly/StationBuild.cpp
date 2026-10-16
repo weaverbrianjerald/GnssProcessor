@@ -22,6 +22,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/Responses.hpp"
+#include <Eigen/Dense>   // LLT in networkWriteWhitenedRows
 #include "network/slip/OraclePin.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "network/qc/Congruence.hpp"
@@ -66,73 +67,19 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
     // ---- End of the bindings ----
     // The alias lines of networkPassB_ this stage reads, verbatim.
     auto& stations = setup.stations;
-    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide jointly whitened local block at inject (F3, SPEC_amb_iono_split_overcount); off = byte-identical
-    // Read-only parallel consult of the latched free-epoch set
-    // (SPEC_slip_relevel_walk; filled serially in PASS-A, const for the whole produce).
-    const bool   relevel_free_on = ctx.knobs.relevel_free_on;
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
-    auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
-    auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
-    auto& n_cpl_terms_shrunk = ctx.counters.n_cpl_terms_shrunk;
-    auto& n_cpl_row_dump = ctx.counters.n_cpl_row_dump;
 
-    // Coupling observability, serial and post-produce: fold the
-    // per-station coupling-term counts into the run totals, plus the one-shot
-    // debug dump of the first few assembled coupling rows (see
-    // network/carry/Coupling.hpp).  Free-epoch skips (SPEC_slip_relevel_walk): fold
-    // the per-station counts (serial, post-produce, the same discipline as the
-    // coupling fold below).
-    if (relevel_free_on)
-        for (const StationAssembly& Rc : asm_res)
-            ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+    // The produce wrote only each station's own slot; the run's counters, tables and traces
+    // are folded here, serially and in station order, one family at a time. Each family's
+    // fold is a tally function in the file of the family.
+    networkAmbiguityFreeEpochTally(ctx, asm_res);
     // The stations' parameter inventories, folded serially (the same
     // discipline); networkParamInventoryEpochTail writes the table after the first
     // emitted epoch and the teardown writes the run's.  `present` tells a roster station
     // with no usable observations from one that was assembled but never reached its split.
     networkParamInventoryDrain(ctx.param_inventory, asm_res, present, se.time.week, se.time.tow);
-    // The produce phase's per-station response counts, folded into the
-    // run's response table (serial, the same discipline; zero where a site is unarmed).
-    for (const StationAssembly& Rc : asm_res) {
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatch,    Rc.prm_amb_free_latch);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatchReentry,
-                   Rc.prm_amb_free_latch_reentry);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbPendingReseedSkip, Rc.prm_amb_pending_reseed_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapSkip,           Rc.prm_amb_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapSkip,          Rc.prm_rxcb_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbJumpSkip,         Rc.prm_rxcb_jump_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapSkip,          Rc.prm_iono_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapSkip,         Rc.prm_rxclk_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapSkip,           Rc.prm_zwd_gap_skip);
-        prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapSkip,           Rc.prm_rpb_gap_skip);
-    }
-    // Simulation-only oracle ambiguity pin: fold this epoch's per-station pin
-    // accounting into the run-scope counters (serial, post-produce, the same
-    // discipline).  Null pointer when off, so this is unreachable on an unarmed run.
-    if (ctx.carry.oracle_pin) {
-        auto& op = *ctx.carry.oracle_pin;
-        for (const StationAssembly& Rc : asm_res) {
-            op.rows_injected        += Rc.opin_rows;
-            op.gauge_pinned_skipped += Rc.opin_gauge_skipped;
-            op.no_column            += Rc.opin_no_column;
-        }
-    }
-    // Fold the inject-side stale skips (the cliff mechanism, SPEC_withhold_era_release
-    // §8) and record the worst epoch with a handle a trace filter can use.
-    {
-        long long stale_ep = 0, stale_sta = 0;
-        for (const StationAssembly& Rc : asm_res)
-            if (Rc.inject_stale_skips > 0) { stale_ep += Rc.inject_stale_skips; ++stale_sta; }
-        if (stale_ep > 0) {
-            ctx.counters.n_cr_inject_stale += stale_ep;
-            ++ctx.counters.n_cr_inject_stale_epochs;
-            if (stale_ep > ctx.counters.n_cr_inject_stale_max) {
-                ctx.counters.n_cr_inject_stale_max      = stale_ep;
-                ctx.counters.n_cr_inject_stale_max_week = se.time.week;
-                ctx.counters.cr_inject_stale_max_tow    = se.time.tow;
-                ctx.counters.n_cr_inject_stale_max_sta  = stale_sta;
-            }
-        }
-    }
+    networkResponsesStationTally(ctx, asm_res);
+    networkOraclePinStationTally(ctx, asm_res);
+    networkAmbiguityStaleSkipTally(ctx, asm_res, se);
     // Fold the per-station block telemetry (F3, network.phase_leveling_local_block;
     // same discipline).  Keyed on the knob, not the live predicate, so an armed but
     // inert posture still prints its zeros at run end (invariant #4).
@@ -157,87 +104,12 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
                           pl_now_s, asm_res[si].pl_blk_fallback_dim);
             ctx.counters.n_amb_block_fallback += asm_res[si].pl_blk_fallback;
         }
-    if (pl_local_block)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;
-            ctx.counters.n_pl_blk_rows         += Rc.pl_blk_rows;
-            ctx.counters.n_pl_blk_marg_cols    += Rc.pl_blk_marg_cols;
-            ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
-            ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
-            ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
-            // B9-in-block: same discipline (counted in the parallel produce, reduced here).
-            ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
-            ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;
-            ctx.counters.n_pl_blk_zwd_missing_cross += Rc.pl_blk_zwd_missing_cross;
-            // I-in-block: same discipline (counted in the parallel produce, reduced here).
-            ctx.counters.n_pl_blk_iono_cols          += Rc.pl_blk_iono_cols;
-            ctx.counters.n_pl_blk_iono_not_folded    += Rc.pl_blk_iono_not_folded;
-            ctx.counters.n_pl_blk_iono_missing_cross += Rc.pl_blk_iono_missing_cross;
-            ctx.counters.n_iono_blk_gap_drop         += Rc.pl_blk_iono_gap_drop;
-            // RX-CLK-in-block: same discipline (counted in the parallel produce,
-            // reduced here).  n_rxclk_carry_refused is not folded here: the jump
-            // response fires at the serial harvest, where the one-step prediction
-            // innovation exists.
-            ctx.counters.n_pl_blk_rxclk_cols          += Rc.pl_blk_rxclk_cols;
-            ctx.counters.n_pl_blk_rxclk_isb_cols      += Rc.pl_blk_rxclk_isb_cols;
-            ctx.counters.n_pl_blk_rxclk_not_folded    += Rc.pl_blk_rxclk_not_folded;
-            ctx.counters.n_pl_blk_rxclk_missing_cross += Rc.pl_blk_rxclk_missing_cross;
-            ctx.counters.n_pl_blk_rxcb_cols           += Rc.pl_blk_rxcb_cols;
-            ctx.counters.n_pl_blk_rxcb_not_folded     += Rc.pl_blk_rxcb_not_folded;
-            ctx.counters.n_pl_blk_rxcb_missing_cross  += Rc.pl_blk_rxcb_missing_cross;
-            ctx.counters.n_rxcb_blk_restored_skip     += Rc.pl_rxcb_restored_skip;
-            ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
-            for (int b = 0; b < 5; ++b)
-                ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
-            if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
-                ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
-        }
-    // The phase-colour prior edges, counted in the parallel produce and reduced
-    // here.  Off: the loop does not run.
-    if (ctx.knobs.pc_on)
-        for (const StationAssembly& Rc : asm_res) {
-            ctx.counters.n_pc_birth_rows     += Rc.pc_birth_rows;
-            ctx.counters.n_pc_backstop_rows  += Rc.pc_backstop_rows;
-            ctx.counters.n_pc_block_folds    += Rc.pc_block_folds;
-            ctx.counters.n_pc_fallback_folds += Rc.pc_fallback_folds;
-        }
-    // Latch the first warm epoch's present/departed split across this fold (§18.12).
-    // A restore that reads its rows and then marginalizes most of their terms has
-    // softened the rows (σ² += Sum M²·P_prev), rung 3's mechanism by another route,
-    // and must be read as a failure even though every "restored" counter looks
-    // normal.  Both names are run-total aliases into ctx.counters (see the alias block
-    // at the top of this function), so the seam value is a difference bracketing this
-    // one call, not anything the call returns.
-    const long long cpl_p0 = n_cpl_terms_present, cpl_d0 = n_cpl_terms_departed;
-    foldAndDumpCouplingRows(carry_cpl_cond, asm_res, est,
-                            registered_clock_sats, shared_phase_keys, registered_code_keys,
-                            se.time.tow, log,
-                            n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
-                            ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
-                            ctx.counters.n_cpl_reinit_diverted,
-                            ctx.counters.n_cpl_readmit_diverted,
-                            n_cpl_row_dump,
-                            &ctx.counters.cpl_orphan_fam_total);
-    if (ctx.carry.resume.cpl_census && carry_cpl_cond) {
-        ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
-        ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
-    }
-    // Fold each station's exact-update counts into the run totals (serial; the
-    // produce wrote only its own slot).
-    if (ctx.knobs.carry_cpl_exact)
-        for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);
-
-    // SD pre-reduce EWL trace drain (serial, post-produce; SPEC_sd_ewl_prereduce §6).
-    // The rows were formatted per station inside the parallel produce; writing them
-    // here in station index order makes the file independent of the thread count.
-    // Flushed per epoch: this stream exists to diagnose runs that are killed
-    // mid-flight, and an unflushed tail would lose exactly that evidence.
-    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
-        for (size_t i = 0; i < asm_res.size(); ++i)
-            for (const std::string& row : asm_res[i].sd_ewl_trace)
-                traces.sd_ewl_trace << row;
-        traces.sd_ewl_trace.flush();
-    }
+    networkLocalBlockTally(ctx, asm_res);
+    networkPhaseColourTally(ctx, asm_res);
+    networkCouplingTermTally(ctx, est, asm_res, registered_clock_sats, shared_phase_keys,
+                             registered_code_keys, se, log);
+    networkCouplingExactTally(ctx, asm_res);
+    networkSdEwlTraceDrain(config_, traces, asm_res);
 }
 
 // ---- End of the PASS B serial stages ----
@@ -333,6 +205,37 @@ const std::array<StationCarryStep, kStationCarryStepCount> kStationCarrySteps = 
      0,
      &networkStationPriorFinalize},
 }};
+
+void networkGrowBlockRows(Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
+                          Eigen::VectorXd& y, Eigen::Index n) {
+    const Eigen::Index m0 = A_s.rows();
+    A_s.conservativeResize(m0 + n, Eigen::NoChange);
+    A_s.bottomRows(n).setZero();
+    A_r.conservativeResize(m0 + n, Eigen::NoChange);
+    A_r.bottomRows(n).setZero();
+    w.conservativeResize(m0 + n);
+    y.conservativeResize(m0 + n);
+}
+
+void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd& Hr,
+                              const Eigen::MatrixXd* Hs, const Eigen::VectorXd& zc,
+                              Eigen::Index out, Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r,
+                              Eigen::VectorXd& w, Eigen::VectorXd& y) {
+    const Eigen::Index mc = cov.rows();
+    const Eigen::LLT<Eigen::MatrixXd> llt(cov);
+    A_r.middleRows(out, mc) = llt.matrixL().solve(Hr);
+    if (Hs) A_s.middleRows(out, mc) = llt.matrixL().solve(*Hs);
+    y.segment(out, mc)      = llt.matrixL().solve(zc);
+    w.segment(out, mc).setOnes();
+}
+
+const Eigen::VectorXd& StationBuild::postUpdateState() {
+    if (!post_state_ready) {
+        post_state = st.sm->getStateVector();
+        post_state_ready = true;
+    }
+    return post_state;
+}
 
 bool networkStationBuild(StationBuild& build) {
     for (const StationBuildStep& s : kStationBuildSteps)

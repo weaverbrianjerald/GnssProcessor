@@ -188,9 +188,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     if (rxclk_blk_on) {
         // q is per epoch, so the gap needs an epoch length, taken from the
         // run itself exactly as in the iono carry.
-        double dt_ep = pl_now_s - ctx.carry.pl_prev_now_s;
-        if (!std::isfinite(dt_ep) || dt_ep <= 0.0 || dt_ep > pl_max_gap_s)
-            dt_ep = 0.0;   // first epoch / implausible spacing ⇒ gap_ep = 1
+        const double dt_ep = networkEpochSpacingS(pl_now_s, ctx.carry.pl_prev_now_s, pl_max_gap_s);
         struct RxCand { std::string kind; int sidx; };
         std::vector<RxCand> rx_cand;
         const size_t clk_sz = st.sm->getClockIndex();
@@ -313,10 +311,9 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
     // advanced to pl_now_s when this loop runs.  Used only to convert a gap into
     // epochs for the per-epoch q, so the knob means the same thing at 1 s and at
     // 30 s.
-    double dt_ep_run = (ctx.carry.rxclk_prev_now_s > 0.0)
-                           ? pl_now_s - ctx.carry.rxclk_prev_now_s : 0.0;
-    if (!std::isfinite(dt_ep_run) || dt_ep_run <= 0.0 || dt_ep_run > rxclk_gap_s)
-        dt_ep_run = 0.0;   // first epoch / implausible spacing ⇒ gap_ep = 1
+    const double dt_ep_run =
+        (ctx.carry.rxclk_prev_now_s > 0.0)
+            ? networkEpochSpacingS(pl_now_s, ctx.carry.rxclk_prev_now_s, rxclk_gap_s) : 0.0;
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];

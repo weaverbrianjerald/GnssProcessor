@@ -38,6 +38,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -372,5 +373,19 @@ struct NetworkRunEndView;
 int networkResponsesRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+struct StationAssembly;   // network/driver/RunTypes.hpp
+
+/**
+ * @brief Folds the stations' per-site response counts into the run's response table.
+ *
+ * Serial, after the parallel produce: each station counted the responses its inject sites made
+ * in its own slot (zero where a site is unarmed).
+ *
+ * @param ctx     The run context: the response table is written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkResponsesStationTally(NetworkRunContext& ctx,
+                                  const std::vector<StationAssembly>& asm_res);
 
 }  // namespace GnssProcessor

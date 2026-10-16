@@ -1439,11 +1439,12 @@ StationStep networkRaimColumnCensus(StationBuild& build) {
     //
     // It is a separate block rather than a relaxation of the two existing
     // gates, so `pl_amb` keeps its current contents and every reader of it
-    // stays byte-identical (standing invariant #6).  The one cost is a second
-    // `getStateVector()` when both are live, a per-station vector copy already
-    // paid once below; it is not paid at all on the off path.
+    // stays byte-identical (standing invariant #6).  The state vector is the
+    // station's shared post-update copy (StationBuild::postUpdateState), made
+    // once per station by the first step that reads it, and not made here on
+    // the off path.
     if (!(raim_ci_on || pd_handover_continuous)) return StationStep::Next;
-    const Eigen::VectorXd x_lin_qc = st.sm->getStateVector();
+    const Eigen::VectorXd& x_lin_qc = build.postUpdateState();
     for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
         const auto parts = StateKeys::parseAmbiguityKey(key);
         if (!parts) continue;

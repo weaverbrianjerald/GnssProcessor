@@ -443,4 +443,19 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 
 // ---- End of the PASS B station steps, declarations ----
 
+/**
+ * @brief Writes the stations' SD pre-reduce EWL trace rows to the trace file, in station order.
+ *
+ * Serial, after the parallel produce: each station formatted its rows into its own slot, and
+ * writing them in station index order makes the file independent of the thread count. The
+ * stream is flushed every epoch, because it exists to diagnose runs that are killed
+ * mid-flight. Does nothing unless the trace is on and its file is open.
+ *
+ * @param config_ The configuration (the trace switch).
+ * @param traces  The run's trace streams: the SD-EWL trace is written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkSdEwlTraceDrain(const GnssConfig& config_, NetworkRunTraces& traces,
+                            const std::vector<StationAssembly>& asm_res);
+
 } // namespace GnssProcessor

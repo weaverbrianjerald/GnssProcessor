@@ -1431,7 +1431,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         ? (!st.pinned_amb_targets.empty() || !st.pinned_rpb_keys.empty())
         : st.is_pivot;
     if (do_fold) {
-        const Eigen::VectorXd piv_x = st.sm->getStateVector();
+        const Eigen::VectorXd& piv_x = build.postUpdateState();
         std::vector<int> pin_col;       // A_r column of each pin
         std::vector<double> pin_y;       // innovation = target - current absolute value
         std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
@@ -1605,12 +1605,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         const int np = static_cast<int>(pin_col.size());
         if (np > 0) {
             const Eigen::Index m0 = R.A_s.rows();
-            R.A_s.conservativeResize(m0 + np, Eigen::NoChange);
-            R.A_s.bottomRows(np).setZero();
-            R.A_r.conservativeResize(m0 + np, Eigen::NoChange);
-            R.A_r.bottomRows(np).setZero();
-            R.w.conservativeResize(m0 + np);
-            R.y.conservativeResize(m0 + np);
+            networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, np);
             for (int k = 0; k < np; ++k) {
                 R.A_r(m0 + k, pin_col[k]) = 1.0;
                 R.w(m0 + k) = pin_w[k];   // 1e10 pins / 1/σ² RPB priors
