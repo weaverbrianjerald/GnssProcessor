@@ -13,7 +13,7 @@
  * system, so they are reported as a separate section and excluded from the
  * kernel-level closure.
  *
- * Card NOM step N2b: the decomposition iterates exactly the channels the kernel folds
+ * The decomposition iterates exactly the channels the kernel folds
  * (@ref networkRhsAttribDecompose): a station's rows, its pre-PD prior (folded with the
  * block, the channel the attribution had missed) and its
  * post-PD diagonal prior when the consume folded it, then every captured shared fold
@@ -1503,8 +1503,8 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
 namespace {
 
 /**
- * @brief Write `cols_<tow>.csv`, the solution shares at the named shared columns (card
- *        ICF instrument A'; the format is documented at @ref networkRhsAttribDump).
+ * @brief Write `cols_<tow>.csv`, the solution shares at the named shared columns
+ *        (instrument A'; the format is documented at @ref networkRhsAttribDump).
  * @param f       The frame.
  * @param dec     Its class decomposition.
  * @param labels  The shared labels of @c network.rhs_attrib_columns.

@@ -86,7 +86,7 @@
  *    edge stays classified as FRAME there, which is the other answer §8.4 INC-2
  *    permits.
  *  - The **two-state clock oscillator** clear (`clk_model_warm`).  `clock_model`
- *    is not armed on any validated lineage (the card is a documented NO-GO), so
+ *    is not armed on any validated lineage (the model is a documented NO-GO), so
  *    transforming the oscillator state would be untested code on an unused path.
  *  - The **SH-VTEC** carry, which has no constellation and whose skip is
  *    deliberately global (see the RTA-2 loader warning).

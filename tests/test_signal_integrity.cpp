@@ -8,7 +8,7 @@
  * (G21 at MBAR00UGA, DOY-129 19:22-19:26) is a semi-codeless L2W loop slipping ~6 and
  * ~4 cycles with no receiver flag, in windows where MW (needs Welford history), IF-TD
  * (needs three consecutive epochs) and GF (not used at 30 s by policy) are all blind.
- * No detector observes the event; the card is bookkeeping over presence, and
+ * No detector observes the event; the check is bookkeeping over presence, and
  * bookkeeping that does nothing looks the same as bookkeeping that works.  Each case
  * below pins a decision that has no other observable:
  *
@@ -328,7 +328,7 @@ TEST(NetworkSignalIntegrity, DemotionMapIsKeyedBySatelliteSoOnlyPhaseRowsCanMatc
 //
 // Otherwise an arc that permanently lost a band would stay Degraded, and so demoted,
 // for the rest of its life.  That is the standing single-frequency policy question
-// the spec defers until after the census (§7), and this card does not answer it by
+// the spec defers until after the census (§7), and this check does not answer it by
 // default.  The arc instead re-vets on its reduced set and returns to full weight,
 // while `ever_dual` keeps it visible in the audit census.
 TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSet) {
@@ -364,11 +364,11 @@ TEST(NetworkSignalIntegrity, BandGoneBeyondTheFlickerWindowReducesTheReferenceSe
 // ---------------------------------------------------------------------------
 //
 // The spec's premise is that a true re-entry already refloats through the funnel
-// (Card G measured "0 bridged"), so this card's instruction is "no change, but assert
+// (the gap instrument measured "0 bridged"), so this check's instruction is "no change, but assert
 // it with a counter".  Acting anyway would push ~1.7 extra funnel entries per epoch
-// into a channel the Iono-2 v3k erase policy is tuned on, so the card measures the
-// premise and leaves the decision to a later card.  The gap bucketing makes the
-// measurement comparable to Card G's own re-entry totals.
+// into a channel the Iono-2 v3k erase policy is tuned on, so the check measures the
+// premise and leaves the decision to a later change.  The gap bucketing makes the
+// measurement comparable to the gap instrument's own re-entry totals.
 TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
     LogManager lm;
     auto cfg = loadCfg(lm, "reentry", armed());
@@ -400,7 +400,7 @@ TEST(NetworkSignalIntegrity, ReentryIsAssertedAndBucketedButNeverRefloated) {
 //
 // The BSHM/G07 class: an arc never observed dual.  Folding it into the degraded count
 // would inflate the audit answer with arcs that never degraded, and the two have
-// opposite policy consequences: a degraded arc is a hazard this card demotes, while a
+// opposite policy consequences: a degraded arc is a hazard this check demotes, while a
 // standing single-frequency arc is a deferred policy question (spec §7) and must not
 // be demoted permanently by default.
 TEST(NetworkSignalIntegrity, StandingSingleFrequencyArcsAreCountedSeparatelyAndStabilise) {
@@ -553,8 +553,8 @@ TEST(NetworkSignalIntegrity, WarmResumeVetsEveryArcForTheRevetWindowThenExpires)
 // ---------------------------------------------------------------------------
 //
 // Invariant #6 requires byte-identity by structure, not by a numerically neutral
-// value: with the card off no band map is allocated, no sigma map is published, no
-// counter moves and no observable is touched, so the assembly reads the pre-card
+// value: with the check off no band map is allocated, no sigma map is published, no
+// counter moves and no observable is touched, so the assembly reads the original
 // `em.R_v.cwiseInverse()` with no additional floating-point operations.  The action
 // knobs are set on purpose: the loader disarms them when the census master is off,
 // rather than letting them act behind a classifier that never ran.

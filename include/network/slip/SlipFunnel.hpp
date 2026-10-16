@@ -11,7 +11,7 @@
  * (NetworkCarryState::carry_innov_pending, carry_innov_pending_flat), never a funnel entry.
  *
  * Producers, in spine order (each takes the funnel as an output parameter):
- *   1. networkSlipFunnelOpen: the previous epoch's innovation-gate flags (card 4 D5), consumed
+ *   1. networkSlipFunnelOpen: the previous epoch's innovation-gate flags (D5), consumed
  *      one-shot, and the retap-only drain beside them (carry_innov_flat_now).
  *   2. Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp): the PASS-A slip
  *      detectors' drains (network/slip/SlipQc.cpp), into the raw subset only.
@@ -65,7 +65,7 @@ struct NetworkSlipFunnel {
  *
  * Under network.carry_invariant_innov_gate the flags the gate raised after the last solve
  * (ctx.carry.carry_innov_pending) enter the funnel and are cleared.  The retap-only drain
- * (card 4 D5 v4) moves the corroborated-flat subset into ctx.carry.carry_innov_flat_now, which
+ * (D5 v4) moves the corroborated-flat subset into ctx.carry.carry_innov_flat_now, which
  * is cleared first on every epoch so a disarmed run cannot inherit a stale set.
  *
  * @param run    The run: reads ctx.knobs.carry_innov_gate; writes ctx.carry's pending and

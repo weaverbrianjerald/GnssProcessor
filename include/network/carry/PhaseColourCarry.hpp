@@ -29,7 +29,7 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
 /**
- * @brief Card LGM: the phase-colour columns' record and birth rows.
+ * @brief The phase-colour columns' record and birth rows.
  *
  * Step `phase_colour_rows` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * PhaseColourBirth, PhaseColourBackstop. It returns at once unless `ctx.knobs.pc_on`. Records:
@@ -41,7 +41,7 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 StationStep networkPhaseColourRows(StationBuild& build);
 
 /**
- * @brief Card LGM: the station's carried phase-colour columns for the local block.
+ * @brief The station's carried phase-colour columns for the local block.
  *
  * Step `phase_colour_block` of kStationCarrySteps (network/assembly/StationBuild.hpp); its kinds:
  * none (it records only). It returns at once unless the frozen enclosing conditions
@@ -62,7 +62,7 @@ struct HarvestBorder;                       // network/carry/LocalCarryHarvest.h
 struct StationHarvestBlock;                 // network/carry/LocalCarryHarvest.hpp
 
 /**
- * @brief Card LGM: each phase-colour column's posterior, regression and F3 row, and its trace row.
+ * @brief Each phase-colour column's posterior, regression and F3 row, and its trace row.
  *        No-op unless the station carries phase-colour columns under the coupling carry.
  *
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.
@@ -80,7 +80,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
                                       std::size_t i, EpochEvents& events);
 
 /**
- * @brief Card LGM: drop phase-colour entries past network.phase_colour_max_gap_s (counted).
+ * @brief Drop phase-colour entries past network.phase_colour_max_gap_s (counted).
  *
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.
  * @param ep This epoch after the solve (the solution, the assembly, the columns and the clock are

@@ -2,7 +2,7 @@
  * @file test_resume_emit_restore.cpp
  * @brief Contract tests for the emit-layer continuity
  *        (docs/SPEC_event_harness.md §21.10): the snapshot's format-forward
- *        emit-layer records (@c ER: the emission frame of the Card-4 eq34 emit
+ *        emit-layer records (@c ER: the emission frame of the eq34 emit
  *        re-base), the engine's own export/restore, and the loader's side of the
  *        two knobs (@c network.state_snapshot_emit_capture,
  *        @c network.resume_emit_restore).

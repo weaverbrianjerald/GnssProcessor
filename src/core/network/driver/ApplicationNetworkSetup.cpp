@@ -88,18 +88,18 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot and warm resume (RTB-7)
-#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
-#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
+#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
+#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader
 #include "network/solve/Estimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
@@ -222,7 +222,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // threaded through Phase 3 (nav load and SP3-error lift), the producer-station
     // gate suppression (D1), the anchor-σ re-base (D6), the clock-IODE stamp and the
     // apriori_product_id.  Every use is guarded on it, so the sp3 path is textually
-    // unchanged.  (Card 5, RTF-1)
+    // unchanged.
     setup.brdc_rts =
         (config_.networkAprioriSource() == NetworkAprioriSource::BrdcRts);
     const bool brdc_rts = setup.brdc_rts;
@@ -418,7 +418,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // LiveEphemerisStore does for toe).  The staging sort here and the epoch-loop
     // feed both call navAvailabilityGpsSeconds, one inline function in
     // network/driver/SetupResult.hpp, so their orders cannot drift apart.
-    // (Card 8, replay parity; INC-5)
+    // (replay parity; INC-5)
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     if (brdc_rts) {
@@ -430,7 +430,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Geometry::getSatellitePV falls back to this store when no SP3 is loaded, and
         // GnssCorrections::getSatelliteClockCorrection supplies the broadcast SV clock
         // (marked broadcast-grade) when no precise CLK covers the epoch, which is the
-        // broadcast a-priori this mode needs.  (Card 5, RTF-1)
+        // broadcast a-priori this mode needs.
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
             log->error("Network (brdc_rts): network.apriori_source = brdc_rts requires a "
@@ -442,8 +442,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Parse first so a per-constellation loaded-satellite summary is available.
         //
         // The whole day is not inserted at once.  LiveEphemerisStore keeps only the
-        // current and previous record per satellite (live streaming semantics, which
-        // Cards 3/6/7 pin), so a full-file load would leave each satellite holding its
+        // current and previous record per satellite (live streaming semantics),
+        // so a full-file load would leave each satellite holding its
         // last two records of the day; at any processing epoch more than a fit window
         // (~4 h GPS, ~2 h GAL/BDS) before the end of the day, the staleness guard would
         // then reject every satellite and the producer would degenerate to
@@ -454,7 +454,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // and toc is the closest file-derivable stand-in for "a live receiver holds this
         // record".  Live GPS broadcasts a data set from about toe − 2 h, so the toc proxy
         // is conservative by up to one fit half-window: records roll in slightly later
-        // than live, never early.  (Card 8, replay parity, plan D4)
+        // than live, never early.  (replay parity)
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         std::map<char, std::set<std::string>> nav_by_const;
         for (const auto& e : nav)
@@ -711,9 +711,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                         : fmt::format(" (on {})", worst_sat));
         }
     } else if (config_.estimateNetworkSatCodeBias()) {
-        // A second guard (Card 5): the external-GIM code-bias path is post-processing-only
+        // A second guard: the external-GIM code-bias path is post-processing-only
         // (a GIM is a daily product, unavailable to the self-sufficient brdc_rts service).
-        // The load-time validation (Card 1) rejects brdc_rts + estimate_sat_code_bias +
+        // The load-time validation rejects brdc_rts + estimate_sat_code_bias +
         // !estimate_iono_sh as a hard error, so reaching this branch in brdc_rts means that
         // check was bypassed; refuse rather than load a GIM the service cannot have.
         if (brdc_rts) {
@@ -972,7 +972,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // broadcast-phase gate is therefore suppressed on producer models only:
         // buildStation never builds the held-out closed-loop consumer (the roster loop
         // below skips it), so the consumer keeps the default gate.  sp3 mode passes
-        // false (byte-identical).  (Card 5, RTF-1 / plan D1)
+        // false (byte-identical).
         st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
         // A producer station's a priori satellite clock is the native broadcast
         // a priori (null in every other mode, byte-identical).  buildStation never builds
@@ -1371,7 +1371,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     if (seam_on)
         log->info("Network: post-solve carry-fold/D5 seam PARALLEL across {} threads "
                   "(deterministic — byte-identical to the serial fold)", n_threads);
-    // network.parallel_carry: thread the Card-4 carry's dense per-block algebra
+    // network.parallel_carry: thread the invariant carry's dense per-block algebra
     // (buildDdPriors W·Pᶻ·Wᵀ, foldReducedDdPriors, installPosterior) through Eigen's
     // own multi-threaded GEMM.  The seam parallelizes the carry only over its few
     // blocks; this un-pins Eigen so each block's O(K²–K³) matmul spreads across
@@ -1470,8 +1470,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
             // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under
-            // phase_datum_eq34 the emitted bias references a single-receiver chain
-            // (Card 3), not a pivot receiver.  The per-solve decl in SolveGlue.cpp
+            // phase_datum_eq34 the emitted bias references a single-receiver chain,
+            // not a pivot receiver.  The per-solve decl in SolveGlue.cpp
             // makes the same choice, but that object feeds only buildSharedDatum: the
             // serialized declaration is this one.  Without this branch the product would declare
             // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
@@ -1530,7 +1530,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             } else if (brdc_rts) {
                 // The a-priori is broadcast ephemeris, so the identity is the nav-file
                 // basename ("brdc:<file>").  Once an RTS-orbit source is attached (plan D9
-                // seam / RTF-3), this becomes "brdc+rts:<mount>".  (Card 5, plan D10)
+                // seam / RTF-3), this becomes "brdc+rts:<mount>".
                 const std::string nav = config_.getNavigationPath().filename().string();
                 apriori_id = "brdc:" + (nav.empty() ? std::string("?") : nav);
             } else {

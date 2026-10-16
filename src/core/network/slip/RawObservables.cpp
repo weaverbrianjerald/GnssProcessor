@@ -23,7 +23,7 @@ namespace GnssProcessor {
 namespace {
 
 /// True when the observation carries at least one phase signal.  This defines the
-/// denominator of the card-L LLI fraction: a satellite with no phase cannot assert a
+/// denominator of the LLI fraction: a satellite with no phase cannot assert a
 /// phase loss of lock, so counting it would dilute the fraction of a station whose
 /// receiver sets LLI too often.
 bool hasAnyPhase(const PppObservation& obs) {
@@ -329,7 +329,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
                 // When the pair changed, the two MW values sit on different
                 // wide-lane wavelengths: d_mw is still a level change, but it has
                 // no meaning in cycles of the current pair's lane.  The step is
-                // flagged, not suppressed: the slip cards use it, and a consumer that
+                // flagged, not suppressed: the slip detectors use it, and a consumer that
                 // converts d_mw into cycles of one lane refuses it (RawVerdict::pair_changed).
                 v.pair_changed = (pit->second.obs.sig1 != r.sig1)
                               || (pit->second.obs.sig2 != r.sig2);
@@ -420,7 +420,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // (gap_reentry, docs/SPEC_slip_qc_hardening §G3/W1).  Both consume the
         // same records; gating the response on the instrument would let turning
         // the instrument off disarm the response without notice.  With both off,
-        // the block is not reached and every card-G output is byte-identical.
+        // the block is not reached and every gap-response output is byte-identical.
         // row_resumed holds the satellites with a row-level resumption this
         // epoch and is the de-duplication key of the per-signal tier (5b,
         // per-signal gap re-entry).  It is filled only when gap_reentry_per_signal is on, so a run
@@ -470,7 +470,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // keys on the signal instead.  Satellites already reported at (5) are
         // skipped, so each break is counted once, by the tier that can see it.
         //
-        // The row-level card is a required prerequisite: the de-duplication
+        // The row-level response is a required prerequisite: the de-duplication
         // list `row_resumed` is filled at (5), so with (5) not reached a
         // whole-satellite gap would be reported by both tiers and answered
         // twice.  The loader warns about the combination; here the tier does
@@ -496,7 +496,7 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
                     g.gap_epochs = epoch_idx - wit->second.last_epoch - 1;
                     g.lli        = s.lli;
                     g.gate_gf    = gate_gf_sig;
-                    // --- The witness, in the card's priority order -----------
+                    // --- The witness, in priority order -----------
                     // First choice: a partner that tracked through the gap, i.e.
                     // present continuously from at or before the candidate's
                     // last-seen epoch up to the previous epoch, and present now.

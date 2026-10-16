@@ -187,7 +187,7 @@ TEST(ArcLedgerTest, AnAbsentStationFreezesItsArcsInsteadOfGappingThem) {
 
     // Station 1 reports nothing at all, and its arc is not gapped.  Otherwise a
     // station outage would create a gap at every one of its arcs, while the
-    // population the card is about is the arc that vanished while its station
+    // population of interest is the arc that vanished while its station
     // kept reporting.
     const auto edges = runEpoch(led, 1, { a }, { 0 });
     EXPECT_TRUE(edges.empty());

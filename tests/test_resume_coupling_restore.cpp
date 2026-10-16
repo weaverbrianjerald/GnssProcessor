@@ -1,6 +1,6 @@
 /**
  * @file test_resume_coupling_restore.cpp
- * @brief Contract tests for the coupling-regressor resume card (card 1,
+ * @brief Contract tests for the coupling-regressor resume (see
  *        SPEC_synthetic_minimum_network §18.12): the snapshot format-v3 coupling
  *        records (@c QS shared-column dictionary, @c QL / @c QZ packed per-row
  *        regressions, @c QR write-epoch clock-refloat set), their backward
@@ -26,10 +26,10 @@
  * What is pinned here:
  * (1) every regressor round-trips bit-exactly and in harvest order.  The order is
  *     observable at the ulp: @c CouplingRowBuilder::buildCplRow accumulates
- *     @c rhs += coeff*s_prev in vector order (Coupling.cpp), and the card 1f
+ *     @c rhs += coeff*s_prev in vector order (Coupling.cpp), and the gauge-projection
  *     family deficit sums in the same order;
  * (2) @c serialize is idempotent through a parse;
- * (3) the three cases the format exists to handle: a card 1e pinned column
+ * (3) the three cases the format exists to handle: a datum-pinned column
  *     (@c p_prev == 0 is a meaningful value, not "missing"); an SH @c sh_layer
  *     carried as its own field (not the @c D record's "L1"-in-the-sat tag, which
  *     would bind a layer-1 coefficient to the live layer-0 column); and two
@@ -39,14 +39,14 @@
  * (4) @c hasCouplingState() is independent of @c hasFrameState().  Widening the
  *     latter would let a coupling-only snapshot claim frame state it lacks; the
  *     restore would then run with an empty @c anchor_incumbent, the QUEUE-1(d)
- *     erase would fire, and the card would undo its own restore without any sign;
+ *     erase would fire, and the feature would undo its own restore without any sign;
  * (5) the off path is byte-identical: a frame-only snapshot still writes v2 and a
  *     bare one v1;
  * (6) every structural defect is a hard parse failure, because restoring a subset
- *     of a row is the card 1e amputation (@f$M^Tg_s\neq-g_r(c)@f$ ⇒ every coupling
+ *     of a row is the row amputation (@f$M^Tg_s\neq-g_r(c)@f$ ⇒ every coupling
  *     row observes the clock gauge ⇒ the W5 null-space gate withholds the epoch),
  *     which is strictly worse than no coupling at all;
- * (7) the loader interlocks.  This card changes the direction only and never
+ * (7) the loader interlocks.  This feature changes the direction only and never
  *     modifies @c var: a weight change (the retired seam variance re-inflation)
  *     walked the consumer by metres (invariant #1, the slip-relevel-walk family).
  *
@@ -113,7 +113,7 @@ NetworkStateSnapshot frameSnapshot() {
 
 /// A v3 snapshot exercising every case the §18.12 format exists to handle, in one
 /// object: an empty @c signal (Clock column) and an empty @c sat (VtecSh), a
-/// card 1e pinned column (@c p_prev == 0), an SH entry on layer 1 with the full
+/// datum-pinned column (@c p_prev == 0), an SH entry on layer 1 with the full
 /// (n, m, trig, layer) quadruple, and a second dictionary entry for an identity
 /// already present at a different @c p_prev (the older-vintage row).  It also
 /// carries the frame records, because the loader interlock makes the coupling
@@ -126,7 +126,7 @@ NetworkStateSnapshot couplingSnapshot() {
     s.coupling_dict = {
         {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 1.7312e-05},  // Clock, empty signal
         {2, "G01", "L1C", 0, 0, 'C', 0, -1.2178912315598864, 8.128093975162085e-07},
-        {1, "E02", "C1C", 0, 0, 'C', 0,  0.2675481109223,    0.0},         // pinned (card 1e)
+        {1, "E02", "C1C", 0, 0, 'C', 0,  0.2675481109223,    0.0},         // pinned
         {3, "",    "",    2, 1, 'S', 1,  0.4471821,          2.05e-05},    // VtecSh layer 1
         {0, "G01", "",    0, 0, 'C', 0, -0.9718706123456789, 4.4e-05},     // same identity,
     };                                                 // older vintage (different p_prev)
@@ -239,7 +239,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
     return ok;
 }
 
-/// The card 1 knobs every coupling posture needs: the conditional local carry is
+/// The conditional-coupling knobs every coupling posture needs: the conditional local carry is
 /// exact only against a dense border carry, so the loader requires
 /// @c shared_carry_full_cov for @c carry_conditional_coupling
 /// (GnssConfigLoadNetwork.cpp, network section loader).
@@ -254,7 +254,7 @@ const char* kCard1 =
 // ResumeCouplingSnapshotTest: the format-v3 contract.
 // =============================================================================
 
-// 1. The card's main requirement: every regressor comes back bit-exact and in
+// 1. The main requirement: every regressor comes back bit-exact and in
 //    harvest order.  Vector equality, not a set compare: the order is observable
 //    at the ulp (rhs accumulates in vector order), so a restore with the same
 //    contents in a different order is a different row.
@@ -315,7 +315,7 @@ TEST(ResumeCouplingSnapshotTest, SerializeIsIdempotent) {
     EXPECT_EQ(serializeToString(r), once);
 }
 
-// 3. p_prev == 0 (card 1e) is the meaningful "datum-pinned / ensemble-gauge column,
+// 3. p_prev == 0 is the meaningful "datum-pinned / ensemble-gauge column,
 //    exactly known" value, not a missing one.  A reader that dropped or defaulted
 //    it would activate the κ shrink (guarded on p_prev > 0 in
 //    CouplingRowBuilder::buildCplRow, Coupling.cpp) on a column the datum
@@ -384,7 +384,7 @@ TEST(ResumeCouplingSnapshotTest, DistinctVintagesOfOneIdentityBothSurvive) {
 //    WarmResume.cpp), so widening it would let a coupling-bearing snapshot
 //    with no PA/PT/CA rows claim frame state it does not have: the restore would
 //    proceed with an empty anchor_incumbent, the QUEUE-1(d) erase would fire
-//    anyway, and the carries this card restores would be erased without a warning.
+//    anyway, and the carries restored here would be erased without a warning.
 TEST(ResumeCouplingSnapshotTest, HasCouplingStateIsIndependentOfHasFrameState) {
     NetworkStateSnapshot only_cpl = baseSnapshot();
     only_cpl.local_carry[{7, "G01", "L1C"}] = {-3.43, 8.1e-07, 1399204800.0};
@@ -443,7 +443,7 @@ TEST(ResumeCouplingSnapshotTest, V2FileParsesWithEmptyCouplingContainers) {
 
 // 10. The parser enforces row completeness.  The explicit k makes it checkable: a
 //     line that lost exactly one whole (id, M) pair still has even arity and would
-//     pass unnoticed, and a partial coefficient vector breaks the card 1e gauge
+//     pass unnoticed, and a partial coefficient vector breaks the gauge
 //     identity (strictly worse than an empty one).
 TEST(ResumeCouplingSnapshotTest, EntryCountMismatchFailsParse) {
     std::string text = serializeToString(couplingSnapshot());
@@ -645,7 +645,7 @@ TEST(ResumeCouplingConfig, RestoreRequiresConditionalCoupling) {
                       "    \"resume_coupling_restore\": true,\n"), cfg));
 }
 
-// 25. carry_coupling_gauge_project (card 1f) repairs the family-sum defect that a
+// 25. carry_coupling_gauge_project repairs the family-sum defect that a
 //     truncated row leaves (it restores Mᵀg_s = −g_r(c)), and the resume seam is
 //     the largest-scale truncation regime.  Without it the W5 null-space gate can
 //     withhold every epoch that carries coupling rows.

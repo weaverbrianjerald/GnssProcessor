@@ -1,6 +1,6 @@
 /**
  * @file test_carry_disposition.cpp
- * @brief Card PRM phase 1b: the carried border's fold disposition, decided once before PASS B
+ * @brief The carried border's fold disposition, decided once before PASS B
  *        (filter/NetworkCarryDisposition), and the Q3 anchor's decide / commit split.
  *
  * The decision must be the fold's: every clause in the fold's order, the variance the fold
@@ -86,7 +86,7 @@ void layout(NetworkEstimator& est) {
 
 }  // namespace
 
-// Every clause in the fold's order, with the dispositions the card names.
+// Every clause in the fold's order, with the dispositions the clauses name.
 TEST(CarryDisposition, DecideFollowsTheFoldsClauses) {
     Loaded L("clauses");
     ASSERT_TRUE(L.ok);

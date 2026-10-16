@@ -88,7 +88,7 @@ EpochAdmission networkAdmitEpoch(NetworkRun& run, const NetworkEpoch& ep) {
 
     // Feeds the staged broadcast nav records whose availability (toc, GPS scale)
     // this epoch has reached.  The store's current/previous retention then evolves
-    // as under live arrival: IODE rolls happen at their true times (the card 6
+    // as under live arrival: IODE rolls happen at their true times (the
     // re-levels fire), and the fit-window guard sees fresh records instead of the
     // end-of-day pair a bulk load would leave.  The first processed epoch catches up
     // over any start_offset span in one sorted batch, which ends in the same store
@@ -102,7 +102,7 @@ EpochAdmission networkAdmitEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             ++brdc_nav_cursor;
         }
     }
-    // Card NBP: the native broadcast clock a priori feeds the store by transmission
+    // The native broadcast clock a priori feeds the store by transmission
     // time (healthy records), so the record the wire stamps this epoch is the store's
     // current one when the consumer reads it.  Null in every other mode.
     if (setup.brdc_apriori)

@@ -37,9 +37,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (INC-7b)
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)

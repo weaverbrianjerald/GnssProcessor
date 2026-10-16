@@ -11,7 +11,7 @@
  * Baarda minimal detectable bias δ₀σ/√r → ∞: no residual-based test can see it,
  * however large it gets.
  *
- * The tests therefore target the four claims the card makes, each of which fails
+ * The tests therefore target the four claims the census makes, each of which fails
  * silently if it is wrong:
  *
  *   1. r_i is the Baarda number 1 − w·(HΣHᵀ)_ii, checked against an independent

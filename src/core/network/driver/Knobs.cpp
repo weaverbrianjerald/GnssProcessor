@@ -59,7 +59,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // every downstream site reads one number and a floor configured without float_kf
     // resolves to 0 instead of acting at some sites and not at others.
     k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();
-    // Card LGM: the loader has validated the posture, so the knob is read as is.
+    // The loader has validated the phase-colour posture, so the knob is read as is.
     k.pc_on        = nc.phase_colour_state;
     k.pc_sigma_zen = nc.phase_colour_sigma_zen_m;
     k.pc_tau_s     = nc.phase_colour_tau_s;
@@ -251,7 +251,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
-    // Card HLT: broadcast satellite health on the network path.
+    // Broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
     // replay site reads.  It removes the datum's own direction from the carried
@@ -290,7 +290,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
     k.carry_aware_covariance = k.carry_invariant && config_.networkCarryAwareCovariance();
-    // Card ARL: the search's suspect-corner mask has nothing to mask without the search.
+    // The search's suspect-corner mask has nothing to mask without the search.
     k.ar_suspect_epochs = nc.ambiguity_resolution.enable
                               ? std::max(0, nc.ambiguity_resolution.suspect_epochs) : 0;
     // RAIM pool re-host (network.raim_carry_invariant).  Resolved here, beside the other
@@ -324,11 +324,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.gl_bound         = k.gl_on && config_.getNetworkConfig().gross_los_bound;
     k.gl_emit_exclude  = k.gl_on && config_.getNetworkConfig().gross_los_emit_exclude;
     k.gl_station_tier  = k.gl_on && config_.getNetworkConfig().gross_los_station_tier;
-    // Card ICF response 1, gated on the screen and refused under the hold (the hold would
+    // The cold response, gated on the screen and refused under the hold (the hold would
     // keep the faulted level the cold response erases).  Not fingerprinted, like the
     // screen's other knobs.
     k.gl_cold_bound_m  = (k.gl_on && !k.gl_bound) ? config_.networkGrossLosColdBoundM() : 0.0;
-    // Card RPA: the RAIM pools restricted to observation phase rows.  ANDed with raim_on
+    // The RAIM pools restricted to observation phase rows.  ANDed with raim_on
     // (the loader already guarantees it), so both pool walks and the run-end lines read
     // one bool.  Not appended to the snapshot fingerprint (SnapshotFingerprint.cpp): a QC knob, like raim_*.
     k.raim_pool_data_rows_only = k.raim_on && config_.networkRaimPoolDataRowsOnly();
@@ -599,7 +599,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         // for the RAIM fine-slip layer that the invariant bypass empties.  Requires
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
-        // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
+        // Emit-layer frame re-base, on by default when carry_invariant is
         // armed (spec D7).
         k.emit_rebase_on = k.carry_invariant && config_.networkCarryInvariantEmitRebase();
     }

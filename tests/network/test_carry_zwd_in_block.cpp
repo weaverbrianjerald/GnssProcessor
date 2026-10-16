@@ -12,7 +12,7 @@
  * joint Σ carries the harvested @f$(N_{rr}^{-1})_{c\,c_j}@f$ cross terms, so the
  * overlap is subtracted exactly rather than counted twice.
  *
- * A unit test reaches the seam the card acts on
+ * A unit test reaches the seam this mechanism acts on
  * (@c CouplingRowBuilder::buildLocalBlock over a real registered
  * @c NetworkEstimator) and the loader's interlocks.  It does not reach the harvest
  * (which appends the ZWD column to @c cols and writes row n of
@@ -136,8 +136,8 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// The posture the card is validated on: the leveling carry as the live vehicle,
-/// folded as Card-1 conditional coupling rows, with F3 armed.
+/// The posture this mechanism is validated on: the leveling carry as the live vehicle,
+/// folded as conditional coupling rows, with F3 armed.
 const char* kF3Posture =
     "    \"phase_leveling\": true,\n"
     "    \"carry_conditional_coupling\": true,\n"
@@ -481,7 +481,7 @@ TEST(CarryZwdInBlockTest, ArmedHappyPathSurvivesLoadAndLeavesQAtItsDefault) {
     EXPECT_TRUE(cfg.networkCarryZwdInBlock());
     EXPECT_TRUE(cfg.networkCarryZwd());
     EXPECT_TRUE(cfg.networkPhaseLevelingLocalBlock());
-    // The card changes the vehicle, not the process-noise model.
+    // It changes the vehicle, not the process-noise model.
     EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
 }
 

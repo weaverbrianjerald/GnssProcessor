@@ -161,7 +161,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   "transferring a coupled frame move",
                   k.n_pbh_coupled_marks, c50, c90, cmax,
                   ctx.carry.pb_hold_coupled_step_m.size());
-        // Card LAH (network.emit_pb_hold_phase_clock): the phase-clock mode's ON-path
+        // The phase-clock mode (network.emit_pb_hold_phase_clock): its ON-path
         // telemetry.  `moved 0` means the mode never wrote.  Under the mode the
         // |estimate - held| line above measures what the hold hides with the level
         // transferred (the phase-visible wander only).
@@ -191,7 +191,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                       ctx.carry.pb_hold_frz_step_abs_m.size(), t50, t90, tmax,
                       ctx.carry.pb_hold_frz_total_abs_m.size(), k.n_pbh_frz_coupled);
         }
-        // Card SMH (network.emit_pb_hold_smoothed): the smoothed hold's ON-path
+        // The smoothed hold (network.emit_pb_hold_smoothed): its ON-path
         // telemetry.  `0 update(s)` means no clone was ever advanced (the mode wrote
         // only the phase-clock fallback).  r reads the passed motion against its
         // stated variance; under a consistent covariance it averages 1.
@@ -277,7 +277,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                           cc.smh_reg_checked - cc.smh_reg_mismatch, cc.smh_reg_checked,
                           cc.smh_reg_maxdiff);
             }
-            // Card SMD: the block clones (carried whenever the smoothed hold is armed), an
+            // The block clones (carried whenever the smoothed hold is armed), an
             // instrument of the smoothed hold: the wire never reads them.
             {
                 auto pa = k.smh_pv_phi_abs;   // copies: run-end readout

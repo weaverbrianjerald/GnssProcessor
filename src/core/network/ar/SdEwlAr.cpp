@@ -711,7 +711,7 @@ StationStep networkSdEwlStationRows(StationBuild& build) {
     // --- SD pre-reduce EWL constraint (docs/SPEC_sd_ewl_prereduce.md) --------
     // Appended after the iono rows and before the block reaches
     // addStationObservations, so it folds into N_rr/N_sr/N_ss pre-reduce and
-    // composes exactly with the post-reduce Card-4 DD fold.  Off by default;
+    // composes exactly with the post-reduce DD fold.  Off by default;
     // the call then returns immediately (byte-identical).
     if (!(config_.getNetworkConfig().sd_ewl.enable)) return StationStep::Next;
     const long long sd_rows0 = st.sd_ewl_ctr.rows_built;

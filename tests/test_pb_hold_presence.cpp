@@ -10,7 +10,7 @@
  * reaction the consumer's Kalman peel either catches the row or resets the wrong
  * satellites.  These cases drive the real reaction seam (RealTimeEngine::
  * resetOnPhaseBiasDisc, which runs the hold seam first) across both edges, with the
- * knob off (the card-PBH dispatch, nothing answered) and on (both edges answered).
+ * knob off (the hold dispatch, nothing answered) and on (both edges answered).
  */
 
 #include <gtest/gtest.h>
@@ -26,7 +26,7 @@
 
 namespace GnssProcessor {
 
-// House friend-shim idiom: expose only the engine seams this card needs.
+// House friend-shim idiom: expose only the engine seams this suite needs.
 struct PbHoldPresenceTestAccess {
     static void initialize(RealTimeEngine& e, const SsrCorrectionStore& store) {
         e.state_manager_ = std::make_unique<StateManager>(5, e.log_manager_, e.config_);
@@ -157,7 +157,7 @@ protected:
     }
 };
 
-// The card-PBH dispatch: a claimed key skips every reaction, so neither the
+// The hold dispatch: a claimed key skips every reaction, so neither the
 // appearance nor the departure of the held bias touches the ambiguity.
 TEST_F(PbHoldPresenceTest, KnobOffAnswersNeitherEdge) {
     build(/*presence_flip=*/false);
@@ -192,7 +192,7 @@ TEST_F(PbHoldPresenceTest, KnobOnResetsTheFlippedSignalAtBothEdges) {
     EXPECT_EQ(c.suppressed, 0u);
 }
 
-// Armed with the card-CC carry, the edge translates the ambiguity by the applied
+// Armed with the declared-step carry, the edge translates the ambiguity by the applied
 // step instead of resetting it: amb - 92.4 at the appearance, back at the departure.
 TEST_F(PbHoldPresenceTest, KnobOnWithCarryTranslatesByTheWholeBias) {
     build(/*presence_flip=*/true, /*carry=*/true);

@@ -752,7 +752,7 @@ namespace GnssProcessor {
          *
          * Keyed on the signal's own band digit rather than on the band name the map
          * uses, because the name is constellation-specific ("L1" on GPS, "E1" on
-         * Galileo, "B1C" on BeiDou) while the card's scope, band 1, is the digit in
+         * Galileo, "B1C" on BeiDou) while the second-code scope, band 1, is the digit in
          * the RINEX code.  The two are 1:1 within a constellation: the prefix table
          * maps each "C<digit>" to exactly one band name.
          *
@@ -914,8 +914,7 @@ namespace GnssProcessor {
         /// satellites (the brdc_rts network producer estimates the satellite clock,
         /// so phase is informative) instead of applying the default code-only gate.
         /// Set via @ref setBroadcastPhaseGateSuppressed on producer station models
-        /// only; the default @c false is byte-identical for every other caller
-        /// (card 5, RTF-1 / plan D1).
+        /// only; the default @c false is byte-identical for every other caller.
         bool broadcast_phase_gate_suppressed_{false};
 
         /// Satellites already logged as phase-retained under the gate-suppressed

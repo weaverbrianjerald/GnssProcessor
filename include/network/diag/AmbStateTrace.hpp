@@ -35,14 +35,14 @@
  *    immediately before and after and the folds taken to recover it.  By invariant #4,
  *    a float_kf run with 0 drops indicates a wiring fault, not a quiet run.
  *  - **D4 σ̂₀(pl) by arc age** (first 5 folds / 5–30 / > 30).  A correctly weighted
- *    prior reads ≈ 1 in every bucket.  This read can refute the card before any
+ *    prior reads ≈ 1 in every bucket.  This read can refute the approach before any
  *    mechanism is built, and otherwise calibrates the birth floor.
  *
  * D4's split cannot come from @c network_prior_residual.csv, which has no arc-age
  * column.  It is formed from consecutive rows of the same arc: @c e =
  * value_abs(t−1) − value_abs(t) is the harvest's own prior-residual numerator and
  * @c fold_var_m2 is its denominator; the census file remains the unsplit cross-check.
- * The census's caveat applies here too: under Card-1's conditional coupling the fold's
+ * The census's caveat applies here too: under the conditional coupling the fold's
  * RHS is not @c value_abs alone (the coupling rows contribute Σ M_rj·ŝ_prev,j), so this
  * ê and the ê the fold saw differ by the regressor term.  That is an open item on the
  * census, not a defect of this trace.
@@ -221,7 +221,7 @@ struct HarvestBorder;                       // network/carry/LocalCarryHarvest.h
 struct StationHarvestBlock;                 // network/carry/LocalCarryHarvest.hpp
 
 /**
- * @brief Card AIL: the ionosphere-free ambiguity's prior and posterior variance per line of sight
+ * @brief The ionosphere-free ambiguity's prior and posterior variance per line of sight
  *        with both bands in the block, raw and de-meaned per constellation. Measure-only; no-op
  *        unless network.trace_amb_if.
  *

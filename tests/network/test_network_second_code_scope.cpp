@@ -12,9 +12,9 @@
  * be tested without a network solve:
  *
  *   (a) the allow-list grammar: a 3-character code type on band 1, and nothing
- *       else.  This card refuses a band-2 entry (it would make the
+ *       else.  This feature refuses a band-2 entry (it would make the
  *       `network.sat_isc_state` bridging roster non-empty for the first time),
- *       and a phase type belongs to a different card;
+ *       and a phase type belongs to a different feature;
  *   (b) companion selection: allow-list order, no duplicates, never the selected
  *       code itself, never a code the station does not report, and empty when the
  *       band has no selected code (that is the fallback case, not a companion);
@@ -34,7 +34,7 @@
  *       pinned off.
  *
  * The mechanism itself (which rows enter the solve, which columns reach two
- * stations) is graded on the arms by gates G0 to G2 of the card.
+ * stations) is graded on the arms by gates G0 to G2.
  */
 #include <gtest/gtest.h>
 
@@ -60,7 +60,7 @@ using GnssProcessor::secondCodeCompanions;
 
 namespace {
 
-/// The card's default allow-list.
+/// The default allow-list.
 const std::vector<std::string> kDefaultList{ "C1C", "C1W" };
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
@@ -91,8 +91,8 @@ std::string networkConfig(const std::string& network_extra) {
         "}\n";
 }
 
-/// The network block that satisfies the card's interlocks, so a test can vary one
-/// knob at a time without the loader disarming the card for an unrelated reason.
+/// The network block that satisfies the feature's interlocks, so a test can vary one
+/// knob at a time without the loader disarming the feature for an unrelated reason.
 /// `carry_rx_code_bias` itself needs `code_datum_time_linked`, which the loader
 /// checks first; without it the loader forces the carry off.
 const char* kArmable =
@@ -125,7 +125,7 @@ TEST(NetworkSecondCodeScope, RefusesAPhaseTypeBecauseThatIsADifferentCard) {
 }
 
 TEST(NetworkSecondCodeScope, RefusesAnyBandOtherThanOne) {
-    // This card defers band 2; it is not unsupported in principle.  A band-2
+    // This feature defers band 2; it is not unsupported in principle.  A band-2
     // entry would make the network.sat_isc_state bridging roster non-empty for
     // the first time.
     std::string why;
@@ -157,7 +157,7 @@ TEST(NetworkSecondCodeScope, PicksTheAllowListedCodeThatIsNotTheSelectedOne) {
 
 TEST(NetworkSecondCodeScope, AStationThatReportsOnlyItsCanonicalCodeContributesNothing) {
     // 18 of the 59 field stations are this case, and so is every simulated file,
-    // so the sim bed needs the cloned second code (R9) to exercise the card.
+    // so the sim bed needs the cloned second code (R9) to exercise the feature.
     const std::set<std::string> reported{ "C1C", "C2W" };
     EXPECT_TRUE(secondCodeCompanions(reported, "C1C", kDefaultList).empty());
 }
@@ -257,7 +257,7 @@ TEST(NetworkSecondCodeScope, TheIscKeyIsRefusedByEveryOtherReceiverBiasParser) {
     // networkSplitStation_ drops every receiver column whose key contains
     // "_IFB", and the receiver code-bias zero-mean datum prior is gated on
     // parseDcbKey.  The inter-signal state must survive the first and be skipped
-    // by the second (R2); the rest of the card depends on this pin.
+    // by the second (R2); the rest of the feature depends on this pin.
     namespace K = GnssProcessor::StateKeys;
     const std::string key = K::makeReceiverIscKey("GPS", "C1W");
     EXPECT_EQ(key.find("_IFB"), std::string::npos);
@@ -332,7 +332,7 @@ TEST(NetworkSecondCodeScope, IsDisarmedWithoutTheReceiverCodeBiasCarry) {
 TEST(NetworkSecondCodeScope, IsSubsumedByChannelModeAllRatherThanRefused) {
     // Under channel_mode `all` the second code channel is subsumed rather than refused.
     // This posture is the leveling vehicle, so the widening's own
-    // interlock clamps the mode back to single and the card is then armed in its
+    // interlock clamps the mode back to single and the feature is then armed in its
     // ordinary form; the two assertions below cover that contract.
     LogManager log;
     const fs::path p = writeTempConfig("chanall",
@@ -420,7 +420,7 @@ TEST(NetworkSecondCodeScope, ParsesALegalSigmaScale) {
 }
 
 TEST(NetworkSecondCodeScope, TheClosedLoopConsumerIsPinnedOff) {
-    // The card is a producer-side mechanism: it exists so the satellite families
+    // The feature is a producer-side mechanism: it exists so the satellite families
     // share the network's stations, and a consumer is one station with no family
     // to support (R6).
     LogManager log;

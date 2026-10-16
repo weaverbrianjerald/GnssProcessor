@@ -85,14 +85,14 @@ NetworkEngineSpec networkEngineSpec(const GnssConfig& config_, const NetworkConf
     // LS-VCE calibration of the gate threshold (σ̂₀²); requires innov_gate, rejected at
     // config load otherwise (D5 v2).
     carry_cfg.innov_calibrate        = carry_innov_gate && config_.networkCarryInvariantInnovCalibrate();
-    // Corroboration gate on the re-tap (card 4, D5 v3).  The loader already forces the
+    // Corroboration gate on the re-tap (D5 v3).  The loader already forces the
     // knob false when the D5 gate is off; the && here keeps the driver Cfg
     // self-consistent on any load path.
     carry_cfg.innov_corroborate      = carry_innov_gate && config_.networkCarryInvariantInnovCorroborate();
     carry_cfg.innov_corroborate_backstop_k = config_.networkCarryInvariantInnovCorroborateBackstopK();
     carry_cfg.innov_carried_only     = carry_innov_gate && config_.networkCarryInvariantInnovCarriedOnly();
     carry_cfg.innov_calibrate_window = config_.networkCarryInvariantInnovCalibrateWindow();
-    // PD-safe DD fold (card 4).  The driver half owns the two edges of invariant #7,
+    // PD-safe DD fold.  The driver half owns the two edges of invariant #7,
     // the install-time degenerate-block rebirth and the warm-resume restore guard; the
     // kernel half (est.setDdFoldPdSafe, below) owns the arithmetic.  The loader already
     // disarms it without carry_invariant; the && here keeps the driver Cfg
@@ -275,7 +275,7 @@ void networkSectionTimersArm(NetworkRun& run) {
     est.resetSectionTimers();
     // The carry driver's per-op timers are armed on the same toggle (INC-C0).  They split
     // the SB_DDBUILD and SB_INSTALL wall brackets into basis projection, posterior
-    // read-back and D5 gate (the dense K² operations the perf-restructure card ranks).
+    // read-back and D5 gate (the dense K² operations the perf restructuring ranks).
     // Byte-identical off.
     carry_driver.setPerfTiming(ctx.knobs.sec_timers_on);
     carry_driver.resetPerfTimers();
@@ -301,7 +301,7 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     NetworkInvariantCarryDriver& carry_driver = run.engines.carry_driver;
     // The emit-layer engines (network/driver/RunGroups.hpp), run by networkEmitStore on every
     // emitted epoch:
-    //  - the emit-layer frame re-base (card 4 phase D, ctx.knobs.emit_rebase_on).  It
+    //  - the emit-layer frame re-base (ctx.knobs.emit_rebase_on).  It
     //    re-references the emitted per-(sat,σ) phase biases onto the previous emission
     //    frame, so the per-epoch gauge churn of the freely re-realized eq34 datum does not
     //    send the consumer spurious ambiguity resets; the integer step of a genuine

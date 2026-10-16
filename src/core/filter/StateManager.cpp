@@ -1588,7 +1588,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Receiver phase-bias states (network.phase_datum_eq34, Card 3): the
+    // Receiver phase-bias states (network.phase_datum_eq34): the
     // per-(receiver, system, signal) split δ_{r,σ}, keyed "<sys>_RPB_<sig>".
     // Local and re-estimated each epoch (no process noise, no carry).
     // ===================================================================

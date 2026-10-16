@@ -315,13 +315,13 @@ TEST(NetworkProductEmitterTest, DatumChangePendsAcrossEpochWithNoConstellationSa
     EXPECT_EQ(emitter.codeBiasDiscontinuityCounter("G01", "C1W"), 1);
 }
 
-// network.code_datum_time_linked (Card 2): the driver signals a time-linked datum
+// network.code_datum_time_linked: the driver signals a time-linked datum
 // re-seed (a cold sum-to-zero channel, or an IF-pin split forced to the 0 seed) by
 // calling markSatDiscontinuity for the re-seeded satellites.  The emitter lands that
 // bump on the code disc counter at the emit that carries the stepped value, even with
 // the clock-disc channel off (the code OSB re-references whether or not the clock
 // channel is published).  This is the landing half of the value-step/disc
-// coincidence that the card's falsifier checks end to end.
+// coincidence that the end-to-end falsifier checks.
 TEST(NetworkProductEmitterTest, ForcedSatDiscBumpsCodeCounterOnSteppedEmit) {
     SsrCorrectionStore store;
     NetworkProductEmitter emitter;   // emit_clock_disc = false (default): code channel only

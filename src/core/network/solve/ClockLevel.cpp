@@ -239,7 +239,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
             || kind != SharedParamKind::CodeBias)
             continue;
         cb.col = c;
-        // GLONASS is FDMA (no common pin-pair frequency): out of the card's scope.
+        // GLONASS is FDMA (no common pin-pair frequency): out of scope.
         const System sys = systemOfSat(cb.sat);
         const auto code = ObservableId::parse(sys, cb.sig);
         if (sys == System::GLONASS || !code || code->type != ObsType::Code) continue;
@@ -715,7 +715,7 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
     // The level monitor: the ratio of the stashed block's level
     // variance to the code-only bound, per satellite per kept epoch from its second
     // epoch of code on.  A consistent estimator keeps it at or above 1; the control
-    // (the card 1d kappa) reads far below 1, the freeze's truth-free fingerprint.
+    // (the kappa shrink) reads far below 1, the freeze's truth-free fingerprint.
     const auto& c = ctx.counters;
     std::vector<double> r = c.clm_ratios;
     double med = 0.0, p10 = 0.0;

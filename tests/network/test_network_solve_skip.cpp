@@ -3,8 +3,8 @@
  * @brief The network solve's exit table: one row per SolveSkip enumerator in
  *        its order, the frozen disposition literals, the trace flags, the heartbeat states and
  *        the tail, and the facts the rows read.  The three silent exits (DatumFailed,
- *        SolveFailed, WeRestoreFailed: no H line, no trace row) are pinned here until a card of
- *        their own changes them (finding 3 of the SG design).
+ *        SolveFailed, WeRestoreFailed: no H line, no trace row) are pinned here until a separate change
+ *        alters them (finding 3 of the SG design).
  */
 #include <gtest/gtest.h>
 

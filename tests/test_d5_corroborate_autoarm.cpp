@@ -1,12 +1,12 @@
 /**
  * @file test_d5_corroborate_autoarm.cpp
  * @brief Loader-contract tests for the D5 v3/v4 evidence interlock: the auto-arm that
- *        keeps the corroboration knobs from being silently inert (Card 4, M1).
+ *        keeps the corroboration knobs from being silently inert.
  *
  * The D5 v3 suppression set and the v4 pending-flat set (both in
  * @c InstallCarry.cpp) are built from @c slip_qc.epoch.verdict / @c .stepped.
  * The only writer of those is the slip-QC qualify pass, which
- * @c ApplicationNetworkAssembly.cpp runs only when a decision card is armed:
+ * @c ApplicationNetworkAssembly.cpp runs only when a decision consumer is armed:
  * @c SlipQcState::cardsArmed() = @c lli_corroborate || @c gap_instrument ||
  * @c bridge_gf || @c iono_cs.
  *
@@ -15,7 +15,7 @@
  * and sizes @c epoch.verdict to n_sta with empty maps.  The consumers gate on
  * @c epoch.computed, so with the trace alone they run, every per-satellite lookup
  * misses, and the suppression set is empty: the gate logs as armed and does nothing
- * (standing invariant #4).  The gap is also latent: the sets fill as soon as any card
+ * (standing invariant #4).  The gap is also latent: the sets fill as soon as any decision consumer
  * arms (the LV-6 census arming the CS advance does that), which changes the solve
  * through a knob that was not touched.  The loader therefore does not count
  * @c trace_slip_raw as a sufficient consumer.  See
@@ -27,9 +27,9 @@
  * entry a test could attach a sink to.  The sibling auto-arm test
  * (@c tests/network/test_block_baarda.cpp, @c BlockBaardaSweepTest) makes the same choice.
  *
- * Card G (@c gap_instrument) is instrumentation only (counters and trace rows, verified
- * byte-identical), which is why it, and not the @c mw_lli_corroborate decision card,
- * is the card that gets auto-armed.
+ * The gap instrument (@c gap_instrument) is instrumentation only (counters and trace rows, verified
+ * byte-identical), which is why it, and not the @c mw_lli_corroborate decision consumer,
+ * is the one that gets auto-armed.
  */
 
 #include <gtest/gtest.h>
@@ -94,7 +94,7 @@ bool loadInto(const std::string& tag, const std::string& network_extra, GnssConf
 }  // namespace
 
 // ============================================================================
-//  Direction 1: corroborate (+ trace_slip_raw) with no card armed: the auto-arm fires.
+//  Direction 1: corroborate (+ trace_slip_raw) with no decision consumer armed: the auto-arm fires.
 // ============================================================================
 
 // Regression case: trace_slip_raw is not a sufficient evidence source.  If the loader
@@ -130,7 +130,7 @@ TEST(D5CorroborationAutoArm, RetapOnlyWithTraceSlipRawAlsoAutoArms) {
         << "v4 tags flags flat from the same verdict maps v3 does";
 }
 
-// With neither the trace nor any card, the auto-arm also fires.  This baseline case
+// With neither the trace nor any decision consumer, the auto-arm also fires.  This baseline case
 // guards against a future edit regressing it.
 TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceCard) {
     GnssConfig cfg;
@@ -141,7 +141,7 @@ TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceCard) {
 }
 
 // ============================================================================
-//  Direction 2: a decision card is already armed, so there is nothing to auto-arm.
+//  Direction 2: a decision consumer is already armed, so there is nothing to auto-arm.
 // ============================================================================
 
 // Explicit gap_instrument on is the posture that every committed corroborate config
@@ -195,7 +195,7 @@ TEST(D5CorroborationAutoArm, UnarmedCarryInvariantNeverAutoArmsAnything) {
 }
 
 // The knobs are force-disabled without the innovation gate (there are no re-taps to
-// corroborate), so the interlock must find nothing to do and leave Card G alone.
+// corroborate), so the interlock must find nothing to do and leave the gap instrument alone.
 TEST(D5CorroborationAutoArm, CorroborateWithoutTheGateIsDisarmedAndArmsNoCard) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_nogate",

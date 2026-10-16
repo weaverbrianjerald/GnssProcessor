@@ -61,8 +61,8 @@ void networkShHealth(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& event
     std::string& rhs_trip_pending = events.qc.rhs_trip_pending;   // written
     // ---- End of the bindings ----
     // --- Alias preamble: run-TU aliases derived mechanically (+ reconstructions). --
-    // The VCE monitor's hourly flush schedule: driver locals passed by reference until card
-    // NOM3 step EP0, now run carry (not snapshotted).
+    // The VCE monitor's hourly flush schedule: formerly driver locals passed by reference,
+    // now run carry (not snapshotted).
     double& first_vce_s   = ctx.carry.first_vce_s;
     int&    last_vce_hour = ctx.carry.last_vce_hour;
     auto& sh_model = setup.sh_model;

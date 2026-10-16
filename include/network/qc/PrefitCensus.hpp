@@ -211,7 +211,7 @@ struct PrefitStationCentres {
  */
 PrefitStationCentres prefitStationCentres(const StationAssembly& R);
 
-/// @return @f$s = |y - m|\sqrt{\max(w,0)}@f$, the card's standardized prefit
+/// @return @f$s = |y - m|\sqrt{\max(w,0)}@f$, the standardized prefit
 ///         deviation.  Non-finite inputs yield 0 (the caller counts those
 ///         separately instead of propagating a NaN into a maximum).
 double prefitStandardizedDeviation(double y, double w, double m);

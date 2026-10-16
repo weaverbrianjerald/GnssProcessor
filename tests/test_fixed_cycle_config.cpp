@@ -78,7 +78,7 @@ std::string simBedStations() {
          + "\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n";
 }
 
-/// Card ARL section 13's slip fixes with the knobs that make them act, as the network key
+/// The slip fixes with the knobs that make them act, as the network key
 /// @c cycle_slip (comma-led, for @c config's @p net_extra).  A non-empty @p key is given
 /// @p value, or removed when @p value is empty.
 std::string slipFixes(const std::string& key = "", const std::string& value = "") {
@@ -322,7 +322,7 @@ TEST(FixedCycleConfig, TheRemainingInterlocksRefuse) {
     }
 }
 
-// Card FCFB section 5: a slip no detector flags leaves the zero-q float on the wrong integer,
+// A slip no detector flags leaves the zero-q float on the wrong integer,
 // which the per-unit test and block acceptance cannot see, so Emit requires every slip fix (and
 // the knobs that make two of them act) and Observe names a missing one.
 TEST(FixedCycleConfig, EmitRequiresTheSlipFixesAndObserveNamesThem) {

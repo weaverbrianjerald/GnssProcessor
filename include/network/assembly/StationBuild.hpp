@@ -164,7 +164,7 @@ struct StationCarryFrame {
     const bool               legacy_local_inject;  ///< The leveling carry injects here (the frozen predicate).
     const bool               do_amb_carry;         ///< The ambiguity carry injects (off under carry_invariant).
     const Eigen::VectorXd    x_lin;                ///< The station's linearization point (one copy).
-    CouplingRowBuilder       cb;                   ///< The coupling rows and the local block (card 1, F3).
+    CouplingRowBuilder       cb;                   ///< The coupling rows and the local block.
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj;        ///< Post-PD diagonal priors (col, Lambda, eta, tag).
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>> inj_prior;  ///< Pre-PD datum rows (RF-PD-fix).
     std::vector<PlPend>        pl_pend;            ///< Ambiguity columns for the block.

@@ -34,7 +34,7 @@
  * v1 constraints (deliberate decisions):
  *  - Station construction still reads each roster station's @c rinex_path for
  *    header metadata (antenna type, GLONASS FCN slots).  A header-free
- *    StationMetadata factory is a follow-up increment of the RTF-3 card.
+ *    StationMetadata factory is a follow-up increment.
  *  - No signal handling here: a session ends at @c processing.max_duration_s
  *    (content time, checked in the epoch body) or at stream end (file lanes).
  *    Live service supervision follows the restart procedure in

@@ -626,7 +626,7 @@ private:
     /// from @c flush() (end-of-run).
     void logBiasAttrMismatchSummary(const char* tag);
 
-    /// @brief Log the one-line orbit/clock coherence-echo mismatch summary (card 7).
+    /// @brief Log the one-line orbit/clock coherence-echo mismatch summary.
     ///
     /// Reads @c orbitEchoMismatchCounts() from the clock-routed store
     /// (@c clock_store_override_, else the singleton), where GnssCorrections
@@ -827,7 +827,7 @@ private:
     /// (declared or not) beyond pb_step_translate_eps_m translates the ambiguity
     /// by −Δ (PbStepTranslateLedger::react).  Because it replaces the whole
     /// reaction, a declared step is translated once, not twice, even with the
-    /// card-CC carry also armed.  Its record() is the update site, per key after
+    /// declared-step carry also armed.  Its record() is the update site, per key after
     /// the reaction.
     void translatePhaseBiasStep_(RtEpochContext& ctx);
     /// One INFO line with the translation counters; silent unless armed.
@@ -966,7 +966,7 @@ private:
     void applyStagedStateSnapshot_(RtEpochContext& ctx);///< One-shot: age/fingerprint gate, layout rebuild, wholesale x/P + baselines restore.
     void writeStateSnapshot_(RtEpochContext& ctx);      ///< Cadence-gated atomic snapshot write.
     /// Harvest the live filter memory into @p out stamped at @p at (the shared
-    /// body of writeStateSnapshot_ and the card-CC writeStateSnapshotTo).  False
+    /// body of writeStateSnapshot_ and writeStateSnapshotTo).  False
     /// + @p why when the dynamic layout is unserializable (warned once per run).
     bool harvestStateSnapshot_(struct RtStateSnapshot& out, const GnssTime& at,
                                const std::string& epoch_prefix, std::string* why);
@@ -1056,7 +1056,7 @@ private:
     const SsrCorrectionStore* ssr_store_override_{ nullptr };
 
     /// The clock-routed store (per setSsrStore's consume_clock), on which
-    /// GnssCorrections tallies orbit-echo mismatches (card 7).  The
+    /// GnssCorrections tallies orbit-echo mismatches.  The
     /// ssr_store_override_ above is bias-routed (consume_bias), so the two differ
     /// under a clock-on/bias-off profile; the echo summary reads this one, since
     /// the bias-routed store never holds a split consumer's mismatches.

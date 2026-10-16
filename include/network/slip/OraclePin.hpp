@@ -170,7 +170,7 @@ struct NetworkOraclePin {
     std::map<std::tuple<int, std::string, std::string>, Truth> truth;
 
     /// Wavelength provider (correct for FDMA).  Owned here so the pin does not
-    /// depend on whether another card armed a shared provider.
+    /// depend on whether another mechanism armed a shared provider.
     std::unique_ptr<PppUtils> utils;
 
     /// Every armed `oracle_pin` event's (index into `network.inject.events`, parsed

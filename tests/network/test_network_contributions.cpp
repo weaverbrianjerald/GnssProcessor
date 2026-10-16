@@ -1,6 +1,6 @@
 /**
  * @file test_network_contributions.cpp
- * @brief Card NOM step N2a: the contribution declarations, the row tags and the
+ * @brief The contribution declarations, the row tags and the
  *        "contributions as armed" table of filter/Contributions.hpp.
  *
  * The contracts:

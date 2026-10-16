@@ -120,7 +120,7 @@ TEST(MwEvidenceAdmit, LooseKnownIntegerIsDroppedAndCountedWithKnobOff) {
     EXPECT_TRUE(d.drop_loose);
     EXPECT_FALSE(d.drop_unknown);
     // The rule itself is evaluated with the knob off; that evaluation is the
-    // would-admit census, which sizes the card's effect before it is armed.
+    // would-admit census, which sizes the rule's effect before it is armed.
     EXPECT_TRUE(d.evidence_ok);
     EXPECT_TRUE(d.would_admit);
     EXPECT_FALSE(d.admit_evidence) << "the knob is off: the rule must not act";

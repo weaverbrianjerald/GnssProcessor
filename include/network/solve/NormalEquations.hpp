@@ -415,8 +415,8 @@ public:
     std::size_t numSumZeroGauges() const { return sumzero_gauges_.size(); }
 
     /// The rank-K double-difference prior of one connected (const,signal)
-    /// component: the invariant-carry z-store's contribution to the producer solve
-    /// (Card-4, M1 phase C).  Each of the K rows is a DD ambiguity constraint
+    /// component: the invariant-carry z-store's contribution to the producer solve.
+    /// Each of the K rows is a DD ambiguity constraint
     /// @f$z_k=\sum(\text{coeff}\cdot x_{\text{local}})@f$ with signed coefficients on
     /// four local ambiguity columns (more for higher-order fundamental cycles)
     /// spanning up to four stations.  The quantity is gauge-free: the receiver and
@@ -621,7 +621,7 @@ public:
 
     // --- Detached fold of fixed integer cycles ----------------------
     //
-    // The second DD-fold path of this class, beside the Card-4 dense fold above
+    // The second DD-fold path of this class, beside the dense fold above
     // (@ref foldReducedDdPriors, which stays unchanged and is this path's unit
     // oracle).  The two never share an epoch: the fixed-cycle fold's loader refuses
     // carry_invariant.  The algebra is the same Woodbury fold; what differs is that
@@ -1081,7 +1081,7 @@ public:
 
     /// The regression of one local column on the shared border, and that column's
     /// pure conditional variance: the two ingredients of an exact between-epoch
-    /// conditional carry (@c network.carry_conditional_coupling; Card 1).
+    /// conditional carry (@c network.carry_conditional_coupling).
     struct StationRegression {
         Eigen::VectorXd row;   ///< @f$M_r^\top = N_{sr}N_{rr}^{-1}e_r@f$ (length @c n_shared): row @c r of @f$N_{rr}^{-1}N_{rs}@f$, i.e. the coefficients of the local's linear regression on the shared border.  Empty when @c n_shared is 0.
         double cond_var{0.0};  ///< @f$(N_{rr}^{-1})_{rr}=\mathrm{Var}(x_r\mid x_s)@f$: the local's variance conditional on the whole shared border (not the marginal that @ref reconstructStationCovarianceDiag returns).

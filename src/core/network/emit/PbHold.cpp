@@ -62,7 +62,7 @@ std::map<std::string, double> decommonedClockStep(
     return raw;
 }
 
-/// Card LAH: a held emission counts as moved by the transfer above this (m).
+/// A held emission counts as moved by the transfer above this (m).
 constexpr double kFrzMovedM = 1e-6;
 
 }  // namespace
@@ -120,7 +120,7 @@ void networkPbHold(NetworkRunContext& ctx,
     bool logged_arm = ctx.counters.n_pbh_held_emissions > 0
                       || ctx.counters.n_pbh_gen_first > 0;
 
-    // Card LAH (network.emit_pb_hold_phase_clock): the held key keeps the satellite's
+    // Phase-clock mode (network.emit_pb_hold_phase_clock): the held key keeps the satellite's
     // phase-visible clock c - p instead of its phase bias.  c~ = c - M_k, with M_k the
     // accumulated median emitted-clock step of constellation k over its satellites
     // present at this and the previous emission.  A move common to a constellation (its
@@ -129,7 +129,7 @@ void networkPbHold(NetworkRunContext& ctx,
     // code and phase alike, and a satellite's own move (its level included) is written
     // into its held phase biases as well.  Built before the sweep from the clocks about
     // to be emitted (the frame-held values in sol).
-    // Card SMH (network.emit_pb_hold_smoothed) runs the same machinery: it is the
+    // The smoothed hold (network.emit_pb_hold_smoothed) runs the same machinery: it is the
     // transfer a key reverts to when its clock clone dies, and the shadow the clone's
     // transfer is compared with.
     const bool smh_on = ctx.knobs.emit_pb_hold_smoothed;
@@ -203,7 +203,7 @@ void networkPbHold(NetworkRunContext& ctx,
                     pc.generation = st.generation;
                     pc.queued_ep  = loop_ep;
                     net::putSig(ctx.entities, key, &SG::smh_pending) = pc;
-                    // Card SMD: the generation's block clone, under the same rule.
+                    // The generation's block clone, under the same rule.
                     net::dropSig(sigs, key, &SG::smh_block);
                     pc.block = true;
                     net::putSig(ctx.entities, key, &SG::smh_block_pending) = pc;
@@ -236,11 +236,11 @@ void networkPbHold(NetworkRunContext& ctx,
             // and it is recorded on every held emission, not sampled.
             auto& st = *it;
             double held_emit = st.held_m;
-            // Card LAH: the held phase bias moves with the satellite's common-removed
+            // Phase-clock mode: the held phase bias moves with the satellite's common-removed
             // clock, so c - p stays at its generation-start value.  An epoch without the
             // satellite's clock reuses the last transfer; a generation started without
             // one is held plainly (both counted).
-            // Card SMH: a live clone updated this epoch writes LAH's transfer minus the
+            // Smoothed hold: a live clone updated this epoch writes LAH's transfer minus the
             // clone's frame-free passed motion Phi (section 10): the members of the hold
             // family share LAH's frame and median and differ only by Phi, so a smoothed key
             // and a bridged neighbour stay consistent.  A key with no live clone of its
@@ -250,7 +250,7 @@ void networkPbHold(NetworkRunContext& ctx,
             // Every switch is continuous.
             bool smh_written = false;
             if (smh_on) {
-                // Card SMD: the key's block clone against the emitter's marks on the
+                // The key's block clone against the emitter's marks on the
                 // satellite's phase channel (a retirement, or its unmarked steps and the
                 // split of its passed motion).
                 networkPbHoldBlockAtHold(
@@ -316,9 +316,9 @@ void networkPbHold(NetworkRunContext& ctx,
                         }
                     }
                     if (traces.pb_hold_clone_trace.is_open()) {
-                        // Card SMD: the key's block clone beside the writing clock clone (the
+                        // The key's block clone beside the writing clock clone (the
                         // split of its passed motion on its own birth), empty when not live.
-                        // Card REV: then the revision, the step, the stated variance of D(t0)
+                        // Then the revision, the step, the stated variance of D(t0)
                         // (now and at birth), the filtered variance of D and the epoch's walk.
                         std::string bcols = ",,,,,,,,,,,,,";
                         const PbHoldClone* bit = net::getSig(sigs, key, &SG::smh_block);
@@ -426,7 +426,7 @@ void networkPbHold(NetworkRunContext& ctx,
             ++ctx.counters.n_pbh_held_emissions;
 
             if (coupled && !counted_coupled && frz_on && !smh_written && st.frz_ok && has_frz) {
-                // Card LAH: the mode writes the satellite's clock step into the held
+                // The phase-clock mode writes the satellite's clock step into the held
                 // phase bias, so a coupled move is transferred, not lost.
                 counted_coupled = true;
                 ++ctx.counters.n_pbh_frz_coupled;

@@ -8,7 +8,7 @@
  *  - the oracle: on 500 random arrowheads (2 to 12 stations, 20 to 60 shared columns,
  *    random datum pins, rows through anchor-pinned local columns in a third of them, 1 to
  *    3 blocks over disjoint station sets) the held estimate and the posterior cycles
- *    zhat + Pz kappa equal the Card-4 dense path (setDdPriors with a diagonal Pz, solve,
+ *    zhat + Pz kappa equal the dense path (setDdPriors with a diagonal Pz, solve,
  *    ddPriorPosteriorMean) to 1e-9 relative; a held estimate beyond the bar is arbitrated
  *    by a refined solve of the whole stacked network (it must be within the bar of that
  *    solve; the dense fold's distance to it is printed), at most 5 such systems;
@@ -288,7 +288,7 @@ Blocks randomBlocks(std::mt19937_64& rng, const System& s) {
     return blocks;
 }
 
-/// The same rows as Card-4 dense DD-prior blocks (diagonal Pz).
+/// The same rows as dense DD-prior blocks (diagonal Pz).
 std::vector<NetworkNormalEquations::DdPriorBlock> asDdPriors(const Blocks& blocks) {
     std::vector<NetworkNormalEquations::DdPriorBlock> out;
     for (const auto& rows : blocks) {
@@ -1317,7 +1317,7 @@ TEST(NetworkDetachedFold, PreconditionsAndMalformedRowsThrow) {
                      std::logic_error);
     }
     {
-        NetworkEstimator est = buildEstimator(s);   // the float solve folded Card-4 DD priors
+        NetworkEstimator est = buildEstimator(s);   // the float solve folded DD priors
         est.setDdPriors(asDdPriors(blocks));
         const Eigen::VectorXd x = est.solve(s.datum);
         EXPECT_THROW(est.solveHeldDetached(s.datum, x, blocks), std::logic_error);

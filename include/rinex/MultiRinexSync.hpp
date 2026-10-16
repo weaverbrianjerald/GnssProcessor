@@ -147,7 +147,7 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Card HLT: remove the observations a predicate selects from synced epochs.
+         * @brief Remove the observations a predicate selects from synced epochs.
          *
          * The second door beside @ref retainSystems, for a rule that depends on the epoch
          * time (the broadcast health in force).  Station keys stay in place, as there.
@@ -160,7 +160,7 @@ namespace GnssProcessor {
             std::vector<SyncedEpoch>& epochs,
             const std::function<bool(const GnssTime&, const RinexObservation&)>& drop);
 
-        /// Card HLT: @ref removeObservationsIf applied to this instance's synced epochs.
+        /// @ref removeObservationsIf applied to this instance's synced epochs.
         /// @param drop Called with the epoch time and each observation; true removes it.
         /// @return The number of observations removed.
         std::size_t removeObservationsIf(

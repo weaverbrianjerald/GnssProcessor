@@ -1,6 +1,6 @@
 /**
  * @file test_resume_signal_canon_restore.cpp
- * @brief Contract tests for the RS-8 canonical-signal continuity card
+ * @brief Contract tests for the RS-8 canonical-signal continuity
  *        (docs/SPEC_event_harness.md §21.16): the snapshot's format-forward
  *        @c CN records (one per (station roster index, constellation, band,
  *        C|L), naming the locked RINEX code), the loader's side of the write
@@ -28,7 +28,7 @@
  *   (d) @c PppModel::exportCanonicalSignals / @c restoreCanonicalSignals
  *       round-trip, and a restored latch is not re-decided by the next epoch's
  *       tally even when that tally would pick a different signal, while the
- *       same model without the restore does flip (the card's main contract);
+ *       same model without the restore does flip (the main contract);
  *   (e) the loader's defaults, its @c resume_frame_restore prerequisite, and the
  *       inert (not fatal) posture with no snapshot path.
  *
@@ -280,7 +280,7 @@ TEST(ResumeSignalCanonRestore, MalformedCanonicalRowIsAHardParseFailure) {
 // ---------------------------------------------------------------------------
 
 /// A file with no CN rows restores nothing: an old snapshot (or a writer without
-/// the capture knob) leaves every station re-deciding its latch, as without the card.
+/// the capture knob) leaves every station re-deciding its latch, as without the restore.
 TEST(ResumeSignalCanonRestore, SnapshotWithoutCanonicalRowsRestoresNothing) {
     const NetworkStateSnapshot s = baseSnapshot();
     ASSERT_FALSE(s.hasCanonicalSignalState());
@@ -296,7 +296,7 @@ TEST(ResumeSignalCanonRestore, SnapshotWithoutCanonicalRowsRestoresNothing) {
     EXPECT_TRUE(staged(r, 0).empty());
 
     // The restore applied to an empty stage is a no-op on the model: the latch
-    // stays undecided, so the first epoch decides it as without the card.
+    // stays undecided, so the first epoch decides it as without the restore.
     ModelFixture f("inertmodel");
     EXPECT_EQ(f.model->restoreCanonicalSignals(staged(r, 0)), 0u);
     EXPECT_FALSE(PppModelCanonicalTestAccess::decided(*f.model, "GPS"));
@@ -304,7 +304,7 @@ TEST(ResumeSignalCanonRestore, SnapshotWithoutCanonicalRowsRestoresNothing) {
 
 /// The driver gates the capture on the write knob, so with it off the container
 /// stays empty and the file the snapshot produces is byte-identical to one written
-/// without the card (standing invariant #6, at the format level).  With a row, the
+/// without the restore (standing invariant #6, at the format level).  With a row, the
 /// only differences are that row and the END line.
 TEST(ResumeSignalCanonRestore, WriteKnobOffEmitsNoneOfTheRows) {
     GnssConfig cfg;
@@ -360,7 +360,7 @@ TEST(ResumeSignalCanonRestore, WithoutARestoreTheFirstEpochsTallyDecidesTheLatch
     }
 }
 
-/// The card's contract in one test: a restored latch marks the constellation
+/// The contract in one test: a restored latch marks the constellation
 /// decided, so the next epoch's tally leaves it unchanged, even when that tally
 /// would pick the other channel.  Export after the epoch returns the writer's
 /// signals, and the audit reports the disagreement without acting on it.

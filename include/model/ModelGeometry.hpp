@@ -285,7 +285,7 @@ namespace GnssProcessor {
          * wiring uses this split (@c processing.network_consumer.orbit_source).
          *
          * Also forwards to the echo seam of the internal @c GnssCorrections
-         * (@c setOrbitEchoStore, Card 7), so the orbit-coherence echo check
+         * (@c setOrbitEchoStore), so the orbit-coherence echo check
          * compares against the store this overlay applies from and the two
          * routings cannot diverge.
          *
@@ -294,7 +294,7 @@ namespace GnssProcessor {
          */
         void setSsrOrbitStore(const SsrCorrectionStore* store) {
             ssr_store_override_ = store;
-            corrections_.setOrbitEchoStore(store);   // echo check follows the orbit routing (Card 7)
+            corrections_.setOrbitEchoStore(store);   // echo check follows the orbit routing
         }
 
         /**

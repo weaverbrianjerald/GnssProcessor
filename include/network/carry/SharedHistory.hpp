@@ -34,7 +34,7 @@
  *   route of the coupling update).  A history column is read by the gate view and the S-basis
  *   completion as nuisance (marginalized with the clones), never emitted, never stashed and
  *   never snapshotted.
- * - Events: a row of an older compression (a stale station, card 1d's route, a history
+ * - Events: a row of an older compression (a stale station, the kappa-shrink route, a history
  *   column not registered this epoch) marginalizes its history terms into its variance
  *   (counted); a re-stash without history terms invalidates the old coefficients; a
  *   snapshot writes each row's marginal, @c var plus the squared norm of its coefficients.
@@ -234,7 +234,7 @@ double sharedHistoryMarginalVar(const LocalCarry& lc);
  *
  * With @p emit (the exact coupling route) and the row's coefficients of the compression the
  * registered columns belong to, each nonzero coefficient is added to @p emit on its
- * column (the right-hand side does not move: the prior mean is 0).  Otherwise (card 1d's
+ * column (the right-hand side does not move: the prior mean is 0).  Otherwise (the kappa-shrink
  * route, @p emit null; a stale generation; a column not registered) the coefficient's
  * square is added to @p marg_var: the term is marginalized at its harvest variance, the
  * conservative direction.  Counted in @p X.  No-op on a row with no valid coefficient.

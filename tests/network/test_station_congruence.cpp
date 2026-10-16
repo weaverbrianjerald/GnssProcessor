@@ -32,7 +32,7 @@
  *      wrong marginalization still returns a plausible symmetric 3x3.
  *   5. The null ladder is chi-square_q, together with the sigma0 rescale that makes it
  *      so.  NetworkCarryVce inverts a chi-square_1 geometric mean, so a chi-square_3
- *      statistic fed raw biases the scale high by ~1.57x in sigma.  The block card applies
+ *      statistic fed raw biases the scale high by ~1.57x in sigma.  The block-level screen applies
  *      this correction; it is re-verified here at q = 3 because an error produces a
  *      plausible, silently mis-scaled ladder.  The Student-t arm preserves D5's
  *      negative result: the Gaussian tail is the wrong critical value on real
@@ -119,7 +119,7 @@ DenseGls finishDense(const Eigen::MatrixXd& A, const Eigen::VectorXd& w,
 //  iono, per-(satellite, band) ambiguity.  The iono and ambiguity priors stand
 //  in for the SH tie and the phase-leveling carry.
 //
-//  Unlike the block card's toy, each row carries a position partial.  The network
+//  Unlike the block-level toy, each row carries a position partial.  The network
 //  drops those three columns (coordinates are held), so StationAssembly::row_pos_enu
 //  has to retain them for this screen to work.
 // ===========================================================================
@@ -322,7 +322,7 @@ Eigen::VectorXd injectCoordinate(const CongruenceNet& net, int r,
 
 /// The whole network's observation vector with a same-sign bias on both phase rows
 /// of one line of sight and nothing else: an unflagged half-cycle-class slip.  This is
-/// the block card's own discriminating fault (a 6x block-over-row gain on exactly this
+/// the block-level screen's own discriminating fault (a 6x block-over-row gain on exactly this
 /// shape, where the row tier is blind), and it is this screen's negative control.
 ///
 /// Deliberately not a bias on all four rows.  A same-sign bias on the code rows as
@@ -345,7 +345,7 @@ CongruenceSolve solveStation(const CongruenceNet& net, int r,
                                net.stationRows(resid_all, r), delta0);
 }
 
-/// The block card's statistic on the largest LOS of one station: T_B = e' Q^-1 e / b.
+/// The block-level statistic on the largest LOS of one station: T_B = e' Q^-1 e / b.
 double maxBlockT(const CongruenceNet& net, int r, const Eigen::VectorXd& resid_all) {
     double worst = 0.0;
     for (int k = 0; k < kS; ++k) {
@@ -612,7 +612,7 @@ TEST(StationCongruenceTest, CoordinateAndSingleLosFaultsExciteDifferentTiers) {
     const double coord_block = maxBlockT(net, 0, r_coord);
     ASSERT_TRUE(coord.ok);
 
-    // (b) an unflagged slip on one line of sight: the block card's fault class.
+    // (b) an unflagged slip on one line of sight: the block-level screen's fault class.
     const Eigen::VectorXd r_los = net.dense.residuals(injectLosPhase(0, 2, 0.05));
     const CongruenceSolve los = solveStation(net, 0, r_los);
     const double los_block = maxBlockT(net, 0, r_los);
@@ -780,7 +780,7 @@ TEST(StationCongruenceTest, Sigma0RecoversTheTrueScaleThroughTheChiSquareQRescal
     // NetworkCarryVce inverts the geometric mean of a chi-square_1 variate.  A
     // chi-square_3 statistic fed as sqrt(T) would read 2 exp(psi(3/2))/3 = 0.6915
     // instead of 0.2807, so sigma0 would be high by sqrt(0.6915/0.2807) = 1.57 and
-    // every t deflated by 2.46x.  This is the block card's correction, re-verified at
+    // every t deflated by 2.46x.  This is the block-level screen's correction, re-verified at
     // q = 3 because an error here still produces a plausible ladder.
     constexpr double kTrueSigma = 2.0;
     NetworkCongruence acc(/*armed=*/true, /*window_epochs=*/0.0,

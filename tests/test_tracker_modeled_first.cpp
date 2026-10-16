@@ -118,7 +118,7 @@ struct TrackerHarness {
     /// Band digit to latched GPS phase signal.  A band absent from the map is a
     /// cell the latch does not know, which the tracker reads as "change nothing".
     std::map<char, std::string> latch;
-    /// False reproduces the pre-card call shape: no lookup bound at all.
+    /// False reproduces the earlier call shape: no lookup bound at all.
     bool bind_latch{ true };
 
     /// @param modeled_first  Gap re-entry key knob state for this pass.

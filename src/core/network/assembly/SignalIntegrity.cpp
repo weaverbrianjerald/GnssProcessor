@@ -195,7 +195,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                     if (mit != a.missing_since.end()) {
                         // A reference band is back and the LOS never went away, so
                         // no producer-registered gap exists for it.  This is the
-                        // flicker the card is named for (the shape of the G21 design
+                        // flicker this check targets (the shape of the G21 design
                         // case).
                         regained.insert(b);
                         a.missing_since.erase(mit);
@@ -369,7 +369,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                     // it with a counter" (spec §2 INC-3a).  Acting here would add
                     // about 1.7 funnel entries per epoch to a channel the Iono-2 v3k
                     // erase policy is tuned on, so the premise is measured and the
-                    // count decides any follow-up card.
+                    // count decides any follow-up.
                     // Guarded on a non-empty band set: a code-only re-entry (bands=0,
                     // observed for G21 at BSHM00ISR) has no ambiguity to refloat, and
                     // counting it as "not already refloated" would inflate the number
@@ -479,7 +479,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
     // demoted-row count is summed here from the per-station counters because the fold
     // runs inside the parallel produce phase.  A live map with zero demoted rows means
     // the map is written and never read: live counters over dead wiring, the failure
-    // the rx-CB carry card documents.  The census block states the INC-0 audit answer
+    // documented for the rx-CB carry.  The census block states the INC-0 audit answer
     // directly rather than leaving it to be inferred from two raw counts.
     if (!ctx.knobs.sig_integrity_on) return 0;
     auto s = ctx.counters.sig;   // a local copy: the demoted-row sum below is this report's own
