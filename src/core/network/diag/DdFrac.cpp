@@ -13,6 +13,7 @@
 #include "common/GnssIdentity.hpp"
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
+#include "network/solve/PhaseDatum.hpp"      // networkIsGaugePinned
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -63,19 +64,10 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
     auto& dd_frac_trace        = traces.dd_frac_trace;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
     auto& n_loop_epochs = ctx.counters.n_loop_epochs;
-    // Pure gauge-pin predicate, a byte-copy of Application::networkIsGaugePinned_
-    // (INC-7 H1).  It reads no member state, so the seam holds it as a local.
-    auto networkIsGaugePinned_ = [](const std::vector<NetStation>& stations,
-                                    bool phase_datum_prioritized, std::size_t i,
-                                    const std::string& sat, const std::string& signal) -> bool {
-        if (!phase_datum_prioritized) return stations[i].is_pivot;
-        return stations[i].pinned_amb_targets.count(StateKeys::makeAmbiguityKey(sat, signal)) != 0;
-    };
-
 
     // --- S1: the (cons, signal, sat) -> anchor station map -----------------------
     // docs/SPEC_lane_spectrometer.md §3.3 anchor partition.  The map is emitted here
-    // because this seam already reconstructs the gauge-pin predicate and walks every
+    // because this seam already evaluates the gauge-pin predicate and walks every
     // station's ambiguity key map, so the map is read off the election that ran
     // instead of being re-derived (a second derivation could disagree with the
     // datum).  It sits outside the DD-fractional gate below on purpose: that block is
@@ -85,7 +77,7 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
     // grader takes the per-arc mode, which needs the full sequence.
     //
     // The two outputs are complementary: the DD-fractional emit skips pinned
-    // ambiguities (the networkIsGaugePinned_ continue below), so no satellite appears
+    // ambiguities (the networkIsGaugePinned continue below), so no satellite appears
     // both as a graded DD member and as its own anchor on the same signal.  The two
     // files together cover the gauge, each ambiguity in one of them.
     if (traces.phase_anchor_trace.is_open()) {
@@ -95,8 +87,8 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
                 (void)sidx;
                 const auto parts = StateKeys::parseAmbiguityKey(key);
                 if (!parts) continue;
-                if (!networkIsGaugePinned_(stations, phase_datum_prioritized,
-                                           i, parts->satellite, parts->signal))
+                if (!networkIsGaugePinned(stations, phase_datum_prioritized,
+                                          i, parts->satellite, parts->signal))
                     continue;
                 const std::string cst = constellationKey(systemOfSat(parts->satellite));
                 traces.phase_anchor_trace
@@ -148,8 +140,8 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
             for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
                 const auto parts = StateKeys::parseAmbiguityKey(key);
                 if (!parts) continue;
-                if (networkIsGaugePinned_(stations, phase_datum_prioritized,
-                                          i, parts->satellite, parts->signal))
+                if (networkIsGaugePinned(stations, phase_datum_prioritized,
+                                         i, parts->satellite, parts->signal))
                     continue;   // anchored (pinned to 0) → degenerate DD
                 const System sys = systemOfSat(parts->satellite);
                 if (sys == System::GLONASS) continue;   // GLONASS FDMA: excluded (no common λ / integer DD)

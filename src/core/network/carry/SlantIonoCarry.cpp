@@ -158,9 +158,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
         // harvest stamp is this epoch's spacing), so the knob means the same
         // thing at 1 s and 30 s cadence and no nominal-rate config is needed.
         // Floored at one epoch: a same-epoch re-fold still pays one q.
-        double dt_ep = pl_now_s - ctx.carry.pl_prev_now_s;
-        if (!std::isfinite(dt_ep) || dt_ep <= 0.0 || dt_ep > pl_max_gap_s)
-            dt_ep = 0.0;   // first epoch / implausible spacing ⇒ gap_ep = 1
+        const double dt_ep = networkEpochSpacingS(pl_now_s, ctx.carry.pl_prev_now_s, pl_max_gap_s);
         for (const auto& [isat, iidx_sz] : st.sm->getIonosphereStates()) {
             const int iidx = static_cast<int>(iidx_sz);
             if (iidx < 0 || iidx >= x_lin.size()) continue;

@@ -221,4 +221,17 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkCouplingExactTally(NetworkRunContext& ctx,
+                               const std::vector<StationAssembly>& asm_res) {
+    // Fold each station's exact-update counts into the run totals (serial; the
+    // produce wrote only its own slot).
+    if (ctx.knobs.carry_cpl_exact)
+        for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);
+
+}
+
+// ---- End of the PASS B serial tallies ----
+
 }  // namespace GnssProcessor

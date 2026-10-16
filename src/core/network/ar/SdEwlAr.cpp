@@ -824,4 +824,23 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 
 // ---- End of the PASS B station steps ----
 
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkSdEwlTraceDrain(const GnssConfig& config_, NetworkRunTraces& traces,
+                          const std::vector<StationAssembly>& asm_res) {
+    // SD pre-reduce EWL trace drain (serial, post-produce; SPEC_sd_ewl_prereduce §6).
+    // The rows were formatted per station inside the parallel produce; writing them
+    // here in station index order makes the file independent of the thread count.
+    // Flushed per epoch: this stream exists to diagnose runs that are killed
+    // mid-flight, and an unflushed tail would lose exactly that evidence.
+    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
+        for (size_t i = 0; i < asm_res.size(); ++i)
+            for (const std::string& row : asm_res[i].sd_ewl_trace)
+                traces.sd_ewl_trace << row;
+        traces.sd_ewl_trace.flush();
+    }
+}
+
+// ---- End of the PASS B serial tallies ----
+
 } // namespace GnssProcessor

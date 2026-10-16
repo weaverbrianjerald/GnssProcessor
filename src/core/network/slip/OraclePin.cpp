@@ -840,4 +840,23 @@ void networkOraclePinPriors(StationCarryFrame& carry) {
 
 // ---- End of the PASS B station steps ----
 
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkOraclePinStationTally(NetworkRunContext& ctx,
+                                    const std::vector<StationAssembly>& asm_res) {
+    // Simulation-only oracle ambiguity pin: fold this epoch's per-station pin
+    // accounting into the run-scope counters (serial, post-produce, the same
+    // discipline).  Null pointer when off, so this is unreachable on an unarmed run.
+    if (ctx.carry.oracle_pin) {
+        auto& op = *ctx.carry.oracle_pin;
+        for (const StationAssembly& Rc : asm_res) {
+            op.rows_injected        += Rc.opin_rows;
+            op.gauge_pinned_skipped += Rc.opin_gauge_skipped;
+            op.no_column            += Rc.opin_no_column;
+        }
+    }
+}
+
+// ---- End of the PASS B serial tallies ----
+
 } // namespace GnssProcessor

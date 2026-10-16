@@ -584,4 +584,27 @@ int networkResponsesRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkResponsesStationTally(NetworkRunContext& ctx,
+                                   const std::vector<StationAssembly>& asm_res) {
+    // The produce phase's per-station response counts, folded into the
+    // run's response table (serial, the same discipline; zero where a site is unarmed).
+    for (const StationAssembly& Rc : asm_res) {
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatch,    Rc.prm_amb_free_latch);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatchReentry,
+                   Rc.prm_amb_free_latch_reentry);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbPendingReseedSkip, Rc.prm_amb_pending_reseed_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::AmbGapSkip,           Rc.prm_amb_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapSkip,          Rc.prm_rxcb_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbJumpSkip,         Rc.prm_rxcb_jump_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::IonoGapSkip,          Rc.prm_iono_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RxclkGapSkip,         Rc.prm_rxclk_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapSkip,           Rc.prm_zwd_gap_skip);
+        prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapSkip,           Rc.prm_rpb_gap_skip);
+    }
+}
+
+// ---- End of the PASS B serial tallies ----
+
 }  // namespace GnssProcessor

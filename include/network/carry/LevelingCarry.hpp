@@ -30,10 +30,9 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
 /**
- * @brief The ambiguity carry's `pl_emit_row`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Emits one carried ambiguity as a diagonal prior or, under conditional coupling, as a
+ *        coupling row, as a function of the station's carry frame.  Called directly by the
+ *        ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_idx,
@@ -41,20 +40,17 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
                             const std::string& sat = {}, const std::string& signal = {});
 
 /**
- * @brief The ambiguity carry's `amb_state_note`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Records the variance and the route a folded ambiguity took, as a function of the
+ *        station's carry frame.  Called directly by the ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 void networkAmbStateNote(StationCarryFrame& carry, const std::string& sat,
                          const std::string& signal, double var_eff, AmbFoldRoute route);
 
 /**
- * @brief The ambiguity carry's `pl_finish_var`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Finishes a carried ambiguity's variance (the floor and the carry variance factor), as a
+ *        function of the station's carry frame.  Called directly by the ambiguity and
+ *        local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 double networkAmbCarryFinishVar(const StationCarryFrame& carry, double var_eff,
@@ -188,5 +184,35 @@ struct LevelingCarryCounters {
     size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
     long long prm_pruned_after_drop = 0;
 };
+
+struct NetworkRunContext;   // network/state/RunContext.hpp
+struct SyncedEpoch;         // rinex/MultiRinexSync.hpp
+
+/**
+ * @brief Folds the stations' free-epoch skip counts (slip re-leveling) into the run counter.
+ *
+ * Serial, after the parallel produce: each station counted its own skips in its slot. Does
+ * nothing unless the free-epoch latch is armed.
+ *
+ * @param ctx     The run context: the counter is written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkAmbiguityFreeEpochTally(NetworkRunContext& ctx,
+                                    const std::vector<StationAssembly>& asm_res);
+
+/**
+ * @brief Folds the stations' inject-side stale skips into the run counters and records the
+ *        worst epoch.
+ *
+ * Serial, after the parallel produce. Keeps the epoch's week, time of week and station count
+ * with the largest skip total, as a handle a trace filter can use to find the epoch.
+ *
+ * @param ctx     The run context: the stale-skip counters are written.
+ * @param asm_res The stations' assembled blocks, read.
+ * @param se      The epoch (its time stamps the worst epoch).
+ */
+void networkAmbiguityStaleSkipTally(NetworkRunContext& ctx,
+                                    const std::vector<StationAssembly>& asm_res,
+                                    const SyncedEpoch& se);
 
 } // namespace GnssProcessor
