@@ -1,6 +1,6 @@
 /**
  * @file MeasurementModelNetwork.cpp
- * @brief Network-only surface, owned with card NOM: the parts of MeasurementModel
+ * @brief Network-only surface, owned with the network producer: the parts of MeasurementModel
  *        only the PPP-RTK network producer reaches.
  *
  * Holds the shared satellite-state pre-allocation ensureNetworkSharedStates
@@ -57,7 +57,7 @@ namespace GnssProcessor {
         if (config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) return;
         if (!config_.isUncombinedEnabled()) return;  // network V1 is uncombined-only
 
-        // The parameter inventory's absorbed instances (card NOM N1b): every shared
+        // The parameter inventory's absorbed instances: every shared
         // state a gate below withholds from this station is noted with the gate's
         // reason, and recordStationParams counts it after the split as Absorbed.  The
         // list is the station's for this epoch, so it starts empty here (the later
@@ -171,7 +171,7 @@ namespace GnssProcessor {
                 // the network scope): FDMA makes a single shared per-(sat,signal) OSB
                 // unphysical for GLONASS, whose receiver group delay stays in the
                 // per-FCN-slot rx IFB and whose code feeds the satellite clock alone.
-                // (Card NOM N1b, checked: the per-slot IFB exists only on the FDMA bands
+                // (Checked: the per-slot IFB exists only on the FDMA bands
                 // at a known slot k != 0, and the GLONASS branch below is not reached
                 // in a loaded run, because the loader refuses
                 // network.estimate_sat_code_bias together with network.estimate_glonass.)

@@ -1,9 +1,9 @@
 #pragma once
 /**
  * @file SlipFunnel.hpp
- * @brief The slip funnel of one network epoch (card C3c): every (station roster index,
+ * @brief The slip funnel of one network epoch: every (station roster index,
  *        ambiguity key) the epoch treats as slipped, its producers, its readers, and the
- *        standing invariants it serves (card NOM3 step EP2).
+ *        standing invariants it serves.
  *
  * The funnel is an epoch group (NetworkEpoch::funnel, network/driver/Epoch.hpp): empty at the
  * epoch's construction, filled before the phase datum, read from the phase datum on, and gone
@@ -11,7 +11,7 @@
  * (NetworkCarryState::carry_innov_pending, carry_innov_pending_flat), never a funnel entry.
  *
  * Producers, in spine order (each takes the funnel as an output parameter):
- *   1. networkSlipFunnelOpen: the previous epoch's innovation-gate flags (card 4 D5), consumed
+ *   1. networkSlipFunnelOpen: the previous epoch's innovation-gate flags (D5), consumed
  *      one-shot, and the retap-only drain beside them (carry_innov_flat_now).
  *   2. Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp): the PASS-A slip
  *      detectors' drains (network/slip/SlipQc.cpp), into the raw subset only.
@@ -23,10 +23,10 @@
  * counted as bridged), Application::networkPassB_ (the T5 erase policy reads the raw subset),
  * networkBuildCarryDdPriors and the solve glue's replay rebuild (the DD carry's membership
  * exclusion: a funnel arc re-taps fresh), networkEmitStore, networkSignalRosterAudit.  The DD
- * build reads the funnel through the epoch, and the solve glue does not take it (card NOM3
- * step EP1c removed both writable parameters).
+ * build reads the funnel through the epoch, and the solve glue does not take it (both writable
+ * parameters were removed).
  *
- * The standing invariants it serves (CLAUDE.md, "Standing invariants"; card NOM section 3.5):
+ * The standing invariants it serves (CLAUDE.md, "Standing invariants"):
  *   - Invariant 1, every stiff carried quantity has a wired slip response: the funnel is the
  *     response's feed for the DD carry (a funnel arc leaves A_old and is re-born), the phase
  *     anchor (a just-freed arc is not mature, a freed anchor hands over) and the T5 deviation
@@ -54,7 +54,7 @@ struct NetworkRun;
 struct NetworkEpoch;
 struct EpochEvents;             // network/driver/Epoch.hpp
 
-/// The slip funnel (card C3c).  See the file comment for its producers, readers and invariants.
+/// The slip funnel.  See the file comment for its producers, readers and invariants.
 struct NetworkSlipFunnel {
     std::set<std::pair<int, std::string>> carry_slipped_ambs; ///< The funnel: (station roster index, ambiguity key).
     std::set<std::pair<int, std::string>> carry_slipped_raw;  ///< Its raw-detector subset (Iono-2 v3k): the entries a raw observable saw step.
@@ -65,7 +65,7 @@ struct NetworkSlipFunnel {
  *
  * Under network.carry_invariant_innov_gate the flags the gate raised after the last solve
  * (ctx.carry.carry_innov_pending) enter the funnel and are cleared.  The retap-only drain
- * (card 4 D5 v4) moves the corroborated-flat subset into ctx.carry.carry_innov_flat_now, which
+ * (D5 v4) moves the corroborated-flat subset into ctx.carry.carry_innov_flat_now, which
  * is cleared first on every epoch so a disarmed run cannot inherit a stale set.
  *
  * @param run    The run: reads ctx.knobs.carry_innov_gate; writes ctx.carry's pending and

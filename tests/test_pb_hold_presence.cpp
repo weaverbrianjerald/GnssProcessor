@@ -1,8 +1,8 @@
 /**
  * @file test_pb_hold_presence.cpp
- * @brief Presence edges of a held phase bias at the consumer (card PBF).
+ * @brief Presence edges of a held phase bias at the consumer.
  *
- * Under the producer's hold (card PBH) the hold seam claims every key whose store
+ * Under the producer's hold the hold seam claims every key whose store
  * entry carries a generation, and the three phase-bias reactions used to skip a
  * claimed key entirely.  A held bias that appears on a phase row the consumer is
  * already using, or leaves it, steps the applied correction by the whole bias; the
@@ -10,7 +10,7 @@
  * reaction the consumer's Kalman peel either catches the row or resets the wrong
  * satellites.  These cases drive the real reaction seam (RealTimeEngine::
  * resetOnPhaseBiasDisc, which runs the hold seam first) across both edges, with the
- * knob off (the card-PBH dispatch, nothing answered) and on (both edges answered).
+ * knob off (the hold dispatch, nothing answered) and on (both edges answered).
  */
 
 #include <gtest/gtest.h>
@@ -26,7 +26,7 @@
 
 namespace GnssProcessor {
 
-// House friend-shim idiom: expose only the engine seams this card needs.
+// House friend-shim idiom: expose only the engine seams this suite needs.
 struct PbHoldPresenceTestAccess {
     static void initialize(RealTimeEngine& e, const SsrCorrectionStore& store) {
         e.state_manager_ = std::make_unique<StateManager>(5, e.log_manager_, e.config_);
@@ -46,7 +46,7 @@ struct PbHoldPresenceTestAccess {
 namespace {
 
 constexpr const char* kSat = "G32";
-constexpr double kHeldBias = 92.409344;   // the field value of G32 L1W (card PBF)
+constexpr double kHeldBias = 92.409344;   // the field value of G32 L1W
 
 class PbHoldPresenceTest : public ::testing::Test {
 protected:
@@ -157,7 +157,7 @@ protected:
     }
 };
 
-// The card-PBH dispatch: a claimed key skips every reaction, so neither the
+// The hold dispatch: a claimed key skips every reaction, so neither the
 // appearance nor the departure of the held bias touches the ambiguity.
 TEST_F(PbHoldPresenceTest, KnobOffAnswersNeitherEdge) {
     build(/*presence_flip=*/false);
@@ -192,7 +192,7 @@ TEST_F(PbHoldPresenceTest, KnobOnResetsTheFlippedSignalAtBothEdges) {
     EXPECT_EQ(c.suppressed, 0u);
 }
 
-// Armed with the card-CC carry, the edge translates the ambiguity by the applied
+// Armed with the declared-step carry, the edge translates the ambiguity by the applied
 // step instead of resetting it: amb - 92.4 at the appearance, back at the departure.
 TEST_F(PbHoldPresenceTest, KnobOnWithCarryTranslatesByTheWholeBias) {
     build(/*presence_flip=*/true, /*carry=*/true);

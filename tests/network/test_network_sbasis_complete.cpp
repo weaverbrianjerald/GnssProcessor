@@ -9,7 +9,7 @@
  * receiver channel family (the Galileo C/Q-vs-X tracking split), with eigenvector
  * components ∝ μ_σ, resisted only by the SH-VTEC prior (λ ≈ 1e-6 ≪ cutoff).  On
  * such an epoch the rank gate observes more null directions than declared and
- * withholds the epoch, or card PA soft-anchors columns (FT63 GPS+Galileo,
+ * withholds the epoch, or a soft anchor fixes columns (FT63 GPS+Galileo,
  * DOY-129).  The completion derives the realized dimension and constrains each
  * extra direction along its own unit eigenvector at its carried level, so:
  *
@@ -238,7 +238,7 @@ TEST(NetworkSbasisCompleteTest, UnseparatedExtrasAreSkippedNotEpochFatal) {
     // (b) Extra at machine zero with a declared gauge at exactly 0.0: the
     // relative test alone (10·0 = 0) would admit it, so the absolute floor
     // (1e-14·λmax = 1e-8 here) catches it.  This is the orphaned-exact-gauge
-    // class, left to card PA by design.
+    // class, left to the soft anchor by design.
     const auto Mb = planted({0.0, 1e-12, 1e6});
     const auto cb = sb.completeSbasisDimension(Mb, 1, kTol, Eigen::VectorXd(),
                                                nullptr, 6);

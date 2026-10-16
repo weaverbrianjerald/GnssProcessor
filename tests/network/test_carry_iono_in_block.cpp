@@ -2,7 +2,7 @@
  * @file test_carry_iono_in_block.cpp
  * @brief Contract tests for @c network.carry_iono_in_block: the per-LOS slant-iono
  *        columns folded inside the F3 jointly-whitened station block, the I half of
- *        the ZWD-in-block card (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).
+ *        the ZWD-in-block design (SPEC_amb_iono_split_overcount §7 item 17, §6.16.7d).
  *
  * Rationale, which shapes the tests: a station's carried B band priors already assert
  * each LOS's iono direction implicitly, so an independent diagonal iono prior
@@ -12,7 +12,7 @@
  * The same argument holds for the ZWD carry (0.723 m diagonal against 0.088 m
  * in-block on the quiet bed).
  *
- * A unit test reaches the seam the card acts on,
+ * A unit test reaches the seam this mechanism acts on,
  * @c CouplingRowBuilder::buildLocalBlock over a real registered
  * @c NetworkEstimator, plus the loader's interlocks and the carry map's key shape.
  * It does not reach the harvest (which appends the iono columns to @c cols and
@@ -64,7 +64,7 @@ namespace {
 struct IonoBlockFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 
@@ -143,8 +143,8 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// The posture the card is validated on: the leveling carry as the live vehicle,
-/// folded as conditional coupling rows (Card-1), with F3 armed.
+/// The posture this feature is validated on: the leveling carry as the live vehicle,
+/// folded as conditional coupling rows, with F3 armed.
 const char* kF3Posture =
     "    \"phase_leveling\": true,\n"
     "    \"carry_conditional_coupling\": true,\n"
@@ -166,7 +166,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 //     block whose Σ carries the harvested iono cross terms.
 // =============================================================================
 //
-// The card's central claim in one case: the per-LOS iono is coupled to the
+// The central claim in one case: the per-LOS iono is coupled to the
 // station's ambiguities, to the ZWD and to each other through the harvested
 // (N_rr⁻¹) terms instead of being asserted independently.  Σ is checked directly,
 // then the whitening is verified the way test_network_coupling checks an
@@ -398,7 +398,7 @@ TEST(CarryIonoInBlockTest, GapScalingIsLinearInEpochsOnTheIonoDiagonal) {
 //     linearization point changes η by exactly −Δx_lin and nothing else.
 // =============================================================================
 //
-// The frame decision of the card: network_ionosphere.csv writes x_r alone and is
+// The frame decision: network_ionosphere.csv writes x_r alone and is
 // frame-broken, so the carry stashes x_lin + x_r.  If the carry held a correction
 // instead, the same stored number would mean a different absolute ionosphere after
 // the linearization point moved, and the test below would see the RHS unchanged
@@ -530,7 +530,7 @@ TEST(CarryIonoInBlockTest, IonoWithoutAHarvestBlockZeroesItsPairsAndIsCountedSep
 // not per signal, so one erase clears the LOS once however many bands tripped, and
 // a sibling satellite (or the same satellite at another station) survives.
 TEST(CarryIonoInBlockTest, T4EraseKeyClearsExactlyOneLosAndSparesSiblings) {
-    net::NetworkEntities ent;   // the line-of-sight table (card NOM step N4c)
+    net::NetworkEntities ent;   // the line-of-sight table
     auto put = [&](int sta, const std::string& sat, double v) {
         net::putLos(ent, sta, sat, &net::LosState::iono_blk) = LocalCarry{v, 0.0120, 100.0};
     };

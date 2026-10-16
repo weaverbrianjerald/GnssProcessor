@@ -2,7 +2,7 @@
 /**
  * @file ChainDatum.hpp
  * @brief Eq-34 / de Jonge single-receiver-chain phase-bias datum for the PPP-RTK
- *        network producer (Card 3).
+ *        network producer.
  *
  * For each (constellation, signal) connected component of the bipartite
  * (receiver × satellite) observation graph, the election picks a datum receiver r1
@@ -32,7 +32,7 @@
  * downstream by networkInjectD2CarryPrior, networkStashCarry and the M2 VCE
  * shared-prior snapshot).  It therefore runs:
  *   - after networkAssemblyPrefilter_ (its phase-bias prune is a precondition);
- *   - before the Card-3 D3c RPB allocation, which stays in the run TU.  This
+ *   - before the D3c RPB allocation, which stays in the run TU.  This
  *     function is the only writer of shared_phase_keys on the eq34 path, and D3c
  *     derives this epoch's need_rpb set from it.  If D3c ran first it would allocate
  *     and prune RPB states against the previous epoch's shared set: this epoch's
@@ -48,7 +48,7 @@
 
 #include "network/driver/RunTypes.hpp"   // NetStation / PhaseDatumCandidates
 #include "network/solve/AnchorHygiene.hpp"   // AnchorHygiene (eq34 reattach hygiene)
-#include "network/state/CarrySites.hpp"      // CarrySiteCounts (card PRM phase 2)
+#include "network/state/CarrySites.hpp"      // CarrySiteCounts
 
 #include <map>
 #include <memory>
@@ -70,7 +70,7 @@ struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cp
 
 /**
  * @brief The eq34 chain datum's D4 carry shift through the traversal of carried references
- *        (card PRM phase 2, @c CarryMechanism::Eq34Shift).
+ *        (@c CarryMechanism::Eq34Shift).
  *
  * The rule of the D4 apply: a carried ambiguity moves by
  * @f$-\Delta b_s - \Delta\delta_r@f$ (its satellite's and its receiver's chain steps, formed in
@@ -80,17 +80,17 @@ struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cp
  * phase-bias and wet-delay carries) by @f$\Delta b_s@f$.  A non-finite or zero step moves
  * nothing.
  *
- * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the walk also moves
+ * With @p complete (@c network.carry_rebase_complete) the walk also moves
  * the sites the mechanism table exempts as owed, each by the same rule: the gross screen's
  * held ambiguity like the ambiguity (@f$-\Delta b_s - \Delta\delta_r@f$), the last solved
  * phase bias (@c pb_level_prev, "SAT_SIGNAL") like the carried phase bias
  * (@f$+\Delta b_s@f$), and the phase-bias coupling terms on a shifted satellite column in
  * every other coupling map (the slant ionosphere and its block, the gross screen's three
- * holds, the receiver clock and code bias, card LGM's phase colour) by @f$\Delta b_s@f$.
+ * holds, the receiver clock and code bias, the phase colour) by @f$\Delta b_s@f$.
  * The phase hold's held value (an emitted value) and an open pin bridge (a root of the chain
  * with a zero shift) are not moved.
  * @param carry     the run's carried state.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param shift_sat (satellite, signal) -> @f$\Delta b_s@f$.
  * @param shift_rxg (station, constellation, signal) -> @f$\Delta\delta_r@f$.
  * @param shift_rpb (station, receiver phase-bias key) -> @f$\Delta\delta_r@f$.
@@ -99,7 +99,7 @@ struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cp
  *                  @p complete are counted in @p counts only).
  * @param n_terms   out: coupling terms moved.
  * @param counts    optional out: per-site tallies (accumulated).
- * @param complete  also move the owed sites (false = the walk of card PRM phase 2).
+ * @param complete  also move the owed sites (false = the original walk, without them).
  */
 void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     const std::map<std::pair<std::string, std::string>, double>& shift_sat,
@@ -109,7 +109,7 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                     CarrySiteCounts* counts = nullptr, bool complete = false);
 
 /**
- * @brief Elect the Card-3 eq34 chain datum for this epoch.
+ * @brief Elect the eq34 chain datum for this epoch.
  *
  * Resets every station's pins, seeds the shared set from the (post-gate) union,
  * builds the per-(constellation,signal) bipartite graph, elects r1 and grows a
@@ -117,8 +117,8 @@ void eq34ShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
  * (re-reference erase + S-transformation apply + I2 extend-only merge-back) and
  * advances the sticky baselines.
  *
- * The graph, its components and the tree are those of filter/NetworkArcGraph (card
- * AGT step AGT-4): arcgraph::buildArcGraph per group (stations in roster order,
+ * The graph, its components and the tree are those of filter/NetworkArcGraph:
+ * arcgraph::buildArcGraph per group (stations in roster order,
  * satellites in string order, arcs in usable_keys order), arcgraph::arcComponents in
  * the legacy order (arcgraph::legacyChainVertexRank) and arcgraph::growChainForest per
  * component (roots r1 and the bridged satellites, the live incumbent arcs as the
@@ -168,14 +168,14 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys, EpochEvents& events);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
  *
- * The eq34 chain datum: the card-3 re-reference totals, the pin audit, the seed round
+ * The eq34 chain datum: the re-reference totals, the pin audit, the seed round
  * and the slip-aware election.
  *
  * Gate: each section under its own condition, as in the teardown:
@@ -194,16 +194,16 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochPassA;              // network/driver/Epoch.hpp
 struct EpochAssembly;           // network/driver/Epoch.hpp
 
-// ---- PASS B serial stages, declarations (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py) ----
+// ---- PASS B serial stages, declarations (generated by scripts/nom_pb1_cut.py) ----
 
 /**
  * @brief The eq34 chain-pin audit: declared, folded, landed and short pins per group, and the
  *        seed-round targets of accepted stations for the next election.
  *
  * No-op unless NetworkKnobs::phase_datum_eq34 and the epoch was not aborted. Called by
- * networkPassB_ after the consume (card NOM3 step PB1a).
+ * networkPassB_ after the consume.
  *
- * Epoch form (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py): a serial stage of
+ * Epoch form (generated by scripts/nom_pb1_cut.py): a serial stage of
  * Application::networkPassB_, cut with the alias lines of networkPassB_ it reads.  Below its
  * bindings is the frozen text; a piece wholly inside one `if` returns early instead
  * (scripts/nom_pb1/declared.py).
@@ -218,9 +218,9 @@ struct EpochAssembly;           // network/driver/Epoch.hpp
 void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAssembly& assembly,
                          bool epoch_ok);
 
-// ---- End of the PASS B serial stages, declarations (card NOM3 step PB1a) ----
+// ---- End of the PASS B serial stages, declarations ----
 
-// ---- Harvest half, declarations (card NOM3 step HV1; generated by scripts/nom_hv1_cut.py) ----
+// ---- Harvest half, declarations (generated by scripts/nom_hv1_cut.py) ----
 
 struct NetworkRun;                          // network/driver/Run.hpp
 struct NetworkEpoch;                        // network/driver/Epoch.hpp
@@ -228,7 +228,7 @@ struct HarvestBorder;                       // network/carry/LocalCarryHarvest.h
 struct StationHarvestBlock;                 // network/carry/LocalCarryHarvest.hpp
 
 /**
- * @brief Card 3 (eq34): each receiver phase bias with its diagonal conditional variance (no
+ * @brief Eq34: each receiver phase bias with its diagonal conditional variance (no
  *        coupling, by design), then the prune. No-op unless network.eq34_rpb_q > 0.
  *
  * @param run The run: its context (carry, counters, knobs), setup (stations) and engines.

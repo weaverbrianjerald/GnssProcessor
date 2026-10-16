@@ -2,7 +2,7 @@
 
 /**
  * @file PhaseColour.hpp
- * @brief Band-common, per-line-of-sight Gauss-Markov carrier-phase error (card SFR).
+ * @brief Band-common, per-line-of-sight Gauss-Markov carrier-phase error.
  *
  * ## Purpose
  *

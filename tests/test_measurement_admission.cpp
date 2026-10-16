@@ -71,7 +71,7 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// The admission records of every station (card NOM step N4f1: StationState::adm_arc).
+/// The admission records of every station (StationState::adm_arc).
 std::size_t admArcs(const NetworkRunContext& ctx) {
     std::size_t n = 0;
     const net::StationTable& t = ctx.entities.stations;
@@ -419,7 +419,7 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
 // Standing invariant #1: a zero-q or stiff time-linked quantity needs a wired
 // slip/jump response before a hole is made in it.  A withhold is such a hole, and
 // the invariant-DD chord is keyed independently of the StateManager, so only an
-// explicit re-tap discards it.  (Card 4's slip hole without a response cost
+// explicit re-tap discards it.  (The invariant carry's slip hole without a response cost
 // 10.9 cyc/ep in the field.)
 TEST(MeasurementAdmission, MidArcOnsetWithholdsTheBandAndRefloatsTheArc) {
     LogManager lm;
@@ -758,7 +758,7 @@ TEST(MeasurementAdmission, StatisticAndBandIdentityAreWellDefined) {
 }
 
 // ===========================================================================
-// The arc re-entry vet (card §10, INC-4)
+// The arc re-entry vet (§10, INC-4)
 // ===========================================================================
 //
 // The admission record outlives the arc: it is kept for kAdmArcForgetEp (2880)
@@ -823,7 +823,7 @@ TEST(MeasurementAdmission, ReEntryAfterAGapIsScreenedAsABirthNotAnOnset) {
 // ---------------------------------------------------------------------------
 //
 // This pins the mislabel itself.  It is the only case in the file that asserts
-// behaviour the card considers wrong; it checks that disarming the vet reproduces
+// behaviour the design considers wrong; it checks that disarming the vet reproduces
 // the pre-change classification exactly.
 TEST(MeasurementAdmission, DisarmedVetStillInheritsTheStaleVerdictAsAnOnset) {
     LogManager lm;

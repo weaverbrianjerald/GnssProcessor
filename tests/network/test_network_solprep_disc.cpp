@@ -3,7 +3,7 @@
  * @brief The emit-site landings of per-satellite discontinuities in
  *        networkSolPrep: the Q3 trap-1 rule (docs/SPEC_clock_temporal_anchor.md)
  *        applied to the sibling landing sites eph_cutover, cb_excursion, the IF-pin
- *        re-selection (T3c), and the CB re-seed queue (Card-2).
+ *        re-selection (T3c), and the CB re-seed queue.
  *
  * The contract under test: a queue's landed mark does not stop at
  * markSatDiscontinuity.  That call bumps only the emitter's in-process

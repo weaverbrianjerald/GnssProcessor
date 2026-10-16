@@ -277,11 +277,11 @@ TEST(SdEwlAlgebraTest, CorrectionFrameResidualEqualsHTimesTheStateError) {
 // SdEwlArcSourceTest: the row's statistic source, against a real MwSlipDetector.
 // =================================================================================
 
-// The card rests on this: the detector forms the EWL (band2, band5) MW pair.
+// The mechanism rests on this: the detector forms the EWL (band2, band5) MW pair.
 // collectUncombinedPairs enumerates every band pair present (i<j over bands sorted by
 // descending frequency), so with L1/L2/L5 tracked the arcs are (L1,L2), (L1,L5) and
 // (L2,L5); the enumeration is not L1-referenced.  A failure here means the row has no
-// statistic and the card is inert.
+// statistic and the mechanism is inert.
 TEST(SdEwlArcSourceTest, EwlBandPairArcIsFormedAndServedInZdFrame) {
     LogManager log; GnssConfig cfg;
     MwSlipDetector det(cfg, log);

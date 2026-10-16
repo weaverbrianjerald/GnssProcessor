@@ -1,6 +1,6 @@
 /**
  * @file test_border_clone.cpp
- * @brief Gate U0 of card BCL, the whole previous border on clones
+ * @brief Gate U0 of the border clone, the whole previous border on clones
  *        (@c network.carry_coupling_bias_clone, @c network.carry_coupling_departed_clone;
  *        docs/refound/BCL_previous_border_on_clones_2026-10-08.md, section 4).
  *
@@ -10,11 +10,11 @@
  *     of b(t) - b(t-1) and withdraws exactly; a joint factor over a clock and a bias walk
  *     equals A' Qw^-1 A.
  * (c) The departed clone is exact: two rows sharing a departed key, folded on its clone with
- *     the stashed block, give the batch posterior, while card CTU's per-row re-attribution
+ *     the stashed block, give the batch posterior, while the exact update's per-row re-attribution
  *     of the same rows does not (its cross-row term is dropped).
  * (d) The gate view marginalizes a referenced bias clone and keeps the declared gauge null,
  *     also with no clock clone registered.
- * (e) Both knobs load default off and refuse to load without card SCL's clock clone.
+ * (e) Both knobs load default off and refuse to load without the clock clone.
  */
 
 #include <gtest/gtest.h>
@@ -41,7 +41,7 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// Config text: a two-station network with card SCL's chain (the exact update, the dense
+/// Config text: a two-station network with the clock clone's chain (the exact update, the dense
 /// carry, the dense handover transform) and the given clone switches; @p extra is spliced
 /// into the network section.
 std::string bclConfig(bool clone, bool bias, bool departed, const std::string& extra = "") {
@@ -98,7 +98,7 @@ int nullCount(const Eigen::MatrixXd& N) {
 }  // namespace
 
 // (a) The bias clone is the last column, keyed and labelled apart from the bias, idempotent,
-// counted with the clones, and a clock clone through it is card SCL's own.
+// counted with the clones, and a clock clone through it is the clock clone's own.
 TEST(BorderCloneTest, BiasCloneRegistersLastWithItsKeyAndLabel) {
     NetworkEstimator est;
     const Eigen::Index c1 = est.registerClock("G01");
@@ -208,7 +208,7 @@ TEST(BorderCloneTest, BiasPriorsAndWalksFoldByIdentity) {
 
 // (c) Two rows share a departed key d.  Folded on d's clone with the stashed block (the clone
 // of the continuing clock s standing in, its walk folded once), they give the batch
-// posterior of s(t) exactly; card CTU's per-row re-attribution of the same rows, each with
+// posterior of s(t) exactly; the exact update's per-row re-attribution of the same rows, each with
 // its own conditional variance, does not.
 TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
     const double Pss = 0.04, Psd = 0.012, Pdd = 0.01, Q = 0.02;
@@ -231,7 +231,7 @@ TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
     const Eigen::Matrix3d Spost = Ipost.inverse();
     const Eigen::Vector3d xpost = Spost * (S0.inverse() * z0 + H.transpose() * Rinv * y);
 
-    // Card BCL-d: s on its clone (stand-in, walk once), d on its clone (the stashed row, no walk).
+    // BCL-d: s on its clone (stand-in, walk once), d on its clone (the stashed row, no walk).
     NetworkEstimator est;
     const Eigen::Index cs = est.registerClock("G01");
     const Eigen::Index ks = est.registerClockClone("G01");
@@ -260,7 +260,7 @@ TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
     EXPECT_NEAR(Sx(cs, cs) / Spost(0, 0), 1.0, 1e-9);
     EXPECT_NEAR(x(kd), xpost(2), 1e-9 * std::max(1.0, std::abs(xpost(2))));
 
-    // Card CTU's per-row form on the same rows: S = {s} with Q, D = {d} departed.
+    // The CTU per-row form on the same rows: S = {s} with Q, D = {d} departed.
     CouplingExactEpoch ep;
     ep.P = P;
     ep.p_of_key = {{"s", 0}, {"d", 1}};
@@ -341,7 +341,7 @@ TEST(BorderCloneTest, GateViewMarginalizesABiasClone) {
     EXPECT_NEAR((Vw * Eigen::Vector3d(1.0, 1.0, 0.0)).norm(), 0.0, 1e-9 * N.norm());
 }
 
-// (e) Both knobs are off by default and require card SCL's clock clone; armed with it, they
+// (e) Both knobs are off by default and require the clock clone; armed with it, they
 // load and are read into the run context.
 TEST(BorderCloneTest, LoaderDefaultOffAndRequiresTheClockClone) {
     bool bias = true, departed = true;

@@ -1,12 +1,12 @@
 /**
  * @file test_raim_pool_data_rows_only.cpp
- * @brief Card RPA: the carried-phase RAIM pools restricted to observation phase rows
+ * @brief The carried-phase RAIM pools restricted to observation phase rows
  *        (@c network.raim_pool_data_rows_only,
  *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
  *
  * The contracts:
  *  - the pools' admission predicate (@c raimPoolAdmitsRow) with the knob off is the
- *    declared rule of card NOM step N2b exactly: the coefficient clears 0.5 and
+ *    declared rule exactly: the coefficient clears 0.5 and
  *    @c raimPoolAdmitsKind admits the kind, whatever column subject is passed;
  *  - with the knob on it admits an observation phase row (@c data_phase,
  *    @c data_phase_second) whose tag names the column's satellite and signal, and nothing

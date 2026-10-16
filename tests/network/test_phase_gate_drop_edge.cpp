@@ -3,7 +3,7 @@
  * @brief Coverage-gate drop-edge predicate
  *        (@ref GnssProcessor::networkPhaseGateDropEdges,
  *        network/solve/PhaseGateDrop.hpp) and the knob that gates its response
- *        (@c network.phase_datum_gate_drop_erase).  Card EV7 §6, requirement F3.
+ *        (@c network.phase_datum_gate_drop_erase).  Requirement F3.
  *
  * The defect produces no signal at the site where it happens
  * (docs/refound/EV7_all_sat_clock_decouple_2026-09-21.md §5.3).  The coverage gate
@@ -32,7 +32,7 @@
  *      because an arm that names a knob the loader does not parse is silently null.
  *
  * Not asserted here: that the erase happens.  That is the existing
- * @c networkApplyPhaseAnchorCarryReref path, covered by its own suite; this card
+ * @c networkApplyPhaseAnchorCarryReref path, covered by its own suite; this mechanism
  * adds which families enter it and when.
  */
 #include <gtest/gtest.h>

@@ -2,7 +2,7 @@
 /**
  * @file Epoch.hpp
  * @brief One epoch of the network producer: everything the stages of
- *        Application::networkProcessEpoch_ hand each other (card NOM3 step EP1).
+ *        Application::networkProcessEpoch_ hand each other.
  *
  * Built once per processed epoch, right after the admission (the event injector and the
  * canonical-pair screen) fixes the observations the producer sees, and destroyed at the
@@ -29,7 +29,7 @@
  *   assembly      EpochAssembly        networkPassB_             networkPassB_; est_index_of also networkSolveGlue (each T2 replay rebuilds it)
  *   dd_build      EpochDdBuild         the DD build              networkBuildCarryDdPriors (the driver's primary call), networkSolveGlue
  *                                                                (each replay's DD rebuild)
- *   ws            EpochWorkspace       construction (empty)      networkSolveGlue (the primary DD build reads it empty, card WCF)
+ *   ws            EpochWorkspace       construction (empty)      networkSolveGlue (the primary DD build reads it empty)
  *   solve         NetworkSolveGlueResult  the solve              the driver stores the solve's return; solve.handoff also networkPostFitRaim, networkClockQc
  *   ar_fixes      ArEpochFixes         the producer AR           the driver stores networkProducerAr's return
  *   fixed_cycles  FixedCycleEmission   the fixed-cycle fold      the driver stores networkFixedCycles's return
@@ -49,12 +49,12 @@
  *     (`const std::vector<bool>& present = ep.pass_a.present;`), and each name it writes
  *     through its output, marked `// written`; below the preamble the body never spells `ep.`;
  *   - a seam reads only groups available at its spine line (scripts/nom_epoch_lint.py);
- *   - no seam keeps a pointer or a copy of an epoch member across a call (card WCF's defect
+ *   - no seam keeps a pointer or a copy of an epoch member across a call (a past defect
  *     was a by-value pointer copy that stayed null while the original moved on).
  * After the solve the seams' outputs are solve.handoff, prep.sol and events (each writer its
  * own group of it); the driver's own writes are the four stores above (the lint checks the
  * driver, the compiler checks the seams).
- * Inside networkPassB_ (card NOM3 step PB1a) its outputs reach its own serial stages, not the
+ * Inside networkPassB_ its outputs reach its own serial stages, not the
  * spine: networkPrefitFuseEpoch writes the assembly, networkAssemblyConsume writes pass_a and
  * the assembly; the tally, the in-solve track and the eq34 audit take the assembly as a const
  * parameter, since a group the caller is still writing is not read through `ep`.
@@ -73,7 +73,7 @@
 #include "network/ar/ArCycleBasis.hpp"  // ArEpochFixes
 #include "network/ar/FixedCycles.hpp"   // FixedCycleEmission
 #include "network/ar/ZStore.hpp"        // ArcKey
-#include "network/slip/SlipFunnel.hpp"    // NetworkSlipFunnel (card NOM3 step EP2)
+#include "network/slip/SlipFunnel.hpp"    // NetworkSlipFunnel
 #include "network/state/ArcLedger.hpp"            // ArcReentryOutcomeMap, ArcLedger::Key
 #include "network/solve/Sbasis.hpp"        // the code-datum records
 #include "network/qc/BlockBaarda.hpp"   // BlockBaardaHit
@@ -97,7 +97,7 @@ struct NetworkRun;
 /// from the driver's three const locals (dt, pl_now_s, carry_warm), which keep their names
 /// for the inline blocks.
 struct EpochClock {
-    double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step, card NOM3 section 2 finding 4.)
+    double dt{0.0};           ///< Seconds since the previous processed epoch, week-aware; 0 on the first.  (The DD-carry predict uses its own TOW-only step)
     double pl_now_s{0.0};     ///< This epoch in continuous GPS seconds.
     bool   carry_warm{false}; ///< The phase-leveling carry is past its warm-up (the emitted-epoch count reached network.phase_leveling_warmup_epochs).
 };
@@ -335,7 +335,7 @@ struct NetworkEpoch {
     EpochColumns           columns;       ///< The shared columns.
     EpochAssembly          assembly;      ///< The station blocks.
     EpochDdBuild           dd_build;      ///< The DD build's reverse map.
-    EpochWorkspace         ws;            ///< The replay capture channel, the clock maps, the within-epoch culprit sets (card WCF).
+    EpochWorkspace         ws;            ///< The replay capture channel, the clock maps, the within-epoch culprit sets.
     NetworkSolveGlueResult solve;         ///< The shared solution and its datum; solve.handoff is the post-fit hand-off.
     ArEpochFixes           ar_fixes;      ///< The producer AR search's fixes.
     FixedCycleEmission     fixed_cycles;  ///< The fixed-cycle fold's held solve.
@@ -344,7 +344,7 @@ struct NetworkEpoch {
     EpochEvents            events;        ///< The epoch's events, one group per writing stage.
 
     /// The solution the wire carries: the held vector when the fixed-cycle fold emits, else
-    /// the float solve (card FCF).  Read by solution prep and the emitter; every other seam
+    /// the float solve.  Read by solution prep and the emitter; every other seam
     /// reads solve.x_s.
     const Eigen::VectorXd& x_emit() const { return fixed_cycles.emit ? fixed_cycles.x_held : solve.x_s; }
 };

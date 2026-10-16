@@ -88,18 +88,18 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot and warm resume (RTB-7)
-#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
-#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
+#include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
+#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader
 #include "network/solve/Estimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
@@ -146,7 +146,7 @@
 #include <vector>
 #include "network/driver/SetupResult.hpp"
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include <spdlog/spdlog.h>
@@ -222,7 +222,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // threaded through Phase 3 (nav load and SP3-error lift), the producer-station
     // gate suppression (D1), the anchor-σ re-base (D6), the clock-IODE stamp and the
     // apriori_product_id.  Every use is guarded on it, so the sp3 path is textually
-    // unchanged.  (Card 5, RTF-1)
+    // unchanged.
     setup.brdc_rts =
         (config_.networkAprioriSource() == NetworkAprioriSource::BrdcRts);
     const bool brdc_rts = setup.brdc_rts;
@@ -282,7 +282,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // inactive system with a priority list would enter the rows with no bias column.  The
     // loader accepts that combination with a warning; removing the inactive systems here,
     // before any reader of the synced epochs runs, makes processing.active_systems the one
-    // admission rule.  (Card OWD, O4)
+    // admission rule.
     {
         const std::map<std::string, std::size_t> removed =
             sync.retainSystems(config_.getActiveSystems());
@@ -294,7 +294,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             what += fmt::format("{}{} {}", what.empty() ? "" : ", ", sys, n);
             n_removed += n;
         }
-        log->info("Network (card OWD): admission by processing.active_systems [{}] — {} "
+        log->info("Network: admission by processing.active_systems [{}] — {} "
                   "observation(s) of inactive systems removed from the synced epochs{}{}.",
                   active, n_removed, what.empty() ? "" : ": ", what);
     }
@@ -309,14 +309,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the start-offset skip of runNetwork's fast-forward, then the max-duration cutoff
     // (without a cutoff the window ends 1 s after the last synced epoch).  The group-delay
     // latch takes the navigation records in force during the window, and the S contract
-    // names the product files in force during it.  (Card OWD)
+    // names the product files in force during it.
     setup.window_t0_s = TimeUtils::continuousGpsSeconds(synced.front().time)
                       + config_.networkStartOffsetHours() * 3600.0;
     setup.window_t1_s = config_.getMaxDuration() > 0.0
                       ? setup.window_t0_s + config_.getMaxDuration()
                       : TimeUtils::continuousGpsSeconds(synced.back().time) + 1.0;
 
-    // Card HLT: broadcast satellite health on the network path (network.sat_health).  The
+    // Broadcast satellite health on the network path (network.sat_health).  The
     // series is built once from the navigation file, a record taking force at its clock
     // epoch as in the O3 latch.  "exclude": a satellite's observations leave the synced
     // epochs at which the broadcast flags it, here beside the constellation door, so every
@@ -326,7 +326,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     if (config_.networkSatHealth() != 0) {
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
-            log->error("Network (card HLT): network.sat_health needs a broadcast navigation "
+            log->error("Network: network.sat_health needs a broadcast navigation "
                        "file, but files.navigation_path is empty.  Set it, let PathResolver "
                        "auto-resolve a BRDC / _MN.rnx file covering the day, or set "
                        "network.sat_health to off.");
@@ -339,7 +339,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         if (gal_mask == 0) gal_mask = 0x1FF;   // no Galileo band named: every signal's bits count
         setup.sat_health = NetworkSbasis::satHealthSeries(nav, gal_mask);
         if (setup.sat_health.sats.empty()) {
-            log->error("Network (card HLT): parsed 0 usable broadcast records from '{}', so "
+            log->error("Network: parsed 0 usable broadcast records from '{}', so "
                        "network.sat_health has no health to read.", nav_path.string());
             return 1;
         }
@@ -368,7 +368,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             flagged_sats.insert(sat);
             flagged += fmt::format("{}{} ({})", flagged.empty() ? "" : "; ", sat, spans);
         }
-        log->info("Network (card HLT): broadcast health from '{}' ({} record(s), {} unhealthy "
+        log->info("Network: broadcast health from '{}' ({} record(s), {} unhealthy "
                   "under the band mask, Galileo mask 0x{:03X}): {} satellite(s) flagged inside "
                   "the window [TOW {:.1f}, TOW {:.1f}){}{}; {} status change(s) inside it.  "
                   "Mode '{}'.",
@@ -379,7 +379,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   config_.networkSatHealth() == 1 ? "pivot" : "exclude");
         const std::string& declared = config_.getNetworkConfig().clock_datum_satellite;
         if (!declared.empty() && flagged_sats.count(declared))
-            log->warn("Network (card HLT): the declared clock pivot {} "
+            log->warn("Network: the declared clock pivot {} "
                       "(network.clock_datum_satellite) is flagged unhealthy inside the window; "
                       "the declaration is kept.", declared);
         if (config_.networkSatHealth() == 2) {
@@ -396,7 +396,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 in_window += k;
                 by_sat += fmt::format("{}{} {}", by_sat.empty() ? "" : ", ", sat, k);
             }
-            log->info("Network (card HLT): the health door removed {} observation(s) of flagged "
+            log->info("Network: the health door removed {} observation(s) of flagged "
                       "satellites from the synced epochs, {} inside the window{}{}.",
                       n_removed, in_window, by_sat.empty() ? "" : ": ", by_sat);
         }
@@ -418,7 +418,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // LiveEphemerisStore does for toe).  The staging sort here and the epoch-loop
     // feed both call navAvailabilityGpsSeconds, one inline function in
     // network/driver/SetupResult.hpp, so their orders cannot drift apart.
-    // (Card 8, replay parity; INC-5)
+    // (replay parity; INC-5)
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
     if (brdc_rts) {
@@ -430,7 +430,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Geometry::getSatellitePV falls back to this store when no SP3 is loaded, and
         // GnssCorrections::getSatelliteClockCorrection supplies the broadcast SV clock
         // (marked broadcast-grade) when no precise CLK covers the epoch, which is the
-        // broadcast a-priori this mode needs.  (Card 5, RTF-1)
+        // broadcast a-priori this mode needs.
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
             log->error("Network (brdc_rts): network.apriori_source = brdc_rts requires a "
@@ -442,8 +442,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Parse first so a per-constellation loaded-satellite summary is available.
         //
         // The whole day is not inserted at once.  LiveEphemerisStore keeps only the
-        // current and previous record per satellite (live streaming semantics, which
-        // Cards 3/6/7 pin), so a full-file load would leave each satellite holding its
+        // current and previous record per satellite (live streaming semantics),
+        // so a full-file load would leave each satellite holding its
         // last two records of the day; at any processing epoch more than a fit window
         // (~4 h GPS, ~2 h GAL/BDS) before the end of the day, the staleness guard would
         // then reject every satellite and the producer would degenerate to
@@ -454,7 +454,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // and toc is the closest file-derivable stand-in for "a live receiver holds this
         // record".  Live GPS broadcasts a data set from about toe − 2 h, so the toc proxy
         // is conservative by up to one fit half-window: records roll in slightly later
-        // than live, never early.  (Card 8, replay parity, plan D4)
+        // than live, never early.  (replay parity)
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         std::map<char, std::set<std::string>> nav_by_const;
         for (const auto& e : nav)
@@ -512,7 +512,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                    "Set navigation_path / products to cover the observation day.");
         return 1;
     }
-    // Card NBP (network.apriori_source sp3_brdc_clock): SP3 orbits (required by the branch
+    // Broadcast clock a priori (network.apriori_source sp3_brdc_clock): SP3 orbits (required by the branch
     // above) and the broadcast clock of the navigation file, with no CLK product.  A loaded
     // CLK would shadow the broadcast clock silently (interpolateClock takes precedence in
     // getSatelliteClockCorrection), so it is refused, as brdc_rts refuses one.  The selector
@@ -523,7 +523,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // the transmission-time rule alone would alternate between them.
     if (config_.networkAprioriBrdcClock()) {
         if (product_cache.getClockCount() > 0) {
-            log->error("Network (card NBP): {} CLK sample(s) are loaded under "
+            log->error("Network: {} CLK sample(s) are loaded under "
                        "network.apriori_source sp3_brdc_clock.  A CLK product would shadow the "
                        "broadcast clock (a silent clock frame split); use a data root without "
                        "CLK files (e.g. runs/_scl_data_nbp) or apriori_source sp3.",
@@ -532,14 +532,14 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         for (const std::string& sys : config_.getActiveSystems()) {
             if (sys != systemName(System::GPS)) {
-                log->error("Network (card NBP): network.apriori_source sp3_brdc_clock is GPS-only "
+                log->error("Network: network.apriori_source sp3_brdc_clock is GPS-only "
                            "(processing.active_systems names '{}').", sys);
                 return 1;
             }
         }
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
-            log->error("Network (card NBP): network.apriori_source sp3_brdc_clock requires a "
+            log->error("Network: network.apriori_source sp3_brdc_clock requires a "
                        "broadcast navigation file (files.navigation_path is empty).");
             return 1;
         }
@@ -548,7 +548,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                  [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
                   nav.end());
         if (nav.empty()) {
-            log->error("Network (card NBP): parsed 0 GPS broadcast records from '{}'.",
+            log->error("Network: parsed 0 GPS broadcast records from '{}'.",
                        nav_path.string());
             return 1;
         }
@@ -556,7 +556,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         setup.brdc_apriori = std::make_unique<BrdcClockApriori>(
             std::move(nav), origin_s, setup.window_t1_s, BrdcSelectRule::Ttom);
         const auto& bs = setup.brdc_apriori->stats();
-        log->info("Network (card NBP): native broadcast clock a priori from '{}' (rule ttom): "
+        log->info("Network: native broadcast clock a priori from '{}' (rule ttom): "
                   "{} GPS records, {} selectable (healthy, with a transmission time), {} "
                   "unhealthy, {} without a transmission time; {} satellites; offset table from "
                   "tow {:.0f} to {:.0f}: {} cut-overs, O range [{:.4f}, {:.4f}] m.",
@@ -565,7 +565,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   std::fmod(bs.end_s, 604800.0), bs.n_switches, bs.offset_min_m,
                   bs.offset_max_m);
         if (bs.n_staged == 0) {
-            log->error("Network (card NBP): no selectable GPS broadcast record in '{}'.",
+            log->error("Network: no selectable GPS broadcast record in '{}'.",
                        nav_path.string());
             return 1;
         }
@@ -656,7 +656,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // record: the first record is the value in force when the file starts, which is
             // right only for a run that starts there.  The rule and its reasons are in
             // NetworkSbasis::latchBroadcastGroupDelays, beside the pair rule it feeds.
-            // (Card OWD, O3)
             const NetworkSbasis::GroupDelayLatch latch = NetworkSbasis::latchBroadcastGroupDelays(
                 nav, setup.window_t0_s, setup.window_t1_s);
             if (latch.sats.empty()) {
@@ -712,9 +711,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                                         : fmt::format(" (on {})", worst_sat));
         }
     } else if (config_.estimateNetworkSatCodeBias()) {
-        // A second guard (Card 5): the external-GIM code-bias path is post-processing-only
+        // A second guard: the external-GIM code-bias path is post-processing-only
         // (a GIM is a daily product, unavailable to the self-sufficient brdc_rts service).
-        // The load-time validation (Card 1) rejects brdc_rts + estimate_sat_code_bias +
+        // The load-time validation rejects brdc_rts + estimate_sat_code_bias +
         // !estimate_iono_sh as a hard error, so reaching this branch in brdc_rts means that
         // check was bypassed; refuse rather than load a GIM the service cannot have.
         if (brdc_rts) {
@@ -763,7 +762,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     const double pb_cover_min  = config_.networkPhaseBiasMinStationFraction();
     // Under the all-channel widening the tally is reported even with the gate at 0:
     // "0 = every tracked channel admitted" is a statement about which channels
-    // entered the solve, and the run log has to make it.  (Card SID phase 6b, R7)
+    // entered the solve, and the run log has to make it.
     const bool chan_all_tally = config_.networkChannelModeAll();
     if (sig_cover_min > 0.0 || pb_cover_min > 0.0 || chan_all_tally) {
         std::map<std::string, std::set<std::pair<std::string, std::string>>> sta_tracks; // station -> {(system, code)}
@@ -820,7 +819,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     const std::string tag = fmt::format("{}({:.0f}%)", c, 100.0 * code_n[{sys, c}] / ns);
                     // A threshold of 0 leaves the allow-list empty, which the producer
                     // reads as "admit every tracked channel"; without this clause the
-                    // forced tally (card SID phase 6b) would print the whole list under
+                    // forced tally would print the whole list under
                     // GATE, the opposite of what the run does.
                     const bool admitted =
                         (thr <= 0.0) ? true : (ait != allow.end() && ait->second.count(c));
@@ -865,10 +864,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // receiver correction takes on the two lowest bands of that list ("exact",
     // "same_system", "cross_system", "none"), collected for one summary line:
     // system -> route -> station names.  Filled only when a constellation other than
-    // GPS is active, so a GPS-only setup log is unchanged.  (Card GAL, R6)
+    // GPS is active, so a GPS-only setup log is unchanged.
     const bool atx_src_on = networkMultiGnssActive(config_);
     std::map<std::string, std::map<std::string, std::vector<std::string>>> atx_src_by_sys;
-    // --- Marker → ARP roster reduction (card UPO) ----------------------------
+    // --- Marker → ARP roster reduction ----------------------------
     // Marker → antenna-reference-point reduction of the roster's configured
     // coordinates (docs/refound/UPO_consumer_up_offset_2026-09-22.md §4).  The
     // eccentricities are read in both knob states (standing invariant #4: a run
@@ -903,7 +902,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // Coordinates::markerToArp that the held-out consumer's truth uses.
         // markerToArp is an exact no-op at or below a 1e-6 m eccentricity, so a
         // 0/0/0 station is bit-for-bit unchanged in either knob state.
-        // (Card UPO §4, requirement U1)
         {
             const Eigen::Vector3d hen = parser->getAntennaDeltaHen();
             const bool   has_record = parser->hasAntennaDeltaHen();
@@ -915,7 +913,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 // the station has stays in the run as a modelling error, whether or
                 // not the knob is armed.
                 no_ecc_record_stations.push_back(cfg.name);
-                log->warn("Network (card UPO): station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
+                log->warn("Network: station '{}' has NO 'ANTENNA: DELTA H/E/N' record "
                           "in its RINEX header — its configured coordinate is used as given "
                           "(no marker -> ARP reduction possible). If that coordinate is a "
                           "monument coordinate the station is held below its antenna.",
@@ -932,7 +930,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     st.ecef = Coordinates::markerToArp(st.ecef, hen);
                     ++n_ecc_reduced;
                 }
-                log->info("Network (card UPO): station '{}' ANTENNA: DELTA H/E/N "
+                log->info("Network: station '{}' ANTENNA: DELTA H/E/N "
                           "({:.4f}, {:.4f}, {:.4f}) m — marker -> ARP reduction {} "
                           "(network.station_marker_to_arp).",
                           cfg.name, hen(0), hen(1), hen(2),
@@ -952,7 +950,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // empty in every run, so the labelled rider (RS-8, SPEC_event_harness §21.16)
         // is what shows a warm resume re-deciding a station's per-band channel.
         // The label is also the name matched against
-        // processing.canonical_signal_priority_stations (card CSL-2): with that list
+        // processing.canonical_signal_priority_stations: with that list
         // set it selects the station's canonical-signal rule; with the list empty it
         // changes log text only.
         st.model->setCanonicalTraceLabel(cfg.name);
@@ -974,9 +972,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // broadcast-phase gate is therefore suppressed on producer models only:
         // buildStation never builds the held-out closed-loop consumer (the roster loop
         // below skips it), so the consumer keeps the default gate.  sp3 mode passes
-        // false (byte-identical).  (Card 5, RTF-1 / plan D1)
+        // false (byte-identical).
         st.model->setBroadcastPhaseGateSuppressed(brdc_rts);
-        // Card NBP: a producer station's a priori satellite clock is the native broadcast
+        // A producer station's a priori satellite clock is the native broadcast
         // a priori (null in every other mode, byte-identical).  buildStation never builds
         // the held-out consumer, which reconstructs brdc(iode) + C from the store.
         st.model->setBroadcastClockApriori(setup.brdc_apriori.get());
@@ -1047,7 +1045,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // The receiver ATX frequency source per active constellation, on the two lowest
         // bands of its priority list (the dual pair: GPS 1 and 2, Galileo 1 and 5).  A
         // station whose route is not "exact" on some band gets its own line; every
-        // station lands in the summary.  Measure-only.  (Card GAL, R6)
+        // station lands in the summary.  Measure-only.
         if (rx_corr_on && atx_src_on) {
             std::string rx_ant = parser->getReceiverAntennaType();
             const auto last = rx_ant.find_last_not_of(" \t\r\n");
@@ -1085,7 +1083,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 per_sys += fmt::format("{}{}: {}", per_sys.empty() ? "" : " | ", sys_name, band_txt);
             }
             if (any_not_exact)
-                log->warn("Network (card GAL, receiver ATX source): station '{}' antenna '{}' "
+                log->warn("Network (receiver ATX source): station '{}' antenna '{}' "
                           "does not resolve every band exactly: {}.  'cross_system' borrows "
                           "the nearest GPS band (model_corrections."
                           "enable_receiver_cross_system_atx_fallback); 'none' leaves the "
@@ -1153,8 +1151,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // on the pairs no chain watched.  Design: §14.10 of docs/SPEC_event_harness.md.
             st.if_slip->setAllPairs(
                 config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All);
-            // Push the hardened reference-satellite gate (Card R,
-            // docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
+            // Push the hardened reference-satellite gate
+            // (docs/SPEC_slip_qc_hardening.md §2); it is pushed only here, so the staged
             // user/kinematic path keeps the legacy gate (spec R5).  With
             // network.cycle_slip.if_phase_td_ref_gate off, rg.enable is false and the
             // gate is disabled (byte-identical).
@@ -1241,7 +1239,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         return s;
     };
     // Receiver ATX source summary per constellation: the route of each station's
-    // worst band (exact < same_system < cross_system < none).  (Card GAL, R6)
+    // worst band (exact < same_system < cross_system < none).
     for (const auto& [sys_name, by_route] : atx_src_by_sys) {
         std::string t;
         for (const char* route : { "exact", "same_system", "cross_system", "none" }) {
@@ -1251,7 +1249,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             if (n > 0 && std::string(route) != "exact")
                 t += " [" + joinNames(it->second) + "]";
         }
-        log->info("Network (card GAL, receiver ATX source, {}): per station, the route of "
+        log->info("Network (receiver ATX source, {}): per station, the route of "
                   "its worst band on the dual pair: {}.  (cross-system fallback {}.)",
                   sys_name, t,
                   config_.getModelCorrections().enable_receiver_cross_system_atx_fallback
@@ -1281,7 +1279,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   "covered any uncalibrated radomes).");
     }
 
-    // --- Marker → ARP summary (card UPO §4, requirement U2) -----------------
+    // --- Marker → ARP summary -----------------
     // Emitted in both knob states.  With the knob on it records the roster's frame;
     // with it off it measures the error the run carries, which is the number the
     // fix is judged against (standing invariant #4).
@@ -1292,7 +1290,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     setup.marker_arp_max_h       = ecc_max_h;
     setup.marker_arp_max_h_station = ecc_max_h_station;
     if (marker_to_arp) {
-        log->info("Network (card UPO): marker -> ARP roster reduction ON — {} of {} loaded "
+        log->info("Network: marker -> ARP roster reduction ON — {} of {} loaded "
                   "station(s) carry an 'ANTENNA: DELTA H/E/N' eccentricity ({} above 0.01 m), "
                   "{} reduced to the antenna reference point; largest H {:+.4f} m at '{}'. "
                   "The roster is now in the SAME frame as the antenna model and as the "
@@ -1300,7 +1298,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   n_ecc_stations, stations.size(), n_ecc_over_1cm, n_ecc_reduced,
                   ecc_max_h, ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
     } else if (n_ecc_over_1cm > 0) {
-        log->warn("Network (card UPO): marker -> ARP roster reduction OFF — {} of {} loaded "
+        log->warn("Network: marker -> ARP roster reduction OFF — {} of {} loaded "
                   "station(s) carry an eccentricity above 0.01 m (largest component {:.4f} m; "
                   "largest H {:+.4f} m at '{}') and are held at their MONUMENT coordinate while "
                   "their observations refer to the antenna. Each such station misfits every "
@@ -1311,13 +1309,13 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   n_ecc_over_1cm, stations.size(), ecc_max_abs, ecc_max_h,
                   ecc_max_h_station.empty() ? "<none>" : ecc_max_h_station);
     } else {
-        log->info("Network (card UPO): marker -> ARP roster reduction OFF — no loaded station "
+        log->info("Network: marker -> ARP roster reduction OFF — no loaded station "
                   "carries an eccentricity above 0.01 m ({} with any nonzero record), so the "
                   "roster's monument and antenna-reference-point frames coincide to within a "
                   "centimetre.", n_ecc_stations);
     }
     if (!no_ecc_record_stations.empty())
-        log->warn("Network (card UPO): {} of {} loaded station(s) carry NO 'ANTENNA: DELTA "
+        log->warn("Network: {} of {} loaded station(s) carry NO 'ANTENNA: DELTA "
                   "H/E/N' record and cannot be reduced in either knob state: {}",
                   no_ecc_record_stations.size(), stations.size(),
                   joinNames(no_ecc_record_stations));
@@ -1373,7 +1371,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     if (seam_on)
         log->info("Network: post-solve carry-fold/D5 seam PARALLEL across {} threads "
                   "(deterministic — byte-identical to the serial fold)", n_threads);
-    // network.parallel_carry: thread the Card-4 carry's dense per-block algebra
+    // network.parallel_carry: thread the invariant carry's dense per-block algebra
     // (buildDdPriors W·Pᶻ·Wᵀ, foldReducedDdPriors, installPosterior) through Eigen's
     // own multi-threaded GEMM.  The seam parallelizes the carry only over its few
     // blocks; this un-pins Eigen so each block's O(K²–K³) matmul spreads across
@@ -1436,7 +1434,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           config_.networkCodeBiasDiscJumpTest(),
                           config_.networkClockDiscOnSetChange(),
                           config_.networkDiscThresholdFracCycles(),
-                          nc.disc_mark_scope == "channel");  // per-channel mark scope (Card MS)
+                          nc.disc_mark_scope == "channel");  // per-channel mark scope
     NetworkProductEmitter& emitter = *setup.emitter;
 
     // --- Optional on-disk product serialization -----------------------------
@@ -1465,15 +1463,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // the flat default phase-bias threshold) and misses every declared clock
         // re-reference, so the declaration cannot depend on an output option.  The
         // records are the same byte for byte as a contract-less writer's; only the
-        // header gains the S line.  (Card OWD, O1)
+        // header gains the S line.
         {
             // Stamp the S-basis contract into a v2 header (B6).  The declaration semantics
             // are the A3-corrected per-constellation satellite-clock-pin basis.
             pending_contract.decl.reference_receiver_id = nc.clock_datum_station;
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
             // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under
-            // phase_datum_eq34 the emitted bias references a single-receiver chain
-            // (Card 3), not a pivot receiver.  The per-solve decl in SolveGlue.cpp
+            // phase_datum_eq34 the emitted bias references a single-receiver chain,
+            // not a pivot receiver.  The per-solve decl in SolveGlue.cpp
             // makes the same choice, but that object feeds only buildSharedDatum: the
             // serialized declaration is this one.  Without this branch the product would declare
             // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
@@ -1515,7 +1513,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             std::string apriori_id =
                 fmt::format("{}{}{:04d}{:03d}", dl.product_source, dl.product_type, dl.year, dl.doy);
             if (config_.networkAprioriBrdcClock()) {
-                // Card NBP: the SP3 files in force, the navigation file and the rule
+                // The SP3 files in force, the navigation file and the rule
                 // ("sp3+brdc:<SP3>|<nav>|ttom").  A consumer (and the replay driver) reads
                 // this prefix as "the clock refers to the stamped broadcast ephemeris" and
                 // refuses a CLK-bearing root under it.
@@ -1532,7 +1530,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             } else if (brdc_rts) {
                 // The a-priori is broadcast ephemeris, so the identity is the nav-file
                 // basename ("brdc:<file>").  Once an RTS-orbit source is attached (plan D9
-                // seam / RTF-3), this becomes "brdc+rts:<mount>".  (Card 5, plan D10)
+                // seam / RTF-3), this becomes "brdc+rts:<mount>".
                 const std::string nav = config_.getNavigationPath().filename().string();
                 apriori_id = "brdc:" + (nav.empty() ? std::string("?") : nav);
             } else {
@@ -1540,13 +1538,12 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 // the previous, the observation and the next day's products, and the first
                 // merged SP3 / CLK (getProductPath) is the previous day's, so naming it would
                 // declare the previous day's products (DOY-128 on a DOY-129 wire).
-                // (Card OWD, O1)
                 bool named_all = false;
                 const std::string in_force = aprioriIdentityForWindow(
                     config_.getProductPaths(), setup.window_t0_s, setup.window_t1_s, &named_all);
                 if (!in_force.empty()) apriori_id = in_force;
                 if (named_all)
-                    log->info("Network (card OWD): a product file name does not carry an IGS "
+                    log->info("Network: a product file name does not carry an IGS "
                               "long-name span (or none meets the processing window), so the S "
                               "contract's a-priori identity names every merged file of that "
                               "kind: '{}'.", apriori_id);
@@ -1583,11 +1580,11 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.code_bias_jump_test = config_.networkCodeBiasDiscJumpTest();
             pending_contract.clock_disc_on_set_change = config_.networkClockDiscOnSetChange();
             pending_contract.disc_threshold_frac_cycles = config_.networkDiscThresholdFracCycles();  // per-λ jump gate, discfrac= (H3)
-            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope= (Card MS)
-            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold= (Card PBH)
-            pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held (Card LAH)
+            pending_contract.disc_mark_scope_channel = (nc.disc_mark_scope == "channel");  // per-channel mark scope, discscope=
+            pending_contract.emit_pb_hold = nc.emit_pb_hold;  // the phase-bias hold reading rule, pbhold=
+            pending_contract.emit_pb_hold_phase_clock =       // pbhold=2: the phase-visible clock is held
                 nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
-            pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold (Card SMH)
+            pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold
                 nc.emit_pb_hold && nc.emit_pb_hold_smoothed;
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
@@ -1670,7 +1667,6 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             // baseline arm (consume_network_products = false): a consumer that consumes
             // no products still has ambiguities, iono states and residuals, and the A/B
             // between the two arms is one of the comparisons this trace serves.
-            // (Card CST)
             consumer->setConsumerSatTrace(nc.trace_consumer_sat);
             const bool undiff = cl.consumer_undifferenced;
             if (undiff)
@@ -1720,7 +1716,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     return 0;
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the marker to ARP roster reduction (UPO).
 int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
@@ -1728,14 +1724,14 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
     const GnssConfig& config_ = v.config;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // Marker to antenna-reference-point roster frame (card UPO), reported in both knob
+    // Marker to antenna-reference-point roster frame, reported in both knob
     // states (invariant #4).  With the knob off this line gives the size of the modelling
     // error the run carried, the number the fix is judged against; armed, it states that
     // the roster is held at the antenna reference points rather than the published
     // monument coordinates, which a reader of the products has to know.
     if (!(ctx.counters.n_marker_arp_ecc > 0 || ctx.counters.n_marker_arp_no_record > 0)) return 0;
     if (config_.networkStationMarkerToArp())
-        log->info("Network (card UPO): marker -> ARP roster reduction ON — {} station(s) "
+        log->info("Network: marker -> ARP roster reduction ON — {} station(s) "
                   "carried an eccentricity ({} above 0.01 m) and {} were reduced to their "
                   "antenna reference point; largest H {:+.4f} m at '{}'; {} station(s) had "
                   "no header record and were left at their configured coordinate.",
@@ -1745,7 +1741,7 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
                       ? "<none>" : ctx.counters.marker_arp_max_h_station,
                   ctx.counters.n_marker_arp_no_record);
     else
-        log->info("Network (card UPO): marker -> ARP roster reduction OFF — {} station(s) "
+        log->info("Network: marker -> ARP roster reduction OFF — {} station(s) "
                   "carried an eccentricity ({} above 0.01 m; largest H {:+.4f} m at '{}') "
                   "and were held at their MONUMENT coordinate for the whole run, while "
                   "their observations refer to the antenna; {} station(s) had no header "
@@ -1761,13 +1757,13 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/driver/SetupResult.hpp.
+// Setup builder; documented at its declaration in network/driver/SetupResult.hpp.
 void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
     // ---- End of the bindings ----
     // The marker → ARP roster census is measured in networkSetup_, which runs
     // before this context exists.  It is copied into the counters because the
     // run-end readout and the run manifest read ctx.counters, and both report it
-    // in either knob state (card UPO).
+    // in either knob state.
     ctx.counters.marker_arp_armed         = config_.networkStationMarkerToArp();
     ctx.counters.n_marker_arp_ecc         = setup.n_marker_arp_ecc;
     ctx.counters.n_marker_arp_reduced     = setup.n_marker_arp_reduced;

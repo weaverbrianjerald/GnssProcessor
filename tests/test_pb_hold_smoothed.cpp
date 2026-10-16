@@ -1,10 +1,10 @@
 /**
  * @file test_pb_hold_smoothed.cpp
- * @brief Unit gates of card SMH, the smoothed phase-bias hold on a carried clock clone
+ * @brief Unit gates of the smoothed phase-bias hold on a carried clock clone
  *        (@c network.emit_pb_hold_smoothed).
  *
  * 1. The clone row, advanced by @ref pbHoldCloneAdvance and re-harvested by
- *    @ref pbHoldCloneRebase over card CTU's exact epoch inputs, equals the fixed-point
+ *    @ref pbHoldCloneRebase over the exact update's epoch inputs, equals the fixed-point
  *    smoother of a small dense random-walk model (an augmented Kalman filter carrying
  *    c(t0) as a zero-noise state) at every epoch, with a reinit of a column the clone
  *    has spread onto and of the clone's own clock.
@@ -113,7 +113,7 @@ constexpr double kReinitVar = 1e7;
     return ::testing::AssertionFailure() << a << " vs " << b << " (tol " << tol << " relative)";
 }
 
-/// Card CTU's epoch inputs over the stash (x, P) of the previous epoch, every key in S
+/// The exact-update epoch inputs over the stash (x, P) of the previous epoch, every key in S
 /// with the walk as its inflation, except @p reinit (a D key on the Reinit route).
 CouplingExactEpoch exactEpoch(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
                               const Eigen::VectorXd& q, double stash_s, int reinit) {

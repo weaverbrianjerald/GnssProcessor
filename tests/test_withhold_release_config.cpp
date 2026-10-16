@@ -204,7 +204,7 @@ TEST(WithholdReleaseConfig, FreeEraseSurvivesWithoutEscalate) {
 TEST(WithholdReleaseConfig, CeilingRejectBandCascadesIntoResponderDisarm) {
     // A ceiling in (0,1] is itself rejected to 0 (the R11/R1 guard); the
     // responders then disarm on the post-reject value, not the configured one.
-    // This is why the interlocks sit at the end of the section (Card-1g parse
+    // This is why the interlocks sit at the end of the section (parse
     // order).
     GnssConfig cfg;
     const std::string extra =

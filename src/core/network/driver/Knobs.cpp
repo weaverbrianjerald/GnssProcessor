@@ -7,8 +7,8 @@
  * (include/network/state/RunContext.hpp) and directly by unit tests.  Many assignments
  * combine knobs assigned above them, so the order of the lines matters.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -58,15 +58,15 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Variance floor applied at the drop only (RF-3a).  It is gated on the vehicle here, so
     // every downstream site reads one number and a floor configured without float_kf
     // resolves to 0 instead of acting at some sites and not at others.
-    k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();   // card CTU section 14
-    // Card LGM: the loader has validated the posture, so the knob is read as is.
+    k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();
+    // The loader has validated the phase-colour posture, so the knob is read as is.
     k.pc_on        = nc.phase_colour_state;
     k.pc_sigma_zen = nc.phase_colour_sigma_zen_m;
     k.pc_tau_s     = nc.phase_colour_tau_s;
     k.pc_floor_deg = nc.phase_colour_elev_floor_deg;
     k.pc_max_gap_s = nc.phase_colour_max_gap_s;
     k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
-    k.amb_if_trace = nc.trace_amb_if;   // card AIL
+    k.amb_if_trace = nc.trace_amb_if;
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
@@ -93,22 +93,22 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.fullcov_on = config_.networkSharedCarryFullCov();
     k.carry_cpl_cond = config_.networkCarryConditionalCoupling();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
-    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov
-    k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
-    k.pfq_on = config_.networkClockPivotFrameQ();   // card PFQ; loader guarantees fullcov + the pin datum
-    k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
-    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // card SCL2 X2; loader guarantees B1
-    k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // card SCL2 X2; loader guarantees [1, 8]
-    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // card BCL-a; loader guarantees B1
-    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // card BCL-d; loader guarantees B1
-    k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
-    k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
-    k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
-    k.pv_on        = config_.networkPhaseVisibleMonitor();     // card PVN (trace class)
-    k.nbp_on       = config_.networkAprioriBrdcClock();        // card NBP (fingerprinted in SnapshotFingerprint.cpp)
+    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // loader guarantees tu + fullcov
+    k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // loader guarantees exact
+    k.pfq_on = config_.networkClockPivotFrameQ();   // loader guarantees fullcov + the pin datum
+    k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // loader guarantees exact + fullcov
+    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // loader guarantees B1
+    k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // loader guarantees [1, 8]
+    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // loader guarantees B1
+    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // loader guarantees B1
+    k.clm_on    = config_.networkClockLevelMonitor();      // clock-level monitor (trace class)
+    k.clm_raise = config_.networkClockLevelBoundRaise();   // clock-level raise; loader guarantees clm_on
+    k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();
+    k.pv_on        = config_.networkPhaseVisibleMonitor();     // phase-visible monitor (trace class)
+    k.nbp_on       = config_.networkAprioriBrdcClock();        // broadcast clock a priori (fingerprinted in SnapshotFingerprint.cpp)
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
-    k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
-    k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
+    k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();
+    k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // loader guarantees clm_on
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
@@ -153,8 +153,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rxclk_isb        = config_.networkCarryRxClockIsb();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
-    // The live block predicates and the free-epoch consult, resolved once here (card NOM3
-    // step PB1a): networkPassB_ derived them per epoch and the harvest a second time.
+    // The live block predicates and the free-epoch consult, resolved once here:
+    // networkPassB_ derived them per epoch and the harvest a second time.
     k.pl_blk_on       = k.pl_local_block && k.carry_cpl_cond;
     k.zwd_blk_on      = k.zwd_in_block && k.pl_blk_on;
     k.iono_blk_on     = k.iono_blk && k.pl_blk_on;
@@ -208,8 +208,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();
     k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
-    k.handover_stransform_dense = config_.networkHandoverStransformDense();   // card SCL B2
-    k.rebase_complete = config_.networkCarryRebaseComplete();   // card PRM phase 3b step 2
+    k.handover_stransform_dense = config_.networkHandoverStransformDense();
+    k.rebase_complete = config_.networkCarryRebaseComplete();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
     k.ser_disc_ctrs = config_.networkSerializeDiscCounters();
@@ -220,38 +220,38 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.perconst_on = config_.networkPerConstWithhold();
     k.perconst_min_rows = config_.networkPerConstWithholdMinRows();
     k.emit_epoch_status = config_.networkEmitEpochStatusRecord();
-    // Clock emission re-base knobs (card CLK-R).  The engine lives in NetworkCarryState,
+    // Clock emission re-base knobs.  The engine lives in NetworkCarryState,
     // because its per-satellite baselines and frame accumulators outlive the epoch, and
     // the driver configures it next to the emit re-base setup.
     k.clk_frame_hold = config_.networkEmitClockFrameHold();
     k.clk_jump_test  = config_.networkClockDiscJumpTest();
-    // Emit-side phase-bias hold (card PBH).  The held values and generations live in
+    // Emit-side phase-bias hold.  The held values and generations live in
     // NetworkCarryState because they outlive the epoch; these are the knobs the
     // NetworkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
-    k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;   // card LAH
-    k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;      // card SMH
+    k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;
+    k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
     // interlock here, so every downstream site reads one predicate.  Under the two-state
     // oscillator the clock is never stashed to the D2 carry, so the anchor has nothing to
     // fold and reads as off (the loader reports an error on the combination).
     k.clk_model_on = config_.networkClockModel();
     k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
-    k.cta_datum_keep     = config_.networkClockAnchorDatumKeep() && k.cta_on;   // card SCL B2
+    k.cta_datum_keep     = config_.networkClockAnchorDatumKeep() && k.cta_on;
     k.cta_q              = config_.networkClockAnchorQ();
     k.cta_var_floor      = config_.networkClockAnchorVarFloorM2();
     k.cta_max_gap_s      = config_.networkClockAnchorMaxGapS();
     k.cta_k              = config_.networkClockAnchorK();
     k.cta_abs_m          = config_.networkClockAnchorAbsM();
     k.cta_sigma_floor_m  = config_.networkClockAnchorSigmaFloorM();
-    k.cta_space          = config_.networkClockAnchorGuardSpace();          // card CTU section 14
+    k.cta_space          = config_.networkClockAnchorGuardSpace();
     k.cta_phi_floor_m    = config_.networkClockAnchorPhaseSigmaFloorM();
     k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
     k.cta_resolve        = config_.networkClockAnchorResolve();
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
-    // Card HLT: broadcast satellite health on the network path.
+    // Broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
     // replay site reads.  It removes the datum's own direction from the carried
@@ -264,8 +264,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // constrained solve either throws on its pivot guard (the epoch is skipped, every
     // epoch) or factorizes a saddle and returns a wrong x_s without an error.
     k.carry_gauge_free   = k.cta_on && k.cta_gauge_free;
-    // The denominator of the anchor guard and its census is resolved here, once (card Q3
-    // §2.1), for the same reason `cta_on` resolves its interlock here: the guard and the
+    // The denominator of the anchor guard and its census is resolved here, once,
+    // for the same reason `cta_on` resolves its interlock here: the guard and the
     // census have to standardize identically, or the census stops being a cross-check on
     // the guard, and a mapping derived separately at two call sites can drift apart.
     // `auto` follows the fold, which is the behavior before this knob existed, so `auto`
@@ -290,7 +290,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.carry_invariant = k.phase_datum_eq34 && config_.networkCarryInvariant();
     k.carry_invariant_pd_safe = k.carry_invariant && config_.networkCarryInvariantPdSafe();
     k.carry_aware_covariance = k.carry_invariant && config_.networkCarryAwareCovariance();
-    // Card ARL: the search's suspect-corner mask has nothing to mask without the search.
+    // The search's suspect-corner mask has nothing to mask without the search.
     k.ar_suspect_epochs = nc.ambiguity_resolution.enable
                               ? std::max(0, nc.ambiguity_resolution.suspect_epochs) : 0;
     // RAIM pool re-host (network.raim_carry_invariant).  Resolved here, beside the other
@@ -307,7 +307,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // carry_invariant_pd_safe and carry_aware_covariance resolve, and it stays correct if
     // that requirement is relaxed.
     k.raim_ci_on = k.raim_on && k.carry_invariant && config_.networkRaimCarryInvariant();
-    // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18).  Resolved
+    // Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18).  Resolved
     // once here so the driver, the assembly, the seam and the teardown read one bool.  It
     // has no interlock: the screen owns its residual walk and its state, so it runs with no
     // other tier armed, which matters because every other post-fit tier is phase-only.
@@ -324,11 +324,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.gl_bound         = k.gl_on && config_.getNetworkConfig().gross_los_bound;
     k.gl_emit_exclude  = k.gl_on && config_.getNetworkConfig().gross_los_emit_exclude;
     k.gl_station_tier  = k.gl_on && config_.getNetworkConfig().gross_los_station_tier;
-    // Card ICF response 1, gated on the screen and refused under the hold (the hold would
+    // The cold response, gated on the screen and refused under the hold (the hold would
     // keep the faulted level the cold response erases).  Not fingerprinted, like the
     // screen's other knobs.
     k.gl_cold_bound_m  = (k.gl_on && !k.gl_bound) ? config_.networkGrossLosColdBoundM() : 0.0;
-    // Card RPA: the RAIM pools restricted to observation phase rows.  ANDed with raim_on
+    // The RAIM pools restricted to observation phase rows.  ANDed with raim_on
     // (the loader already guarantees it), so both pool walks and the run-end lines read
     // one bool.  Not appended to the snapshot fingerprint (SnapshotFingerprint.cpp): a QC knob, like raim_*.
     k.raim_pool_data_rows_only = k.raim_on && config_.networkRaimPoolDataRowsOnly();
@@ -426,11 +426,11 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
         k.sig_resume_warmup   = si.census && si.resume_warmup_vet
                                 && (k.sig_withhold || k.sig_unvetted_scale > 1.0);
     }
-    // The SH-deviation carry (card T5, Iono-2): live when a co-estimated SH field
+    // The SH-deviation carry: live when a co-estimated SH field
     // (network.estimate_iono_sh) has a positive correlation time.  The epoch driver
     // tested the SH model (setup.sh_model) where this reads the flag: setup builds
     // the model exactly when the flag is set, and a run whose setup fails never reaches the
-    // epoch loop or the run end (card NOM3 step EP0).
+    // epoch loop or the run end.
     {
         const GlobalVtecShConfig& shc = config_.getGlobalVtecShConfig();
         k.sh_dev_tau     = config_.estimateNetworkIonoSh() ? shc.rep_error_tau_s : 0.0;
@@ -475,7 +475,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                 else if (f == "cb")   k.prires_cb   = true;
                 else if (f == "zwd")  k.prires_zwd  = true;
                 else if (f == "rxcb") k.prires_rxcb = true;
-                else if (f == "clk")  k.prires_clk  = true;   // clock anchor (card Q3, INC-0)
+                else if (f == "clk")  k.prires_clk  = true;   // clock anchor
             }
             k.prires_on = k.prires_pl || k.prires_pb || k.prires_cb
                        || k.prires_zwd || k.prires_rxcb || k.prires_clk;
@@ -592,18 +592,18 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
                              ? nc.adm_revet_bound_scale : 0.2;
         k.adm_revet_bound_m = k.adm_bound_m * s;
     }
-    // --- Invariant-carry gate and emit layers (card NOM step TD1a) ---
+    // --- Invariant-carry gate and emit layers ---
     // Moved from runNetwork with their conjunctions unchanged.
     {
         // Estimation-side fine-slip innovation gate: the invariant-carry-native replacement
         // for the RAIM fine-slip layer that the invariant bypass empties.  Requires
         // carry_invariant (rejected at config load otherwise).
         k.carry_innov_gate = k.carry_invariant && config_.networkCarryInvariantInnovGate();
-        // Emit-layer frame re-base (card 4 phase D), on by default when carry_invariant is
+        // Emit-layer frame re-base, on by default when carry_invariant is
         // armed (spec D7).
         k.emit_rebase_on = k.carry_invariant && config_.networkCarryInvariantEmitRebase();
     }
-    // --- The epoch driver's configuration-derived values (card NOM3 step EP0) ---
+    // --- The epoch driver's configuration-derived values ---
     // Moved from runNetwork with each expression unchanged (the SH-deviation switches are
     // resolved above).  The rest is read from `nc`, which is the driver's own
     // configuration in a run.

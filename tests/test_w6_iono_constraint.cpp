@@ -1,9 +1,9 @@
 /**
  * @file test_w6_iono_constraint.cpp
- * @brief @c network.w6_iono_constraint, the self-contained W6 posture (card RF-0b), and
- *        the datum cards built on it (RF-0c, RF-0d, RF-0e, RF-0f).
+ * @brief @c network.w6_iono_constraint, the self-contained W6 posture, and
+ *        the datum mechanisms built on it (RF-0c, RF-0d, RF-0e, RF-0f).
  *
- * Card: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
+ * Reference: docs/refound/RF-0_baseline_2026-09-14.md, Finding 2.  Under GPS-only dual
  * frequency, without this option, the producer has no posture that avoids external
  * ionosphere data: the co-estimated SH field is off, the loader forces
  * @c ionosphere_weighting on, and the run hard-errors without a `.INX`.
@@ -17,7 +17,7 @@
  *    (standing invariant #6), @c none clears the force instead of merely skipping it,
  *    the contradictory co-arm (the SH field) fails the load, and a typo never selects a
  *    different product datum.
- * 2. The datum's reach.  The card's premise is that the per-(constellation, signal)
+ * 2. The datum's reach.  The premise is that the per-(constellation, signal)
  *    sum-to-zero rows can stand in for the GIM.  They cannot, and the tests below
  *    compute the shortfall instead of asserting it: with the ionosphere-free pin and the
  *    sum-to-zero rows folded, exactly @c n_sat-1 of the rank-deficiency-3b directions
@@ -216,7 +216,7 @@ std::vector<DatumRowsHarness::Pair> registerRoster(
 /// `I_r^s += beta^s` at every station, and is therefore invisible to the observation
 /// equations when the ionosphere is free per line of sight.  Mapping each unit `beta^s`
 /// through @p H gives one column of A; the surviving dimension is `n_sats - rank(A)`.
-/// The count is computed, not asserted, because it is the card's central result.
+/// The count is computed, not asserted, because it is the central result.
 int survivingRd3bDims(const NetworkEstimator& est, const Eigen::MatrixXd& H,
                       const std::vector<std::string>& sats,
                       const std::vector<std::string>& sigs) {
@@ -344,7 +344,7 @@ TEST(W6IonoConstraintTest, UnknownValueFallsBackToAuto) {
 // ===========================================================================
 
 // The builder takes no ionosphere-constraint argument, which is why RF-0b needs no new
-// datum row: the rows the card names are already folded on every W6 epoch, with or
+// datum row: the rows RF-0b names are already folded on every W6 epoch, with or
 // without a GIM.  The shape (one IF pin per satellite, one sum-to-zero row per
 // (constellation, signal) channel) is checked so a change to the builder's arming
 // cannot remove the only datum this posture has.
@@ -363,7 +363,7 @@ TEST(W6IonoConstraintTest, DatumRowsAreBuiltWithoutAnyIonoConstraintInput) {
     EXPECT_EQ(rows.H.cols(), est.numShared());
 }
 
-// The card's central count.  With the ionosphere free per line of sight, each satellite
+// The central count.  With the ionosphere free per line of sight, each satellite
 // owns one rank-deficiency-3b direction (Odijk 2016).  The ionosphere-free pin is
 // orthogonal to it by construction (a1*mu_1 + a2*mu_2 = 0 is what "ionosphere-free"
 // means), and a sum-to-zero row over signal j changes by -mu_j * sum_s beta^s, so it is
@@ -433,7 +433,7 @@ TEST(W6IonoConstraintTest, UnequalChannelSupportClosesASecondDirection) {
 }
 
 // ===========================================================================
-// The hard per-satellite geometry-free datum, network.sat_gf_datum (card RF-0c).
+// The hard per-satellite geometry-free datum, network.sat_gf_datum.
 // ===========================================================================
 
 // Standing invariant #6: the default builds no row at all, so an unarmed run folds
@@ -456,9 +456,9 @@ TEST(W6IonoConstraintTest, SatGfDatumDefaultBuildsNoRow) {
     EXPECT_EQ(rows.H.rows(), 34);             // 32 IF pins + 2 sum-to-zero, unchanged
 }
 
-// The card's bar, on real datum rows.  RF-0b leaves 31 of 32 rd-3b directions open with
+// The bar, on real datum rows.  RF-0b leaves 31 of 32 rd-3b directions open with
 // only the IF pin and the sum-to-zero rows; the hard geometry-free datum closes every
-// one, with no prior involved, because the card replaces a prior standing in for a
+// one, with no prior involved, because the hard datum replaces a prior standing in for a
 // datum with an actual datum.
 TEST(W6IonoConstraintTest, SatGfDatumZeroClosesEveryDirection) {
     NetworkEstimator est;
@@ -502,10 +502,10 @@ TEST(W6IonoConstraintTest, SatGfDatumClosesDirectionsWithSameBandCompanions) {
 }
 
 // ===========================================================================
-// The per-signal extension of the geometry-free datum (card RF-0d).
+// The per-signal extension of the geometry-free datum.
 // ===========================================================================
 
-// The card's bar.  Four registered channels, the prior off.  RF-0c's pair pin already
+// The bar.  Four registered channels, the prior off.  RF-0c's pair pin already
 // leaves 0 rank-deficiency-3b directions here (the mu-shift moves every column of a
 // satellite together, so one row on the pair reaches it), but it does not make the extra
 // channels' levels a datum, which leaves the sparse C2X wire noisy.  With RF-0d every
@@ -533,7 +533,7 @@ TEST(W6IonoConstraintTest, SatGfDatumPerSignalPinsEveryCrossBandColumn) {
     EXPECT_EQ(survivingRd3bDims(est, rows.H, sats, sigs), 0);
 }
 
-// The L2X column's own direction, which the card names.  It differs from the rd-3b
+// The L2X column's own direction.  It differs from the rd-3b
 // family above: shift only the C2X columns by a per-satellite delta and leave every
 // other column alone.  Only the stations that track C2X (a sparse set on the field)
 // see it in the observation equations, so without the RF-0d rows it is weakly
@@ -683,7 +683,7 @@ TEST(W6IonoConstraintTest, SatGfDatumParsesBothArmedModes) {
 
 // With an ionosphere constraint present this direction is determined by the data, so a
 // pin would be a second datum conflicting with the data instead of replacing it.  The
-// loader enforces the card's precondition.
+// loader enforces the precondition.
 TEST(W6IonoConstraintTest, SatGfDatumRequiresTheNoConstraintPosture) {
     LogManager log;
     const fs::path p = writeTempConfig("gf_needs_none",
@@ -707,7 +707,7 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
 }
 
 // ===========================================================================
-// The S-line declaration `sat_gf_datum=<mode>` (card RF-0d item 2).
+// The S-line declaration `sat_gf_datum=<mode>`.
 // ===========================================================================
 
 // A separate field, not an overload of gfpin=.  That token's payload is its presence
@@ -797,7 +797,7 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
 }
 
 // ===========================================================================
-// The level datum (card RF-0e), arm e2: time-linked geometry-free rows.  (Arm e1, an
+// The level datum, arm e2: time-linked geometry-free rows.  (Arm e1, an
 // absolute per-constellation ionosphere-free sum-to-zero row, is retired.)
 // ===========================================================================
 
@@ -853,10 +853,10 @@ TEST(W6IonoConstraintTest, SatGfTimeLinkUnarmedKeepsTheAbsoluteTarget) {
 }
 
 // ===========================================================================
-// The band-2 ISC: estimated where a station bridges, pinned where none does (card RF-0f).
+// The band-2 ISC: estimated where a station bridges, pinned where none does.
 // ===========================================================================
 
-// The card's first bar: estimable with one dual-tracking station.  The companion column
+// The first bar: estimable with one dual-tracking station.  The companion column
 // gets no geometry-free row, so `b(C2X) = b(C2W) + ISC^s` with the ISC free, as it was
 // before RF-0d pinned it at c*T_GD (an assertion of ISC = 0 that RINEX navigation never
 // makes).  The band-1 companion stays free, and the C2W pin itself is untouched: that is
@@ -896,7 +896,7 @@ TEST(W6IonoConstraintTest, IscStateLeavesABridgedBand2CompanionFree) {
     }
 }
 
-// The card's second bar: pinned without one.  No station bridges the two signals, so the
+// The second bar: pinned without one.  No station bridges the two signals, so the
 // ISC is unreachable and the column falls through to the RF-0d pin, counted so the run
 // and the wire can both say which satellites' C2X is an estimate and which an assertion.
 TEST(W6IonoConstraintTest, IscStatePinsAnUnbridgedBand2Companion) {

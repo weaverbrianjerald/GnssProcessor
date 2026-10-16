@@ -1387,11 +1387,11 @@ namespace GnssProcessor {
 
 
         // ======================================================================
-        // Network-only surface, owned with card NOM
+        // Network-only surface, owned with the network object model
         //
         // The per-station detectors of the network producer call these; the user
         // drivers (post-processing, real time, baseline) and the closed-loop
-        // consumer never do.  The phase bridge (cards WL-2, WL-3, UWL-1), the
+        // consumer never do.  The phase bridge, the
         // zero-differenced and cold arc reads (WL-1, WL-3, UWL-1), the per-epoch
         // pair status with its LLI shadow (SPEC_event_harness §14) and the
         // station label of the debug lines.  The bridge stays off and the label
@@ -1443,7 +1443,7 @@ namespace GnssProcessor {
         /**
          * @brief Read a (satellite, signal-pair) MW arc as a ZD-consistent Welford
          *        summary: the per-arc code-coherence accumulator that the wide-lane
-         *        layer double-differences over the Card-4 chord basis.
+         *        layer double-differences over the invariant-carry chord basis.
          *
          * The network per-station detector stores non-pivot arcs single-differenced
          * against a per-(constellation,signal-pair) MW pivot (mean = MW_bia(sat) -

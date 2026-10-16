@@ -1,6 +1,6 @@
 /**
  * @file test_canonical_pair_admission.cpp
- * @brief The canonical-pair admission state machine and its two knobs (card CPA).
+ * @brief The canonical-pair admission state machine and its two knobs.
  *
  * (docs/refound/CPA_canonical_pair_admission_2026-09-20.md §1 and §2.4.)  The rule
  * the producer runs per (station, satellite) is a pure function of three inputs:
@@ -18,7 +18,7 @@
  *    clamp.
  *
  * Structural only (the suite does not validate estimation accuracy); the rule's
- * effect on the network is graded by the arms the card records.
+ * effect on the network is graded by the arms the design records.
  *
  * Suites: CanonicalPairStateMachine, CanonicalPairConfig (one file owns both; no
  * other file declares either name).
@@ -126,7 +126,7 @@ TEST(CanonicalPairStateMachine, NeverGoodIsWithheldForever) {
         EXPECT_EQ(st.action, CanonicalPairAction::WithholdBeforeFirst);
     EXPECT_STREQ(canonicalPairReason(s.front().action), "before_first");
     // The decoupling edge is raised once, on the first withheld epoch, not once per
-    // withheld epoch (the card's event contract).
+    // withheld epoch (the rule's event contract).
     EXPECT_TRUE(s.front().withhold_edge);
     for (std::size_t i = 1; i < s.size(); ++i) EXPECT_FALSE(s[i].withhold_edge);
     // Nothing was ever admitted, so no re-coupling edge exists to report.
@@ -208,7 +208,7 @@ TEST(CanonicalPairStateMachine, ReturnBeforeTheFirstGoodEpochAlsoReCouples) {
 }
 
 TEST(CanonicalPairStateMachine, ToleranceZeroAdmitsOnlyTheGoodEpochs) {
-    // N = 0 is the card's other measured arm: every partial epoch is withheld, so
+    // N = 0 is the other measured arm: every partial epoch is withheld, so
     // the shape is the pattern itself.  It differs from the "never good" case in
     // that the returns still readmit.
     const auto s = run("G.G..G", 0);

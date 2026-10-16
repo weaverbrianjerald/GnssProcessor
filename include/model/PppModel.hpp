@@ -12,7 +12,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "products/ProductParser.hpp"
-#include "products/SignalDeclaration.hpp"   // the declared signal roster (card SID phase 5)
+#include "products/SignalDeclaration.hpp"   // the declared signal roster
 #include "logging/LogManager.hpp"
 #include "rinex/RinexParser.hpp"
 #include "filter/StateManager.hpp"
@@ -259,7 +259,7 @@ namespace GnssProcessor {
          * A locally constructed @c PppUtils carries the built-in default GLONASS
          * slot table, not the one @ref setGlonassSlots pushed from the live
          * ephemeris store, so a caller that needs the carrier wavelengths the
-         * measurement model used reads them through this instance.  Card ALC uses
+         * measurement model used reads them through this instance.  A caller uses
          * it from a seam that holds only the engine.  Read-only: the slot map is
          * written only through @ref setGlonassSlots.
          *
@@ -307,7 +307,7 @@ namespace GnssProcessor {
 
         /**
          * @brief The route the receiver antenna correction of a signal takes to an
-         *        ATX frequency (forwards to Antenna; card GAL, R6).
+         *        ATX frequency (forwards to Antenna).
          * @param signal  RINEX observation code.
          * @param system  GNSS system of the observation.
          * @param out_key [out, optional] The ATX frequency key used, empty when none.
@@ -441,7 +441,7 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Take the a priori satellite clock from card NBP's native broadcast clock
+         * @brief Take the a priori satellite clock from the native broadcast clock
          *        a priori (@c network.apriori_source @c sp3_brdc_clock).
          *
          * Covers both satellite-clock consumers behind this model (geometry's internal
@@ -498,7 +498,7 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief The installed network signal allow list (card SID phase 1).
+         * @brief The installed network signal allow list.
          *
          * A const read of what @ref setSignalAllowlist installed, so the signal
          * roster can record an allow-list exclusion as a per-station reason rather
@@ -530,7 +530,7 @@ namespace GnssProcessor {
 
         /**
          * @struct CanonicalCandidate
-         * @brief One channel offered to the canonical-signal decision (card CSL).
+         * @brief One channel offered to the canonical-signal decision.
          *
          * The caller supplies these in priority-list order, already filtered by
          * the network coverage allowlist and already resolved to a band name, so
@@ -545,7 +545,7 @@ namespace GnssProcessor {
 
         /**
          * @struct CanonicalPick
-         * @brief The latch and its runner-up for one (band, obs-type) (card CSL).
+         * @brief The latch and its runner-up for one (band, obs-type).
          */
         struct CanonicalPick {
             std::string signal;             /**< The latched RINEX code. */
@@ -555,7 +555,7 @@ namespace GnssProcessor {
         };
 
         /**
-         * @brief Decide the per-(band, obs-type) canonical signals (card CSL).
+         * @brief Decide the per-(band, obs-type) canonical signals.
          *
          * Pure (no member state, no logging, no I/O): the rule the network
          * producer's latch is built from, exposed so tests can pin it directly
@@ -586,7 +586,7 @@ namespace GnssProcessor {
          * @param code_follows_phase true (the default, and the CSL-1 behaviour)
          *                     runs the follow clause above; false leaves each code
          *                     row on the pick the priority rule made from the
-         *                     code's own list (card CSL-3).  Unread under
+         *                     code's own list.  Unread under
          *                     @c Count, which has no follow clause.
          * @return (band, obs-type) → pick, for every (band, obs-type) that had at
          *         least one candidate with a positive count.
@@ -598,12 +598,12 @@ namespace GnssProcessor {
                              bool code_follows_phase = true);
 
         /**
-         * @brief Scope the canonical-signal rule to a station list (card CSL-2).
+         * @brief Scope the canonical-signal rule to a station list.
          *
          * Pure: the per-station half of @ref decideCanonicalPicks' rule argument.
          * A coverage floor cannot separate stations whose first-epoch margins are
          * equal, so selecting the priority rule at some of them needs a
-         * per-station override (card CSL section 4).
+         * per-station override.
          *
          * An empty @p priority_stations is the default: @p rule applies at every
          * station.  A non-empty list is a scope and decides on its own: a listed
@@ -640,17 +640,17 @@ namespace GnssProcessor {
         std::vector<CanonicalSignal> exportCanonicalSignals() const;
 
         /**
-         * @brief The candidate channels the latch decided on, retained for card SID.
+         * @brief The candidate channels the latch decided on, retained for the declared-signal comparison.
          *
          * @c decideConstellationCanonicals builds one @ref CanonicalCandidate per
          * admitted priority-list channel that at least one satellite observes, in
          * priority order, with that channel's satellite count at the
          * constellation's first observed epoch, and hands them to
          * @ref decideCanonicalPicks.  The candidates are the only input from which
-         * a second rule can be evaluated, so card SID's counter of what the count
+         * a second rule can be evaluated, so the counter of what the count
          * rule would have latched needs them outside the class.
          *
-         * Retained on every network run (card NOM step N3a: the signal roster's
+         * Retained on every network run (the signal roster's
          * census is built on every network run, and it is the only reader); no
          * decision reads the stored candidates.  Filled at the constellation's
          * decision epoch and never revised, like the latch itself.
@@ -694,7 +694,7 @@ namespace GnssProcessor {
         /**
          * @struct DeclaredLatchCounters
          * @brief The consumer's latch compared with the producer's declared roster,
-         *        one named counter per class (card SID phase 5; standing
+         *        one named counter per class (standing
          *        invariant 4).
          *
          * Every class has a denominator, so a zero can be read: @c compared 0
@@ -715,7 +715,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Hand the producer's declared signal roster to the latch
-         *        (@c network.closed_loop.roster_latch; card SID phase 5).
+         *        (@c network.closed_loop.roster_latch).
          *
          * Copied, not referenced: the store that owns it is mutex-guarded and
          * shared, and the latch is decided once per constellation.  Setting it has
@@ -734,7 +734,7 @@ namespace GnssProcessor {
          */
         void setDeclaredSignalRoster(const NetworkSignalDeclaration& decl, bool act);
 
-        /// @brief The latch-against-declaration census (card SID phase 5).
+        /// @brief The latch-against-declaration census.
         const DeclaredLatchCounters& declaredLatchCounters() const {
             return declared_latch_;
         }
@@ -745,14 +745,14 @@ namespace GnssProcessor {
          * A const read of @c constellation_canonical_, which
          * @c decideConstellationCanonicals fills on the constellation's first observed
          * epoch and then locks for the run (or which @ref restoreCanonicalSignals
-         * refills at a warm resume).  Card SCC reads it outside this class: the
+         * refills at a warm resume).  The second-code routing reads it outside this class: the
          * receiver side (R2) routes a band-1 code through an inter-signal state exactly
          * when it is not the station's latched canonical code, and the row-weight seam
          * (R5) has to reach the same verdict from the assembly.
          *
          * Keyed on the signal's own band digit rather than on the band name the map
          * uses, because the name is constellation-specific ("L1" on GPS, "E1" on
-         * Galileo, "B1C" on BeiDou) while the card's scope, band 1, is the digit in
+         * Galileo, "B1C" on BeiDou) while the second-code scope, band 1, is the digit in
          * the RINEX code.  The two are 1:1 within a constellation: the prefix table
          * maps each "C<digit>" to exactly one band name.
          *
@@ -780,7 +780,7 @@ namespace GnssProcessor {
          * The analogue of @ref latchedCanonicalCodeOnBandDigit over the 'L'
          * entries of @c constellation_canonical_, with the same lifetime: filled on
          * the constellation's first observed epoch, locked for the run, refilled by
-         * @ref restoreCanonicalSignals at a warm resume.  Card GRK reads it outside
+         * @ref restoreCanonicalSignals at a warm resume.  The tracker key reads it outside
          * this class: the arc-level slip tracker picks one phase per band from the
          * raw record, the carried ambiguity is keyed on the latch, and the gap
          * re-entry response cannot reach an arc when the two disagree.
@@ -818,7 +818,7 @@ namespace GnssProcessor {
          * The network producer sets it to the station name at construction; the
          * single-receiver paths leave it empty and the rider prints "-".  The label
          * is also the station name @ref canonicalRuleForStation matches against the
-         * priority-station scope (card CSL-2), so it can change the rule the latch
+         * priority-station scope, so it can change the rule the latch
          * is decided under; an empty label is never in the scope.
          *
          * @param label Station / receiver label.
@@ -881,7 +881,7 @@ namespace GnssProcessor {
         // pinned without a full geometry / product chain.  Defined only in gnss_tests.
         friend struct PppModelCanonicalTestAccess;
         // Test seam: PppModelDeclaredLatchTestAccess (tests/test_ledger_emit.cpp)
-        // drives the card SID phase 5 declared-latch comparison through the same
+        // drives the declared-latch comparison through the same
         // private first-epoch decision, so C1's two branches (the latch follows a
         // declared signal the station tracks; it falls back when the station
         // tracks none) can be pinned without a geometry / product chain.
@@ -914,8 +914,7 @@ namespace GnssProcessor {
         /// satellites (the brdc_rts network producer estimates the satellite clock,
         /// so phase is informative) instead of applying the default code-only gate.
         /// Set via @ref setBroadcastPhaseGateSuppressed on producer station models
-        /// only; the default @c false is byte-identical for every other caller
-        /// (card 5, RTF-1 / plan D1).
+        /// only; the default @c false is byte-identical for every other caller.
         bool broadcast_phase_gate_suppressed_{false};
 
         /// Satellites already logged as phase-retained under the gate-suppressed
@@ -940,10 +939,10 @@ namespace GnssProcessor {
         std::set<std::string> constellation_canonical_decided_; /**< Constellations whose canonical set is locked. */
 
         /**
-         * @brief The candidates the latch decided on, retained (card SID phase 1).
+         * @brief The candidates the latch decided on, retained.
          *
-         * Filled at the constellation's decision epoch on every network run (card
-         * NOM step N3a; the user-side and real-time paths have no reader), and read
+         * Filled at the constellation's decision epoch on every network run
+         * (the user-side and real-time paths have no reader), and read
          * only by @ref canonicalCandidates.  Nothing in the decision path reads it,
          * so the store changes no decision.
          */
@@ -951,22 +950,22 @@ namespace GnssProcessor {
 
         /**
          * @brief The producer's declared signal roster as the consumer received it
-         *        (@ref setDeclaredSignalRoster; card SID phase 5).
+         *        (@ref setDeclaredSignalRoster).
          *
          * @c present false (the default, and any wire that carries no declaration)
          * makes the whole comparison unreachable, so a consumer of such a stream is
          * unchanged.
          */
         NetworkSignalDeclaration declared_roster_;
-        /// Whether the latch may follow the declaration (card SID phase 5b).
+        /// Whether the latch may follow the declaration.
         bool declared_roster_act_{ false };
-        /// The census of the comparison (@ref declaredLatchCounters; card SID phase 5).
+        /// The census of the comparison (@ref declaredLatchCounters).
         DeclaredLatchCounters declared_latch_;
 
         /**
          * @brief Compare this constellation's picks with the declaration, count
          *        every class and, only under @ref declared_roster_act_, move the
-         *        latch onto it (card SID phase 5, E3 / C1).
+         *        latch onto it.
          *
          * @param cons       Constellation display name.
          * @param band_table The system's RINEX-prefix to band-name table.
@@ -1071,13 +1070,13 @@ namespace GnssProcessor {
         /**
          * @brief Select individual code/phase signals per band (PPP-RTK uncombined).
          *
-         * Under `channel_mode` "all" on the network path (card SID phase 6b, R1),
+         * Under `channel_mode` "all" on the network path,
          * the channel widening fills both output sets instead, with every admitted
          * extra code or phase channel it adds on a selected band whose selected
          * signal of that type is present this epoch; the two knob-driven additions
          * described below are then skipped.
          *
-         * @param companion_out Optional (card SCC, R1).  When non-null and
+         * @param companion_out Optional.  When non-null and
          *        `network.second_code_channel` is armed on the network path, receives
          *        the allow-listed band-1 code signals this call added besides the one
          *        the band map selected.  Those keys are also in @p selected_signals
@@ -1087,7 +1086,7 @@ namespace GnssProcessor {
          *        guard, R4, and the cell telemetry, R7).  Left untouched when neither
          *        the knob nor the `channel_mode` "all" widening applies, so such a run
          *        never allocates.
-         * @param second_phase_out Optional (card SID phase 6a, R1).  When non-null and
+         * @param second_phase_out Optional.  When non-null and
          *        `network.second_phase_channel` is armed on the network path, receives
          *        the allow-listed band-1 phase signals this call added besides the one
          *        the latch selected.  Same contract as @p companion_out: the keys are

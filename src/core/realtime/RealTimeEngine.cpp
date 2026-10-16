@@ -362,26 +362,26 @@ void RealTimeEngine::flush() {
     // End-of-run obs-code attribute-mismatch summary (flush is the engine's
     // end-of-stream hook).  Silent when no mismatch was counted.  (RTA-13)
     logBiasAttrMismatchSummary("end of run");
-    // The same summary for the orbit/clock coherence-echo mismatches (card 7).
+    // The same summary for the orbit/clock coherence-echo mismatches.
     logOrbitEchoMismatchSummary("end of run");
-    // The declared-step carry counters, silent unless armed (card CC (A)).  The
+    // The declared-step carry counters, silent unless armed.  The
     // closed-loop harness never calls flush(); its consumer's counters go out on
     // the closed-loop summary (networkClosedLoopRunEnd) instead.
     logPbDiscCarrySummary_("end of run");
-    // The every-step translation counters (card PBT (A)).
+    // The every-step translation counters.
     logPbStepTranslateSummary_("end of run");
-    // The hold reaction, silent unless a held entry was seen (card PBH).
+    // The hold reaction, silent unless a held entry was seen.
     logPbHoldSummary_("end of run");
-    // Its presence edges, silent unless armed (card PBF).
+    // Its presence edges, silent unless armed.
     logPbHoldPresenceSummary("end of run");
-    // The ambiguity level-check counters (card ALC).
+    // The ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
     // The declared-roster census, silent unless a declaration was seen or the
-    // 5b knob is armed (card SID phase 5).  The closed-loop harness and the
+    // 5b knob is armed.  The closed-loop harness and the
     // replay driver never call flush(), so both call this directly at their
     // own tails.
     logRosterConsumerSummary("end of run");
-    logReinflateSummary("end of run");   // card OWD (O2)
+    logReinflateSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -412,7 +412,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // Clear the previous epoch's per-satellite readout here, before any gate can
     // end the epoch, so an epoch the admission gates defer leaves the buffer
     // empty (that epoch produced no consumer solution) instead of handing the
-    // harness a stale repeat.  No-op unarmed.  (card CST)
+    // harness a stale repeat.  No-op unarmed.
     if (consumer_sat_trace_) {
         consumer_sat_rows_.clear();
         consumer_sat_events_.clear();
@@ -420,7 +420,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // The same contract for the level check's per-epoch transport: a deferred
     // epoch hands the harness an empty event list and a zero check count, never
-    // the previous epoch's.  No-op unarmed.  (card ALC)
+    // the previous epoch's.  No-op unarmed.
     if (config_.ambLevelCheck()) {
         amb_level_events_.clear();
         amb_level_epoch_checks_ = 0;
@@ -476,7 +476,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // else: computeModels decides a constellation's canonical signals on its
     // first epoch, so a declaration handed over after this call is too late for
     // the band it would have moved.  No-op on a wire that carries no roster
-    // (producers without the declaration, every RTCM stream).  (card SID phase 5)
+    // (producers without the declaration, every RTCM stream).
     refreshDeclaredRoster_();
 
     if (!ppp_model_->computeModels(filtered_obs, ppp_state_, ctx.modeled_obs,
@@ -543,7 +543,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     resetOnPhaseBiasDisc(ctx);
     reinflateOnCodeBiasDisc(ctx);
     reinflateOnClockDisc(ctx);
-    reactToDeclaredLevelSteps_(ctx);   // card CLV2 (no-op unarmed)
+    reactToDeclaredLevelSteps_(ctx);   // no-op unarmed
 
     // --- Estimation tail ---------------------------------------------------
     runMeasurementUpdate(ctx);
@@ -565,7 +565,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // Re-validate this epoch's float ambiguities against their own windowed code
     // level and refloat the ones the code rejects: invariant #7's re-coupling
-    // edge for the card-CC carry and the card-PBT translation (card ALC).  It
+    // edge for the CC carry and the PBT translation.  It
     // sits after the update, constraints and AR (it reads the epoch's committed
     // pre-fit innovations) and before the CST harvest (so the row reports the
     // refloat_level event and the re-inflated amb_var).  The epoch's own
@@ -576,12 +576,12 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
 
     // Harvest the per-satellite readout last (after the update, the
     // pseudo-observation constraints and AR), so the ambiguity / slant-iono
-    // values and variances it reports are the epoch's committed ones (card CST).
+    // values and variances it reports are the epoch's committed ones.
     // Measure-only; no-op unless network.trace_consumer_sat armed the engine.
     traceConsumerSat_(ctx);
 
     // The live filter memory is now "as of" this epoch: the stamp that
-    // writeStateSnapshotTo uses and checks against the network copy (card CC (B)).
+    // writeStateSnapshotTo uses and checks against the network copy.
     last_processed_epoch_ = ctx.current_time;
     has_processed_epoch_  = true;
 
@@ -612,7 +612,7 @@ void RealTimeEngine::setSsrStore(const SsrCorrectionStore* store,
     // keep precise SP3/CLK for the clock while consuming only the network phase
     // bias (clean integer test).  Called after initialize(), so the models exist.
     ssr_store_override_ = consume_bias ? store : nullptr;   // discontinuity hook reads phase bias
-    // Remember the clock routing (card 7): the orbit-echo mismatch tallies land
+    // Remember the clock routing: the orbit-echo mismatch tallies land
     // on the store GnssCorrections reads clocks from, so the echo summary must
     // read that store (it differs from the bias-routed override above whenever
     // consume_clock != consume_bias).

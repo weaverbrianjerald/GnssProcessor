@@ -411,7 +411,7 @@ TEST(PdSafeFoldTest, MixedScaleLanePairStaysPd) {
     // The driver's q_z time update, applied to every arm as beginEpoch does.  It is
     // required: with q_z = 0 the DD variance falls like 1/n and after a few hundred epochs
     // the covariance is numerically singular on any arithmetic, including the oracle,
-    // which returns NaN.  The lineage the card is graded on runs q_z = 1e-4 m²/s, so a
+    // which returns NaN.  The lineage this fold is graded on runs q_z = 1e-4 m²/s, so a
     // bounded random walk is the realistic regime; 1e-6 m² per epoch is a ~1 mm step,
     // small against the 1e-4 mature scale and large enough to floor the spectrum.
     constexpr double kQz = 1e-6;

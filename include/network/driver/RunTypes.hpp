@@ -2,7 +2,7 @@
 /**
  * @file RunTypes.hpp
  * @brief @internal Run-loop record types for Application::runNetwork: the
- *        per-station bundle, the PASS-B assembly slot, the carry PODs (D2, card 1)
+ *        per-station bundle, the PASS-B assembly slot, the carry PODs (D2)
  *        and the other run-loop-local helper types that the network seams share.
  *
  * Support header for the network run loop, not a public API; each type carries its
@@ -13,10 +13,10 @@
 
 #include "filter/StateManager.hpp"
 #include "network/solve/Estimator.hpp"      // SharedParamKind
-#include "network/carry/CouplingExact.hpp"  // CouplingExactCounters (StationAssembly, card CTU)
-#include "network/assembly/ParamInventory.hpp" // StationParamSlot (StationAssembly, card NOM N1)
-#include "network/assembly/Contributions.hpp" // RowTag, GimRowsOutcome (StationAssembly, card NOM N2a)
-#include "network/qc/WithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits, card WCF)
+#include "network/carry/CouplingExact.hpp"  // CouplingExactCounters (StationAssembly)
+#include "network/assembly/ParamInventory.hpp" // StationParamSlot (StationAssembly)
+#include "network/assembly/Contributions.hpp" // RowTag, GimRowsOutcome (StationAssembly)
+#include "network/qc/WithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
@@ -152,7 +152,7 @@ struct NetStation {
     // (sat, signal) pairs and is an ordinary carry-eligible station for the rest:
     // membership is per (sat, signal), never a station-level role.
     std::map<std::string, double> pinned_amb_targets;
-    // eq34 only (card 3): the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
+    // eq34 only: the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
     // station is the datum receiver r1 this epoch, each folded as a 1e10 pin on the
     // RPB column in this station's own block (δ_{r1,σ} = 0, the receiver half of the
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
@@ -169,7 +169,7 @@ struct NetStation {
     // off never reads this map and the fold is byte-identical.  Cleared and rebuilt
     // with the pins.
     std::map<std::string, double> pinned_amb_sigma_scale;
-    // Seed-round, fold-deferred path (docs/SPEC_eq34_seed_round.md §3.2, card 3):
+    // Seed-round, fold-deferred path (docs/SPEC_eq34_seed_round.md §3.2):
     // the wavelength of each elected pin whose ambiguity state did not exist at
     // election time (a cold start, or a new arc that PASS B's pre-pass allocates), so
     // the election had no value to round.  The fold computes target = λ·round(piv_x/λ)
@@ -195,7 +195,7 @@ struct NetStation {
     // PASS-B produce reads it (station-local, so thread-safe).
     std::map<std::string, double> phase_sigma_scale;
     /// Per-satellite sigma scale for this station's code rows while that line of sight
-    /// is declared gross (card GL, docs/SPEC_event_harness.md §24.18).  The code-row
+    /// is declared gross (docs/SPEC_event_harness.md §24.18).  The code-row
     /// counterpart of @ref phase_sigma_scale above, under the same contract: the fold
     /// divides the row's information by scale^2 (sigma multiplied by scale); phase rows
     /// are untouched, because they have their own responses (the erase and pending
@@ -206,7 +206,7 @@ struct NetStation {
     /// thread-safe).  Never populated when network.gross_los_screen is off, so such a
     /// run never reads this map and the assembly is byte-identical.
     std::map<std::string, double> gl_code_sigma_scale;
-    /// Code rows this station folded at the deweighted sigma over the run (card GL).
+    /// Code rows this station folded at the deweighted sigma over the run.
     /// Accumulated inside the parallel produce phase, so it lives per station; summed
     /// into the run-end report at teardown, like @c si_rows_demoted.
     long long gl_rows_deweighted{ 0 };
@@ -217,23 +217,23 @@ struct NetStation {
     long long si_rows_demoted{ 0 };
     /// Code rows of an extra-band signal (one whose band is neither band of the
     /// constellation's ionosphere-free pin pair) that this station folded at the scaled
-    /// sigma over the run (`network.extra_band_code_sigma_scale`, card L5P).
+    /// sigma over the run (`network.extra_band_code_sigma_scale`).
     /// Accumulated inside the parallel produce phase, so it lives per station and is
     /// summed into the run-end report at teardown, like @c gl_rows_deweighted.
     long long eb_rows_deweighted{ 0 };
     /// Code rows for which the scale could not be decided, because the row's
     /// constellation has no resolvable ionosphere-free pin pair in the BIA product
-    /// (card L5P).  Those rows keep their unscaled weight; a nonzero count means the
+    ///.  Those rows keep their unscaled weight; a nonzero count means the
     /// knob is partly inert, and the run-end line says so (standing invariant #4).
     long long eb_rows_no_pin{ 0 };
     /// The receiver IFB columns network.estimate_rx_extra_band_code_delay estimates at
-    /// this station (card L5B): the counts and edge state of
+    /// this station: the counts and edge state of
     /// network/assembly/ParamInventory.hpp, written by the station's own split and inject
     /// inside the parallel produce phase and by the serial harvest, summed by the run-end
     /// report.  Untouched unless the knob is effective.
     RxIfbStationState l5b;
 
-    // --- second code channel, card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md)
+    // --- second code channel (docs/refound/SCC_second_code_channel_2026-09-21.md)
     /// This epoch's companion cells at this station, as "<satellite>|<signal>" keys
     /// (the shape of @c StateKeys::makeSatBiasKey).  Republished serially from the
     /// PASS-A observations before the parallel PASS-B produce reads it (station-local,
@@ -243,55 +243,55 @@ struct NetStation {
     /// unarmed posture, so the split never reads it and the assembly is byte-identical.
     std::set<std::string> scc_cells;
     /// The previous epoch's @ref scc_cells, so that the serial sweep can diff the two
-    /// and emit the opening and closing edges (standing invariant #7; card SCC, R7).
+    /// and emit the opening and closing edges (standing invariant #7; R7).
     /// Not cleared between epochs: a station absent this epoch keeps its set, and its
     /// cells close when it returns without them.
     std::set<std::string> scc_cells_prev;
     /// Receiver inter-signal state keys this station held at the end of the previous
-    /// epoch (card SCC, R7).  A key that is absent here and present now, at a station
+    /// epoch.  A key that is absent here and present now, at a station
     /// that has held it before, is a reseed: the state cold-started instead of being
-    /// restored by the receiver code-bias carry.  A reseed is the one way card SCC can
+    /// restored by the receiver code-bias carry.  A reseed is the one way the second code channel can
     /// silently determine a receiver bias from a single epoch of code.
     std::set<std::string> scc_isc_prev;
     /// Receiver inter-signal state keys this station has held at any time in the run
-    /// (card SCC, R7).  The reseed test needs "held before", not "held last epoch": a
+    /// (R7).  The reseed test needs "held before", not "held last epoch": a
     /// state that legitimately disappears for an hour and returns is still a reseed.
     std::set<std::string> scc_isc_seen;
-    /// Companion code rows this station folded over the run (card SCC, R7).
+    /// Companion code rows this station folded over the run.
     /// Accumulated inside the parallel produce phase, so it lives per station and is
     /// summed into the run-end report at teardown, like @c eb_rows_deweighted.
     long long scc_rows{ 0 };
     /// Code rows this station routed through the receiver inter-signal state that were
     /// not companions, i.e. a band-1 code that arrived without its latched canonical
-    /// code beside it (the fallback case that R2 covers; card SCC, R7).  On a lineage
+    /// code beside it (the fallback case that R2 covers; R7).  On a lineage
     /// whose canonical latch is decided this reads 0; a nonzero count means some
     /// station's canonical code is regularly missing, which points at the latch.
     long long scc_fallback_rows{ 0 };
 
-    // --- second phase channel, card SID phase 6a (docs/refound/SID_signal_identity_2026-09-22.md)
+    // --- second phase channel (docs/refound/SID_signal_identity_2026-09-22.md)
     /// This epoch's second-phase cells at this station, as
     /// @c StateKeys::makeSatPhaseBiasKey keys.  Republished serially from the PASS-A
     /// observations before the parallel PASS-B produce reads it (station-local, so
     /// thread-safe).  It lets @ref Application::networkSplitStation_ tell a
     /// second-phase row from the latched one; nothing else distinguishes them, because
-    /// card SID phase 6a builds no receiver state that a row could be keyed on.  Empty
+    /// the second phase channel builds no receiver state that a row could be keyed on.  Empty
     /// on every unarmed posture, so the split never reads it and the assembly is
     /// byte-identical.
     std::set<std::string> spc_cells;
     /// The previous epoch's @ref spc_cells, so that the serial sweep can diff the two
-    /// and emit the opening and closing edges (standing invariant #7; card SID phase
-    /// 6a, R7).  Not cleared between epochs: a station absent this epoch keeps its set,
+    /// and emit the opening and closing edges (standing invariant #7;
+    /// R7).  Not cleared between epochs: a station absent this epoch keeps its set,
     /// and its cells close when it returns without them.
     std::set<std::string> spc_cells_prev;
-    /// Every second-phase cell this station has opened during the run (card SID phase
-    /// 6a, R7).  The run-end "arcs born" count is its size summed over stations; a
+    /// Every second-phase cell this station has opened during the run
+    /// (R7).  The run-end "arcs born" count is its size summed over stations; a
     /// re-opening after a dropout is an edge, not a birth.
     std::set<std::string> spc_cells_seen;
-    /// Second-phase rows this station folded over the run (card SID phase 6a, R7).
+    /// Second-phase rows this station folded over the run (R7).
     /// Accumulated inside the parallel produce phase, so it lives per station and is
     /// summed into the run-end report at teardown, like @c scc_rows.
     long long spc_rows{ 0 };
-    /// Between-channel witness memory (card SID phase 6a, R8), keyed
+    /// Between-channel witness memory (R8), keyed
     /// "<satellite>|<second signal>" -> (latched minus second phase, in cycles; the
     /// loop epoch of the measurement).  Differencing this quantity from one epoch to
     /// the next turns a one-channel slip into an integer step, while a slip common to
@@ -332,20 +332,20 @@ struct SdEwlFix {
     bool        measured{ false };
 };
 
-/// What the D2 fold does with one carried border entry this epoch (card PRM phase 1b,
-/// section 4.4).  Decided once per epoch, before PASS B, by
+/// What the D2 fold does with one carried border entry this epoch
+/// (section 4.4).  Decided once per epoch, before PASS B, by
 /// @ref networkCarryDecide, and read by every consumer of the decision: the exact
 /// coupling update's rows (through @c cxu_epoch), the fold itself and the run-end
-/// tally.  The card's seven names map as: Anchored and Loose (a satellite clock under
-/// the Q3 anchor), Reinit, Reref and Parked as named; the card's Skipped is split into
-/// @c Held, @c OnOscillator, @c Screened and @c Retired; the card's Departed is the
+/// tally.  The design's seven names map as: Anchored and Loose (a satellite clock under
+/// the Q3 anchor), Reinit, Reref and Parked as named; the design's Skipped is split into
+/// @c Held, @c OnOscillator, @c Screened and @c Retired; the design's Departed is the
 /// decision's @c departed flag (a foldable entry whose column left the layout, which the
 /// estimator marginalizes); @c Folded (a bias at its kind's process noise, or a clock with
-/// the anchor disarmed) and @c Seeded (READMIT) are the two the card did not list.
+/// the anchor disarmed) and @c Seeded (READMIT) are the two the design did not list.
 enum class CarryDisposition : int {
     Undecided = 0,  ///< not decided this epoch (a fresh stash or restore entry)
     Folded,         ///< folded at its kind's process noise over the gap
-    Anchored,       ///< a satellite clock folded at the Q3 anchor's rate (card Q3)
+    Anchored,       ///< a satellite clock folded at the Q3 anchor's rate
     Loose,          ///< a satellite clock the armed anchor does not hold: the legacy rate
     Reinit,         ///< folded at the clock monitor's reinit variance, decorrelated (inflate_q)
     Seeded,         ///< a parked pre-gap realization seeding its re-registered column (READMIT)
@@ -380,7 +380,7 @@ inline const char* carryDispositionName(CarryDisposition d) {
 }
 
 /**
- * @brief One carried border entry's fold decision for this epoch (card PRM phase 1b).
+ * @brief One carried border entry's fold decision for this epoch.
  *
  * Holds the route and the process-noise increment, not the folded variance: a consumer
  * forms the variance from the carried variance it holds with
@@ -401,19 +401,19 @@ struct CarryFoldDecision {
     bool   anchored{false};     ///< the anchor holds this clock (its floor applies)
     bool   decoupled{false};    ///< the anchor found an anchored clock's carry stale this epoch
     bool   departed{false};     ///< a foldable entry whose shared column is absent from this epoch's layout
-    bool   has_seam{false};     ///< card CTU G5: a switch-on seam's level noise applies (dense fold only)
+    bool   has_seam{false};     ///< a switch-on seam's level noise applies (dense fold only)
     double seam_q_m2{0.0};      ///< that noise (m^2)
     /// The interval the increment covers (s) and its rate (m^2/s), q_applied_m2 = rate·dt
-    /// before card PFQ's term.  Set for a folding disposition.
+    /// before the pivot-frame process noise term.  Set for a folding disposition.
     double dt_applied_s{0.0};
     double rate_m2ps{0.0};
-    /// Card PFQ (network.clock_pivot_frame_q): the pivot's rate this clock's term uses
+    /// Pivot-frame process noise (network.clock_pivot_frame_q): the pivot's rate this clock's term uses
     /// (m^2/s), 0 when the clock takes no term (the knob off, the pivot itself, a reinit, a
     /// non-folding disposition, another kind).  The term r_p·dt_applied_s is inside
     /// q_applied_m2; the dense fold and the exact update add r_p·min(dt_a, dt_b) between
     /// two such clocks of a constellation.
     double pfq_rate_m2ps{0.0};
-    double pfq_add_m2{0.0};     ///< card PFQ: the diagonal term inside q_applied_m2 (m^2), 0 without
+    double pfq_add_m2{0.0};     ///< pivot-frame process noise: the diagonal term inside q_applied_m2 (m^2), 0 without
     double var_decided_m2{0.0};   ///< the carried variance when decided
     double value_decided_m{0.0};  ///< the carried value when decided
 };
@@ -443,7 +443,7 @@ struct CarryPrior {
     /// true gap instead of tripping `gap` into a code-only loose re-draw, which the
     /// anchor's own re-coupling would then freeze into a tail.
     double          t_park_s{0.0};
-    /// This epoch's fold decision (card PRM phase 1b): written by
+    /// This epoch's fold decision: written by
     /// @ref networkCarryDecide before PASS B, read by the coupling rows and the fold.  It
     /// lives from the decision to the stash, which rebuilds the entries; a parked entry is
     /// copied whole by the stash and re-decided at the next epoch's pass.
@@ -494,7 +494,7 @@ struct SharedCarryCov {
 };
 
 /// One non-negligible entry of a carried local column's regression @f$M_r@f$ on the
-/// shared border (card 1, network.carry_conditional_coupling).  The coupling makes the
+/// shared border (network.carry_conditional_coupling).  The coupling makes the
 /// between-epoch carry conditional (a pseudo-observation row over @f$(x_s\mid x_r)@f$)
 /// rather than an independent marginal.  The entry holds the shared parameter's
 /// identity (kind plus sat/signal, or SH n/m/trig), so that it re-maps across the
@@ -505,7 +505,7 @@ struct SharedCarryCov {
 /// this epoch.  Datum-pinned and folded-gauge columns are carried with their
 /// coefficient but with @c p_prev = 0, because they are exactly known (the datum
 /// re-applies them each epoch).  Keeping them preserves the row's exact gauge
-/// invariance (card 1e); without them every coupling row observes the clock gauge,
+/// invariance; without them every coupling row observes the clock gauge,
 /// and the W5 null-space gate withholds the rows every epoch.
 struct CoupledShared {
     SharedParamKind kind{SharedParamKind::Clock};  ///< shared parameter kind
@@ -522,7 +522,7 @@ struct CoupledShared {
 
 /// Relative sparsification threshold for a carried column's regression row: an
 /// entry @f$M_{rj}@f$ is stashed only when @f$|M_{rj}| > @f$ @c kCouplingSparsifyRelThresh
-/// @f$\cdot\max_k|M_{rk}|@f$ (Card 1).  1e-8 keeps only the numerically meaningful
+/// @f$\cdot\max_k|M_{rk}|@f$.  1e-8 keeps only the numerically meaningful
 /// couplings; the dropped near-zero entries contribute negligibly to the row.
 inline constexpr double kCouplingSparsifyRelThresh = 1e-8;
 
@@ -530,13 +530,13 @@ inline constexpr double kCouplingSparsifyRelThresh = 1e-8;
 /// whitened local block (F3; @ref PlBlockRaw), retained so that the block can be
 /// re-whitened if a within-epoch RAIM refloat later drops some of its columns.
 /// @c shared holds the present shared terms, kept as ordinary @f$A_s@f$ coefficients as
-/// in card 1; the departed terms are already marginalized into @c var_eff.
+/// in the scalar coupling row; the departed terms are already marginalized into @c var_eff.
 struct CplRowRaw {
     Eigen::Index local_col{0};                            ///< carried local (A_r) column this row targets (+1).
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< present shared terms: (shared col, M_rj).
     double rhs{0.0};                                      ///< (r̂_prev − r_lin) + Σ_present M_rj·ŝ_prev,j.
     double var_eff{0.0};                                  ///< pure conditional variance (plus process noise); this row's own diagonal.
-    /// The row's contribution tag (card NOM N2a): its kind and the identity of its local
+    /// The row's contribution tag: its kind and the identity of its local
     /// column, carried with the ingredients so that a re-whiten keeps the tags aligned.
     /// Default @c Unset (caught by the tag check).
     RowTag tag{};
@@ -549,8 +549,8 @@ struct CplRowRaw {
 /// columns marginalized (their rows and columns deleted from Σ before the factor,
 /// never conditioned on; the decoupling edge of standing invariant #7).  @c rows holds
 /// the per-column scalar-path ingredients: the same +1 local coefficient, the present
-/// shared terms (κ-shrunk per card 1d, gauge-restored per card 1f), the RHS, and
-/// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the card 1 scalar row
+/// shared terms (κ-shrunk, gauge-restored), the RHS, and
+/// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the scalar coupling row
 /// would have carried.  Here @c var_eff is that σ², i.e. the diagonal of Σ; the
 /// departed-column marginalization stays per row and diagonal, as on the scalar path.
 /// @c Sigma is the n×n joint prior covariance over those columns: that diagonal, and off
@@ -595,7 +595,7 @@ struct LocalCarry {
     double value_abs;     ///< Carried absolute ambiguity estimate (m).
     double var;           ///< Last-solve posterior variance (m²): the marginal (conditionalLocalVarianceDiag) on the legacy diagonal carry, or, under network.carry_conditional_coupling, the pure conditional @f$(N_{rr}^{-1})_{rr}@f$.
     double last_seen_s;   ///< Continuous-GPS seconds when last stashed (gap inflation).
-    std::vector<CoupledShared> coupling{};  ///< The regression on the free shared border (card 1).  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off.  An empty coupling injects as a plain diagonal row (a one-epoch degradation).
+    std::vector<CoupledShared> coupling{};  ///< The regression on the free shared border.  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off.  An empty coupling injects as a plain diagonal row (a one-epoch degradation).
     std::shared_ptr<const PlHarvestBlock> blk{};  ///< The harvest cross-covariance block that holds this entry's off-diagonals (F3, network.phase_leveling_local_block).  Null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry; with no block, every pair with this entry is zeroed and counted at inject.
     int blk_idx{-1};                              ///< This entry's row and column in @c blk->C (−1 = none; F3).
     double var_first{0.0};                        ///< The arc's first-stash conditional variance (m²; 0 = unknown): set once at birth and kept across re-stashes (an erase-and-rebirth starts it over; a re-level keeps it).  The unfloored σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
@@ -698,7 +698,7 @@ struct LocalCarry {
     /// every other RF-1 stamp: a restored entry reads 0, which means no drop pending
     /// (the conservative direction).
     int drop_walk_ph{0};
-    /// Card SCL2 X2 (network.carry_coupling_shared_history, filter/NetworkSharedHistory):
+    /// Shared history (network.carry_coupling_shared_history, filter/NetworkSharedHistory):
     /// this row's coefficients on the shared-history columns of the compression stamped
     /// @ref shx_stash_s (m; history column j has the prior N(0, 1)).  Valid only when
     /// @ref shx_stash_s equals @ref last_seen_s (the row was stashed at that compression);
@@ -707,7 +707,7 @@ struct LocalCarry {
     /// @c var plus that norm (what the snapshot writes).  Empty off and for a restored
     /// entry.
     std::vector<double> shx_coef{};
-    double shx_stash_s{0.0};   ///< Card SCL2 X2: the compression (harvest second) @ref shx_coef belongs to (0 = none)
+    double shx_stash_s{0.0};   ///< Shared history: the compression (harvest second) @ref shx_coef belongs to (0 = none)
 };
 
 /// The route through which the PASS-B inject folded a carried ambiguity column this
@@ -723,7 +723,7 @@ enum class AmbFoldRoute {
     None,           ///< No prior was folded for this column this epoch (skipped: freed / stale-gap / pending reseed / no carry / non-finite / gauge-pinned).
     Diag,           ///< A plain diagonal local prior row (Λ, η): the legacy per-column route.
     Block,          ///< A row of the station-wide jointly-whitened local block (F3 / the float_kf vehicle's structural fold).
-    CouplingScalar  ///< A card 1 conditional coupling row: +1 on the local column, M_r on the free shared border (the RF-0 route).
+    CouplingScalar  ///< A conditional coupling row: +1 on the local column, M_r on the free shared border (the RF-0 route).
 };
 
 /// One row of @c network_amb_state.csv, the per-arc carry-state trace (RF-1 §7.4).
@@ -742,7 +742,7 @@ struct AmbStateRow {
     std::string sat;                ///< Satellite (e.g. G07).
     std::string signal;             ///< RINEX signal (e.g. L1C).
     double      value_abs_m{0.0};   ///< The carried absolute float ambiguity after this epoch's harvest (m).  On an erase row, the value the entry held when it was deleted.
-    double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²); the conditional variance under card 1.
+    double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²); the conditional variance under the conditional coupling.
     double      var_first_m2{0.0};  ///< @ref LocalCarry::var_first: the arc's first-stash variance, unfloored.
     double      var_birth_m2{0.0};  ///< @ref LocalCarry::var_birth: the floored birth prior that the drop restores (RF-1 step 4).
     double      fold_var_m2{0.0};   ///< The variance the fold used this epoch (0 when @ref folded is false).
@@ -936,8 +936,8 @@ struct RelevelEpochState {
         kCauseT4Attrib  = 8,   ///< RAIM prominence-attribution erase (T4).
         kCauseT4Consens = 16,  ///< RAIM per-satellite consensus erase (T3).
         kCauseWindup    = 32,  ///< Wind-up accumulator restart response (§10.4).
-        kCauseGap       = 64,  ///< Gap re-entry response (card G, §G3-W1): the arc came back across a tracking break that, by the raw level or the receiver's LLI, it did not survive.
-        kCauseGfJump    = 128, ///< Arc-scoped geometry-free jump trigger (card ARL; network/slip/GfArcJump.hpp): the arc's GF step departed from its last clean step.
+        kCauseGap       = 64,  ///< Gap re-entry response (§G3-W1): the arc came back across a tracking break that, by the raw level or the receiver's LLI, it did not survive.
+        kCauseGfJump    = 128, ///< Arc-scoped geometry-free jump trigger (network/slip/GfArcJump.hpp): the arc's GF step departed from its last clean step.
     };
     /// (station idx, amb key) marked pending-reseed by a detector this epoch.  The
     /// inject site skips these, which gives each marked arc its free epoch.
@@ -961,7 +961,7 @@ struct RelevelEpochState {
 /// PASS B for the post-solve harvest/stash: its A_r column, identity, and the
 /// linearization point used this epoch (so the absolute value is
 /// @c x_lin + x_r(col) and a carried prior targets @c value_abs − x_lin).
-/// One present phase-colour column of a station-epoch (card LGM section 4.1),
+/// One present phase-colour column of a station-epoch,
 /// recorded in PASS B for the post-solve harvest and the trace.
 struct PlPc {
     std::string  sat;          ///< Satellite id (the state's key).
@@ -1179,13 +1179,13 @@ struct StationAssembly {
     Eigen::VectorXd  w, y;                 ///< Per-row information weights + innovations.
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
     std::map<int,int> h2local;             ///< H-column -> A_r-column map (back-substitute the slant-iono nuisance for the viz trace).
-    /// One contribution tag per row of @c A_s / @c A_r, in row order (card NOM N2a,
-    /// network/assembly/Contributions.hpp): every site that appends rows appends their tags in
+    /// One contribution tag per row of @c A_s / @c A_r, in row order
+    /// (network/assembly/Contributions.hpp): every site that appends rows appends their tags in
     /// lockstep, so the row's kind, satellite and signal travel with it.  Every reader that
-    /// asks what a row is reads its tag (card NOM step N2b, filter/NetworkRowClassify).
+    /// asks what a row is reads its tag (filter/NetworkRowClassify).
     std::vector<RowTag> row_tags;
     /// The split's data rows: rows [0, n_data_rows) of the block are the measurement
-    /// update's (@c em.H.rows()), everything after them is appended (card NOM N2a; the tag
+    /// update's (@c em.H.rows()), everything after them is appended (the tag
     /// check reads it).
     Eigen::Index n_data_rows{0};
     /// One tag per entry of @c carry_cols (the post-PD diagonal channel), in entry order.  An
@@ -1199,14 +1199,14 @@ struct StationAssembly {
     /// The serial consume folded @c carry_cols through @c addStationPrior (the entries count
     /// as folded contributions only then).
     bool carry_prior_folded{false};
-    /// What the GIM ionosphere row builder did on this station-epoch (card NOM section 16,
+    /// What the GIM ionosphere row builder did on this station-epoch (
     /// suspect 4: it was called and silently inert on the golden).
     GimRowsOutcome gim_rows{GimRowsOutcome::NotCalled};
     /// SD-EWL rows the builder reported this station-epoch (the change of the station's
-    /// @c sd_ewl_ctr.rows_built over the call; card NOM N2a: the tag check compares it with
+    /// @c sd_ewl_ctr.rows_built over the call; the tag check compares it with
     /// the @c SdEwl tags).
     long long sd_ewl_rows{0};
-    /// The station's parameter inventory of this epoch (card NOM N1): every state column
+    /// The station's parameter inventory of this epoch: every state column
     /// classified, with the disposition networkSplitStation_ gave it.  Written by this
     /// station's produce iteration only, drained serially after PASS B
     /// (networkParamInventoryDrain).  Trace class: nothing in the solve reads it.
@@ -1216,7 +1216,7 @@ struct StationAssembly {
     std::vector<Eigen::Index> carry_cols;  ///< A_r columns receiving a carried prior (ascending, for determinism).
     Eigen::VectorXd           carry_dNrr;  ///< Per-column information increment Λ = 1/var_eff.
     Eigen::VectorXd           carry_dur;   ///< Per-column RHS increment η = Λ·(value_abs − x_lin).
-    // The station's own datum rows (card RF-PD-fix, network.station_prior_before_pd),
+    // The station's own datum rows (network.station_prior_before_pd),
     // held apart from the carry above so that they can be handed to addStation and
     // folded into N_rr/u_r before its positive-definiteness test.  Otherwise the test
     // judges a station without the only row that gauges its receiver DCB, and drops it
@@ -1228,7 +1228,7 @@ struct StationAssembly {
     std::vector<Eigen::Index> prior_cols;  ///< A_r columns receiving a pre-PD datum row (ascending).
     Eigen::VectorXd           prior_dNrr;  ///< Per-column information increment Λ = 1/σ².
     Eigen::VectorXd           prior_dur;   ///< Per-column RHS increment η = Λ·(0 − x_lin).
-    // Conditional coupling rows (card 1, network.carry_conditional_coupling).  The
+    // Conditional coupling rows (network.carry_conditional_coupling).  The
     // appended rows live in A_s/A_r (not in carry_cols), so the within-epoch RAIM
     // refloat must know which rows to withhold.  cpl_row_start = the first A_s/A_r row
     // index of the coupling block (−1 when none); cpl_row_local_cols = the carried local
@@ -1236,7 +1236,7 @@ struct StationAssembly {
     // row can be zeroed).
     Eigen::Index              cpl_row_start{-1};
     std::vector<Eigen::Index> cpl_row_local_cols;
-    // Coupling-term counts of this station-epoch's injected rows (card 1 and 1d
+    // Coupling-term counts of this station-epoch's injected rows (coupling and κ-shrink
     // observability): layout-present terms, departed (marginalized) terms, and present
     // terms κ-shrunk by the border time update.  Summed serially into run totals.
     long long                 cpl_terms_present{0};
@@ -1245,8 +1245,8 @@ struct StationAssembly {
     /// (constellation, kind) families whose coefficient sum was held at its harvest
     /// value against a truncated column, and families with truncated mass but no present
     /// recipient to carry it, which leaves the row gauge-dirty for that family this
-    /// epoch (card 1f, network.carry_coupling_gauge_project).  Both stay 0 with the
-    /// card off, so a nonzero pair shows that the wiring ran.
+    /// epoch (network.carry_coupling_gauge_project).  Both stay 0 with the
+    /// knob off, so a nonzero pair shows that the wiring ran.
     long long                 cpl_gauge_held{0};
     long long                 cpl_gauge_orphan{0};
     /// Orphan attribution: per (constellation, SharedParamKind) family, the orphan
@@ -1255,21 +1255,21 @@ struct StationAssembly {
     /// because the datum is, so holding an orphaned family's mass against the row's
     /// other constellation family would move a different datum's gauge.  The residue
     /// stays counted, attributed and unfixed by construction; a fallback needs its own
-    /// derivation card.
+    /// derivation.
     std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam;
     /// Coupling terms diverted to the departed route by the widened (kind, sat, signal)
     /// probe specifically, i.e. terms that the legacy satellite-wide probe would have
-    /// folded as present (card 1g, network.carry_coupling_reinit_sources).  This is the
-    /// card's own denominator: the run-total departed count moves for many reasons and
+    /// folded as present (network.carry_coupling_reinit_sources).  This is the
+    /// knob's own denominator: the run-total departed count moves for many reasons and
     /// cannot distinguish armed-and-working from armed-and-inert.
     long long                 cpl_reinit_diverted{0};
     /// Coupling terms diverted to the departed route this station-epoch because their
     /// satellite is inside its post-re-admission marginalization window (READMIT
     /// re-coupling edge, network.readmit_coupling_marg_ep).
     long long                 cpl_readmit_diverted{0};
-    /// Card CTU (network.carry_coupling_exact_update): this station-epoch's exact-update
+    /// Exact coupling update (network.carry_coupling_exact_update): this station-epoch's exact-update
     /// row and term counts, accumulated in the parallel produce phase and folded into
-    /// the run totals serially afterwards.  All zero when the card is off.
+    /// the run totals serially afterwards.  All zero when the knob is off.
     CouplingExactCounters     cxu{};
     /// Inject-site free-epoch skips taken this station-epoch: the arc had a live carry
     /// that the latched set suppressed (SPEC_slip_relevel_walk).
@@ -1281,7 +1281,7 @@ struct StationAssembly {
     /// Accumulated per station in the parallel produce phase and folded into the run
     /// counters serially afterwards, like @c relevel_free_skips.
     long long                 inject_stale_skips{0};
-    /// Card PRM phase 3a (network/assembly/Responses.hpp): the carried-instance responses
+    /// (network/assembly/Responses.hpp): the carried-instance responses
     /// taken in the parallel produce phase, one per @c ResponseSite, accumulated per
     /// station and folded into @c NetworkServiceCounters::prm_resp serially afterwards,
     /// like @c relevel_free_skips.  Count-only: no decision reads them.
@@ -1363,7 +1363,7 @@ struct StationAssembly {
     // (RXCB-IN-BLOCK, network.carry_rx_code_bias_in_block).  As for the receiver clock
     // there is no diagonal fallback row: the diagonal rx-CB fold at the conditional
     // variance re-asserts the shared border every epoch (the information along each
-    // satellite's level doubles per epoch, card CTU section 14), so a column whose block
+    // satellite's level doubles per epoch), so a column whose block
     // fails to factorize carries nothing that epoch and is counted.
     long long                 pl_blk_rxcb_cols{0};           ///< Receiver code-bias columns admitted into the block build this station-epoch (they passed the scalar screen and became rows of Sigma).  A block that then failed to factorize still counts here; read it against @c pl_blk_rxcb_not_folded.
     long long                 pl_blk_rxcb_not_folded{0};     ///< Receiver code-bias columns pushed but not folded: the block was non-SPD this station-epoch and there is no diagonal row to fall back to.
@@ -1376,7 +1376,7 @@ struct StationAssembly {
     /// The receiver code-bias columns of @ref pl_rxcb_blk_cols that the block builder's
     /// scalar screen refused (@c CouplingRowBuilder::buildLocalBlock; counted in
     /// @c pl_blk_col_refused): pushed, but never rows of the block.  Read only by the
-    /// fold count of card L5B, which counts a column as folded only when it is absent here.
+    /// fold count of the band-5 receiver delay, which counts a column as folded only when it is absent here.
     std::vector<Eigen::Index> rxcb_refused;
     long long                 pl_blk_hist[5]{0, 0, 0, 0, 0}; ///< Block dimension histogram <10 / 10–24 / 25–49 / 50–74 / ≥75 (F3).
     long long                 pl_blk_max_dim{0};       ///< Largest block dimension this station-epoch (F3).
@@ -1426,7 +1426,7 @@ struct StationAssembly {
     bool                      pl_zwd_injected{false}; ///< A ZWD carry prior was injected this epoch (the "carried" flag of network_zwd.csv, distinct from carry-eligible; L7).
     PlZwd                     pl_zwd{};               ///< The ZWD present-record for the post-solve stash (B9).
     /// Present unpinned RPB columns recorded for the post-solve stash, as (rpb_key, A_r
-    /// column, linearization point) (eq34 RPB time-linking, card 3).  Empty unless
+    /// column, linearization point) (eq34 RPB time-linking).  Empty unless
     /// network.phase_datum_eq34 is on with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
     /// Present per-LOS iono columns recorded for the post-solve harvest, as (sat, A_r
@@ -1438,7 +1438,7 @@ struct StationAssembly {
     /// (state key, A_r col, x_lin) recorded for the post-solve harvest.  Filled only
     /// under network.carry_rx_code_bias; same tuple shape as pl_rpb.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_cb;
-    // Card LGM (network.phase_colour_state): the present phase-colour columns and the
+    // Phase colour (network.phase_colour_state): the present phase-colour columns and the
     // edges of their priors this station-epoch (produce-phase locals, summed serially).
     std::vector<PlPc>         pl_pc;        ///< Present columns, for the harvest and the trace.
     std::vector<Eigen::Index> pc_planned;   ///< Columns that entered PASS B with a live carry.
@@ -1479,7 +1479,7 @@ struct StationAssembly {
     /// data rows, so only rows @f$[0,\text{rows}())@f$ can carry a non-zero triple.
     ///
     /// Empty unless @c network.congruence_screen is armed: an unarmed run allocates
-    /// nothing and executes no extra floating-point operation, which the card's
+    /// nothing and executes no extra floating-point operation, which the knob's
     /// byte-identity A/B checks.
     Eigen::MatrixXd           row_pos_enu;
     /// Pre-formatted `network_sd_ewl.csv` rows for this station-epoch (SD pre-reduce
@@ -1490,7 +1490,7 @@ struct StationAssembly {
     /// the file is deterministic for any thread count.  Empty unless the trace is armed
     /// (log-only; it changes no solve).
     std::vector<std::string>  sd_ewl_trace;
-    /// Chain-pin audit (card 3, docs/SPEC_synthetic_minimum_network.md §14 T1, measured
+    /// Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured
     /// record §12.8): per (constellation, signal) fold tallies for this station-epoch's
     /// elected datum pins, keyed `"<cons>|<signal>"` (the election's @c dr_key), with
     /// value {folded, miss_state, miss_row} counting @c foldAmb / @c foldRpb outcomes.
@@ -1502,8 +1502,8 @@ struct StationAssembly {
     /// consume, so run totals do not depend on the thread count.  Empty unless
     /// @c network.phase_datum_eq34 is on.
     std::map<std::string, std::array<int, 3>> pin_audit;
-    /// Fold-deferred realized targets of the seed-round path (card 3,
-    /// docs/SPEC_eq34_seed_round.md §3.4): (ambiguity key, realized target m, pin
+    /// Fold-deferred realized targets of the seed-round path
+    /// (docs/SPEC_eq34_seed_round.md §3.4): (ambiguity key, realized target m, pin
     /// innovation y m) for every pin whose target the fold computed because the state
     /// was absent at election time.  Drained serially after the consume into
     /// @c ctx.carry.eq34_prev_target for accepted stations.  Without this feedback the
@@ -1598,7 +1598,7 @@ struct ClockOsc {
 /// One-step predicted ClockOsc (the carry-prior mean and variance): Φ·x and Φ·P·Φᵀ + Q(dt).
 struct ClockOscPred { double x0, x1, p00, p01, p11; };
 
-/// Per-satellite state of the guarded temporal clock anchor (card Q3,
+/// Per-satellite state of the guarded temporal clock anchor (
 /// docs/SPEC_clock_temporal_anchor.md).  Two states: ANCHORED (the clock's D2 carry
 /// folds at @c network.clock_anchor_q) and LOOSE (it folds at the legacy
 /// @c filter.process_noise.sat_clock_q, the behaviour without the anchor, which is
@@ -1613,13 +1613,13 @@ struct ClockAnchorSat {
     double last_var_eff{0.0};  ///< prior variance folded this epoch (the guard's P⁻; marginal, so it is identical on the diagonal and dense D2 branches)
     int    in_band{0};         ///< consecutive in-band epochs accumulated while LOOSE
     bool   anchored{false};    ///< false = LOOSE (born LOOSE; re-validation required)
-    bool   ever_anchored{false};  ///< the guard has anchored this satellite before (measure-only: separates a re-coupling from the first engagement in card PRM phase 3a's response count)
+    bool   ever_anchored{false};  ///< the guard has anchored this satellite before (measure-only: separates a re-coupling from the first engagement in the response count)
     bool   folded{false};      ///< a clock prior is folded for this satellite this epoch and is still standing (guard eligibility; cleared when the guard withdraws it)
     bool   folded_anchored{false};  ///< …and it was the ANCHORED variance
     bool   stale_pending{false};    ///< the fold found the carry older than the staleness bound and fell back to the LOOSE variance; the guard owns the state transition, event and mark, so every decoupling edge goes through one path
 };
 
-/// Run state of the guarded temporal clock anchor (card Q3).  Lives in
+/// Run state of the guarded temporal clock anchor.  Lives in
 /// NetworkCarryState.  Not snapshotted, by design (an exemption from the three-place
 /// rule): a warm resume is an invariant #1 event (the F1 rule), so every satellite must
 /// re-earn the anchor from LOOSE after a resume rather than inherit a stiffness whose
@@ -1631,7 +1631,7 @@ struct ClockAnchorState {
     std::set<std::string> tripped;
 };
 
-/// Per-satellite window sums of the level innovation instrument (card CTU section 14),
+/// Per-satellite window sums of the level innovation instrument,
 /// reset at every window end.
 struct ClockLevelInnovWin {
     int    k{0};          ///< epochs accumulated
@@ -1742,8 +1742,8 @@ inline std::pair<double, double> shDevExactUpdate(double d_pred, double p_pred,
 ///        harvest's step test, and is pruned at the harvest.
 ///
 /// A constant, not a knob.  The one definition read by every one of those sites and by
-/// the parameter registry (@c ParamSpec::gap_horizon_s of the receiver code bias, card PRM
-/// phase 3b); before phase 3b it was two function-local constants and six literals.
+/// the parameter registry (@c ParamSpec::gap_horizon_s of the receiver code bias);
+/// it was formerly two function-local constants and six literals.
 inline constexpr double kRxCbMaxGapS = 900.0;
 
 /// Inject-time decision for one carried receiver code-bias prior (rx-CB carry,
@@ -1879,7 +1879,7 @@ struct EpochStatusRow {
     std::optional<int>    datum_changed;
     std::optional<int>    n_arc_refloat;   ///< Isolated-arc RAIM refloats this epoch (the churn metric; distinct from n_refloat_sats, which is the clock-refloat set; T2d).
     // --- per-epoch carry churn (SPEC_day129_frame_guards P1-1) -----------------
-    // The card 4 run-end log line reports run totals only, which cannot show whether
+    // The run-end log line reports run totals only, which cannot show whether
     // the churn spiked at a given epoch.  These are the same quantities differenced
     // per epoch (NetworkInstallCarry).  Appended columns; existing positions are
     // preserved (as for T2d).
@@ -1999,8 +1999,8 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 /// this channel):
 ///   - cap_H / cap_z / cap_constraint_weight / cap_has_constraint / cap_row_kinds: the W6
 ///     satellite code-bias datum constraint rows and their kinds (SB_SOLVEGLUE, W6
-///     block; the kinds name the replay's re-fold, card NOM step N2b).
-///   - cap_birth_H / cap_birth_z / cap_birth_weight: card GFC step 2's first-sighting
+///     block; the kinds name the replay's re-fold).
+///   - cap_birth_H / cap_birth_z / cap_birth_weight: the first-sighting
 ///     family prior rows (SB_SOLVEGLUE, network.code_family_birth_prior_sigma_m), soft
 ///     priors captured apart from the gauge rows above and re-applied at their own weight
 ///     1/sigma^2 under ContributionKind::CbFamilyBirth, through the helper the primary fold
@@ -2012,51 +2012,51 @@ enum class EpochAction { Proceed, SkipEpoch, StopRun };
 ///   - cap_priors / cap_prior_kinds: the SH-VTEC pre-gate prior
 ///     (networkInjectShVtecPrior_), the eq34 reattach-hygiene pin-bridge priors
 ///     (network.phase_datum_time_linked), the drop-and-heal soft anchors
-///     (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path), the card KP
+///     (NetworkPhaseDatum healNearNullPhaseBias, gate-failure path), the
 ///     code-bias bound prior (NetworkSolveGlue, network.cb_kaula_prior), the D2 diagonal
 ///     carry prior and dense-fallback leftovers (networkInjectD2CarryPrior_), the
 ///     two-state clock-model prior (networkInjectClockOscPrior_), and the a-priori
 ///     satellite-clock Tikhonov anchor.  Each writer appends its priors through
 ///     @ref networkCapturePriors with the kind its fold named, so cap_prior_kinds holds
 ///     one kind per entry of cap_priors and the replay's single re-fold of them is
-///     recorded per kind (card NOM step N2b).
+///     recorded per kind.
 ///   - cap_dense_keys / cap_dense_cov: the C1 dense shared-carry fold
 ///     (networkInjectD2CarryPrior_, dense-success branch only; its non-PD fallback
-///     routes through cap_priors like every diagonal prior).  On a card SCL clone epoch
+///     routes through cap_priors like every diagonal prior).  On a clock clone epoch
 ///     they hold the marginal of the joint fold over the epoch's own columns, which is
-///     the fold without the clones (the prior card Q3's phase statistic, card PVN and
-///     card SMH read), and the replay folds cap_ccl_* instead.
-///   - cap_ccl_on / cap_ccl_keys / cap_ccl_cov / cap_ccl_walk / cap_ccl_idle: card SCL's
+///     the fold without the clones (the prior that the temporal clock anchor's phase statistic, the phase-visible NEES and
+///     the smoothed-hold clone read), and the replay folds cap_ccl_* instead.
+///   - cap_ccl_on / cap_ccl_keys / cap_ccl_cov / cap_ccl_walk / cap_ccl_idle: the clock clone's
 ///     joint fold (the stand-in block, the clones' walk factors) and the idle clones'
 ///     isolated priors (filter/NetworkClockClone); empty and false when off.
-///   - cap_shx: card SCL2 X2's history priors (filter/NetworkSharedHistory); empty off.
+///   - cap_shx: the shared history's priors (filter/NetworkSharedHistory); empty off.
 /// The Q3 clock-anchor guard (NetworkClockAnchor) also edits the capture: before its
 /// re-solve it removes the withdrawn satellites' clock priors from cap_priors (and their
 /// kinds from cap_prior_kinds, in step) and
-/// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a card SCL clone
+/// marginalizes them out of cap_dense_keys / cap_dense_cov (and, on a clock clone
 /// epoch, removes their walk factors from cap_ccl_walk).
 struct EpochWorkspace {
     Eigen::MatrixXd cap_H;
     Eigen::VectorXd cap_z;
     double cap_constraint_weight = 0.0;
     bool   cap_has_constraint = false;
-    std::vector<ContributionKind> cap_row_kinds;   ///< One kind per row of cap_H (the W6 builder's row kinds; card NOM N2b)
-    Eigen::MatrixXd cap_birth_H;          ///< Card GFC step 2's first-sighting family prior rows (see writer-site list)
+    std::vector<ContributionKind> cap_row_kinds;   ///< One kind per row of cap_H (the W6 builder's row kinds)
+    Eigen::MatrixXd cap_birth_H;          ///< The first-sighting family prior rows (see writer-site list)
     Eigen::VectorXd cap_birth_z;          ///< Their targets
     double          cap_birth_weight = 0.0;  ///< Their weight, 1/sigma^2
     Eigen::MatrixXd cap_sbc_H;   ///< SBC completion rows (see writer-site list)
     Eigen::VectorXd cap_sbc_z;   ///< SBC completion targets
     std::vector<NetworkEstimator::SharedPrior> cap_priors;
-    std::vector<ContributionKind> cap_prior_kinds;   ///< One kind per entry of cap_priors: the kind its fold site named (card NOM N2b; see @ref networkCapturePriors)
+    std::vector<ContributionKind> cap_prior_kinds;   ///< One kind per entry of cap_priors: the kind its fold site named (see @ref networkCapturePriors)
     std::vector<NetworkEstimator::SharedPrior> cap_dense_keys;
     Eigen::MatrixXd cap_dense_cov;
-    bool cap_ccl_on = false;                                       ///< card SCL: the joint fold below was captured (the replay folds it in place of cap_dense_*)
-    std::vector<NetworkEstimator::SharedPrior> cap_ccl_keys;       ///< card SCL: the stand-in block's keys (the cloned clocks as their clones)
-    Eigen::MatrixXd cap_ccl_cov;                                   ///< card SCL: the stand-in block's covariance
-    std::vector<NetworkEstimator::CloneWalk> cap_ccl_walk;         ///< card SCL: the walk factors
-    Eigen::MatrixXd cap_ccl_walkQ;                                 ///< card PFQ: the walks' joint covariance (empty: the per-walk form)
-    std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< card SCL: the idle clones' isolated priors
-    std::vector<NetworkEstimator::SharedPrior> cap_shx;            ///< card SCL2 X2: the history columns' N(0, 1) priors (filter/NetworkSharedHistory)
+    bool cap_ccl_on = false;                                       ///< the joint fold below was captured (the replay folds it in place of cap_dense_*)
+    std::vector<NetworkEstimator::SharedPrior> cap_ccl_keys;       ///< the stand-in block's keys (the cloned clocks as their clones)
+    Eigen::MatrixXd cap_ccl_cov;                                   ///< the stand-in block's covariance
+    std::vector<NetworkEstimator::CloneWalk> cap_ccl_walk;         ///< the walk factors
+    Eigen::MatrixXd cap_ccl_walkQ;                                 ///< the walks' joint covariance (empty: the per-walk form)
+    std::vector<NetworkEstimator::SharedPrior> cap_ccl_idle;       ///< the idle clones' isolated priors
+    std::vector<NetworkEstimator::SharedPrior> cap_shx;            ///< the history columns' N(0, 1) priors (filter/NetworkSharedHistory)
     /// Two-state clock-model predictions stashed by the prior fold
     /// (networkInjectClockOscPrior_), consumed by the post-solve normalized-
     /// innovation test (T5) later in the same epoch.
@@ -2065,7 +2065,7 @@ struct EpochWorkspace {
     /// only when the anchor-info trace is open and consumed by the B7 anchor-fraction
     /// diagnostic after the solve (B7, P1-4).
     std::map<std::string, double> clk_prior_info;
-    /// The within-epoch RAIM tier's culprit sets (card WCF; the hand-off is described in
+    /// The within-epoch RAIM tier's culprit sets (the hand-off is described in
     /// network/qc/WithinEpochCulprits.hpp).  Written only by the T2 block of
     /// networkSolveGlue, which clears it when it starts and when it ends; read by the
     /// DD-carry rebuild of each of the block's re-solves (the driver's rebuild callback
@@ -2076,7 +2076,7 @@ struct EpochWorkspace {
 
 /**
  * @brief Append a fold's priors to the RAIM-replay capture with the kind the fold named
- *        (card NOM step N2b).
+ *.
  *
  * Appends @p priors to @p cap_priors and one @p kind per prior to @p cap_prior_kinds, so
  * the two stay in step (the replay names the kinds to its single re-fold of the captured
@@ -2108,7 +2108,7 @@ inline void networkCapturePriors(std::vector<NetworkEstimator::SharedPrior>& cap
 /// `union_keys` is post-gate: the network.phase_datum_min_stations coverage gate
 /// erases from it in place inside the builder.  There is no pre-gate copy, and none
 /// may be added: a pre-gate census would re-admit every one-tracker (sat, signal)
-/// into shared_phase_keys, which the card 3 D3c RPB allocation reads directly (the
+/// into shared_phase_keys, which the D3c RPB allocation reads directly (the
 /// non-PD ejection, one-station re-level and split-leak class that the gate exists
 /// to prevent).
 struct PhaseDatumCandidates {
@@ -2124,7 +2124,7 @@ struct PhaseDatumCandidates {
     /// "sat_signal" -> "sat|signal|PB", coverage-gated union over present stations.
     std::map<std::string, std::string>              union_keys;
     /// The "sat_signal" keys that the coverage gate excluded this epoch, i.e. exactly
-    /// what was erased from @ref union_keys above (card EV7 §6).  Kept because the drop
+    /// what was erased from @ref union_keys above.  Kept because the drop
     /// edge (network/solve/PhaseGateDrop.hpp) is the difference between this set and
     /// the previous epoch's anchor incumbents.  Empty when the gate is off
     /// (network.phase_datum_min_stations = 1) and whenever it excluded nothing.  No

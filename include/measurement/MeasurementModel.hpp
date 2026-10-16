@@ -1,7 +1,7 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
-#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states, card NOM N1b)
+#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -49,7 +49,7 @@ namespace GnssProcessor {
      *    observation equation) and the product coverage checks.
      *  - MeasurementModelVariance.cpp: rowVariance, the variance of one row.
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
-     *  - MeasurementModelNetwork.cpp: the network-only surface (card NOM).
+     *  - MeasurementModelNetwork.cpp: the network-only surface.
      */
     class MeasurementModel {
     public:
@@ -98,8 +98,8 @@ namespace GnssProcessor {
             const std::set<std::string>& excluded_measurements = {});
 
         // -------------------------------------------------------------------
-        // Network-only surface (the PPP-RTK network producer), owned with
-        // card NOM: from ensureNetworkSharedStates to carrierFrequency below,
+        // Network-only surface (the PPP-RTK network producer):
+        // from ensureNetworkSharedStates to carrierFrequency below,
         // and the private members marked "network only".  The out-of-line
         // definitions are in MeasurementModelNetwork.cpp, except
         // setGlonassSlots (MeasurementModel.cpp).
@@ -131,7 +131,7 @@ namespace GnssProcessor {
          * Every shared state a gate here withholds from the station (GLONASS
          * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
          * noted in @ref absorbedSharedStates, which this call clears first: the
-         * parameter inventory counts each as an absorbed instance (card NOM N1b; the
+         * parameter inventory counts each as an absorbed instance (the
          * record is measurement/AbsorbedSharedStates.hpp, the inventory
          * network/assembly/ParamInventory.hpp).
          *
@@ -153,7 +153,7 @@ namespace GnssProcessor {
 
         /**
          * @brief The shared satellite states withheld from this station this epoch
-         *        (network producer only; card NOM N1b).
+         *        (network producer only).
          *
          * Cleared and refilled by @ref ensureNetworkSharedStates in PASS A, then
          * extended by the serial gates that prune a state the station had allocated
@@ -432,7 +432,7 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
-        // --- Network only (card NOM; MeasurementModelNetwork.cpp) ---------
+        // --- Network only (MeasurementModelNetwork.cpp) ---------
 
         /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
         /// system → admitted phase signals.  Empty (default) = allow every signal.
@@ -801,8 +801,8 @@ namespace GnssProcessor {
                                     const RequiredStates& need);
 
         /**
-         * @brief Phase colour (network only: network.phase_colour_state, card
-         *        LGM): born for each satellite with an uncombined phase row;
+         * @brief Phase colour (network only: network.phase_colour_state):
+         *        born for each satellite with an uncombined phase row;
          *        seeded 0 with variance phase_colour_sigma_zen_m squared; pruned
          *        to the keep set.
          * @param need The working value.

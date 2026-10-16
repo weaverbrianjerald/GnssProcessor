@@ -1,6 +1,6 @@
 /**
  * @file ClockLevel.cpp
- * @brief Implementation of the satellite clock level read: card CTU's level monitor, its
+ * @brief Implementation of the satellite clock level read: the level monitor, its
  *        innovation instrument and the G5 restore raise.  The level direction and the
  *        read are described in the header banner.
  *
@@ -32,13 +32,13 @@
 #include <utility>
 #include <vector>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include <cstddef>
 #include <memory>
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
 #include "network/driver/SetupResult.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -168,7 +168,7 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
     const Eigen::VectorXd x = f.solve(b);
     if (!x.allFinite()) return out;
     for (const auto& [sat, i] : sidx) out.effect[sat] = x(i);
-    // The effect covariance at unit weight (card CTU section 14): the satellites' block of
+    // The effect covariance at unit weight: the satellites' block of
     // the inverse normals (one solve per satellite on the same factor), projected on each
     // constellation's contrast.  The stiff sum-to-zero leaves 1/(n^2 big) on every entry
     // along the common direction; the projection removes it exactly, which gives the
@@ -211,7 +211,7 @@ ClockLevelTwoWay clockLevelTwoWay(const std::vector<ClockLevelPair>& pairs, int 
 
 namespace {
 
-/// Step (1) of the level read of the level monitor (card CTU): this epoch's satellite
+/// Step (1) of the level read of the level monitor: this epoch's satellite
 /// code-bias columns, then one ionosphere-free pair per (station, satellite) from the
 /// heaviest full-weight data code row on each of the constellation's two pin bands, read
 /// on the satellite's realized pin pair only.
@@ -239,7 +239,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
             || kind != SharedParamKind::CodeBias)
             continue;
         cb.col = c;
-        // GLONASS is FDMA (no common pin-pair frequency): out of the card's scope.
+        // GLONASS is FDMA (no common pin-pair frequency): out of scope.
         const System sys = systemOfSat(cb.sat);
         const auto code = ObservableId::parse(sys, cb.sig);
         if (sys == System::GLONASS || !code || code->type != ObsType::Code) continue;
@@ -263,8 +263,8 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
         try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s); }
         catch (...) { continue; }
         if (x_r.size() != R.A_r.cols()) continue;
-        // A code-bias column's rows: the code observation rows (by their tags; card NOM
-        // step N2b) that carry the column's partial and the satellite clock's.  The tag
+        // A code-bias column's rows: the code observation rows (by their tags)
+        // that carry the column's partial and the satellite clock's.  The tag
         // replaces the row's position ahead of the coupling region, which kept out the
         // coupling rows (statements about the carry, which can carry both partials).
         const Eigen::Index n_rows = R.A_s.rows();
@@ -285,7 +285,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
                 if (!codeRowOf(r, cb)) continue;
                 const double w = R.w(r);
                 if (!(w >= kClvFullWeight) || !std::isfinite(w)) continue;
-                auto& slot = best[cb.sat][cb.signal.digit];   // a pin band role (card NOM step N3)
+                auto& slot = best[cb.sat][cb.signal.digit];   // a pin band role
                 if (!(w > std::get<0>(slot))) continue;
                 const double v = R.y(r) - R.A_s.row(r).dot(x_s) - R.A_r.row(r).dot(x_r);
                 if (std::isfinite(v)) slot = {w, v, cb.sig};
@@ -316,7 +316,7 @@ bool clockLevelBuildPairs(NetworkRunContext& ctx, const NetworkEstimator& est,
     return true;
 }
 
-/// The level innovation instrument (card CTU section 14; the offline prototype is the
+/// The level innovation instrument (the offline prototype is the
 /// session scratchpad's wf/lvl/lvl3.py).  The ionosphere-free code is the only
 /// observable of a satellite's level, and it sees the clock alone (the code bias's IF
 /// combination is the datum), so the prefit IF code read against the constellation is an
@@ -398,7 +398,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
             // The prior contrast variance u'P-u from the previous stash's clock block
             // (the pivot, pinned outside the block, contributes 0) plus the walk the
             // fold applied (the anchor's q, or the loose clock q for a LOOSE clock).
-            const double q_clk = ctx.params.q(SharedParamKind::Clock);   // the registry (card PRM)
+            const double q_clk = ctx.params.q(SharedParamKind::Clock);   // the registry
             std::vector<int> pr(n, -1);
             for (std::size_t a = 0; a < n; ++a) {
                 if (const int* pi = net::getSat(ctx.entities.sats, F[a], &net::SatelliteState::clm_prev_pidx)) pr[a] = *pi;
@@ -525,7 +525,7 @@ void clockLevelInnovation(NetworkRunContext& ctx, NetworkRunTraces& traces, cons
 }  // namespace
 
 void networkClockLevelRestoreRaise(NetworkRun& run) {
-    // ---- From the run (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py, each line checked
+    // ---- From the run (generated by scripts/nom_ep1_cut.py, each line checked
     //      by scripts/nom_ep1_verify.py). The seam reads no epoch member. ----
     NetworkRunContext& ctx = run.ctx;
     const std::shared_ptr<spdlog::logger>& log = run.log;
@@ -555,7 +555,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
         for (const auto& [key, row] : pcc.row)
             if (key == sat + "|CLK") { has_clk = true; break; }
         if (!has_clk) continue;   // the pivot: pinned, no level to loosen
-        // Card CTU G5: the seam is a process-noise event of variance v along the level
+        // The seam is a process-noise event of variance v along the level
         // direction, applied by this epoch's time update (the dense fold, and the coupling
         // rows' exact update when armed), not a raise of the stashed block.  The
         // distinction matters for the restored coupling rows: a row harvested in a lineage
@@ -588,7 +588,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
 }
 
 void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_ep1_cut.py,
     //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
@@ -625,7 +625,7 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
         net::putSat(ctx.entities, sat, &net::SatelliteState::clm_info) += info;
         ++net::putSat(ctx.entities, sat, &net::SatelliteState::clm_n);
     }
-    // Card CTU G5: the same information in the constellation contrast and at the fit's own
+    // The same information in the constellation contrast and at the fit's own
     // unit variance, 1 / (s0^2 Q_ss): the level variance a consistent carry holds after
     // these epochs is its inverse (section 14.4: the effective code gain is IF-efficient).
     if (tw.ok && std::isfinite(tw.s0sq) && tw.s0sq > 0.0)
@@ -704,7 +704,7 @@ void networkClockLevelMonitor(NetworkRun& run, const NetworkEpoch& ep) {
     }
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the CTU level monitor.
 int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
@@ -712,10 +712,10 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (!ctx.knobs.clm_on) return 0;
-    // Card CTU level monitor (section 9.3): the ratio of the stashed block's level
+    // The level monitor: the ratio of the stashed block's level
     // variance to the code-only bound, per satellite per kept epoch from its second
     // epoch of code on.  A consistent estimator keeps it at or above 1; the control
-    // (the card 1d kappa) reads far below 1, the freeze's truth-free fingerprint.
+    // (the kappa shrink) reads far below 1, the freeze's truth-free fingerprint.
     const auto& c = ctx.counters;
     std::vector<double> r = c.clm_ratios;
     double med = 0.0, p10 = 0.0;
@@ -736,9 +736,9 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
               c.clm_no_clock, ctx.knobs.clm_raise ? "ON" : "off", c.clm_raised,
               c.clm_raised_by_sat.size(), c.clm_raised_sum, c.clm_raised_max);
     if (c.clm_rows == 0)
-        log->warn("Network (card CTU): the level monitor is ARMED but counted no ratio: "
+        log->warn("Network: the level monitor is ARMED but counted no ratio: "
                   "no satellite had both code information and a carried level.");
-    // The level innovation instrument (card CTU section 14).  A consistent level reads
+    // The level innovation instrument.  A consistent level reads
     // NIS mean ~1, window T ~1 and NEES_tf ~0.6 to 1 (the split-half cross product over
     // the mean prior variance); a frozen or overconfident one reads NEES_tf >> 1.
     {

@@ -1,14 +1,14 @@
 #pragma once
 /**
  * @file GrossLos.hpp
- * @brief Gross line-of-sight screen for the PPP-RTK network producer (card GL,
+ * @brief Gross line-of-sight screen for the PPP-RTK network producer (
  *        docs/SPEC_event_harness.md §24.18).
  *
  * ## Coverage gap addressed
  *
  * Every other post-fit tier of the producer screens carried-ambiguity phase rows
  * only.  The admission rule of @c networkPostFitRaim (Raim.cpp) is the declared
- * one of network/assembly/RowClassify.hpp (card NOM step N2b): a row enters the pool of an
+ * one of network/assembly/RowClassify.hpp: a row enters the pool of an
  * ambiguity column when its coefficient on the column exceeds 0.5 and its kind is one
  * @c raimPoolAdmitsKind admits (the observation phase rows, the coupling and block
  * carried-prior rows, and the SD-EWL constraint rows).  No code kind is admitted.
@@ -78,7 +78,7 @@
  *    evidence does not apply to it; without the expiry, a deweight set once would
  *    carry over to a fresh arc unnoticed.
  *
- * ## The cold-start bound (card ICF response 1, @c network.gross_los_cold_bound_m)
+ * ## The cold-start bound (@c network.gross_los_cold_bound_m)
  *
  * The maturity horizon holds every σ-bar declaration for the first
  * @c gross_los_warmup_epochs emitted epochs, because a cold post-fit code residual
@@ -86,7 +86,7 @@
  * is not that: on the field golden, BSHM00ISR tracks G07 on a faulty L1 channel (C1C
  * and L1C drift together), and once its carried ambiguity makes the line of sight
  * redundant it puts about -2.2 m per epoch into G07's clock, which the dense border
- * carry keeps (card ICF section 6).  Its post-fit code |v| is 24 m at its first
+ * carry keeps.  Its post-fit code |v| is 24 m at its first
  * visible epoch, against a largest clean value of 6.7 m (field) and 4.9 m (sim) over
  * the first 120 epochs of the 2 h goldens.
  *
@@ -230,7 +230,7 @@ struct NetworkGrossLosTallies {
     long long sta_released = 0;      ///< Station-level releases (B4).
     long long sta_los_epochs = 0;    ///< Station-epochs spent under a standing station declaration (B4).
     std::map<std::string, long long> sta_declared_by_station;  ///< Station declarations per station name (B4).
-    // --- The cold-start bound (card ICF response 1); all zero unless
+    // --- The cold-start bound; all zero unless
     //     network.gross_los_cold_bound_m is positive.  The cold path's edges are counted
     //     here only, not in declared / cleared / expired above, so those keep describing
     //     the σ-bar path; currently_gross and max_concurrent count both paths.
@@ -275,7 +275,7 @@ double networkGrossLosUndoDeweight(double r_folded, double scale);
  * @brief One code row of a line of sight, as the pure decision rule sees it.
  */
 struct GrossLosSample {
-    std::string signal;      ///< The row's observation code, from its contribution tag (card NOM step N2b); empty when the tag names no signal.
+    std::string signal;      ///< The row's observation code, from its contribution tag; empty when the tag names no signal.
     double      r{0.0};      ///< @f$|v|\sqrt{w}@f$: the residual in units of the row's own σ.
     double      v_m{0.0};    ///< The signed residual, metres (event detail only).
 };
@@ -308,7 +308,7 @@ struct GrossLosVerdict {
  * The rule is a free function so it can be unit-tested without a network.
  *
  * Two edge cases:
- *  - **Counted as rows, not distinct signal labels.**  Before card NOM step N2b a
+ *  - **Counted as rows, not distinct signal labels.**  Formerly a
  *    row's signal was read from its @c CB: column, so a code row of a posture whose
  *    satellite code biases are supplied externally, and a row of the W6 datum signal,
  *    had an empty label; a distinct-label test would have under-counted exactly
@@ -353,8 +353,8 @@ struct GrossLosState {
     double first_over_tow{0.0};
     /// Over-bar screened epochs since @ref first_over_tow: the same latency in epochs (RF-3b B5).
     int    first_over_age_ep{0};
-    /// The standing declaration was taken under the cold-start bound (card ICF response
-    /// 1).  While set, each epoch over the bound re-erases the carried ambiguity, and the
+    /// The standing declaration was taken under the cold-start bound.
+    /// While set, each epoch over the bound re-erases the carried ambiguity, and the
     /// release or expiry re-seeds it.  Cleared at the release and the expiry.
     bool   cold{false};
 };
@@ -404,7 +404,7 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  int declare_epochs, int clear_epochs, double tow,
                                  bool allow_declare = true);
 
-/// The edge a @ref networkGrossLosColdStep transition produced (card ICF response 1).
+/// The edge a @ref networkGrossLosColdStep transition produced.
 enum class GrossLosColdEdge {
     None,     ///< The cold-start bound does not act on this line of sight this epoch.
     Declare,  ///< Decoupling edge: the line of sight is declared under the bound.
@@ -414,7 +414,7 @@ enum class GrossLosColdEdge {
 
 /**
  * @brief Pure function: the cold-start bound's transition for one line of sight
- *        (card ICF response 1, @c network.gross_los_cold_bound_m).
+ *        (@c network.gross_los_cold_bound_m).
  *
  * Called for an epoch in which the line of sight produced code rows, before
  * @ref networkGrossLosStep.  A @c Declare edge replaces that step for the epoch; the
@@ -446,7 +446,7 @@ GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict
                                          double tow);
 
 /**
- * @brief Run-end readout of the cold-start bound (card ICF response 1; standing
+ * @brief Run-end readout of the cold-start bound (standing
  *        invariant #4).
  *
  * Prints nothing when @c network.gross_los_cold_bound_m is 0.  Armed, it states the
@@ -513,15 +513,15 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                         std::vector<NetStation>& stations,
                         const std::vector<StationAssembly>& asm_res, EpochEvents& events);
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Run the gross-LOS screen for this epoch (the seam).
  *
  * Walks each station in the solve once, forms @f$v = y - A_s x_s - A_r x_r@f$,
  * takes the code observation rows by their contribution tags (the rule
- * @c networkPostfitSigma0 reads; card NOM step N2b), bins them per satellite, and
+ * @c networkPostfitSigma0 reads), bins them per satellite, and
  * drives the state machine above.
  *
  * Mutates persistent carries.  The response erases (or, under
@@ -537,7 +537,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  *
  * No-op (not even a state allocation) unless @c ctx.knobs.gl_on.
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -575,7 +575,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep,
 /**
  * @brief Republish each station's code-row σ scale from the declared set.
  *
- * The deweight actuator is the code counterpart of the signal-integrity card's
+ * The deweight actuator is the code counterpart of the phase deweight
  * @c NetStation::phase_sigma_scale, and it follows the same thread-safety
  * contract: this function runs serially, before the parallel PASS-B produce, and
  * the assembly only find-reads the map.  An empty map is the off path: the
@@ -594,14 +594,14 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep,
 void networkGrossLosPublishScales(NetworkRunContext& ctx,
                                   std::vector<NetStation>& stations);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the gross line-of-sight screen and its cold-start bound.
  *
- * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
  * beside it in GrossLos.cpp, print in this order, each gated on its own knob:
  *   - networkGrossLosScreenRunEnd: the gross line-of-sight screen.
  *   - networkGrossLosColdBoundRunEnd: the gross line-of-sight screen's cold-start bound.

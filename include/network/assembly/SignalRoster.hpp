@@ -3,10 +3,10 @@
  * @file SignalRoster.hpp
  * @brief The per-station signal roster and the observatory that counts every
  *        disagreement between it and the sites that currently decide the same
- *        question (card SID phase 1), built on every network run since card NOM
- *        step N3a, with the "signals as planned" table.
+ *        question, built on every network run,
+ *        with the "signals as planned" table.
  *
- * ### What is built, and what the knob does (card NOM step N3a)
+ * ### What is built, and what the knob does
  *
  * The roster, the arc ledger and the disagreement census are built on every network
  * run.  @c network.signal_roster no longer arms them: it is the switch of the arc
@@ -42,7 +42,7 @@
  *  - Tracked: the phase and code signals the receiver reported this epoch.
  *  - Modelled: the phase and code the estimator carries, copied from the station's
  *    canonical latch (@c PppModel::exportCanonicalSignals), never re-derived.
- *  - Companion: the band-1 codes carried as card SCC companions.
+ *  - Companion: the band-1 codes carried as second-code companions.
  *  - Excluded: the signals that are present and not used, each with a reason.
  *  - Datum: the signal the S-basis pins.  Phase 1 leaves it empty.  Phase 2 makes
  *    the IF pin pair election write it (@ref networkSignalRosterDatumPin), from the
@@ -70,7 +70,7 @@
 
 #include "common/GnssTypes.hpp"         // System (the tracker cell census key)
 #include "network/state/ArcLedger.hpp"
-#include "network/solve/AnchorReentry.hpp"  // AnchorReentry (card SID phase 4)
+#include "network/solve/AnchorReentry.hpp"  // AnchorReentry
 
 #include <array>
 #include <map>
@@ -106,7 +106,7 @@ namespace GnssProcessor {
         Tracked,    ///< reported by the receiver this epoch.
         Modelled,   ///< the estimator's choice for the band (the latch).
         Datum,      ///< pinned by the S-basis (unfilled in phase 1).
-        Companion,  ///< a card SCC second code channel.
+        Companion,  ///< a second code channel.
         Excluded    ///< present and deliberately unused, with a reason.
     };
 
@@ -116,8 +116,8 @@ namespace GnssProcessor {
     /**
      * @brief One (station, constellation, band digit) cell of the roster.
      *
-     * @c modelled_extra holds the additional modelled phases of the band (card SID
-     * phase 6): band-1 second phases under @c network.second_phase_channel, or every
+     * @c modelled_extra holds the additional modelled phases of the band:
+     * band-1 second phases under @c network.second_phase_channel, or every
      * other tracked, admitted phase of the band under @c processing.channel_mode
      * "all" on the network path.  With neither armed it is empty and the estimator
      * carries one phase per band.
@@ -128,7 +128,7 @@ namespace GnssProcessor {
         std::string modelled_phase;               ///< the latched phase of this band, or empty.
         std::string modelled_code;                ///< the latched code of this band, or empty.
         std::vector<std::string> modelled_extra;  ///< additional modelled phases (phase 6); else empty.
-        std::vector<std::string> companion_code;  ///< companion codes (card SCC), in configured order.
+        std::vector<std::string> companion_code;  ///< companion codes, in configured order.
         /// The phase that the pinned code accompanies at this station (phase 2).  Filled
         /// only where @ref datum_code equals this cell's @ref modelled_code; anywhere
         /// else, naming a phase would derive a signal the estimator does not carry.
@@ -164,7 +164,7 @@ namespace GnssProcessor {
      *
      * The selection rules are reproduced, not re-derived: @c modelled_phase and
      * @c modelled_code are the latch's own rows, and the companion walk applies the
-     * card SCC rule (@c SecondCodeScope.cpp) in its configured order.
+     * second-code scope rule (@c SecondCodeScope.cpp) in its configured order.
      *
      * @param tracked           Raw observation keys this epoch.  Keys that are not
      *                          'C' or 'L' keys of at least three characters are
@@ -175,11 +175,10 @@ namespace GnssProcessor {
      * @param companions_armed  @c network.second_code_channel.
      * @param allowlist         The network signal allow list for this constellation,
      *                          or nullptr when every tracked code is admitted.
-     * @param second_phase_allow `network.second_phase_signals`, in configured order
-     *                          (card SID phase 6a).
+     * @param second_phase_allow `network.second_phase_signals`, in configured order.
      * @param second_phase_armed `network.second_phase_channel`.
-     * @param all_channels      `processing.channel_mode: all` on the network path
-     *                          (card SID phase 6b).  Replaces the two flags above
+     * @param all_channels      `processing.channel_mode: all` on the network path.
+     *                          Replaces the two flags above
      *                          (the caller passes them as false) and fills
      *                          @c modelled_extra and @c companion_code on every band
      *                          from the tracked, admitted signals instead of from an
@@ -216,14 +215,14 @@ namespace GnssProcessor {
         const std::vector<std::string>& tracked);
 
     // =====================================================================
-    // The decision sites (card NOM step N3a)
+    // The decision sites
     // =====================================================================
 
     /**
      * @brief A site of the code that decides a question the roster or the arc ledger
      *        also answers, and whose disagreement with them the census counts.
      *
-     * The first six decide a band role or a signal choice (card NOM section 18,
+     * The first six decide a band role or a signal choice (
      * groups A to G, lists every such site; these are the ones with a counter today).
      * The last five hold an arc's lifecycle, which the arc ledger also tracks.  The
      * order is the table's.
@@ -290,11 +289,11 @@ namespace GnssProcessor {
                                            const RosterSiteCounts& start);
 
     // =====================================================================
-    // The site census of card NOM step N3b (network/assembly/SignalRosterSites.cpp)
+    // The site census (network/assembly/SignalRosterSites.cpp)
     // =====================================================================
 
     /**
-     * @brief A site of card NOM section 18 (groups A to G) that N3b measures against the
+     * @brief A site (groups A to G) that the census measures against the
      *        roster or the arc ledger, beyond the eleven sites of @ref RosterSite.
      *
      * Two kinds.  A RULE site (the first six) is a selection rule the census evaluates
@@ -332,7 +331,7 @@ namespace GnssProcessor {
     struct RosterN3bSpec {
         RosterN3bSite site;        ///< the site this row declares (its index in the table).
         const char* name;          ///< stable identifier.
-        const char* sites;         ///< the card NOM section 18 items the counter stands for.
+        const char* sites;         ///< the sites the counter stands for.
         const char* compared;      ///< the unit of the compared count.
         const char* disagreement;  ///< what is counted as a disagreement.
     };
@@ -370,7 +369,7 @@ namespace GnssProcessor {
                               const std::string& what);
 
     // =====================================================================
-    // The plan: what the roster says one epoch modelled (card NOM step N3a)
+    // The plan: what the roster says one epoch modelled
     // =====================================================================
 
     /// @brief One signal in one role, with the number of stations that hold it in
@@ -393,7 +392,7 @@ namespace GnssProcessor {
         std::vector<RosterPlanEntry> phase;        ///< the modelled (latched) phase.
         std::vector<RosterPlanEntry> code;         ///< the modelled (latched) code.
         std::vector<RosterPlanEntry> extra_phase;  ///< additional modelled phases (second phases, all-channel).
-        std::vector<RosterPlanEntry> companion;    ///< card SCC companion codes (all-channel extra codes).
+        std::vector<RosterPlanEntry> companion;    ///< companion codes (all-channel extra codes).
         /// The code the ionosphere-free pin designated for this (constellation, band),
         /// written into the cells (@c BandRoster::datum_code), counted in stations.
         std::vector<RosterPlanEntry> datum_code;
@@ -505,7 +504,7 @@ namespace GnssProcessor {
 
     /**
      * @brief One phase-bias family's carried support over the run, as a histogram
-     *        (census class (f); card NOM step N3a).
+     *        (census class (f)).
      *
      * Each epoch in which the family is carried adds one sample: the number of
      * stations whose modelled arc of it is alive in the ledger and present in
@@ -555,16 +554,16 @@ namespace GnssProcessor {
      */
     struct SignalRoster {
         /// Set up for this run by @ref networkSignalRosterArm, which every network run
-        /// calls (card NOM step N3a); false only in a context no run set up, such as a
+        /// calls; false only in a context no run set up, such as a
         /// unit test's, where every seam returns on its first line.
         bool      active{ false };
         /// @c network.signal_roster: write the arc ledger's trace
         /// (@c logs/network_arc_ledger.csv and the @c ARC event rows of the build and
         /// the audit).  Decides what is written, never what is built or counted.
         bool      trace{ false };
-        long long epochs{ 0 };      ///< seam invocations; the processed-epoch clock of this card.
+        long long epochs{ 0 };      ///< seam invocations; the processed-epoch clock of this seam.
 
-        // --- The "signals as planned" table (card NOM step N3a) -------------------
+        // --- The "signals as planned" table -------------------
         /// The site census at the start of this epoch's build, so the audit can state
         /// the epoch's own counts (@ref signalRosterSiteDelta).
         RosterSiteCounts site_epoch_start{};
@@ -599,7 +598,7 @@ namespace GnssProcessor {
         /// any (band, obs type).
         std::set<std::string> rule_differs;
         /// Stations at which the two rules pick a different band-1 phase: the
-        /// population card CSL names, measured by the audit at six stations.
+        /// population measured by the audit at six stations.
         std::set<std::string> rule_differs_b1;
         /// Stations at which the comparison ran at least once; the complement is the
         /// unreachable population.  Tracked as a positive set because the roster sees
@@ -676,8 +675,8 @@ namespace GnssProcessor {
         /// Self-check (P2, bar 0): cells whose Modelled role differs from the latch.
         /// The roster is built from the latch, so any nonzero value is a bug here.
         long long roster_latch_disagree{ 0 };
-        /// Cells the self-check compared with the latch (its denominator; card NOM
-        /// step N3a).  A cell of a station with no model is not compared.
+        /// Cells the self-check compared with the latch (its denominator).
+        /// A cell of a station with no model is not compared.
         long long latch_cells_checked{ 0 };
 
         // --- (a) the arc-level tracker against modelled_phase ------------------
@@ -693,7 +692,7 @@ namespace GnssProcessor {
         // --- (b) the count rule against the priority rule ----------------------
         long long rule_stations{ 0 };         ///< stations whose candidate list was reachable (denominator).
         long long rule_stations_differ{ 0 };  ///< of those, stations the two rules latch differently on any (band, obs type).
-        long long rule_stations_differ_b1{ 0 };///< of those, stations whose band-1 phase differs (the card CSL population).
+        long long rule_stations_differ_b1{ 0 };///< of those, stations whose band-1 phase differs.
         long long rule_unreachable{ 0 };      ///< stations whose candidates were never retained.
 
         // --- (c) local_carry against the ledger --------------------------------
@@ -722,7 +721,7 @@ namespace GnssProcessor {
         std::map<std::string, long long> wire_cb_missing;  ///< signal -> satellite-epochs with a clock and no code bias.
         std::map<std::string, long long> wire_pb_present;  ///< signal -> satellite-epochs that carried one.
         /// signal -> satellite-epochs that carried a code bias for it (the code half's
-        /// denominator beside @ref wire_cb_missing; card NOM step N3a).
+        /// denominator beside @ref wire_cb_missing).
         std::map<std::string, long long> wire_cb_present;
 
         // --- (h) coverage-gate drop edges against the ledger -------------------
@@ -743,7 +742,7 @@ namespace GnssProcessor {
         long long gap_2_30_answered{ 0 };     ///< of those, answered by the gap re-entry tier in the same epoch.
         long long gap_any{ 0 };               ///< raw-side re-entries after any number of missed epochs.
         /// Carry-side gap census: the audit's own population, presence in
-        /// `network_amb_state.csv`, on which the card's figures were measured.
+        /// `network_amb_state.csv`, on which the original figures were measured.
         long long carry_gap_any{ 0 };         ///< carry returns after at least one missed epoch.
         long long carry_gap_2_30{ 0 };        ///< of those, after 2 to 30 missed epochs.
         long long carry_gap_2_30_answered{ 0 };///< of those, answered by the gap re-entry tier at the return epoch.
@@ -776,7 +775,7 @@ namespace GnssProcessor {
         /// phase can be named without deriving one.
         long long datum_cells_off_model{ 0 };
         /// Of those, cells with no modelled code to compare with (the roster of a
-        /// constellation's first epoch; card NOM step N3a, the IF pin site's
+        /// constellation's first epoch; the IF pin site's
         /// denominator leaves them out).
         long long datum_cells_unmodelled{ 0 };
         /// "<constellation>|<band>|<signal>" -> cells the designation was written to,
@@ -897,7 +896,7 @@ namespace GnssProcessor {
 
         double    build_ms{ 0.0 };            ///< wall time inside the build seam, summed.
         double    audit_ms{ 0.0 };            ///< wall time inside the audit seam, summed.
-        /// The site census of card NOM step N3b (network/assembly/SignalRosterSites.cpp).
+        /// The site census (network/assembly/SignalRosterSites.cpp).
         RosterN3bCensus n3b{};
     };
 
@@ -949,8 +948,8 @@ namespace GnssProcessor {
                                 const std::shared_ptr<spdlog::logger>& log,
                                 const std::vector<NetStation>& stations);
 
-    struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/Run.hpp
+    struct NetworkEpoch;            // network/driver/Epoch.hpp
 
     /**
      * @brief Build this epoch's roster and advance the arc ledger (the single call
@@ -960,7 +959,7 @@ namespace GnssProcessor {
      * (@c SignalRoster::site_epoch_start).  The trace rows are written only under
      * @c network.signal_roster; the ledger and the counters advance either way.
      *
-     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
@@ -1003,9 +1002,9 @@ namespace GnssProcessor {
      *
      * @c modeled[i] exists only for satellites that passed the elevation mask, and
      * @c PppObservation::observed holds only the signals the model built (the
-     * canonical latch, its card SCC companions and whatever the allow list admitted),
+     * canonical latch, its second-code companions and whatever the allow list admitted),
      * which is the set that @c local_carry and the ambiguity states are keyed from.
-     * The roster's admitted lifecycle and the card SID phase 3 re-entry population
+     * The roster's admitted lifecycle and the re-entry population
      * both use this one definition, so the two cannot diverge.
      *
      * @param modeled Per-station modelled observations of this epoch.
@@ -1019,7 +1018,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The admitted arcs whose signal the roster calls Modelled.  Pure
-     *        function (card SID phase 3).
+     *        function.
      *
      * @ref signalRosterAdmittedArcs restricted by the roster's role.  This is the
      * population the re-entry response is defined on: the response frees a carried
@@ -1127,13 +1126,13 @@ namespace GnssProcessor {
      * both sides, and the carry-side gap census gains an admitted-lifecycle reading
      * beside its re-stash-stamp reading.
      *
-     * Card NOM step N3a closes the epoch's decision-site census here
+     * This step closes the epoch's decision-site census here
      * (@c SignalRoster::site_last_epoch), and after the first emitted epoch whose
      * roster carries a modelled role it logs the "signals as planned" table and
      * appends its record to the run manifest.  That is the only output it writes
      * outside the counters and the trace.
      *
-     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
@@ -1180,7 +1179,7 @@ namespace GnssProcessor {
                                      const std::string& signal);
 
     /**
-     * @brief Fold the election's ledger read (card SID phase 4, S2 / B1).
+     * @brief Fold the election's ledger read.
      *
      * Called from the driver after @c networkElectPhaseAnchors returns and its
      * @c gate_drop.events loop has run, where the per-epoch @ref AnchorReentry result
@@ -1199,7 +1198,7 @@ namespace GnssProcessor {
                                        const AnchorReentry& re);
 
     /**
-     * @brief Run-end "signals as planned" table (card NOM step N3a): the band rows
+     * @brief Run-end "signals as planned" table: the band rows
      *        and the epoch columns of the last audited epoch, the run columns of every
      *        epoch the roster was built at, logged and appended to the run manifest
      *        as a @c signals_as_planned record.  Nothing in a context no run set up.
@@ -1233,7 +1232,7 @@ namespace GnssProcessor {
     void networkSignalRosterRunEnd(const NetworkRunContext& ctx,
                                    const std::shared_ptr<spdlog::logger>& log);
 
-    // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+    // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
     struct NetworkRunEndView;
 
@@ -1241,7 +1240,7 @@ namespace GnssProcessor {
      * @brief Run-end report: the signal roster: signals as planned (NOM N3a), the roster and the
      *        arc ledger (SID phase 1).
      *
-     * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+     * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
      * beside it in SignalRoster.cpp, print in this order, each gated on its own knob:
      *   - networkSignalRosterPlanRunEnd: signals as planned (NOM N3a).
      *   - networkSignalRosterLedgerRunEnd: the signal roster and the arc ledger (SID phase 1).
@@ -1289,7 +1288,7 @@ namespace GnssProcessor {
     /**
      * @brief The signal that stands for a (station, constellation, band) in one
      *        observation type, as the roster's Modelled role names it, else as the
-     *        station's canonical latch names it (card NOM step N3b).
+     *        station's canonical latch names it.
      *
      * The read of the latch readers moved onto the roster.  The roster is built at the
      * top of the epoch, upstream of the latch decision inside computeModels, so at a

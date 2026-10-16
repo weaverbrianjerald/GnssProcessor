@@ -5,7 +5,7 @@
  *        the fresh-pin σ ramp (INC-3).
  *
  * The tests target failures that produce no other signal.  The field defect behind
- * this card produced a clean epoch (post-fit σ̂0 2.95) and broke one epoch later, so
+ * this feature produced a clean epoch (post-fit σ̂0 2.95) and broke one epoch later, so
  * no run-time screen could attribute it.  The guard is therefore a pure election
  * decision, and an election decision that does nothing looks the same as one that
  * works.  Each case below pins a decision that has no other observable:
@@ -20,7 +20,7 @@
  *   5. a warm resume seeds arc ages as mature, otherwise a resumed leg blocks every
  *      reattach;
  *   6. with the knobs off the feature is structurally inert: no age map, no bridge, no
- *      counter, and an election whose pin set is identical to the one without the card.
+ *      counter, and an election whose pin set is identical to the one without the feature.
  *
  * The eq34 chain election is exercised directly (it reads only station names and the
  * candidate census, never a StateManager); the hygiene seam gets real StateManagers
@@ -383,7 +383,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
 //     emitted realization contradicts it
 // ---------------------------------------------------------------------------
 //
-// This covers the opposite failure to the card's: an absolute eligibility rule would
+// This covers the opposite failure to the field defect's: an absolute eligibility rule would
 // turn every network restart into a min_arc_ep-epoch phase-bias outage, because on a
 // restart every host is fresh and there is nothing for the guard to protect.  The risk
 // of a cold pin scales with the warm memory it contradicts.  Both directions are pinned
@@ -519,9 +519,9 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
 //
 // The bridge is a stiff, zero-q, time-linked quantity; earlier quantities of this kind
 // without a wired slip response failed in the field (phase-leveling's zero-q carry, the
-// card 4 invariant DD carry).  A cycle slip aliases n·λ into the ambiguity whose level
+// invariant DD carry).  A cycle slip aliases n·λ into the ambiguity whose level
 // the bridge holds, so the held value is invalid: reset, do not repair.  Both slip feeds
-// are tested: the card 4 funnel and the phase-leveling pending-reseed flag (they are
+// are tested: the invariant-carry funnel and the phase-leveling pending-reseed flag (they are
 // gated by different, non-overlapping toggles).
 TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
     LogManager log;
@@ -543,7 +543,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         attachStateManagers(c2, spec, log, *cfg);
         std::set<std::pair<int, std::string>> funnel;
         if (feed == 0) {
-            funnel.insert({ 0, "G29_L1C" });               // slip funnel (card 4)
+            funnel.insert({ 0, "G29_L1C" });               // slip funnel
         } else {
             c2.stations[0].sm->markAmbiguityPendingReseed("G29_L1C");  // leveling refloat
         }
@@ -564,7 +564,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
 // The age map is deliberately not serialized (spec §7).  Without the seed every arc
 // would look one epoch old on the first resumed epoch, and the gate would block every
 // reattach for min_arc_ep epochs, a phase-bias outage.  The seed is taken from presence,
-// not from carried keys, because the stacks this card targets run with phase_leveling
+// not from carried keys, because the stacks this feature targets run with phase_leveling
 // off, so local_carry is empty there.
 TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
     LogManager log;
@@ -646,7 +646,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
 // observable is a weight deep inside the parallel assembly).  It decays monotonically
 // to exactly 1 and never tightens a pin beyond the hard-pin weight.
 TEST(Eq34ReattachHygiene, FreshPinRampDecaysMonotonelyToUnity) {
-    net::ArcTable age;   // the arcs' anchor ages (card NOM step N4f1)
+    net::ArcTable age;   // the arcs' anchor ages
     AnchorHygiene hyg;
     hyg.active = true;
     hyg.min_arc_ep = 5;
@@ -710,7 +710,7 @@ TEST(Eq34ReattachHygiene, LoaderRefusesAnInvertedRampAndDisarmsOutsideAnAnchored
 }
 
 // ---------------------------------------------------------------------------
-// Slip-aware election (network.phase_datum_eq34_slip_aware_election, cards 3/4)
+// Slip-aware election (network.phase_datum_eq34_slip_aware_election)
 // ---------------------------------------------------------------------------
 //
 // A slipped arc in the spanning tree invalidates every fundamental cycle that closes

@@ -1,6 +1,6 @@
 ﻿/**
  * @file MwSlipDetectorZd.cpp
- * @brief The MW detector's zero-differenced arc reads (network-only, owned with card NOM).
+ * @brief The MW detector's zero-differenced arc reads (network-only).
  *
  * A (satellite, signal-pair) arc served in a zero-differenced frame: the lagged Welford
  * mean, read by the network producer's SD pre-reduce EWL rows.

@@ -1,13 +1,13 @@
 #pragma once
 /**
  * @file Responses.hpp
- * @brief The responses of the network's carried parameters, declared and counted (card PRM
- *        phase 3a, docs/refound/PRM_parameter_registry_2026-09-29.md section 4.5).
+ * @brief The responses of the network's carried parameters, declared and counted
+ *        (docs/refound/PRM_parameter_registry_2026-09-29.md section 4.5).
  *
  * A carried instance (a border entry of @c prev_carry, a station-local carry) responds to
  * events: a slip, a gap, a datum handover, a decouple, a re-admission.  Each response was
  * written where its mechanism needed it, and the run end reported some of them, under the
- * mechanism's own words, and not others: card RF-1's design section 1.5 names four paths
+ * mechanism's own words, and not others: the float-ambiguity design (docs/refound/RF-1_float_ambiguities_design.md, section 1.5) names four paths
  * for one ambiguity and counts two of them only in aggregate.  This header declares every
  * site that changes a carried instance in response to an event, one row per (kind, event,
  * policy, site) (@ref ResponseSite), with the condition under which the site can act on
@@ -18,7 +18,7 @@
  * and a check: a site that responded on a run where it is not declared armed is a
  * declaration error, warned at the run end.
  *
- * The declared datum moves of card PRM phase 2 (@ref CarryMechanism) are the Stransform
+ * The declared datum moves (@ref CarryMechanism) are the Stransform
  * responses; their counts are the traversal's moved values per kind
  * (@ref carryMechanismArmed declares when each can act).
  *
@@ -28,8 +28,8 @@
  * horizon the registry declares per kind (@c ParamSpec::gap_horizon_s).
  * Not responses, and not in the table: the q rule's time update (the registry's q), the
  * numerical guards that decorrelate or skip a carried prior that fails a positive-definite
- * or finite screen, the coupling terms' re-attribution to a border key's disposition (card
- * CTU's run-end line), and the marks that only re-seed a linearization point (a
+ * or finite screen, the coupling terms' re-attribution to a border key's disposition (the
+ * exact coupling update's run-end line), and the marks that only re-seed a linearization point (a
  * pending-reseed mark consumed by the measurement pre-pass, a solve no-op).
  */
 
@@ -80,7 +80,7 @@ enum class ResponseSite : int {
     IonoGrossHold,         ///< the gross line-of-sight screen held the carried ionosphere
     IonoGapSkip,           ///< a carried ionosphere past its horizon not folded
     IonoGapPrune,          ///< a carried ionosphere unseen past its horizon erased
-    // --- Phase colour (pc_carry, card LGM) ---------------------------------------------
+    // --- Phase colour (pc_carry) ---------------------------------------------
     PcRaimErase,           ///< RAIM's attribution erased the line of sight's phase colour
     PcGrossErase,          ///< the gross line-of-sight screen erased the phase colour
     PcGapPrune,            ///< a phase colour unseen past its horizon erased
@@ -109,8 +109,8 @@ enum class ResponseSite : int {
     ClkParkDiscardDatum,   ///< a parked clock dropped at a clock-datum change
     ClkReinit,             ///< folded at the clock monitor's reinit variance
     ClkRetire,             ///< not folded: a clock-pivot handover retired its datum
-    ClkAnchorDecouple,     ///< card Q3's guard decoupled the clock from its anchor (folds loose)
-    ClkAnchorRecouple,     ///< card Q3's guard re-validated the clock (folds anchored again)
+    ClkAnchorDecouple,     ///< the temporal clock anchor's guard decoupled the clock from its anchor (folds loose)
+    ClkAnchorRecouple,     ///< the temporal clock anchor's guard re-validated the clock (folds anchored again)
     ClkOscWipe,            ///< the clock oscillator's state wiped at a clock-datum change
     ClkOscReinit,          ///< the clock oscillator re-initialized on a flagged fault
     ClkOscGapReset,        ///< the clock oscillator's drift reset past its maximum gap
@@ -204,7 +204,7 @@ inline void prmRespond(long long (&counts)[kResponseSites], ResponseSite s, long
 
 /**
  * @brief Whether a carried instance last seen at @p last_seen_s is past its gap horizon at
- *        @p now_s: the one gap test of the GapSkip and GapPrune policies (card PRM phase 3b).
+ *        @p now_s: the one gap test of the GapSkip and GapPrune policies.
  *
  * Exactly the comparison the gap sites made before phase 3b, operand for operand: the gap
  * @c now_s - @c last_seen_s, then a strict @c > against the horizon.  A gap equal to the
@@ -224,7 +224,7 @@ inline bool carryPastHorizon(double now_s, double last_seen_s, double horizon_s)
 }
 
 /**
- * @brief The GapPrune policy, one implementation (card PRM phase 3b): erase every carried
+ * @brief The GapPrune policy, one implementation: erase every carried
  *        instance of @p m that is past the horizon.
  *
  * Walks @p m from @c begin() to @c end() in the map's order.  For an entry that is
@@ -261,7 +261,7 @@ long long carryGapPrune(Map& m, double now_s, double horizon_s, OnErase on_erase
 }
 
 /**
- * @brief The entity-table form of @ref carryGapPrune (card NOM step N4a): walks field @p f
+ * @brief The entity-table form of @ref carryGapPrune: walks field @p f
  *        of table @p t in identity order (the order of the map it replaces) and resets each
  *        present value past the horizon, after calling @p on_erase(id, value).  The rows
  *        stay (an entity row is never erased).  @p on_erase must not insert rows.
@@ -317,7 +317,7 @@ long long carryGapPrune(T& t, M R::*sub, std::optional<V> SR::*f, double now_s,
 }
 
 /**
- * @brief The free-epoch latch's causes, counted (card RF-1 section 1.5: "free-epoch latches
+ * @brief The free-epoch latch's causes, counted (the float-ambiguity design, section 1.5: "free-epoch latches
  *        not individually traced").
  *
  * One row per cause bit of @c RelevelEpochState::free_cause, plus the latched keys with no
@@ -354,14 +354,14 @@ long long responseSiteCount(const NetworkServiceCounters& C, ResponseSite s);
  */
 void networkResponseLatchTally(NetworkRunContext& ctx, const EpochEvents& events);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the declared responses of the carried instances (PRM 3a).
  *
- * The declared responses of the carried instances (card PRM phase 3a), with the
+ * The declared responses of the carried instances, with the
  * `param_responses` manifest record.
  *
  * Gate: prints always (a block).

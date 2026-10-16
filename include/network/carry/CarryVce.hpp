@@ -27,7 +27,7 @@
  * innovation
  * @f[ \hat e = \bar b - \hat x @f]
  * does not depend on how the fold is represented: a scalar diagonal prior and the
- * Card-1 coupling rows both encode the same marginal prior
+ * coupling rows both encode the same marginal prior
  * @f$N(\bar b,\,\text{fold\_var})@f$ on that one state.  A single hook at the
  * post-solve carry harvest therefore captures it for every carry wire format.
  *
@@ -224,7 +224,7 @@ public:
      *        resume uses the restored inflation immediately (RTB-7(d), RE-1).
      *
      * Without this a resumed run restarts the accumulator empty, so every consumer
-     * gated on a warm-up row count (e.g. @c kInflationWarmupRows of the Card-4 D5
+     * gated on a warm-up row count (e.g. @c kInflationWarmupRows of the D5
      * gate) falls back to its raw-formal test for a whole window, which is the
      * regime D5 v2 exists to correct, while the restored carry presents a full set
      * of chords to gate.  Constructing with @c seed_floor_m2 does not achieve this:

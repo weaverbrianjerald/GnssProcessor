@@ -1,7 +1,7 @@
 /**
  * @file PbHoldLedger.hpp
  * @brief Consumer reaction to a held satellite phase bias: the per-key generation
- *        memory, the ignore-or-refloat decision and its run-end counters (card PBH).
+ *        memory, the ignore-or-refloat decision and its run-end counters.
  *
  * A producer running @c network.emit_pb_hold freezes the emitted phase bias of
  * each (satellite, signal) at the first value of its generation and keeps
@@ -22,8 +22,8 @@
  * ambiguity at every satellite rise.
  *
  * The decision is kept separate from the engine seam
- * (@c RealTimeEngine::reactToPbHold_, RealTimeEngineSsrBreaks.cpp), as in cards CC
- * and PBT: the seam computes the inputs, calls @ref react, and performs the reset
+ * (@c RealTimeEngine::reactToPbHold_, RealTimeEngineSsrBreaks.cpp), as in the declared-step carry
+ * and the step-translate ledger: the seam computes the inputs, calls @ref react, and performs the reset
  * and the logging, so every branch is unit-testable without a live engine.  The
  * ledger modifies only its own memory and counters.
  *
@@ -39,7 +39,7 @@
 
 namespace GnssProcessor {
 
-/// Hold-generation memory, the ignore-or-refloat decision and counters (card PBH).
+/// Hold-generation memory, the ignore-or-refloat decision and counters.
 class PbHoldLedger {
 public:
     /// What @ref react decided for one (key, epoch) cell.
@@ -77,7 +77,7 @@ public:
      *                    consumer is about to apply.  0 means the producer is not
      *                    holding this key; the call is then a no-op returning
      *                    @ref Action::NotHeld, which keeps every unheld product
-     *                    (RTCM streams, files written before card PBH, runs with the
+     *                    (RTCM streams, files written before the phase-bias hold, runs with the
      *                    hold off) on the unchanged consumer path.
      * @param disc_changed Whether the discontinuity counter changed this epoch.  Only
      *                    counted, never acted on, for a held key; ignored for an

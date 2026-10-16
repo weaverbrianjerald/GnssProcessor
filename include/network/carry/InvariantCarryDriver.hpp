@@ -2,7 +2,7 @@
 /**
  * @file InvariantCarryDriver.hpp
  * @brief Per-epoch driver that time-links the DD cycle-basis carry (`NetworkZStore`)
- *        through the network producer solve (card 4, M1, phase C3b).
+ *        through the network producer solve (M1, phase C3b).
  *
  * The driver is the factored, unit-drivable core of the "invariant-function carry"
  * (design handoff `docs/SPEC_card4_invariant_carry.md`).  Phase B built the z-store
@@ -57,7 +57,7 @@
  * ## Scope and conventions
  *
  * Pure numeric leaf that depends only on `NetworkArcGraph` (the cycle algebra: the
- * union-find, the tree, the fundamental cycles and the W rows; card AGT, which took
+ * union-find, the tree, the fundamental cycles and the W rows; it took
  * them over from `NetworkZStore`) and the
  * `NetworkEstimator` kernel (the fold and the posterior readout).  It does not depend on
  * `ApplicationNetwork`: the caller (the live epoch loop or a unit test) resolves each
@@ -77,9 +77,9 @@
  * DatumFreedom gate compares carried chords, which are basis-exact).
  */
 
-#include "network/ar/ArcGraph.hpp"        // ArcKey + the cycle algebra (card AGT)
+#include "network/ar/ArcGraph.hpp"        // ArcKey + the cycle algebra
 #include "network/solve/Estimator.hpp"       // DdPriorBlock, Pin/Datum, posterior readout
-#include "network/carry/CarryVce.hpp"        // LS-VCE robust inflation of Cov(v) (card 4, D5 v2)
+#include "network/carry/CarryVce.hpp"        // LS-VCE robust inflation of Cov(v) (D5 v2)
 
 #include <Eigen/Dense>
 
@@ -103,7 +103,7 @@ public:
     struct Config {
         double qz{0.0};                 ///< z process noise (state²/s); 0 = constant DDs (correct absent slips).
         double fresh_prior_var{1.0e6};  ///< diffuse prior variance for a fresh chord (state units²); large, so the prior carries almost no information and the chord's posterior is the data-only tap-off.
-        bool   innov_gate{false};       ///< enable the estimation-side fine-slip innovation test on the DD chords (@ref installPosterior).  Off: the posterior is installed unconditionally, byte-identical to C3c (card 4, D5).
+        bool   innov_gate{false};       ///< enable the estimation-side fine-slip innovation test on the DD chords (@ref installPosterior).  Off: the posterior is installed unconditionally, byte-identical to C3c (D5).
         double innov_k{4.0};            ///< per-chord flag threshold: a chord is flagged when |v_i|/√Cov(v)_ii > innov_k·σ̂₀ (σ̂₀ = 1 unless @c innov_calibrate), and a flagged chord is re-tapped fresh.  Inert unless @c innov_gate (D5).
         bool   innov_calibrate{false};  ///< scale the test by the LS-VCE estimate of the empirical innovation variance σ̂₀² (robust geometric mean of the standardized innovations) instead of the raw formal Cov(v), which makes @c innov_k an Nσ threshold (the formal Cov(v) measured 10-30× optimistic).  Off: the raw formal test (v1).  Inert unless @c innov_gate (D5 v2).
         double innov_calibrate_window{60.0};  ///< exponential-forgetting half-life (epochs) of the σ̂₀² accumulator.  Inert unless @c innov_calibrate (D5 v2).
@@ -112,7 +112,7 @@ public:
          *        (D5 v3).
          *
          * Measured: 2.1 % of D5 resets coincide with a raw MW/GF step, against 95 % on the
-         * same run's Card-G arc resumptions (known real discontinuities), and 97.4 % of
+         * same run's gap-instrumentation arc resumptions (known real discontinuities), and 97.4 % of
          * inter-reset gaps are one epoch.  The gate therefore fires on a persistent
          * model-versus-data disagreement rather than on slips, and re-taps continuous arcs
          * indefinitely.  With this armed, a flagged chord is re-tapped unless the raw
@@ -181,7 +181,7 @@ public:
          *    This loses one bounded epoch of information, the same semantics as a chord
          *    birth, instead of decoupling the block permanently without a signal.
          *  - Restore guard (INC-2c): @ref restoreCarry screens each parsed block and
-         *    rebirths a non-PD one.  Snapshots written before the PD-safe card can hold a
+         *    rebirths a non-PD one.  Snapshots written before the PD-safe fix can hold a
          *    corrupt (non-PD) block, which a warm resume would otherwise re-import into a
          *    build that has the fix.
          *
@@ -232,7 +232,7 @@ public:
         bool tree_edge{false};   ///< election spanning-tree edge (gauge pin) vs chord (a carried DD).
         int  est_station{-1};    ///< estimator station index of this arc's ambiguity (−1 = unresolvable this epoch).
         int  local_col{-1};      ///< A_r local ambiguity column of this arc (−1 = unresolvable).
-        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills (card 4, C3c).
+        bool slipped{false};     ///< a cycle slip or refloat invalidated this arc's carried ambiguity this epoch (its pre-slip DD would be a stiff wrong prior).  The caller sets it from the network's slip funnel (MW wide-lane, LLI, IF-phase TD, RAIM culprit).  The arc is treated as absent from A_old, so any new cycle whose support includes it is re-tapped fresh (data-only), the birth path; a carried chord lost this way is counted in @ref Counters::slip_kills (C3c).
         double x_lin{0.0};       ///< this arc's ambiguity linearization value (m), the value the kernel takes its corrections about.  Read only under @ref Config::carry_lin; otherwise left 0 and unused, so the off path costs nothing (RS-2, docs/SPEC_event_harness.md §21.4).
     };
 
@@ -254,10 +254,10 @@ public:
         long long chords_born{0};         ///< fresh chords (diffuse prior → data-only tap-off).
         long long chords_marginalized{0}; ///< chords of previous blocks that fed no component this epoch (whole-block marginalization, e.g. every arc died); per-chord drops are in @ref chords_marg_perchord.
         long long chords_dropped{0};      ///< chords skipped this epoch because a cycle arc was unresolvable (a data-gap refloat, distinct from a slip).
-        long long slip_kills{0};          ///< chords that would have been carried but were refloated fresh because a cycle slip or RAIM culprit invalidated an arc of their fundamental cycle (about the slip rate the carry saw) (card 4, C3c).
-        long long innov_flags{0};         ///< chord rows flagged by the D5 gate: post-solve standardized innovation above @c innov_k·σ̂₀ and not skipped or suppressed (a fine slip the coarse layer missed).  Born chords are tested too unless @c innov_carried_only; flags inside the post-resume warm-up window are included (card 4, D5).
-        long long innov_retaps{0};        ///< flagged chord rows re-tapped fresh at install: @c innov_flags minus @ref d5_warmup_suppressed (card 4, D5).
-        long long innov_suppressed{0};    ///< chord rows that tripped the gate but were not re-tapped because the raw observables showed the arc continuous (@c innov_corroborate).  This counter is the only evidence that the corroboration gate acts (invariant #4): 0 with the knob armed means the flat set never reached it, usually because no slip-QC decision card ran the qualify pass that fills the verdicts (SlipQcState::cardsArmed(); network.trace_slip_raw alone computes the observables but adjudicates none, so every verdict map is empty) (D5 v3).
+        long long slip_kills{0};          ///< chords that would have been carried but were refloated fresh because a cycle slip or RAIM culprit invalidated an arc of their fundamental cycle (about the slip rate the carry saw) (C3c).
+        long long innov_flags{0};         ///< chord rows flagged by the D5 gate: post-solve standardized innovation above @c innov_k·σ̂₀ and not skipped or suppressed (a fine slip the coarse layer missed).  Born chords are tested too unless @c innov_carried_only; flags inside the post-resume warm-up window are included (D5).
+        long long innov_retaps{0};        ///< flagged chord rows re-tapped fresh at install: @c innov_flags minus @ref d5_warmup_suppressed (D5).
+        long long innov_suppressed{0};    ///< chord rows that tripped the gate but were not re-tapped because the raw observables showed the arc continuous (@c innov_corroborate).  This counter is the only evidence that the corroboration gate acts (invariant #4): 0 with the knob armed means the flat set never reached it, usually because no slip-QC decision mechanism ran the qualify pass that fills the verdicts (SlipQcState::cardsArmed(); network.trace_slip_raw alone computes the observables but adjudicates none, so every verdict map is empty) (D5 v3).
         long long innov_born_skipped{0};  ///< chord rows the gate did not evaluate under @c innov_carried_only because the chord was born this epoch or its Cov(v)_ii is at least half of @c fresh_prior_var.  Counted before the threshold test, so it is the whole skipped population, not only the part that would have flagged: the measure of how much of the gate had no hypothesis to test (D5 v5).
         long long merges{0};              ///< components formed from ≥2 previous components.
         long long splits{0};              ///< previous components spread across ≥2 new components.
@@ -328,7 +328,7 @@ public:
     /// Per-op wall-clock accumulators (ms), armed by @ref setPerfTiming
     /// (@c network.trace_section_timers) (INC-C0).  They split the driver's own cost,
     /// which the D0b SB_DDBUILD / SB_INSTALL wall brackets lump together, into the
-    /// primitive ops so the perf-restructure card can rank them (dense Pᶻ basis
+    /// primitive ops so a performance restructure can rank them (dense Pᶻ basis
     /// projection, posterior read-back, D5 gate).  Whole-run: not zeroed by @ref reset,
     /// as with @c NetworkNormalEquations::SectionTimers.  Byte-identical when off (no clock
     /// reads; the accumulators touch nothing the solution depends on).  Only the serial
@@ -482,7 +482,7 @@ public:
     /// Blocks rebirthed at @ref restoreCarry because the blob's @f$P^z@f$ failed the
     /// equilibrated PD screen: the means were kept and the covariance reset to the fresh
     /// diffuse diagonal.  0 unless @c Config::pd_safe.  Snapshots written before the
-    /// PD-safe card can hold a corrupt block, so a non-zero count on the first
+    /// PD-safe fix can hold a corrupt block, so a non-zero count on the first
     /// resume from one is expected; a non-zero count on a resume from a pd_safe-armed
     /// writer indicates a new defect (PD-safe INC-2c).
     long long resumeCarryRebirthBlocks() const { return resume_carry_rebirth_blocks_; }
@@ -596,12 +596,12 @@ public:
     /// (station, ambiguity) and feeds it into the next epoch's slip funnel (the C3c
     /// membership-exclusion re-tap), except the entries that
     /// @ref lastInnovWarmupSuppressed marks.  Empty unless @c Config::innov_gate;
-    /// refreshed every @ref installPosterior (card 4, D5).
+    /// refreshed every @ref installPosterior (D5).
     const std::vector<std::pair<int, ArcKey>>& lastInnovFlags() const { return last_innov_flags_; }
 
     /**
      * @brief The terms behind each flag in @ref lastInnovFlags, index-aligned, so the
-     *        standardized innovation can be decomposed (D5 diagnostic, churn card).
+     *        standardized innovation can be decomposed (D5 diagnostic).
      *
      * No production path reads them since the D5 flag dump that wrote them out was
      * retired with the MW/WL lane layer; the unit suite reads @c var_v to check that
@@ -874,18 +874,18 @@ private:
     static constexpr double kInflationFactorCap   = 1.0e6;
 };
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: the invariant carry driver: the PD-safe DD fold, the card 4/M1 carry, the
+ * @brief Run-end report: the invariant carry driver: the PD-safe DD fold, the M1 carry, the
  *        D5 gate and its map misses.
  *
- * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
  * beside it in InvariantCarryDriver.cpp, print in this order, each gated on its own knob:
  *   - networkCarryDdFoldRunEnd: the PD-safe invariant-DD fold.
- *   - networkInvariantCarryRunEnd: the card 4/M1 invariant carry.
+ *   - networkInvariantCarryRunEnd: the M1 invariant carry.
  *   - networkD5GateRunEnd: the D5 fine-slip innovation gate and its variants.
  *   - networkD5MapMissRunEnd: D5 flags missing from the carry map.
  *

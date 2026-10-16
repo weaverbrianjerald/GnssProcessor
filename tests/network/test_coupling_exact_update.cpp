@@ -1,9 +1,9 @@
 /**
  * @file test_coupling_exact_update.cpp
- * @brief Unit gate of card CTU (docs/refound/CTU_coupling_time_update_2026-09-28.md,
+ * @brief Unit gate of the exact coupling time update (docs/refound/CTU_coupling_time_update_2026-09-28.md,
  *        section 9.2): the exact conditional time update of the carried coupling rows.
  *
- * The card 1d fixture (test_network_estimator.cpp, ConditionalCarryTimeUpdateRecursiveEqualsBatch)
+ * The time-update fixture (test_network_estimator.cpp, ConditionalCarryTimeUpdateRecursiveEqualsBatch)
  * carries clocks only, on one band, with no ionosphere and no phase-bias column, which is
  * why the scalar kappa shrink passed it.  This fixture has what the lock needs: three
  * satellites, each with a clock and two phase-bias columns; three stations with two-band
@@ -16,17 +16,17 @@
  * ambiguities as one joint local block, so the one rule plus the rows' full time-update
  * covariance make it an exact Kalman recursion: it must equal the batch (every epoch's
  * rows plus the walk pseudo-observations) to rounding.  The production form carries one
- * block per station and drops the cross-station time-update covariance (card section 4):
- * its level is reported against the batch.  A third recursion applies the card 1d scalar
+ * block per station and drops the cross-station time-update covariance:
+ * its level is reported against the batch.  A third recursion applies the scalar
  * kappa at the legacy clock rate, and must be seen to lock the level.
  *
- * Card SCL (docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4.1 and 6)
+ * The self-contained clock level (docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 4.1 and 6)
  * makes the clock walk a test parameter (the broadcast grade, 5e-6 m^2/s), rotates the phase
  * datum (each satellite anchored at its own station, as the producer's prioritized datum
  * elects anchors), and adds the one-epoch clock clone in two harvest forms: U1 (the
  * per-row form over-states the level at the broadcast grade) and U2 (the clone with the
  * joint harvest equals the batch; with the per-station harvest it keeps the level).  With
- * card SMH, the smoothed hold's fixed-point row c_s(t0) is carried alongside: on the clone
+ * the smoothed hold, the fixed-point row c_s(t0) is carried alongside: on the clone
  * epoch with its clone terms marginalized the production row equals a recursion that carries
  * the target as a local with its harvest covariance to the ambiguities dropped, and the same
  * recursion with that covariance kept equals the batch's smoothed estimate.
@@ -130,7 +130,7 @@ constexpr int    kR      = 3;          // stations; station 0 holds the datum (a
 constexpr double kDt     = 30.0;
 constexpr double kQClk   = 2.9e-8;     // the anchor's clock walk (m^2/s)
 /// The clock walk of the fixture's truth, its batch tie and the recursions' inflation (m^2/s).
-/// kQClk unless a test sets it (card SCL's broadcast-grade walk); restored by @ref QClkScope.
+/// kQClk unless a test sets it (the clock clone's broadcast-grade walk); restored by @ref QClkScope.
 double gQClk = kQClk;
 struct QClkScope {
     explicit QClkScope(double q) { gQClk = q; }
@@ -193,7 +193,7 @@ struct Net {
         return b;
     }
     /// The station whose ambiguities of satellite s hold the phase datum: station 0 for every
-    /// satellite (the original fixture), or station s % kR when gAnchorRotate (card SCL: each
+    /// satellite (the original fixture), or station s % kR when gAnchorRotate (each
     /// satellite its own anchor, as the producer's prioritized phase datum elects them).
     static int anchorOf(int s);
     /// Carried ambiguities: every (station other than the satellite's anchor, satellite,
@@ -205,7 +205,7 @@ struct Net {
     static constexpr int kN = (kR - 1) * kS * 2;
 };
 
-/// Card SCL: rotate the phase datum (@ref Net::anchorOf).  False (the original fixture)
+/// Rotate the phase datum (@ref Net::anchorOf).  False (the original fixture)
 /// unless a test sets it; restored by AnchorRotateScope.
 bool gAnchorRotate = false;
 int Net::anchorOf(int s) { return gAnchorRotate ? s % kR : 0; }
@@ -365,9 +365,9 @@ BatchOut runBatch(const Net& n) {
 /// The factorized recursion.  mode 0: the exact rule with one joint local block (the
 /// reference); mode 1: the exact rule with one block per station, cross-station
 /// time-update covariance dropped and the within-station one kept (the producer's form
-/// with network.carry_coupling_exact_cross, card WSX); mode 2: card 1d's scalar kappa at the
+/// with network.carry_coupling_exact_cross); mode 2: the scalar kappa at the
 /// legacy clock rate q = 1e-3 m^2/s (the lock); mode 3: one block per station with the
-/// time-update addend on the diagonal only (the shipped form, the knob off).  Card SCL
+/// time-update addend on the diagonal only (the shipped form, the knob off).  The clock clone
 /// (network.carry_coupling_clock_clone): mode 4, every previous clock carried as a clone
 /// column, the rows on their harvested coefficients (a clock term on its clone), the prior
 /// in information form (the previous border over its stand-ins plus the walk factor
@@ -375,7 +375,7 @@ BatchOut runBatch(const Net& n) {
 /// with one harvest block per station (the producer's per-station harvest, which drops the
 /// cross-station covariance the clones' posterior leaves).
 ///
-/// Card SCL with card SMH (@ref FpOpts): the smoothed hold's fixed-point target, the clock of
+/// The clock clone with the smoothed hold (@ref FpOpts): the smoothed hold's fixed-point target, the clock of
 /// one satellite at a past epoch, carried alongside the recursion by a test-side reference
 /// and by the production row functions.
 struct RecOut {
@@ -391,7 +391,7 @@ struct RecOut {
     double fp_smh_var{std::numeric_limits<double>::quiet_NaN()};     ///< its stated variance, sigma2 + m'Pm
 };
 
-/// Card SCL with card SMH: the fixed-point target c_sat(k0) of the smoothed hold.
+/// The clock clone with the smoothed hold: the fixed-point target c_sat(k0) of the smoothed hold.
 struct FpOpts {
     int sat{1};    ///< the satellite (not the pinned pivot)
     int k0{20};    ///< the birth epoch
@@ -399,10 +399,10 @@ struct FpOpts {
     /// from epoch k0 + 1 on (it is the satellite's clone there), harvested jointly with the
     /// ambiguities (mode 4: a Kalman recursion, so it equals the batch); 2 the same with the
     /// target's harvest covariance with the ambiguities dropped (the form of a row carried on
-    /// its own, card SMH's).
+    /// its own, the smoothed hold's).
     int ref{0};
     /// The production row (pbHoldCloneAdvanceRow, pbHoldCloneRebase): 0 none; 1 advanced on
-    /// card CTU's epoch (the update before this card); 2 advanced on the clone epoch
+    /// the exact update's epoch (the update before the smoothed hold); 2 advanced on the clone epoch
     /// (pbHoldCloneOnClones) with the clones then marginalized (pbHoldCloneMarginalizeClones),
     /// modes 4 and 5.
     int smh{0};
@@ -422,8 +422,8 @@ std::string keyOf(const BKey& b) {
     return sharedCarryKey(t.kind, t.sat, t.signal);
 }
 
-/// Card CTU's epoch over the previous border with the production key map (the rows' and
-/// card SMH's view: S = the previous columns present now, the walk on the clocks).
+/// The exact update's epoch over the previous border with the production key map (the rows' and
+/// the smoothed hold's view: S = the previous columns present now, the walk on the clocks).
 CouplingExactEpoch ctuEpoch(const std::vector<BKey>& bprev, const Eigen::VectorXd& sprev,
                             const Eigen::MatrixXd& Pprev, const std::map<BKey, int>& bcol) {
     CouplingExactEpoch ep;
@@ -466,7 +466,7 @@ RecOut runRecursion(const Net& n, int mode, const FpOpts* fp = nullptr) {
     Eigen::MatrixXd C;               // conditional covariance
     RecOut out;
     out.min_var_add = 1e300;
-    // Card SCL with card SMH: the reference target (a local of the solve once born) and the
+    // The clock clone with the smoothed hold: the reference target (a local of the solve once born) and the
     // production row.
     const bool fp_ref = fp && fp->ref != 0 && mode >= 4;
     bool fp_carry = false;                    // the reference target is a local of this epoch's solve
@@ -478,7 +478,7 @@ RecOut runRecursion(const Net& n, int mode, const FpOpts* fp = nullptr) {
         const int nb = static_cast<int>(b.size());
         std::map<BKey, int> bcol;
         for (int i = 0; i < nb; ++i) bcol[b[i]] = i;
-        // Modes 4 and 5 (card SCL): every previous clock carried into this epoch gets a clone
+        // Modes 4 and 5: every previous clock carried into this epoch gets a clone
         // column, the previous epoch's clock, between the border and the ambiguities.
         std::map<int, int> clone_of_p;           // previous border row -> clone column
         if (have && mode >= 4)
@@ -659,8 +659,8 @@ RecOut runRecursion(const Net& n, int mode, const FpOpts* fp = nullptr) {
         // An ambiguity never observed yet (epoch 1) has no row: it is fixed by its phase.
         const Eigen::MatrixXd Sx = spdInverse(L);
         const Eigen::VectorXd x = Sx * e;
-        // Card SMH's production row over this epoch, read before the harvest replaces the
-        // previous stash: the advance (card CTU's epoch, or the clone epoch), the revision
+        // The smoothed hold's production row over this epoch, read before the harvest replaces the
+        // previous stash: the advance (the exact update's epoch, or the clone epoch), the revision
         // from this solve, and on the clone epoch the clones marginalized through the
         // posterior regression over the shared block [border, clones].
         PbHoldCloneStep sm_st;
@@ -753,7 +753,7 @@ RecOut runRecursion(const Net& n, int mode, const FpOpts* fp = nullptr) {
                 for (int i = 0; i < nN; ++i) C(i, nN) = C(nN, i) = 0.0;
             fp_carry = true;
         }
-        // Card SMH's production row: re-harvested on the new stash, or born at epoch k0 on
+        // The production row of the SMH case: re-harvested on the new stash, or born at epoch k0 on
         // the satellite's clock (M = -1, sigma2 = 0).
         if (sm_step) {
             std::map<std::string, std::pair<double, double>> stash;
@@ -834,7 +834,7 @@ void expectEqualsBatch(const Net& n, const BatchOut& bt, const RecOut& rc) {
 }
 
 /// @ref expectEqualsBatch at one tolerance @p tol for every value (absolute) and every
-/// variance and covariance (relative to the batch diagonal): card SCL's clone recursion.
+/// variance and covariance (relative to the batch diagonal): the clock clone's recursion.
 void expectEqualsBatchTol(const BatchOut& bt, const RecOut& rc, double tol) {
     ASSERT_EQ(rc.keys.size(), bt.col_of.size());
     for (int a = 0; a < static_cast<int>(rc.keys.size()); ++a) {
@@ -939,7 +939,7 @@ TEST(CouplingExactUpdateTest, ZeroNoiseReproducesTheRawRow) {
     EXPECT_NEAR(r.var_raw, 0.0, 1e-13);
 }
 
-// A diagonal P with nothing decoupled is card 1d's kappa, column by column.
+// A diagonal P with nothing decoupled is the time-update kappa, column by column.
 TEST(CouplingExactUpdateTest, DiagonalBorderIsTheKappaShrink) {
     Eigen::MatrixXd P = Eigen::MatrixXd::Zero(4, 4);
     P.diagonal() << 1e-5, 2e-3, 4e-6, 1e-9;
@@ -1052,13 +1052,13 @@ TEST(CouplingExactUpdateTest, DecoupledAndDepartedColumnsEqualTheBatch) {
     expectEqualsBatch(np, runBatch(np), runRecursion(np, 0));
 }
 
-// The card 1d scalar kappa at the legacy clock rate states the level at phase precision:
+// The scalar kappa at the legacy clock rate states the level at phase precision:
 // its claimed level variance collapses far below the batch's, and its level sits many of
 // its own claimed sigmas from the batch's (one realization: the distance in batch sigmas
 // is a draw of the first epochs' code, so the robust signatures are the claimed variance
 // and the error against it).  The exact rule in a per-station form (mode 1, with the
-// within-station cross terms of card WSX's knob; the shipped form, mode 3, is read in
-// WithinStationCrossTermsAgainstTheBatch) stays with the batch: card section 4's claim that
+// within-station cross terms of the cross-terms knob; the shipped form, mode 3, is read in
+// WithinStationCrossTermsAgainstTheBatch) stays with the batch: the design's section 4 claim that
 // the dropped cross-station term leaves the level untouched, measured.
 TEST(CouplingExactUpdateTest, ShrunkFormLocksTheLevelAndTheExactFormDoesNot) {
     const Net n = makeNet(Scenario{});
@@ -1094,7 +1094,7 @@ TEST(CouplingExactUpdateTest, ShrunkFormLocksTheLevelAndTheExactFormDoesNot) {
     }
 }
 
-// Card WSX: the shipped form (mode 3, the time-update addend on the diagonal only) beside
+// The shipped form (mode 3, the time-update addend on the diagonal only) beside
 // the form with the within-station cross terms (mode 1), both against the exact batch.  Per
 // satellite the level's variance ratio and error; over the whole border the extreme
 // generalized eigenvalues of the recursion's covariance against the batch's (below 1: a
@@ -1141,7 +1141,7 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
             }
             std::printf("\n");
         }
-        // Measured (card WSX section 6): both forms keep the level with the batch (variance
+        // Measured: both forms keep the level with the batch (variance
         // ratio 1.0000 / 1.0001); the shipped form states no border direction tighter than
         // the batch (eigenvalues 1.0000 to 1.163, the loosest the pivot satellite's
         // phase-visible clock against the others'); the within-station half alone states one
@@ -1150,7 +1150,7 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
         // smallest eigenvalue falls with the stations per satellite (the dropped cross-station
         // half): shipped form 0.885 / 0.661 / 0.336 and with the within-station half 0.693 /
         // 0.518 / 0.322 at 8 / 16 / 48 stations, always along a between-satellite
-        // phase-visible contrast, the level staying with the batch (card WSX section 6).
+        // phase-visible contrast, the level staying with the batch.
         EXPECT_GT(rmin, 0.5) << "mode " << mode;
         EXPECT_LT(rmax, 2.0) << "mode " << mode;
         EXPECT_LT(emax, 0.5) << "mode " << mode;
@@ -1164,16 +1164,16 @@ TEST(CouplingExactUpdateTest, WithinStationCrossTermsAgainstTheBatch) {
 }
 
 // ---------------------------------------------------------------------------
-// Card SCL: the broadcast-grade clock walk and the one-epoch clock clone.
+// The broadcast-grade clock walk and the one-epoch clock clone.
 // ---------------------------------------------------------------------------
 
-// Card SCL U1: the per-row form at a broadcast-grade clock walk, with the producer's
+// U1: the per-row form at a broadcast-grade clock walk, with the producer's
 // datum.  The prioritized phase datum elects an anchor per satellite (here satellite s at
 // station s), so the between-satellite phase-visible clock runs through float ambiguities.
 // At the golden walk (2.9e-8 m^2/s) the shipped per-row form (mode 3) keeps the level with
-// the batch; at the broadcast grade (5e-6 m^2/s, card SCL section 2) the dropped
-// cross-station time-update covariance states the level too tight in variance (card SCL
-// section 4.1, measured at the fixture's 3 stations: 1.0010 and 0.7492 for the worse
+// the batch; at the broadcast grade (5e-6 m^2/s) the dropped
+// cross-station time-update covariance states the level too tight in variance
+// (measured at the fixture's 3 stations: 1.0010 and 0.7492 for the worse
 // satellite; 0.278 / 0.163 at 8 / 16 stations with kR raised by hand).
 TEST(CouplingExactUpdateTest, BroadcastGradeWalkLocksThePerRowLevelWithRotatedAnchors) {
     const AnchorRotateScope rot(true);
@@ -1193,14 +1193,14 @@ TEST(CouplingExactUpdateTest, BroadcastGradeWalkLocksThePerRowLevelWithRotatedAn
     }
 }
 
-// Card SCL U2: the clone with the joint harvest (mode 4) is exact.  The previous clocks are
+// U2: the clone with the joint harvest (mode 4) is exact.  The previous clocks are
 // clone columns, the rows keep their harvested coefficients on them, the walk enters the
 // border prior once (information form), and the harvest conditions every ambiguity on the
 // new border jointly: a Kalman recursion that equals the batch at both walks and both
 // datum layouts.  Held to 1e-7 (border values, ambiguity values, and both covariances
 // relative) rather than the fixture's 1e-8: the clone adds two inversions per epoch (the
 // stand-in block and the posterior with the clone columns), and measured, two phase-bias
-// values miss 1e-8 by about 2e-9 (card SCL section 4.1).
+// values miss 1e-8 by about 2e-9.
 TEST(CouplingExactUpdateTest, CloneWithTheJointHarvestEqualsTheBatch) {
     for (const bool rotate : {false, true}) {
         const AnchorRotateScope rot(rotate);
@@ -1214,7 +1214,7 @@ TEST(CouplingExactUpdateTest, CloneWithTheJointHarvestEqualsTheBatch) {
     }
 }
 
-// Card SCL U2: the clone with the producer's per-station harvest (mode 5, B1's form): the
+// U2: the clone with the producer's per-station harvest (mode 5, B1's form): the
 // harvest marginalizes the clones one station at a time and drops the cross-station
 // covariance the clones' posterior leaves (the second-order term).  At the broadcast-grade
 // walk with rotated anchors it removes most of the shipped form's over-statement (measured
@@ -1235,7 +1235,7 @@ TEST(CouplingExactUpdateTest, CloneWithThePerStationHarvestKeepsTheLevel) {
     EXPECT_GT(w5.ratio_min, w3.ratio_min) << "the clone should state the level more honestly";
 }
 
-// Card SCL with card SMH: the smoothed hold's row (a fixed-point smoother target, c_s(k0)
+// The clock clone with the smoothed hold: the hold's row (a fixed-point smoother target, c_s(k0)
 // carried with no observations) on the clone epoch.  Under the clone the solve's prior is the
 // joint one over the stand-ins plus the walk factor, and the coupling rows inform the previous
 // clock through its clone, so the row is conditionally independent of an epoch's data given
@@ -1251,12 +1251,12 @@ TEST(CouplingExactUpdateTest, CloneWithThePerStationHarvestKeepsTheLevel) {
 //       the joint solve (mode 4) and under the producer's per-station one (mode 5), to
 //       rounding;
 //   (c) against the batch, the production row on the clone epoch keeps the per-row residue
-//       only, while the update before this card (the row on card CTU's epoch) under the clone
+//       only, while the update before the smoothed hold (the row on the exact update's epoch) under the clone
 //       solve does not equal the batch.
 // Measured (printed as [SCL SMH]): (a) within 1e-7; (b) |row - reference| <= 7e-10 m in every
 // case; (c) at 5e-6 the row on the clone epoch misses the batch by +0.249 / +0.262 batch sigma
 // (modes 4 / 5, satellite 1; +0.032 / +0.042 for satellite 2), variance ratio 1.055 / 1.052,
-// the target's dropped covariance with the ambiguities; the row on card CTU's epoch under the
+// the target's dropped covariance with the ambiguities; the row on the exact update's epoch under the
 // clone solve misses it by +1.091 (satellite 1) and +0.155 (satellite 2) batch sigma, ratio
 // 0.942, and under its own solve (mode 3, the knob off) by +1.757 / +0.336, ratio 0.862 (the
 // per-row level of U1).  At 2.9e-8 every form is within 0.12 batch sigma.
@@ -1302,8 +1302,8 @@ TEST(CouplingExactUpdateTest, SmoothedRowOnTheCloneEpochIsTheFixedPointSmoother)
                 EXPECT_LT(r, 1.1) << "mode " << mode;
                 if (mode == 5) clone_err_mode5 = std::abs(e);
             }
-            // (c) the row on card CTU's epoch: under the clone solve (mode 5, the update before
-            // this card with the clone armed) and under its own solve (mode 3, the clone off).
+            // (c) the row on the exact update's epoch: under the clone solve (mode 5, the update before
+            // the smoothed hold with the clone armed) and under its own solve (mode 3, the clone off).
             const FpOpts fc{sat, k0, 0, 1};
             const RecOut rc5 = runRecursion(n, 5, &fc);
             const RecOut rc3 = runRecursion(n, 3, &fc);
@@ -1324,8 +1324,8 @@ TEST(CouplingExactUpdateTest, SmoothedRowOnTheCloneEpochIsTheFixedPointSmoother)
 }
 
 // The rows are built before the fold runs, so the exact update reads the anchor's
-// decision, made before PASS B without side effects (card PRM phase 1b, which replaced card
-// CTU's twin of the fold with it).  The decision must be what the fold applies, in every
+// decision, made before PASS B without side effects (which replaced
+// the exact update's twin of the fold with it).  The decision must be what the fold applies, in every
 // state the fold distinguishes, and must not advance the state.
 TEST(CouplingExactUpdateTest, AnchorDecisionIsTheFoldWithoutItsSideEffects) {
     Loaded L("peek");

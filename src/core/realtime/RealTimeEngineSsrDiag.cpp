@@ -5,11 +5,11 @@
  * Diagnostics only: none of these functions mutates estimator state.  The two
  * seams run before the broadcast-grade drop, so satellites the precise solution
  * discards still appear in the census and the trace.  The per-satellite readout
- * of card CST (traceConsumerSat_) runs at the epoch tail instead; see its section.
+ * of the consumer trace (traceConsumerSat_) runs at the epoch tail instead; see its section.
  */
 
 #include "realtime/RealTimeEngine.hpp"
-#include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey (card CST)
+#include "filter/StateKeySchema.hpp"   // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <algorithm>
@@ -134,7 +134,7 @@ void RealTimeEngine::traceSsrConsumer(RtEpochContext& ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-satellite readout of the closed-loop consumer's own epoch (card CST)
+// Per-satellite readout of the closed-loop consumer's own epoch
 // ---------------------------------------------------------------------------
 //
 // Added after the seam cut (not a relocation).  The two seams above run before

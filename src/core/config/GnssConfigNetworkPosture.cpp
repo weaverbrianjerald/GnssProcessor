@@ -3,8 +3,8 @@
  * \brief The network posture readout: recommended versus armed knobs, per run regime.
  *
  * Separate from @c GnssConfigLoadNetwork.cpp (which holds @c loadNetworkSection_)
- * because it changes for a different reason than the loader: a card that adds a
- * knob edits the loader, and a card that validates a knob adds a row here, so the
+ * because it changes for a different reason than the loader: a change that adds a
+ * knob edits the loader, and a change that validates a knob adds a row here, so the
  * two kinds of change touch different files.
  *
  * The readout is log-only: it reads already-parsed state and changes nothing.
@@ -276,15 +276,15 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.carry_coupling_time_update",
               "else the coupling rows re-assert the harvest-epoch border at full strength (~5.8 "
               "cyc, 1.5e4x weight lie)" },
-            // --- The exact coupling update and its companions (card CTU, promoted by card
-            //     EXL).  Card 1d's scalar update ages each row's satellite clock term at the
-            //     legacy sat_clock_q while card Q3's anchor folds the same clock at its own q,
-            //     so a young arc's ambiguity information is discarded every epoch (card AIL)
-            //     and the clock level freezes (card CTU's root); the exact update re-expresses
+            // --- The exact coupling update and its companions
+            //     The scalar-κ update ages each row's satellite clock term at the
+            //     legacy sat_clock_q while the clock anchor folds the same clock at its own q,
+            //     so a young arc's ambiguity information is discarded every epoch
+            //     and the clock level freezes (the root cause); the exact update re-expresses
             //     each row on the moved border with the fold's own Q.  Its companions are each
-            //     measured necessary on this posture (card CTU2 sections 2, 5 and 6); the
+            //     measured necessary on this posture; the
             //     guard space (phase) and rank_gate_tol 1e-11 are value companions of the same
-            //     ledger row.  Regime: the float vehicle on the leveling carry with the card 1
+            //     ledger row.  Regime: the float vehicle on the leveling carry with the
             //     coupling trio, which the loader requires.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
                   && network_carry_coupling_time_update_ && network_shared_carry_full_cov_,
@@ -400,7 +400,7 @@ namespace GnssProcessor {
               "run the reference arm on the additional IF-TD chains (empirical gate): collateral refloats "
               "6 -> 0 on every GOPE/G24 event, the 13.3 m innocent PB re-realization removed, consumer mean "
               "1.4-2.7x better, flood held (93/94 wide-chain candidates suppressed); sim storm arm owed" },
-            // --- The re-entry response on the float vehicle (card G, AB2 sections 12 to 15).
+            // --- The re-entry response on the float vehicle.
             //     Freeing a re-entering arc makes it re-level from one epoch of code; on the
             //     converging leveling vehicle that is KEEP_OFF (float consumer +56 % in hours
             //     3 to 9), while a float ambiguity state with a floored birth prior prices it
@@ -413,7 +413,7 @@ namespace GnssProcessor {
               "refloats 1069 -> 702, epochs below a decimetre 223 -> 321, clock wire on the "
               "consumer's satellites 0.0406 -> 0.0203 m, never worse than 0.03 m of consumer "
               "p50 in hours 3 to 12; needs cycle_slip.relevel_free_epoch to act" },
-            // --- The per-signal rider of the row above (card GRS, PROMOTED).  The row-level
+            // --- The per-signal rider of the row above.  The row-level
             //     tier keys on the satellite, so it does not see a loss of lock on the
             //     primary pair while band 5 or a fallback signal keeps tracking.  Regime: the
             //     float vehicle and the row-level knob; without the latter the per-signal
@@ -427,7 +427,7 @@ namespace GnssProcessor {
               "0.0029 m triple), field dual T4_attrib 228 -> 92, and the 12 h field arm "
               "never worse than 0.02 m of consumer p50 in hours 3 to 12 (T4_attrib 702 "
               "-> 370)" },
-            // --- The tracker key of the two rows above (card GRK).  With the knob off, the
+            // --- The tracker key of the two rows above.  With the knob off, the
             //     arc-level tracker names each band by the lexically lowest phase carrying a
             //     matching code (L1C before L1W), while a carried ambiguity at an L1W station
             //     is keyed L1W; the row-level re-entry response then looks the carry up under
@@ -447,10 +447,10 @@ namespace GnssProcessor {
               "re-entries 21 -> 0, gross post-fit code rows at full weight 507 -> 101 (12 h "
               "759 -> 261), consumer, census and clock wire unchanged; byte-identical on the "
               "sim" },
-            // --- Accumulated phase wind-up and its restart response (card WUP).  In
+            // --- Accumulated phase wind-up and its restart response.  In
             //     fractional mode each half-cycle crossing steps the applied wind-up by one
             //     cycle on both bands (MW-blind, half of them under the IF-TD floor), about
-            //     half the field's hour-scale walk-share excess (card FWS).  Accumulated,
+            //     half the field's hour-scale walk-share excess.  Accumulated,
             //     every return after a gap above the wind-up horizon restarts the unwrap,
             //     which the response answers by freeing the arc's leveling carry (invariant
             //     #1).  Regime: the float vehicle on the phase-leveling carry, the posture
@@ -472,7 +472,7 @@ namespace GnssProcessor {
               "after a gap above 300 s): unanswered, the carry folds across an integer-cycle "
               "step; 6 h field golden 27 of 28 in-horizon restarts answered (52 arcs), sim 14 "
               "of 15, none bridged, consumers unchanged" },
-            // --- The canonical-signal latch (card CSL).  A value knob, and the first
+            // --- The canonical-signal latch.  A value knob, and the first
             //     processing.* row in this table: the default string "count" is truthy, so
             //     the armed test is an explicit comparison on canonical_signal_rule_ (a
             //     direct GnssConfig member, not part of network_config_ and not a
@@ -487,7 +487,7 @@ namespace GnssProcessor {
               "pair latches the civil signal for the whole run): field dual epochs below "
               "a decimetre 162 -> 603 of 720, 12 h 275 -> 994 of 1440, triple 6 -> 314; "
               "byte-identical on the sim; mechanism half read (a station subset)" },
-            // --- The Galileo package (cards GAL2 and GFC, adopted 2026-10-13, ledger A16).
+            // --- The Galileo package (adopted 2026-10-13, ledger A16).
             //     Four processing / estimation / model_corrections value rows; like the CSL
             //     row above, each armed test is an explicit comparison on a direct GnssConfig
             //     member.  Regime: the float vehicle in dual-frequency mode (the package was
@@ -500,7 +500,7 @@ namespace GnssProcessor {
               std::find(active_systems_.begin(), active_systems_.end(), "Galileo")
                   != active_systems_.end(),
               Tier::SCOPED, false, "processing.active_systems",
-              "GPS + Galileo (cards GAL2, GFC): census median -0.020 m against GPS only in "
+              "GPS + Galileo: census median -0.020 m against GPS only in "
               "hours 2 to 6 (10 of 16 sites better, 2 worse) and -0.22 m in hour 1; WTZZ00DEU "
               "0.058 0.011 0.018 0.010 0.015 0.011 m by hour against 0.113 0.023 0.016 0.020 "
               "0.030 0.026; 2 to 6 times the GPS-only epoch time depending on the load" },
@@ -512,27 +512,27 @@ namespace GnssProcessor {
                                                       "C5Q", "C5X", "L5Q", "L5X" },
               Tier::SCOPED, false, "processing.signal_priorities.Galileo",
               "E1 / E5a in both code families (pilot C/Q first, combined X second), E5b left "
-              "out: the dual-frequency pair the Galileo package was graded on (card GAL2)" },
+              "out: the dual-frequency pair the Galileo package was graded on" },
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
                   && gps_gal_only,
               clock_disc_isb_reinflate_std_ >= 9.99,
               Tier::SCOPED, false, "estimation.clock_disc_isb_reinflate_std",
               "re-inflate the consumer's Galileo inter-system bias to 10 m on a consumed clock "
               "datum discontinuity: without it the first GPS + Galileo sim consumer diverged "
-              "to 2.44 m in hour 6 (card GAL); inert without Galileo" },
+              "to 2.44 m in hour 6; inert without Galileo" },
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && !r.tri && r.n_sys >= 2
                   && gps_gal_only,
               model_corrections_.enable_receiver_cross_system_atx_fallback,
               Tier::SCOPED, false, "model_corrections.enable_receiver_cross_system_atx_fallback",
               "a receiver antenna without Galileo PCO / PCV takes its nearest GPS band (E1 -> "
               "G01, E5a -> G05) instead of dropping the station's Galileo: 6 field stations "
-              "(card GAL2); never applied to a satellite antenna" },
+              "; never applied to a satellite antenna" },
             { true,
               network_exclude_unmodeled_antenna_stations_,
               Tier::SCOPED, false, "network.exclude_unmodeled_antenna_stations",
               "backstop: an unmodelled receiver PCO/PCV is a systematic in every obs feeding the "
               "shared clocks and biases" },
-            // --- Roster coordinates held at the monument (card UPO).  A roster station's
+            // --- Roster coordinates held at the monument.  A roster station's
             //     configured coordinate is its ITRF2020 monument coordinate while the
             //     observations refer to the antenna, so 48 of the 59 field stations sit below
             //     their antennas by the header eccentricity.  The station's own zenith wet
@@ -573,7 +573,7 @@ namespace GnssProcessor {
               Tier::SCOPED, false, "network.raim_within_epoch",
               "the ONLY tier that acts BEFORE emit (adapt-and-EMIT); also the only source of the "
               "sigma0_adapt column" },
-            // --- The completed gross line-of-sight screen (cards GL / RF-3).  It is the only
+            // --- The completed gross line-of-sight screen.  It is the only
             //     acting code-row tier the producer has: every post-fit RAIM pool admits
             //     carried-ambiguity phase rows, so a code-only gross error on one line of
             //     sight is invisible to RAIM's consensus, and on the float vehicle those rows
@@ -599,7 +599,7 @@ namespace GnssProcessor {
               "10 m at full weight 100 -> 32, census 13 of 16 sites better on hours 4 to 6 with "
               "none worse, WTZZ00DEU within 0.003 m, clock wire 0.0045 -> 0.0041 m; the hold "
               "(gross_los_bound) FALSIFIED, the station tier OFF" },
-            // (card ICF response 1, armed 2026-10-09 at the author's ruling) The screen's
+            // (armed 2026-10-09 at the author's ruling) The screen's
             // cold-start bound: inside the maturity horizon a line of sight whose post-fit
             // code residual exceeds the bound is declared at once and reconnects on a fresh
             // ambiguity.  Regime: the screen itself.
@@ -626,7 +626,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.emit_generation_id",
               "a restored non-zero id SUPPRESSES the first-emit mint, so a producer restart does "
               "not hard-reset every consumer" },
-            // --- The emit-side phase-bias hold (card PBH).  The emitted phase bias of each
+            // --- The emit-side phase-bias hold.  The emitted phase bias of each
             //     (satellite, signal) is held at the first value of its generation, and a gap
             //     longer than emit_pb_hold_max_gap_s declares a new generation on the wire
             //     (gen= token).  The hold is the last writer of the value and runs one call
@@ -644,7 +644,7 @@ namespace GnssProcessor {
               "a float consumer: 0.0467 m of within-arc RMS on the field against the clock's "
               "0.0274 m, first differences uncorrelated with the clock's): adopted 2026-09-20, "
               "all five PBH-1 bars pass; the solve is untouched" },
-            // --- The phase-clock hold (card LAH, promoted by card EXL with the exact update).
+            // --- The phase-clock hold (promoted with the exact update).
             //     The plain hold freezes each emitted phase bias while the exact update moves
             //     the clock and the phase biases together as the level converges, so the
             //     convergence lands on the consumer's phase rows; this hold transfers each
@@ -664,7 +664,7 @@ namespace GnssProcessor {
               "consumer 3.878 / 2.245 m in hours 1 / 2 under the plain hold, 0.108 / 0.024 m "
               "with this hold); armed with network.carry_coupling_exact_update; interim, "
               "precise a priori clock only; the solve is untouched" },
-            // --- The consumer's answer to a held bias's presence edges (card PBF).  Under the
+            // --- The consumer's answer to a held bias's presence edges.  Under the
             //     hold, a bias that appears on a phase row the consumer already uses, or leaves
             //     it, steps the row by the whole bias; the hold seam claims the key and, without
             //     this knob, the A5 edge is skipped and the Kalman peel is the only response.
@@ -786,7 +786,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.code_datum_time_linked",
               "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
               "wander after each rise/set" },
-            // --- Card GFC's refinements of the time-linked datum above (the Galileo package,
+            // --- The refinements of the time-linked datum above (the Galileo package,
             //     adopted 2026-10-13, ledger A16).  network.code_datum_pair_continuity is
             //     KEEP_OFF (it preserves the birth realizations; pilot-family users worse) and
             //     has no row: this table lists RECOMMEND_* ledger verdicts only.  Both rows
@@ -814,7 +814,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.estimate_sat_code_bias",
               "W6 OSB is a drop-in for the .BIA product (3-sta closed loop 0.508 m vs 0.489 m "
               "3D); grade BIAS-ONLY" },
-            // --- The second code channel (card SCC).  Placed beside the satellite code-bias
+            // --- The second code channel.  Placed beside the satellite code-bias
             //     row above because it is the same product: with one canonical band-1 code
             //     per station, the C1C and C1W satellite families compete for the same 59
             //     stations, so a satellite's column can depend on a single tracker.  Armed, a
@@ -825,8 +825,8 @@ namespace GnssProcessor {
             //     cold-starts every epoch and the loader disarms the knob, and with
             //     channel_mode 'all' the loader refuses it because that mode already widens
             //     every band on the phase side.  The knob is armed although it fails a frozen
-            //     bar of its own card (B1, WTZZ00DEU): the verdict records the author's
-            //     decision and the card keeps the bar as failed.
+            //     bar of its own (B1, WTZZ00DEU): the verdict records the author's
+            //     decision and the bar stays recorded as failed.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && network_carry_rx_code_bias_
                   && channel_mode_ != ChannelMode::All,
@@ -849,8 +849,8 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.phase_datum_prioritized",
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
-            // --- The ambiguity vehicle (cards RF-1 / RF-2b / RF-0hv; ledger row added with
-            //     the golden re-base, card GRB).  float_kf carries each (station, satellite,
+            // --- The ambiguity vehicle (ledger row added with
+            //     the golden re-base).  float_kf carries each (station, satellite,
             //     signal) ambiguity as a float state with covariance in the station block
             //     instead of a zero-q scalar level, and the held S-basis freezes the phase
             //     datum's basis value with every handover declared.  The pair is the
@@ -874,7 +874,7 @@ namespace GnssProcessor {
               "ONLY, so the carry folds in the RETIRED frame and the clock absorbs it (1e10:1). "
               "24-sta/1h/GPS sim: clock episodes 7 -> 1, sum|dev| 160.5 -> 1.5 m, datum-free C "
               "contrast 18.66 -> 0.50 m. n=1, field arm OWED; eq34 owns eq34_reref instead" },
-            // --- The drop edge of the phase_datum_min_stations coverage gate (card EV7).
+            // --- The drop edge of the phase_datum_min_stations coverage gate.
             //     The gate assumes a gated-out key costs nothing because the surviving
             //     station's float ambiguity absorbs the removed bias.  On the float vehicle
             //     that ambiguity is a carried state at a centimetre prior: it absorbs the
@@ -973,7 +973,7 @@ namespace GnssProcessor {
               "the settled window — set >= 1e-2 (a working value, not a promotion)" },
             // Resume frame and coupling-regressor restore (SPEC_synthetic_minimum_network
             // §18.10–§18.14).  On a warm resume, restore the phase-anchor incumbents and sticky
-            // targets, the Q3 per-satellite anchor state, the CLK-R held frame, the Card-1
+            // targets, the Q3 per-satellite anchor state, the CLK-R held frame, the coupling
             // regression of every restored leveling row, and the dense D2 border covariance
             // (QK/QP), so the first warm fold is conditional and dense.  Leg E: consumer h12
             // 0.62 m rms (p50 0.10) against 2.05 with the frame and regressors alone, and 0.52
@@ -1076,13 +1076,13 @@ namespace GnssProcessor {
               "readmit seeds cover the code-bias columns too (default true): the clock-only variant "
               "is FALSIFIED — the IF-pair code-bias seeds anchor the clock-vs-code-bias split at the "
               "return, without them the T3 clock tails come back (runs/readmit24h_e2clk)" },
-            // Coupling reinit sources (cards 1f/1g).  Meaningful only where the Card-1
+            // Coupling reinit sources.  Meaningful only where the
             // coupling rows exist: the conditional carry armed and not superseded by the
-            // Card-4 invariant carry (under carry_invariant the whole coupling trio is
+            // invariant carry (under carry_invariant the whole coupling trio is
             // structurally inert).  This row and the carry_coupling_gauge_project row in the
             // ON table are both fingerprinted.  Feed interlock: without eq34 or the
             // prioritized phase-anchor carry re-reference there is no realization-step source,
-            // and the card is inert (measured).
+            // and the knob is inert (measured).
             { network_carry_conditional_coupling_ && !network_carry_invariant_
                   && (network_phase_datum_eq34_ || network_phase_anchor_carry_reref_),
               network_carry_coupling_reinit_sources_,

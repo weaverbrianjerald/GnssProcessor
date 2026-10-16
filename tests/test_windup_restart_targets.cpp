@@ -1,6 +1,6 @@
 /**
  * @file test_windup_restart_targets.cpp
- * @brief Card WUP: @c networkWindupRestartTargets, the arcs a wind-up accumulator
+ * @brief @c networkWindupRestartTargets, the arcs a wind-up accumulator
  *        restart steps (docs/refound/WUP_windup_accumulated_promotion_2026-10-01.md).
  *
  * ## Why this exists
@@ -15,7 +15,7 @@
  * the synthesised key the inject reads.
  *
  * The drain itself needs a model whose wind-up ledger holds a restart, so it is
- * graded end to end on the field arm's run-end counters (card WUP section 4); this
+ * graded end to end on the field arm's run-end counters; this
  * file pins the decision it was missing.
  */
 
@@ -78,7 +78,7 @@ std::vector<std::pair<std::string, std::string>> keys(std::initializer_list<cons
     return out;
 }
 
-// The arc kept its columns: they are the target, as before the card, and the carry
+// The arc kept its columns: they are the target, as before the change, and the carry
 // is not consulted even when it holds entries.
 TEST(WindupRestartTargets, LiveColumnsAreTheTargetWhenPresent) {
     Harness h;
@@ -139,7 +139,7 @@ TEST(WindupRestartTargets, OtherStationsAndSatellitesAreNotTargets) {
     EXPECT_TRUE(via);
 }
 
-// Card NOM step N3b: with the arc ledger given, the ledger rules on each carried arc.
+// With the arc ledger given, the ledger rules on each carried arc.
 // An admitted arc that is dead is not a target; a carried arc the ledger holds no
 // admission for (one admitted before a warm resume, which restores the carry and not
 // the ledger) is named by the carry and counted as the site's fallback.

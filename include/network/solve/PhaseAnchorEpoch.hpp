@@ -2,8 +2,8 @@
 /**
  * @file PhaseAnchorEpoch.hpp
  * @brief The phase datum of one network epoch: the shared phase-bias set, the station that
- *        anchors each (sat,signal), and the eq34 receiver phase-bias allocation (card NOM3
- *        step EP2).
+ *        anchors each (sat,signal), and the eq34 receiver phase-bias allocation
+ *        (a stage of the per-epoch spine).
  *
  * The bodies are the frozen driver text (main 7141240), moved by scripts/nom_ep2_cut.py and
  * checked by scripts/nom_ep2_verify.py.  The algorithms they call are elsewhere: the candidate
@@ -42,7 +42,7 @@ struct EpochPassA;
 void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a, EpochEvents& events);
 
 /**
- * @brief The eq34 receiver phase-bias allocation (card 3, rule D3c).
+ * @brief The eq34 receiver phase-bias allocation (rule D3c).
  *
  * A present station carries the per-(receiver,system,signal) split state if and only if it
  * carries an ungated shared phase-bias column on that signal; the set is re-derived each epoch

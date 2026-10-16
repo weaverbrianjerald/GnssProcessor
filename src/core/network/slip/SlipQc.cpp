@@ -344,7 +344,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
     // is refloated like any other station.
     if (config_.networkCycleSlipMwDetect()) {
         // Matched (a detection landed on a live ambiguity) and refloated (the warm
-        // carry was reset) are recorded separately (Card E).  A cold run matches,
+        // carry was reset) are recorded separately.  A cold run matches,
         // and feeds the C3c funnel, without refloating; the separate flag lets it
         // still report its MW/LLI events, with action "diagnostic" (limitation L3).
         struct SignalAction { bool matched{false}; bool refloated{false};
@@ -390,7 +390,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                         }
                     }
                     // Feed the DD invariant carry from epoch 1, independent of the
-                    // legacy carry's warm gate (Card 4 C3c).  The DD carry is live
+                    // legacy carry's warm gate (C3c).  The DD carry is live
                     // throughout, and pending-reseed cannot serve it: the PASS-B
                     // MeasurementModel consumes and clears the mark before the fold.
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
@@ -419,7 +419,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             }
             return act;
         };
-        // The LLI qualification (Card L) is armed only when the toggle is on and
+        // The LLI qualification is armed only when the toggle is on and
         // this epoch has raw evidence.  Without evidence an LLI stays decisive: a
         // gate that fires on missing data would do more harm than the LLI chatter
         // it is meant to filter.
@@ -711,7 +711,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 !lli_qual || (i < static_cast<int>(raw.lli_credible.size())
                               && raw.lli_credible[static_cast<std::size_t>(i)] != 0);
             for (const auto& obs : modeled[i]) {
-                // The LLI qualification (Card L) is a per-(station, satellite)
+                // The LLI qualification is a per-(station, satellite)
                 // decision, so first establish whether this satellite asserts LLI.
                 bool asserts = false;
                 for (const auto& [code, lli] : obs.lli_flags)
@@ -786,7 +786,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
 
                 if (datum_active && i == 0) {
                     // Datum station: a qualified LLI assertion takes the network
-                    // re-reference path.  The Card-L suppression above applies here
+                    // re-reference path.  The LLI-corroboration suppression above applies here
                     // too, so a chattering pivot receiver cannot re-reference the
                     // network repeatedly.
                     datum_slip_detect(obs.satellite,
@@ -909,7 +909,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
     //  4. A flagged arc has its detector gradient reset (a fresh arc next epoch,
     //     whatever the carry state); under if_phase_td_reseed_on_flag the gradient is
     //     kept instead as the next epoch's origin, so that epoch is still evaluated
-    //     (card ARL).  When the carry is warm, both band
+    //.  When the carry is warm, both band
     //     ambiguities are marked pending-reseed so PASS B refloats them (less any
     //     band the band scope or the common-band scope keeps).  Clean survivors
     //     then update the station-pair EWMA; slips are excluded, so the scale does
@@ -939,7 +939,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
         const bool iftd_all_pairs =
             config_.networkCycleSlipIfPhaseTdPairs() == NetworkIfPhaseTdPairs::All;
 
-        // Post-flag re-seed (card ARL, slip-ladder defect 2): a flag keeps the
+        // Post-flag re-seed (slip-ladder defect 2): a flag keeps the
         // satellite's flag-epoch gradient instead of restarting its chain, so the next
         // epoch has a double difference (see step 4 below).
         const bool reseed_on_flag =
@@ -1008,7 +1008,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                             continue;
                         }
                     }
-                    // Feed the DD carry from epoch 1 (Card 4 C3c; see refloat_signal).
+                    // Feed the DD carry from epoch 1 (C3c; see refloat_signal).
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     if (carry_warm) {
                         pact.freed = true;
@@ -1173,7 +1173,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     // (invariant #4).
                     IfTdPairTally* tally = pair_tally ? &(*pair_tally)[pair] : nullptr;
                     if (tally) { ++tally->evaluated; if (flagged) ++tally->flagged; }
-                    // The evaluation a re-seed restored (card ARL); never set with
+                    // The evaluation a re-seed restored; never set with
                     // the re-seed off.
                     if (tally && sp->after_reseed) {
                         ++tally->post_flag_evaluated;
@@ -1186,7 +1186,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                         // on another's flag, which the per-pair-kind pools exist
                         // to prevent.  Under `first` there is one chain per system
                         // and the two calls do the same thing.  Under the re-seed
-                        // (card ARL) the chain keeps the flag epoch's gradient
+                        // the chain keeps the flag epoch's gradient
                         // instead, with the same scoping, so the next epoch is
                         // evaluated rather than left blind.
                         IfPhaseSlipDetector& det = *stations[sp->sta].if_slip;
@@ -1225,7 +1225,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                   // pre-knob text.
                                   + (pact.cb_kept.empty() ? std::string{}
                                        : ";cb_kept=" + pact.cb_kept)
-                                  // A flag in the epoch after a re-seed (card ARL):
+                                  // A flag in the epoch after a re-seed:
                                   // a slip repeated there.  Absent with the re-seed
                                   // off, so those rows keep the pre-knob text.
                                   + (sp->after_reseed ? std::string{";post_flag"}
@@ -1451,7 +1451,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
             const std::string sig = net::signalKey(it->first.signal);
             targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
         }
-        // The arc identity from the arc ledger (card NOM step N3b): of the carry entries
+        // The arc identity from the arc ledger: of the carry entries
         // inside the horizon (the arcs with a value), in signal order, the ledger keeps
         // its admitted records that are not dead.  Where the ledger holds no admission
         // for a carried arc, the arc's admission predates the ledger (a warm resume
@@ -1549,7 +1549,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // usually left the model set: its ambiguity column was pruned with the
             // gap, and PASS B's pre-pass re-creates it only after this drain.  A walk
             // of the live ambiguity map alone then matches nothing while the PASS-B
-            // inject folds the leveling carry across the step (card WUP section 1:
+            // inject folds the leveling carry across the step (
             // on the 6 h field arm all 28 restarts inside the carry horizon matched
             // no live column).  The live columns stay the target when the arc kept
             // them; otherwise the target is the (station, satellite)'s leveling carry
@@ -1589,7 +1589,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                     }
                 }
                 // The DD invariant carry owns its own funnel and is live from
-                // epoch 1 (Card 4 C3c; see refloat_signal).
+                // epoch 1 (C3c; see refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                 if (carry_warm) {
                     orc_freed = true;
@@ -1635,7 +1635,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                 // that never reached the carry, or one the band scope kept whole).
                 // Counted apart from the responses, so a run whose restarts all
                 // land here reads as unanswered rather than answered (invariant
-                // #4; card WUP section 1).
+                // #4).
                 ++qc_cnt.wu_restart_no_arc;
             }
             traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
@@ -1697,7 +1697,7 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                 if (!d.coversSignal(parts->signal)) continue;   // band scope
                 ++matched;
                 // The DD invariant carry owns its own funnel and is live from
-                // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
+                // epoch 1 (C3c; the same contract as refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({ i, amb_key });
                 if (carry_warm) {
                     sm.markAmbiguityPendingReseed(amb_key);
@@ -1794,8 +1794,8 @@ struct GapArcOutcome {
 /**
  * @brief Free one (station, satellite, signal) arc at a gap re-entry.
  *
- * The response body shared by the row-level tier (Card G) and the per-signal
- * rider (Card GRS): both answer the same question about the same carry, and a
+ * The response body shared by the row-level tier and the per-signal
+ * rider: both answer the same question about the same carry, and a
  * single copy keeps the two tiers from drifting apart.  Counters land in @p led
  * so each tier keeps its own closed partition; the caller emits the event,
  * because only it knows the tier's identity fields.
@@ -1804,7 +1804,7 @@ struct GapArcOutcome {
  * @param satellite          Satellite id.
  * @param sig                The one signal this call responds on (band-scoped).
  * @param sm                 That station's state manager, mutated (pending-reseed mark).
- * @param carry_invariant    The Card-4 DD invariant carry vehicle is armed.
+ * @param carry_invariant    The DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
  * @param arcs        The leveling carry (the arc table), read-only; it answers "is
@@ -1819,12 +1819,12 @@ struct GapArcOutcome {
  * @param relevel            Free-epoch latch, or nullptr when relevel_free_epoch is off.
  * @param present_sigs       The phase signals of this (station, satellite) that
  *                           are present this epoch with a matching code, used
- *                           only to qualify @c gap_reentry_unreachable (Card
- *                           GRK).  Null (the default) keeps the broader count,
+ *                           only to qualify @c gap_reentry_unreachable.
+ *                           Null (the default) keeps the broader count,
  *                           which is what a posture without the per-signal list
  *                           can state.
  * @param count_unreachable  Whether this call may feed @c gap_reentry_unreachable
- *                           at all (Card GRK).  True only from the row-level
+ *                           at all.  True only from the row-level
  *                           tier, whose key is the tracker's band signal and can
  *                           therefore differ from the carried one.  The
  *                           per-signal tier passes false: there the returning
@@ -1852,7 +1852,7 @@ GapArcOutcome gapReentryRespondArc(
     // model set, so its ambiguity column was pruned with the gap, and PASS B's
     // measurement pre-pass (MeasurementModel::ensureRequiredStates) re-creates
     // it only after this drain, so a walk would match and free nothing.  This is
-    // the key format the PASS-B inject site reads and the one the Card-G arc
+    // the key format the PASS-B inject site reads and the one the gap-reentry arc
     // classification synthesizes, so a freed arc reads `shifted_fresh` there by
     // construction.
     const std::string amb_key = StateKeys::makeAmbiguityKey(satellite, sig);
@@ -1860,7 +1860,7 @@ GapArcOutcome gapReentryRespondArc(
     // "Is there anything to protect?" is a question about the carry.  A
     // LocalCarry entry still inside the max-gap window is what the PASS-B
     // inject would fold across the break.  This is the `pl_bridged` predicate
-    // the Card-G classification applies, so the instrument and the response
+    // the gap-reentry classification applies, so the instrument and the response
     // agree on the population.
     {
         const auto cit = net::getArc(arcs, std::make_tuple(i, satellite, sig), &net::ArcState::amb);
@@ -1880,7 +1880,7 @@ GapArcOutcome gapReentryRespondArc(
     // (gap_shifted_bridged / _fresh) can, from the driver.
     if (!(out.pl_bridged || carry_invariant)) {
         ++led.no_carry;
-        // Why there was no carry under this key (Card GRK).  A LocalCarry entry
+        // Why there was no carry under this key.  A LocalCarry entry
         // for the same (station, satellite) on another signal of the same band,
         // still inside the max-gap window, is what the PASS-B inject will fold
         // across this break, and this response cannot reach it: the tracker
@@ -1936,7 +1936,7 @@ GapArcOutcome gapReentryRespondArc(
     if (!out.state_live) ++led.state_absent;
 
     // The DD invariant carry owns its own funnel and is live from
-    // epoch 1 (Card 4 C3c; the same contract as refloat_signal).
+    // epoch 1 (C3c; the same contract as refloat_signal).
     if (carry_invariant) {
         carry_slipped_ambs.insert({i, amb_key});
         ++led.dd_marked;
@@ -1980,7 +1980,7 @@ GapArcOutcome gapReentryRespondArc(
     return out;
 }
 
-/// This epoch's raw row for (station @p i, @p satellite), or null (Card GRK).
+/// This epoch's raw row for (station @p i, @p satellite), or null.
 ///
 /// The row carries the per-signal list that @c gap_reentry_unreachable qualifies
 /// on.  A linear scan suffices: a station's row vector holds one entry per
@@ -1994,7 +1994,7 @@ const RawSlipObs* gapReentryFindRow(const RawSlipEpoch& raw, int i,
 }
 
 /// The phase signals of @p row that are present with a matching code, or an
-/// empty set when the row carries no per-signal list (the Card GRS tier
+/// empty set when the row carries no per-signal list (the per-signal tier
 /// unarmed).  An empty set is passed to the responder as a null pointer, which
 /// keeps the broader unreachable count instead of reporting a zero.
 std::set<std::string> gapReentryPresentSignals(const RawSlipObs* row) {
@@ -2020,12 +2020,12 @@ void gapReentryVoidPends(int i, const std::string& satellite,
 }
 
 // ---------------------------------------------------------------------------
-// Shared lookup helpers (Card SID phase 3)
+// Shared lookup helpers
 // ---------------------------------------------------------------------------
 
 /// Record one arc's response outcome for the unified census (R4).  Null sink ⇒
 /// no roster was set up (a context no network run built, such as a unit test's;
-/// every network run builds it since card NOM step N3a) and nothing is recorded.
+/// every network run builds it) and nothing is recorded.
 void sidRecordOutcome(ArcReentryOutcomeMap* sink, int i, const std::string& sat,
                       const std::string& sig, ArcReentryOutcome o) {
     if (sink == nullptr) return;
@@ -2252,7 +2252,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 ArcReentryOutcomeMap* sid_out,
                                 ArcLedger* arc_ledger) {
     if (!qc.gap_reentry) return;
-    // With the ledger armed (Card SID phase 3), the population is the ledger's and
+    // With the ledger armed, the population is the ledger's and
     // the raw list is only the verdict source, so an epoch with no raw resumption
     // still has work.
     const bool ledger_driven = (sid != nullptr && sid->armed);
@@ -2260,7 +2260,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     int n_resp = 0;
     std::string detail_log;
     // This tier's counters are accumulated here and folded into the historical
-    // flat fields at the end (the run-end Card-G line and the unit suite name
+    // flat fields at the end (the run-end gap-reentry line and the unit suite name
     // them individually); the shared responder speaks the ledger shape.
     GapReentryLedger led;
     // The resumption list is built station-ordered by the qualify pass, and this
@@ -2306,7 +2306,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
         const GapCause primary = g.shifted ? GapCause::Shifted
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
-        // With the ledger armed (Card SID phase 3), this tier's detections,
+        // With the ledger armed, this tier's detections,
         // verdicts and traces are everything above, unchanged so an A/B can still
         // read what the raw tier saw, and the response moves to the ledger loop
         // below.
@@ -2314,13 +2314,13 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
         // The signals this (station, satellite) tracks this epoch, which qualify
-        // the unreachable count (Card GRK).  Built once per resumption and shared
+        // the unreachable count.  Built once per resumption and shared
         // by both bands.
         const std::set<std::string> present_sigs =
             gapReentryPresentSignals(gapReentryFindRow(raw, i, g.satellite));
         const std::set<std::string>* present_ptr =
             present_sigs.empty() ? nullptr : &present_sigs;
-        // --- Extra channels of the same two bands (Card SID phase 6b, R3) --------
+        // --- Extra channels of the same two bands (R3) --------
         // This tier keys on the satellite and frees the tracker's one phase per band.
         // That is the whole modelled set on a one-channel-per-band posture, but not
         // under `processing.channel_mode: all`: there the station also carries every
@@ -2371,7 +2371,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             // an identity, not only a count).  `statistic` is the raw ΔMW in
             // metres when the break was measurable and blank otherwise: a 0.0
             // would read as "the level did not move", an absence-of-evidence
-            // claim that Card G is designed not to make.
+            // claim that the gap classifier is designed not to make.
             traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite,
                              stations[static_cast<std::size_t>(i)].name,
                              g.measurable ? std::optional<double>(g.d_mw) : std::nullopt,
@@ -2404,7 +2404,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     }
 
     // ----------------------------------------------------------------------
-    // The response over the ledger's admitted population (Card SID phase 3)
+    // The response over the ledger's admitted population
     // ----------------------------------------------------------------------
     //
     // This loop owns the census of the whole population, including the arcs it
@@ -2469,7 +2469,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 if (v.shared) ++qc_cnt.ledger_reentry_v_shared;
             } else {
                 ++qc_cnt.ledger_reentry_no_verdict;
-                // Attribute the no-verdict return (Card SID phase 4a, S1).  This
+                // Attribute the no-verdict return.  This
                 // population is a screen-side decoupling: the modelled row of a
                 // signal disappears while `raw_observed` keeps it and the satellite
                 // stays modelled, so neither raw tier sees a break.  The reason mask
@@ -2580,7 +2580,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
     }
     // Fold this tier's ledger into the historical flat fields.  They are the
-    // names the run-end Card-G line and the unit suite read, so the ledger is
+    // names the run-end gap-reentry line and the unit suite read, so the ledger is
     // an internal shape only: no counter changes meaning here.
     qc_cnt.gap_reentry_verdicts      += led.verdicts;
     qc_cnt.gap_reentry_pivot_skipped += led.pivot_skipped;
@@ -2607,7 +2607,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
 }
 
 // ---------------------------------------------------------------------------
-// Per-signal gap re-entry response (Card GRS)
+// Per-signal gap re-entry response
 // ---------------------------------------------------------------------------
 void networkSlipDrainGapReentryPerSignal(
     std::vector<NetStation>& stations, const std::vector<bool>& present,
@@ -2622,8 +2622,8 @@ void networkSlipDrainGapReentryPerSignal(
     const ArcReentryEpoch* sid, ArcReentryOutcomeMap* sid_out) {
     if (!qc.gap_reentry || !qc.gap_reentry_per_signal) return;
     if (raw.sig_resumptions.empty()) return;
-    // The decoupling-edge trace below is the same in both ledger states (Card SID
-    // phase 3).  With the ledger armed, the response runs over the ledger arcs
+    // The decoupling-edge trace below is the same in both ledger states.
+    // With the ledger armed, the response runs over the ledger arcs
     // that carry one of this tier's verdicts, and the row-level drain owns the
     // census.
     const bool ledger_driven = (sid != nullptr && sid->armed);
@@ -2716,8 +2716,8 @@ void networkSlipDrainGapReentryPerSignal(
             if (share != nullptr) ++sh.skipped;
             continue;
         }
-        // With the ledger armed, the population is the ledger's (Card SID phase
-        // 3).  A raw per-signal resumption whose arc is not in the admitted
+        // With the ledger armed, the population is the ledger's.
+        // A raw per-signal resumption whose arc is not in the admitted
         // population (the estimator never lost the row, or the gap outran the
         // carry horizon) is still detected, given a verdict and traced, but gets
         // no response.  A shared verdict is a verdict here too.
@@ -2762,7 +2762,7 @@ void networkSlipDrainGapReentryPerSignal(
         // valid, and freeing them would add the response cost that
         // SPEC_lane_slip_response measures (the slip cost of a whole-satellite
         // refloat is 100 % response-inflicted).
-        // This tier does not feed gap_reentry_unreachable (Card GRK).  Its key is
+        // This tier does not feed gap_reentry_unreachable.  Its key is
         // the returning signal, so the tracker and the carry cannot disagree
         // about which signal names the band; a return on a signal the station
         // does not model correctly finds no carry, and the modelled same-band
@@ -2848,9 +2848,9 @@ void networkSlipDrainGapReentryPerSignal(
                   detail_log);
 }
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/slip/SlipQc.hpp.
+// Setup builder; documented at its declaration in network/slip/SlipQc.hpp.
 void networkSlipQcConfigure(NetworkRun& run) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     const GnssConfig& config_ = run.config;
     const NetworkConfig& nc = run.nc;
@@ -2878,11 +2878,11 @@ void networkSlipQcConfigure(NetworkRun& run) {
     // The gap re-entry response consumes the same GapResumption records as
     // the instrument, so it arms the resumption collection on its own: the
     // response works without the diagnostic armed, and turning the diagnostic
-    // off does not disarm it (card G, §G3/W1).
+    // off does not disarm it (§G3/W1).
     sp.gap_reentry             = sq.gap_reentry;
     sp.gap_reentry_lli         = sq.gap_reentry_lli;
     sp.gap_reentry_unmeasurable = sq.gap_reentry_unmeasurable;
-    // Per-signal rider of the same response (card GRS).  It also arms the
+    // Per-signal rider of the same response.  It also arms the
     // per-signal half of the compute and qualify passes, so a run with it off
     // never builds or reads a per-signal list.
     sp.gap_reentry_per_signal  = sq.gap_reentry_per_signal;
@@ -2893,13 +2893,13 @@ void networkSlipQcConfigure(NetworkRun& run) {
     sp.gap_reentry_coresumed_share = sq.gap_reentry_coresumed_share;
     // The arc-level tracker takes its per-band signal from the model, so the
     // tracker, the carried ambiguity key and the gap re-entry response's
-    // lookup name the same signal.  Read at the compute pass only (card GRK).
+    // lookup name the same signal.  Read at the compute pass only.
     sp.tracker_modeled_first   = sq.tracker_modeled_first;
     // With the ledger re-entry armed, the response's population is the arc
     // ledger's admitted lifecycle, and the raw tiers become the verdict source,
     // looked up per arc.  The loader already refuses the knob without the roster, the roster
     // read and the row-level response, so no interlock is re-tested here.
-    // Unarmed, both drains stay on their raw-driven path (card SID phase 3).
+    // Unarmed, both drains stay on their raw-driven path.
     sp.ledger_reentry          = config_.networkLedgerReentry();
     sp.ledger_reentry_refloat  =
         config_.networkLedgerReentryNoVerdict() == LedgerReentryNoVerdict::Refloat;
@@ -2910,7 +2910,7 @@ void networkSlipQcConfigure(NetworkRun& run) {
     // iono_cs flips cardsArmed(), so census A/B pairs must pin
     // cycle_slip.gap_instrument in both arms.
     sp.iono_cs             = config_.networkLevelAuthorityCsgf();
-    // The arc-scoped GF jump trigger (card ARL) reads the raw rows and keeps its own
+    // The arc-scoped GF jump trigger reads the raw rows and keeps its own
     // per-arc steps, so it arms the compute pass (anyConsumer) and not the qualify
     // pass.
     sp.gf_jump.armed       = sq.gf_arc_jump;
@@ -2921,9 +2921,9 @@ void networkSlipQcConfigure(NetworkRun& run) {
     slip_qc.hist.resize(stations.size());
 }
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/slip/SlipQc.hpp.
+// Setup builder; documented at its declaration in network/slip/SlipQc.hpp.
 void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager_) {
-    // ---- From the run (card NOM3 step EP4; generated by scripts/nom_ep4_cut.py, each line
+    // ---- From the run (generated by scripts/nom_ep4_cut.py, each line
     //      checked by scripts/nom_ep4_verify.py). ----
     NetworkRunTraces& traces = run.traces;
     SlipQcChannel& slip_qc = run.engines.slip_qc;
@@ -2931,7 +2931,7 @@ void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager
     // ---- End of the bindings ----
     // Wavelength provider for the raw-slip path, gated on the streams openAll just
     // opened.  It is built here because it needs log_manager_, which the traces
-    // unit does not hold.  The raw-slip provider serves three consumers (the trace, card L and card G) and is built when any
+    // unit does not hold.  The raw-slip provider serves three consumers (the trace, the LLI qualification and the gap classifier) and is built when any
     // of them is armed, per spec §1: "compute once per epoch when any consumer
     // needs it".  With none armed it stays null and the raw-observable path is
     // skipped.

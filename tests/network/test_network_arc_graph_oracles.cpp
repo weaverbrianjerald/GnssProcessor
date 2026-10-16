@@ -1,4 +1,4 @@
-// Frozen oracles for filter/NetworkArcGraph (card AGT, AGT-1 to AGT-4): suite NetworkArcGraphOracle.
+// Frozen oracles for filter/NetworkArcGraph (AGT-1 to AGT-4): suite NetworkArcGraphOracle.
 //
 // The module replaces five pieces of legacy graph code.  Before any caller moves (AGT-2 to
 // AGT-4), each replacement is proven decision-identical against a frozen verbatim copy of the
@@ -11,7 +11,7 @@
 //     the incumbent seed 303-349);
 //   - the ARL Prim, ProducerAr.cpp 386 to 478 (the ar_pool loop head and the tree_basis
 //     branch) with the DDrow struct 379 to 385, ArRec 323 and reqOf 362 to 370;
-//   - the Card-4 driver's UnionFind (InvariantCarryDriver.cpp 73 to 90) and its pair-group
+//   - the invariant-carry driver's UnionFind (InvariantCarryDriver.cpp 73 to 90) and its pair-group
 //     tree completion (674 to 689);
 //   - added at AGT-3, when those owners move onto the shared Dsu: the datum-graph census's
 //     union-by-size UnionFind and its component reduction (DatumGraph.cpp 54 to 85 and
@@ -84,7 +84,7 @@ namespace {
 using namespace arcgraph;
 
 // =====================================================================================
-// The Card-4 driver's union-find and pair completion (frozen).
+// The invariant-carry driver's union-find and pair completion (frozen).
 // =====================================================================================
 
 // ---- BEGIN FROZEN src/core/filter/NetworkInvariantCarryDriver.cpp lines 73-90 @ b5592b6 (verbatim) ----
@@ -1567,7 +1567,7 @@ PrimCase randomPrimCase(std::mt19937& rng, int it) {
 TEST(NetworkArcGraphOracle, GrowBaselineForestThenParentOnlyReproducesTheFrozenPrim) {
     std::mt19937 rng(17u);
     const ArcFamily family{System::GPS, {*SignalId::fromObsCode(System::GPS, "L1C")}};
-    ForestRules legacy;   // card ARL tree_basis: min_common 2, stop at the gap, first common, no incumbent
+    ForestRules legacy;   // tree_basis: min_common 2, stop at the gap, first common, no incumbent
     legacy.band_mask   = 1;
     legacy.min_common  = 2;
     legacy.stop_at_gap = true;
@@ -2067,10 +2067,10 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 // components and spanning forest now come from the module, against the whole frozen function.
 // =====================================================================================
 
-/// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
+/// The receiver phase-bias carry and the receiver-side eq34 parents moved
 /// from NetworkCarryState into the station table (network/state/Entities.hpp).  The frozen body
 /// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
-/// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
+/// at exit, and around the one walker call that reads the tables.  A later step moved the
 /// eq34 datum receivers into the constellation table's channels, and N4c the eq34 arc elevations
 /// into the line-of-sight table; the shim carries their maps too.
 struct FrozenStationMaps {
@@ -2143,7 +2143,7 @@ struct FrozenStationMaps {
 };
 
 // The frozen election compiles against the real run context: nothing in it is stood in but the
-// station maps of FrozenStationMaps (card NOM step N4a).
+// station maps of FrozenStationMaps.
 namespace frozen_eq34 {
 // ---- BEGIN FROZEN src/core/filter/NetworkChainDatum.cpp lines 99-1057 @ b5592b6 (verbatim) ----
 void networkElectChainDatum(NetworkRunContext& ctx,
@@ -2158,22 +2158,22 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
 auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
-FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
-auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
-auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
+FrozenStationMaps station_maps(ctx);   // shim, not in the frozen source
+auto& anchor_incumbent = station_maps.anchor_incumbent;   // shim
+auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
-auto& eq34_sat_root = station_maps.eq34_sat_root;   // card NOM step N4e2 shim
-auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
+auto& eq34_sat_root = station_maps.eq34_sat_root;   // shim
+auto& eq34_prev_el = station_maps.eq34_prev_el;   // shim
 auto& eq34_reref_total = ctx.counters.eq34_reref_total;
 auto& eq34_erase_total = ctx.counters.eq34_erase_total;
 auto& eq34_shift_total = ctx.counters.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
-auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
-auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
+auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // shim
+auto& eq34_prev_target = station_maps.eq34_prev_target;   // shim
 auto& eq34_reref = events.phase_datum.eq34_reref;
-auto& local_carry = station_maps.local_carry;   // card NOM step N4f1 shim
+auto& local_carry = station_maps.local_carry;   // shim
 auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
@@ -2998,10 +2998,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        station_maps.store();   // card NOM step N4a shim, not in the frozen source
+        station_maps.store();   // shim, not in the frozen source
         eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
-        station_maps.load();    // card NOM step N4a shim
+        station_maps.load();    // shim
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
@@ -3402,7 +3402,7 @@ std::string chainElectionDiff(const NetworkRunContext& f, const NetworkRunContex
 }
 
 /// The arcs of this epoch's chain graphs that are slipped: the new eq34_slip_demoted per epoch under
-/// the longevity and slip-aware elections (card AGT section 5).
+/// the longevity and slip-aware elections.
 long long slippedGraphArcs(const ChainEpoch& e) {
     long long n = 0;
     for (std::size_t i = 0; i < e.present.size(); ++i) {
@@ -3492,7 +3492,7 @@ TEST(NetworkArcGraphOracle, ChainElectionOnTheModuleEqualsTheFrozenElection) {
             networkElectChainDatum(ctx_l, *cfg, quiet, st_l, e.present, e.cnd, e.hyg, e.slipped, sh_l, ev_l);
             ASSERT_EQ(chainElectionDiff(ctx_f, ctx_l, ev_f, ev_l, st_f, st_l, sh_f, sh_l), "")
                 << "lineage " << lineage << " epoch " << ep;
-            // The declared move (card AGT section 5): one count per slipped graph arc and epoch.
+            // The declared move: one count per slipped graph arc and epoch.
             const long long want_demoted = (kn.longevity && kn.slip_aware) ? slippedGraphArcs(e) : 0;
             ASSERT_EQ(ctx_l.counters.eq34_slip_demoted - demoted_l, want_demoted) << "lineage " << lineage << " epoch " << ep;
             n_frozen_demoted += ctx_f.counters.eq34_slip_demoted - demoted_f;

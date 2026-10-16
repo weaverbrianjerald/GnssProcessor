@@ -1,6 +1,6 @@
 /**
  * @file test_network_ar_suspect.cpp
- * @brief Unit tests of the producer AR search's suspect-corner mask (card ARL, slip-ladder
+ * @brief Unit tests of the producer AR search's suspect-corner mask (slip-ladder
  *        defect 3; include/network/ar/ArSuspect.hpp).
  *
  * Five suites:

@@ -1,4 +1,4 @@
-// Tests for the per-station local-block audit (card ZP, SPEC_event_harness §24.10).
+// Tests for the per-station local-block audit (SPEC_event_harness §24.10).
 //
 // §24.9 of SPEC_event_harness describes a station whose own post-fit code residuals
 // are 0.3-0.55 m while its reconstructed ZWD reads -18 +/- 4.5 m and 47 of its 130
@@ -34,7 +34,7 @@
 //                           the column against every other local state, to the
 //                           digit.  The implementation uses the identity
 //                           1/(N^+)_zz; this gate checks it against the
-//                           definition in the card.
+//                           definition in the design.
 //   Gate 5 (span format)  - the span field is a deterministic function of the
 //                           eigenvector, stops at three entries or the 90 % cover
 //                           (whichever comes first), and cannot emit a CSV

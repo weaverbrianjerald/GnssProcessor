@@ -1,6 +1,6 @@
 /**
  * @file test_network_contributions.cpp
- * @brief Card NOM step N2a: the contribution declarations, the row tags and the
+ * @brief The contribution declarations, the row tags and the
  *        "contributions as armed" table of filter/Contributions.hpp.
  *
  * The contracts:
@@ -81,7 +81,7 @@ void setRows(StationAssembly& R, const std::vector<RowTag>& tags, Eigen::Index n
 struct BuilderFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     Eigen::Index clk_col{-1}, pb_col{-1};
 

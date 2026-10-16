@@ -1,7 +1,7 @@
 /**
  * @file test_amb_level_band_scope.cpp
  * @brief Dependency witnesses for the existing and proposed ambiguity-level
- *        observables (card ALC-BAND).
+ *        observables.
  *
  * The band-level formulas below are test-only design probes, not a new monitor.
  * Production WL/IF helpers provide the independently checked existing basis.

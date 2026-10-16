@@ -1,10 +1,10 @@
 /**
  * @file test_network_ar_lattice.cpp
- * @brief Unit gates of the producer AR search's lattice observatory (card AGT, step AGT-6;
+ * @brief Unit gates of the producer AR search's lattice observatory (step AGT-6;
  *        network/ar/ArLattice.hpp).
  *
- * Suite @c NetworkArLattice (the ledger's steps, pure; card AGT step AGT-6 as re-scoped by card
- * FCF step FCF-3, run here with @c persist_ep 1, the observatory's immediate offers):
+ * Suite @c NetworkArLattice (the ledger's steps, pure;
+ * run here with @c persist_ep 1, the observatory's immediate offers):
  *  - the order: an arc released this epoch is eliminated before the epoch's fixes are offered,
  *    so a DD fixed again on it enters as a new row (offered first, it would contradict);
  *  - the attribution: each released arc carries its cause (vanished, first seen, freed, stamp
@@ -14,10 +14,10 @@
  *    still imply the DDs between their satellites; a satellite that vanishes at four stations
  *    costs one dimension per released arc that still holds rows (three), the last arc holding
  *    none;
- *  - a contradiction releases the arcs of its cycle (card FCF; AGT-6 left the lattice
+ *  - a contradiction releases the arcs of its cycle (AGT-6 left the lattice
  *    unchanged) and reports the implied integer;
  *  - the run tallies count stamp fields and free causes on the arc releases that held rows only.
- * Card FCF's release seam (the evidence, the cycle releases, the seam gap, the admission
+ * The fixed-cycle fold's release seam (the evidence, the cycle releases, the seam gap, the admission
  * streak, the re-validation) is suite @c NetworkFixedCycleRelease
  * (tests/network/test_network_fixed_cycle_release.cpp).
  *
@@ -92,7 +92,7 @@ CycleLattice heldLattice(const std::vector<ArFixedCycle>& fixes) {
 int verdictCount(const ArLatticeEpoch& e, LatticeVerdict v) { return e.verdicts[static_cast<std::size_t>(v)]; }
 
 /// One ledger epoch on @p L with no outside evidence and immediate offers (persist_ep 1): the
-/// AGT-6 observatory's step, through card FCF's functions.
+/// AGT-6 observatory's step, through the fixed-cycle fold's functions.
 ArLatticeEpoch stepOf(CycleLattice& L, const ArEpochFixes& fixes) {
     ArLatticeState S;
     S.lattice = L;
@@ -251,7 +251,7 @@ TEST(NetworkArLattice, AContradictionReleasesTheArcsOfItsCycleAndReportsTheImpli
     ASSERT_EQ(e.offers.size(), 2u);
     EXPECT_EQ(e.offers[0].verdict, LatticeVerdict::Contradicted);
     EXPECT_EQ(e.offers[0].implied, 7);
-    // Card FCF: the contradiction released the arcs of the cycle, and with them its row (AGT-6
+    // The contradiction released the arcs of the cycle, and with them its row (AGT-6
     // kept it); the contradicting fix waits for its next epoch; the other fix enters.
     ASSERT_EQ(e.releases.size(), 1u);
     EXPECT_EQ(e.releases[0].cause, ArLatticeRelease::Contradiction);
@@ -386,7 +386,7 @@ TEST(NetworkArLatticeConfig, TheTwoFilesHaveTheirDocumentedColumns) {
         return static_cast<int>(std::count(h.begin(), h.end(), ',')) + 1;
     };
     const std::string epoch = kArLatticeHeader, events = kArLatticeEventsHeader;
-    EXPECT_EQ(columns(epoch), 29);   // AGT-6's 19, then card FCF's 10 (step FCF-3)
+    EXPECT_EQ(columns(epoch), 29);   // AGT-6's 19, then the fixed-cycle fold's 10 (step FCF-3)
     EXPECT_EQ(epoch.rfind("week,tow,rows,arcs,fixes,added,confirmed,contradicted,not_primitive,", 0), 0u);
     EXPECT_NE(epoch.find(",max_len,mean_len,waiting,rel_replay,"), std::string::npos);
     EXPECT_EQ(columns(events), 17);

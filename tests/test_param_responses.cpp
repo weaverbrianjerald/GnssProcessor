@@ -1,6 +1,6 @@
 /**
  * @file test_param_responses.cpp
- * @brief Card PRM phase 3a: the declared responses of the carried instances
+ * @brief The declared responses of the carried instances
  *        (filter/NetworkResponses), the registry's per-event policies built from them, the
  *        free-epoch latch's per-cause tally, and the traversal's per-kind tally of the border
  *        moves (the Stransform responses).
@@ -168,7 +168,7 @@ TEST(ParamResponses, ArmingFollowsTheCodesOwnGates) {
 }
 
 // The goldens' declared posture (the float vehicle with RAIM's attribution, the gross screen,
-// the phase-anchor re-reference, READMIT, card Q3's anchor and the handover S-transform):
+// the phase-anchor re-reference, READMIT, the clock anchor and the handover S-transform):
 // what each kind does on each event, as the inventory of 2026-10-02 read it in the code.
 TEST(ParamResponses, GoldensDeclareTheFloatVehiclesResponses) {
     for (const char* bed : {"field", "sim"}) {
@@ -235,7 +235,7 @@ TEST(ParamResponses, ArmedMechanismsDeclareStransformOnTheKindsTheyMove) {
     EXPECT_FALSE(has(ho(K::RxCodeBias), ResponsePolicy::Stransform));
 }
 
-// Card PRM phase 3b step 2: the one owed station-local value is the gross screen's held
+// The one owed station-local value is the gross screen's held
 // ambiguity (owed by the eq34 shift and the declared anchor handover), whose kind the two
 // mechanisms already declare through the ambiguity value; so network.carry_rebase_complete adds
 // no kind to the declaration today, and the masks are the same with and without it.
@@ -382,7 +382,7 @@ TEST(ParamResponses, SiteCountReadsItsDeclaredSource) {
     EXPECT_EQ(responseSiteCount(C, ResponseSite::PbDeparted), 12);
 }
 
-// Card PRM phase 3b: the GapPrune policy's one implementation erases exactly the entries past
+// The GapPrune policy's one implementation erases exactly the entries past
 // the horizon (a gap equal to the horizon is inside it), calls on_erase once for each while the
 // entry is still in the map, in the map's order, and returns the count.  A NaN horizon prunes
 // nothing (the comparison is false).
@@ -429,7 +429,7 @@ TEST(ParamResponses, CarryGapPruneErasesExactlyTheEntriesPastTheHorizon) {
     EXPECT_EQ(m.size(), 4u);
 }
 
-// Card PRM phase 3b: the goldens' registry declares the ambiguity's gap horizon at 900 s, the
+// The goldens' registry declares the ambiguity's gap horizon at 900 s, the
 // knob snapshot's own double (the prune reads the registry in place of the knob, so the two
 // must be the same double), the receiver code bias at the fixed kRxCbMaxGapS, and no gap
 // horizon for a border kind.

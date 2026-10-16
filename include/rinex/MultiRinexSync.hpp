@@ -118,7 +118,7 @@ namespace GnssProcessor {
         const std::vector<SyncedEpoch>& getSyncedEpochs() const { return synced_; }
 
         /**
-         * @brief Keep only the observations of the active systems (card OWD, O4).
+         * @brief Keep only the observations of the active systems.
          *
          * The network producer's single admission point for constellations.  The RINEX
          * parser keeps every system and the network admits an observation by its signal
@@ -139,7 +139,7 @@ namespace GnssProcessor {
         static std::map<std::string, std::size_t> retainSystems(
             std::vector<SyncedEpoch>& epochs, const std::vector<std::string>& active);
 
-        /// @ref retainSystems applied to this instance's synced epochs (card OWD, O4).
+        /// @ref retainSystems applied to this instance's synced epochs.
         /// @param active The active system names.
         /// @return The number of observations removed per system name.
         std::map<std::string, std::size_t> retainSystems(const std::vector<std::string>& active) {
@@ -147,7 +147,7 @@ namespace GnssProcessor {
         }
 
         /**
-         * @brief Card HLT: remove the observations a predicate selects from synced epochs.
+         * @brief Remove the observations a predicate selects from synced epochs.
          *
          * The second door beside @ref retainSystems, for a rule that depends on the epoch
          * time (the broadcast health in force).  Station keys stay in place, as there.
@@ -160,7 +160,7 @@ namespace GnssProcessor {
             std::vector<SyncedEpoch>& epochs,
             const std::function<bool(const GnssTime&, const RinexObservation&)>& drop);
 
-        /// Card HLT: @ref removeObservationsIf applied to this instance's synced epochs.
+        /// @ref removeObservationsIf applied to this instance's synced epochs.
         /// @param drop Called with the epoch time and each observation; true removes it.
         /// @return The number of observations removed.
         std::size_t removeObservationsIf(

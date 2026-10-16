@@ -1,14 +1,14 @@
 /**
  * @file ParamRegistry.hpp
  * @brief The network producer's parameter registry: one declared property set per
- *        parameter kind (card PRM, docs/refound/PRM_parameter_registry_2026-09-29.md).
+ *        parameter kind (docs/refound/PRM_parameter_registry_2026-09-29.md).
  *
  * The PPP path has a registry (@c StateManager owns the layout, @c StateKeySchema every
  * key format).  The network path had identities without properties: a border parameter
  * is a (kind, satellite, signal) tuple whose process noise, variance floor and carry
  * route were re-derived at every site that needed them, and a site that needed a
  * property it did not decide read a different answer from the one another site applied
- * (card CTU's root: the coupling rows shrank a clock term at one q while the fold
+ * (for example, the coupling rows shrank a clock term at one q while the fold
  * anchored the same clock at another).
  *
  * This header declares the kinds (@ref NetworkParamKind) and one descriptor per kind
@@ -16,7 +16,7 @@
  * (@ref NetworkParamRegistry::build) and held read-only on @c NetworkRunContext.  The
  * registry is read, never written, inside the epoch loop.  Per-instance runtime
  * dispositions (anchored, loose, reinit, departed) stay on the instance, decided by the
- * mechanism that decides them (card PRM section 3, principle 5).
+ * mechanism that decides them (principle 5).
  *
  * Phase 1 scope (byte-identical by construction): the kinds and descriptors, the single
  * process-noise lookup for the border kinds (@ref NetworkParamRegistry::q), read by the
@@ -60,9 +60,9 @@ enum class NetworkParamKind : int {
     RxClock,          ///< Receiver clock and ISB per station (local).
     RxPhaseBias,      ///< Receiver phase bias of the eq34 chain datum (local).
     RxCodeBias,       ///< Receiver code bias per (station, signal) (local).
-    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local; card LGM).
+    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local).
     /// Receiver position per station: three columns of the station's state manager that
-    /// the network holds at the roster coordinate and never estimates (card NOM N1: the
+    /// the network holds at the roster coordinate and never estimates (the
     /// parameter inventory's coordinate instances, treatment Pinned).
     RxPosition,
 };
@@ -75,7 +75,7 @@ enum class ParamQRule {
     None,                ///< Not carried, or carried with no process noise stated.
     RandomWalk,          ///< var += q · gap_s (q in m²/s).
     RandomWalkPerDegree, ///< SH ladder: q / n² per degree n ≥ 1, q at n = 0 (TECU²/s).
-    AnchorElapsed,       ///< Card Q3: anchored at the anchor's q over the satellite's own elapsed time, loose at the legacy q until the guard re-validates.
+    AnchorElapsed,       ///< Q3 clock anchor: anchored at the anchor's q over the satellite's own elapsed time, loose at the legacy q until the guard re-validates.
     RandomWalkPerEpoch,  ///< var += q · gap_s / epoch (q in m² per epoch; the in-block local carries).
     GaussMarkov,         ///< x' = phi x + w, phi = exp(-gap/tau), var(w) = q (1 - phi²); q is the stationary variance (m²) at the zenith.
 };
@@ -86,13 +86,13 @@ enum class ParamRoute {
     DenseBorder,          ///< One information block over the border carry (C1, shared_carry_full_cov).
     DiagonalBorder,       ///< A diagonal prior per border key (D2).
     LocalBlock,           ///< A row of the station's jointly whitened local block (F3 / the float vehicle).
-    ConditionalRow,       ///< A conditional coupling row on the border, one per column (card 1).
+    ConditionalRow,       ///< A conditional coupling row on the border, one per column.
     DiagonalStationPrior, ///< A diagonal prior on the local column (addStationPrior).
     PriorRow,             ///< A pseudo-observation row of the station's A_r (before the PD test).
 };
 
 /**
- * @brief The events a carried instance responds to (card PRM section 4.2, the descriptor's
+ * @brief The events a carried instance responds to (the descriptor's
  *        @c on_slip, @c on_gap, @c on_handover, @c on_decouple and @c on_readmit).
  */
 enum class ParamEvent : int {
@@ -107,7 +107,7 @@ enum class ParamEvent : int {
 inline constexpr std::size_t kParamEvents = 5;
 
 /**
- * @brief The named responses (card PRM section 4.5), one value per thing a response does
+ * @brief The named responses, one value per thing a response does
  *        to a carried instance.
  *
  * Phase 3a declares which of these each kind uses on the run and counts every response at
@@ -126,7 +126,7 @@ enum class ResponsePolicy : int {
     Park,              ///< Kept past the column's departure, not folded, until it returns or the horizon expires.
     SeedAtVarPlusQGap, ///< A parked entry seeds its returned column at var + q times the gap.
     Discard,           ///< A parked or held entry dropped without a fold (a datum change, a return it was not consumed by).
-    Loosen,            ///< Folded at the loose rate until a guard re-validates it (card Q3's anchor).
+    Loosen,            ///< Folded at the loose rate until a guard re-validates it (the clock anchor).
     Recouple,          ///< The guard re-validated a loosened instance: it folds at its anchored rate again.
     Reinit,            ///< Folded at the re-initialization variance (the clock monitor's flag).
     Hold,              ///< Frozen and re-applied while a guard holds it.
@@ -162,7 +162,7 @@ struct ParamSpec {
     double       q{0.0};            ///< The process-noise rate (units in @ref q_units).
     const char*  q_units{"m^2/s"};  ///< Units of @ref q.
     ParamQRule   q_rule{ParamQRule::None};
-    /// The anchored rate under @c ParamQRule::AnchorElapsed (card Q3's
+    /// The anchored rate under @c ParamQRule::AnchorElapsed (the clock anchor's
     /// network.clock_anchor_q, m²/s): the rate a held satellite clock is folded at, while
     /// @ref q is the loose rate it takes until the guard re-validates it.  NaN otherwise.
     double       q_anchored{std::numeric_limits<double>::quiet_NaN()};
@@ -171,7 +171,7 @@ struct ParamSpec {
     double       var_floor_m2{0.0}; ///< Variance floor of the carried instance (m²; 0 = none).
     double       birth_var_m2{std::numeric_limits<double>::quiet_NaN()};  ///< Variance floor at an instance's birth (m²; 0 = none, NaN = the kind has no birth rule).
     /// The gap horizon of a carried instance of the kind (s): the time unseen past which
-    /// it is no longer folded and is pruned (card PRM phase 3b; the test is
+    /// it is no longer folded and is pruned (the test is
     /// @c carryPastHorizon, the prune @c carryGapPrune, both in
     /// @c network/assembly/Responses.hpp).  The double the kind's gap sites read, set from
     /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
@@ -190,9 +190,9 @@ struct ParamSpec {
     /// The response policies armed for this kind on this run, per @ref ParamEvent (a mask of
     /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
     /// arming condition holds on the knob snapshot, and Stransform where an armed datum
-    /// mechanism moves a carried value of the kind (card PRM phase 3a,
+    /// mechanism moves a carried value of the kind (see
     /// @c network/assembly/Responses.hpp; with @c network.carry_rebase_complete its owed value
-    /// sites count too, card PRM phase 3b).  Zero for an event the kind does not respond to.
+    /// sites count too).  Zero for an event the kind does not respond to.
     std::array<std::uint32_t, kParamEvents> on{};
 };
 
@@ -230,11 +230,11 @@ public:
      * @brief The single process-noise source for the border kinds.
      *
      * The random-walk rate a carried border instance of @p kind is inflated at (m²/s):
-     * the satellite clock's legacy rate (which card Q3's anchor replaces per satellite
+     * the satellite clock's legacy rate (which the clock anchor replaces per satellite
      * while it holds the clock), the phase bias's and the code bias's.  For @c VtecSh it
      * is the degree-0 rate of the legacy shell (TECU²/s); the per-degree ladder stays in
-     * @c CouplingRowBuilder::couplingQ and the SH prior inject until an SH card re-arms
-     * them (card PRM section 10).
+     * @c CouplingRowBuilder::couplingQ and the SH prior inject until a later SH build re-arms
+     * them.
      *
      * @param kind The border kind.
      * @return The rate.
@@ -242,7 +242,7 @@ public:
     double q(SharedParamKind kind) const;
 
     /**
-     * @brief The "model as armed" table: a header line and one line per kind (card PRM
+     * @brief The "model as armed" table: a header line and one line per kind (docs/refound/PRM_parameter_registry_2026-09-29.md
      *        section 6).
      *
      * Columns: kind, estimated, carried, q with its units and rule, the anchored rate,
@@ -257,7 +257,7 @@ public:
 
     /**
      * @brief The response policies armed per kind, one line per kind: the kind, then each
-     *        event it responds to with its policies (card PRM phase 3a, @ref ParamSpec::on).
+     *        event it responds to with its policies (@ref ParamSpec::on).
      *
      * Trace class: written at run start beside @ref modelTable.
      *
@@ -289,14 +289,14 @@ const char* paramQRuleName(ParamQRule rule);
 /// @brief Table name of a route (e.g. "local_block").
 const char* paramRouteName(ParamRoute route);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the parameter model as armed.
  *
- * The parameter model as armed at run end (card PRM phase 1): the registry's table and
+ * The parameter model as armed at run end: the registry's table and
  * the carried instances per kind.
  *
  * Gate: prints always.

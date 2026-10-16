@@ -1,13 +1,13 @@
 /**
  * @file test_network_param_registry.cpp
- * @brief Card PRM phase 1: the parameter registry built from the committed goldens.
+ * @brief The parameter registry built from the committed goldens.
  *
  * The registry is the single process-noise source of the border kinds, so its values
  * must be the doubles the folds used before it existed (exact equality with the knob
  * snapshot, the byte-identity contract), and its descriptors must state the goldens'
- * armed model: the satellite clock anchored at card Q3's rate and loose at the legacy
+ * armed model: the satellite clock anchored at the clock anchor's rate and loose at the legacy
  * rate, the phase and code biases at their pinned rates, the float ambiguities in the
- * station's whitened local block, the receiver code bias carried in that block (card EXL),
+ * station's whitened local block, the receiver code bias carried in that block,
  * and the wet delay, slant ionosphere and receiver clock re-estimated every epoch.
  */
 #include <gtest/gtest.h>
@@ -77,9 +77,9 @@ void expectGoldenModel(const std::string& bed) {
 
     const ParamSpec& rxcb = r.spec(NetworkParamKind::RxCodeBias);
     EXPECT_TRUE(rxcb.carried);
-    EXPECT_EQ(rxcb.route, ParamRoute::LocalBlock);   // in the station block since card EXL
+    EXPECT_EQ(rxcb.route, ParamRoute::LocalBlock);   // in the station block
 
-    EXPECT_FALSE(r.spec(NetworkParamKind::PhaseColour).estimated);   // card LGM, off
+    EXPECT_FALSE(r.spec(NetworkParamKind::PhaseColour).estimated);   // phase colour, off
     EXPECT_EQ(r.spec(NetworkParamKind::PhaseColour).route, ParamRoute::NotCarried);
 }
 

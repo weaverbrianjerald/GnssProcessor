@@ -16,7 +16,7 @@
  *    and the product coverage checks they use.
  *  - MeasurementModelVariance.cpp: the variance of one row (rowVariance).
  *  - MeasurementModelDd.cpp: the baseline double-difference build, in stages.
- *  - MeasurementModelNetwork.cpp: the network producer's surface (card NOM).
+ *  - MeasurementModelNetwork.cpp: the network producer's surface.
  *
  * Heavy sub-tasks are delegated:
  *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.

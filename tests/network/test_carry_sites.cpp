@@ -1,6 +1,6 @@
 /**
  * @file test_carry_sites.cpp
- * @brief Card PRM phase 2: the carried references of the border (filter/NetworkCarrySites),
+ * @brief The carried references of the border (filter/NetworkCarrySites),
  *        the one traversal over them, and each re-base mechanism's walk through it.
  *
  * The section 5 test: a carried state with every site populated for one satellite, a shift of
@@ -158,7 +158,7 @@ TEST(CarrySites, TableIsInOrderAndComplete) {
     EXPECT_EQ(kAllCarrySites, (std::uint32_t{1} << kCarrySites) - 1u);
 }
 
-// Card PRM section 5: every site populated for one satellite, a shift of 1 m applied through
+// Every site populated for one satellite, a shift of 1 m applied through
 // the traversal, and every site moved by 1 m (one reference each, each visited once).
 TEST(CarrySites, EverySiteMovesByOneMetre) {
     NetworkCarryState c; net::NetworkEntities c_ent;
@@ -229,7 +229,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
         EXPECT_TRUE(containers.count((*it)[1].str()))
             << "the local carry map " << (*it)[1].str() << " has no site in NetworkCarrySites";
     }
-    // The station carries moved to the entity tables (card NOM step N4a): each LocalCarry
+    // The station carries moved to the entity tables: each LocalCarry
     // field of an entity row is a site under the member it was (its FieldDecl row's `was`).
     const std::string ent_h = readFile(root / "include" / "network" / "state" / "Entities.hpp");
     ASSERT_FALSE(ent_h.empty());
@@ -244,7 +244,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
             << "the entity field " << (*it)[1].str() << " (was " << was
             << ") has no site in NetworkCarrySites";
     }
-    EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02 (card PRM section 16)";
+    EXPECT_EQ(maps, 11) << "the eleven local carry maps of 2026-10-02";
     // A carried container of LocalCarry by any other shape (a vector, a pointer) is a site
     // the scan above cannot see.
     EXPECT_EQ(body.find("std::vector<LocalCarry>"), std::string::npos);
@@ -271,7 +271,7 @@ TEST(CarrySites, MechanismTableStatesTheHandListsAndTheirGaps) {
                            S::IonoBlockCoupling, S::HoldAmbiguityCoupling, S::HoldIonoCoupling,
                            S::HoldIonoBlockCoupling, S::RxClockCoupling,
                            S::RxPhaseBiasCoupling, S::RxCodeBiasCoupling};
-    // The ephemeris re-level: two of the local carries (card CLV section 6.4 item 6).
+    // The ephemeris re-level: two of the local carries.
     EXPECT_TRUE(moves(M::EphRelevel, S::AmbiguityCoupling));
     EXPECT_TRUE(moves(M::EphRelevel, S::ZwdCoupling));
     for (S s : couplings)
@@ -345,7 +345,7 @@ TEST(CarrySites, EphRelevelThroughSitesFollowsTheRule) {
 
 // The clock-pivot handover's S-transform through the traversal: after PASS B the carried
 // clocks of the registered set (the kernel's rule, written out; step 1 checked it against the
-// vector kernel bit for bit, card PRM section 16); before the rows it also re-expresses every
+// vector kernel bit for bit); before the rows it also re-expresses every
 // clock reference of the constellation the rows read.
 TEST(CarrySites, HandoverThroughSitesFollowsTheRule) {
     const std::vector<std::pair<std::string, double>> v_c{{"G01", 1.0}, {"G02", 1.0}, {"G03", 1.0}};
@@ -498,7 +498,7 @@ TEST(CarrySites, DeclaredHandoverThroughSitesFollowsTheRule) {
 }
 
 // ===========================================================================
-// Card PRM phase 3b step 2: network.carry_rebase_complete
+// network.carry_rebase_complete
 // ===========================================================================
 
 namespace {
@@ -544,7 +544,7 @@ void expectOwedMoved(CarryMechanism m, const CarrySiteCounts& counts, bool compl
 
 }  // namespace
 
-// The owed exemptions are the gaps card PRM sections 16.2 and 16.7 name: disjoint from the
+// The owed exemptions are the known gaps: disjoint from the
 // moved sites, never the phase hold's held value, none for the two handover transforms, and the
 // by-design exemptions stay exempt with the knob.
 TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
@@ -602,7 +602,7 @@ TEST(CarrySites, OwedSitesAreTheHandListsGaps) {
             EXPECT_FALSE(carryMechanismMoves(m, s, true)) << carryMechanismName(m);
 }
 
-// The ephemeris re-level with the owed sites (card CLV section 6.4 item 6): the stash's pivot
+// The ephemeris re-level with the owed sites: the stash's pivot
 // value and the excursion and hold clock baselines move by -d, and every other coupling map's
 // clock terms move under the conditional coupling as the ambiguity's and wet delay's do;
 // without the knob the walk is phase 2's, and no knob argument is complete = false.

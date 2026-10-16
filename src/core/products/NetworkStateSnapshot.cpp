@@ -29,7 +29,7 @@ constexpr const char* kHeader = "# gnss_network_state_snapshot v1";
 // present, so a run that carries none writes v1 byte-for-byte.  The reader accepts
 // both; a v1 file restores empty frame maps, which gives the cold-pin behaviour.
 constexpr const char* kHeaderV2 = "# gnss_network_state_snapshot v2";
-// Format v3 (SPEC_synthetic_minimum_network §18.12): v2 plus the Card-1 coupling
+// Format v3 (SPEC_synthetic_minimum_network §18.12): v2 plus the coupling
 // regressors (QS shared-column dictionary, QL/QZ per-row (id, M_rj) lists, QR
 // write-epoch clock-refloat set).  Written only when at least one coupling record
 // is present, so a frame-only run still writes v2 and a bare run v1 byte-for-byte;
@@ -172,7 +172,7 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, hp] : snap.clk_frame_prev)
         put(fmt::format("FP,{},{},{}", sat, hp.first, hp.second));
     if (snap.clk_frame_epochs > 0) put(fmt::format("FE,{}", snap.clk_frame_epochs));
-    // Coupling regressors (format v3, §18.12; Card 1): the shared-column dictionary
+    // Coupling regressors (format v3, §18.12): the shared-column dictionary
     // first, then one packed line per carried row holding only (dictionary id, M_rj)
     // in harvest order, then the write epoch's clock-refloat set.  Emitted before the
     // CARRY/EMITTER blobs so the verbatim blob parsers never consume them.  The
@@ -250,7 +250,7 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
                         l.value_abs, l.var, l.last_seen_s));
     for (const auto& [key, d] : snap.sh_dev_carry)
         put(fmt::format("SD,{},{},{},{},{}", key, d.dev, d.var, d.var_ss, d.t_s));
-    // Card CTU G5: the level monitor's contrast-frame code information per satellite
+    // The level monitor's contrast-frame code information per satellite
     // (LB rows); empty unless the writer ran the monitor, so a run without it writes the
     // previous bytes unchanged.
     for (const auto& [sat, in] : snap.level_info)
@@ -280,11 +280,11 @@ void NetworkStateSnapshotIO::serialize(std::ostream& os, const NetworkStateSnaps
     for (const auto& [sat, n] : snap.ura_refloat_horizon)
         put(fmt::format("Y,{},{}", sat, n));
     for (const auto& s : snap.c1_zoh_active)  put(fmt::format("C,{}", s));
-    for (const auto& [sat, iode] : snap.relevel_iode)   // eph-cutover re-level IODE (Card 6)
+    for (const auto& [sat, iode] : snap.relevel_iode)   // eph-cutover re-level IODE
         put(fmt::format("I,{},{}", sat, iode));
-    for (const auto& s : snap.eph_cutover_disc_pending) // pending eph-cutover disc (Card 6)
+    for (const auto& s : snap.eph_cutover_disc_pending) // pending eph-cutover disc
         put(fmt::format("X,{}", s));
-    // Invariant carry for a branch-faithful resume (Card 4 M1, RTB-7): the ArcKey
+    // Invariant carry for a branch-faithful resume (RTB-7): the ArcKey
     // vertex numbering (SV, GG), then the z-store blob verbatim (CARRY header .. CEND).
     // All three are written only when the carry blob is present
     // (network.state_snapshot_carry), so a default snapshot is byte-identical to the
@@ -369,7 +369,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             s.emitter_state += '\n';
             continue;
         }
-        if (line.rfind("CARRY,", 0) == 0) {   // invariant-carry z-store blob (Card 4)
+        if (line.rfind("CARRY,", 0) == 0) {   // invariant-carry z-store blob
             if (carry_done) return fail("duplicate carry section");
             in_carry = true;
             s.carry_state += line;
@@ -487,18 +487,18 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
         } else if (tag == "C") {
             if (f.size() != 2) return fail("malformed C line");
             s.c1_zoh_active.insert(f[1]);
-        } else if (tag == "I") {   // eph re-level baseline IODE (Card 6)
+        } else if (tag == "I") {   // eph re-level baseline IODE
             if (f.size() != 3) return fail("malformed I line");
             if (!parseI(f[2], i1)) return fail("malformed I iode");
             s.relevel_iode[f[1]] = static_cast<int>(i1);
-        } else if (tag == "X") {   // pending eph-cutover disc (Card 6)
+        } else if (tag == "X") {   // pending eph-cutover disc
             if (f.size() != 2) return fail("malformed X line");
             s.eph_cutover_disc_pending.insert(f[1]);
-        } else if (tag == "SV") {  // satellite -> carry vertex id (Card 4)
+        } else if (tag == "SV") {  // satellite -> carry vertex id
             if (f.size() != 3) return fail("malformed SV line");
             if (!parseI(f[2], i1)) return fail("malformed SV vertex id");
             s.carry_sat_vertex[f[1]] = static_cast<int>(i1);
-        } else if (tag == "GG") {  // (const,signal) -> carry group id (Card 4)
+        } else if (tag == "GG") {  // (const,signal) -> carry group id
             if (f.size() != 4 || f[1].size() != 1) return fail("malformed GG line");
             if (!parseI(f[3], i1)) return fail("malformed GG group id");
             s.carry_group_id.emplace_back(f[1][0], f[2], static_cast<int>(i1));
@@ -542,7 +542,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                                         s.coupling_dict.size(), id));
             if (kd < 0 || kd > 3) return fail("QS kind out of range");
             // p_prev == 0 is valid (a datum-pinned or ensemble-gauge column, known
-            // exactly; Card 1e); only a negative or non-finite value is corrupt.  fmt
+            // exactly); only a negative or non-finite value is corrupt.  fmt
             // writes "nan"/"inf" and parseD consumes them fully, so without this screen a
             // corrupt value round-trips and then hits buildCplRow's non-finite RHS guard
             // (Coupling.cpp), which skips the whole row and so loses the arc's
@@ -566,7 +566,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             if (!parseI(f[head - 1], k) || k <= 0)
                 return fail("malformed " + tag + " entry count");
             // The parser enforces row completeness: a partially restored coefficient
-            // vector breaks the exact gauge identity (Card 1e) and is worse than no
+            // vector breaks the exact gauge identity and is worse than no
             // coupling at all.  The explicit k makes this checkable, because a line that
             // lost one whole (id, M) pair still has even arity.
             if (f.size() != head + 2u * static_cast<std::size_t>(k))
@@ -676,7 +676,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
                 return fail("RC field not finite (or a non-positive variance)");
             s.rx_cb_carry[{static_cast<int>(i1), f[2]}] =
                 NetworkStateSnapshot::Local{d1, d2, d3};
-        } else if (tag == "LB") {   // card CTU G5: contrast-frame level information
+        } else if (tag == "LB") {   // contrast-frame level information
             if (f.size() != 4 || f[1].empty()) return fail("malformed LB line");
             if (!parseD(f[2], d1) || !parseI(f[3], i1)) return fail("malformed LB fields");
             if (!std::isfinite(d1) || d1 < 0.0 || i1 < 0)
@@ -736,7 +736,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
     // cold start, byte-identical to a run without a snapshot, or refuses the run
     // under network.state_snapshot_require.  A file
     // whose regressors cannot be read whole must not resume with truncated rows
-    // (Card 1e amputation: Mᵀg_s ≠ −g_r(c), so every coupling row observes the clock
+    // (Amputation: Mᵀg_s ≠ −g_r(c), so every coupling row observes the clock
     // gauge and the W5 null-space gate withholds each epoch that carries rows).
     const auto ids_ok = [&](const std::vector<std::pair<int, double>>& v, int& bad) {
         for (const auto& e : v)

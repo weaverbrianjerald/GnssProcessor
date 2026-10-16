@@ -1,6 +1,6 @@
 /**
  * @file test_consumer_sat_trace.cpp
- * @brief Pins the schema of `logs/closed_loop_sat_trace.csv` (card CST).
+ * @brief Pins the schema of `logs/closed_loop_sat_trace.csv`.
  *
  * The row formatter is a pure function (no engine, no store, no file), so it is
  * the part of the trace that a unit test can exercise directly.  The tests guard
@@ -120,7 +120,7 @@ TEST(ConsumerSatTraceSchemaTest, AbsentQuantitiesAreBlankNeverZero) {
 
 TEST(ConsumerSatTraceSchemaTest, MetreColumnsResolveSubMillimetreSteps) {
     // Metre columns carry six decimals, so a 0.5 mm phase-bias step is visible;
-    // three decimals would round it to 0.000.  Card EV6 relied on a +0.0005 m
+    // three decimals would round it to 0.000.  A check (EV6) relied on a +0.0005 m
     // emitted phase-bias move to clear the frame algebra at a +14.36 m S-transform.
     ConsumerSatRow r;
     r.sat = "G22"; r.sig = "L2W";

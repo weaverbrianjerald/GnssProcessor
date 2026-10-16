@@ -2,13 +2,13 @@
 
 /**
  * @file PbHoldClone.hpp
- * @brief The smoothed phase-bias hold's clock clone (card SMH,
+ * @brief The smoothed phase-bias hold's clock clone (
  *        @c network.emit_pb_hold_smoothed): c(t0|t) carried as a coupling row with no
  *        observation rows.
  *
- * The smoothed member of card LAH's hold family keeps
+ * The smoothed member of the hold family keeps
  * @f$(C - P_j)(t) = (c - p_j)(t_0|t_0) + \Phi(t)@f$ with @f$\Phi = c(t|t) - c(t_0|t)@f$, the
- * clock's smoothed motion since the generation start (card SMH sections 1 and 10).  The
+ * clock's smoothed motion since the generation start.  The
  * fixed-point smoothed clock @f$c(t_0|t)@f$ is carried per hold key as a row in the
  * coupling-row convention
  * @f$x_0 = v - \sum_j M_j (x_j - \hat s_j)@f$ with residual variance @f$\sigma^2@f$:
@@ -16,7 +16,7 @@
  * - Birth: at the stash of the generation's first epoch, one term on the satellite's
  *   clock with @f$M = -1@f$ (so @f$x_0 = c@f$), @f$v@f$ the stashed clock,
  *   @f$\sigma^2 = 0@f$, stamped with the stash time.
- * - Time update: each later epoch the row takes card CTU's exact route
+ * - Time update: each later epoch the row takes the exact route
  *   (@ref couplingExactRow over the epoch's @ref CouplingExactEpoch): S terms by the one
  *   rule, D terms (departed, reinit, re-referenced) re-attributed through P, the
  *   clock-family deficit onto the stash's pinned pivot; a term on a key outside the dense
@@ -27,22 +27,22 @@
  *   stash value after any in-place frame transform).  A pinned column contributes no
  *   revision.  A declared frame step therefore never steps the clone.
  * - Re-harvest: at the stash the row is re-expressed on the new stash's keys.
- * - No fallback: a clone that would take card 1d's route (an unfactored epoch, a stale
+ * - No fallback: a clone that would take the scalar-κ route (an unfactored epoch, a stale
  *   stamp, its own clock outside the dense block) is destroyed, never shrunk.
- * - Transfer: the hold writes card LAH's transfer minus the clone's frame-free passed
- *   motion (@ref PbHoldClone::phi), so the members of the hold family share LAH's frame
- *   and its common-mode median and differ only by the passed motion (card SMH section 10).
- * - Lifetime: the parent clock's anchor engagement (card SMH section 9).  A LOOSE clock
+ * - Transfer: the hold writes the hold family's transfer minus the clone's frame-free passed
+ *   motion (@ref PbHoldClone::phi), so the members of the hold family share one frame
+ *   and its common-mode median and differ only by the passed motion.
+ * - Lifetime: the parent clock's anchor engagement.  A LOOSE clock
  *   folds at the legacy rate, a datum device rather than a statement about motion, so a
- *   clone is born only at a stash at which card Q3's anchor holds its parent clock, and
+ *   clone is born only at a stash at which the clock anchor holds its parent clock, and
  *   dies at the epoch the anchor withdraws the clock (a trip, a gap, a retired frame) or
- *   folds it at anything but the anchored variance.  The key carries card LAH's transfer
+ *   folds it at anything but the anchored variance.  The key carries the hold family's transfer
  *   in between, and the birth is queued again for the same generation.
  *
  * The row form equals the first stage of a clone column in the estimator (a zero-noise
  * column informed only by its prior correlation with the border).
  *
- * Card SMD (an instrument of the smoothed hold; its wire selection was removed): a block
+ * Block clones (an instrument of the smoothed hold; its wire selection was removed): a block
  * clone carries, on one lifetime, a clock row and the row of the ionosphere-free phase-visible clock
  * @f$D = c - \sum_j w_j p_j@f$ over one phase bias per band, the pair fixed at birth.  The
  * exact rule is linear in a row's coefficients, so the D row is the functional of the
@@ -70,7 +70,7 @@ namespace GnssProcessor {
 
 struct NetworkRunContext;   // network/state/RunContext.hpp defines it as a struct
 struct EpochWorkspace;      // network/driver/RunTypes.hpp
-struct SharedHistoryState;  // network/carry/SharedHistory.hpp (card SCL2 X2)
+struct SharedHistoryState;  // network/carry/SharedHistory.hpp
 
 /// One term of a clone row: the coupling-row convention of @c CoupledShared.
 struct PbHoldCloneTerm {
@@ -83,9 +83,9 @@ struct PbHoldCloneTerm {
     Eigen::Index col{-1};     ///< this epoch's shared column (set by the update; -1 = none)
 };
 
-/// Why a clone died.  After @c Withdrawn and @c Disengaged the key carries card LAH's
+/// Why a clone died.  After @c Withdrawn and @c Disengaged the key carries the hold family's
 /// transfer until the anchor holds again and a new clone is born in the same generation;
-/// after any other cause it carries LAH's transfer for the rest of its generation.
+/// after any other cause it carries the hold family's transfer for the rest of its generation.
 enum class PbHoldCloneDeath : int {
     None = 0,
     Unfactored,     ///< the epoch's exact inputs were not built or did not factor
@@ -95,14 +95,14 @@ enum class PbHoldCloneDeath : int {
     NoStash,        ///< no dense stash at the epoch's end (the row cannot be re-harvested)
     Missed,         ///< alive at the stash but not updated this epoch
     Unlinked,       ///< every dense term was re-attributed away (no folded key carries the row)
-    Withdrawn,      ///< card Q3's guard decoupled the parent clock this epoch (a trip, a gap, a retired frame); the birth is queued again
+    Withdrawn,      ///< the clock anchor's guard decoupled the parent clock this epoch (a trip, a gap, a retired frame); the birth is queued again
     Disengaged,     ///< the parent clock's fold this epoch was not the anchored one (LOOSE, or no prior folded); the birth is queued again
-    Followed,       ///< card SMD: a declared phase-datum step of the block clone's phase-bias pair (@ref PbHoldFollow); the birth is queued again
-    PairLost,       ///< card SMD: a phase bias of the pair had no column or no folded prior this epoch; the birth is queued again
+    Followed,       ///< a declared phase-datum step of the block clone's phase-bias pair (@ref PbHoldFollow); the birth is queued again
+    PairLost,       ///< a phase bias of the pair had no column or no folded prior this epoch; the birth is queued again
     kCount
 };
 
-/// Card SMD: the declared step a block clone followed by retiring (@ref PbHoldCloneDeath::Followed).
+/// The declared step a block clone followed by retiring (@ref PbHoldCloneDeath::Followed).
 enum class PbHoldFollow : int {
     None = 0,
     Reref,      ///< a pair key re-referenced (the fold withheld its prior: a cold handover, an incumbent-less pin, a gate drop)
@@ -111,8 +111,8 @@ enum class PbHoldFollow : int {
     kCount
 };
 
-/// One key of a clone row's own functional (card SMD): the combination whose smoothed value
-/// the row carries.  Card SMH's clock row is the clock alone (g = 1); card SMD's phase-visible
+/// One key of a clone row's own functional: the combination whose smoothed value
+/// the row carries.  The smoothed hold's clock row is the clock alone (g = 1); the block clone's phase-visible
 /// row is the clock (g = 1) and one phase bias per band (g = -w_j).
 struct PbHoldCloneOwn {
     SharedParamKind kind{SharedParamKind::Clock};  ///< Clock or PhaseBias
@@ -120,14 +120,14 @@ struct PbHoldCloneOwn {
     double          g{1.0};                        ///< the functional's coefficient
 };
 
-/// Card SMD: the band pair of a satellite's phase-visible functional.
+/// The band pair of a satellite's phase-visible functional.
 struct PbHoldPair {
     std::vector<std::string> sig;   ///< one phase-bias signal per band, in band order
     std::vector<double>      w;     ///< the weights: sum 1, and sum w lambda^2 = 0
 };
 
 /**
- * @brief Card SCL2 X2b (amendment A1): one clone row's terms in card SCL2's shared history.
+ * @brief One clone row's terms in the shared history.
  *
  * Under @c network.carry_coupling_shared_history with the smoothed hold armed, a clone row is
  * not marginalized per row at the update: its coefficients @f$r_T@f$ on Y (the clock clones and
@@ -165,24 +165,24 @@ struct PbHoldClone {
     long long   updated_ep{-1};        ///< n_loop_epochs of the last update
     long long   queued_ep{-1};         ///< n_loop_epochs at which the birth was queued (a pending clone)
     bool        rebirth{false};        ///< queued by a disengagement within the generation, not by its start
-    // Instruments (card SMH section 4), valid after an update.
+    // Instruments, valid after an update.
     double      W{0.0};                ///< sum of the fold inflations applied to the parent clock (m^2)
     bool        w_valid{true};         ///< false once the parent left S (reinit / departure)
-    /// The passed motion since birth, frame-free (card SMH section 10): the sum over the
+    /// The passed motion since birth, frame-free: the sum over the
     /// clone's epochs of the parent clock's step net of declared frame steps (its posterior
     /// minus the prior mean the solve folded) minus the revision of @f$x_0@f$.  Without a
-    /// frame step it equals @f$\hat c(t|t) - x_0(t|t)@f$.  The hold writes card LAH's
+    /// frame step it equals @f$\hat c(t|t) - x_0(t|t)@f$.  The hold writes the hold family's
     /// transfer minus this, so the smoothed and the phase-clock members share one frame.
     double      phi{0.0};
     bool        phi_ok{false};         ///< the parent clock had a column this epoch
     double      vpost{0.0};            ///< posterior variance of @f$c(t) - c(t_0)@f$ (m^2)
-    // The G3 prediction's inputs (card SMH section 5), from the stash at birth; NaN when the
+    // The G3 prediction's inputs, from the stash at birth; NaN when the
     // clock or the key's phase bias has no dense row (a pinned clock).
     double      pd0{std::numeric_limits<double>::quiet_NaN()};  ///< stated variance of D = c - p_j at birth (m^2)
     double      f0{std::numeric_limits<double>::quiet_NaN()};   ///< the clock's share of D at birth, (P_cc - P_cp) / P_D
-    // Card SMD: a block clone (@c ctx.carry.smh_block) carries, on this one lifetime, the
-    // clock row above and the phase-visible row below.  Unused on card SMH's clock clones.
-    bool        block{false};                  ///< a card SMD block clone
+    // A block clone (@c ctx.carry.smh_block) carries, on this one lifetime, the
+    // clock row above and the phase-visible row below.  Unused on the smoothed hold's clock clones.
+    bool        block{false};                  ///< a block clone
     PbHoldPair  pv_pair;                       ///< the band pair, fixed at birth
     std::vector<PbHoldCloneTerm> pv_terms;     ///< the phase-visible row's terms
     double      pv_value{0.0};                 ///< its @f$x_0 = D(t_0|t)@f$ at the stamp (m, solve frame)
@@ -194,7 +194,7 @@ struct PbHoldClone {
     bool        pv_w_valid{true};              ///< false once a key of the functional left S
     double      pv_vpost{0.0};                 ///< posterior variance of @f$D(t) - D(t_0)@f$ (m^2)
     double      pv_step_d{0.0};                ///< this epoch's frame-free step of D (m), read at the hold against the emitter's bar
-    // Card REV: the instruments of the revision member's replay (trace only).
+    // The instruments of the revision member's replay (trace only).
     /// The revision @f$R = D(t_0|t) - D(t_0|t_0)@f$ since birth: the sum of the changes of
     /// @ref pv_value, frame-free as @ref pv_phi, so @f$\Phi_D + R = S_D@f$ (@ref pv_sd).
     double      pv_rev{0.0};
@@ -207,17 +207,17 @@ struct PbHoldClone {
     double      pv_dw{0.0};                    ///< this epoch's fold inflation along D (0 with a key of the functional outside S) (m^2)
     PbHoldFollow follow{PbHoldFollow::None};   ///< the step a @c Followed death followed
     long long   died_ep{-1};                   ///< n_loop_epochs of the death
-    // Card SCL2 X2b: the rows' terms in the shared history (empty unless X2 is armed).
+    // The rows' terms in the shared history (empty unless X2 is armed).
     PbHoldCloneShx shx;                        ///< the clock row's
-    PbHoldCloneShx pv_shx;                     ///< card SMD: the phase-visible row's
+    PbHoldCloneShx pv_shx;                     ///< the phase-visible row's
 };
 
 /// The epoch-level inputs of @ref pbHoldCloneAdvance, built once per epoch.
 struct PbHoldCloneInputs {
     const CouplingExactEpoch* xe{nullptr};
-    /// Card SCL: the epoch whose inflation @c q_s / @c q_off is the fold's walk, read only
+    /// The epoch whose inflation @c q_s / @c q_off is the fold's walk, read only
     /// by the walk-share instrument (@c PbHoldCloneStep::dW).  Set when @c xe carries clocks
-    /// on their clones at @f$Q=0@f$ (@ref pbHoldCloneOnClones): it is then card CTU's epoch
+    /// on their clones at @f$Q=0@f$ (@ref pbHoldCloneOnClones): it is then the exact-coupling epoch
     /// over the same S index space, so W keeps its meaning (the modelled walk since birth).
     /// Null: @c xe itself.
     const CouplingExactEpoch* xe_walk{nullptr};
@@ -263,7 +263,7 @@ struct PbHoldCloneStep {
 PbHoldCloneStep pbHoldCloneAdvance(const PbHoldCloneInputs& in, const PbHoldClone& c);
 
 /**
- * @brief Advance one row of any functional over one epoch (card SMD): the rule of
+ * @brief Advance one row of any functional over one epoch: the rule of
  *        @ref pbHoldCloneAdvance with the row's own keys in place of the parent clock.
  *
  * Pure.  A key of @p own outside the dense block (not stashed, not pinned) is the death
@@ -286,9 +286,9 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
                                       double value, double var, double stamp_s);
 
 /**
- * @brief Card SMD: the band pair of a satellite's phase-visible functional.
+ * @brief The band pair of a satellite's phase-visible functional.
  *
- * Per band, the phase bias with the smallest stashed variance (card PVN's rule, read once at
+ * Per band, the phase bias with the smallest stashed variance (read once at
  * birth), and the minimum-norm weights with @f$\sum w = 1@f$ and
  * @f$\sum w \lambda^2 = 0@f$ (@ref clockAnchorPhaseClockWeights; GPS L1 / L2 2.5457 /
  * -1.5457).  A tie keeps the lexically first signal.
@@ -298,19 +298,19 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
  */
 PbHoldPair pbHoldClonePickPair(const std::string& sat, const std::map<std::string, double>& pb_var);
 
-/// Card SMD: the functional of a block clone's phase-visible row, {clock: 1, pair: -w_j}.
+/// The functional of a block clone's phase-visible row, {clock: 1, pair: -w_j}.
 std::vector<PbHoldCloneOwn> pbHoldCloneOwnPv(const PbHoldPair& pair);
 
 /**
- * @brief Card REV: the stated variance of a clone row's own value, the smoothed
+ * @brief The stated variance of a clone row's own value, the smoothed
  *        @f$x_0@f$ (for the phase-visible row, @f$D(t_0|t)@f$).
  *
  * @f$\sigma^2 + m'\Sigma m@f$, with @f$m@f$ the row's coefficients on the epoch's columns
  * (terms with a column and a dense prior; a datum-pinned term carries no variance): the
- * quantity card SMD's U0 checks against an augmented filter that carries the functional at
+ * quantity the U0 test checks against an augmented filter that carries the functional at
  * @f$t_0@f$ as a zero-noise state.  A column at or beyond @p Sig's dimension is skipped, as
  * in the posterior variance of the increment.  The revision member's freeze reads its fall
- * per epoch against the stated walk (card REV section 2).
+ * per epoch against the stated walk.
  * @param terms  the row's terms with this epoch's columns (after an advance, or at birth).
  * @param var    the row's residual variance @f$\sigma^2@f$ (m^2).
  * @param Sig    the shared border's posterior covariance this epoch.
@@ -336,13 +336,13 @@ CouplingExactEpoch pbHoldCloneRestrictEpoch(const CouplingExactEpoch& xe,
                                             const std::vector<int>& unfolded);
 
 /**
- * @brief Card SCL: the epoch's exact inputs with the given clocks on their clones.
+ * @brief The epoch's exact inputs with the given clocks on their clones.
  *
  * Under @c network.carry_coupling_clock_clone the solve's prior is the joint one over the
  * stand-ins (each cloned clock stood in for by its clone @f$c_s(t-1)@f$ at the stashed
  * covariance) plus the walk factor @f$c_s(t) - c_s(t-1)@f$, and the coupling rows reference
  * the clone.  The new data then inform @f$c_s(t-1)@f$ directly, through the rows, and not
- * only through @f$c_s(t)@f$, so a row with no observations (card SMH's) is conditionally
+ * only through @f$c_s(t)@f$, so a row with no observations (the smoothed hold's) is conditionally
  * independent of the epoch's data given the stand-ins, not given @f$s(t)@f$.  Each S key
  * whose P row is in @p clone_of_p moves onto its clone: column = the clone, @f$Q = 0@f$, its
  * mean the stashed value (unchanged), @c clone_s set; the off-diagonal process noise pairs
@@ -350,7 +350,7 @@ CouplingExactEpoch pbHoldCloneRestrictEpoch(const CouplingExactEpoch& xe,
  * not factor).  The S index space is unchanged, so @p xe stays the walk-share epoch
  * (@c PbHoldCloneInputs::xe_walk).  With the moved set equal to the clones the rows were
  * built on, the result equals @c ClockCloneEpoch::rows_epoch.
- * @param xe          the epoch's inputs on the epoch's own columns (card CTU's, restricted to
+ * @param xe          the epoch's inputs on the epoch's own columns (the exact-coupling epoch's, restricted to
  *                    the folded keys when the solve did not fold some).
  * @param clone_of_p  P row -> clone column, for each clock whose clone stood in at the fold.
  * @return the inputs on the clones (a copy of @p xe when nothing moves).
@@ -358,7 +358,7 @@ CouplingExactEpoch pbHoldCloneRestrictEpoch(const CouplingExactEpoch& xe,
 CouplingExactEpoch pbHoldCloneOnClones(const CouplingExactEpoch& xe,
                                        const std::map<int, Eigen::Index>& clone_of_p);
 
-/// Outcome of @ref pbHoldCloneMarginalizeClones (card SCL).
+/// Outcome of @ref pbHoldCloneMarginalizeClones.
 struct PbHoldCloneMarg {
     bool   ok{true};          ///< false: the regression was not usable (a row with clone terms is then not re-expressed)
     int    n_clone{0};        ///< terms on clone columns marginalized
@@ -371,7 +371,7 @@ struct PbHoldCloneMarg {
 };
 
 /**
- * @brief Card SCL: marginalize a clone row's clock-clone terms through the solve's
+ * @brief Marginalize a clone row's clock-clone terms through the solve's
  *        posterior regression, so the row carries no term on a clone into the next epoch.
  *
  * A clone lives one epoch.  An advanced row on @ref pbHoldCloneOnClones's epoch has its
@@ -395,7 +395,7 @@ struct PbHoldCloneMarg {
  * @param term_of_col column -> a term with its identity, value and variance; false when the
  *                    column has none (the coefficient is dropped, counted).
  * @param pin         constellation -> its datum-pinned clock (p_prev 0, with its column and value).
- * @param defer_rc    card SCL2 X2b: non-null defers the conditional variance: the row's
+ * @param defer_rc    non-null defers the conditional variance: the row's
  *                    coefficients on the trailing block (Y = the clones and the shared
  *                    history) are written here, @p var is not raised, and @c var_add reports
  *                    the term that was not added (the harvest's end projects it,
@@ -408,7 +408,7 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
     const std::function<bool(Eigen::Index, PbHoldCloneTerm&)>& term_of_col,
     const std::map<char, PbHoldCloneTerm>& pin, Eigen::VectorXd* defer_rc = nullptr);
 
-/// Card SCL2 X2b: the counts of @ref pbHoldCloneAttachHistory.
+/// The counts of @ref pbHoldCloneAttachHistory.
 struct PbHoldCloneHistAttach {
     int    n_terms{0};     ///< history terms attached on registered columns
     int    n_marg{0};      ///< history terms marginalized (a stale generation or a column not registered)
@@ -416,7 +416,7 @@ struct PbHoldCloneHistAttach {
 };
 
 /**
- * @brief Card SCL2 X2b: a clone row's history terms at the epoch after their compression.
+ * @brief A clone row's history terms at the epoch after their compression.
  *
  * A history column is a constant of the epoch with the prior N(0, 1), so a term needs no time
  * update: with the compression @p sh belongs to equal to the one whose columns are registered
@@ -459,24 +459,24 @@ std::vector<PbHoldCloneTerm> pbHoldCloneRebase(
     const std::map<std::string, double>& pinned,
     const std::function<std::pair<double, double>(Eigen::Index)>& fallback);
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
- * @brief Card SMH, before emit: advance every live clone over this epoch.
+ * @brief Before emit: advance every live clone over this epoch.
  *
  * The keys and prior means are the final solve's: the dense fold's capture
- * (@c ws.cap_dense_keys, which card Q3's in-epoch refloat trims) and the diagonal priors
+ * (@c ws.cap_dense_keys, which the anchor's in-epoch refloat trims) and the diagonal priors
  * (@c ws.cap_priors).  An S key of @c ctx.carry.cxu_epoch that the solve did not fold
  * takes the Reinit route (@ref pbHoldCloneRestrictEpoch), so a withdrawn prior or an
  * un-carried datum re-realization never reaches a clone as a revision.  Each live clone
  * is advanced (@ref pbHoldCloneAdvance), its instruments recorded (the passed motion, the
  * posterior variance of the increment from the solve's covariance, the fold inflation of
  * the parent), and a clone that cannot take the exact route, or whose row lost every
- * dense term, dies.  Before any of it, a clone whose parent clock card Q3's guard
+ * dense term, dies.  Before any of it, a clone whose parent clock the anchor's guard
  * decoupled this epoch dies @c Withdrawn, and one whose parent was not folded at the
  * anchored variance dies @c Disengaged (a clone on the constellation's pinned clock is
- * exempt from the second); both queue the birth again.  The block clones of card SMD
+ * exempt from the second); both queue the birth again.  The block clones
  * (@c ctx.carry.smh_block, carried whenever the smoothed hold is armed) take the same
  * engagement rule, then retire (@c Followed, the birth queued again) at a re-reference or a
  * new anchor tenure of either phase bias of their pair, and otherwise advance both rows:
@@ -484,20 +484,20 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  * bias lacking a column or a folded prior the death @c PairLost.  No-op unless
  * @c network.emit_pb_hold_smoothed.
  *
- * Card SCL (@c network.carry_coupling_clock_clone), on an epoch where a clone stood in at
+ * With @c network.carry_coupling_clock_clone, on an epoch where a clone stood in at
  * the fold: every row advances on @ref pbHoldCloneOnClones's epoch (the stood-in clocks on
  * their clones at @f$Q=0@f$; a refloat's unfolded clock whose clone stood in stays there,
  * since the clone keeps its stand-in prior), the revision reads each clone's posterior
  * against its prior mean (the stashed value the fold centred it on), the walk share reads
- * card CTU's epoch, and the clone terms are then marginalized
+ * the exact-coupling epoch, and the clone terms are then marginalized
  * (@ref pbHoldCloneMarginalizeClones) through the regression the coupling rows' harvest uses,
  * evaluated here on this epoch's final solve (the update precedes the harvest; the harvest
  * compares its own regression with this one, counted).  A row with clone terms and no
  * regression dies @c RowFailed.  Off, or with no clone stood in, the update is the one
  * above, byte for byte.
  *
- * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * Epoch form; the explicit form and its forwarding adapter
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx).
@@ -511,27 +511,27 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  *   - @p est = run.engines.est: the estimator after this epoch's final solve.
  *   - @p x_s = ep.solve.x_s: the shared-border solution.
  *   - @p ws = ep.ws: the epoch's workspace (the fold's capture).
- *   - @p datum = ep.solve.plan.shared_datum: the datum the final solve applied (card SCL's regression; unread otherwise, so a caller without the knob may leave it empty).
+ *   - @p datum = ep.solve.plan.shared_datum: the datum the final solve applied (read by the clock-level regression; unread otherwise, so a caller without the knob may leave it empty).
  */
 void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
- * @brief Card SMH, after the stash: re-harvest the advanced clones on the new stash and
+ * @brief After the stash: re-harvest the advanced clones on the new stash and
  *        give birth to the clones of the generations that started at this epoch's emit.
  *
  * A clone alive but not advanced this epoch, or any clone at an epoch whose stash has no
  * dense block, dies.  A birth takes the satellite's stashed clock (M = -1, sigma2 = 0),
- * and only while card Q3's anchor holds that clock (anchored after this epoch's guard,
+ * and only while the anchor holds that clock (anchored after this epoch's guard,
  * not decoupled in it), or, for the constellation's pinned clock, a pinned term (a
  * transfer of zero).  A pending birth whose clock is not stashed or not anchored waits
- * for a later stash (counted by cause, with the wait); its key carries card LAH's
+ * for a later stash (counted by cause, with the wait); its key carries the hold family's
  * transfer meanwhile.  A pending birth of a superseded generation is dropped.  A block clone
- * (card SMD) is re-harvested row by row and born under the same rule, when the stash also
+ * is re-harvested row by row and born under the same rule, when the stash also
  * holds a phase bias of the satellite on two bands (@ref pbHoldClonePickPair; otherwise it
  * waits, counted).  No-op unless @c network.emit_pb_hold_smoothed.
  *
- * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * Epoch form; the explicit form and its forwarding adapter
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx).
@@ -548,7 +548,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& ep);
 void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& ep);
 
 /**
- * @brief Card SMD, at the hold: one held key's block clone against the emitter's marks.
+ * @brief At the hold: one held key's block clone against the emitter's marks.
  *
  * A block clone of @p key and @p generation that was advanced this epoch retires
  * (@c Followed, @ref PbHoldFollow::Mark, the birth queued again) when @p pb_marked (a mark on

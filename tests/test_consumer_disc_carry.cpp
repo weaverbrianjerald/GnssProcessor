@@ -1,6 +1,6 @@
 /**
  * @file test_consumer_disc_carry.cpp
- * @brief Tests for the closed-loop consumer's continuity (Card CC): (A) the
+ * @brief Tests for the closed-loop consumer's continuity: (A) the
  *        ambiguity carry across a declared phase-bias step
  *        (StateManager::shiftAmbiguity + PbDiscCarryLedger, the knob-on
  *        alternative to the reset reaction) and (B) the harness-side snapshot

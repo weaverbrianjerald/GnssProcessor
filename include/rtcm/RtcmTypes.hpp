@@ -122,17 +122,17 @@ struct SsrClockCorrection {
     /// to the behaviour without this field).  Only the network producer in
     /// @c brdc_rts mode stamps it >= 0 (C0 is then a delta against
     /// broadcast(IODE)); the consumer then gates clock application on
-    /// @c iodeMatches(brdc_iode, iode) instead of the orbit anchor.  (RTF-2, Card 3)
+    /// @c iodeMatches(brdc_iode, iode) instead of the orbit anchor.  (RTF-2)
     int         iode{-1};
     /// Orbit coherence echo: the IOD-SSR of the RTS orbit correction this clock
     /// was estimated against.  Broadcast radial-orbit error is absorbed 1:1 into
     /// the estimated clock, so the consumer checks that it applies the same orbit
-    /// update the producer used (Card 7 echo check).  -1 = not stamped (standard
-    /// SSR, or not brdc_rts).  (RTF-2, Card 3)
+    /// update the producer used (echo check).  -1 = not stamped (standard
+    /// SSR, or not brdc_rts).  (RTF-2)
     int         orbit_iod_ssr{-1};
     /// SSR content epoch of that referenced RTS orbit correction (the other
     /// operand of the consumer's orbit/clock age-skew budget).  {0,0} = not
-    /// stamped.  (RTF-2, Card 3)
+    /// stamped.  (RTF-2)
     GnssTime    orbit_epoch{0, 0.0};
     /// Formal 1σ (m) of the combined code correction for this satellite (clock
     /// plus code bias at a reference signal), from the network shared covariance
@@ -241,7 +241,7 @@ struct SsrPhaseBiasEntry {
     /// satellite is not deweighted out of the solution.  (M4, contract v2)
     double combined_sigma_m{0.0};
     /// The producer's hold generation for this (sat, signal)
-    /// (@c network.emit_pb_hold, card PBH).  0 = not held: @ref bias_m is a
+    /// (@c network.emit_pb_hold).  0 = not held: @ref bias_m is a
     /// per-epoch estimate and the consumer reacts as it does without the knob, so
     /// every RTCM/IGS-SSR-decoded bias and every product from a producer without
     /// the knob reads 0 and behaves unchanged.  Nonzero = @ref bias_m is constant
@@ -371,7 +371,7 @@ struct RtcmReceiverAntennaDescriptor {
  * into the GLONASS inter-frequency-bias (IFB) estimation path: consuming a
  * base-receiver code-phase bias in the per-FCN-slot IFB datum is an
  * RTF-scale change (it re-references the k=0 datum the network/user IFB
- * states are built on) and needs its own card.
+ * states are built on) and needs its own change.
  */
 struct RtcmGlonassBias {
     int    reference_station_id{0};   ///< DF003.

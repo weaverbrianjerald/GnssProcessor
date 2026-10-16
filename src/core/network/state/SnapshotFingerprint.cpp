@@ -5,7 +5,7 @@
  *
  * One function, called once by the driver (network/driver/ApplicationNetwork.cpp) before the warm
  * resume, and directly by unit tests.  With a snapshot path it sets
- * ctx.carry.live_fingerprint and, under network.ctu_switch_on_resume, the card-CTU twin
+ * ctx.carry.live_fingerprint and, under network.ctu_switch_on_resume, the CTU twin
  * ctx.carry.live_fingerprint_ctu_off; without one it does nothing.  The comments in the
  * body record why each knob is or is not a term.
  *
@@ -16,8 +16,8 @@
  * The body opens with an alias block (decomposition INC-4) that binds the driver's former
  * local names to members of the context, so the relocated code keeps those names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -92,7 +92,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // reduced from the monument to the antenna reference point, so every carried
         // quantity that references a station's geometry (the phase-leveling zero-q levels,
         // the carried ambiguities, the local blocks) refers to a different position across
-        // the flip (card UPO).  Appended only when armed, so the fingerprint of a snapshot
+        // the flip.  Appended only when armed, so the fingerprint of a snapshot
         // written with it off is unchanged.
         if (config_.networkStationMarkerToArp()) add("roster:arp");
         // Carrier-phase wind-up model revision.  Unlike the other tokens this is a code
@@ -118,7 +118,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // when armed, so a non-eq34 snapshot's fingerprint is unchanged.
         if (phase_datum_eq34) add("phdatum:eq34");
         // The invariant carry snapshots a DD z-store that the legacy carries do not have,
-        // so a resume across a carry_invariant flip has to cold-start (card 4, OPEN-4).
+        // so a resume across a carry_invariant flip has to cold-start.
         // Appended only when armed, so the fingerprint of a snapshot without it is
         // unchanged.
         if (carry_invariant) add("carry:inv");
@@ -188,7 +188,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(fmt::format("{}", config_.networkCarryRxClockJumpK()));
             add(fmt::format("{}", config_.networkCarryRxClockIsb()));
         }
-        // Second code channel (card SCC, R6): adds a receiver inter-signal state per
+        // Second code channel: adds a receiver inter-signal state per
         // station and band-1 companion, carried by the receiver code-bias carry whose
         // stash is in the snapshot.  A resume across the flip would restore (or fail to
         // restore) receiver code-bias columns that the other side does not have, and the
@@ -198,7 +198,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // fingerprint.  The allow-list and the sigma scale are included: the list decides
         // which columns exist, and the scale sets the weight at which their rows were
         // accumulated.
-        // All-channel mode (card SID phase 6b, R8) decides which columns exist: a receiver
+        // All-channel mode decides which columns exist: a receiver
         // inter-signal code state per extra code and per band, a float ambiguity per extra
         // phase, and the shared satellite families those rows feed.  A resume across the
         // flip would restore a carry whose column set the other side does not have, the
@@ -210,7 +210,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
         }
-        // Second phase channel (card SID phase 6a, R6): adds a float ambiguity per extra
+        // Second phase channel: adds a float ambiguity per extra
         // arc and feeds an existing satellite phase-bias family from stations that did not
         // support it before, so the carried levels and the shared border in a snapshot
         // mean different things across the flip.  Appended only when armed, as for SCC,
@@ -222,7 +222,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondPhaseSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondPhaseSigmaScale()));
         }
-        // Ledger re-entry response (card SID phase 3, R6): the gap re-entry response keys
+        // Ledger re-entry response: the gap re-entry response keys
         // on the arc ledger's admitted lifecycle, which decides which carried levels
         // survive a break.  A resume across the flip would restore levels that the other
         // side would have refloated, and the ledger is not snapshotted (by design), so the
@@ -235,7 +235,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(config_.networkLedgerReentryNoVerdict()
                     == LedgerReentryNoVerdict::Refloat ? "refloat" : "bridge");
         }
-        // Election memory across a gap (card SID phase 4b, B3).  When armed, a family that
+        // Election memory across a gap.  When armed, a family that
         // the coverage gate erased and that returns at the same generation is re-pinned on
         // its previous incumbent rather than on the station the coverage rank picks, so
         // the carried ambiguities a resumed run restores were accumulated against a
@@ -251,7 +251,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));
         add(fmt::format("{}", clk_model_q1));    add(fmt::format("{}", clk_model_q2));
         add(fmt::format("{}", clk_model_k));     add(fmt::format("{}", clk_model_max_gap));
-        // The retired network.emit_clock_rate (card C1) held this position, always false
+        // The retired network.emit_clock_rate held this position, always false
         // on a snapshot that can resume today; the constant keeps every stored
         // fingerprint written with the key off unchanged.
         add("false");
@@ -266,15 +266,15 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // phase_datum_eq34, so the off path keeps its fingerprint.  When armed, the
         // lineage needs a fresh convergence.
         if (ctx.knobs.handover_stransform) add("sts:1");
-        // Card PRM phase 2: the transform before the coupling rows changes the handover
+        // The transform before the coupling rows changes the handover
         // epoch's rows (armed-only token, so every existing fingerprint is unchanged).
         if (ctx.knobs.handover_stransform_before_rows) add("stsrows:1");
-        // Card SCL B2: the exact S P S^T and the anchor kept across the handover change the
+        // The exact S P S^T and the anchor kept across the handover change the
         // handover epoch's fold and the anchor's state (armed-only tokens, so every existing
         // fingerprint is unchanged).
         if (ctx.knobs.handover_stransform_dense) add("stsdense:1");
         if (ctx.knobs.cta_datum_keep) add("ctakeep:1");
-        // Card PRM phase 3b step 2: the re-base mechanisms also move their owed sites, which
+        // The re-base mechanisms also move their owed sites, which
         // changes the carry they hand on (armed-only token, so every existing fingerprint is
         // unchanged).
         if (ctx.knobs.rebase_complete) add("rbc:1");
@@ -286,7 +286,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // Appended only when armed, like the others.
         if (config_.networkRxCodeBiasDatum())
             add(fmt::format("rxcbdatum:{}", config_.networkRxCodeBiasDatumSigmaM()));
-        // The receiver extra-band code delay estimated (card L5B): the receiver IFB columns
+        // The receiver extra-band code delay estimated: the receiver IFB columns
         // join the local block and the carried receiver code-bias set, so a snapshot written
         // with them held carries a different state set.  Appended only when the knob turned
         // the drop off (the rule's own flag), so a snapshot written without it keeps its
@@ -294,7 +294,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (ctx.param_inventory.rx_ifb.estimated_by_knob) add("rxifbest:1");
         add(fmt::format("{}", q_clock)); add(fmt::format("{}", q_pb)); add(fmt::format("{}", q_cb));
         add(fmt::format("{}", nc.warmup_ura_floor_m)); add(fmt::format("{}", nc.warmup_epochs));
-        // Card LGM: the phase nuisance state changes what every carried ambiguity level
+        // The phase nuisance state changes what every carried ambiguity level
         // means (the colour is no longer in it), and its own carry is not snapshotted, so a
         // warm resume cannot cross the flip.  Appended only when armed.
         if (nc.phase_colour_state)
@@ -332,11 +332,11 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
                 || ctx.knobs.cta_stat_proj_prior))
             add(fmt::format("cta:gfstat:{}:{}", ctx.knobs.cta_stat_proj_post ? 1 : 0,
                             ctx.knobs.cta_stat_proj_prior ? 1 : 0));
-        // Card CTU section 14: the phase-space guard decides trips, which changes the carried
+        // The phase-space guard decides trips, which changes the carried
         // state; the shadow mode is trace-only.  Appended only in phase mode.
         if (ctx.knobs.cta_on && ctx.knobs.cta_space == 2)
             add(fmt::format("cta:space:phase:{:.4f}", ctx.knobs.cta_phi_floor_m));
-        // Card HLT: the health rule changes the clock pivot ("pivot") or the satellite set
+        // The health rule changes the clock pivot ("pivot") or the satellite set
         // ("exclude"), so a snapshot written with it armed carries a different datum or
         // state.  Conditional append, so every earlier fingerprint is unchanged.
         if (ctx.knobs.sat_health != 0)
@@ -365,7 +365,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // frame and re-level against a stale baseline.
         add(fmt::format("{}", static_cast<int>(config_.networkAprioriSource())));
         add(fmt::format("{}", config_.networkAprioriClockAnchorSigmaM()));
-        // Card NBP: the selection rule defines which ephemeris the carried clock refers to
+        // The selection rule defines which ephemeris the carried clock refers to
         // through the offset table, so it is part of the frame.  Appended only under
         // sp3_brdc_clock (whose enum value already differs), so every other fingerprint
         // is unchanged.
@@ -385,7 +385,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (config_.networkCodeBiasDiscJumpTest() || config_.networkClockDiscOnSetChange())
             add(fmt::format("emitchan:cbj={},cks={}", config_.networkCodeBiasDiscJumpTest(),
                             config_.networkClockDiscOnSetChange()));
-        // The per-channel mark scope (card MS) decides which channel's counters a
+        // The per-channel mark scope decides which channel's counters a
         // landed mark steps, those counters are snapshotted emitter state, and the
         // pending-mark section carries a channel mask.  Appended
         // only when armed, so a snapshot written with it off keeps its fingerprint.
@@ -428,14 +428,14 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // armed, so a snapshot written with it off keeps its fingerprint.
         if (cb_time_linked)
             add(fmt::format("cbtimelink={}", cb_time_linked));
-        // Card GFC: pair continuity changes which satellites re-seed their clock at a pin
+        // Pair continuity changes which satellites re-seed their clock at a pin
         // pair change, and the family difference changes which combination realizes the
         // inter-family code offset, so a carried code-bias map was realized under a
         // different datum across either flip.  Armed-only tokens, so every existing
         // fingerprint is unchanged.
         if (config_.networkCodeDatumPairContinuity()) add("cbpaircont=1");
         if (config_.networkCodeDatumFamilyDifference()) add("cbfamdiff=1");
-        // Card GFC step 2: the first-sighting family prior changes the carried code biases
+        // The first-sighting family prior changes the carried code biases
         // of every satellite born beside its family partner, by an amount set by sigma, so
         // the token carries the value.  Armed-only, as for the two arms above.
         if (config_.networkCodeFamilyBirthPriorSigmaM() > 0.0)
@@ -447,29 +447,29 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // with it off keeps its fingerprint.
         if (carry_cpl_tu)
             add(fmt::format("carrycpltu={}", carry_cpl_tu));
-        // The exact update (card CTU) changes every injected row's coefficients and variance
+        // The exact update changes every injected row's coefficients and variance
         // again, on the same footing; appended only when armed.
         if (ctx.knobs.carry_cpl_exact)
             add(fmt::format("carrycplexact={}", ctx.knobs.carry_cpl_exact));
-        // Card WSX: the within-station bracket changes the rows' joint weight; armed only.
+        // The within-station bracket changes the rows' joint weight; armed only.
         if (ctx.knobs.carry_cpl_exact_cross)
             add(fmt::format("carrycplexactx={}", ctx.knobs.carry_cpl_exact_cross));
-        // Card PFQ: the pivot-frame clock noise changes every carried clock's prior and the
+        // The pivot-frame clock noise changes every carried clock's prior and the
         // exact update's Q_S; armed-only token.
         if (ctx.knobs.pfq_on)
             add(fmt::format("pfq={}", ctx.knobs.pfq_on));
-        // Card SCL: the clock clone changes the rows, the fold and the carry each epoch hands
+        // The clock clone changes the rows, the fold and the carry each epoch hands
         // on (the harvest marginalizes the clones); armed-only token, so every existing
         // fingerprint is unchanged.
         if (ctx.knobs.carry_cpl_clone) add("ccl:1");
-        // Card SCL2 X2: the shared history changes the rows, the fold and the carried
+        // The shared history changes the rows, the fold and the carried
         // variances (the remainder only); armed-only token with its rank.
         if (ctx.knobs.carry_cpl_shx) add(fmt::format("shx:{}", ctx.knobs.shx_rank));
-        // Card BCL: the bias and departed clones change the rows and the fold; armed-only
+        // The bias and departed clones change the rows and the fold; armed-only
         // tokens.
         if (ctx.knobs.carry_cpl_bclone) add("bcl:a");
         if (ctx.knobs.carry_cpl_dclone) add("bcl:d");
-        // The bound raise (card CTU) moves the carried border block; the monitor alone is
+        // The bound raise moves the carried border block; the monitor alone is
         // trace class and stays out of the fingerprint.
         if (ctx.knobs.clm_raise)
             add(fmt::format("clmraise={}", ctx.knobs.clm_raise));
@@ -478,12 +478,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         if (ctx.knobs.rxcb_blk)
             add(fmt::format("rxcbblk={}", ctx.knobs.rxcb_blk));
         // A drop that decouples at birth strength changes the carried state; appended
-        // only when armed (card CTU section 14).
+        // only when armed.
         if (ctx.knobs.amb_drop_decouple_always)
             add("ambdropdecouple=true");
-        // Gauge projection and source re-init (cards 1f and 1g) both change which
-        // information an injected coupling row carries: 1f alters the coefficient vector
-        // of every truncated row, and 1g moves whole columns onto the departed route.  Same
+        // Gauge projection and source re-init both change which
+        // information an injected coupling row carries: the projection alters the coefficient vector
+        // of every truncated row, and the re-init moves whole columns onto the departed route.  Same
         // footing as carry_cpl_tu above; appended only when armed, so existing
         // fingerprints are unchanged.
         if (ctx.knobs.carry_cpl_gauge)
@@ -527,8 +527,8 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   carry hygiene           phase_anchor_carry_reref
         //   slip response           cycle_slip.{relevel_free_epoch,relevel_delta_bridge},
         //                           cycle_slip.gf_arc_jump{,_m,_k,_window,_min_count}
-        //                           (card ARL; its per-arc state is never serialized),
-        //                           cycle_slip.if_phase_td_reseed_on_flag (card ARL; the
+        //                           (its per-arc state is never serialized),
+        //                           cycle_slip.if_phase_td_reseed_on_flag (the
         //                           IF-TD gradient chains are never serialized)
         //   resume response         zwd_seam_reseed, resume_frame_restore,
         //                           resume_slip_warmup_ep, resume_coupling_restore,
@@ -566,7 +566,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         //   vintage (a reader that predates it fails the header check and cold-starts), not
         //   of the fingerprint, and the writer's products and traces stay byte-identical
         //   because the capture block reads ctx.carry after the emit and writes only into
-        //   `snap`.  The card-1 arithmetic tokens those rows depend on are already in fp
+        //   `snap`.  The coupling arithmetic tokens those rows depend on are already in fp
         //   above, so a writer/reader mismatch on the coupling arithmetic cannot occur.
         //   The same reasoning covers the unconditional Z-row and frame-row captures and
         //   the RS-5 emit-layer (state_snapshot_emit_capture) and RS-6 station-layer
@@ -594,13 +594,13 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // on.  (zwd_on / zwd_q above stay fingerprinted, because the continuous carry
         // affects the solve on both sides of a seam.)
         live_fingerprint = NetworkStateSnapshotIO::fnv1a64(fp);
-        // Card CTU G5: the same fingerprint with the card's own tokens removed, so a run
+        // CTU G5: the same fingerprint with the CTU tokens removed, so a run
         // that switches the exact update, the bound raise, the in-block rx-CB carry or the
         // phase-space guard ON can resume from a snapshot written without them (the
-        // switch-on seam the card's G5 grades).  The reverse direction is not accepted:
-        // a snapshot written with them holds the card's state, which a run without them
+        // switch-on seam that G5 grades).  The reverse direction is not accepted:
+        // a snapshot written with them holds their state, which a run without them
         // would read under the old rules.  Only under network.ctu_switch_on_resume: the
-        // seam failed G5, and card EXL's ledger rows (the knobs armed on the goldens) are
+        // seam failed G5, and the ledger rows (the knobs armed on the goldens) are
         // fresh convergence only.  Off, the twin is 0 and the resume gate compares the
         // live fingerprint alone.
         ctx.carry.live_fingerprint_ctu_off = 0;

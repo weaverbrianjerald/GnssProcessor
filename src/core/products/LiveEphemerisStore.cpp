@@ -269,7 +269,7 @@ void LiveEphemerisStore::insertTransmitted(const BroadcastEphemeris& eph) {
         by_sat_.emplace(eph.satellite, SatRecord{eph, std::nullopt});
         return;
     }
-    // Transmission order is authoritative (card NBP): no freshest-toe test, and the
+    // Transmission order is authoritative: no freshest-toe test, and the
     // replaced record is kept as "previous" on an IODE change, as insert() does.
     if (it->second.current.iode != eph.iode) it->second.previous = it->second.current;
     it->second.current = eph;

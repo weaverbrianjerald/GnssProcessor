@@ -60,7 +60,7 @@ namespace GnssProcessor {
         double eph_toe_age_s = 0.0;                   /**< Signed age (s, obs epoch − ephemeris toe) of the broadcast ephemeris used for this satellite; |value| is the extrapolation magnitude. Real-time BSSD pivot selection avoids a pivot whose ephemeris is much staler than its peers'. 0 when there is no live ephemeris (post-processing / SP3). */
         /**
          * @brief The band-1 code keys this observation carries as companions of the
-         *        station's latched canonical code (card SCC, R1).
+         *        station's latched canonical code.
          *
          * Empty unless `network.second_code_channel` is armed on the network path, so
          * every other posture allocates nothing and is unchanged.  The keys are also
@@ -81,7 +81,7 @@ namespace GnssProcessor {
         std::set<std::string> companion_codes;
         /**
          * @brief The band-1 phase keys this observation carries besides the one the
-         *        station's canonical latch selected (card SID phase 6a, R1).
+         *        station's canonical latch selected.
          *
          * Empty unless `network.second_phase_channel` is armed on the network path, so
          * every other posture allocates nothing and is unchanged.  The keys are also in
@@ -89,7 +89,7 @@ namespace GnssProcessor {
          * all three to accept a row); this set is what distinguishes a second-phase
          * row from the latched one it accompanies.
          *
-         * Companion code rows (card SCC) can also be identified downstream by the
+         * Companion code rows can also be identified downstream by the
          * receiver inter-signal state they route through.  Second-phase rows have no
          * such state (a float ambiguity already absorbs a constant per arc, so the
          * state would sit in the null space), so this set is the only key: the sigma

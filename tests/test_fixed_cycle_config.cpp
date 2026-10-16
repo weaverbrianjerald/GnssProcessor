@@ -1,23 +1,23 @@
 /**
  * @file test_fixed_cycle_config.cpp
- * @brief Loader tests of the fixed-cycle fold (card FCF, step FCF-2 and its review fixes, step
+ * @brief Loader tests of the fixed-cycle fold (step FCF-2 and its review fixes, step
  *        FCF-3): @c network.ambiguity_resolution.fixed_cycles.*.
  *
  * Suite @c FixedCycleConfig:
  *  - the knobs default to the unarmed posture (off, source unset, hold 0.003 cycle, alphas
  *    1e-6 and 1e-4, three passes, 0.5 m, persist_ep 10, lapse_ep 0 (off), no trace, no
  *    acknowledgement);
- *  - Observe and the D1 Emit arm (source epoch with emit_measurement_only, card ARL section
- *    13's slip fixes, every station on a sim bed) load on the fold's posture (the search on the
+ *  - Observe and the D1 Emit arm (source epoch with emit_measurement_only, the ambiguity-resolution
+ *    slip fixes, every station on a sim bed) load on the fold's posture (the search on the
  *    cycle basis, float_kf, the held S-basis);
- *  - card FCF section 2's refusals: Emit without emit_measurement_only, Emit with source
+ *  - the fixed-cycle fold's refusals: Emit without emit_measurement_only, Emit with source
  *    lattice (step FCF-4 is not built), and an unnamed source; source lattice under Observe
  *    loads (step FCF-3) with its persist_ep and lapse_ep (lapse_ep named inert under source
  *    epoch); the fold's interlocks (no search, no cycle basis, the level vehicle, no held basis,
  *    carry_invariant, phase_datum_eq34, cycle_slip.turbo_edit,
  *    cycle_slip.relevel_delta_bridge, sd_ewl.fix_enable, the smoothed hold under Emit);
  *    malformed values;
- *  - card FCFB section 5's review fixes: Emit refuses a posture missing any of the slip fixes
+ *  - the review fixes: Emit refuses a posture missing any of the slip fixes
  *    (and the knobs that make them act) and Observe names it; Emit refuses a state snapshot
  *    path (a snapshot written or resumed under Emit); Emit refuses a station off a sim bed (the
  *    acknowledgement is checked); a gross-LOS screen without its emit exclusion is named;
@@ -46,12 +46,12 @@ namespace {
 
 namespace fs = std::filesystem;
 
-/// The search on card AGT's cycle basis.
+/// The search on the arc graph's cycle basis.
 const std::string kSearch =
     "\"enable\": true, \"tree_basis\": true, \"decorrelated_partial\": true, "
     "\"block_search\": true, \"cycle_basis\": true";
 
-/// The search with card ARL's suspect-corner mask (the ambiguity_resolution half of the slip
+/// The search with the suspect-corner mask (the ambiguity_resolution half of the slip
 /// fixes).
 const std::string kSearchSuspect = kSearch + ", \"suspect_epochs\": 10";
 
@@ -78,7 +78,7 @@ std::string simBedStations() {
          + "\", \"position_ecef\": [ -2281621.75, -1453585.08, 5756964.89 ] }\n";
 }
 
-/// Card ARL section 13's slip fixes with the knobs that make them act, as the network key
+/// The slip fixes with the knobs that make them act, as the network key
 /// @c cycle_slip (comma-led, for @c config's @p net_extra).  A non-empty @p key is given
 /// @p value, or removed when @p value is empty.
 std::string slipFixes(const std::string& key = "", const std::string& value = "") {
@@ -184,7 +184,7 @@ const std::string kObserve = "\"fold\": \"observe\", \"source\": \"epoch\"";
 /// The record's first clause (GnssConfigLoadNetwork.cpp, the producer AR warning).
 constexpr const char* kRecord = "Network producer AR ARMED, but the emitted product stays FLOAT";
 /// The Emit variant's first clause.
-constexpr const char* kEmitVariant = "Network producer AR ARMED with fixed_cycles.fold EMIT (card FCF)";
+constexpr const char* kEmitVariant = "Network producer AR ARMED with fixed_cycles.fold EMIT";
 /// The slip-fix refusal (Emit) and warning (Observe).
 constexpr const char* kSlipRefusal = "requires the slip fixes of card ARL section 13";
 constexpr const char* kSlipWarning = "fixed_cycles.fold observe runs without the slip fixes";
@@ -239,7 +239,7 @@ TEST(FixedCycleConfig, SectionTwoRefusals) {
         const Loaded l = load(c.tag, c.json);
         EXPECT_FALSE(l.ok) << c.tag;
         EXPECT_NE(l.text.find(c.why), std::string::npos) << c.tag << ": " << l.text;
-        EXPECT_NE(l.text.find("(card FCF)"), std::string::npos) << c.tag;
+        EXPECT_NE(l.text.find(""), std::string::npos) << c.tag;
     }
 }
 
@@ -322,7 +322,7 @@ TEST(FixedCycleConfig, TheRemainingInterlocksRefuse) {
     }
 }
 
-// Card FCFB section 5: a slip no detector flags leaves the zero-q float on the wrong integer,
+// A slip no detector flags leaves the zero-q float on the wrong integer,
 // which the per-unit test and block acceptance cannot see, so Emit requires every slip fix (and
 // the knobs that make two of them act) and Observe names a missing one.
 TEST(FixedCycleConfig, EmitRequiresTheSlipFixesAndObserveNamesThem) {

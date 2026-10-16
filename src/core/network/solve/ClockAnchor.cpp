@@ -1,6 +1,6 @@
 /**
  * @file ClockAnchor.cpp
- * @brief Implementation of the guarded temporal clock anchor (card Q3,
+ * @brief Implementation of the guarded temporal clock anchor (
  *        docs/SPEC_clock_temporal_anchor.md).  The design rationale, the two exact
  *        identities the guard rests on, and the invariant #1 and #7 contract are in
  *        the header's file comment.
@@ -11,10 +11,10 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/diag/RunTraces.hpp"
-#include "network/carry/ClockClone.hpp"      // networkClockCloneRefloat (card SCL)
+#include "network/carry/ClockClone.hpp"      // networkClockCloneRefloat
 #include "network/solve/PivotHandover.hpp"   // datumChangeAffectsKey
-#include "network/assembly/Responses.hpp"       // prmRespond / ResponseSite (card PRM phase 3a)
-#include "common/GnssIdentity.hpp"           // systemOfSat; phase-space statistic: band wavelengths (card CTU section 14)
+#include "network/assembly/Responses.hpp"       // prmRespond / ResponseSite
+#include "common/GnssIdentity.hpp"           // systemOfSat; phase-space statistic: band wavelengths
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -24,7 +24,7 @@
 #include <map>
 #include <optional>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/solve/Estimator.hpp"
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunGroups.hpp"
@@ -32,7 +32,7 @@
 #include <memory>
 #include <string>
 
-#include "network/driver/Epoch.hpp"        // NetworkEpoch (card NOM3 step SG: the solve stages)
+#include "network/driver/Epoch.hpp"        // NetworkEpoch (the solve stages)
 #include "network/driver/Run.hpp"          // NetworkRun
 #include "network/state/RunContext.hpp"
 #include "network/driver/SetupResult.hpp"
@@ -120,7 +120,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
     for (std::size_t a = 0; a < keys.size(); ++a) {
         const auto& p = keys[a];
         if (p.sat.empty()) continue;
-        if (p.kind == SharedParamKind::Clock && !p.clone) by[p.sat].ic = static_cast<int>(a);   // a clone is not the clock (card SCL)
+        if (p.kind == SharedParamKind::Clock && !p.clone) by[p.sat].ic = static_cast<int>(a);   // a clone is not the clock
         else if (p.kind == SharedParamKind::PhaseBias) {
             by[p.sat].ip.push_back(static_cast<int>(a));
             by[p.sat].sig.push_back(p.signal);
@@ -144,7 +144,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         // band with a second signal (GPS L1C and L1W) keeps its primary column; the
         // sparse family's column wanders with its own anchor, and any one signal per band
         // gives a functional blind to the level and to the ionosphere direction.  (A
-        // signal choice, card NOM step N3.)
+        // signal choice.)
         Sat s;
         s.ic = s0.ic;
         {
@@ -183,7 +183,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
             const Eigen::Index cc = est.clockColumn(sat);
             if (cc < 0 || cc >= x_s.size()) continue;
             double e = x_s(cc) - keys[static_cast<std::size_t>(s.ic)].value;
-            double d = x_s(cc);                  // the posterior value (card PVN)
+            double d = x_s(cc);                  // the posterior value
             fn.ka.emplace_back(s.ic, 1.0);
             fn.sc.emplace_back(cc, 1.0);
             for (std::size_t j = 0; j < s.ip.size(); ++j) {
@@ -200,7 +200,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         } catch (...) { continue; }
         row.n_pb = static_cast<int>(s.ip.size());
         for (std::size_t j = 0; j < s.sig.size(); ++j)
-            row.sigs += (j ? "+" : "") + s.sig[j];    // the functional's signals (card PVN)
+            row.sigs += (j ? "+" : "") + s.sig[j];    // the functional's signals
         out[sat] = row;
         by_const[sys].emplace_back(sat, std::move(fn));
     }
@@ -231,7 +231,7 @@ std::map<std::string, ClockAnchorPhiRow> clockAnchorPhaseStatistic(
         std::vector<double> tmp = ev;
         std::nth_element(tmp.begin(), tmp.begin() + static_cast<std::ptrdiff_t>(n / 2), tmp.end());
         const double med = tmp[n / 2];
-        // The posterior value's constellation median (card PVN; the guard reads e_hat).
+        // The posterior value's constellation median (the guard reads e_hat).
         std::vector<double> dv;
         dv.reserve(n);
         for (const auto& [sat, fn] : v) { (void)fn; dv.push_back(out[sat].d_post); }
@@ -284,7 +284,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double prev_var, double dt_epoch,
                                         double pl_now_s, double value,
                                         double seed_horizon_s) {
-    // The decision and the bookkeeping, in one call (card PRM phase 1b split them so the
+    // The decision and the bookkeeping, in one call (split so the
     // decision can be made before PASS B and the bookkeeping at the fold).  Off: the legacy
     // expression prev_var + q_clock * dt, and nothing is written.
     const ClockAnchorFold out =
@@ -363,10 +363,10 @@ void clockAnchorFoldCommit(NetworkRunContext& ctx, const std::string& sat,
     if (f.anchored) {
         if (f.floor_hit) ++ctx.counters.cta_floor_hits;
         ++ctx.counters.cta_folded_anchored;
-        ++ctx.counters.mgnss.anchor_folds_anchored[constellationKey(systemOfSat(sat))];   // per constellation (card GAL)
+        ++ctx.counters.mgnss.anchor_folds_anchored[constellationKey(systemOfSat(sat))];   // per constellation
     } else {
         ++ctx.counters.cta_folded_loose;
-        ++ctx.counters.mgnss.anchor_folds_loose[constellationKey(systemOfSat(sat))];      // per constellation (card GAL)
+        ++ctx.counters.mgnss.anchor_folds_loose[constellationKey(systemOfSat(sat))];      // per constellation
     }
     st.t_last          = pl_now_s;
     st.last_value      = value;
@@ -392,11 +392,11 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     st.anchored = false;
     st.in_band  = 0;
     if (!was_anchored) return false;   // already LOOSE: no edge, nothing to mark
-    // Card PRM phase 3a: one ANCHORED -> LOOSE edge of one satellite, whatever the cause
+    // One ANCHORED -> LOOSE edge of one satellite, whatever the cause
     // (gap, datum, ext, statistic): every decoupling edge goes through this path.
     prmRespond(ctx.counters.prm_resp, ResponseSite::ClkAnchorDecouple);
     ctx.carry.clk_anchor.tripped.insert(sat);
-    ++ctx.counters.mgnss.anchor_trips[constellationKey(systemOfSat(sat))];   // per constellation (card GAL)
+    ++ctx.counters.mgnss.anchor_trips[constellationKey(systemOfSat(sat))];   // per constellation
     // Re-admission continuity: a trip within the verify window of a clock seed is the
     // data rejecting the seeded pre-gap realization (invariant #7's mark-if-moved),
     // attributed in the event detail and counted.
@@ -451,7 +451,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             if (it == anchor.sat.end() || !it->second.anchored) continue;
             if (!datumChangeAffectsKey(sat, changed_consts, ctx.knobs.scoped_handover))
                 continue;
-            // Card SCL B2 (network.clock_anchor_datum_keep): the constellation's carry was
+            // Datum keep (network.clock_anchor_datum_keep): the constellation's carry was
             // re-expressed exactly this epoch (the dense kernel, its self-check passed), this
             // clock has a row in that block, and its fold was the anchored one on the
             // re-expressed entry: the carry is in the incoming frame, so the frame did not
@@ -508,7 +508,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         std::map<System, std::vector<double>> e_by_const;
         // The statistic is on the common-removed residual, so both halves of
         // S = P⁻ − P⁺ have to be the variance of that contrast rather than of the
-        // raw state (card Q3 §2.1; @ref clockAnchorGaugeProject documents why, and
+        // raw state (@ref clockAnchorGaugeProject documents why, and
         // why the raw marginal is wrong for either fold).  Which halves are
         // projected is set by `network.clock_anchor_gauge_free_stat`, resolved into
         // the two predicates above.  It is a bisection knob: the gauge-free arm
@@ -597,7 +597,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             med[c] = v[v.size() / 2];
         }
 
-        // Card CTU section 14: the statistic in the phase-visible complement.  Empty
+        // The statistic in the phase-visible complement.  Empty
         // (and nothing computed) with network.clock_anchor_guard_space = clock.
         const std::map<std::string, ClockAnchorPhiRow> phi =
             (ctx.knobs.cta_space != 0)
@@ -701,7 +701,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 if (bad_nis || bad_abs) { st.in_band = 0; continue; }
                 ++st.in_band;
                 if (st.in_band >= std::max(1, ctx.knobs.cta_recouple_ep)) {
-                    // Card PRM phase 3a: a re-coupling is a LOOSE -> ANCHORED edge of a
+                    // A re-coupling is a LOOSE -> ANCHORED edge of a
                     // satellite the guard anchored before.  A satellite is born LOOSE, so
                     // its first engagement takes this path too (cta_recouples counts it)
                     // and is not a response; ever_anchored separates the two and is read
@@ -774,12 +774,12 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         Eigen::VectorXd x_try;
         try {
             if (!dense_drop.empty()) {
-                // Card SCL: on a clone epoch the fold was the joint one, so its walk factors
+                // On a clone epoch the fold was the joint one, so its walk factors
                 // are withdrawn (the clones stay; filter/NetworkClockClone).  Off, the clone
                 // refloat does nothing and returns false.
                 // The gauge-free flag has to match the fold, or the withdrawn block
                 // is not the block that was applied.
-                // Card NOM N2a: each withdrawal below is named Q3Withdraw just before its
+                // Each withdrawal below is named Q3Withdraw just before its
                 // call, each restore in the catch Q3Restore (the clone refloat names its own).
                 if (!networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/false)) {
                     est.contributionKind(ContributionKind::Q3Withdraw);
@@ -794,7 +794,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 // moves the group's information-weighted mean, so every survivor's
                 // anchor target changes.  Re-fold the group instead of subtracting
                 // one entry.
-                est.contributionKind(ContributionKind::Q3Withdraw);   // card NOM N2a
+                est.contributionKind(ContributionKind::Q3Withdraw);
                 if (gf) {
                     std::set<std::string> ds;
                     for (const auto& p : diag_drop) ds.insert(p.sat);
@@ -814,13 +814,13 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             try {
                 if (folded_dense
                     && !networkClockCloneRefloat(ctx, ws, est, dense_drop, /*restore=*/true)) {
-                    est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
+                    est.contributionKind(ContributionKind::Q3Restore);
                     est.refoldSharedPriorDenseDroppingClocks(ws.cap_dense_keys,
                                                              ws.cap_dense_cov, dense_drop,
                                                              /*restore=*/true, gf);
                 }
                 if (!diag_drop.empty()) {
-                    est.contributionKind(ContributionKind::Q3Restore);   // card NOM N2a
+                    est.contributionKind(ContributionKind::Q3Restore);
                     if (gf) {
                         std::set<std::string> ds;
                         for (const auto& p : diag_drop) ds.insert(p.sat);
@@ -845,7 +845,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         // cap_priors / cap_dense_* verbatim onto a fresh arrowhead, so a withdrawn
         // prior left in the capture would be re-injected.
         if (!diag_drop.empty()) {
-            // The capture's kinds (card NOM step N2b) are erased in step with the priors,
+            // The capture's kinds are erased in step with the priors,
             // when the two are in step; a capture without kinds keeps none.
             auto& cp = ws.cap_priors;
             auto& ck = ws.cap_prior_kinds;
@@ -885,7 +885,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             }
             ws.cap_dense_keys = std::move(nk);
             ws.cap_dense_cov  = std::move(nc);
-            networkClockCloneRefloatTrim(ws, dense_drop);   // card SCL; no-op off
+            networkClockCloneRefloatTrim(ws, dense_drop);   // no-op off
         }
         log->info("Network (Card Q3): TOW {:.1f} clock-anchor refloat — {} satellite(s) [{}] "
                   "withdrawn and the epoch RE-SOLVED before emission (pass {}).",
@@ -899,7 +899,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                   se_time.tow, kCtaMaxPasses);
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the Q3 guarded temporal clock anchor.
 int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
@@ -907,7 +907,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     if (!ctx.knobs.cta_on) return 0;
-    // Guarded temporal clock anchor run-end telemetry (card Q3); the ON-path counters
+    // Guarded temporal clock anchor run-end telemetry; the ON-path counters
     // are the evidence (invariant #4).  `folded_anchored = 0` means the anchor never
     // bound a single row: the mechanism is inert and every downstream number in the
     // run is the legacy carry, however clean the log reads.  Trips are split by
@@ -934,7 +934,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
               c.cta_max_w_sat.empty() ? std::string("(none)") : c.cta_max_w_sat,
               c.cta_max_w_tow);
     if (ctx.knobs.cta_space != 0) {
-        // Card CTU section 14: the phase-space statistic beside the clock statistic.
+        // The phase-space statistic beside the clock statistic.
         // In shadow mode the clock statistic decided; in phase mode the phase one did.
         std::string wl, el;
         for (std::size_t b = 0; b < kCtaWLadder.size(); ++b)
@@ -1052,10 +1052,10 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// ---- Solve stages (card NOM3 step SG; generated by scripts/nom_sg_cut.py) ----
-/// The cold-start a-priori satellite-clock Tikhonov anchor (card NOM3 step SG; Doxygen at the declaration).
+// ---- Solve stages (generated by scripts/nom_sg_cut.py) ----
+/// The cold-start a-priori satellite-clock Tikhonov anchor (Doxygen at the declaration).
 void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspace& ws) {
-    // ---- From the run, the epoch and the solve's values (card NOM3 step SG; generated by
+    // ---- From the run, the epoch and the solve's values (generated by
     //      scripts/nom_sg_cut.py, each line checked by scripts/nom_sg_verify.py) ----
     NetworkRunContext& ctx = run.ctx;
     NetworkEstimator& est = run.engines.est;
@@ -1110,7 +1110,7 @@ void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWo
                 p.info  = clk_info;
                 clk_anchor.push_back(p);
             }
-            est.contributionKind(ContributionKind::ColdClockAnchor);   // card NOM N2a
+            est.contributionKind(ContributionKind::ColdClockAnchor);
             est.addSharedPrior(clk_anchor);
             if (within_epoch_armed)
                 networkCapturePriors(cap_priors, ws.cap_prior_kinds, clk_anchor,
@@ -1119,11 +1119,11 @@ void networkFoldColdClockAnchor(NetworkRun& run, const NetworkEpoch& ep, EpochWo
     }
 }
 
-/// The Q3 guard between the solve and the within-epoch tier (card NOM3 step SG; Doxygen at the declaration).
+/// The Q3 guard between the solve and the within-epoch tier (Doxygen at the declaration).
 void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const SolveDatum& datum,
                                   const NetworkPostFitHandoff& handoff, Eigen::VectorXd& x_s,
                                   EpochWorkspace& ws) {
-    // ---- From the run, the epoch and the solve's values (card NOM3 step SG; generated by
+    // ---- From the run, the epoch and the solve's values (generated by
     //      scripts/nom_sg_cut.py, each line checked by scripts/nom_sg_verify.py) ----
     NetworkRunContext& ctx = run.ctx;
     const GnssConfig& config_ = run.config;
@@ -1138,7 +1138,7 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
     const std::set<std::string>& clock_refloat_sats = handoff.clock_refloat_sats;
     const EpochEvents& events = ep.events;
     // ---- End of the bindings ----
-    // --- Guarded temporal clock anchor (card Q3, docs/SPEC_clock_temporal_anchor.md) ---
+    // --- Guarded temporal clock anchor (docs/SPEC_clock_temporal_anchor.md) ---
     // Must run here: after the primary solve and before the within-epoch adaptation
     // below.  A stiff clock prior fighting a real step pushes the tension into the
     // residuals and raises σ̂0, and the adaptation would then attribute a prior fault to

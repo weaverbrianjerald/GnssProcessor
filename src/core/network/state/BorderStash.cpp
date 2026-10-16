@@ -17,8 +17,8 @@
  * INC-4) that binds the driver's former local names to members of the context, so the
  * relocated code keeps those names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -29,7 +29,7 @@
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, constellationKey
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
-#include "network/state/CarryDisposition.hpp" // carryColumnPresent (card PRM phase 1b)
+#include "network/state/CarryDisposition.hpp" // carryColumnPresent
 #include "network/solve/Sbasis.hpp"          // NetworkSbasis::Plan
 #include "filter/StateKeySchema.hpp"         // StateKeys::parseSatPhaseBiasKey / makeAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
@@ -100,7 +100,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                        const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
                        const EpochEvents& events,
                        const std::shared_ptr<spdlog::logger>& log) {
-    // Card PRM phase 2: the stash re-expresses the carry in the solve's datum, so a transform
+    // The stash re-expresses the carry in the solve's datum, so a transform
     // the handover preview applied before PASS B is no longer a pending record (empty with
     // network.handover_stransform_before_rows off).
     ctx.carry.sts_carry_pivot.clear();
@@ -161,8 +161,8 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     const bool full_refloat = !(clk_mon_reinit_sig > 0.0);   // reinit_sigma ≤ 0 → hard skip-stash
     // Carry this stash epoch's clock-monitor flags across to the next inject (hard-refloat
     // mode skip-stashes the flagged satellite entirely, so the flag cannot travel on
-    // prev_carry.inflate_q).  Gated, so off runs are unchanged.  Card 1g reads the same
-    // history with κ off, so the mirror follows the wider predicate; otherwise arming 1g
+    // prev_carry.inflate_q).  Gated, so off runs are unchanged.  The reinit-sources route reads the same
+    // history with κ off, so the mirror follows the wider predicate; otherwise arming that route
     // alone would leave the clock-QC half of the feed empty, and the widening would cover
     // only the reref sources without any indication.
     if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
@@ -293,7 +293,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             prev_carry_cov.clear();
         }
     }
-    // Card CTU: stamp the block with this epoch's content time (a coupling row is exact
+    // Stamp the block with this epoch's content time (a coupling row is exact
     // only if it was harvested now, against this same posterior) and record which clock
     // the datum pinned (the pivot takes each exact row's clock-family deficit next epoch).
     if (ctx.knobs.carry_cpl_exact) {
@@ -309,7 +309,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                          &net::ConstellationState::cxu_pivot) = {sat, x_s(col)};
         }
     }
-    // Card PFQ: the clock pivot this stash was pinned on, the frame of the carried clocks
+    // The clock pivot this stash was pinned on, the frame of the carried clocks
     // the next epoch's fold applies the pivot-frame process noise in.
     if (ctx.knobs.pfq_on) {
         net::dropAll(ctx.entities.constellations, &net::ConstellationState::pfq_pivot);
@@ -403,7 +403,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                     // Already parked.  Column back but not re-stashed (skip-stash,
                     // pinned, non-finite) ⇒ the memory is dropped with the skip; past the
                     // horizon ⇒ drop.
-                    // Card PRM phase 3a: each drop counted per kind of the parked entry
+                    // Each drop counted per kind of the parked entry
                     // (a Clock, or a CodeBias under readmit_seed_cb: the filter above).
                     if (present) {
                         ++ctx.counters.n_readmit_dropped_stale;
@@ -434,7 +434,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 cp.inflate_q = false;
                 prev_carry.push_back(std::move(cp));
                 ++ctx.counters.n_readmit_parked;
-                prmRespond(ctx.counters.prm_resp,   // card PRM phase 3a, per kind
+                prmRespond(ctx.counters.prm_resp,   // per kind
                            oc.kind == SharedParamKind::Clock ? ResponseSite::ClkPark
                                                              : ResponseSite::CbPark);
                 ++parked_now[oc.sat];
@@ -443,7 +443,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 traces.emitEvent(t, "READMIT", "park", sat, "", static_cast<double>(n),
                                  readmit_h, "park",
                                  "D2 clock + code-bias carry parked at departure");
-                // The READMIT writer (card SID phase 4a, S1).  The park is a shared
+                // The READMIT writer.  The park is a shared
                 // parameter's departure, so it names a satellite and never a station:
                 // the expansion writes the bit on every station's arcs of that satellite
                 // that the admitted lifecycle still considers alive.  This seam runs

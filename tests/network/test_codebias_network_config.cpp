@@ -168,7 +168,7 @@ TEST(CodeBiasNetworkConfig, BiasCoverageRequiresApplyParsesAndSurvivesCoupling) 
     }
 }
 
-// network.code_datum_time_linked (Card 2): parses (default false = the legacy zero-
+// network.code_datum_time_linked: parses (default false = the legacy zero-
 // target code-bias datum, byte-identical) and survives the estimate_sat_code_bias
 // coupling (the datum it re-times exists only in W6, so it has to coexist with that
 // flag rather than be overwritten).
@@ -469,7 +469,7 @@ TEST(NetworkConsumerProfile, OrbitSourceParsesAndValidates) {
 
 // processing.network_consumer.orbit_clock_max_skew_s defaults to 0 (echo skew
 // check and withhold off), parses a positive budget, and clamps a negative value
-// back to 0 with a warning (Card 7, RTF-2).
+// back to 0 with a warning (RTF-2).
 TEST(NetworkConsumerProfile, OrbitClockMaxSkewParsesAndClamps) {
     LogManager log;
 
@@ -1043,7 +1043,7 @@ TEST(RealtimePreciseOrbitConfig, UsePreciseOrbitsParsesDefaultsOffAndSplitsGates
 }
 
 // ===========================================================================
-// network.apriori_source + network.apriori_clock_anchor_sigma_m (RTF-1 Card 1)
+// network.apriori_source + network.apriori_clock_anchor_sigma_m (RTF-1)
 // ===========================================================================
 
 // Default network config: the a-priori source is Sp3 (precise SP3/CLK identity,
@@ -1157,7 +1157,7 @@ TEST(NetworkAprioriSourceConfig, ServiceModeDoesNotArmAprioriSource) {
 // ---------------------------------------------------------------------------
 // resolveNetworkAprioriClockAnchorSigmaM(): the mode-aware auto resolution the
 // producer folds.  Pure config function; the driver's < 100 m binding gate is
-// not applied here.  (RTF-1 Card 5, plan D6)
+// not applied here.  (RTF-1, plan D6)
 // ---------------------------------------------------------------------------
 
 // sp3 + auto (default): resolves to initial_std.sat_clock unchanged, which is
@@ -1462,7 +1462,7 @@ TEST(ClosedLoopBiasGateConfig, DerivedConsumerArmsBiasMaxAge) {
 }
 
 // network.phase_datum_eq34 parses off by default, on in isolation, and with the
-// two sub-knobs (preferred datum receiver, pin-to-round).  (Card 3)
+// two sub-knobs (preferred datum receiver, pin-to-round).
 TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     LogManager log;
     // Default off, byte-identical.
@@ -1492,7 +1492,7 @@ TEST(CodeBiasNetworkConfig, Eq34PhaseDatumParses) {
     }
 }
 
-// eq34 + prioritized is allowed: eq34 supersedes.  (Card 3)
+// eq34 + prioritized is allowed: eq34 supersedes.
 TEST(CodeBiasNetworkConfig, Eq34SupersedesPrioritized) {
     LogManager log;
     // eq34 && prioritized -> loads (eq34 supersedes; both getters reflect config).
@@ -1510,7 +1510,7 @@ TEST(CodeBiasNetworkConfig, Eq34SupersedesPrioritized) {
 }
 
 // network.carry_invariant_innov_gate parses off by default (byte-identical), on with
-// carry_invariant (which itself needs eq34), and reads the k knob.  (Card 4 (M1) D5)
+// carry_invariant (which itself needs eq34), and reads the k knob.  (D5)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
     LogManager log;
     // Default off, k defaults to 4.0.
@@ -1540,7 +1540,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateParses) {
 }
 
 // The innovation gate is defined only on the carried DDs, so arming it without
-// carry_invariant is an incoherent config and fails the load.  (Card 4 (M1) D5)
+// carry_invariant is an incoherent config and fails the load.  (D5)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
     LogManager log;
     const fs::path p = writeTempConfig("d5_no_carry",
@@ -1555,7 +1555,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovGateRequiresCarryInvariant) {
 
 // The LS-VCE calibration parses off by default (byte-identical), on atop the innovation
 // gate with a window, and is rejected without the gate (nothing to calibrate).
-// (Card 4 (M1) D5 v2)
+// (D5 v2)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
     LogManager log;
     // Default off, window 60.
@@ -1603,7 +1603,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovCalibrateParsesAndRequiresGate) {
 // the gate's threshold (an unannounced different gate gives a wrong answer), while
 // retap_only only decides what happens to flags that do not exist without the gate.  It
 // has the same fail-safe shape as the v3 corroboration knob beside it.
-// (Card 4 (M1) D5 v4)
+// (D5 v4)
 TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
     LogManager log;
     // Default off.
@@ -1646,7 +1646,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantInnovRetapOnlyParsesAndNeedsGate) {
 // network.phase_datum_eq34_slip_aware_election keeps a slipped arc out of the eq34
 // spanning tree (a slipped tree edge refloats every fundamental cycle through it; a
 // slipped chord costs one DD).  Default off, on atop phase_datum_eq34, and forced off
-// without it, since there is then no spanning tree.  (Card 3/4)
+// without it, since there is then no spanning tree.
 TEST(CodeBiasNetworkConfig, PhaseDatumEq34SlipAwareElectionParsesAndNeedsEq34) {
     LogManager log;
     {
@@ -1727,7 +1727,7 @@ TEST(CodeBiasNetworkConfig, CarryInvariantPdSafeContract) {
 }
 
 // Carry-aware covariance readback (docs/SPEC_carry_aware_covariance.md §6): default off
-// (every readback expression is the pre-card one, verbatim) and inert without
+// (every readback expression is the earlier one, verbatim) and inert without
 // network.carry_invariant (with no folded DD priors the rank-K correction is identically
 // zero).  The prerequisite check lives in the cross-knob pass for the same loader-ordering
 // reason as the PD-safe knob above.  Unlike that knob, this one is not fingerprinted: its
@@ -1787,7 +1787,7 @@ TEST(CodeBiasNetworkConfig, CarryAwareCovarianceContract) {
 }
 
 // ---------------------------------------------------------------------------
-// The invariant DD carry's event response (standing invariant #1, Card 4 (M1)).
+// The invariant DD carry's event response (standing invariant #1).
 // ---------------------------------------------------------------------------
 // The carried z is stiff (Φ = I, and q_z = 0 by default ⇒ a random constant), so
 // invariant #1 requires a wired erase/refloat/re-tap before an on field run.  For

@@ -188,11 +188,11 @@ TwoStationToy buildTwoStation(NetworkNormalEquations& neq) {
 //  Toy B: a physically shaped network with a rank-1 clock gauge.
 //
 //  kR stations × kS satellites, four rows per LOS (code/phase × two bands),
-//  which is the block this card enumerates.  Shared: per-satellite clock.
+//  which is the block this test enumerates.  Shared: per-satellite clock.
 //  Local: receiver clock, per-satellite slant iono, per-(satellite, band)
 //  ambiguity.  The iono and ambiguity priors stand in for the SH tie and the
 //  phase-leveling carry; without them the LOS block is rank-deficient on its
-//  own and every phase row is uncheckable, which is outside this card.
+//  own and every phase row is uncheckable, which is outside the scope of this test.
 //
 //  The null space is the usual one: adding a constant to every receiver clock
 //  and every satellite clock leaves every row unchanged, so the shared block is
@@ -505,7 +505,7 @@ TEST(BlockBaardaTest, BlockCofactorIsDatumInvariant) {
 }
 
 // ===========================================================================
-//  6. Smearing, the card's motivating case, as a unit test (SPEC §7.2)
+//  6. Smearing, the motivating case, as a unit test (SPEC §7.2)
 // ===========================================================================
 
 TEST(BlockBaardaTest, SmearedFaultIsSilentPerRowAndLoudPerBlock) {
@@ -684,7 +684,7 @@ TEST(BlockBaardaTest, ShapeContractAndValidation) {
 //  the kernel (an Eigen quantity); the tests below cover the accumulator (a
 //  pure-numeric leaf driven with synthetic blocks of known truth, following the
 //  NetworkPriorResidual pattern).  Both live in this file because they belong to
-//  one card; the project's rule is that each suite name is owned by one file, not
+//  one feature; the project's rule is that each suite name is owned by one file, not
 //  that each file holds one suite.
 // ===========================================================================
 
@@ -736,7 +736,7 @@ void feedNull(NetworkBlockBaarda& acc, Rng& rng, int b, double sigma0,
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, Chi2GeoMeanMatchesTheClosedForm) {
-    // 2*exp(psi(b/2)).  An error here shifts every sigma0 in the card and
+    // 2*exp(psi(b/2)).  An error here shifts every sigma0 in the census and
     // re-scales the whole ladder, so it is pinned against independently computed
     // values rather than against its own recurrence.
     EXPECT_NEAR(blockChi2GeoMean(1),  0.2807297417756531,  1e-9);
@@ -976,11 +976,11 @@ TEST(BlockBaardaSweepTest, CheckabilityGuardRejectsSingularAndNonFiniteBlocks) {
 }
 
 // ---------------------------------------------------------------------------
-//  INC-3: the smearing fraction, the output only this card provides
+//  INC-3: the smearing fraction, the output only this census provides
 // ---------------------------------------------------------------------------
 
 TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
-    // SPEC 8.4: block_only / blocks_flagged "decides whether a response card is
+    // SPEC 8.4: block_only / blocks_flagged "decides whether a response is
     // ever worth writing".  The definition has to be exact, because a fraction
     // over the wrong population would steer that decision with no visible sign.
     NetworkBlockBaarda acc({"G"}, 0.0, /*min_rows=*/0.0, /*report_sigma=*/4.0);
@@ -996,7 +996,7 @@ TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
     ASSERT_TRUE(acc.sigma0Warm(0));
     const double s2 = acc.sigma0(0) * acc.sigma0(0);
 
-    // Loud block, every row individually quiet: the smeared fault this card
+    // Loud block, every row individually quiet: the smeared fault this census
     // targets, and the only population no other tier can see.
     const auto smeared = block(10.0 * s2, 1.0 * s2);
     EXPECT_TRUE(smeared.reported);
@@ -1030,7 +1030,7 @@ TEST(BlockBaardaSweepTest, BlockOnlyCountsExactlyTheRowInvisiblePopulation) {
 }
 
 TEST(BlockBaardaSweepTest, SizeHistogramAndCompositionMakeANullResultReadable) {
-    // Invariant #4 applied to this card: a run whose blocks are all b = 1
+    // Invariant #4 applied to this census: a run whose blocks are all b = 1
     // produces a ladder identical to the scalar w-test and an INC-3 fraction of
     // 0 by construction.  Without the size histogram that reads as "no smearing
     // found" when the actual cause is "no multi-row block to smear across".
@@ -1137,7 +1137,7 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
     EXPECT_FALSE(k.bb_on);
     EXPECT_FALSE(k.bb_corrob);
 
-    // The master predicate is the AND of the arm and a live host: this card has
+    // The master predicate is the AND of the arm and a live host: this census has
     // no scheduler of its own, so arming it with the redundancy census off
     // resolves to off rather than to a zero-block run.  (The loader hard-errors
     // on that config; this second check covers a NetworkConfig built by hand, as
@@ -1181,7 +1181,7 @@ TEST(BlockBaardaSweepTest, OffIsStructurallyInert) {
 //  SPEC 6: the loader tripwires
 //
 //  Both are hard errors rather than silent disarms.  A config that asks for this
-//  card and gets an empty run is a live counter over dead wiring (invariant #4):
+//  census and gets an empty run is a live counter over dead wiring (invariant #4):
 //  a silent disarm would produce a clean summary indistinguishable from "this
 //  network has no smeared faults".
 // ---------------------------------------------------------------------------
@@ -1235,7 +1235,7 @@ bool bbLoadFails(const std::string& tag, const std::string& extra) {
 }  // namespace
 
 TEST(BlockBaardaSweepTest, LoaderHardErrorsWithoutASweepHost) {
-    // The main tripwire.  This card has no scheduler by design (SPEC 4); it uses
+    // The main tripwire.  This census has no scheduler by design (SPEC 4); it uses
     // the redundancy census's swept stations.  Armed with that census off it
     // would enumerate zero blocks and print a clean summary, so the loader refuses.
     EXPECT_TRUE(bbLoadFails("nohost", "    \"block_baarda\": true,\n"));
@@ -1273,7 +1273,7 @@ TEST(BlockBaardaSweepTest, LoaderAutoArmsGapInstrumentForTheCorroborationJoin) {
     // INC-2 reads the raw MW/GF step verdicts, and nothing else in a bare config
     // computes them.  Without gap_instrument every contingency cell would land in
     // 'no_evidence' and SPEC 8.3's b-cell could not be measured.  The loader does
-    // not arm mw_lli_corroborate: that is a decision card and would change the
+    // not arm mw_lli_corroborate: that is a decision instrument and would change the
     // population being measured.
     GnssConfig cfg;
     ASSERT_TRUE(bbLoads("autoarm", "    \"block_baarda\": true,\n"

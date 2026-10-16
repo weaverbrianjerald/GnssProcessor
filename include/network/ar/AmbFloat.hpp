@@ -27,7 +27,7 @@
  * (standing invariant #7):
  *  1. The decoupling edge is bounded.  A free epoch removes all information about the
  *     column for one epoch, opening an unbounded direction that the shared parameters
- *     re-balance into (card R10 ties unsignalled satellite-clock steps to T4 refloats of
+ *     re-balance into (unsignalled satellite-clock steps are tied to T4 refloats of
  *     the same satellite).  A drop removes information down to a stated level, so the
  *     response is proportional.
  *  2. The re-coupling edge re-validates by construction: the arc re-earns its variance
@@ -44,7 +44,7 @@
 #pragma once
 
 #include "network/driver/RunTypes.hpp"
-#include "network/state/CarrySites.hpp"   // CarrySiteCounts (card PRM phase 2)
+#include "network/state/CarrySites.hpp"   // CarrySiteCounts
 
 #include <map>
 #include <memory>
@@ -114,7 +114,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      */
     bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_ep,
                       bool decouple_always = false, bool* decoupled_idem = nullptr);
-    // @p decouple_always (network.amb_float_drop_decouple_always, card CTU section 14):
+    // @p decouple_always (network.amb_float_drop_decouple_always):
     // the idempotent branch also clears the border regression and the block row when the
     // arc still has them, and sets *@p decoupled_idem.  Default false = the previous
     // behaviour.
@@ -131,7 +131,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
     struct AmbDropOutcome {
         bool acted{false};            ///< The entry's variance actually moved (@ref ambFloatDrop's return).
         bool from_drop_floor{false};  ///< The restored variance came from @c network.amb_float_drop_var_m2.
-        bool decoupled_idem{false};   ///< Card CTU section 14: the variance did not move but the regression and the block row were cleared (network.amb_float_drop_decouple_always).
+        bool decoupled_idem{false};   ///< The variance did not move but the regression and the block row were cleared (network.amb_float_drop_decouple_always).
     };
 
     /**
@@ -226,8 +226,8 @@ struct EpochEvents;   // network/driver/Epoch.hpp
 
     /**
      * @brief The declared anchor handover's transform of one (satellite, signal) family
-     *        through the traversal of carried references (card PRM phase 2,
-     *        @c CarryMechanism::DeclaredHandover).
+     *        through the traversal of carried references
+     *        (@c CarryMechanism::DeclaredHandover).
      *
      * Every carried ambiguity of the family moves by @f$-\Delta@f$, the satellite's carried
      * phase bias of that signal by @f$+\Delta@f$, and the s_prev of every phase-bias coupling
@@ -235,17 +235,17 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * change).  The sites the transform does not move are declared with their reason in the
      * mechanism table.
      *
-     * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the transform
+     * With @p complete (@c network.carry_rebase_complete) the transform
      * also moves the sites the table exempts as owed, each by the same rule: the gross
      * screen's held ambiguity of the family by @f$-\Delta@f$ (as the ambiguity), the last
      * solved phase bias (@c pb_level_prev) and an open pin bridge of the family ("SAT_SIGNAL")
      * by @f$+\Delta@f$ (as the carried phase bias), and the s_prev of every phase-bias
      * coupling term on the family's column in every other coupling map (the wet delay, the
      * slant ionosphere and its block, the gross screen's three holds, the receiver clock,
-     * phase bias and code bias, card LGM's phase colour) by @f$+\Delta@f$.  The phase hold's
+     * phase bias, code bias and the phase colour) by @f$+\Delta@f$.  The phase hold's
      * held value is an emitted value and is not moved.
      * @param carry    the run's carried state.
-     * @param entities the run's entity tables (the station carries, card NOM step N4a).
+     * @param entities the run's entity tables (the station carries).
      * @param sat      the family's satellite.
      * @param sig      the family's signal.
      * @param delta    the incoming anchor's carried level (m), read before anything moves.
@@ -255,7 +255,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      *                 @p complete are counted in @p counts only).
      * @param n_cpl    out: coupling terms moved (every coupling map's).
      * @param counts   optional out: per-site tallies (accumulated).
-     * @param complete also move the owed sites (false = the walk of card PRM phase 2).
+     * @param complete also move the owed sites (false = the traversal walk only).
      */
     void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
                                     const std::string& sat,
@@ -289,7 +289,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * Two filed latent defects this function must not re-open:
      *  (i) The D4 carry S-transformation in @c ChainDatum.cpp
      *      (SPEC_card1_coupling_carry §14) shifts @c lc.value_abs and every coupling
-     *      @c s_prev on a shifted PB column together, because a Card-1 coupling row's
+     *      @c s_prev on a shifted PB column together, because a coupling row's
      *      RHS is @f$y=(v-x_{lin})+\sum_j M_j\hat s_{prev,j}@f$ and, for a
      *      gauge-invariant row under a known frame step, the two moves cancel exactly.
      *      Shifting one and not the other injects the frame step as row bias.  This
@@ -333,9 +333,9 @@ struct EpochEvents;   // network/driver/Epoch.hpp
     struct NetworkEpoch;    // network/driver/Epoch.hpp
 
     /**
-     * @brief The epoch form of the bounded drop (card NOM3 step EP2): builds this epoch's LOS
-     *        elevation map when the birth floor is armed, tallies the response latch per cause
-     *        (card PRM phase 3a), then runs networkAmbFloatApplyDrops.
+     * @brief The epoch form of the bounded drop: builds this epoch's LOS
+     *        elevation map when the birth floor is armed, tallies the response latch per cause,
+     * then runs networkAmbFloatApplyDrops.
      *
      * Serial, after PASS A's slip scans have latched relevel.free_ambs and before the parallel
      * PASS-B inject reads the carry.  A no-op unless the vehicle is float_kf.  The body is the
@@ -347,7 +347,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * @param events The epoch's events; written: slip (relevel).
      */
     void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
-    // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+    // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
     struct NetworkRunEndView;
 

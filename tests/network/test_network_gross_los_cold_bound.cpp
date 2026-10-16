@@ -1,7 +1,7 @@
 /**
  * @file test_network_gross_los_cold_bound.cpp
  * @brief The gross line-of-sight screen's cold-start bound
- *        (@c network.gross_los_cold_bound_m; card ICF response 1,
+ *        (@c network.gross_los_cold_bound_m;
  *        docs/refound/ICF_ignition_code_fault_2026-10-09.md).
  *
  * Inside the screen's maturity horizon the σ-bar declarations are held, and a faulty
@@ -15,7 +15,7 @@
  * the act half's erase and sweep on hand-built assemblies, the publish half's fold of a
  * cold declaration, the loader and the knob resolve, and the run-end readout's INERT
  * clause (standing invariant #4).  What a declaration does to the solve is graded by the
- * card's gates on the goldens, not here.
+ * validation gates on the goldens, not here.
  */
 #include <gtest/gtest.h>
 

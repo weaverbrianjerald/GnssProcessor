@@ -34,7 +34,7 @@
  *    in this tree is absolute (@f$w = 1/\sigma^2@f$ in metres@f$^{-2}@f$), so no
  *    variance factor multiplies the formula.  The empirical inflation is applied
  *    downstream and reported separately (`mdb_scaled`), not folded in here.  The
- *    formal @f$\sigma@f$ has been measured 10–30x optimistic on field data (card
+ *    formal @f$\sigma@f$ has been measured 10–30x optimistic on field data,
  *    D5), and keeping the formal MDB uninflated keeps that factor auditable.
  *
  * ## The @f$r \to 0@f$ convention

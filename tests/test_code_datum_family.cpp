@@ -1,9 +1,9 @@
 /**
  * @file test_code_datum_family.cpp
- * @brief Card GFC: one clock datum per constellation across Galileo's two code families
+ * @brief One clock datum per constellation across Galileo's two code families
  *        (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md).
  *
- * The card adds two default-off arms to the time-linked code-bias datum, both built in
+ * This feature adds two default-off arms to the time-linked code-bias datum, both built in
  * @c NetworkSbasis::buildCodeBiasDatumRows and read only under its @c cb_time_linked
  * argument:
  *
@@ -101,7 +101,7 @@ namespace fs = std::filesystem;
 namespace {
 
 /// The value behind an entity-table lookup, throwing like std::map::at when it is absent
-/// (card NOM step N4b moved the map the test read into the constellation table).
+/// (the map the test read moved into the constellation table).
 template <class V>
 const V& netAt(const V* p) {
     if (p == nullptr) throw std::out_of_range("netAt: absent");
@@ -200,7 +200,7 @@ std::vector<Pair> registerRoster(
     return keys;
 }
 
-/// The two-family roster of the card: three satellites tracked by both families, one by
+/// The two-family roster: three satellites tracked by both families, one by
 /// the combined family only, one by the pilot family only.
 const std::vector<std::pair<std::string, std::vector<std::string>>> kTwoFamily = {
     {"E01", {"C1C", "C5Q", "C1X", "C5X"}},
@@ -229,7 +229,7 @@ Eigen::Index levelRowOn(const NetworkSbasis::CodeBiasDatumRows& rows, Eigen::Ind
 }
 
 /// Whether two builds produced the same rows, targets, kinds and side channels, the
-/// second with no card GFC record.
+/// second with no code-datum family record.
 void expectSameOutput(const NetworkSbasis::CodeBiasDatumRows& a, const Harness& ha,
                       const NetworkSbasis::CodeBiasDatumRows& b, const Harness& hb) {
     ASSERT_EQ(a.H.rows(), b.H.rows());
@@ -264,7 +264,7 @@ void allVeterans(Harness& h) {
                               {"E05", {"C1C", "C5Q"}}};
 }
 
-/// The E11 leaving edge of the card: pinned on (C1C, C5Q) at the last kept epoch, C5Q
+/// The E11 leaving edge: pinned on (C1C, C5Q) at the last kept epoch, C5Q
 /// gone this epoch, so the pin falls to (C1C, C5X); previous values on C1C and C5X.
 struct LeavingEdge {
     NetworkEstimator  est;
@@ -282,7 +282,7 @@ struct LeavingEdge {
     }
 };
 
-/// The entering edge of the card: E11 pinned on (C1C, C5X) at the last kept epoch, and
+/// The entering edge: E11 pinned on (C1C, C5X) at the last kept epoch, and
 /// C5Q, lower-ordered, registered on it for the first time this epoch, so the selection
 /// names (C1C, C5Q).  E12 keeps (C1C, C5Q) and is the C5Q channel's veteran, so no channel
 /// level re-seeds.  Pair continuity armed, the clock-disc scratch recorded.
@@ -438,7 +438,7 @@ struct EmitHarness {
 // (a) The default path
 // ===========================================================================
 
-// Arms off: the two-family roster gets the pre-card rows.  Every channel keeps its own
+// Arms off: the two-family roster gets the earlier rows.  Every channel keeps its own
 // level row, and the combined channel's row is a plain +1 over its satellites (here time
 // linked on veterans, so the row spans all four C1X satellites with RHS Sum b_prev).
 // Arms on without the time link, and the default argument, give the same output.
@@ -897,7 +897,7 @@ TEST(CodeDatumFamilyTest, HeldSatelliteMarkedByAChannelReseedIsFlagged) {
     EXPECT_FALSE(rc.if_pin_pair_holds.at("E11").reseeded);
 }
 
-// (c) Arm off: the entering change re-selects the pin exactly as before the card, onto
+// (c) Arm off: the entering change re-selects the pin exactly as before the change, onto
 // (C1C, C5Q) at a re-seed target with E11 marked, and nothing is recorded.  The
 // family-difference arm alone does not hold the pin either.
 TEST(CodeDatumFamilyTest, ArmOffKeepsTheSelection) {

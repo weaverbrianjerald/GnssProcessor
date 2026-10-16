@@ -7,7 +7,7 @@
  *        section-timer types (SubBlockTimer, the SubBlock enum and kSubBlockNames).  The
  *        definitions are field-for-field the former runNetwork() ones (INC-9b).
  *
- * The file name is historical: it also held the retired MW/WL lane types (cards WL-1,
+ * The file name is historical: it also held the retired MW/WL lane types (
  * WL-2, WL-3 and UWL-1), which were deleted with the lane layer.
  */
 
@@ -42,21 +42,21 @@ struct SubBlockTimer {
 
 /// The D0b sub-blocks of the epoch loop (network.trace_section_timers): the disjoint
 /// brackets the epoch function opens and closes with networkSubBegin / networkSubEnd
-/// (runNetwork's subBegin / subEnd closures until card NOM3 step EP1), which tile the loop body
+/// (runNetwork's subBegin / subEnd closures until the epoch function replaced them), which tile the loop body
 /// between the assembly wall and the emitted-epoch readout.  The value indexes
 /// NetworkRunTiming::sub_blocks and @ref kSubBlockNames.  Moved here from runNetwork with
-/// its names (card NOM step TD1a) so the driver's per-epoch line and the run-end ranking
+/// its names so the driver's per-epoch line and the run-end ranking
 /// read one table.
 enum SubBlock {
     SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
     SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
-    SB_GAUGEBUILD,   //          the block ahead of the DD build (until card NOM3 step EP1,
+    SB_GAUGEBUILD,   //          the block ahead of the DD build (until the epoch function replaced the closures,
                      //          also the carry-driver closure's set-up)
     SB_DDBUILD,      //          networkBuildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
-                     //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
+                     //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords)
     SB_SOLVEGLUE,    //          pre-solve prep + clock predict + solve + within-epoch re-solve
                      //          (net removes the internal solve/reduce)
-    SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback) (card 4)
+    SB_INSTALL,      //          carry_driver.installPosterior (DD posterior mean/cov readback)
     SB_NETAR,        //          producer-side network AR, phase 2 (log-only; off in the tier)
     SB_SOLPREP,      //          toSolutionEpoch + per-sat discontinuity signalling
     SB_EMITSTORE,    // block 7: emit re-base + store push + solution CSV
@@ -71,9 +71,9 @@ enum SubBlock {
     SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
     SB_ROSTER,       // signal-roster build and arc-ledger advance at the top of the
                      //       epoch, and the disagreement pass after the clock update
-                     //       (card SID phase 1).  Both brackets accumulate into one
+                     //      .  Both brackets accumulate into one
                      //       entry: they are the same observatory, and the cost of
-                     //       interest is what the card adds to an epoch.
+                     //       interest is what the signal roster adds to an epoch.
     SB_COUNT
 };
 

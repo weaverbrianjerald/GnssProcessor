@@ -1,6 +1,6 @@
 /**
  * @file test_rinex3_blank_prn.cpp
- * @brief RINEX 3 blank-padded satellite numbers (card RXP,
+ * @brief RINEX 3 blank-padded satellite numbers (
  *        docs/refound/RXP_rinex3_blank_prn_2026-09-21.md).
  *
  * A RINEX 3 record may write its satellite number blank-padded, "G 7" for "G07";
@@ -142,7 +142,7 @@ const char* kNavHdrV3 =
 } // namespace
 
 // --------------------------------------------------------------------------
-// (a) the observation path (the defect named in card RXP)
+// (a) the observation path
 // --------------------------------------------------------------------------
 
 TEST(Rinex3BlankPrnTest, BlankPaddedNumberIsZeroPaddedAndKeepsItsMeasurements) {

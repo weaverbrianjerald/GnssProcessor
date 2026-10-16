@@ -1,14 +1,14 @@
 /**
  * @file test_network_detached_fold.cpp
  * @brief Unit gates of the detached fold of fixed integer cycles and the held solve
- *        (card FCF, step FCF-1): NetworkNormalEquations::foldCycleRowsDetached and
+ *        (step FCF-1): NetworkNormalEquations::foldCycleRowsDetached and
  *        NetworkEstimator::solveHeldDetached, with no production caller.
  *
  * Suite @c NetworkDetachedFold:
  *  - the oracle: on 500 random arrowheads (2 to 12 stations, 20 to 60 shared columns,
  *    random datum pins, rows through anchor-pinned local columns in a third of them, 1 to
  *    3 blocks over disjoint station sets) the held estimate and the posterior cycles
- *    zhat + Pz kappa equal the Card-4 dense path (setDdPriors with a diagonal Pz, solve,
+ *    zhat + Pz kappa equal the dense path (setDdPriors with a diagonal Pz, solve,
  *    ddPriorPosteriorMean) to 1e-9 relative; a held estimate beyond the bar is arbitrated
  *    by a refined solve of the whole stacked network (it must be within the bar of that
  *    solve; the dense fold's distance to it is printed), at most 5 such systems;
@@ -43,8 +43,8 @@
  *    a condition number of 1e2 to 1e12; empty input returns x_float exactly; the
  *    preconditions (read from the kernel's folded state) and malformed rows throw;
  *  - the kernel's section timers: armed, a held solve with two folded blocks leaves every
- *    accumulator bitwise as it was (the held solves are the fixed-cycle seam's cost, card
- *    FCFB section 5).
+ *    accumulator bitwise as it was (the held solves are the fixed-cycle seam's cost; see the
+ *    fixed-cycle fold design, section 5).
  *
  * Suite name owned by this file alone (suite-hygiene rule in CLAUDE.md).
  */
@@ -288,7 +288,7 @@ Blocks randomBlocks(std::mt19937_64& rng, const System& s) {
     return blocks;
 }
 
-/// The same rows as Card-4 dense DD-prior blocks (diagonal Pz).
+/// The same rows as dense DD-prior blocks (diagonal Pz).
 std::vector<NetworkNormalEquations::DdPriorBlock> asDdPriors(const Blocks& blocks) {
     std::vector<NetworkNormalEquations::DdPriorBlock> out;
     for (const auto& rows : blocks) {
@@ -828,9 +828,9 @@ TEST(NetworkDetachedFold, PlantedWrongIntegerCalibrationAndPower) {
     const Eigen::Matrix2d target = pairCovarianceCycles(0.06, 0.04);
     PairBed bed = makePairBed(rng, 6, 2, 20, target);   // 12 pairs, K = 24
 
-    // The hold sigmas: the design's 0.01 cycle, the 0.003 cycle of the FCF-2 arms (card
-    // FCFB section 3), and 0.0001 cycle, a hold small against the float in every
-    // direction (0.001 cycle, measured in card FCFB section 2, lies between).
+    // The hold sigmas: the design's 0.01 cycle, the 0.003 cycle of the FCF-2 arms (fixed-cycle fold design,
+    // section 3), and 0.0001 cycle, a hold small against the float in every
+    // direction (0.001 cycle, measured in section 2 of that design, lies between).
     constexpr int kHolds = 3;
     const double sigmas[kHolds] = {0.01, 0.003, 0.0001};
 
@@ -911,7 +911,7 @@ TEST(NetworkDetachedFold, PlantedWrongIntegerCalibrationAndPower) {
     // chi2/K within 3 % of 1 holds for a hold small against the float in every direction
     // (0.0001 cycle).  At the design's 0.01 cycle it does not: on this pair the hold
     // variance exceeds the float's along the ionosphere-free direction, and the mean drops
-    // to the expected value printed above (card FCFB section 2); a calibration is graded
+    // to the expected value printed above; a calibration is graded
     // against chi2_expect, not against K.
     EXPECT_NEAR(sum_h0[kHolds - 1] / trials, 1.0, 0.03);
 }
@@ -1105,7 +1105,7 @@ TEST(NetworkDetachedFold, TwoBlocksSharingAStationThrow) {
     EXPECT_NO_THROW(est.solveHeldDetached(s.datum, x, disjoint));
 }
 
-// The held solves are not timed or counted in the kernel's section timers (card FCFB
+// The held solves are not timed or counted in the kernel's section timers (fixed-cycle fold design,
 // section 5): with the timers armed, the float solve is counted, and a held solve with two
 // folded blocks (three shared solves inside it) leaves every accumulator bitwise as it was.
 TEST(NetworkDetachedFold, HeldSolveLeavesTheKernelsSectionTimersAlone) {
@@ -1317,7 +1317,7 @@ TEST(NetworkDetachedFold, PreconditionsAndMalformedRowsThrow) {
                      std::logic_error);
     }
     {
-        NetworkEstimator est = buildEstimator(s);   // the float solve folded Card-4 DD priors
+        NetworkEstimator est = buildEstimator(s);   // the float solve folded DD priors
         est.setDdPriors(asDdPriors(blocks));
         const Eigen::VectorXd x = est.solve(s.datum);
         EXPECT_THROW(est.solveHeldDetached(s.datum, x, blocks), std::logic_error);

@@ -2,7 +2,7 @@
 /**
  * @file ZStore.hpp
  * @brief DD cycle-basis z-store: the S-system-invariant quantities that the
- *        generalized-LS network filter time-links (Card 4, M1, phase B).
+ *        generalized-LS network filter time-links (phase B).
  *
  * Core numerics of the "invariant-function carry" (design handoff
  * `docs/SPEC_card4_invariant_carry.md`; foundations: Teunissen/Khodabandeh/
@@ -16,7 +16,7 @@
  * datum, integer, constant between cycle slips (@f$q_z=0@f$), and their basis
  * change under any pivot, tree or handover event is a **unimodular integer
  * matrix** (exact, with no information loss).  Basis churn, which defeated the
- * Card-3 stabilization arms, therefore leaves the carried information unchanged
+ * eq34 stabilization arms, therefore leaves the carried information unchanged
  * by construction.
  *
  * ## Cycle-space identification (why @f$\Phi^z@f$ is trivial)
@@ -60,7 +60,7 @@
  *     identity on the carried z: the bridge is a cut edge, so every pre-existing
  *     chord's fundamental cycle is unchanged (OPEN-2 of the phase-A scout).
  *
- * ## Scope of this file (Card 4 phase B)
+ * ## Scope of this file (phase B)
  *
  * Pure numeric leaf, header-only, with no `ApplicationNetwork` / `StateManager` /
  * `NetworkNormalEquations` coupling (following the standalone classes
@@ -79,13 +79,13 @@
  *     config toggles (`network.carry_invariant*`), and the field falsifier.
  *
  * Production use: `gnss_core` includes this header.  @ref ArcKey (defined in
- * ArcGraph.hpp since card AGT, included here) keys the carry
+ * ArcGraph.hpp, included here) keys the carry
  * maps (NetworkRunContext, NetworkDdPriorBuild, NetworkInstallCarry).  The
  * @ref NetworkZStore container, the lifecycle
  * transforms and the Kalman recursion on z are exercised by the unit gates (the
  * driver's gate uses them as the phase-B oracle), not by the producer.
  *
- * Since card AGT (step AGT-3) the producer builds no @ref ZComponent either:
+ * The producer builds no @ref ZComponent either:
  * `NetworkInvariantCarryDriver` takes its trees and fundamental cycles from
  * filter/NetworkArcGraph (`arcgraph::singleTreeOf`, `arcgraph::fundamentalCycle`).
  * @ref ZComponent stays here as the phase-B test oracle: of the z-store gates
@@ -98,7 +98,7 @@
 
 #include <Eigen/Dense>
 
-#include "network/ar/ArcGraph.hpp"   // ArcKey (moved there verbatim by card AGT, AGT-1)
+#include "network/ar/ArcGraph.hpp"   // ArcKey (defined there)
 
 #include <algorithm>
 #include <cstddef>
@@ -123,7 +123,7 @@ namespace GnssProcessor {
  * (hence its sign) is recovered from a vertex pair, so no separate edge list is
  * needed.  The z-vector index of a chord is its position in @ref chords_ .
  *
- * @note The phase-B test oracle since card AGT step AGT-3: no production code
+ * @note The phase-B test oracle: no production code
  *       constructs it (the carry driver's trees and cycles come from
  *       filter/NetworkArcGraph); see the file banner.
  */

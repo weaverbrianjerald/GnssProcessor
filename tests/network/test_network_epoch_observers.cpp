@@ -1,6 +1,6 @@
 /**
  * @file test_network_epoch_observers.cpp
- * @brief The observer table (card NOM3 step EP3): every row is filled and appears once, the
+ * @brief The observer table: every row is filled and appears once, the
  *        table is in spine order, and the rows, their slots and their order are pinned.
  *
  * The table is the epoch's instrument order, and a reordered or re-slotted row changes the
@@ -49,7 +49,7 @@ struct Pinned {
     NetworkEpochRecorder record{nullptr};   ///< Set, with observe null, on a recorder row.
 };
 
-/// The table as card NOM3 step EP3 pre-registered it (scripts/nom3_designs/EP3_design.md).
+/// The table as pre-registered (scripts/nom3_designs/EP3_design.md).
 const Pinned kPinned[] = {
     {"networkParamInventoryNoteSatellites", Slot::Admitted,      &networkParamInventoryNoteSatellites},
     {"networkLevelAuthorityCensus",         Slot::BeforeColumns, &networkLevelAuthorityCensus},

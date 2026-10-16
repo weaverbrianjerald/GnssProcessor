@@ -1,7 +1,7 @@
 /**
  * @file test_network_slip_qc.cpp
  * @brief Unit coverage of the shared raw slip-observable seam
- *        (slip/NetworkRawObservables) that Cards L and G of the slip-QC
+ *        (slip/NetworkRawObservables) that the LLI qualification and the gap instrument of the slip-QC
  *        hardening decide on: docs/SPEC_slip_qc_hardening.md §3 (requirement M6)
  *        and §5 (requirement G1).
  *
@@ -16,7 +16,7 @@
  *      MW floor is expressed in.
  *   3. @c networkQualifyRawObservables: the epoch-to-epoch adjudication, that is
  *      LLI credibility (chatty vs quiet station), corroboration by a real
- *      wide-lane step, and the Card-G arc-resumption instrument.
+ *      wide-lane step, and the arc-resumption (gap) instrument.
  *
  * Every satellite here is synthesized from a textbook geometry
  *   L_i = (R − I_i)/λ_i + N_i  [cycles],  C_i = R + I_i  [m],  I_i = I_1(λ_i/λ_1)²
@@ -279,7 +279,7 @@ TEST(SlipQcRawObservables, PrimaryPairSelectionAndCombinations) {
     EXPECT_NEAR(ep.rows[1][0].mw_m, kLambdaWl * (100.0 - 60.0), 1e-6);
 }
 
-// The LLI bytes pass through unmodified per band: they are the raw evidence Card L
+// The LLI bytes pass through unmodified per band: they are the raw evidence the LLI qualifier
 // qualifies, and it never rewrites them.
 TEST(SlipQcRawObservables, LliBytesArePassedThroughPerBand) {
     LogManager log_manager;
@@ -300,7 +300,7 @@ TEST(SlipQcRawObservables, LliBytesArePassedThroughPerBand) {
 }
 
 // ===========================================================================
-// networkQualifyRawObservables: Card L (M6)
+// networkQualifyRawObservables: LLI qualification (M6)
 // ===========================================================================
 
 // Some receivers (four JPN stations in the audit) assert LLI on nearly every
@@ -413,7 +413,7 @@ TEST(SlipQcQualify, FirstSightingIsUnmeasurableNotClean) {
 }
 
 // ===========================================================================
-// networkQualifyRawObservables: Card G (G1a)
+// networkQualifyRawObservables: gap instrument (G1a)
 // ===========================================================================
 
 // The instrument the spec asks for before any mechanism: an arc that disappears

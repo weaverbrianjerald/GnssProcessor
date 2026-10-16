@@ -1,6 +1,6 @@
 /**
  * @file test_second_phase_channel.cpp
- * @brief Contract tests for the second phase channel (card SID phase 6a,
+ * @brief Contract tests for the second phase channel (see
  *        docs/refound/SID_signal_identity_2026-09-22.md section 4).
  *
  * With `network.second_phase_channel` a network station contributes, as ordinary
@@ -12,7 +12,7 @@
  * that can be tested without a network solve:
  *
  *   (a) the allow-list grammar: a 3-character phase type on band 1 and nothing
- *       else.  A code type belongs to card SCC and a band-2 entry to phase 6b;
+ *       else.  A code type belongs to the second code channel and a band-2 entry to the all-channel widening;
  *   (b) second-phase selection: allow-list order, no duplicates, never the latched
  *       phase itself, never a phase the station does not report, and empty when the
  *       band has no latched phase (the fallback case, which adds nothing);
@@ -32,7 +32,7 @@
  *       closed-loop consumer pinned off.
  *
  * The mechanism itself (which rows enter the solve, which families reach the wire)
- * is graded on the arms by the card's own gates.
+ * is graded on the arms by its own gates.
  */
 #include <gtest/gtest.h>
 
@@ -62,7 +62,7 @@ using GnssProcessor::signalRosterBuildCells;
 
 namespace {
 
-/// The card's default allow-list.
+/// The default allow-list.
 const std::vector<std::string> kDefaultList{ "L1C", "L1W" };
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
@@ -96,7 +96,7 @@ std::string networkConfig(const std::string& network_extra,
 }
 
 /// The network block that satisfies every interlock, so a test can vary one knob
-/// at a time without the loader disarming the card for an unrelated reason.
+/// at a time without the loader disarming the mechanism for an unrelated reason.
 /// `ambiguity_vehicle: float_kf` has its own prerequisites (phase leveling, the
 /// conditional coupling and the full shared covariance it rests on), which the
 /// loader checks first; without them the load itself would fail.
@@ -325,7 +325,7 @@ TEST(SecondPhaseChannelTest, TheRosterHonoursTheNetworkSignalAllowList) {
 
 TEST(SecondPhaseChannelTest, ASecondPhaseIsNotReportedAsAnExcludedSignal) {
     // The second phase is modelled, so it does not appear in the excluded list;
-    // otherwise the roster's census would count the card's rows as unused.
+    // otherwise the roster's census would count the second-phase rows as unused.
     const std::vector<std::string> tracked{ "C1C", "L1C", "L1W" };
     const std::vector<RosterLatchRow> latch{ { 'L', "L1C" }, { 'C', "C1C" } };
     const BandRoster on = band1(tracked, latch, kDefaultList, true);
@@ -389,8 +389,8 @@ TEST(SecondPhaseChannelTest, IsDisarmedOnTheFloatVehicleWithoutTheHeldBasis) {
 }
 
 TEST(SecondPhaseChannelTest, IsSubsumedByChannelModeAllRatherThanRefused) {
-    // channel_mode `all` subsumes this knob instead of disarming it (card SID phase
-    // 6b): the widening adds every admitted phase attribute of every selected band,
+    // channel_mode `all` subsumes this knob instead of disarming it:
+    // the widening adds every admitted phase attribute of every selected band,
     // which contains the allow-listed band-1 set, so the knob stays armed, its
     // allow-list is ignored and only its sigma scale is read.  Downstream sites test
     // the resolved row predicate.
@@ -505,7 +505,7 @@ TEST(SecondPhaseChannelTest, WarnsWhenTheIfTdTierCannotFormANonDegeneratePair) {
 }
 
 TEST(SecondPhaseChannelTest, TheClosedLoopConsumerIsPinnedOff) {
-    // The card is a producer-side mechanism: it exists so the satellite families
+    // The second-phase channel is a producer-side mechanism: it exists so the satellite families
     // share the network's stations, and a consumer is one station with no family
     // to support (R6).
     LogManager log;

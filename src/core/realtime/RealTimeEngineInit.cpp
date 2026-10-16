@@ -21,7 +21,7 @@
 namespace GnssProcessor {
 
 /**
- * @brief Applies the configured leap-second override (RTB-1(c)) and the two opt-in process-wide SSR store policies: the code-bias band fallback (RTA-13) and the orbit/clock skew budget (Card 7).  Must run before any stream thread decodes a frame.
+ * @brief Applies the configured leap-second override (RTB-1(c)) and the two opt-in process-wide SSR store policies: the code-bias band fallback (RTA-13) and the orbit/clock skew budget.  Must run before any stream thread decodes a frame.
  *
  * Relocated verbatim from the pre-cut RealTimeEngine::initialize
  * (frozen lines 98-130); see scripts/rt_seam_verify.py.
@@ -53,7 +53,7 @@ void RealTimeEngine::armSsrStoreOptions() {
     // Opt-in, same pattern: arm the orbit/clock coherence skew budget on the
     // process-wide store.  An injected store owned by Application::runRealTime is
     // armed there at creation.  The default 0 leaves the store untouched and clock
-    // application byte-identical.  (Card 7)
+    // application byte-identical.
     if (const double skew = config_.getNetworkConsumerConfig().orbit_clock_max_skew_s;
         skew > 0.0) {
         SsrCorrectionStore::getInstance().setOrbitEchoMaxSkew(skew);

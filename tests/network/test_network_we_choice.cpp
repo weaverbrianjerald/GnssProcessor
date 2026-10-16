@@ -1,6 +1,6 @@
 /**
  * @file test_network_we_choice.cpp
- * @brief The within-epoch tier's culprit choice (card NOM3 step SG2): weChooseCulprit, the pure
+ * @brief The within-epoch tier's culprit choice: weChooseCulprit, the pure
  *        function the adaptation loop calls once per iteration.  The gate on effect / sigma0, the
  *        surgical-first tie-break, the station de-rating, the consensus escalation and the
  *        exclusion of culprits already dropped.

@@ -33,7 +33,7 @@
  *    right-hand circularly polarized about @c k̂ (IEEE), which makes it the
  *    R (extraordinary) magnetoionic mode when @c k̂ is along @c B.  Using
  *    the receiver-to-satellite vector instead of @c k̂ inverts @c I₂; the
- *    engine did so until card I2S
+ *    engine did so until the sign fix
  *    (docs/refound/I2S_second_order_iono_sign_2026-10-01.md).
  *  - For carrier-phase observables, the correction has the opposite sign
  *    and is scaled by @c -1/2 (I₂) or @c -1/3 (I₃), from the ratio of

@@ -236,13 +236,13 @@ void Application::reportProcessingTime_(const PppRunEndView& v) {
 }
 
 // ---------------------------------------------------------------------------
-// Report: the state re-inflation counters (card OWD)
+// Report: the state re-inflation counters
 // ---------------------------------------------------------------------------
 
 void Application::reportReinflations_(const PppRunEndView& v) {
     const bool is_ppp_rtk = v.is_ppp_rtk;
 
-    // Re-inflation counters from the state manager (card OWD, O2).  A re-inflation
+    // Re-inflation counters from the state manager.  A re-inflation
     // never lowers a variance: when the requested value is below the current one,
     // the current one is kept, and each such case is a "kept" count.
     if (state_manager_)

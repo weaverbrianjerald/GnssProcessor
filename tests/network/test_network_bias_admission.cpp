@@ -251,7 +251,7 @@ TEST(NetworkBiasAdmissionTest, Deterministic) {
         EXPECT_EQ(a1.census[i].key, a2.census[i].key);
         EXPECT_EQ(a1.census[i].verdict, a2.census[i].verdict);
     }
-    // BeiDou two-band pair admitted alongside GPS (the target case of card CB-ADM).
+    // BeiDou two-band pair admitted alongside GPS (the target case of the bias-admission rule).
     EXPECT_TRUE(a1.isAdmitted(StateKeys::makeSatBiasKey("C21", "C2I")));
     EXPECT_TRUE(a1.isAdmitted(StateKeys::makeSatBiasKey("C21", "C6I")));
 }

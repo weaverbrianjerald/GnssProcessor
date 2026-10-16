@@ -21,7 +21,7 @@
  */
 
 #include "rtcm/RtcmTypes.hpp"
-#include "products/SignalDeclaration.hpp"   // declared signal roster (card SID phase 5)
+#include "products/SignalDeclaration.hpp"   // declared signal roster
 #include <Eigen/Dense>
 #include <cstdint>
 #include <map>
@@ -141,12 +141,12 @@ public:
         /// (SsrClockCorrection.iode ≥ 0), which then takes precedence.
         /// -1 = unknown (permissive).  GnssCorrections gates clock application on
         /// @c iodeMatches(brdc_iode, clock_iode); orbit application stays on @c iode.
-        /// (RTF-2, card 3)
+        /// (RTF-2)
         int             clock_iode{-1};
         /// Orbit coherence echo carried from the winning clock / combined record:
         /// the IOD-SSR and content epoch of the RTS orbit the clock was estimated
-        /// against.  Default -1 / {0,0} = not stamped.  Read by the card-7 consumer
-        /// echo check (@ref checkOrbitEcho).  (RTF-2, card 3)
+        /// against.  Default -1 / {0,0} = not stamped.  Read by the consumer
+        /// echo check (@ref checkOrbitEcho).  (RTF-2)
         int             orbit_iod_ssr{-1};
         GnssTime        orbit_epoch{0, 0.0};
         /// IOD-SSR of the orbit record merged into this correction
@@ -156,7 +156,7 @@ public:
         /// record; the consumer echo check compares the two.  -1 = no orbit part
         /// merged.  For a combined record both fields hold the same value by
         /// construction (the message guarantees orbit/clock coherence).
-        /// (card 7, RTF-2)
+        /// (RTF-2)
         int             applied_orbit_iod_ssr{-1};
         bool            has_orbit{false};                         ///< True if orbit fields are valid.
         bool            has_clock{false};                         ///< True if clock fields are valid.
@@ -373,7 +373,7 @@ public:
      */
     std::optional<uint32_t> getGenerationId() const;
 
-    /// Card CLV2: one satellite's DECLARED code-level steps, accumulated since the store
+    /// One satellite's DECLARED code-level steps, accumulated since the store
     /// began or was cleared: the clock level of the C record's lvl= token and, per code
     /// signal, a code-bias column's own step of the B record's lvl= token.  A consumer
     /// differences two readings, the pattern of the discontinuity counters.
@@ -384,7 +384,7 @@ public:
     };
 
     /**
-     * @brief Card CLV2: add one emission's declared code-level steps of a satellite.
+     * @brief Add one emission's declared code-level steps of a satellite.
      * @param sat          Satellite id.
      * @param clock_step_m The C record's lvl= step (m); 0 when none.
      * @param bias_steps_m The B records' lvl= steps per code signal (m).
@@ -393,7 +393,7 @@ public:
                                const std::map<std::string, double>& bias_steps_m);
 
     /**
-     * @brief Card CLV2: a satellite's accumulated declared code-level steps.
+     * @brief A satellite's accumulated declared code-level steps.
      * @param sat Satellite id.
      * @return The totals, or std::nullopt when the satellite never declared a step.
      */
@@ -419,7 +419,7 @@ public:
     std::optional<NetworkProducerStatus> getProducerStatus() const;
 
     /**
-     * @brief Record the producer's declared signal roster (card SID phase 5, E2).
+     * @brief Record the producer's declared signal roster.
      *
      * Store-wide (not per-satellite), pushed by the in-process producer at each
      * emit and by the file reader's @c replay for every @c N declaration block
@@ -433,9 +433,9 @@ public:
     void setDeclaredRoster(const NetworkSignalDeclaration& decl);
 
     /**
-     * @brief The declared signal roster, if one was seen (card SID phase 5, E2).
+     * @brief The declared signal roster, if one was seen.
      *
-     * @c present is false (the default) on every wire written before card SID, on
+     * @c present is false (the default) on every wire written before the declaration existed, on
      * every live RTCM stream and for every producer that did not arm
      * @c network.ledger_emit, so a consumer gating on presence infers nothing from
      * a legacy stream.  Returned by value: the store is shared and mutex-guarded,
@@ -651,11 +651,11 @@ public:
     std::map<std::string, std::uint64_t> biasAttributeMismatchCounts() const;
 
     // -----------------------------------------------------------------
-    // Orbit-coherence echo verification (card 7, RTF-2).
+    // Orbit-coherence echo verification (RTF-2).
     // -----------------------------------------------------------------
 
     /**
-     * @brief Verdict of the card-7 orbit-coherence echo check.
+     * @brief Verdict of the orbit-coherence echo check.
      *
      * A @c brdc_rts network clock is estimated against a specific RTS orbit
      * update, and broadcast radial-orbit error is absorbed 1:1 into that clock.
@@ -674,7 +674,7 @@ public:
     };
 
     /**
-     * @brief Pure classification of the orbit-coherence echo (card 7).
+     * @brief Pure classification of the orbit-coherence echo.
      *
      * @param rec        Merged correction whose clock is about to be applied
      *                   (carries the producer echo @c orbit_iod_ssr /
@@ -689,7 +689,7 @@ public:
      *                   the check reduces to IOD-SSR identity + presence
      *                   (count-only diagnostics, as in RTA-13).
      * @return Verdict.  @c NotStamped whenever @c rec has no clock part or
-     *         carries no echo, so every stream written before card 7
+     *         carries no echo, so every stream written before the echo check existed
      *         short-circuits to "nothing to verify".
      */
     static OrbitEchoVerdict classifyOrbitEcho(
@@ -721,7 +721,7 @@ public:
         const std::optional<OrbitClockCorrection>& applied) const;
 
     /**
-     * @brief Arm the card-7 orbit/clock age-skew budget on this store (s).
+     * @brief Arm the orbit/clock age-skew budget on this store (s).
      *
      * Config @c processing.network_consumer.orbit_clock_max_skew_s (default
      * 0: the epoch-skew comparison is off and clock application is never
@@ -733,11 +733,11 @@ public:
      */
     void setOrbitEchoMaxSkew(double max_skew_s);
 
-    /// The armed orbit/clock age-skew budget (s); 0 = withhold off.  (card 7)
+    /// The armed orbit/clock age-skew budget (s); 0 = withhold off.
     double orbitEchoMaxSkew() const;
 
     /**
-     * @brief Per-satellite orbit-echo mismatch counters (card 7).
+     * @brief Per-satellite orbit-echo mismatch counters.
      *
      * Keys @c "sat|reason" (reason ∈ { @c noorbit, @c iod, @c skew }); see
      * @ref checkOrbitEcho.  Reset by @ref clear.  @c RealTimeEngine logs a
@@ -790,10 +790,10 @@ private:
     mutable std::mutex                       mutex_;
     std::unordered_map<std::string, SatRecord> by_sat_;
     uint32_t                                 generation_id_{0};  ///< Producer solution-generation id; 0 = unset.  (RTA-3)
-    std::map<std::string, DeclaredLevelSteps> declared_level_steps_;  ///< Card CLV2: per satellite, the declared code-level step totals.
+    std::map<std::string, DeclaredLevelSteps> declared_level_steps_;  ///< Per satellite, the declared code-level step totals.
     std::optional<NetworkProducerStatus>     producer_status_;   ///< Latest producer epoch-status heartbeat; nullopt = never seen.  (RTA-10)
     /// The producer's declared signal roster (see @ref setDeclaredRoster).
-    /// Configuration-like: survives clear().  (card SID phase 5)
+    /// Configuration-like: survives clear().
     NetworkSignalDeclaration                 declared_roster_;
 
     /// Code-domain band-wise bias fallback (see setCodeBiasBandFallback).
@@ -807,7 +807,7 @@ private:
     mutable std::map<std::string, std::uint64_t> bias_attr_mismatch_;
 
     /// Orbit/clock age-skew budget (s); 0 = epoch-skew check and withhold off
-    /// (see setOrbitEchoMaxSkew).  Configuration: survives clear().  (card 7)
+    /// (see setOrbitEchoMaxSkew).  Configuration: survives clear().
     double orbit_echo_max_skew_s_{0.0};
 
     /// Combined-correction age-scaling coefficient (see setCombinedSigmaAgeCoeff);
@@ -816,7 +816,7 @@ private:
 
     /// Per-"sat|reason" orbit-echo mismatch counters (see checkOrbitEcho).
     /// Written from the const check under mutex_, hence mutable.  std::map keeps
-    /// summary output deterministic.  (card 7)
+    /// summary output deterministic.
     mutable std::map<std::string, std::uint64_t> orbit_echo_mismatch_;
 
     /// Find a same-band, different-attribute sibling of @p code in a per-signal

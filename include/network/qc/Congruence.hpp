@@ -7,7 +7,7 @@
  *
  * Measure-only, off by default and fingerprint-safe; with it off, the output is
  * byte-identical.  Nothing here moves, deweights or re-estimates a station
- * coordinate.  SPEC §8 row 1 assigns any response to a separate card, because
+ * coordinate.  SPEC §8 row 1 assigns any response to a separate change, because
  * re-coordinating a station is a datum act under standing invariant #7, with both
  * edges to bound.
  *
@@ -28,7 +28,7 @@
  *  - the measurement-admission screen tests observations, not geometry.
  *
  * The 6.10 cm ARP error at JPLM is a measured instance on this network
- * (docs/SPEC_antenna_eccentricity_arp.md).  The ARP-frame card fixed that instance;
+ * (docs/SPEC_antenna_eccentricity_arp.md).  The ARP-frame fix resolved that instance;
  * this screen addresses the class.
  *
  * The screen estimates, from the station's own post-fit residuals, the 3D
@@ -43,9 +43,9 @@
  * rows (@ref NetRowClass 0–1; an SH↔slant tie has no position dependence),
  * @f$\tilde e_B@f$ the post-fit residuals, @f$P_B=\mathrm{diag}(w)@f$,
  * @f$Q_{\tilde e,B}@f$ the @f$b\times b@f$ residual cofactor
- * (@ref NetworkNormalEquations::blockResidualCofactor, the kernel the block card
+ * (@ref NetworkNormalEquations::blockResidualCofactor, the kernel the block test
  * uses, applied here to an arbitrary row set of one station; @f$b@f$ is 30–200
- * here, against @f$\le 8@f$ in the block card), and @f$H_B@f$ the @f$b\times 3@f$
+ * here, against @f$\le 8@f$ in the block test), and @f$H_B@f$ the @f$b\times 3@f$
  * position Jacobian in ENU:
  * @f[
  *   M = H_B^\top P_B\,Q_{\tilde e,B}\,P_B H_B, \qquad
@@ -65,7 +65,7 @@
  *
  * ### Three properties of this recipe
  *
- * 1. **@f$Q_{\tilde e,B}@f$ is never inverted.**  The block card's statistic
+ * 1. **@f$Q_{\tilde e,B}@f$ is never inverted.**  The block test's statistic
  *    @f$T_B@f$ needs @f$Q^{-1}@f$ and therefore has an uncheckable population; the
  *    contraction @f$H^\top P\,Q\,P H@f$ here is forward only.  A rank-deficient
  *    block (the normal state at a cold start, where every free ambiguity zeroes its
@@ -119,7 +119,7 @@
  *
  * ## @f$\hat\sigma_0@f$: one network-wide family
  *
- * @ref NetworkCarryVce, predict-then-update, never censored, with the block card's
+ * @ref NetworkCarryVce, predict-then-update, never censored, with the block test's
  * two corrections applied unchanged because both are required for @f$b>1@f$:
  * the accumulator inverts the geometric mean of a @f$\chi^2_1@f$ variate
  * (@c kChi2GeoMean), so a @f$\chi^2_q@f$ statistic is fed as its
@@ -128,7 +128,7 @@
  * @f$\hat\sigma_0=10^{-3}@f$ on an unwarmed family and inflates every @f$t_i@f$ by
  * @f$10^6@f$).
  *
- * The family is a single network-wide partition by design.  The block card splits
+ * The family is a single network-wide partition by design.  The block test splits
  * by constellation because its statistic is per-LOS; this one pools a whole
  * station.  A per-station @f$\hat\sigma_0@f$ would let a faulty station calibrate
  * its own fault away, so the screen would read normal on the station it is meant to
@@ -252,7 +252,7 @@ struct CongruenceSolve {
     /// ENU order.  @c +infinity marks a direction that is not estimable; it is a
     /// category, never a clamp (@ref BaardaReliability.hpp).  The empirical variant
     /// is this times @f$\hat\sigma_0@f$ and is reported separately, never folded in
-    /// here, for the reason the MDB card records: an MDB that is already inflated
+    /// here, for the reason the MDB analysis records: an MDB that is already inflated
     /// hides how optimistic the formal model is.
     Eigen::Vector3d mdb =
         Eigen::Vector3d::Constant(std::numeric_limits<double>::infinity());
@@ -594,7 +594,7 @@ public:
 
         // --- uncensored calibration feed ------------------------------------
         // The calibration is fed before any threshold is consulted, with the
-        // chi2_q -> chi2_1 rescaling from the block card: NetworkCarryVce inverts
+        // chi2_q -> chi2_1 rescaling from the block test: NetworkCarryVce inverts
         // the geometric mean of a chi2_1 variate, and T_raw*q ~ sigma0^2 chi2_q,
         // so feeding sqrt(T_raw) directly would bias sigma0 high by up to 1.57x
         // in sigma (2.46x in variance, at q = 3), and the bias would change with
@@ -756,7 +756,7 @@ public:
     /// with the @f$+\infty@f$ population counted separately.  A median over a pool
     /// containing infinity is either meaningless or censored without notice,
     /// depending on the sort, so the unobservable epochs are reported as their own
-    /// count (the rule the MDB card follows).
+    /// count (the rule the MDB analysis follows).
     struct MdbStats {
         long long n = 0;
         Eigen::Vector3d med = Eigen::Vector3d::Constant(std::numeric_limits<double>::quiet_NaN());
@@ -805,7 +805,7 @@ private:
 
 /// One reportable station-epoch, held until the emission seam writes its rows.
 /// Every station-epoch accepted by @ref NetworkCongruence::addStation (null
-/// geometry included) produces one, unlike the block card's `hits`, which holds
+/// geometry included) produces one, unlike the block test's `hits`, which holds
 /// only the flagged ones: the per-station trace row is this screen's primary
 /// product (SPEC §7.3's MDB table is built from it), and the event stream is a
 /// rate-limited alarm on top of it.
@@ -894,8 +894,8 @@ void networkCongruenceSweepStation(NetworkCongruence& acc,
                                    NetworkCongruenceTallies& tallies,
                                    std::vector<CongruenceHit>& hits);
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Per-epoch emission: the per-station trace rows and the rate-limited
@@ -905,7 +905,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  * which fed the accumulator this epoch.  Gated on @c ctx.knobs.cg_on, so an
  * unarmed run never enters this TU.
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -934,7 +934,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
 /**
  * @brief The predict half of the station-congruence census: sigma0 through the previous epoch
  *        is frozen before the census's rider feeds this epoch's stations, so a station cannot
- *        standardize its own coordinate fault away (card NOM3 step EP2).
+ *        standardize its own coordinate fault away.
  *
  * Under the congruence screen (ctx.knobs.cg_on), its first line.  The body is the frozen
  * driver text, moved by scripts/nom_ep2_cut.py.
@@ -943,7 +943,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
  * @param ep  The epoch, read: clock.pl_now_s, se.time.tow.
  */
 void networkCongruencePredict(NetworkRun& run, const NetworkEpoch& ep);
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
@@ -961,9 +961,9 @@ int networkCongruenceRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B station steps, declarations (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps, declarations (generated by scripts/nom_pb1b_cut.py) ----
 
-struct StationBuild;                       // network/assembly/StationBuild.hpp (card NOM3 step PB1b)
+struct StationBuild;                       // network/assembly/StationBuild.hpp
 struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
@@ -973,12 +973,12 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  * Step `congruence_geometry` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * none (it records only). It returns at once unless `congruence_rows && em.H.rows() > 0 &&
  * st.ecef.norm() > 1.0`. Records: row_pos_enu. The frozen text of networkPassB_'s produce loop
- * below its bindings (card NOM3 step PB1b).
+ * below its bindings.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */
 StationStep networkCongruenceRowGeometry(StationBuild& build);
 
-// ---- End of the PASS B station steps, declarations (card NOM3 step PB1b) ----
+// ---- End of the PASS B station steps, declarations ----
 
 }  // namespace GnssProcessor

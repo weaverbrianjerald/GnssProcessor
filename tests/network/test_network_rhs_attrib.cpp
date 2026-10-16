@@ -1,9 +1,9 @@
 /**
  * @file test_network_rhs_attrib.cpp
- * @brief Card NOM step N2b: the reduced-RHS attribution iterates exactly the channels the
+ * @brief The reduced-RHS attribution iterates exactly the channels the
  *        kernel folds, so its closure holds by construction (network/qc/RhsAttrib.hpp).
  *
- * Card NOM section 16 (suspect 2) found that the attribution read a station's rows and its
+ * The network object-model review (NOM section 16, suspect 2) found that the attribution read a station's rows and its
  * post-PD diagonal prior but not the pre-PD station prior that @c addStation folds with
  * the block (@c network.station_prior_before_pd, the receiver DCB datum on the goldens),
  * so a dump would have left that channel's share of the reduced RHS unattributed.  The
@@ -184,7 +184,7 @@ TEST(NetworkRhsAttribClosureTest, ClassesSumToTheKernelWithAPrePdStationPrior) {
         EXPECT_EQ(d.class_total.count(cls), 1u) << cls;
 
     // The pre-PD channel carries a share of the reduced RHS, and without it the classes
-    // would not close: the defect of card NOM section 16, suspect 2.
+    // would not close: the missed-channel defect.
     const Eigen::VectorXd& pre = d.class_total.at("prior_rx_cb_datum_pre_pd");
     EXPECT_GT(pre.norm(), 1e-6);
     NetworkAttribFrame frame;
@@ -240,7 +240,7 @@ TEST(NetworkRhsAttribClosureTest, SharedClassIsTheKindsName) {
 
 namespace {
 
-/// The replay's captured priors (card NOM step N2b): four kinds over three clocks of one
+/// The replay's captured priors: four kinds over three clocks of one
 /// constellation and a phase bias, two kinds on the same clock column, so the gauge-free
 /// downdate mixes the kinds within its group.
 std::vector<NetworkEstimator::SharedPrior> mixedCapture() {

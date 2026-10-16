@@ -1,6 +1,6 @@
 /**
  * @file test_rhs_attrib_columns.cpp
- * @brief Card ICF instrument A': the attribution's solution shares at named columns
+ * @brief Instrument A': the attribution's solution shares at named columns
  *        (@c network.rhs_attrib_columns, @c networkRhsAttribColumnShares in
  *        network/qc/RhsAttrib.hpp) and the contribution kind in the row dump.
  *

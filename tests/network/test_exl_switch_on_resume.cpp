@@ -1,13 +1,13 @@
 /**
  * @file test_exl_switch_on_resume.cpp
- * @brief Card EXL: the goldens arm card CTU's exact update, and the switch-on resume (a
- *        snapshot written without card CTU's tokens resumed into a run that arms them) is
+ * @brief The goldens arm the exact update, and the switch-on resume (a
+ *        snapshot written without the exact update's tokens resumed into a run that arms them) is
  *        admitted only under network.ctu_switch_on_resume.
  *
- * Card CTU2 section 8 graded the switch-on seam and it failed G5 (the restored ambiguities
- * hold the frozen level), and card EXL's ledger rows state the armed knobs as fresh
+ * Gate G5 of the exact update graded the switch-on seam and it failed (the restored ambiguities
+ * hold the frozen level), and the ledger rows state the armed knobs as fresh
  * convergence only.  The resume gate admits a snapshot whose fingerprint equals the live
- * fingerprint's stripped twin (the card's tokens removed); the twin must therefore be 0
+ * fingerprint's stripped twin (these knobs' tokens removed); the twin must therefore be 0
  * unless the knob asks for the seam.
  */
 #include <gtest/gtest.h>
@@ -64,7 +64,7 @@ TEST(ExlSwitchOnResume, GoldenArmsTheExactUpdateAndRefusesTheSwitchOnSeam) {
     NetworkRunContext ctx(cfg, cfg.getNetworkConfig());
     fingerprint(cfg, ctx);
     EXPECT_NE(ctx.carry.live_fingerprint, 0u);
-    // No stripped twin: a snapshot written without the card's knobs cannot match it.
+    // No stripped twin: a snapshot written without these knobs cannot match it.
     EXPECT_EQ(ctx.carry.live_fingerprint_ctu_off, 0u);
 }
 

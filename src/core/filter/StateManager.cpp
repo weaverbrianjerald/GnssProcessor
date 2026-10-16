@@ -779,7 +779,7 @@ namespace GnssProcessor {
         // The prune always shrinks the state vector.  A caller that passes
         // removed_out also receives the removed keys, so the arc ledger can
         // record that a later re-entry returns to a fresh column.  With the
-        // default null sink nothing is reported (card SID phase 3, R3b).
+        // default null sink nothing is reported.
         if (removed_out != nullptr)
             removed_out->insert(removed_out->end(), to_remove.begin(), to_remove.end());
         for (const auto& key : to_remove)
@@ -1120,7 +1120,7 @@ namespace GnssProcessor {
     }
 
     // =================================================================
-    // Shared re-inflation rule and its counters (card OWD, O2)
+    // Shared re-inflation rule and its counters
     // =================================================================
 
     double StateManager::reinflateDiag_(Eigen::Index idx, double current_diag,
@@ -1361,7 +1361,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
-        long long n_kept = 0;   // states whose larger variance was kept (card OWD)
+        long long n_kept = 0;   // states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);
@@ -1517,7 +1517,7 @@ namespace GnssProcessor {
         const std::string prefix = satellite + "|";
         std::vector<std::pair<std::string, Eigen::Index>> touched;
         std::vector<std::string> frozen;
-        long long n_kept = 0;   // states whose larger variance was kept (card OWD)
+        long long n_kept = 0;   // states whose larger variance was kept
         for (const auto& [key, raw_idx] : sat_phase_bias_indices_) {
             if (key.compare(0, prefix.size(), prefix) != 0) continue;
             const auto idx = static_cast<Eigen::Index>(raw_idx);
@@ -1588,7 +1588,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Receiver phase-bias states (network.phase_datum_eq34, Card 3): the
+    // Receiver phase-bias states (network.phase_datum_eq34): the
     // per-(receiver, system, signal) split δ_{r,σ}, keyed "<sys>_RPB_<sig>".
     // Local and re-estimated each epoch (no process noise, no carry).
     // ===================================================================
@@ -1646,7 +1646,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Phase-colour states (network.phase_colour_state, card LGM): one band-common,
+    // Phase-colour states (network.phase_colour_state): one band-common,
     // phase-only Gauss-Markov nuisance per satellite, keyed by the bare satellite id.
     // The network carries the estimate; this map holds the column only.
     // ===================================================================

@@ -1,6 +1,6 @@
 /**
  * @file RunFields.cpp
- * @brief The run remainder's field declarations (card NOM step N4g): @c net::kRunFields.
+ * @brief The run remainder's field declarations: @c net::kRunFields.
  *
  * One row per member of @c NetworkCarryState left in the run state (and per member of its
  * @c ResumeHandoff group), and one per member that step N4g moved to

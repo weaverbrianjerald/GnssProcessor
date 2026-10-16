@@ -2,7 +2,7 @@
  * @file test_pb_step_translate.cpp
  * @brief The consumer translates every phase-bias product step into its own
  *        ambiguity (@c PbStepTranslateLedger and the
- *        @c network.closed_loop.pb_step_translate plumbing; card PBT (A)).
+ *        @c network.closed_loop.pb_step_translate plumbing).
  *
  * Covered here:
  *   - a 0.30 m product step translates the (sat, signal) ambiguity by exactly
@@ -18,7 +18,7 @@
  *   - an undeclared step is translated in the same way as a declared one (the EV6
  *     population: 451 of 545 de-commoned steps > 0.10 m arrive undeclared);
  *   - with both knobs armed, a declared step is translated once: the engine's
- *     reaction dispatches the translation first and returns, so the card-CC carry
+ *     reaction dispatches the translation first and returns, so the declared-step carry
  *     seam is not entered and its counters stay 0;
  *   - the refusal ladder: a declared cell falls back to the existing reset with
  *     its own counter (first sighting, NL-WL basis, BSSD, unknown key), while an
@@ -31,8 +31,8 @@
  *     eps travels with it.
  *
  * The engine-level half (the per-key sweep, the applied-value read, the CST
- * `ev_pb` kinds) needs a full engine and product stream and is validated on the
- * card's field and sim arms, as card CC's was.
+ * `ev_pb` kinds) needs a full engine and product stream and is validated on
+ * field and sim arms, as for the declared-step carry.
  */
 
 #include <gtest/gtest.h>
@@ -239,7 +239,7 @@ TEST(PbStepTranslateTest, TwoMillimetreChangeIsSkippedDeclaredOrNot) {
 // ---------------------------------------------------------------------------
 TEST(PbStepTranslateTest, DeclaredStepWithBothKnobsIsTranslatedExactlyOnce) {
     // The mechanism half: one react call makes at most one shift, so a declared
-    // step moves the state by −Δ and not by −2Δ, and the card-CC ledger (which
+    // step moves the state by −Δ and not by −2Δ, and the declared-step ledger (which
     // the engine's dispatch does not reach while the translation is armed) is
     // left with empty counters.
     TranslateBed b;

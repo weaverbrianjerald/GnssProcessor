@@ -1,15 +1,15 @@
 /**
  * @file test_clock_level_carry.cpp
  * @brief Tests for the satellite clock level read from the code alone, and for its
- *        declaration on the wire.  Suite @c ClockLevelCarryTest (card CLV,
+ *        declaration on the wire.  Suite @c ClockLevelCarryTest (
  *        docs/refound/CLV_clock_level_2026-09-22.md; the producer's re-base was removed,
- *        the level read stays for card CTU's monitor and the wire's lvl= token stays).
+ *        the level read stays for the clock-level monitor and the wire's lvl= token stays).
  *
  * What is pinned here:
  *  - the level direction (+1 on the satellite clock, +1 on each of its phase biases) is
  *    blind to every phase row and seen by every code row, on the shared border the
  *    estimator actually reduces;
- *  - why the carry freezes it: Card 1d's time update shrinks a coupling row's clock
+ *  - why the carry freezes it: the kappa time update shrinks a coupling row's clock
  *    term at the legacy clock rate and keeps its phase-bias term, so a carried
  *    ambiguity row states its satellite's level;
  *  - the code-only information (the ionosphere-free pair formulas);
@@ -190,7 +190,7 @@ TEST(ClockLevelCarryTest, LevelDirectionIsBlindToPhaseAndSeenByCode) {
 }
 
 // ---------------------------------------------------------------------------
-// The mechanism: Card 1d's time update turns a carried ambiguity into a level statement.
+// The mechanism: the kappa time update turns a carried ambiguity into a level statement.
 // ---------------------------------------------------------------------------
 
 // An ambiguity's exact regression is on the phase side (-clock + phase bias) of its own
@@ -207,7 +207,7 @@ TEST(ClockLevelCarryTest, TimeUpdateTurnsAnAmbiguityRowIntoALevelStatement) {
     NetworkEstimator est;
     const Net n = makeNet(est, /*S=*/3, /*R=*/1);
     GlobalVtecShConfig shc;
-    const net::SatSignalTable hist;   // the reinit history (card NOM step N4d)
+    const net::SatSignalTable hist;   // the reinit history
     const double q_clock = 1e-3, q_cb = 1e-10, q_pb = 1e-12, gap = 30.0;
 
     LocalCarry lc{1.25, 1e-4, 0.0};

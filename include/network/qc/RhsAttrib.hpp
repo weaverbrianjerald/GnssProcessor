@@ -13,7 +13,7 @@
  *
  * At an armed target epoch the solve's reduced shared RHS
  * @f$\tilde u_s = u_s - \sum_r N_{sr} N_{rr}^{-1} u_r\ (+\ \text{DD folds})@f$
- * is decomposed exactly by class (card NOM step N2b: every class is read from a
+ * is decomposed exactly by class (every class is read from a
  * contribution tag or kind, network/assembly/Contributions.hpp):
  *
  *  - a station's rows by their tags' row class (@ref classifyRow, @ref rowClassName):
@@ -52,7 +52,7 @@
  *    sub-rows (a second pass over their rows).
  *  - `rows_<tow>.csv`: one line per row of every station (w, y, target-column
  *    coefficients), with the row's class and, in the last column @c kind, the
- *    contribution kind its tag declares (card NOM step N2a; card ICF instrument A').
+ *    contribution kind its tag declares.
  *  - `vec_<tow>.csv`: per-class total reduced-RHS vectors over all shared
  *    columns (col, label, value) for offline projections.
  *  - `cols_<tow>.csv` (only when @c network.rhs_attrib_columns names columns): for
@@ -68,7 +68,7 @@
  *    @f$x_r(k)@f$ into one share per data row of the station, one per local fold kind,
  *    the shared feedback (split by station and satellite, with each station's net) and
  *    the constraint corrections, with closure lines and two checks of the single parts
- *    (@ref networkRhsAttribLocalShares, card L5B).  The station's geometry-free level
+ *    (@ref networkRhsAttribLocalShares).  The station's geometry-free level
  *    direction is decomposed the same way when the station's data-only block has a
  *    one-dimensional null space.
  *
@@ -79,8 +79,8 @@
  *  - @c network.rhs_attrib_columns (list of shared-column labels as `vec_<tow>.csv`
  *    prints them, e.g. `["CLK:G07", "CB:G07:C1W"]`, and station-local labels
  *    `LOC:<station>:<key>`, e.g. `"LOC:MAJU00MHL:GPS_DCB"`; default empty = no `cols_`
- *    or `loc_` file): the named columns of the solution-share readouts (card ICF
- *    instrument A' for the shared labels, card L5B for the local ones; the key
+ *    or `loc_` file): the named columns of the solution-share readouts (the shared labels
+ *    and the station-local ones; the key
  *    spellings are those of @ref rhsAttribResolveLocalKey).
  *    Diagnostics only, not fingerprinted, read at every dump (armed or trip).
  *  - @c network.rhs_attrib_on_trip (bool, default false): the INC-5 flight
@@ -175,7 +175,7 @@ struct NetworkAttribFrame {
     /// beside its own recomputation as a check that the operator is the solve's.
     Eigen::VectorXd            x_s;
 
-    // --- per work item, station-local readout (card L5B) -----------------------
+    // --- per work item, station-local readout -----------------------
     // Filled only when the caller supplied x_s and asked for the local readout (a LOC:
     // label is named; the armed dumps and a trip's current-epoch dump); empty otherwise, so
     // every other capture, the flight recorder's per-epoch retention among them, pays
@@ -233,7 +233,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
 
 /**
  * @brief The attribution class of a shared fold: the one map from a contribution kind
- *        to the class the dump writes (card NOM step N2b).
+ *        to the class the dump writes.
  *
  * The class is @c "shared:" followed by the kind's name (@ref contributionKindName), so
  * each fold site names one thing: the kind it hands the estimator.  A fold whose site
@@ -290,12 +290,12 @@ NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame
 
 /**
  * @brief The load of every contribution at a few named shared columns, as reduced
- *        right-hand side and as solution share (card ICF instrument A',
+ *        right-hand side and as solution share (the columns named by
  *        @c network.rhs_attrib_columns).
  *
  * A right-hand-side share says how hard a contribution pushes on a column; the solve
  * moves the column by @f$\tilde N^{-1}\tilde u@f$, so a contribution's effect on the
- * estimate is its solution share, which can differ in size and sign (card ICF section 5).
+ * estimate is its solution share, which can differ in size and sign.
  *
  * ## The operator
  *
@@ -389,7 +389,7 @@ NetworkRhsColumnShares networkRhsAttribColumnShares(const NetworkAttribFrame& f,
                                                     const std::vector<std::string>& labels);
 
 // =========================================================================================
-// The station-local readout (card L5B)
+// The station-local readout
 // =========================================================================================
 
 /// A station-local column named in @c network.rhs_attrib_columns: `LOC:<station>:<key>`.
@@ -460,7 +460,7 @@ Eigen::Index rhsAttribResolveLocalKey(const std::vector<std::string>& names,
 
 /**
  * @brief The decomposition of named station-local solved increments into the rows and
- *        folds that move them (card L5B; @c network.rhs_attrib_columns with `LOC:` labels).
+ *        folds that move them (@c network.rhs_attrib_columns with `LOC:` labels).
  *
  * ## The algebra
  *
@@ -736,8 +736,8 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
                           const std::vector<std::string>& columns = {},
                           std::set<std::string>* warned = nullptr);
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Post-solve reduced-RHS class attribution at the armed target epochs.
@@ -746,10 +746,10 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  * LDLᵀ blocks must be current) and after the postfit sweep, from the FrameDiag
  * slot of the observer table (network/driver/EpochObservers.hpp).  No-op unless the
  * estimator's attribution capture is armed (@c est.attribArmed(), the driver's gate
- * until card NOM3 step EP3), @c network.rhs_attrib_tow ≥ 0 and this epoch's TOW lies
+ * until the per-epoch seam refactor), @c network.rhs_attrib_tow ≥ 0 and this epoch's TOW lies
  * in the armed window.
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -801,7 +801,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep);
  * nothing written here.
  *
  * The solve's sigma0 exit (networkSigma0WithholdTail) calls this form with its own map and no
- * solution; the epoch form below forwards the epoch's (card NOM3 step SG3, which retired the
+ * solution; the epoch form below forwards the epoch's (which retired the
  * explicit form EP1 kept).
  *
  * @param run          The run: ctx (the trip latch, the retained frame and counters) is written;
@@ -822,9 +822,9 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
                             const Eigen::VectorXd* x_s = nullptr);
 
 /**
- * @brief Epoch form of networkRhsAttribTrip (card NOM3 step EP1; generated by
+ * @brief Epoch form of networkRhsAttribTrip (generated by
  *        scripts/nom_ep1_cut.py): one call forwarding to networkRhsAttribTripAt with the
- *        epoch's datum, map and solution (card NOM3 step SG3).
+ *        epoch's datum, map and solution.
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx).
  *            Read: run.config (config_), run.log (log), run.traces (traces),

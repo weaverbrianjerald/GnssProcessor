@@ -1,17 +1,17 @@
 #pragma once
 /**
  * @file ArCycleBasis.hpp
- * @brief The producer AR search on a sticky, L1/L2-consistent, full-coverage cycle basis (card
- *        AGT, step AGT-5; @c network.ambiguity_resolution.cycle_basis, log-only).
+ * @brief The producer AR search on a sticky, L1/L2-consistent, full-coverage cycle basis
+ *        (@c network.ambiguity_resolution.cycle_basis, log-only).
  *
  * ## What it replaces
  *
- * Card ARL's @c tree_basis (through filter/NetworkArcGraph since AGT-2) grows one Prim tree per
+ * The @c tree_basis (through filter/NetworkArcGraph since AGT-2) grows one Prim tree per
  * (constellation, signal), from scratch at every search, and closes only the chords whose
  * satellite the link parent tracks.  On the AGT-0 references that covers 344 of the 362
  * cycle directions per band at 60 stations and 2 017 of 2 052 at 300, keeps 97.7 and 95.0 %
  * of the DD identities from one epoch to the next (p50), and keeps as few as 42.9 and 82.1 %
- * of one epoch's fixed DDs in the next epoch's basis (card AGT section 7).  A hold that carries
+ * of one epoch's fixed DDs in the next epoch's basis.  A hold that carries
  * integers across epochs needs a basis whose cycles outlive the epoch.
  *
  * ## One family's basis at one search
@@ -59,7 +59,7 @@
  * releases a lattice arc on that reading, so the search and the observatory share one rule of
  * what ends a life (@ref arcLifeStep, its echo rule included) and keep no second record of it.
  * Filled only under @c network.ambiguity_resolution.trace_lattice or an armed fixed-cycle fold
- * (card FCF, network/ar/FixedCycles.hpp), which also receives every searched DD's float and
+ * (network/ar/FixedCycles.hpp), which also receives every searched DD's float and
  * covariance with its L1/L2 twin (@ref SearchedCycle) and every pooled arc's live column
  * (@ref ArcColumn).
  */
@@ -247,8 +247,8 @@ struct ArFixedCycle {
     ArDdIdentity    id{};      ///< (signal, sta_r, ref_sta, sat_j, ref_sat).
 };
 
-/// One pooled band-arc's live ambiguity column at this search, as the search placed it (card
-/// FCF: where a fixed cycle's terms land in the estimator).
+/// One pooled band-arc's live ambiguity column at this search, as the search placed it
+/// (where a fixed cycle's terms land in the estimator).
 struct ArcColumn {
     std::size_t    est_station{0};  ///< Estimator station index (the term's @c station).
     std::ptrdiff_t local_col{-1};   ///< Ambiguity column in that station's local block (the assembly's h2local).
@@ -256,7 +256,7 @@ struct ArcColumn {
     double         lambda_m{0.0};   ///< The wavelength of the arc's signal (m).
 };
 
-/// One searched basis DD with its float from the search's own covariance readback (card FCF).
+/// One searched basis DD with its float from the search's own covariance readback.
 struct SearchedCycle {
     ArDdIdentity    id{};                ///< (signal, sta_r, ref_sta, sat_j, ref_sat).
     arcgraph::Cycle cycle;               ///< The DD as its basis cycle (band-tagged signed arcs).
@@ -270,14 +270,14 @@ struct SearchedCycle {
 
 /// What one search hands the lattice observatory and the fixed-cycle fold (file banner).  Empty
 /// (searched false) unless @c network.ambiguity_resolution.trace_lattice or a fixed-cycle fold
-/// (card FCF) is armed, both of which require the cycle basis; @c floats and @c columns are
+/// is armed, both of which require the cycle basis; @c floats and @c columns are
 /// filled only under the fold.
 struct ArEpochFixes {
     bool                          searched{false};  ///< The cycle basis was built at this search (the search block ran).
     std::vector<ArFixedCycle>     fixed;            ///< The determined DDs (the trace's kept rows), in basis order.
     std::map<ArcId, ArArcReading> arcs;             ///< Every band-arc this search read, with its life reading.
-    std::vector<SearchedCycle>    floats;           ///< (card FCF) Every PartnerDd and BorrowedDd row of the search with its float, in basis order; empty unless the fold is armed or the covariance did not return.
-    std::map<ArcId, ArcColumn>    columns;          ///< (card FCF) Every pooled band-arc's live column; empty unless the fold is armed.
+    std::vector<SearchedCycle>    floats;           ///< Every PartnerDd and BorrowedDd row of the search with its float, in basis order; empty unless the fold is armed or the covariance did not return.
+    std::map<ArcId, ArcColumn>    columns;          ///< Every pooled band-arc's live column; empty unless the fold is armed.
 };
 
 /**

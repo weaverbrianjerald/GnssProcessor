@@ -1,6 +1,6 @@
 /**
  * @file test_phase_visible_monitor.cpp
- * @brief The phase-visible consistency instrument (card PVN,
+ * @brief The phase-visible consistency instrument (
  *        docs/refound/PVN_phase_visible_nees_2026-09-29.md).
  *
  * Covered here:

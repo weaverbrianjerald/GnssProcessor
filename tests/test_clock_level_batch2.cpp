@@ -1,7 +1,7 @@
 /**
  * @file test_clock_level_batch2.cpp
- * @brief Card CLV2 (docs/refound/CLV2_clock_level_batch2_2026-09-25.md): the declared
- *        level steps a consumer answers.
+ * @brief The declared
+ *        level steps a consumer answers (docs/refound/CLV2_clock_level_batch2_2026-09-25.md).
  *
  * The emitter accumulates the declared steps (the C and B records' lvl= tokens) in the
  * SSR store, which a consumer differences like a discontinuity counter.  The producer's

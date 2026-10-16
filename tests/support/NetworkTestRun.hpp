@@ -2,10 +2,10 @@
 /**
  * @file NetworkTestRun.hpp
  * @brief A network run and one epoch for unit tests: everything a per-epoch seam's epoch form
- *        `(NetworkRun&, const NetworkEpoch&[, kept...][, outputs...])` reads (card NOM3 step EP2;
+ *        `(NetworkRun&, const NetworkEpoch&[, kept...][, outputs...])` reads (
  *        step HV1 builds on it).
  *
- * Card NOM3 step EP1 gave every per-epoch seam of the network producer one form over the run
+ * Every per-epoch seam of the network producer has one form over the run
  * (network/driver/Run.hpp) and the epoch (network/driver/Epoch.hpp).  A unit test that drives a seam
  * builds both here instead of keeping an explicit-parameter overload alive for it:
  *

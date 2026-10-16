@@ -1,7 +1,7 @@
 /**
  * @file ApplicationNetworkEpoch.cpp
  * @brief Application::networkProcessEpoch_: one synced epoch through the PPP-RTK network
- *        producer (card NOM3 step EP1).
+ *        producer.
  *
  * The body is runNetwork's former per-epoch lambda (processSyncedEpoch), moved four columns
  * left by scripts/nom_ep1_cut.py and checked line for line by scripts/nom_ep1_verify.py
@@ -28,13 +28,13 @@
  */
 
 #include "app/Application.hpp"
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
-#include "network/driver/EpochAdmission.hpp"     // networkFastForward, networkAdmitEpoch (card NOM3 step EP2)
-#include "network/slip/SlipFunnel.hpp"       // the slip funnel's drains (card NOM3 step EP2)
-#include "network/solve/PhaseAnchorEpoch.hpp" // the phase datum of the epoch (card NOM3 step EP2)
-#include "network/slip/GapResumeCensus.hpp"    // the arc-resumption bridge census (card NOM3 step EP2)
-#include "network/driver/EpochObservers.hpp"  // the measure-only instruments, a declared table (card NOM3 step EP3)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
+#include "network/driver/EpochAdmission.hpp"     // networkFastForward, networkAdmitEpoch
+#include "network/slip/SlipFunnel.hpp"       // the slip funnel's drains
+#include "network/solve/PhaseAnchorEpoch.hpp" // the phase datum of the epoch
+#include "network/slip/GapResumeCensus.hpp"    // the arc-resumption bridge census
+#include "network/driver/EpochObservers.hpp"  // the measure-only instruments, a declared table
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
@@ -46,30 +46,30 @@
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume
 #include "network/solve/Estimator.hpp"
-#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
+#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "network/driver/WlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
-#include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
+#include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally
 #include "network/qc/RobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
 #include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
 #include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
-#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
+#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
-#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
+#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (§24.18)
 #include "network/qc/Raim.hpp"        // post-fit network RAIM (INC-9)
 #include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
 #include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
-#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (card ZP, §24.10)
+#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (§24.10)
 #include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
 #include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
 #include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
@@ -78,17 +78,17 @@
 #include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
 #include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
 #include "network/runend/Teardown.hpp"
-#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
-#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
-#include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
+#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument
+#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones
+#include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition
 #include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
-#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
+#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads
 #include "network/carry/Inject.hpp"
-#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
-#include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
-#include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail (card SID phase 6a)
-#include "network/assembly/ChannelAll.hpp"      // all-channel census (card SID phase 6b)
-#include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster (card SID phase 5a)
+#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam
+#include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory
+#include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail
+#include "network/assembly/ChannelAll.hpp"      // all-channel census
+#include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster
 #include "network/carry/InstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
 #include "network/carry/DdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
 #include "network/solve/SolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
@@ -147,8 +147,8 @@ namespace GnssProcessor {
 
 // === One synced epoch through the full producer (RTF-3 carve-out) =========
 // The per-epoch body, a member function over the run (network/driver/Run.hpp), which holds
-// the loop-invariant setup and the ctx-carried run state, and the synced epoch.  Until
-// card NOM3 step EP1 it was runNetwork's lambda processSyncedEpoch, a callable over `se`
+// the loop-invariant setup and the ctx-carried run state, and the synced epoch.  It was formerly
+// runNetwork's lambda processSyncedEpoch, a callable over `se`
 // that captured every other name by reference.  Loop control maps one to one (a
 // top-level `continue` became return Next, the max-duration `break` return Stop), so
 // runNetwork's batch iteration is structurally identical to an inline loop.  The
@@ -157,7 +157,7 @@ namespace GnssProcessor {
 // synced vector; both epoch sources are in runNetwork (ApplicationNetwork.cpp).
 Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
                                                           const SyncedEpoch& se_raw) {
-    // ---- The run under the names the remaining lines read (card NOM3 step EP1; generated by
+    // ---- The run under the names the remaining lines read (generated by
     //      scripts/nom_ep1_cut.py; each line the frozen runNetwork declaration with the run's
     //      objects re-pointed).  Step EP2 removed the names only the moved blocks read. ----
     const std::shared_ptr<spdlog::logger>& log = run.log;
@@ -202,8 +202,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     SyncedEpoch se_inject_scratch;
     const SyncedEpoch& se_admit = networkInjectEpoch(ctx, log, traces, se_raw,
                                                      se_inject_scratch);
-    // Canonical-pair admission seam (network/assembly/CanonicalPairAdmission.cpp,
-    // card CPA).  It sits immediately after the injector, on the same contract,
+    // Canonical-pair admission seam (network/assembly/CanonicalPairAdmission.cpp).
+    // It sits immediately after the injector, on the same contract,
     // because this is the only site upstream of everything the withhold must be
     // absent from: computeModels, the T0 detectors, networkComputeRawObservables,
     // assembly, the RAIM pools and the traces all derive from this
@@ -218,13 +218,13 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The epoch: everything the stages below hand each other (network/driver/Epoch.hpp).
     NetworkEpoch ep(se);
 
-    // Signal-roster seam (network/assembly/SignalRoster.cpp, card SID phase 1).  It sits
+    // Signal-roster seam (network/assembly/SignalRoster.cpp).  It sits
     // immediately after the canonical-pair admission returns the epoch, for the
     // reason given above: this site is upstream of computeModels, the T0
     // detectors, networkComputeRawObservables, assembly, the RAIM pools and the
     // traces, so the roster answers "which signal stands for this band at this
     // station" from the same RinexObservation all of them derive from.  It fills
-    // ctx.roster and advances ctx.arc_ledger on every epoch (card NOM step N3a).
+    // ctx.roster and advances ctx.arc_ledger on every epoch.
     // The disagreement census, the "signals as planned" table and the trace read
     // them; the solve reads them only through a SID reader armed by its own knob
     // (the roster tracker, the ledger re-entry response, the anchor hygiene, the
@@ -283,7 +283,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
         return LoopSignal::Next;
 
     networkSubBegin(run, SB_SLIP);   // block 1: PASS-A slip scans, pre-assembly (D0b)
-    ++slip_qc.epoch_idx;   // monotonic processed-epoch index (card G gap arithmetic)
+    ++slip_qc.epoch_idx;   // monotonic processed-epoch index (gap arithmetic)
     networkPassASlipScan_(run, ep, ep.pass_a, ep.funnel, ep.events);
     networkSlipFunnelUnionRaw(run, ep, ep.funnel);   // the raw subset joins the funnel
     networkSubEnd(run, SB_SLIP);       // close block 1, slip scans (D0b)
@@ -384,14 +384,14 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The bounded drop (RF-1 step 4, network/ar/AmbFloat.cpp): serially, after PASS A's
     // slip scans latched relevel.free_ambs and before the parallel PASS-B inject reads the carry.
     networkAmbFloatDropEpoch(run, ep, ep.events);
-    // --- Exact coupling time update, per-epoch inputs (card CTU) ---------------
+    // --- Exact coupling time update, per-epoch inputs ---------------
     // After the columns are registered (the layout the rows resolve against) and
     // before PASS B, whose parallel produce reads the result.  The rows read this
-    // epoch's D2 fold decision, which card PRM phase 1b makes once here (after the
+    // epoch's D2 fold decision, which is made once here (after the
     // seam's level noise is set) and the fold, later in networkSolveGlue, reads too.
     // Inside the SB_PREASM bracket for the reason networkSdEwlAr gives.  No-op off.
-    networkClockLevelRestoreRaise(run);   // card CTU G5: once, the first leg epoch after a warm resume
-    // Card PRM phase 2 (network.handover_stransform_before_rows): a clock-pivot handover's
+    networkClockLevelRestoreRaise(run);   // once, the first leg epoch after a warm resume
+    // Handover S-transform before the rows (network.handover_stransform_before_rows): a clock-pivot handover's
     // S-transform before the decision and PASS B, through the traversal of carried
     // references, so the fold decision, the exact update's prepare and the coupling rows
     // read the re-expressed carry; the solve glue's transform then does the bookkeeping.
@@ -404,7 +404,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
 
     // --- PASS B (in ApplicationNetworkAssembly.cpp): networkPassB_ owns the D0
     // assembly wall (a raw chrono pair; the sinks are passed by reference), the T5
-    // sh-dev aging, the card-1d reinit history, the parallel produce loop (including
+    // sh-dev aging, the reinit history, the parallel produce loop (including
     // the coupling-injection cluster, whose row builder is filter/NetworkCoupling
     // since INC-7b), and the serial consume.  The failed / empty-epoch skip keeps its
     // bookkeeping inside (SkipEpoch return).
@@ -415,7 +415,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     ep.assembly.est_index_of = std::vector<int>(stations.size(), -1);
     if (networkPassB_(run, ep, ep.pass_a, ep.assembly) == EpochAction::SkipEpoch)
         return LoopSignal::Next;
-    // The block ahead of the DD build (D0b); until card NOM3 step EP1 it also set up the
+    // The block ahead of the DD build (D0b); it formerly also set up the
     // carry-driver closure buildCarryDdPriors (the epoch function and the solve's replay
     // now call networkBuildCarryDdPriors directly).
     networkSubBegin(run, SB_GAUGEBUILD);
@@ -461,10 +461,10 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // The slip feed is the PASS-A funnel (carry_slipped_ambs, above) and, on a
     // within-epoch RAIM re-solve, the tier's culprit sets (spec §3 culprit withhold),
     // read from the epoch workspace's ws.we_culprits.  The solve glue's T2 block
-    // adapts that member while it runs and clears it when it ends (card WCF), so the
+    // adapts that member while it runs and clears it when it ends, so the
     // primary build here reads it empty.
     { CarryEigenScope es(carry_par, n_threads); networkBuildCarryDdPriors(run, ep, ep.dd_build); }  // parallel_carry: thread W·Pᶻ·Wᵀ
-    networkSubEnd(run, SB_DDBUILD);      // close networkBuildCarryDdPriors, the card-4 DD-cov projection (D0b)
+    networkSubEnd(run, SB_DDBUILD);      // close networkBuildCarryDdPriors, the DD-cov projection (D0b)
     networkSubBegin(run, SB_SOLVEGLUE);  // pre-solve prep + clock predict + solve + within-epoch re-solve (D0b)
     ep.solve = networkSolveGlue(run, ep, ep.ws, ep.assembly.est_index_of, ep.dd_build, ep.events);
     if (ep.solve.action == EpochAction::SkipEpoch) return LoopSignal::Next;
@@ -478,7 +478,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // epoch, not only RAIM-armed ones.  A failure resets the carry (a safe cold
     // start).  No-op when off.
     networkInstallCarry(run, ep, ep.events);
-    networkSubEnd(run, SB_INSTALL);     // close installPosterior, the card-4 posterior readback (D0b)
+    networkSubEnd(run, SB_INSTALL);     // close installPosterior, the posterior readback (D0b)
     networkSubBegin(run, SB_NETAR);     // producer-side network AR phase 2, log-only, off in the tier (D0b)
     ep.ar_fixes = networkProducerAr(run, ep);
     networkSubEnd(run, SB_NETAR);      // close producer AR / pre-emit tail (D0b)
@@ -491,8 +491,8 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // slot would change the section-timing artifact for every run, armed or not (as
     // for networkSdEwlAr).  Unreachable unless network.gross_los_emit_exclude.
     networkGrossLosScreen(run, ep, GrossLosPhase::Decide, ep.events);
-    // The fixed-cycle fold (card FCF, network/ar/FixedCycles.hpp) and the ledger of
-    // fixed cycles it steps (network/ar/ArLattice.hpp, card AGT's lattice, moved here
+    // The fixed-cycle fold (network/ar/FixedCycles.hpp) and the ledger of
+    // fixed cycles it steps (network/ar/ArLattice.hpp, the lattice, moved here
     // from SB_NETAR at step FCF-3): the search's fixed L1/L2 pairs, or the pairs the ledger
     // implies, folded into a held solve beside the float one.  After the gross-LOS Decide,
     // so its declarations release this epoch, and inside this bracket for the reason given
@@ -509,7 +509,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // written once after the first emitted epoch (signals as planned, parameters as
     // armed, contributions as armed) key on it below.
     const std::size_t n_emitted_before = ctx.counters.n_emitted;
-    // The smoothed hold's clock clones (card SMH): advanced over this epoch before the
+    // The smoothed hold's clock clones: advanced over this epoch before the
     // hold reads them at emit.  No-op off.
     networkPbHoldCloneUpdate(run, ep);
     networkSubBegin(run, SB_EMITSTORE); // block 7: re-base + store push + solution CSV (D0b)
@@ -533,14 +533,14 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubEnd(run, SB_LEVELING);   // close block 5, leveling (D0b)
     networkSubBegin(run, SB_RAIM);     // block 2: post-fit network RAIM + median-polish attribution (D0b)
     // RAIM pool re-host: `carry_warm` requires network.phase_leveling, so gating on
-    // it alone would leave post-fit RAIM unreachable on every card-4 lineage that
+    // it alone would leave post-fit RAIM unreachable on every carry_invariant lineage that
     // leaves leveling off (armed at load, never executed).  ctx.knobs.raim_ci_on is
     // the re-hosted arming condition (already ANDed with raim_on and the resolved
     // carry_invariant).
     if (raim_on && (carry_warm || ctx.knobs.raim_ci_on)) {
         networkPostFitRaim(run, ep, ep.solve.handoff);
     }
-    // Gross line-of-sight screen (card GL, docs/SPEC_event_harness.md §24.18), the
+    // Gross line-of-sight screen (docs/SPEC_event_harness.md §24.18), the
     // only acting post-fit tier that screens code.  It sits inside this bracket,
     // immediately after the RAIM pass, for the ordering reason RAIM's own header
     // gives: erasing a `local_carry` entry is the refloat, so it must run after the
@@ -562,7 +562,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubEnd(run, SB_CLOCKUPD);       // close block 8, clock update + retro feed (D0b)
     // The measure-only instruments of this spine point (network/driver/EpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::AfterClockQc, ep.events);
-    // Roster disagreement pass (network/assembly/SignalRoster.cpp, card SID phase 1).  It sits here
+    // Roster disagreement pass (network/assembly/SignalRoster.cpp).  It sits here
     // because this is the first point at which every input of P4 exists in one scope:
     // the arc-level tracker's rows were built in PASS A, local_carry is post-harvest
     // (networkLeveling), the ambiguity states are post-assembly, the anchor
@@ -570,7 +570,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // responses, and `sol` is the solution the wire received.  Read-only; every class
     // is a counter.  It also closes the epoch's decision-site census and, after the
     // first emitted epoch whose roster carries a modelled role, logs the "signals as
-    // planned" table with its run-manifest record (card NOM step N3a).
+    // planned" table with its run-manifest record.
     networkSubBegin(run, SB_ROSTER);
     // Phase 2 adds `modeled` and `present`: the admitted row set that feeds the
     // second lifecycle.  They are in the same scope as every other input of the pass,
@@ -599,17 +599,17 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     networkSubEnd(run, SB_FRAMEDIAG);
     networkSubBegin(run, SB_STASH_STATUS); // D2/C1/SH carry re-stash + VCE fold + epoch-status QC (D0b)
     networkStashStatus(run, ep, ep.events);
-    // Card SMH: the clones re-harvested on the stash just written, and the clones of
+    // Smoothed hold: the clones re-harvested on the stash just written, and the clones of
     // the generations that started at this epoch's emit born on it.  No-op off.
     networkPbHoldCloneHarvest(run, ep);
-    // The level monitor of card CTU reads the post-fit code and the block the stash
+    // The level monitor of the exact coupling update reads the post-fit code and the block the stash
     // just wrote; with the bound raise armed it raises that block before the next
     // fold.  It runs only on a kept epoch, which is every epoch that reaches here.
     // No-op off.
     networkClockLevelMonitor(run, ep);
     // The measure-only instruments of this spine point (network/driver/EpochObservers.hpp).
     networkObserveEpoch(run, ep, NetworkObserverSlot::StashTail, ep.events);
-    networkBufferedTraceDrains(run, ep);   // cards LGM and AIL: the buffered trace rows
+    networkBufferedTraceDrains(run, ep);   // the buffered phase-colour and ambiguity-information trace rows
     networkSubEnd(run, SB_STASH_STATUS);   // close the stash and epoch-status tail, before the readout (D0b)
 
     // Per-epoch section-timer readout, emitted-epoch path (D0 and D0b, network/driver/Run.cpp).

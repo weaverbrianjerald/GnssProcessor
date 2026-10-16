@@ -1,6 +1,6 @@
 /**
  * @file test_ar_cycle_basis_config.cpp
- * @brief Loader tests of the producer AR search's cycle basis (card AGT, step AGT-5):
+ * @brief Loader tests of the producer AR search's cycle basis (step AGT-5):
  *        @c network.ambiguity_resolution.cycle_basis and @c .cycle_basis_sticky.
  *
  * Suite @c ArCycleBasisConfig:

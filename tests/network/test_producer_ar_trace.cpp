@@ -17,7 +17,7 @@
  * this file proves the mapping on fabricated cases whose right answer is known by
  * construction, not inferred from a 24 h run.
  *
- *   Case 1  the card's worked example: 5 DDs, cap 3, a partial fix of 2.
+ *   Case 1  the design's worked example: 5 DDs, cap 3, a partial fix of 2.
  *   Case 2  the uncapped path is the identity (and does not sort).
  *   Case 3  a rejected fix labels nothing as kept, but subset membership stands.
  *   Case 4  σ-ordering picks the lowest-variance DDs, ties included.

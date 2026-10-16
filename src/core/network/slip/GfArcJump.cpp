@@ -1,6 +1,6 @@
 /**
  * @file GfArcJump.cpp
- * @brief The arc-scoped geometry-free jump trigger (card ARL, slip-ladder defect 1): the
+ * @brief The arc-scoped geometry-free jump trigger (slip-ladder defect 1): the
  *        per-arc test, the PASS-A drain that answers its flags, and its run-end report.
  *
  * The design (what the test is, why its reference is the last clean step, what a flag
@@ -170,8 +170,8 @@ GfJumpAction gfJumpFreePair(SlipQcChannel& qc, NetStation& st, int i,
             ++act.coincident;
             continue;
         }
-        // The DD invariant carry owns its own funnel and is live from epoch 1 (Card 4
-        // C3c), as at every other freeing site.
+        // The DD invariant carry owns its own funnel and is live from epoch 1,
+        // as at every other freeing site.
         if (carry_invariant) carry_slipped_ambs.insert(key);
         if (!carry_warm) continue;
         sm.markAmbiguityPendingReseed(amb_key);

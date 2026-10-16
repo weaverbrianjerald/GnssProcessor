@@ -2,8 +2,8 @@
 /**
  * @file SignalDeclaration.hpp
  * @brief The producer's declared signal roster as it travels on the network
- *        product wire, and the helpers that write and parse it (card SID
- *        phase 5, E2).
+ *        product wire, and the helpers that write and
+ *        parse it.
  *
  * ### Purpose
  *
@@ -11,12 +11,12 @@
  * with no event row, and the consumer cannot ask whether the network carries a
  * family for the signal it tracks at all.  The SID audit
  * (`runs/_msc/sid_audit_report_2026-09-22.md`, Part C) lists this as an
- * information gate with no identity at either edge; card MSC measured its
- * effect on consumer code-bias dropouts.
+ * information gate with no identity at either edge; its
+ * effect on consumer code-bias dropouts was measured.
  *
  * The declaration states, in the wire's own grammar, per constellation and
  * RINEX band digit: which phase and code signals the network models, which
- * codes travel as card SCC companions, and which signal the S-basis pins.  A
+ * codes travel as second-code companions, and which signal the S-basis pins.  A
  * consumer that holds it can distinguish "the network does not carry this
  * family" from "the record is stale", which the freshness flip alone cannot.
  *
@@ -64,7 +64,7 @@ namespace GnssProcessor {
     struct SignalDeclarationBand {
         std::vector<std::string> phase;      ///< Phase signals the network models on this band.
         std::vector<std::string> code;       ///< Code signals the network models on this band.
-        std::vector<std::string> companion;  ///< Companion codes emitted beside the modelled code (card SCC).
+        std::vector<std::string> companion;  ///< Companion codes emitted beside the modelled code.
         std::string              datum_phase;///< The phase the S-basis pinned, or empty.
         std::string              datum_code; ///< The code the S-basis pinned, or empty.
 
@@ -115,7 +115,7 @@ namespace GnssProcessor {
          */
         bool declaresPhase(const std::string& cons, const std::string& signal) const;
 
-        /// @brief The code twin of @ref declaresPhase.  A card SCC companion counts.
+        /// @brief The code twin of @ref declaresPhase.  A second-code companion counts.
         bool declaresCode(const std::string& cons, const std::string& signal) const;
     };
 
@@ -149,8 +149,7 @@ namespace GnssProcessor {
     std::string signalDeclarationSummary(const NetworkSignalDeclaration& decl);
 
     /**
-     * @brief Why a consumer's correction for one signal stopped being applied
-     *        (card SID phase 5, E3).
+     * @brief Why a consumer's correction for one signal stopped being applied.
      *
      * The values are tested in declaration order, and each applies only when the
      * ones before it did not.  Only @ref Undeclared states that the network

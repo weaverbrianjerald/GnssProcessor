@@ -1,15 +1,15 @@
 /**
  * @file test_network_run_end.cpp
- * @brief The run-end table (card NOM step TD1b): every row is filled and appears once, and
+ * @brief The run-end table: every row is filled and appears once, and
  *        the order constraints network/runend/RunEnd.hpp states hold; one row per subsystem
- *        and the heading line of the walk (card NOM2 step TD2).
+ *        and the heading line of the walk.
  *
  * The table is the run end's order, so these are the constraints a reordered or added row
  * could break without any data run noticing: the trace close first, every manifest record
  * before the manifest's complete record, the product contract round trip before the
  * closed-loop summary, the five tail reports last, and the ambiguity-block bar before the
  * injection verdict (the exit code's precedence).  One placement is pinned besides: the
- * culprit withhold of card WCF directly after the within-epoch RAIM report.
+ * culprit withhold directly after the within-epoch RAIM report.
  */
 
 #include "network/runend/RunEnd.hpp"
@@ -77,7 +77,7 @@ TEST(NetworkRunEndTable, TheTraceCloseIsFirst) {
 TEST(NetworkRunEndTable, EveryManifestRecordPrecedesTheCompleteRecord) {
     const std::size_t complete = rowOf(networkRunManifestCompleteRunEnd);
     ASSERT_LT(complete, kNetworkRunEndReports.size());
-    // The subsystem reports whose sections write the records (card NOM2 step TD2): the
+    // The subsystem reports whose sections write the records: the
     // parameter inventory, the contributions, the signal roster's plan, the carried border's
     // dispositions, the carried sites and the responses.
     const NetworkRunEndReport records[] = {
@@ -87,7 +87,7 @@ TEST(NetworkRunEndTable, EveryManifestRecordPrecedesTheCompleteRecord) {
 }
 
 TEST(NetworkRunEndTable, TheContractRoundTripPrecedesTheClosedLoopSummary) {
-    // The emit store's report holds the product contract round trip (card NOM2 step TD2).
+    // The emit store's report holds the product contract round trip.
     const std::size_t contract = rowOf(networkEmitStoreRunEnd);
     ASSERT_LT(contract, kNetworkRunEndReports.size());
     EXPECT_LT(contract, rowOf(networkClosedLoopRunEnd));
@@ -103,19 +103,19 @@ TEST(NetworkRunEndTable, TheTailReportsAreTheLastRowsInOrder) {
 }
 
 TEST(NetworkRunEndTable, TheRosterSiteCensusFollowsTheRoster) {
-    // Card NOM step N3b: the site census is read beside the roster's report.
+    // The site census is read beside the roster's report.
     const std::size_t roster = rowOf(networkSignalRosterRunEnd);
     ASSERT_LT(roster, kNetworkRunEndReports.size());
     EXPECT_EQ(rowOf(networkSignalRosterSitesRunEnd), roster + 1);
 }
 
 TEST(NetworkRunEndTable, EachSubsystemHasOneRow) {
-    // Card NOM2 step TD2: one report per subsystem (its home file).  The run artifacts keep
+    // One report per subsystem (its home file).  The run artifacts keep
     // three rows held apart by the order constraints; only the run summary prints.
     std::map<std::string, int> rows;
     for (const NetworkRunEndRow& row : kNetworkRunEndReports) ++rows[row.home];
     for (const auto& [home, n] : rows)
-        EXPECT_EQ(n, home == "app/RunArtifactsRunEnd.cpp" ? 3 : 1) << home;
+        EXPECT_EQ(n, home == "network/runend/RunArtifactsRunEnd.cpp" ? 3 : 1) << home;
 }
 
 /// The captured text without spdlog's platform end-of-line carriage returns.
@@ -170,7 +170,7 @@ TEST(NetworkRunEndHeading, HeldLinesAreWrittenWhenTheReportThrows) {
 }
 
 TEST(NetworkRunEndTable, TheCulpritWithholdFollowsTheWithinEpochRaimReport) {
-    // Card WCF: the hand-off's line is read beside the T2 responses it accounts for.
+    // The hand-off's line is read beside the T2 responses it accounts for.
     const std::size_t we = rowOf(networkWithinEpochRaimRunEnd);
     ASSERT_LT(we, kNetworkRunEndReports.size());
     EXPECT_EQ(rowOf(networkWithinEpochCulpritWithholdRunEnd), we + 1);

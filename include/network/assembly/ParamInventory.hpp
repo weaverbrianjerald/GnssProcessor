@@ -4,15 +4,15 @@
  * @brief The network producer's parameter inventory: every state column of every
  *        station, and every shared state a gate withheld from it, classified into a
  *        parameter instance with a declared disposition, and the "parameters as armed"
- *        table (card NOM steps N1 and N1b,
+ *        table (
  *        docs/refound/NOM_network_object_model_2026-10-08.md sections 11.2 and 13).
  *
  * ### What it answers
  *
- * Card PRM's registry (network/assembly/ParamRegistry.hpp) declares each parameter KIND
+ * The parameter registry (network/assembly/ParamRegistry.hpp) declares each parameter KIND
  * once.  It cannot say what happened to each INSTANCE: whether the receiver's band-5
  * code delay of one station is a column of its local block, held at its seed outside
- * the solve, or not observed this epoch.  Card L5R needed a residual census to find
+ * the solve, or not observed this epoch.  A residual census was needed to find
  * that the band-5 receiver delay was dropped from the solve by a substring test whose
  * justification the goldens do not satisfy.  This file makes that a table a reader
  * finds at run start:
@@ -101,13 +101,13 @@
  * both goldens, a three-band arm and a GPS+Galileo arm).
  *
  * Trace class: nothing here is read by the solve except the rule, which is built once per
- * run and read by the split.  Plain value types, free functions and tables (card NOM
- * section 10): no behaviour classes, no virtual dispatch.
+ * run and read by the split.  Plain value types, free functions and tables:
+ * no behaviour classes, no virtual dispatch.
  */
 
 #include "common/GnssIdentity.hpp"           // System, SatId, SignalId, StationId, FrequencyBand
 #include "network/assembly/ParamRegistry.hpp"   // NetworkParamKind
-#include "measurement/AbsorbedSharedStates.hpp"  // StateContainer, AbsorbedReason, StationAbsorbed (card NOM N1b)
+#include "measurement/AbsorbedSharedStates.hpp"  // StateContainer, AbsorbedReason, StationAbsorbed
 
 #include <array>
 #include <cstddef>
@@ -143,7 +143,7 @@ namespace GnssProcessor {
      *        station, or one shared state withheld from it) on one epoch.  The values are
      *        the count columns of the table, in print order.
      *
-     * Section 11.2 of the card pre-registered a treatment @c Estimated with a route; the
+     * Section 11.2 of the design pre-registered a treatment @c Estimated with a route; the
      * route is folded in here as the two estimated values, so one enum carries the whole
      * decision and indexes the counts.
      */
@@ -175,7 +175,7 @@ namespace GnssProcessor {
     /**
      * @brief The form of an instance, where one registry kind has more than one shape.
      *
-     * The registry (card PRM) declares the receiver clock and its inter-system biases as
+     * The registry declares the receiver clock and its inter-system biases as
      * one kind, because one carry, its three response sites and its value site act on
      * both; likewise the receiver code bias and the ambiguity forms.  The inventory tells
      * the shapes apart, so a table line is never "inter-system bias | rx_clock".  The
@@ -190,7 +190,7 @@ namespace GnssProcessor {
         WideLane,    ///< ambiguity: wide-lane, per band pair (@c StateKeys::makeWlAmbiguityKey).
         Dcb,         ///< rx_code_bias: "<system>_DCB", the differential code bias of the clock-reference pair.
         Ifb,         ///< rx_code_bias: "<system>_IFB<band>", the inter-frequency bias of a band outside that pair.
-        Isc,         ///< rx_code_bias: "<system>_ISC_<signal>", the inter-signal correction of a second code (card SCC).
+        Isc,         ///< rx_code_bias: "<system>_ISC_<signal>", the inter-signal correction of a second code.
         GloSlotIfb,  ///< rx_code_bias: "<system>_IFB<band>_k<slot>", the GLONASS per-slot inter-frequency bias.
     };
 
@@ -284,7 +284,7 @@ namespace GnssProcessor {
     // StateContainer (where a column sits in a station's StateManager, the classifier's
     // input) is declared in measurement/AbsorbedSharedStates.hpp, beside the absorbed-state
     // record that uses it, so that the user-side measurement header includes no network
-    // header (card NOM2 section 1).
+    // header.
 
     /**
      * @brief The name of a container, used in the unclassified labels ("<container>:<key>").
@@ -344,12 +344,12 @@ namespace GnssProcessor {
     // AbsorbedReason (one value per gate), kAbsorbedReasons, the station's record
     // StationAbsorbed and noteAbsorbed are declared in measurement/AbsorbedSharedStates.hpp:
     // the record lives on the station's MeasurementModel, whose header includes no network
-    // header (card NOM2 section 1).  This header classifies and counts the record.
+    // header.  This header classifies and counts the record.
 
     /**
      * @brief One row of the reason table: what a reader needs to know about a gate.
      *
-     * Every text was checked against the code it names (card NOM N1b); where a code comment
+     * Every text was checked against the code it names; where a code comment
      * claims more than the code does, the row says what the code does.
      */
     struct AbsorbedReasonSpec {
@@ -450,7 +450,7 @@ namespace GnssProcessor {
      * Without the weighting (or with the W6 ionosphere constraint @c none) nothing takes
      * the delay up, and the table says so.
      *
-     * @c network.estimate_rx_extra_band_code_delay (card L5B) turns the drop off where it
+     * @c network.estimate_rx_extra_band_code_delay turns the drop off where it
      * can act (@ref rxExtraBandDelayEffective, the one predicate the loader, this rule,
      * the snapshot fingerprint and the run-end report read): @ref drop is then false,
      * @ref estimated_by_knob is true, and the governed columns take the split's ordinary
@@ -465,7 +465,7 @@ namespace GnssProcessor {
         /// The drop is turned off by @ref estimated_by on this run
         /// (@ref rxExtraBandDelayEffective): the satellite code biases are estimated (the
         /// drop would apply), the knob is armed and some active constellation tracks a band
-        /// outside a two-band pair, so the governed columns are estimated (card L5B).
+        /// outside a two-band pair, so the governed columns are estimated.
         bool             estimated_by_knob{false};
         const char*      estimated_by{"network.estimate_rx_extra_band_code_delay"};  ///< The knob that turns the drop off.
         /// Some active constellation tracks a band outside a two-band pair under the run's
@@ -518,7 +518,7 @@ namespace GnssProcessor {
     /**
      * @brief Does some active constellation track a band outside a two-band pair under a
      *        frequency mode?  The configuration-time answer to "can a receiver IFB column
-     *        exist on this run" (card L5B).
+     *        exist on this run".
      *
      * A constellation counts when it is not FDMA (GLONASS never has a per-band receiver
      * IFB: @c StateInitializer::resolveReceiverBias gives it the per-slot form) and the
@@ -539,7 +539,7 @@ namespace GnssProcessor {
 
     /**
      * @brief Is @c network.estimate_rx_extra_band_code_delay effective on this run?  The
-     *        one predicate of card L5B: the loader's interlocks and posture line, the rule
+     *        one predicate: the loader's interlocks and posture line, the rule
      *        (@ref RxIfbRule::estimated_by_knob), the snapshot fingerprint token and the
      *        run-end report all read it, so none of them can call an armed knob effective
      *        where another calls it inert.
@@ -553,7 +553,7 @@ namespace GnssProcessor {
 
     /**
      * @brief One station's state and counts for the receiver IFB columns that
-     *        @c network.estimate_rx_extra_band_code_delay estimates (card L5B): the ON-path
+     *        @c network.estimate_rx_extra_band_code_delay estimates: the ON-path
      *        telemetry of standing invariants #4 and #7, and the edge state the split and
      *        the harvest need.
      *
@@ -608,7 +608,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The extra-band code rows of a station that the split excludes (zero weight)
-     *        because the knob estimates the receiver IFB (card L5B), with the station's
+     *        because the knob estimates the receiver IFB, with the station's
      *        counts and edge state kept.
      *
      * An extra-band code row carries the satellite's extra-band code bias.  When that bias
@@ -631,7 +631,7 @@ namespace GnssProcessor {
      * @p s (the rows excluded, the governed columns left with no weighted row, the
      * registration edges, and the family signals).
      *
-     * @param s           The station's card L5B state (written).
+     * @param s           The station's band-5 receiver-delay state (written).
      * @param sm          The station's state manager (governed columns, satellite code-bias
      *                    columns).
      * @param em          The station's measurement update (H and the row identities
@@ -846,7 +846,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The satellite ids whose constellation the network does not model by its own
-     *        rule, counted over the run (card NOM step N0b).
+     *        rule, counted over the run.
      *
      * Two readers of a satellite's constellation behave differently since step N0b on
      * inputs the goldens do not contain.  An id whose letter is outside the traits table
@@ -884,15 +884,15 @@ namespace GnssProcessor {
         SatIdentityCensus   sat_ids;                     ///< The satellite ids of no modelled constellation, and of SBAS.
     };
 
-    struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/Run.hpp
+    struct NetworkEpoch;            // network/driver/Epoch.hpp
 
     /**
      * @brief Count this epoch's satellite ids into @c inv.sat_ids (serial, once per
      *        processed epoch, after the admission seams and before any model reads the
      *        observations).
      *
-     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
@@ -937,7 +937,7 @@ namespace GnssProcessor {
      * once when the table is out, when @p emitted is false, or when no station was
      * counted on the last epoch.
      *
-     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
@@ -969,17 +969,17 @@ namespace GnssProcessor {
                                      const std::shared_ptr<spdlog::logger>& log,
                                      NetworkRunTraces& traces, const NetworkConfig& nc);
 
-    // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+    // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
     struct NetworkRunEndView;
 
     /**
-     * @brief Run-end report: the receiver extra-band code delay (card L5B) and parameters as armed
+     * @brief Run-end report: the receiver extra-band code delay and parameters as armed
      *        (NOM N1).
      *
-     * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+     * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
      * beside it in ParamInventory.cpp, print in this order, each gated on its own knob:
-     *   - networkRxExtraBandDelayRunEnd: the receiver extra-band code delay (card L5B).
+     *   - networkRxExtraBandDelayRunEnd: the receiver extra-band code delay.
      *   - networkParamInventoryTableRunEnd: parameters as armed (NOM N1).
      *
      * @param v The run at its end (network/runend/RunEnd.hpp).
@@ -996,11 +996,11 @@ namespace GnssProcessor {
      */
     struct RxIfbReportLine {
         bool        warn{false};  ///< Logged at warn level (else info).
-        std::string text;         ///< The line, without the "Network (card L5B...)" prefix.
+        std::string text;         ///< The line, without the "Network (receiver extra-band code delay)" prefix.
     };
 
     /**
-     * @brief The receiver extra-band code delay report (card L5B) as lines: the content
+     * @brief The receiver extra-band code delay report as lines: the content
      *        of @ref networkRxExtraBandDelayRunEnd, from plain inputs so that a test can
      *        build it.
      *

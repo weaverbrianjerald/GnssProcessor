@@ -109,17 +109,16 @@ struct BroadcastEphemeris {
     /// The Galileo "data sources" word (RINEX ORBIT-5 field 2): bit 0 I/NAV E1-B,
     /// bit 1 F/NAV E5a-I, bit 2 I/NAV E5b-I, bit 8 clock and group delay for (E5a, E1),
     /// bit 9 for (E5b, E1).  −1 for every other system and for a record whose source
-    /// carries no such word (the RTCM decoders).  (Card OWD, O3.)
+    /// carries no such word (the RTCM decoders).
     int         data_source{-1};
     GnssTime    received_time{0, 0.0};      ///< Wall-clock receive time (GPS scale) for staleness.
     /// GPS / QZSS issue of data, clock (RINEX ORBIT-6 field 4); −1 for every other
     /// system and for a record decoded from a stream that carries no such field.
-    /// (Card NBP.)
     int         iodc{-1};
     /// Transmission time of the message (RINEX ORBIT-7 field 1), on the record's native
     /// week scale (BDT for BeiDou), reduced to within half a week of the clock reference
     /// epoch @c kepler.toc (RINEX permits a value referred to the neighbouring week).
-    /// Valid only when @ref has_transmission_time is true.  (Card NBP: the broadcast
+    /// Valid only when @ref has_transmission_time is true.  (The broadcast
     /// clock a priori selects the latest record transmitted at or before the epoch.)
     GnssTime    transmission_time{0, 0.0};
     /// True when @ref transmission_time was read from the record.  False for the RTCM
@@ -138,7 +137,7 @@ struct BroadcastEphemeris {
  *
  * week x 604800 + seconds of week; a BeiDou toc (native BDT) is shifted by 1356 weeks plus
  * 14 s.  The single definition behind the network's broadcast staging
- * (@c navAvailabilityGpsSeconds) and its group-delay latch (card OWD).
+ * (@c navAvailabilityGpsSeconds) and its group-delay latch.
  *
  * @param e A GPS / Galileo / BeiDou / QZSS record.
  * @return Its toc in continuous GPS seconds.
@@ -155,7 +154,7 @@ inline double brdcTocGpsSeconds(const BroadcastEphemeris& e) {
  * week x 604800 + seconds of week of @c BroadcastEphemeris::transmission_time, with the
  * BeiDou shift of @ref brdcTocGpsSeconds.  Meaningful only when
  * @c has_transmission_time is true.  The availability instant of a record under the
- * broadcast clock a priori of card NBP (@c network.brdc_select ttom).
+ * broadcast clock a priori (@c network.brdc_select ttom).
  *
  * @param e A GPS / Galileo / BeiDou / QZSS record.
  * @return Its transmission time in continuous GPS seconds.

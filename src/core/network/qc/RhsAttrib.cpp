@@ -13,9 +13,9 @@
  * system, so they are reported as a separate section and excluded from the
  * kernel-level closure.
  *
- * Card NOM step N2b: the decomposition iterates exactly the channels the kernel folds
+ * The decomposition iterates exactly the channels the kernel folds
  * (@ref networkRhsAttribDecompose): a station's rows, its pre-PD prior (folded with the
- * block, the channel the attribution had missed: card NOM section 16, suspect 2) and its
+ * block, the channel the attribution had missed) and its
  * post-PD diagonal prior when the consume folded it, then every captured shared fold
  * and the DD folds.  Rows are classed by their tags, station priors and shared folds by
  * their kinds' names, so the classes sum to the kernel's reduced RHS by construction.
@@ -54,8 +54,8 @@
 #include "network/solve/NormalEquations.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "network/diag/RunTraces.hpp"
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
 #include "network/driver/SetupResult.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -181,7 +181,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.N_red     = kernel.reducedSharedNormals();
     out.datum     = plan_datum;
     if (x_s && x_s->size() == n) out.x_s = *x_s;
-    // The station-local readout's inputs (card L5B), read now because the kernel and the
+    // The station-local readout's inputs, read now because the kernel and the
     // state managers move on after the epoch: each item's local-column names and the
     // kernel's reconstruction of its locals at x_s, terms apart.  Only when asked (a LOC:
     // label is named) and with x_s, so every other capture, the flight recorder's
@@ -236,7 +236,7 @@ NetworkRhsAttribDecomposition networkRhsAttribDecompose(const NetworkAttribFrame
     // diagonal prior (addStationPrior), which the consume folds only when it sets
     // carry_prior_folded.  Each row is classed by its tag (classifyRow) and each prior
     // entry by its tag's kind (contributionKindName), so every term the kernel folded is
-    // attributed once and the closure holds by construction (card NOM step N2b).
+    // attributed once and the closure holds by construction.
     for (std::size_t k = 0; k < f.asm_ptr.size(); ++k) {
         const StationAssembly& R = *f.asm_ptr[k];
         const std::size_t slot = f.slot[k];
@@ -716,7 +716,7 @@ NetworkRhsColumnShares networkRhsAttribColumnShares(const NetworkAttribFrame& f,
 }
 
 // =========================================================================================
-// The station-local readout (card L5B)
+// The station-local readout
 // =========================================================================================
 
 bool isRhsAttribLocalLabel(const std::string& label) {
@@ -1503,8 +1503,8 @@ NetworkRhsLocalShares networkRhsAttribLocalShares(const NetworkAttribFrame& f,
 namespace {
 
 /**
- * @brief Write `cols_<tow>.csv`, the solution shares at the named shared columns (card
- *        ICF instrument A'; the format is documented at @ref networkRhsAttribDump).
+ * @brief Write `cols_<tow>.csv`, the solution shares at the named shared columns
+ *        (instrument A'; the format is documented at @ref networkRhsAttribDump).
  * @param f       The frame.
  * @param dec     Its class decomposition.
  * @param labels  The shared labels of @c network.rhs_attrib_columns.
@@ -1583,7 +1583,7 @@ void writeColumnShares(const NetworkAttribFrame& f, const NetworkRhsAttribDecomp
 
 /**
  * @brief Write `loc_<tow>.csv`, the decomposition of the named station-local solved
- *        increments (card L5B; the format is documented at @ref networkRhsAttribDump).
+ *        increments (the format is documented at @ref networkRhsAttribDump).
  *
  * Nothing is written for a frame without the station-local capture (a retained previous
  * frame, which holds no solve @c x_s); the labels are then named once in the log.  An
@@ -1842,7 +1842,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     // w, y and h_c00 are written separately so a weight change and an
     // innovation change can be told apart; the class/station sums cannot
     // separate them.  About 3–4k rows per armed epoch; diagnostics-only.
-    // The last column is the row's contribution kind (card ICF instrument A'): the
+    // The last column is the row's contribution kind: the
     // class lumps kinds (cpl_row holds the coupling rows and all six carried-prior
     // block kinds), the kind names the one the row's builder declared.  It is
     // appended last so the columns before it keep their positions.
@@ -1933,7 +1933,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
               pin_rows.size(), (dir / ("attrib_" + tow_tag + ".csv")).string(),
               closure_rel, c00_l1, c00_l2);
 
-    // ---- the named columns: shared (cols_, card ICF A') and station-local (loc_, L5B) --
+    // ---- the named columns: shared (cols_) and station-local (loc_) --
     std::vector<std::string> shared_labels, local_labels;
     for (const auto& c : columns)
         (isRhsAttribLocalLabel(c) ? local_labels : shared_labels).push_back(c);
@@ -1944,7 +1944,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
 }
 
 void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_ep1_cut.py,
     //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
@@ -1959,7 +1959,7 @@ void networkRhsAttribution(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const Eigen::VectorXd* x_s = &ep.solve.x_s;
     // ---- End of the bindings ----
-    if (!est.attribArmed()) return;   // the driver's gate (card NOM3 step EP3)
+    if (!est.attribArmed()) return;   // the driver's gate
     const auto& nc = config_.getNetworkConfig();
     if (nc.rhs_attrib_tow < 0.0) return;
     if (ctx.carry.rhs_attrib_done >= std::max(1, nc.rhs_attrib_n_ep)) return;
@@ -1996,7 +1996,7 @@ bool networkRhsTripEdge(NetworkRunContext& ctx, std::string& trip, const char* k
 void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
                             const NetworkEstimator::Datum& plan_datum,
                             const std::vector<int>& est_index_of, const Eigen::VectorXd* x_s) {
-    // ---- From the run and the epoch (card NOM3 step SG3: the former explicit parameters, each
+    // ---- From the run and the epoch (the former explicit parameters, each
     //      bound under its former name; the body below is unchanged) ----
     NetworkRunContext& ctx = run.ctx;
     const GnssConfig& config_ = run.config;
@@ -2069,7 +2069,7 @@ void networkRhsAttribTripAt(NetworkRun& run, const NetworkEpoch& ep,
     }
 }
 
-// ---- Epoch forms (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): one forwarding
+// ---- Epoch forms (generated by scripts/nom_ep1_cut.py): one forwarding
 //      call each, with the bindings of the frozen call site; the explicit forms
 //      above stay for their other callers. ----
 

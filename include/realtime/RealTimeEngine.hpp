@@ -44,11 +44,11 @@
 #include "math/WlsEstimator.hpp"
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
-#include "realtime/PbDiscCarryLedger.hpp"    // Declared-step ambiguity carry ledger, card CC (A)
-#include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation (card ALC)
-#include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger, card PBT (A)
-#include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger (card PBH)
-#include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row (card CST)
+#include "realtime/PbDiscCarryLedger.hpp"    // Declared-step ambiguity carry ledger
+#include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation
+#include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger
+#include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
+#include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
@@ -350,7 +350,7 @@ public:
      */
     void notifyProductsAdvanced() { drainHeldObs(); }
 
-    // --- Per-satellite consumer readout (card CST) ----------------------------
+    // --- Per-satellite consumer readout ----------------------------
     /**
      * @brief Arm the per-satellite readout of this engine's own epoch
      *        (@c network.trace_consumer_sat, set by the closed-loop harness and by
@@ -397,7 +397,7 @@ public:
     double getTroposphereZwd() const;
 
     /**
-     * @brief Receiver inter-system bias per non-GPS system (card GAL).
+     * @brief Receiver inter-system bias per non-GPS system.
      *
      * Reads the Kalman state and its variance (the consumer carries the bias as a
      * state with the @c filter.process_noise.system_time_offset_q random walk).
@@ -421,7 +421,7 @@ public:
     /// Always false when max_duration_s is 0 (the default, unlimited).
     bool maxDurationReached() const { return max_duration_reached_; }
 
-    // --- Declared-step ambiguity carry readout, card CC (A) ------------------
+    // --- Declared-step ambiguity carry readout ------------------
     /// True iff @c processing.ssr_phase_bias_disc_carry is armed on this engine's
     /// config (the closed-loop harness derives it from
     /// @c network.closed_loop.pb_disc_carry).
@@ -432,7 +432,7 @@ public:
         return pb_disc_carry_.counters();
     }
 
-    // --- Phase-bias step translation readout, card PBT (A) -------------------
+    // --- Phase-bias step translation readout -------------------
     /// True iff @c processing.ssr_phase_bias_step_translate is armed on this
     /// engine's config (the closed-loop harness derives it from
     /// @c network.closed_loop.pb_step_translate).
@@ -443,7 +443,7 @@ public:
         return pb_step_translate_.counters();
     }
 
-    // --- Consumer phase-bias hold reaction readout (card PBH) ----------------
+    // --- Consumer phase-bias hold reaction readout ----------------
     /// Run-end counters of the reaction to a held phase bias.  All zero on an
     /// unheld product, so a consumer can read back that the producer's hold was
     /// inert (invariant #4): @c cells == 0 on a clean wire means nothing was
@@ -452,7 +452,7 @@ public:
 
     /**
      * @struct PbHoldPresenceCounters
-     * @brief Presence edges of held phase-bias keys (card PBF), counted whether or
+     * @brief Presence edges of held phase-bias keys, counted whether or
      *        not @c processing.ssr_pb_hold_presence_flip is armed.
      *
      * A key is "held" here once the hold ledger has recorded it, so an edge that
@@ -465,13 +465,13 @@ public:
         std::size_t appear{ 0 };     ///< Held key applied now, not applied at the previous epoch.
         std::size_t vanish{ 0 };     ///< Held key applied at the previous epoch, not applied now.
         std::size_t answered{ 0 };   ///< Edges that took the A5 reaction (knob armed).
-        std::size_t suppressed{ 0 }; ///< Edges left alone by the declared-roster rule (card SID 5b).
+        std::size_t suppressed{ 0 }; ///< Edges left alone by the declared-roster rule.
     };
-    /// Run-end counters of the held-key presence edges (card PBF).
+    /// Run-end counters of the held-key presence edges.
     const PbHoldPresenceCounters& pbHoldPresenceCounters() const { return pb_hold_presence_; }
 
     /**
-     * @brief Log the held-key presence-edge counters (card PBF) on @c rt_engine.
+     * @brief Log the held-key presence-edge counters on @c rt_engine.
      *
      * Silent when no held entry was ever seen, so a consumer of an unheld product
      * keeps a byte-identical log.  Public so the consumer replay driver, which never
@@ -481,10 +481,10 @@ public:
      */
     void logPbHoldPresenceSummary(const char* tag) const;
 
-    // --- Declared signal roster at the consumer (card SID phase 5) -----------
+    // --- Declared signal roster at the consumer -----------
     /**
      * @struct RosterConsumerCounters
-     * @brief The consumer's half of card SID phase 5, one named counter per class.
+     * @brief The consumer's half of the declared signal roster, one named counter per class.
      *
      * Every class carries a denominator so that a zero can be interpreted:
      * @c epochs_declared at 0 means no declaration ever reached the store, which
@@ -509,23 +509,23 @@ public:
         long long flip_events{ 0 };       ///< ARC rows written for the flips (up to a per-run cap; the rest count in flip_events_suppressed).
         long long flip_events_suppressed{ 0 };
         // --- Responses the declaration changed (C2) --------------------------
-        long long flip_suppressed{ 0 };   ///< flips whose reset / re-inflation card SID phase 5b withheld.
+        long long flip_suppressed{ 0 };   ///< flips whose reset / re-inflation was withheld by the declared roster.
     };
-    /// The consumer's declaration census (card SID phase 5).  On a wire that
-    /// carries no declaration (every producer before card SID), @c epochs_declared
+    /// The consumer's declaration census.  On a wire that
+    /// carries no declaration (every producer before the declared roster), @c epochs_declared
     /// and @c decl_changes stay zero and every flip counts as @c flip_no_decl.
     const RosterConsumerCounters& rosterConsumerCounters() const {
         return roster_consumer_;
     }
-    /// The consumer's latch against the declaration, as the model counted it
-    /// (card SID phase 5).  @c compared 0 means no declaration reached the latch.
+    /// The consumer's latch against the declaration, as the model counted it.
+    /// @c compared 0 means no declaration reached the latch.
     const PppModel::DeclaredLatchCounters& declaredLatchCounters() const;
-    /// One INFO block with both censuses (card SID phase 5).  Silent when no
+    /// One INFO block with both censuses.  Silent when no
     /// declaration was ever seen and @c network.closed_loop.roster_latch is off,
     /// so a consumer of a wire without a declaration prints nothing.
     void logRosterConsumerSummary(const char* tag) const;
 
-    // --- Consumer ambiguity level check readout (card ALC) --------------------
+    // --- Consumer ambiguity level check readout --------------------
     /// True iff @c processing.amb_level_check is armed on this engine's config
     /// (the closed-loop harness derives it from
     /// @c network.closed_loop.amb_level_check).
@@ -543,7 +543,7 @@ public:
     /// drain.  0 on an unarmed engine and on any epoch that did not update.
     uint64_t ambLevelEpochChecks() const { return amb_level_epoch_checks_; }
 
-    // --- Harness-driven snapshot write and restore readout, card CC (B) ------
+    // --- Harness-driven snapshot write and restore readout ------
     /// Epoch time of the last epoch that ran the full estimation tail (the
     /// epoch the live filter memory is "as of"); nullopt before the first.
     std::optional<GnssTime> lastProcessedEpochTime() const {
@@ -575,7 +575,7 @@ public:
 
     /// Path of the consumer snapshot that sits beside a network history copy
     /// `<network_snapshot_path>.ep<NNNN>`: `<network_snapshot_path>.consumer.ep<NNNN>`
-    /// (the same zero-padded @c n_emitted suffix the network copy uses; card CC (B)).
+    /// (the same zero-padded @c n_emitted suffix the network copy uses).
     static std::filesystem::path consumerSnapshotHistoryPath(
         const std::filesystem::path& network_snapshot_path, unsigned long long n_emitted);
 
@@ -600,7 +600,7 @@ public:
 
 private:
     friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
-    friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges (card PBF).
+    friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -626,7 +626,7 @@ private:
     /// from @c flush() (end-of-run).
     void logBiasAttrMismatchSummary(const char* tag);
 
-    /// @brief Log the one-line orbit/clock coherence-echo mismatch summary (card 7).
+    /// @brief Log the one-line orbit/clock coherence-echo mismatch summary.
     ///
     /// Reads @c orbitEchoMismatchCounts() from the clock-routed store
     /// (@c clock_store_override_, else the singleton), where GnssCorrections
@@ -688,7 +688,7 @@ private:
      *
      * The fields are the values that cross a seam boundary within one epoch:
      * the eleven locals that crossed a block boundary in the pre-cut driver,
-     * plus @c pb_hold_handled (card PBH).  A value that a single seam computes
+     * plus @c pb_hold_handled.  A value that a single seam computes
      * and consumes itself stays local to that seam and does not belong here.
      */
     struct RtEpochContext {
@@ -724,7 +724,7 @@ private:
         bool update_applied{ false };        ///< A float update committed; gates AR and the trace "have_applied" flag.
 
         /// The "sat|code" keys @ref RealTimeEngine::reactToPbHold_ already handled
-        /// this epoch (card PBH).  A held key is judged afresh every epoch, so the
+        /// this epoch.  A held key is judged afresh every epoch, so the
         /// set is per-epoch and belongs here, not in a member.  The three
         /// phase-bias reactions skip these keys, so exactly one seam reacts per
         /// (key, epoch).  Empty unless the producer armed @c network.emit_pb_hold,
@@ -761,18 +761,18 @@ private:
     void logSsrCoverage(RtEpochContext& ctx);    ///< Per-epoch SSR coverage summary line.
     void traceSsrConsumer(RtEpochContext& ctx);  ///< Consumer-side SSR-application CSV (L10).
     /// Harvest this epoch's per-(sat, raw phase signal) rows into
-    /// @ref consumer_sat_rows_ (card CST).  Runs at the processEpoch tail
+    /// @ref consumer_sat_rows_.  Runs at the processEpoch tail
     /// (post-update, post-AR) so the states and residuals it reads are the
     /// committed ones; no-op unless @ref consumer_sat_trace_.
     void traceConsumerSat_(RtEpochContext& ctx);
     /// Record what a reaction (an SSR datum-break reaction or the level check)
-    /// did to one key, for this epoch's rows (card CST).  @p key is
+    /// did to one key, for this epoch's rows.  @p key is
     /// "<sat>|<signal>" for the phase/code-bias reactions and "<sat>|CLK" for the
     /// clock one; repeated actions on one key in one epoch are joined with ';'.
     /// No-op unless armed.
     void noteConsumerSatEvent_(const std::string& key, const char* action);
 
-    // --- Ambiguity level re-validation, card ALC (RealTimeEngineEstimate.cpp) --
+    // --- Ambiguity level re-validation (RealTimeEngineEstimate.cpp) --
     /// Re-validate every dual-frequency satellite's float ambiguities against
     /// their own windowed code level and, in act mode
     /// (@c processing.amb_level_check_mode), refloat the ones the code refuses.
@@ -782,9 +782,9 @@ private:
     /// No-op unless @c processing.amb_level_check.
     void checkAmbiguityLevel_(RtEpochContext& ctx);
     /// Restart @p sat's level window because a reaction wrote its ambiguity this
-    /// epoch (card ALC).  No-op unless the check is armed.
+    /// epoch.  No-op unless the check is armed.
     void noteAmbLevelDisturbed_(const std::string& sat);
-    /// One INFO line with the level-check counters; silent unless armed (card ALC).
+    /// One INFO line with the level-check counters; silent unless armed.
     void logAmbLevelCheckSummary_(const char* tag);
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
@@ -811,7 +811,7 @@ private:
     void reactToGenerationChange(RtEpochContext& ctx);  ///< Generation-id change → global datum break (RTA-3).
     void logProducerStatus(RtEpochContext& ctx);        ///< Producer heartbeat → one-shot transition log (RTA-10).
     void resetOnPhaseBiasDisc(RtEpochContext& ctx);     ///< Phase-bias discontinuity / freshness flip → ambiguity reset.
-    /// Carry twin of resetOnPhaseBiasDisc (card CC (A)): with
+    /// Carry twin of resetOnPhaseBiasDisc: with
     /// processing.ssr_phase_bias_disc_carry armed, resetOnPhaseBiasDisc runs this
     /// instead of its reset body.  A declared step (disc-counter change) or an A5
     /// freshness flip translates the ambiguity by −Δ (PbDiscCarryLedger::react);
@@ -819,20 +819,20 @@ private:
     /// site: it runs per key after the reaction, with the value the measurement
     /// update will apply this epoch (the same gated read the model makes).
     void carryOnPhaseBiasDisc_(RtEpochContext& ctx);
-    /// One INFO line with the carry counters; silent unless armed (card CC (A)).
+    /// One INFO line with the carry counters; silent unless armed.
     void logPbDiscCarrySummary_(const char* tag);
-    /// Step twin of resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_ (card PBT (A)):
+    /// Step twin of resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_:
     /// with processing.ssr_phase_bias_step_translate armed, resetOnPhaseBiasDisc
     /// runs this instead of both.  Every change in the applied phase bias
     /// (declared or not) beyond pb_step_translate_eps_m translates the ambiguity
     /// by −Δ (PbStepTranslateLedger::react).  Because it replaces the whole
     /// reaction, a declared step is translated once, not twice, even with the
-    /// card-CC carry also armed.  Its record() is the update site, per key after
+    /// declared-step carry also armed.  Its record() is the update site, per key after
     /// the reaction.
     void translatePhaseBiasStep_(RtEpochContext& ctx);
-    /// One INFO line with the translation counters; silent unless armed (card PBT (A)).
+    /// One INFO line with the translation counters; silent unless armed.
     void logPbStepTranslateSummary_(const char* tag);
-    /// Reaction to a held phase bias (card PBH), which resetOnPhaseBiasDisc runs
+    /// Reaction to a held phase bias, which resetOnPhaseBiasDisc runs
     /// ahead of all three reactions above.  It keys on the data, not on a
     /// consumer knob: a consumer cannot know the producer armed
     /// @c network.emit_pb_hold, it can only see
@@ -846,13 +846,13 @@ private:
     /// no held entries the set stays empty and all three are byte-identical.
     /// With @c processing.ssr_pb_hold_presence_flip armed, the downstream reaction
     /// skips only the claimed key's counter reaction and still answers its A5
-    /// presence edge (card PBF).
+    /// presence edge.
     void reactToPbHold_(RtEpochContext& ctx);
     /// One INFO line with the hold-reaction counters; silent unless a held entry
-    /// was ever seen (card PBH).
+    /// was ever seen.
     void logPbHoldSummary_(const char* tag);
     /**
-     * @brief Count one A5 presence edge if it belongs to a held key (card PBF).
+     * @brief Count one A5 presence edge if it belongs to a held key.
      *
      * Called by the three phase-bias reactions at an A5 edge.  Counts only with
      * @c processing.ssr_pb_hold_presence_flip armed (the off path never reaches a
@@ -861,13 +861,13 @@ private:
      *
      * @param key         The "<sat>|<signal>" key.
      * @param applied_now The bias is applied this epoch (an appearance) or not (a vanish).
-     * @param suppressed  The declared-roster rule left the edge alone (card SID 5b).
+     * @param suppressed  The declared-roster rule left the edge alone.
      */
     void countPbHoldPresenceEdge_(const std::string& key, bool applied_now, bool suppressed);
     void reinflateOnCodeBiasDisc(RtEpochContext& ctx);  ///< Code-bias datum re-reference → rx code-bias re-inflation.
     void reinflateOnClockDisc(RtEpochContext& ctx);     ///< Clock datum re-reference → scoped ISB re-inflation (A2).
     /**
-     * @brief Card CLV2: answer a declared code-level step (processing.ssr_level_step_inflate).
+     * @brief Answer a declared code-level step (processing.ssr_level_step_inflate).
      *
      * For each satellite of this epoch whose declared step totals in the SSR store moved
      * since the engine last read them (the first reading only records), the change of
@@ -881,7 +881,7 @@ private:
     void reactToDeclaredLevelSteps_(RtEpochContext& ctx);
 public:
     /**
-     * @brief The inter-system biases to re-inflate on a clock re-reference (card OWD (O2)).
+     * @brief The inter-system biases to re-inflate on a clock re-reference.
      *
      * A non-reference constellation's own step re-inflates its own ISB; a reference (GPS)
      * step re-inflates every allocated non-reference ISB, observed this epoch or not (the
@@ -900,12 +900,12 @@ public:
                                                    const std::map<std::string, size_t>& allocated);
 
     /**
-     * @brief Log this consumer's state-manager re-inflation counters (card OWD (O2)).
+     * @brief Log this consumer's state-manager re-inflation counters.
      *
      * One line, "card OWD re-inflations (<tag>): code_bias raised=N kept=M | isb ... |
      * iono ... | iono_rate ... | sat_bias ... | sat_phase_bias ... | sat_clock ...", on the
      * @c rt_engine logger.  A nonzero kept count names a re-inflation that left a larger
-     * current variance in place, where the rule before card OWD would have lowered it.
+     * current variance in place, where the earlier rule would have lowered it.
      *
      * @param tag Where the line comes from ("end of run", "closed loop", "end of replay").
      */
@@ -913,17 +913,17 @@ public:
 private:
 
     /// Read the producer's declared signal roster out of the SSR store once per
-    /// epoch, before @c computeModels, and hand it to the latch (card SID
-    /// phase 5).  The latch is decided inside that call at a constellation's first
+    /// epoch, before @c computeModels, and hand it to the latch.
+    /// The latch is decided inside that call at a constellation's first
     /// epoch, so a declaration that arrives later is too late, and the counters
     /// record that.  No-op on every wire that carries no declaration (every
-    /// producer before card SID, every RTCM stream), which keeps a legacy
+    /// producer before the declared roster, every RTCM stream), which keeps a legacy
     /// consumer byte-identical.
     void refreshDeclaredRoster_();
     /// Classify one fresh-to-stale (or stale-to-fresh) freshness flip against the
     /// declaration and the family's presence on the wire, count it, and write an
-    /// @c ARC event carrying its identity, up to a per-run cap (card SID phase 5,
-    /// E3).
+    /// @c ARC event carrying its identity, up to a per-run cap
+    /// (E3).
     ///
     /// @param key       "sat|signal" (phase) or "CB|sat|signal" (code).
     /// @param sat       Satellite id.
@@ -936,7 +936,7 @@ private:
     /// @param t         Epoch time.
     /// @return true when the flip is absent by declaration (the network declares
     ///         no family for this signal) and @c network.closed_loop.roster_latch
-    ///         is armed: the one class whose response card SID phase 5b
+    ///         is armed: the one class whose response the declared roster
     ///         suppresses.
     bool noteFreshnessFlip_(const std::string& key, const std::string& sat,
                             const std::string& signal, const std::string& cons,
@@ -966,7 +966,7 @@ private:
     void applyStagedStateSnapshot_(RtEpochContext& ctx);///< One-shot: age/fingerprint gate, layout rebuild, wholesale x/P + baselines restore.
     void writeStateSnapshot_(RtEpochContext& ctx);      ///< Cadence-gated atomic snapshot write.
     /// Harvest the live filter memory into @p out stamped at @p at (the shared
-    /// body of writeStateSnapshot_ and the card-CC writeStateSnapshotTo).  False
+    /// body of writeStateSnapshot_ and writeStateSnapshotTo).  False
     /// + @p why when the dynamic layout is unserializable (warned once per run).
     bool harvestStateSnapshot_(struct RtStateSnapshot& out, const GnssTime& at,
                                const std::string& epoch_prefix, std::string* why);
@@ -1056,7 +1056,7 @@ private:
     const SsrCorrectionStore* ssr_store_override_{ nullptr };
 
     /// The clock-routed store (per setSsrStore's consume_clock), on which
-    /// GnssCorrections tallies orbit-echo mismatches (card 7).  The
+    /// GnssCorrections tallies orbit-echo mismatches.  The
     /// ssr_store_override_ above is bias-routed (consume_bias), so the two differ
     /// under a clock-on/bias-off profile; the echo summary reads this one, since
     /// the bias-routed store never holds a split consumer's mismatches.
@@ -1071,7 +1071,7 @@ private:
     AmbiguityResolution last_ar_result_{};
     bool last_ar_ran_{ false };
 
-    // --- Per-satellite consumer readout, card CST (network.trace_consumer_sat) ---
+    // --- Per-satellite consumer readout (network.trace_consumer_sat) ---
     /// Armed by @ref setConsumerSatTrace.  Gates both the tail harvest and the
     /// per-key event recording (@ref noteConsumerSatEvent_), so an unarmed
     /// engine does no allocation and no map write anywhere on the epoch path.
@@ -1085,7 +1085,7 @@ private:
     /// cleared with the row buffer.
     std::map<std::string, std::string> consumer_sat_events_;
 
-    /// Card CLV2: the declared code-level step totals last read per satellite
+    /// The declared code-level step totals last read per satellite
     /// (@ref reactToDeclaredLevelSteps_), and its counters.
     std::map<std::string, SsrCorrectionStore::DeclaredLevelSteps> level_steps_seen_;
     long long level_step_events_{ 0 };     ///< (sat, epoch) declared code steps above the dead band
@@ -1135,12 +1135,12 @@ private:
     // re-inflated on the flip.
     std::map<std::string, bool> ssr_code_bias_applied_;
     /// The producer's declared signal roster as this consumer last read it out
-    /// of the SSR store (@ref refreshDeclaredRoster_; card SID phase 5).
+    /// of the SSR store (@ref refreshDeclaredRoster_).
     /// @c present is false on every wire that carries none, which leaves every
     /// use site inert and the engine byte-identical.
     NetworkSignalDeclaration ssr_declared_roster_;
     bool declared_roster_logged_{ false };   ///< one-shot arming / inert line.
-    RosterConsumerCounters roster_consumer_; ///< The consumer census (card SID phase 5).
+    RosterConsumerCounters roster_consumer_; ///< The consumer census.
     /// Last observed network solution-generation id from the SSR store (RTA-3;
     /// 0 = never seen).  A change of a present id means the producer restarted
     /// and re-realized its whole datum: every phase-bias lump and code-bias level
@@ -1158,36 +1158,36 @@ private:
     std::unique_ptr<struct RtStateSnapshot> staged_rt_snap_;
     double    rt_snap_last_write_s_{ -1.0 };   ///< Continuous GPS seconds of the last snapshot write (-1 = never).
     bool      rt_snap_layout_warned_{ false }; ///< One-shot warn for an unserializable state layout (unknown dynamic index).
-    RtSnapshotRestoreStatus rt_snap_restore_;  ///< Outcome of the one-shot staged resume (Restored, Discarded or NotStaged; card CC (B)).
-    /// The epoch the live filter memory is "as of" (card CC (B)): set at the
+    RtSnapshotRestoreStatus rt_snap_restore_;  ///< Outcome of the one-shot staged resume (Restored, Discarded or NotStaged).
+    /// The epoch the live filter memory is "as of": set at the
     /// processEpoch tail, just before the cadence-gated snapshot write, so
     /// writeStateSnapshotTo stamps (and checks) that epoch.
     GnssTime  last_processed_epoch_{ 0, 0.0 };
     bool      has_processed_epoch_{ false };
-    /// Per-(sat|signal) applied-bias ledger + carry counters (card CC (A)).  Only
+    /// Per-(sat|signal) applied-bias ledger + carry counters.  Only
     /// touched by carryOnPhaseBiasDisc_ (the knob-on twin of the reset reaction).
     /// Not part of the RT snapshot, whose v1 format is unchanged: the first event
     /// per key after a restore takes the reset (see RtStateSnapshot.hpp).
     PbDiscCarryLedger pb_disc_carry_;
-    /// Per-(sat|signal) applied-bias ledger + translation counters (card PBT (A)).
+    /// Per-(sat|signal) applied-bias ledger + translation counters.
     /// Only touched by translatePhaseBiasStep_ (the knob-on replacement for the
     /// reset / carry reactions).  Not part of the RT snapshot, whose v1 format is
     /// unchanged: the first cell per key after a restore has no (k−1, k) pair, so
     /// a declared one takes the reset and an undeclared one is a no-op.
     PbStepTranslateLedger pb_step_translate_;
     /// Per-(sat|signal) hold-generation memory + the ignore-vs-refloat decision +
-    /// counters (card PBH).  Only touched by reactToPbHold_, and only for entries
+    /// counters.  Only touched by reactToPbHold_, and only for entries
     /// carrying a nonzero generation, so an unheld product never reaches it.  Not
     /// part of the RT snapshot, whose v1 format is unchanged: a restored
     /// consumer's first held entry per key is a first sighting, which re-seats the
     /// memory without a reset, and the producer's own hold state cold-starts on
     /// its own resume.
     PbHoldLedger pb_hold_;
-    /// Presence edges of held keys (card PBF).  Counted on every consumer of a held
+    /// Presence edges of held keys.  Counted on every consumer of a held
     /// product; the reaction to them is gated by processing.ssr_pb_hold_presence_flip.
     PbHoldPresenceCounters pb_hold_presence_;
 
-    // --- Consumer ambiguity level re-validation (card ALC) --------------------
+    // --- Consumer ambiguity level re-validation --------------------
     /// The windowed code levels + the two tests + the counters.  Configured once
     /// on the first armed epoch (@c amb_level_configured_); untouched, and never
     /// sampled, with @c processing.amb_level_check off.

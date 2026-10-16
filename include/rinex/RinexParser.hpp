@@ -245,7 +245,7 @@ namespace GnssProcessor {
          * facts for a caller that reduces a monument coordinate to the antenna
          * reference point: the first is a reduction that is an exact no-op, the
          * second is a coordinate that could not be reduced and has to be reported
-         * (card UPO, @c network.station_marker_to_arp).
+         * (@c network.station_marker_to_arp).
          *
          * @return true when the record was parsed from the header.
          */

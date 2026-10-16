@@ -1,13 +1,13 @@
 /**
  * @file test_wsx_within_station_cross.cpp
- * @brief Unit gates of card WSX (@c network.carry_coupling_exact_cross): the exact time
+ * @brief Unit gates of the exact cross term (@c network.carry_coupling_exact_cross): the exact time
  *        update's bracket between two carried rows of a station, added in the station's
  *        whitened local block (docs/refound/WSX_within_station_cross_terms_2026-09-30.md).
  *
  * 1. With the knob, every pair of rows that both took the exact route gets
  *    @f$M_i^\top B M_k@f$ (@ref GnssProcessor::couplingExactCross over the rows'
  *    @ref GnssProcessor::couplingExactRow) added to @f$\Sigma_{ik}@f$ on top of the
- *    harvested conditional covariance; a row on card 1d's route (harvested before the
+ *    harvested conditional covariance; a row on the scalar-kappa route (harvested before the
  *    stash) adds nothing; the diagonal is unchanged; the counters count it.
  * 2. Without it, @f$\Sigma@f$ is the per-row form, bitwise.
  * 3. The loader refuses the knob without the exact update.
@@ -48,7 +48,7 @@ constexpr double kStash = 1000.0;
 struct WsxFixture {
     NetworkEstimator est;
     GlobalVtecShConfig shc{};
-    net::SatSignalTable tu_reinit_hist;   // the reinit history (card NOM step N4d)
+    net::SatSignalTable tu_reinit_hist;   // the reinit history
     StationAssembly R;
     CouplingExactEpoch ep;
     std::vector<std::string> keys;
@@ -105,7 +105,7 @@ std::shared_ptr<PlHarvestBlock> harvestBlock(const std::vector<double>& diag, do
 }
 
 /// A carried ambiguity with coupling terms on the three keys (coefficients @p m), seen at
-/// @p seen_s (kStash: the exact route; earlier: card 1d's route).
+/// @p seen_s (kStash: the exact route; earlier: the scalar-kappa route).
 LocalCarry carry(const WsxFixture& f, const std::vector<double>& m, double seen_s,
                  const std::shared_ptr<PlHarvestBlock>& blk, int idx) {
     LocalCarry lc;
@@ -189,7 +189,7 @@ bool wsxLoads(bool exact, bool cross, const char* tag, bool* armed = nullptr) {
 
 }  // namespace
 
-// The knob adds M_i'BM_k between the exact rows and nothing with the card 1d row; the
+// The knob adds M_i'BM_k between the exact rows and nothing with the scalar-kappa row; the
 // diagonal and the harvested term are untouched.
 TEST(WsxWithinStationCrossTest, TheBlockTakesTheBracketBetweenExactRowsOnly) {
     WsxFixture off, on;
@@ -216,7 +216,7 @@ TEST(WsxWithinStationCrossTest, TheBlockTakesTheBracketBetweenExactRowsOnly) {
     EXPECT_GT(largest, 1e-4) << "the fixture's walk should make the bracket visible";
     EXPECT_EQ(on.R.cxu.cross_blocks, 1);
     EXPECT_EQ(on.R.cxu.cross_pairs, 3);
-    EXPECT_EQ(on.R.cxu.cross_pairs_skipped, 3);   // the three pairs with the card 1d row
+    EXPECT_EQ(on.R.cxu.cross_pairs_skipped, 3);   // the three pairs with the scalar-kappa row
     long long n = 0;
     for (int b = 0; b < CouplingExactCounters::kCrossRhoBins; ++b) n += on.R.cxu.cross_rho_hist[0][b];
     EXPECT_EQ(n, 3);

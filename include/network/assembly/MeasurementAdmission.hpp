@@ -1,14 +1,14 @@
 /**
  * @file MeasurementAdmission.hpp
  * @brief Product-referenced measurement admission: the screen for corrupt channels.
- *        Card: docs/SPEC_measurement_admission.md.
+ *        Spec: docs/SPEC_measurement_admission.md.
  *
  * ## The fault class
  *
  * The screen targets a channel whose code and phase carry the same large offset
  * against the product-predicted range.  Reference case (DOY-129, BSHM00ISR): G07
  * C1C+L1C at +198.2 km and G16 at +99.9 km against the SP3+CLK prediction.  From
- * the prefit-census card's §17 gate 6: the same G07 reads +8.0 m at DJIG, so the
+ * the prefit-census spec's §17 gate 6: the same G07 reads +8.0 m at DJIG, so the
  * products are sound; eleven other BSHM satellites sit in -12.5…+19.1 m, so the
  * station clock and the model are sound; G21@BSHM, also C1C-only, reads -10.1 m,
  * so single-band tracking alone is not the cause.  The receiver failure mode
@@ -24,7 +24,7 @@
  * which discharges it into the ionosphere and starts a long withhold era.
  *
  * Layers of defense, in order of engagement: this seam (layer 0, at the origin) and
- * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`).  The card's
+ * the prefit fuse (a bound on the symptom, `network.prefit_fuse_sigma`).  The spec's
  * other two layers, the INC-3b admission validation (the valve) and the SH health
  * gate (the backstop), were retired with their keys.
  *
@@ -49,14 +49,14 @@
  * @f$C^\text{obs} - \rho_\text{pred}(\text{SP3}) - c\,\delta t^s(\text{CLK})@f$
  * with the small deterministic corrections also removed.  The healthy spread is
  * tighter, at no extra cost, with no product re-query and no new dependency in
- * this translation unit.  The deviation from the spec is recorded in the card's §9.
+ * this translation unit.  The deviation from the spec is recorded in the spec's §9.
  *
  * Being state-free is what lets this screen act at a cell's birth, where the
  * prefit census cannot: a prefit innovation subtracts the filter state, and a
  * correctly self-seeded birth has innovation ≈ 0 whatever the observable says.
  * @f$d_i@f$ does not depend on whether the cell is new.
  *
- * Design choices, each backed by a field result recorded in the card:
+ * Design choices, each backed by a field result recorded in the spec:
  *
  *  - Raw by intent.  No wet-troposphere, iono or receiver-bias modelling.  Those
  *    terms lie inside the healthy spread the threshold must tolerate (at BSHM,
@@ -93,7 +93,7 @@
  *    exceeds @c network.adm_bound_m at the epoch its arc would be born is not
  *    seeded: the band is withheld from the model set for that epoch.  On a warm
  *    resume the same applies at each station's first screened epoch, because a
- *    restored corrupt arc is not a birth and the census card's INC-3 cannot see
+ *    restored corrupt arc is not a birth and the census spec's INC-3 cannot see
  *    it.  At a birth no state exists yet, so nothing estimable is lost; this is
  *    admission (the coverage-gate and anchor-hygiene hold-out precedent), not a
  *    measurement drop.  Birth versus restore is only a label: the refloat runs on
@@ -127,7 +127,7 @@
  *    PREFIT-census `obs_code` exceedance on the line of sight in the previous
  *    epoch refuses the channel as the bound does.  Refusing at admission costs
  *    nothing, while amputating an established arc has a cost (standing
- *    invariant #7 at both edges).  Field basis (card §10): on the FT63 24 h day,
+ *    invariant #7 at both edges).  Field basis (spec §10): on the FT63 24 h day,
  *    16 of the 17 mid-arc onsets followed an `arc_resume` within five minutes.
  *    Twelve fired at the resume epoch itself (gaps of 3-2025 epochs), so only
  *    their label was wrong; the other four were readmitted and crossed the bound
@@ -157,28 +157,28 @@
  *   * after the PASS-A slip scans and their union into the funnel, because it
  *     inserts into `carry_slipped_ambs` / `carry_slipped_raw` and every consumer
  *     (`networkAnchorHygiene`, the T5v2 deviation erase in PASS B, the C3c
- *     DD-prior build, the Card-G gap classifier) must see those insertions;
+ *     DD-prior build, the gap classifier) must see those insertions;
  *   * after `networkAssemblyPrefilter_`, so a satellite the two-station
  *     observability gate has just erased is not screened, evented, or counted as
  *     admitted;
  *   * after `networkSignalIntegrity` (see below); and
  *   * before the phase-datum census and election, the shared-column registration
- *     and PASS B.  It is layer 0 of the card's §1 defense in depth (this seam, the
+ *     and PASS B.  It is layer 0 of the spec's §1 defense in depth (this seam, the
  *     prefit fuse), and every later layer,
  *     the election, the prefit census and RAIM observe the admitted set rather
  *     than the raw one.
  *
  * The window is the point immediately after `networkSignalIntegrity`.  Running
  * before the flicker classifier would also fall inside the window and would work,
- * but it would distort that card's instrument: `modeled` is rebuilt from
+ * but it would distort the flicker instrument: `modeled` is rebuilt from
  * `computeModels` every epoch, so a withhold applied first would make the
  * classifier read a band loss this epoch, a `band_dropped_perm` after its flicker
- * window and a FLICKER-REGAIN on heal, producing the events the flicker card's
+ * window and a FLICKER-REGAIN on heal, producing the events the flicker spec's
  * INC-0 census measures.  Running after it costs nothing: this seam's statistic
  * reads only the code keys of `observed` and `modeled`, and the classifier writes
  * neither (its withhold erases phase keys only).  It also keeps the flicker
  * counters comparable between an admission-armed leg and its control.  The
- * refloats of the two cards compose: both land in the same funnel, which is a set.
+ * refloats of the two screens compose: both land in the same funnel, which is a set.
  *
  * ## Scope
  *
@@ -278,7 +278,7 @@ struct MeasurementAdmissionArc {
 };
 
 /**
- * @brief Run tallies for the card (standing invariant #4: run-end counters are the
+ * @brief Run tallies for the admission seam (standing invariant #4: run-end counters are the
  *        on-path telemetry).  Embedded in @c NetworkServiceCounters as `adm`.
  *
  * @c epochs, @c station_epochs and @c channels are the denominators.  An armed run
@@ -291,7 +291,7 @@ struct MeasurementAdmissionArc {
  * rejection says the channel was never admissible, a resume rejection says a
  * corrupt arc was carried across a snapshot boundary, and an onset says a
  * previously good channel went bad.  Only an onset needs a refloat (at a birth the
- * refloat is a no-op), and only onsets can falsify the card's finding that the
+ * refloat is a no-op), and only onsets can falsify the spec's finding that the
  * offset is present from the arc's first epoch.  Re-entries (INC-4) have their own
  * counters.
  */
@@ -346,7 +346,7 @@ struct NetworkMeasurementAdmissionTallies {
     long long withheld_pb_pruned = 0; ///< satellite phase-bias states pruned alongside a withhold, so the election cannot seat a pin with no supporting row.
     long long withheld_cb_pruned = 0; ///< satellite code-bias (OSB) states pruned, so the >= 2-station registration gate is not satisfied by a station whose row this seam removed.
     long long withheld_clk_pruned = 0;///< satellite clock states pruned at a station left with no observable at all for that satellite (the same reason, for the clock column's union).
-    long long refloat_ambs = 0;       ///< ambiguity keys newly inserted into the Card-4 slip funnel (only with carry_invariant).
+    long long refloat_ambs = 0;       ///< ambiguity keys newly inserted into the invariant-carry slip funnel (only with carry_invariant).
     long long refloat_reseeds = 0;    ///< ambiguity keys marked pending-reseed (the phase-leveling feed; only with carry_warm).
 
     // --- INC-3 census -------------------------------------------------------
@@ -358,19 +358,19 @@ struct NetworkMeasurementAdmissionTallies {
     long long over_bound = 0;         ///< channel-epochs with |z| over adm_bound_m, whether or not the response is armed: the measure-only census's headline.
 };
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochEvents;             // network/driver/Epoch.hpp
-struct EpochPassA;              // network/driver/Epoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct EpochPassA;              // network/driver/Epoch.hpp
+struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
 
 /**
  * @brief Screen this epoch's code observables against the products, withhold the
  *        channels that fail, heal the ones that recover, and census the rest.
  *        The file banner describes the statistic and the ordering contract.
  *
- * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * Epoch form; the explicit form and its forwarding adapter
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -386,13 +386,13 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp (card NOM3 step EP1)
  *   - @p log = run.log: producer logger (debug).
  *   - @p traces = run.traces: ADMISSION-tier `trace_events` rows.
  *   - @p t = ep.se.time: this epoch's time (event stamps).
- *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  The same counter Card G and the flicker classifier use, so the three instruments' per-epoch totals are directly comparable.
+ *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  The same counter the gap instrumentation and the flicker classifier use, so the three instruments' per-epoch totals are directly comparable.
  *   - @p stations = run.setup.stations: [in/out] non-const: a withheld band's satellite phase-bias and code-bias states, and the clock state of a satellite left with no observable, are pruned as the coverage gate prunes a thin key's.
  *   - @p present = ep.pass_a.present: this epoch's presence mask.
  *   - @p modeled = pass_a.modeled: [in/out] per-station observations.  Read for the statistic; on a rejection the failing band's entries are erased from `observed`, never from `raw_observed`, which the slip detectors own and which must keep reporting the true tracking state.
  *   - @p carry_slipped_ambs = funnel.carry_slipped_ambs: [in/out] the epoch's slip funnel, written by every withhold (rejection, hold, station guard) and by a heal.
  *   - @p carry_slipped_raw = funnel.carry_slipped_raw: [in/out] the raw-detector provenance subset (Iono-2 v3k). A withheld band is a raw observable event (the channel leaves the model set), so it is recorded here too; otherwise the deviation carry would D5-keep a level across the hole this seam made.
- *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the Card-4 funnel is live (gates the funnel insertion).
+ *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the invariant-carry funnel is live (gates the funnel insertion).
  *   - @p carry_warm = ep.clock.carry_warm: the phase-leveling carry is warm (gates pending-reseed).
  * @param events The epoch's events; written: admission.
  */
@@ -405,7 +405,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
  *
  * Exposed for the unit suite (and used by the seam itself) so the band of an
  * observable has one definition.  Combination keys produced by the iono-free path
- * (e.g. "C1C_C2W") are rejected on purpose: this card screens the uncombined
+ * (e.g. "C1C_C2W") are rejected on purpose: this seam screens the uncombined
  * producer's raw channels, and an IF combination has no single band to withhold.
  */
 char measurementAdmissionBand(const std::string& key);
@@ -421,7 +421,7 @@ char measurementAdmissionBand(const std::string& key);
 bool measurementAdmissionD(const PppObservation& obs, const std::string& code_key,
                            double& d_out);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 

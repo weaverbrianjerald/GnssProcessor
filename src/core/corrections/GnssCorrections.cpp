@@ -21,7 +21,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
-#include "products/BrdcClockApriori.hpp"   // card NBP native broadcast clock a priori
+#include "products/BrdcClockApriori.hpp"   // native broadcast clock a priori
 #include "model/SatAttitude.hpp"
 #include <algorithm>
 #include <array>
@@ -161,7 +161,7 @@ namespace GnssProcessor {
         // it returns 0.0, so the broadcast fallback below still applies.
         double clock_corr = interpolateClock(satellite, time, *clocks_);
 
-        // Card NBP (network.apriori_source sp3_brdc_clock, producer stations only): the a
+        // Native broadcast clock (network.apriori_source sp3_brdc_clock, producer stations only): the a
         // priori is the continuous broadcast clock a_s(t) = brdc_k(t) + O_s,k of the
         // native selector.  It is the producer's declared a priori (the value the bed's CLK
         // carried), so it is returned as product-grade, and neither the live store's
@@ -218,9 +218,9 @@ namespace GnssProcessor {
         // anchor, so across a producer/consumer ephemeris-cutover skew the store's
         // current+previous retention re-references the baseline to the producer's
         // version instead of dropping the satellite.  Every unstamped path has
-        // clock_iode == iode (combined or inherited, Card 3) or clock_iode == -1
+        // clock_iode == iode (combined or inherited) or clock_iode == -1
         // (falls through to iode), so its output is byte-identical.
-        // (Card 7, RTF-2 / plan D7.)
+        // (RTF-2 / plan D7.)
         const int  ssr_iode = (ssr && ssr->has_clock)
             ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
             : -1;
@@ -297,7 +297,7 @@ namespace GnssProcessor {
             // when the skew budget (processing.network_consumer.orbit_clock_max_skew_s,
             // armed on the clock store) is > 0.  A stream that stamps no echo on a
             // separate clock record never reaches the lookup, so the default path
-            // is byte-identical.  (Card 7, RTF-2 / conventions §2.)
+            // is byte-identical.  (RTF-2 / conventions §2.)
             bool echo_ok = true;
             if (ssr->orbit_iod_ssr >= 0
                 && !(ssr->has_orbit
@@ -352,7 +352,7 @@ namespace GnssProcessor {
             // getOrbitClock; standalone network clocks stay -1), so the output is
             // byte-identical; only a brdc_rts producer's stamped clock IODE makes
             // the two differ.  The orbit overlay gate (ModelGeometry) stays on
-            // iode.  (RTF-2, Card 3.)
+            // iode.  (RTF-2.)
             if (std::isfinite(clock_corr) && echo_ok
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
@@ -379,7 +379,7 @@ namespace GnssProcessor {
                 // Logging both IODs lets a live run tell a decode problem (garbage
                 // ssr_iode) from a convention problem (plausible but unequal) per
                 // constellation (GAL low-8-bit IODnav, BDS mod(toe/720,240)).
-                // echo_ok=false is the Card-7 orbit-coherence withhold (the debug
+                // echo_ok=false is the orbit-coherence withhold (the debug
                 // line above carries the echo detail).
                 log->trace("SSR clock present for {} ({}) but NOT applied: "
                            "brdc_iode={} clock_iode={} clock_finite={} echo_ok={}",
@@ -422,7 +422,7 @@ namespace GnssProcessor {
         // live broadcast store to fall back to, so the satellite would be modelled
         // against a zero clock.  0.1 s matches the final sanity bound in
         // getSatelliteClockCorrection.  The output equals that of a 1 ms bound
-        // wherever every sample is below 1 ms.  (Card GAL.)
+        // wherever every sample is below 1 ms.
         constexpr double MAX_CLOCK_BIAS = 1e-1;
         constexpr size_t LAGRANGE_POINTS = 9;
 

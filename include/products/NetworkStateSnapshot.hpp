@@ -69,7 +69,7 @@
  *   FP,<sat>,<last_held>,<last_seen_s>                  # v2 frame: CLK-R per-sat held value
  *   FE,<epochs>                                         # v2 frame: CLK-R epoch count (if > 0)
  *   QS,<id>,<kind>,<sat>,<signal>,<sh_n>,<sh_m>,<sh_trig>,<sh_layer>,<s_prev>,<p_prev>
- *                                                       # Card1 coupling dictionary (v3)
+ *                                                       # coupling dictionary (v3)
  *   QL,<station_idx>,<sat>,<signal>,<k>,<id>,<M_rj>,...  # L row's regression, harvest order
  *   QZ,<station_idx>,<k>,<id>,<M_rj>,...                 # Z row's regression
  *   QR,<sat>                                             # write-epoch clock-refloat set
@@ -93,10 +93,10 @@
  *   A,<sat>                                             # retro_active (edge-trigger)
  *   Y,<sat>,<epochs>                                    # URA refloat-inflation horizon
  *   C,<sat>                                             # c1_zoh_active (event edge-trigger)
- *   I,<sat>,<iode>                                      # Card6 eph re-level baseline (brdc_rts)
- *   X,<sat>                                             # Card6 pending eph-cutover disc bump
- *   SV,<sat>,<vertex_id>                                # Card4 carry: satellite vertex id
- *   GG,<const>,<signal>,<group_id>                      # Card4 carry: (const, signal) group id
+ *   I,<sat>,<iode>                                      # eph re-level baseline (brdc_rts)
+ *   X,<sat>                                             # pending eph-cutover disc bump
+ *   SV,<sat>,<vertex_id>                                # invariant carry: satellite vertex id
+ *   GG,<const>,<signal>,<group_id>                      # invariant carry: (const, signal) group id
  *   CARRY,...                                           # invariant-carry blob (verbatim;
  *   ...                                                 #  see carry_state)
  *   CEND
@@ -112,7 +112,7 @@
  * record carries @c <station_idx>, station identity is the roster index, valid only
  * under an identical station roster, which the config fingerprint guarantees.
  *
- * The header literal carries the format version: @c v3 when any Card-1 coupling record
+ * The header literal carries the format version: @c v3 when any coupling record
  * (@c QS / @c QL / @c QZ / @c QR, or the @c QK / @c QP side-car) is present, otherwise
  * @c v2 when any §18.10 frame record (@c PA / @c PT / @c CA / @c FA / @c FP / @c FE) is
  * present, otherwise @c v1.  The reader accepts all three, and an absent record group
@@ -269,7 +269,7 @@ struct NetworkStateSnapshot {
     std::set<std::string> retro_active;    ///< Currently-flagged sats (retro edge-trigger).
     std::set<std::string> c1_zoh_active;   ///< T5/R6 c1-ZOH event edge-trigger (log-only dedup).
 
-    // --- Ephemeris-cutover re-level state, brdc_rts only (Card 6, RTF-2) ----
+    // --- Ephemeris-cutover re-level state, brdc_rts only (RTF-2) ----
     /// sat -> broadcast IODE the carried clock state is currently referenced to
     /// (the eph-cutover re-level baseline).  Empty in sp3 mode or in an older snapshot
     /// without @c I rows; the first brdc_rts epoch then re-seeds it, so absence is safe.
@@ -278,7 +278,7 @@ struct NetworkStateSnapshot {
     /// evicted before Δ_eph could be computed), awaiting their next emit.
     std::set<std::string> eph_cutover_disc_pending;
 
-    // --- Invariant DD carry, branch-faithful resume (Card 4 M1, RTB-7) ------
+    // --- Invariant DD carry, branch-faithful resume (M1, RTB-7) ------
     /// ArcKey vertex numbering that the carry blob references (network.state_snapshot_carry).
     /// @c carry_sat_vertex maps a satellite id to its stable (first-seen-order) vertex id,
     /// and @c carry_group_id maps a (constellation, signal) to its stable group id.  Both
@@ -314,7 +314,7 @@ struct NetworkStateSnapshot {
     /// incumbent anchor is realized at.  Absent ⇒ the 0-frame (a cold pin realizes
     /// the same frame as long as the incumbent is kept).
     std::map<std::string, double> anchor_pin_target;
-    /// Per-satellite state of the guarded temporal clock anchor (card Q3); mirrors the
+    /// Per-satellite state of the guarded temporal clock anchor; mirrors the
     /// driver's @c ClockAnchorSat.  With it restored, the first post-resume fold runs
     /// anchored over the true elapsed time instead of loose from a first sighting.  The
     /// stale test still runs on @c t_last, so a resume older than the anchor's own max
@@ -334,12 +334,12 @@ struct NetworkStateSnapshot {
     std::map<char, double> clk_frame_acc;                        ///< constellation -> A_c (m).
     std::map<std::string, std::pair<double, double>> clk_frame_prev; ///< sat -> {last held (m), last seen (s)}.
     long long clk_frame_epochs{0};                               ///< rebaseEpoch count.
-    // --- Coupling regressors (Card 1; format v3; SPEC_synthetic_minimum_network §18.12) ---
+    // --- Coupling regressors (format v3; SPEC_synthetic_minimum_network §18.12) ---
     //
     // Second half of the resume frame restore.  A leveling carry restored from
     // (value, var) alone (v1/v2) is injected as a plain diagonal row at the pure
     // conditional variance, a combination that no continuous epoch produces: the legacy
-    // diagonal carry is stiff at the marginal variance, and the Card-1 row is stiff at
+    // diagonal carry is stiff at the marginal variance, and the coupling row is stiff at
     // the conditional variance but shared-neutral (its @f$A_s = M_r@f$ cancels the
     // reduced-normals contribution).  Such rows out-vote the Q3 anchored clock priors,
     // and anchors trip at the first warm fold (§18.11).
@@ -349,7 +349,7 @@ struct NetworkStateSnapshot {
     /// their integer values, as in @ref SharedCarry.
     ///
     /// @note @c p_prev == 0 carries meaning: a datum-pinned or ensemble-gauge column is
-    ///       "exactly known" (Card 1e; networkHarvestColumn, the former harvest lambda,
+    ///       "exactly known" (networkHarvestColumn, the former harvest lambda,
     ///       src/core/network/carry/LocalCarryHarvest.cpp).  A reader must not treat it as
     ///       absent or re-derive it: the κ shrink is guarded on @c p_prev > 0 (the
     ///       CouplingRowBuilder row builders, Coupling.cpp), so a re-derived value
@@ -386,7 +386,7 @@ struct NetworkStateSnapshot {
     /// (station roster index, sat, signal), the key of @ref local_carry, mapped to the
     /// row's regression as (dictionary id, @f$M_{rj}@f$) pairs in harvest order.  The
     /// order is kept because it affects the result: @c CouplingRowBuilder
-    /// (Coupling.cpp) accumulates the row RHS and the Card-1f family deficit in it.
+    /// (Coupling.cpp) accumulates the row RHS and the family deficit in it.
     std::map<std::tuple<int, std::string, std::string>,
              std::vector<std::pair<int, double>>> coupling_rows;
     /// station roster index -> the ZWD carry's regression (same shape).  ZWD coupling is
@@ -395,7 +395,7 @@ struct NetworkStateSnapshot {
     /// regression has the same defect as an L row.
     std::map<int, std::vector<std::pair<int, double>>> coupling_zrows;
     /// The write epoch's clock-monitor refloat set
-    /// (@c NetworkCarryState::prev_clock_refloat_sats; Card 1d/1g).  A hard-refloated
+    /// (@c NetworkCarryState::prev_clock_refloat_sats).  A hard-refloated
     /// satellite is not stashed, so it has no @c D row, and no other record in this file
     /// carries the flag.  Without this set the first warm epoch's serial pre-pass
     /// (networkPassB_, ApplicationNetworkAssembly.cpp) writes no @c tu_reinit_hist mark for
@@ -566,7 +566,7 @@ struct NetworkStateSnapshot {
         double t_s{0.0};     ///< Continuous-GPS s of the last harvest; ≤ 0 marks a never-harvested (cold) entry.
     };
     std::map<std::string, ShDev> sh_dev_carry;  ///< "<station>|<sat>" -> deviation carry.
-    /// Card CTU (section 9.3, G5): satellite -> (the code-only information of its level in
+    /// Clock level monitor state (G5): satellite -> (the code-only information of its level in
     /// the constellation contrast, 1/m^2; the epochs it accumulated), @c LB rows.  Written
     /// whenever the level monitor (network.clock_level_monitor) ran; read back by a leg's
     /// raise on restore (network.clock_level_restore_raise).  Empty otherwise.

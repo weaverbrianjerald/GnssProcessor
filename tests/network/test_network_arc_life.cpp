@@ -1,13 +1,13 @@
 /**
  * @file test_network_arc_life.cpp
- * @brief Unit tests of the arc life stamp and the search's track of a life (card AGT, step
+ * @brief Unit tests of the arc life stamp and the search's track of a life (step
  *        AGT-5; include/network/ar/ArcLife.hpp).
  *
  * Suite @c NetworkArcLife:
  *  - the stamp read from its three sources (the arc ledger's admitted side, the leveling carry,
  *    the held-basis flag map), on its own and through the run context;
  *  - the change mask and the field names;
- *  - the gate of card AGT section 4: exactly one life edge per ledger birth or re-entry, and per
+ *  - the gate of the arc-graph design, section 4: exactly one life edge per ledger birth or re-entry, and per
  *    carry erase, drop, re-level or flag, on an epoch loop that runs the owners in the
  *    producer's order (the ledger opens the epoch, the pre-search writers act, the search reads,
  *    then the roster audit admits the rows, the leveling harvest stashes and RAIM acts);

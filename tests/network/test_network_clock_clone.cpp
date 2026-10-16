@@ -1,12 +1,12 @@
 /**
  * @file test_network_clock_clone.cpp
- * @brief Unit gates of card SCL's clock clone (@c network.carry_coupling_clock_clone,
+ * @brief Unit gates of the clock clone (@c network.carry_coupling_clock_clone,
  *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, section 6, U2).
  *
  * 1. Estimator: a clone column is registered after every other column, keyed
  *    @c "sat|CLKC" and labelled @c "CLKC:<sat>", never emitted by @c toSolutionEpoch, and
  *    a clone prior folds by identity onto the clone column (dense and diagonal), while
- *    card Q3's refloat marginalizes the clock and keeps its clone.  The walk factor is the
+ *    the temporal clock anchor's refloat marginalizes the clock and keeps its clone.  The walk factor is the
  *    information form of @f$c(t) - c(t-1)@f$ and withdraws exactly.
  * 2. The posterior regression of the clones (@c cloneConditional) equals the covariance
  *    form @f$K=\Sigma_{CS'}\Sigma_{S'S'}^{-1}@f$, @f$B'=\Sigma_{CC}-K\Sigma_{S'C}@f$, and
@@ -15,9 +15,9 @@
  *    an idle clone is dropped (a principal sub-matrix would break the gauge).
  * 4. The harvest marginalization of one row (mode 5 of the unit network).
  * 5. The loader: default off; the requirements and refusals throw.
- * 6. Card SMH's row on the clone epoch (@c pbHoldCloneOnClones): the moved clock at Q = 0,
+ * 6. The smoothed-hold row on the clone epoch (@c pbHoldCloneOnClones): the moved clock at Q = 0,
  *    its coefficient unshrunk, its revision from the clone's posterior, the walk share from
- *    card CTU's epoch; and its re-expression (@c pbHoldCloneMarginalizeClones), the
+ *    the exact coupling epoch; and its re-expression (@c pbHoldCloneMarginalizeClones), the
  *    harvest's rule in the row convention.
  *
  * The recursion-level gates (the clone with the joint harvest equals the batch, the
@@ -51,9 +51,9 @@ using namespace GnssProcessor;
 
 namespace {
 
-/// Config text: a two-station network with the card CTU chain and the given card SCL
+/// Config text: a two-station network with the exact coupling chain and the given clock clone
 /// switches.  @p extra is spliced into the network section.
-/// @p dense: network.handover_stransform_dense (card SCL B2, which B1 requires); -1 follows
+/// @p dense: network.handover_stransform_dense (the dense build B2, which B1 requires); -1 follows
 /// @p clone.
 std::string sclConfig(bool exact, bool fullcov, bool clone, const std::string& extra = "",
                       int dense = -1) {
@@ -189,7 +189,7 @@ TEST(NetworkClockCloneTest, CloneIsNeverEmitted) {
 
 // A clone prior folds by identity onto the clone column (dense and diagonal); the walk
 // factor is (e_c - e_k)(e_c - e_k)'/q with the mean on the right-hand side and withdraws
-// exactly; card Q3's refloat marginalizes the clock and keeps the clone.
+// exactly; the temporal clock anchor's refloat marginalizes the clock and keeps the clone.
 TEST(NetworkClockCloneTest, PriorsFoldByIdentityOntoTheClone) {
     NetworkEstimator est;
     const Eigen::Index c = est.registerClock("G05");
@@ -227,7 +227,7 @@ TEST(NetworkClockCloneTest, PriorsFoldByIdentityOntoTheClone) {
     w.q = 0.0;
     EXPECT_EQ(est.addCloneWalk({w}), 0u) << "a factor with no walk is skipped";
 
-    // Card Q3's refloat over a block with the clock and its clone: the clock alone is
+    // The temporal clock anchor's refloat over a block with the clock and its clone: the clock alone is
     // marginalized.  The block re-folded without the clock equals the clone's own prior.
     NetworkEstimator e2;
     const Eigen::Index c2 = e2.registerClock("G05");
@@ -363,10 +363,10 @@ TEST(NetworkClockCloneTest, HarvestRowMarginalizesTheClones) {
     EXPECT_EQ(ctx.counters.ccl.harvest_rows, 1);
 }
 
-// Card SMH's row on the clone epoch (pbHoldCloneOnClones): the stood-in clock moves onto its
+// The smoothed-hold row on the clone epoch (pbHoldCloneOnClones): the stood-in clock moves onto its
 // clone at Q = 0 (the seam pair touching it dropped, the other keys unchanged), a row's clock
 // coefficient comes through the time update unshrunk, its revision reads the clone's
-// posterior against the stashed mean, and the walk share still reads card CTU's Q.
+// posterior against the stashed mean, and the walk share still reads the exact coupling epoch's Q.
 TEST(NetworkClockCloneTest, SmoothedRowAdvancesOnTheClones) {
     // P rows: 0 G02 clock, 1 G02 L1C phase bias, 2 G03 clock; all in S at columns 1, 5, 2.
     CouplingExactEpoch xe;
@@ -400,7 +400,7 @@ TEST(NetworkClockCloneTest, SmoothedRowAdvancesOnTheClones) {
     EXPECT_EQ(xc.clone_s, (std::vector<char>{1, 0, 0}));
     EXPECT_TRUE(xc.q_off.empty()) << "the seam pair touching the moved clock";
 
-    // The time update: on the clone the coefficient is the harvested one, on card CTU's
+    // The time update: on the clone the coefficient is the harvested one, on the exact coupling
     // epoch the walk shrinks it.
     const CouplingExactRow on_clone = couplingExactRow(xc, {{0, -1.0}});
     const CouplingExactRow on_ctu   = couplingExactRow(xe, {{0, -1.0}});
@@ -439,7 +439,7 @@ TEST(NetworkClockCloneTest, SmoothedRowAdvancesOnTheClones) {
     EXPECT_EQ(pbHoldCloneAdvanceRow(in, "G02", {PbHoldCloneOwn{}}, {t}, 0.10, 0.0, 0.0).dW, 0.0);
 }
 
-// Card SMH's re-expression (pbHoldCloneMarginalizeClones): the coupling rows' harvest rule on
+// The smoothed-hold re-expression (pbHoldCloneMarginalizeClones): the coupling rows' harvest rule on
 // the row convention, with the same K, B' and gauge restore as HarvestRowMarginalizesTheClones.
 TEST(NetworkClockCloneTest, SmoothedRowMarginalizesTheClones) {
     // Columns: 0 G01 clock (pinned), 1 G02 clock, 2 G03 clock, 3 clone of G02, 4 clone of G03.

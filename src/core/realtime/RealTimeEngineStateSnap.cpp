@@ -142,7 +142,7 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     };
     // The one-line RESTORED log line that a grader asserts against (the cold
     // counterpart is the DISCARDED line above).  The outcome is also kept on
-    // the status getter so a harness or test needs no log parsing (Card CC (B)).
+    // the status getter so a harness or test needs no log parsing.
     auto restored = [&](const char* scope) {
         rt_snap_restore_.outcome   = RtSnapshotRestoreStatus::Outcome::Restored;
         rt_snap_restore_.week      = snap->snap_week;
@@ -472,7 +472,7 @@ bool RealTimeEngine::writeStateSnapshotTo(const std::filesystem::path& path,
     // Writes a consumer snapshot beside the network snapshot copy.  No cadence
     // gate and no use of realtime.state_snapshot_path; the cadence writer's
     // last-write stamp is not advanced, because the two writers are
-    // independent (Card CC (B)).
+    // independent.
     if (!has_processed_epoch_ || !state_manager_)
         return fail("no epoch has been processed yet — nothing to snapshot");
     if (expected_epoch

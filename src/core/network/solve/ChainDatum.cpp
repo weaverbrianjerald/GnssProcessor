@@ -1,11 +1,11 @@
 /**
  * @file ChainDatum.cpp
- * @brief Card-3 Eq-34 single-receiver-chain phase-bias datum (see the header).
+ * @brief Eq-34 single-receiver-chain phase-bias datum (see the header).
  *
  * The body was moved out of Application::runNetwork at decomposition INC-8b.  The
  * alias preamble below reproduces the run TU's local names for the entries this body
  * references: `auto& X = ctx.carry.X;` references (eq34_cpl_sprev_total serves the §14
- * coupling re-base), the entity tables of the station carries (card NOM step N4a: the
+ * coupling re-base), the entity tables of the station carries (the
  * receiver phase-bias carry and the receiver-side eq34 parents) and 7 `ctx.knobs` values.
  */
 
@@ -13,9 +13,9 @@
 
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest (card AGT)
+#include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest
 #include "network/carry/Coupling.hpp"
-#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
+#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, rinexLetter, constellationKey, SignalId, SatId, StationId, wavelengthM
 
@@ -27,25 +27,25 @@
 #include <tuple>
 #include <utility>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
 #include "network/driver/SetupResult.hpp"
 #include "network/solve/Estimator.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <fmt/format.h>
-#include "network/carry/LocalCarryHarvest.hpp"   // HarvestBorder, StationHarvestBlock (card NOM3 step HV1)
+#include "network/carry/LocalCarryHarvest.hpp"   // HarvestBorder, StationHarvestBlock
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "network/diag/AmbStateTrace.hpp"   // AmbStateRow / ambStateNoteErase (RF-1 §7.4)
 #include "network/ar/AmbFloat.hpp"       // ambFloatBirthFloor (RF-1 step 4)
 #include "network/carry/CarryVce.hpp"
-#include "network/assembly/ParamInventory.hpp" // rxIfbFamilyReseeded (card L5B)
+#include "network/assembly/ParamInventory.hpp" // rxIfbFamilyReseeded
 #include "network/qc/PriorResidual.hpp"    // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/NormalEquations.hpp"
 #include "network/solve/Sbasis.hpp"          // NetworkSbasis::Plan
@@ -124,7 +124,7 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys, EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-// The incumbent anchors as the old "sat_signal"-keyed map (card NOM step N4d): read-only
+// The incumbent anchors as the old "sat_signal"-keyed map: read-only
 // until the wholesale replacement at the end of the election, which writes the table.
 const std::map<std::string, std::string> anchor_incumbent =
     net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
@@ -139,7 +139,7 @@ auto& eq34_shift_total = ctx.counters.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
-// The arcs' retained edges and pin targets (card NOM step N4f1): copied in, written back at
+// The arcs' retained edges and pin targets: copied in, written back at
 // the end of the election.
 std::set<std::pair<int, std::string>> eq34_retained_edges =
     net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
@@ -155,7 +155,7 @@ const bool eq34_slip_aware = ctx.knobs.eq34_slip_aware;
 const bool eq34_seed_round = ctx.knobs.eq34_seed_round;
 const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
 
-    // Slip-aware election (Card 3/4): true when this arc slipped this epoch.  The
+    // Slip-aware election: true when this arc slipped this epoch.  The
     // funnel is complete here by the ordering contract (every PASS-A drain, signal
     // integrity and measurement admission run before the election).  The key is
     // (station, ambiguity), the same as the C3c membership test, so the election and
@@ -176,7 +176,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         auto jt = it->second.find(i); return jt == it->second.end() ? 0 : jt->second;
     };
 
-    // Eq-34 / de Jonge single-receiver-chain datum (Card 3).  Per
+    // Eq-34 / de Jonge single-receiver-chain datum.  Per
     // (constellation,signal) connected component of the bipartite
     // (receiver × satellite) observation graph, elect a datum receiver
     // r1 (its RPB is pinned to 0) and pin the ambiguities on the edges
@@ -218,7 +218,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     std::map<std::pair<int, std::string>, double>         shift_rpb;
 
     const std::string eq34_pref_rx = config_.networkPhaseDatumEq34Receiver();
-    // Under carry_invariant (Card 4) pin-to-round is off: the frame is re-realized
+    // Under carry_invariant pin-to-round is off: the frame is re-realized
     // each epoch and continuity is held by the invariant DD carry.  (Seed-round,
     // below, can still round the targets.)
     const bool        eq34_round   = config_.networkPhaseDatumEq34PinRound()
@@ -297,7 +297,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             const double* pe = net::getLos(entities.los, static_cast<int>(ri), sat,
                                            &net::LosState::eq34_prev_el);
             const bool rising = (pe != nullptr && el > *pe + 1e-6);
-            // Slip-aware (Card 3/4): an arc that slipped this epoch is the worst new
+            // Slip-aware: an arc that slipped this epoch is the worst new
             // tree edge at any elevation.  As a tree edge it invalidates every
             // fundamental cycle that closes through it, so the whole dependent chord set
             // refloats instead of the one DD the slip affects.  Demote it below every
@@ -305,7 +305,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             // slipped set, so that if the graph leaves no alternative the completion
             // picks the most durable slipped arc.  The score is read once per arc and
             // epoch, as the arc's durability in the group graph below, so the counter
-            // counts each slipped arc once per epoch (card AGT step AGT-4; it counted
+            // counts each slipped arc once per epoch (it counted
             // the sort's comparator calls before).
             const double life = el + (rising ? 90.0 : 0.0);
             if (arcSlipped(ri, sat, grp_sig)) {
@@ -315,7 +315,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             return life;
         };
 
-        // The group's observation graph (card AGT step AGT-4, filter/NetworkArcGraph).
+        // The group's observation graph (filter/NetworkArcGraph).
         // Station slots follow the roster index (ascending) and satellite slots the
         // group's string order, the vertex order of the string graph this replaced; the
         // arcs follow usable_keys, the order the components are united in.  Each arc
@@ -385,7 +385,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (ni == slot_of_name.end() || ki == slot_of_sat.end()) return;
             const int arc = arcgraph::arcIndex(graph, ni->second, ki->second);
             if (arc < 0) return;
-            // Slip-aware (Card 3/4): a slipped incumbent loses its sticky seed.  The
+            // Slip-aware: a slipped incumbent loses its sticky seed.  The
             // incumbent queue drains before the new-edge walk, so a seeded edge is in
             // effect unconditional, and an incumbent that slipped this epoch should
             // leave the tree: every chord whose fundamental cycle runs through it is
@@ -433,8 +433,8 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         // unreachable (their only connection to the component runs through a fresh arc),
         // the second pass admits everything and counts each unavoidable cold pin.  The
         // incumbent queue is not filtered: keeping the incumbent is not a reattach, and
-        // blocking it would cause the handover this card is meant to prevent.
-        // Slip-aware (Card 3/4): a slipped arc is refused in the first pass on the same
+        // blocking it would cause the handover this rule is meant to prevent.
+        // Slip-aware: a slipped arc is refused in the first pass on the same
         // terms as a cold host, and admitted in the second.  The refusal is a rule of its
         // own, not only the arcLife ranking, because arcLife is read only under the
         // longevity election; relying on it would leave slip avoidance inactive wherever
@@ -563,7 +563,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 const std::string sat          = satName(sat_slot);
                 const bool        sat_is_child = edge.attaches_sat;
                 const std::string amb = StateKeys::makeAmbiguityKey(sat, grp_sig);
-                // Slip-aware (Card 3/4): this arc is becoming a tree edge.  If it slipped
+                // Slip-aware: this arc is becoming a tree edge.  If it slipped
                 // this epoch, the election could not avoid it (the component has no other
                 // route to the vertex), and every cycle through it refloats.  Counted
                 // separately so that "deseeded > 0" is not read as "no slipped arc ended
@@ -597,7 +597,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 // Seed-round (docs/SPEC_eq34_seed_round.md) applies when the
                 // carry-round above did not engage (first sighting; incumbent whose
                 // carry is dead; or every epoch under carry_invariant, where
-                // eq34_round is off by the Card-4 design).  The target would then be
+                // eq34_round is off by the invariant-carry design).  The target would then be
                 // the cold absolute 0, which puts the seeded phase−code offset into
                 // the datum frame (km-scale on the synthetic fixture; SPEC §12.8).
                 // Instead, round the value the state holds, so |pin innovation| ≤ λ/2
@@ -745,7 +745,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 // pass could not avoid a fresh host, give the pin fold an INC-3 σ
                 // multiplier so the datum row is soft enough for the data to pull
                 // the cold ambiguity instead of re-levelling the component onto its
-                // code-seeded value.  Inert (no map entry, no counter) when the card
+                // code-seeded value.  Inert (no map entry, no counter) when the reattach hygiene
                 // is off.
                 if (hyg.active) {
                     if (edge_changed && sat_is_child) ++ctx.counters.hyg.reattaches;
@@ -841,7 +841,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     if (!k) {
                         // Unknown frame step: the carried δ̂_{r,σ}
                         // belongs to an unrecoverable retired frame.
-                        // Card PRM phase 3a: counted only when an entry was erased.
+                        // Counted only when an entry was erased.
                         if (net::drop(sta_rows, StationId{idx}, &net::StationState::signals, rpb_key,
                                       &net::StationSignalState::rpb) != 0)
                             prmRespond(ctx.counters.prm_resp, ResponseSite::RpbEq34Erase);
@@ -878,7 +878,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!eq34_reref.empty()) {
         eq34_reref_total += static_cast<long long>(eq34_reref.size());
         // The first post-resume epoch's share of that total, the quantity the
-        // datum-continuity card is graded on (RS-3, SPEC_event_harness §21.7).
+        // datum-continuity check is graded on (RS-3, SPEC_event_harness §21.7).
         // Measure-only; the latch is cleared at the emit site, so a withheld first
         // epoch folds into the window.
         if (ctx.carry.resume_datum_first_ep)
@@ -890,7 +890,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (eq34_reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) {
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
-                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);   // card PRM phase 3a
+                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);
                 return true;
             }
             return false;
@@ -909,13 +909,13 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     //
     // Coupling references move with the carries (docs/SPEC_card1_coupling_carry.md
     // §9): D4 shifts `lc.value_abs` below and also every coupling `s_prev` on a
-    // shifted PB column (SPEC_card1_coupling_carry §14).  A Card-1 coupling row's RHS is
+    // shifted PB column (SPEC_card1_coupling_carry §14).  A coupling row's RHS is
     // y = (value_abs − x_lin) + Σ_j M_j·ŝ_prev,j , and `CoupledShared::s_prev` and
     // `CarryPrior::value` hold the same number for the same identity (both are
     // `x_s(j)` at harvest: the LocalCarryHarvest.cpp s_prev assignment and the
     // prev_carry stash).  For a gauge-invariant row the two moves cancel under a
     // known frame step; shifting one reference without the other injects the frame
-    // step as row bias.  The same rule holds at Relevel.cpp's Card-6 eph
+    // step as row bias.  The same rule holds at Relevel.cpp's eph
     // cutover: the row's functional u = r + Mᵀs is frame-consistent only if all
     // carried references move together.
     //
@@ -928,7 +928,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // are mutually exclusive by construction at the population site, so the shifted
     // keys are exactly those whose carries survive.  With coupling off the stashes
     // are empty and the walk leaves the output byte-identical.
-    // The walk is the traversal of carried references (card PRM phase 2): the ambiguities,
+    // The walk is the traversal of carried references: the ambiguities,
     // the receiver phase biases and the satellite phase biases, then the s_prev of the
     // phase-bias coupling terms in the ambiguity, receiver phase-bias and wet-delay carries.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
@@ -938,7 +938,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                        ctx.knobs.rebase_complete);
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
-        // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old
+        // The held emissions of the shifted families, left in the old
         // frame (PbHold is exempt from the shift).  Measure-only.
         net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_hold,
                      [&](const SatSignalId& id, const net::PbHoldKey&) {
@@ -1060,7 +1060,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     }
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the eq34 chain datum: re-references, pin audit, seed round, slip-aware election.
 int networkChainDatumRunEnd(const NetworkRunEndView& v) {
@@ -1225,11 +1225,11 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B serial stages (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py) ----
+// ---- PASS B serial stages (generated by scripts/nom_pb1_cut.py) ----
 
 void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAssembly& assembly,
                          bool epoch_ok) {
-    // ---- From the run and the epoch (card NOM3 step PB1a; generated by scripts/nom_pb1_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_pb1_cut.py,
     //      each line checked by scripts/nom_pb1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
@@ -1238,7 +1238,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     const std::vector<int>& est_index_of = assembly.est_index_of;
     const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
     // ---- End of the bindings ----
-    // The alias lines of networkPassB_ this stage reads, verbatim (card NOM3 step PB1a).
+    // The alias lines of networkPassB_ this stage reads, verbatim.
     auto& stations = setup.stations;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
 
@@ -1293,12 +1293,12 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     }
 }
 
-// ---- End of the PASS B serial stages (card NOM3 step PB1a) ----
+// ---- End of the PASS B serial stages ----
 
-// ---- Harvest half (card NOM3 step HV1; generated by scripts/nom_hv1_cut.py) ----
+// ---- Harvest half (generated by scripts/nom_hv1_cut.py) ----
 
 void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run, the epoch and the harvest (card NOM3 step HV1; generated by
+    // ---- From the run, the epoch and the harvest (generated by
     //      scripts/nom_hv1_cut.py, each line checked by scripts/nom_hv1_verify.py). ----
     NetworkRunContext& ctx = run.ctx;
     const NetworkEstimator& est = run.engines.est;
@@ -1308,11 +1308,11 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     const NetworkSbasis::Plan& plan = ep.solve.plan;
     double pl_now_s = ep.clock.pl_now_s;
-    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries (card NOM step N4a)
+    net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
     const double eq34_rpb_q = ctx.knobs.eq34_rpb_q;
     // ---- End of the bindings ----
-    // --- RPB carry (card 3, eq34): harvest δ̂_{r,σ}, stash and prune ----------
-    // Mirrors the ZWD harvest.  There is no card-1 coupling harvest for RPB
+    // --- RPB carry (eq34): harvest δ̂_{r,σ}, stash and prune ----------
+    // Mirrors the ZWD harvest.  There is no coupling harvest for RPB
     // columns, on purpose: coupling rows would give the RPB a de facto
     // shared-border footprint (the D6 v2 caveat zone, tuGaugeRestore group
     // exclusions); the diagonal conditional variance keeps the carry strictly
@@ -1347,12 +1347,12 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
         }
     }
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
-    // double as pl_max_gap_s; card PRM phase 3b).
+    // double as pl_max_gap_s).
     carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rpb, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxPhaseBias).gap_horizon_s,
                   [&](const auto&, const auto&, const auto&) {
                       ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);
                   });
 }
 

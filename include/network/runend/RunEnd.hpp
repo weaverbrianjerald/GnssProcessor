@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file RunEnd.hpp
- * @brief The network producer's run end as a declared table of reports (card NOM step TD1b).
+ * @brief The network producer's run end as a declared table of reports.
  *
  * When the epoch loop has ended, networkTeardown (network/runend/Teardown.cpp) measures the
  * epoch-loop wall, builds one @ref NetworkRunEndView and calls every row of
@@ -16,7 +16,7 @@
  * row with what it reports and its home file, so it reads as the run end's table of
  * contents.
  *
- * One report per subsystem (card NOM2 step TD2): a subsystem, the file a report lives in,
+ * One report per subsystem: a subsystem, the file a report lives in,
  * has one row.  A subsystem that prints several blocks writes each as a file-local section
  * (`static int networkXxxRunEnd(const NetworkRunEndView& v)`, gated on its own knob) and
  * its row's report lists them in print order with @ref networkRunEndSections.  The walk
@@ -110,7 +110,7 @@ inline constexpr std::size_t kNetworkRunEndReportCount = 83;
 extern const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndReports;
 
 /**
- * @brief A subsystem's run-end report as its sections in print order (card NOM2 step TD2).
+ * @brief A subsystem's run-end report as its sections in print order.
  *
  * Calls every section in order with the same view and combines their verdicts by the
  * table's rule: a later non-zero verdict replaces an earlier one.
@@ -123,7 +123,7 @@ int networkRunEndSections(const NetworkRunEndView& v,
                           std::initializer_list<NetworkRunEndReport> sections);
 
 /**
- * @brief Runs one report with its heading line (card NOM2 step TD2).
+ * @brief Runs one report with its heading line.
  *
  * The lines @p report writes through @p lg are held while it runs (the logger's sinks are
  * swapped for a holding sink) and are then written to the logger's own sinks, unchanged,

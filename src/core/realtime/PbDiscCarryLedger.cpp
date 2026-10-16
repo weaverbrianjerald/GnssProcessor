@@ -1,6 +1,6 @@
 /**
  * @file PbDiscCarryLedger.cpp
- * @brief Carry-vs-reset decision for a declared phase-bias step (card CC, A).
+ * @brief Carry-vs-reset decision for a declared phase-bias step.
  *        The header holds the algebra and the refusal branches.
  */
 

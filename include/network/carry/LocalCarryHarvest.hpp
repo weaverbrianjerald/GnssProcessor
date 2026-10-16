@@ -2,7 +2,7 @@
 /**
  * @file LocalCarryHarvest.hpp
  * @brief The station-local carries' post-solve harvest: its table of contents and the
- *        machinery its kinds share (card NOM3 step HV1).
+ *        machinery its kinds share.
  *
  * After the epoch's solve, networkLeveling (network/diag/Leveling.cpp) calls
  * networkHarvestLocalCarries, which reads each station's posterior out of the solved normal
@@ -34,7 +34,7 @@
  *   2. Per station: the block layout, the ambiguity rows, the ionosphere-free trace (it reads
  *      the rows just written), then phase colour.  The shared-history notes therefore run
  *      ambiguities then phase colour per station, then kind by kind (every station's
- *      ionosphere, then receiver clock, receiver code bias and ZWD); card SCL2's compression
+ *      ionosphere, then receiver clock, receiver code bias and ZWD); the shared history's compression
  *      is sensitive to that order.
  *   3. The ambiguity rows read the pending-reseed mark before they clear it; RAIM and the
  *      gross line-of-sight screen run after the harvest because they set new marks.
@@ -74,13 +74,13 @@ struct NetworkEpoch;
 struct HarvestBorder {
     std::map<Eigen::Index, CoupledShared> col2desc;  ///< Shared column -> its identity (clock, phase bias, code bias, SH coefficient).
     Eigen::MatrixXd      cov_df;  ///< The shared covariance in the datum frame: datum-pinned and ensemble-gauge columns zeroed.
-    ClockCloneHarvest    ccl_h;   ///< Card SCL: the clones' posterior regression on the rest of the border.
-    SharedHistoryHarvest shx_h;   ///< Card SCL2 X2: where each harvested row's entry was written.
+    ClockCloneHarvest    ccl_h;   ///< Clock clones: the clones' posterior regression on the rest of the border.
+    SharedHistoryHarvest shx_h;   ///< Shared history: where each harvested row's entry was written.
 };
 
 /// The segments of a station's F3 harvest block, in the order their columns are appended.
 /// The ZWD is last, so its row is the block's last (the B9-in-block invariant).  PASS B's
-/// block build (the carry steps of network/assembly/StationBuild.hpp, card NOM3 step PB1b) must
+/// block build (the carry steps of network/assembly/StationBuild.hpp) must
 /// open a block on the same station-epochs; it pairs entries by block identity and row
 /// index, not by this order.
 enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, PhaseColour, Zwd };
@@ -140,7 +140,7 @@ void networkHarvestLocalCarries(NetworkRun& run, const NetworkEpoch& ep, EpochEv
 
 /**
  * @brief The warm epoch's shared border: column identities, the datum-frame covariance and
- *        the clone and shared-history begin (inert pieces stay empty when their cards are off).
+ *        the clone and shared-history begin (inert pieces stay empty when their knobs are off).
  * @param run The run (the estimator, the context).
  * @param ep  This epoch (the plan's datum, the registered shared columns).
  * @return The border every carried column of this epoch regresses on.
@@ -178,7 +178,7 @@ StationHarvestBlock networkHarvestStationBlock(NetworkRun& run, const NetworkEpo
 
 /**
  * @brief Close the border: the clones' within-station covariance into the F3 blocks, then the
- *        shared-history compression (both no-ops when their cards are off).
+ *        shared-history compression (both no-ops when their knobs are off).
  * @param run    The run (the context).
  * @param ep     This epoch (read by no statement; the seam form).
  * @param border This harvest's border, after the last carried row.

@@ -2,20 +2,20 @@
 /**
  * @file AbsorbedSharedStates.hpp
  * @brief The record a station keeps of the shared satellite states a network gate
- *        withheld from it this epoch (card NOM step N1b,
+ *        withheld from it this epoch (
  *        docs/refound/NOM_network_object_model_2026-10-08.md section 14).
  *
  * The record lives on the station's @c MeasurementModel, because the first gates that
  * withhold a state sit in @c MeasurementModel::ensureNetworkSharedStates.  It is kept in
  * this small header, apart from the parameter inventory that classifies and counts it
  * (network/assembly/ParamInventory.hpp), so that the user-side measurement header includes
- * no network header (card NOM2 section 1).
+ * no network header.
  *
  * A note is the raw (container, key, reason) triple a gate hands in; nothing here reads
  * a key.  The inventory classifies each note with its one classifier when it records the
  * station's parameters after the split (@c classifyAbsorbed, @c recordStationParams).
  *
- * Plain value types and one inline function (card NOM section 10).
+ * Plain value types and one inline function.
  */
 
 #include <cstddef>
@@ -44,7 +44,7 @@ namespace GnssProcessor {
         TropoIndex,               ///< @c getTropoIndex(): the zenith wet delay (no key).
         SystemTimeOffsetStates,   ///< @c getSystemTimeOffsetStates(): key = system name.
         IonosphereStates,         ///< @c getIonosphereStates(): key = satellite.
-        PhaseColourStates,        ///< @c getPhaseColourStates(): key = satellite (card LGM).
+        PhaseColourStates,        ///< @c getPhaseColourStates(): key = satellite.
         Ambiguities,              ///< @c getAmbiguities(): key per @c StateKeys::makeAmbiguityKey (or the NL / WL forms).
         ReceiverPhaseBiasStates,  ///< @c getReceiverPhaseBiasStates(): key per @c StateKeys::makeReceiverPhaseBiasKey.
         CodeBiasStates,           ///< @c getCodeBiasStates(): key per the DCB / IFB / ISC / per-slot makers.

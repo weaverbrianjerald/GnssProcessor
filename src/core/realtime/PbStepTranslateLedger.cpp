@@ -1,7 +1,7 @@
 /**
  * @file PbStepTranslateLedger.cpp
- * @brief Translate / skip / refuse decision for a phase-bias product step (card
- *        PBT (A)).  The header holds the algebra, the scope and the refusal branches.
+ * @brief Translate / skip / refuse decision for a phase-bias product step.
+ *        The header holds the algebra, the scope and the refusal branches.
  */
 
 #include "realtime/PbStepTranslateLedger.hpp"
@@ -82,7 +82,7 @@ PbStepTranslateLedger::react(StateManager& sm, const std::string& key,
         return d;
     }
 
-    // (3) The structural refusals, in card CC's order.
+    // (3) The structural refusals, in the declared-step carry's order.
     if (basis_nlwl) return refuse(Action::ResetBasis, ctr_.reset_basis);
     if (bssd)       return refuse(Action::ResetBssd, ctr_.reset_bssd);
     if (sm.getAmbiguityIndex(amb_key) < 0)

@@ -33,7 +33,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/carry/LocalCarryHarvest.hpp"   // networkHarvestLocalCarries (card NOM3 step HV1)
+#include "network/carry/LocalCarryHarvest.hpp"   // networkHarvestLocalCarries
 #include "network/state/RunContext.hpp"
 #include "../support/NetworkTestRun.hpp"   // the run and epoch the harvest's epoch form takes
 #include "config/GnssConfig.hpp"
@@ -113,7 +113,7 @@ const char* const kNeither = "";
 std::size_t runCensus(const GnssConfig& cfg,
                       const std::vector<int>& rows,
                       const std::vector<int>& est_idx) {
-    // The run and the epoch the harvest's epoch form takes (card NOM3 step HV1; the
+    // The run and the epoch the harvest's epoch form takes (the
     // fixture builds the context, the engines and an empty setup from the configuration).
     NetworkTestRun fx(cfg);
     fx.setup().stations.resize(rows.size());

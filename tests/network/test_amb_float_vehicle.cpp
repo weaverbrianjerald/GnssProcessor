@@ -6,7 +6,7 @@
  *        (@c network.trace_amb_state -> @c network_amb_state.csv), and the vehicle's
  *        operators (joint-block fold, drop, anchor S-transform).
  *
- * Card: docs/refound/RF-1_float_ambiguities_design.md (steps 1 to 5 of §7.3's commit
+ * Design: docs/refound/RF-1_float_ambiguities_design.md (steps 1 to 5 of §7.3's commit
  * order), under docs/refound/NETWORK_REFOUNDING_2026-09-14.md.
  *
  * Motivation (design §1.8): on the level vehicle a network ambiguity is a per-epoch
@@ -61,7 +61,7 @@ using GnssProcessor::ambStateFormatRow;
 using GnssProcessor::ambStateRouteName;
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
-namespace net = GnssProcessor::net;   // the arc table (card NOM step N4f1)
+namespace net = GnssProcessor::net;   // the arc table
 using GnssProcessor::LogManager;
 using GnssProcessor::kAmbStateHeader;
 using GnssProcessor::NetworkAmbiguityVehicle;
@@ -99,8 +99,8 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// The frozen posture of card RF-0, reduced to the knobs the vehicle interlocks read: the
-/// leveling vehicle (phase_leveling on, carry_invariant off) with Card-1's conditional
+/// The frozen posture of the re-founding baseline, reduced to the knobs the vehicle interlocks read: the
+/// leveling vehicle (phase_leveling on, carry_invariant off) with the conditional
 /// coupling; F1 and F3 are absent and therefore off.
 const char* kRf0Posture =
     "    \"phase_leveling\": true,\n"
@@ -108,7 +108,7 @@ const char* kRf0Posture =
     "    \"carry_conditional_coupling\": true,\n"
     "    \"shared_carry_full_cov\": true,\n";
 
-/// The other vehicle: the Card-4 invariant DD carry.  @c carry_invariant has its own
+/// The other vehicle: the invariant DD carry.  @c carry_invariant has its own
 /// loader prerequisite (@c phase_datum_eq34: the DD cycle basis is defined only on the
 /// eq34 chain datum), so it is included here; without it the interlock case below would
 /// pass on an unrelated validation failure.
@@ -248,7 +248,7 @@ TEST(AmbFloatVehicleTest, FloatKfWithoutPhaseLevelingIsAHardError) {
                           cfg));
 }
 
-// On a carry_invariant lineage the Card-4 DD carry is the ambiguity time-link, and
+// On a carry_invariant lineage the invariant DD carry is the ambiguity time-link, and
 // ApplicationNetworkAssembly's do_amb_carry skips the leveling inject entirely, so
 // float_kf would have nothing to replace.
 TEST(AmbFloatVehicleTest, FloatKfUnderCarryInvariantIsAHardError) {
@@ -495,7 +495,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
 
     NetworkEstimator est;
     GnssProcessor::GlobalVtecShConfig shc{};
-    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history (card NOM step N4d)
+    GnssProcessor::net::SatSignalTable tu_hist;   // the reinit history
     const NetworkEstimator::Datum datum{};          // no shared border, nothing to pin
     const std::vector<Eigen::Index> carried{kColN1, kColN2};
 
@@ -538,7 +538,7 @@ RecursionResult runRecursion(bool joint, int n_epochs, double drift_m_per_ep = 0
         const std::size_t id = est.addStation(R.A_s, R.A_r, R.w, R.y);
         if (have_carry && !joint) {
             // The legacy fold: N independent diagonal rows, each asserting its own
-            // column's marginal precision (the over-count the card names).
+            // column's marginal precision (the over-count the design names).
             Eigen::VectorXd lam(2), eta(2);
             lam << 1.0 / c1.var, 1.0 / c2.var;
             eta << lam(0) * c1.value_abs, lam(1) * c2.value_abs;   // x_lin = 0
@@ -726,7 +726,7 @@ TEST(AmbFloatVehicleTest, BirthFloorIsElevationMappedLikeTheCodeWeights) {
 // (7b) The drop-only floor (RF-3a;
 //      docs/refound/RF-3_code_row_qc_2026-09-22.md §4 A1/A4).
 //
-// Card RF-3 separates two populations that the birth floor treats as one.  A drop
+// This section separates two populations that the birth floor treats as one.  A drop
 // hands back a variance the level no longer supports (an arc can restore a variance
 // from hours earlier for a level now wrong by tens of metres, which then walks down
 // over many epochs), while a birth variance is correct and a floor there costs
@@ -867,7 +867,7 @@ TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
 // A frame step is a known, exact basis change, so the carry is expressed in the new
 // basis rather than erased.  The operator's three references move together: the
 // per-station ambiguity levels, the satellite phase bias, and every coupling s_prev on
-// that phase-bias column.  Under a known frame step the correct y-change of a Card-1
+// that phase-bias column.  Under a known frame step the correct y-change of a conditional
 // coupling row is the exact cancellation of the two moves, and shifting one without
 // the other injects the frame step as row bias (the latent defect the design names;
 // the same rule governs D4's carry S-transformation in networkElectChainDatum,
@@ -913,7 +913,7 @@ TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLe
 
 // Latent defect (i): the coupling s_prev on the shifted phase-bias column must move with
 // the levels, and only on that column.  D4 and this transform both apply phaseBiasShiftOf
-// through the traversal of carried references (card PRM phase 2), so the rule cannot drift
+// through the traversal of carried references, so the rule cannot drift
 // between them.
 TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBiasColumn) {
     using GnssProcessor::CoupledShared;
@@ -974,7 +974,7 @@ TEST(AmbFloatVehicleTest, JointBlockFoldConvergesToTheTrueAmbiguity) {
         << std::sqrt(j.var_n[29]) << " m)";
 }
 
-// D4 in one assertion, and the reason the two halves of the card are separable.
+// D4 in one assertion, and the reason the two halves of the mechanism are separable.
 //
 // With the drift the ambiguity absorbs (a phase-only receiver bias the model has no
 // state for), the levels on both routes move: the fold does not fix the level's

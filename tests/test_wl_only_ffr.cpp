@@ -1,7 +1,6 @@
 /**
  * @file test_wl_only_ffr.cpp
- * @brief The WL-only AR acceptance gate (@ref AmbiguityResolverConfig::wl_only_ffr),
- *        card Q3 (§8.11 of the card).
+ * @brief The WL-only AR acceptance gate (@ref AmbiguityResolverConfig::wl_only_ffr).
  *
  * The WL-only / MW-WL-constraint paths assert MW wide-lane integers directly: there
  * is no LAMBDA search, so no ratio test, and without this gate no success-rate gate
@@ -61,7 +60,7 @@ double arcTerm(double sigma_cycles) { return std::erf(kInv2Sqrt2 / sigma_cycles)
 
 // --- The gate agrees with the LAMBDA tier's own functional ----------------
 // Both tiers report one comparable number; otherwise "p_succ" would mean something
-// different depending on which machinery fixed, which is the ambiguity this card
+// different depending on which machinery fixed, which is the ambiguity this gate
 // removes.
 TEST(WlOnlyFfr, PerArcTermMatchesTheLambdaTierBootstrap) {
     AmbiguityResolver r = makeResolver();

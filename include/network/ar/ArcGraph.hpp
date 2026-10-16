@@ -3,14 +3,14 @@
  * @file ArcGraph.hpp
  * @brief The network producer's observation graph (receivers x satellites joined by ambiguity
  *        arcs): components, two sticky spanning-forest rules, short cycle bases, the exact integer
- *        map between two bases, and a saturated lattice of fixed cycles (card AGT).
+ *        map between two bases, and a saturated lattice of fixed cycles.
  *
  * One owner serves every caller:
  *   - the chain datum: growChainForest;
- *   - the Card-4 carry: the integer-id layer;
+ *   - the invariant carry: the integer-id layer;
  *   - the datum-graph census and the emit re-base: Dsu;
  *   - the producer AR search: growBaselineForest, shortCycleBasis, basisChangeMap;
- *   - the hold of card ARL task 2: CycleLattice.
+ *   - the integer hold: CycleLattice.
  *
  * Plain value types and free functions.  No state: callers keep incumbents in
  * NetworkCarryState.  No estimator or run-context access.
@@ -24,13 +24,13 @@
  *
  * ## Layers
  *
- *   1. **Integer ids** (opaque vertex ids, the Card-4 driver's space): @ref ArcKey, @ref arcgraph::Dsu,
+ *   1. **Integer ids** (opaque vertex ids, the invariant-carry driver's space): @ref ArcKey, @ref arcgraph::Dsu,
  *      @ref arcgraph::singleTreeOf, @ref arcgraph::fundamentalCycle,
  *      @ref arcgraph::promoteBridgingArcs, @ref arcgraph::chordRestriction.
  *   2. **Typed family graph**: one constellation with one band or an L1/L2 pair, stations and
  *      satellites in dense slots (@ref arcgraph::ArcGraph), and its components.
  *   3. **Spanning forests**, two named rules with one output type: the eq34 chain walk
- *      (@ref arcgraph::growChainForest) and the baseline Prim of card ARL
+ *      (@ref arcgraph::growChainForest) and the baseline Prim
  *      (@ref arcgraph::growBaselineForest).
  *   4. **Cycles and bases**: @ref arcgraph::fundamentalBasis and the unit-triangular short basis
  *      @ref arcgraph::shortCycleBasis.
@@ -43,14 +43,14 @@
  * A typed cycle term is +1 when the arc is traversed station to satellite, so the four-arc cycle
  * of a chord (r, j) closed against the reference satellite k on the baseline (r, p) is the
  * classical double difference (N_rj - N_rk) - (N_pj - N_pk).  The integer-id layer keeps the
- * Card-4 convention: +1 when an arc is traversed from its lower id to its higher id.
+ * Invariant-carry convention: +1 when an arc is traversed from its lower id to its higher id.
  *
  * ## Legacy orders
  *
  * Two helpers exist only to reproduce pre-migration orders byte for byte:
  * @ref arcgraph::legacyChainVertexRank (the eq34 string vertex order) and the
- * @ref arcgraph::ForestRules::stop_at_gap / @ref arcgraph::BasisCoverage::ParentOnly pair (card
- * ARL tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
+ * @ref arcgraph::ForestRules::stop_at_gap / @ref arcgraph::BasisCoverage::ParentOnly pair
+ * (tree_basis).  They are deleted when the retired eq34 lineage and tree_basis retire.
  */
 #include "common/GnssIdentity.hpp"   // System, StationId, SatId, SignalId, ArcId
 
@@ -79,7 +79,7 @@ namespace GnssProcessor {
  * signed cycle sum uses that convention (the physical DD sign matters only to the
  * phase-D emit re-basing, which uses the same convention on both sides).
  *
- * Moved verbatim from ZStore.hpp (card AGT, AGT-1), which includes this header.
+ * Moved verbatim from ZStore.hpp, which includes this header.
  */
 struct ArcKey {
     int u{0};  ///< lower-id endpoint (reference-orientation tail).
@@ -100,14 +100,14 @@ struct ArcKey {
 
 namespace arcgraph {
 
-// ---- 1. Integer-id layer (opaque vertex ids: the Card-4 driver's space) ------------------------------
+// ---- 1. Integer-id layer (opaque vertex ids: the invariant-carry driver's space) ------------------------------
 
 /**
  * @brief Disjoint sets over sparse integer ids, path-compressed and unranked, so a root depends
  *        on the link sequence alone.
  *
  * The link rule (@ref dsuUnite links root(a) under root(b)) is the one the eq34 chain datum, the
- * Card-4 driver and the emit re-base already share, so a caller that unites in its legacy order
+ * invariant-carry driver and the emit re-base already share, so a caller that unites in its legacy order
  * gets its legacy roots.  Path compression changes no root.
  */
 struct Dsu {
@@ -125,7 +125,7 @@ int dsuFind(Dsu& d, int v);
 /**
  * @brief Join the sets of @p a and @p b by linking root(@p a) under root(@p b).
  *
- * The rule of the chain datum, the Card-4 driver and the emit re-base; callers pass the station
+ * The rule of the chain datum, the invariant-carry driver and the emit re-base; callers pass the station
  * first, then the satellite, so every root is a satellite.
  *
  * @param d The sets.
@@ -147,7 +147,7 @@ struct IntTree {
  *        fragment.
  *
  * This is the ZComponent constructor's contract (ZStore.hpp): a duplicate edge closes a
- * cycle, an empty edge list is the empty tree.  The Card-4 driver skips the component on none.
+ * cycle, an empty edge list is the empty tree.  The invariant-carry driver skips the component on none.
  * One difference is declared: a self-loop ArcKey(a, a) is refused here (it is a cycle of length
  * one), where ZComponent accepts one whose vertex is new; the driver drops degenerate arcs before
  * its tree (InvariantCarryDriver.cpp, "degenerate (defensive)"), so no caller can see it.
@@ -174,7 +174,7 @@ std::map<ArcKey, int> fundamentalCycle(const IntTree& tree, const ArcKey& arc);
 
 /**
  * @brief Move to @p tree_edges, in chord order, every chord that joins two fragments of the
- *        partial tree (the completion the retired Card-4 lane pair groups used).
+ *        partial tree (the completion the retired lane pair groups used).
  *
  * The fragments are those of @p tree_edges; each promoted chord joins two of them, so the result
  * is still a forest.  The chords that stay keep their order.  No production caller remains since
@@ -188,7 +188,7 @@ std::map<ArcKey, int> fundamentalCycle(const IntTree& tree, const ArcKey& arc);
 long long promoteBridgingArcs(std::vector<ArcKey>& tree_edges, std::vector<ArcKey>& chords);
 
 /**
- * @brief The coefficient of each old chord in a cycle, in old-chord order: a Card-4 W row (the
+ * @brief The coefficient of each old chord in a cycle, in old-chord order: an invariant-carry W row (the
  *        chord restriction).
  * @param cycle      The cycle (arc -> coefficient).
  * @param old_chords The old basis's chords.
@@ -459,7 +459,7 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
  * the incumbent order, as soon as its parent is in the tree and the two stations share the
  * current round's threshold, before every new pick.  A station whose incumbent link still waits is
  * picked only when no other outside station reaches the threshold, so a re-seated station rejoins
- * before its former children, which then keep their links (card AGT, step AGT-5).  A link that is
+ * before its former children, which then keep their links (step AGT-5).  A link that is
  * not kept is counted by cause in SpanningForest::reseats.  Then each outside station joins the
  * in-tree station it shares the most satellites with (lowest slot on ties, for both the station
  * and its partner), through the first common satellite or, under
@@ -469,7 +469,7 @@ SpanningForest growChainForest(const ArcGraph& g, const Component& c, const std:
  * it.  Under @ref ForestRules::refuse_slipped_first the first pass reads only clean arcs (counting,
  * reference and satellite attachment); a second pass then reaches the rest through slipped arcs.
  * With the legacy rules (min_common 2, stop_at_gap, no incumbent, no refusal, first common) this
- * is exactly card ARL's tree_basis Prim.
+ * is exactly the legacy tree_basis Prim.
  *
  * @param g         The graph.
  * @param c         The component to span.
@@ -599,7 +599,7 @@ CycleBasis fundamentalBasis(const ArcGraph& g, const SpanningForest& f, int band
  * family bands and, under Full, span every component of that graph (joinForests); every chord of
  * every band is then closed, so each band holds lattice_dim cycles.
  *
- * With a @p sticky basis (the cycle-basis search's last basis, card AGT step AGT-5), a chord that
+ * With a @p sticky basis (the cycle-basis search's last basis), a chord that
  * basis closed with a BorrowedDd keeps that DD's partner and reference while they still close it
  * (the partner earlier in the closing order, every term a tree arc or an earlier pivot), so the
  * borrowed closures do not flip as satellites rise and set; any other chord is closed by the rule
@@ -669,9 +669,9 @@ struct CycleLattice {
     std::vector<Cycle>     rows;       ///< Fixed lattice elements.
     std::vector<long long> values;     ///< Integer of each row (cycles).
     std::map<ArcId, int>   pivot_row;  ///< Pivot arc -> row.
-    /// Loop epoch each row entered (card FCF): the epoch passed to @ref latticeOffer; a row
+    /// Loop epoch each row entered: the epoch passed to @ref latticeOffer; a row
     /// reduced by another row takes the later of the two epochs.  0 for a row offered without
-    /// an epoch (every caller before card FCF).
+    /// an epoch.
     std::vector<long long> entered_ep;
 };
 
@@ -693,7 +693,7 @@ enum class LatticeVerdict : std::uint8_t {
  * @param L     The lattice.
  * @param c     The fixed cycle.
  * @param value Its integer.
- * @param epoch The loop epoch of the offer (card FCF; 0 for a caller that keeps no epochs).
+ * @param epoch The loop epoch of the offer (0 for a caller that keeps no epochs).
  * @return The verdict.
  */
 LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, long long epoch = 0);
@@ -703,7 +703,7 @@ LatticeVerdict latticeOffer(CycleLattice& L, const Cycle& c, long long value, lo
  * @param L      The lattice.
  * @param c      The cycle.
  * @param newest When not null and the cycle is in the span: the latest entry epoch of the rows
- *               the implication uses (its support; card FCF), or -1 when it uses none.
+ *               the implication uses (its support), or -1 when it uses none.
  * @return The integer, or @c std::nullopt outside the lattice's span.
  */
 std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, long long* newest = nullptr);
@@ -718,8 +718,8 @@ std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, l
  * When no row holds it at +-1, every row that touches it is dropped.
  *
  * What remains is the part of the lattice that holds the arc at 0, so no integer it implies
- * depends on the arc's old integer: a slip of the arc leaves every remaining value right (card
- * FCF: a cycle whose integer is in question is released through its arcs, never through the rows
+ * depends on the arc's old integer: a slip of the arc leaves every remaining value right
+ * (a cycle whose integer is in question is released through its arcs, never through the rows
  * behind it alone, since other rows can hold one of its arcs as a non-pivot term).
  *
  * @param L   The lattice.
@@ -729,7 +729,7 @@ std::optional<long long> latticeImplied(const CycleLattice& L, const Cycle& c, l
 int latticeEliminateArc(CycleLattice& L, const ArcId& arc);
 
 /**
- * @brief Plant a wrong integer on one arc (card FCF's event harness, @c fixed_cycle_plant):
+ * @brief Plant a wrong integer on one arc (the event harness, @c fixed_cycle_plant):
  *        every row's integer moves by @p delta times the row's coefficient on @p arc.
  *
  * The lattice then implies, for every cycle in its span, its integer plus @p delta times the

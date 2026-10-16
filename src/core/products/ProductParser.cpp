@@ -1133,7 +1133,7 @@ namespace GnssProcessor {
                 // Receiver lines carry the system character in the PRN/SVN field
                 // (1 char, e.g. "G") and a 4..9-char station.  They go to the separate
                 // receiver vector, so consumers of the satellite vector are unaffected;
-                // nothing consumes them yet (estimation is a separate default-off card).
+                // nothing consumes them yet (estimation is a separate default-off change).
                 // A COD MGX file holds about 6797 receiver records per day.  Item 0b,
                 // docs/SPEC_level_information_budget.md §17.
                 if (!station.empty()) {

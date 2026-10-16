@@ -1,7 +1,7 @@
 /**
  * @file SignalDeclaration.cpp
  * @brief Implementation of the declared signal roster and its wire form (the `N`
- *        record) (card SID phase 5).
+ *        record).
  *
  * Pure functions: no logging, no I/O, no config.  The writer and the reader
  * share these functions so the two cannot diverge.
@@ -72,7 +72,7 @@ bool NetworkSignalDeclaration::declaresCode(const std::string& cons,
     if (cit == bands.end()) return false;
     for (const auto& [band, row] : cit->second) {
         (void)band;
-        // A companion (card SCC) is a family the network emits a code bias for, so
+        // A companion is a family the network emits a code bias for, so
         // it answers "does the network carry this code" the same way a modelled
         // code does.  The roles stay separate in the record so a reader that needs
         // the distinction still has it.

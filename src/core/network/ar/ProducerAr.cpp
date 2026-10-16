@@ -10,7 +10,7 @@
  * ProducerAr.hpp.
  *
  * Three additive departures from the relocated text, all outside the arithmetic (the
- * trace card; docs/network_ambiguity_resolution_
+ * trace additions; docs/network_ambiguity_resolution_
  * design.md, 2026-09-10 note §4.1, "a fix count is not a grade"):
  *   1. `DDrow` carries the six identity strings a truth join needs;
  *   2. the cap's `order` comes from @ref netar::lowestSigmaOrder so the trace can
@@ -29,10 +29,10 @@
 #include "common/GnssIdentity.hpp"       // systemOfSat, systemFromName, constellationKey, SignalId
 #include "common/GnssTypes.hpp"          // System
 #include "filter/IlsCore.hpp"            // ils::IlsGateConfig / IlsResult / ilsFix
-#include "network/ar/ArcGraph.hpp"    // arcgraph:: the observation graph and its tree basis (card AGT)
-#include "network/ar/ArCycleBasis.hpp" // the sticky full-coverage cycle basis (card AGT, AGT-5)
-#include "network/ar/ArcLife.hpp"     // the arc life stamp and the search's track of a life (card AGT)
-#include "network/ar/ArSuspect.hpp"   // the suspect-corner mask (card ARL)
+#include "network/ar/ArcGraph.hpp"    // arcgraph:: the observation graph and its tree basis
+#include "network/ar/ArCycleBasis.hpp" // the sticky full-coverage cycle basis
+#include "network/ar/ArcLife.hpp"     // the arc life stamp and the search's track of a life
+#include "network/ar/ArSuspect.hpp"   // the suspect-corner mask
 #include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 #include "math/TimeUtils.hpp"            // TimeUtils::continuousGpsSeconds (the mask's fold clock)
 #include "filter/StateManager.hpp"       // stations[i].sm-> ...
@@ -62,12 +62,12 @@
 #include <utility>
 #include <vector>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
 #include <limits>
 #include <memory>
-#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch
+#include "network/driver/Run.hpp"     // NetworkRun
 #include "network/driver/SetupResult.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -295,21 +295,21 @@ namespace {
 
 /// One entry of the producer AR pool: a station's absolute float ambiguity on one satellite and
 /// signal, its (est id, A_r column) for the covariance request, and `suspect`, the corner's state
-/// under the suspect-corner mask at this search (card ARL): its live cause bits and whether this
+/// under the suspect-corner mask at this search: its live cause bits and whether this
 /// search releases it; clean while the mask is off.
 struct ArRec { double value_m; std::size_t est_id; Eigen::Index col; ArSuspectCornerState suspect; };
 
 /// One (constellation, signal) pool of the search: satellite -> station index -> entry.
 using ArSatPool = std::map<std::string, std::map<std::size_t, ArRec>>;
 
-/// The tree basis of one pool (card ARL tree_basis).
+/// The tree basis of one pool (tree_basis).
 struct ArTreeBasis {
     int                  n_stations{0};  ///< Stations in the pool (a basis needs two).
     int                  n_refused{0};   ///< Pool satellites left out: the name does not round-trip through SatId (0 expected).
     arcgraph::CycleBasis basis;          ///< One DD (r, p; j, k) per cycle, in the search's order.
 };
 
-/// Card ARL's tree_basis, grown by the observation-graph module (card AGT, step AGT-2).
+/// The tree_basis, grown by the observation-graph module (step AGT-2).
 ///
 /// The pool becomes a one-band graph: stations by ascending index, satellites in the pool's string
 /// order (every tie breaks by these slots), one arc per entry.  A baseline forest is grown with the
@@ -368,9 +368,9 @@ using ArRequestOf = std::function<int(const ArRec&)>;
 /// (SPEC_amb_iono_split_overcount §6.12); without them the trace gives only a fix count.  They
 /// are filled unconditionally: the block is already gated on `netar.enable`, and six short
 /// strings per DD cost little next to the joint conditional covariance.
-/// `suspect`: the four corners' mask states combined (card ARL); a DD with any cause bit set
+/// `suspect`: the four corners' mask states combined; a DD with any cause bit set
 /// stays in the basis and the trace but is not searched.
-/// The cycle-basis fields (card AGT) are set only under cycle_basis: the first four are the
+/// The cycle-basis fields are set only under cycle_basis: the first four are the
 /// trace's columns, the last two what the lattice observatory is offered when the DD is fixed.
 struct DDrow {
     int i_rj, i_rp, i_fj, i_fp; double dd_m, lambda;
@@ -384,7 +384,7 @@ struct DDrow {
     ArDdIdentity    cycle_id{};                  ///< Its typed identity (step AGT-6).
 };
 
-/// The per-(constellation, signal) basis of card ARL: tree_basis (see arTreeBasis), else the star.
+/// The per-(constellation, signal) basis: tree_basis (see arTreeBasis), else the star.
 ///
 /// The star, per (constellation, signal): a reference satellite (tracked at the most stations)
 /// and a reference station (tracking the reference satellite and the most satellites); one DD per
@@ -396,7 +396,7 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
     int n_const_signal = 0;
     for (auto& [cs, satmap] : ar_pool) {
         if (tree_basis) {
-            // Card ARL tree_basis (see arTreeBasis): a greedy spanning tree of station
+            // The tree_basis (see arTreeBasis): a greedy spanning tree of station
             // baselines, one DD per further common satellite of each link.
             const System t_sys = systemFromName(cs.first);
             const std::optional<SignalId> tsig = SignalId::fromObsCode(t_sys, cs.second);
@@ -467,7 +467,7 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
     return n_const_signal;
 }
 
-// ---- Card AGT, step AGT-5: the cycle basis (network/ar/ArCycleBasis.hpp) ----------------------
+// ---- The cycle basis (network/ar/ArCycleBasis.hpp) ----------------------
 
 /// One family's build at this search, held until it becomes the family's memory after the search.
 struct ArCycleFamilyEpoch {
@@ -622,7 +622,7 @@ ArCycleEpochFigures arCycleEpochFiguresOf(const ArCycleBasisCounters& c) {
     return f;
 }
 
-/// The cycle basis's search rows for every family of every constellation in the pools (card AGT,
+/// The cycle basis's search rows for every family of every constellation in the pools (
 /// step AGT-5; network/ar/ArCycleBasis.hpp).  Per family: the rows with their life readings,
 /// the forest and the basis, the map against the stored basis, the tallies and the search rows.
 /// Each family's build is kept in @p epoch for the memory store after the search, and @p clause
@@ -710,7 +710,7 @@ void arCycleBasisStore(net::ConstellationTable& memory, std::vector<ArCycleFamil
     }
 }
 
-/// Card FCF: every cycle-basis search row with its float, its variance and its covariance with
+/// Every cycle-basis search row with its float, its variance and its covariance with
 /// the same DD in the pair's other band (its twin: the same constellation, stations and
 /// satellites, the other signal), and whether the search determined it.  A row is a twin only
 /// when its identity occurs exactly twice, on two signals; the twins share one search block
@@ -755,7 +755,7 @@ std::vector<SearchedCycle> arSearchedCycles(const std::vector<DDrow>& dds, const
 }  // namespace
 
 ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
-    // ---- From the run and the epoch (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_ep1_cut.py,
     //      each line checked by scripts/nom_ep1_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     NetworkRunContext& ctx = run.ctx;
@@ -777,8 +777,8 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     const auto& nc        = config_.getNetworkConfig();
     const auto& netar     = nc.ambiguity_resolution;
     auto&       n_emitted = ctx.counters.n_emitted;
-    // Card AGT, step AGT-6: what this search hands the lattice observatory (filled only under
-    // trace_lattice, which the loader arms only with the cycle basis).  Card FCF: the same
+    // What this search hands the lattice observatory (filled only under
+    // trace_lattice, which the loader arms only with the cycle basis).  The same
     // hand-over goes to the fixed-cycle fold, which also receives every searched DD's float
     // and every pooled arc's live column (fold_armed; the loader arms the fold only with the
     // cycle basis).  Neither is read by anything the solve or the emission reads unless the
@@ -788,7 +788,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   fold_armed    = netar.cycle_basis && netar.fixed_cycle_fold != FixedCycleFold::Off;
     const bool   handover      = lattice_armed || fold_armed;
 
-    // --- Card ARL: the suspect-corner mask's per-epoch fold (network/ar/ArSuspect.hpp).
+    // --- The suspect-corner mask's per-epoch fold (network/ar/ArSuspect.hpp).
     //     It runs ahead of the search gate, so the ledger's clock and stamps stay current
     //     through the epochs before min_epochs.  Window 0 (off): every arSuspect* call
     //     below is a no-op, nothing is read or written, and the search runs as before. --
@@ -814,7 +814,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
         // (const,signal) -> sat -> station index -> absolute float ambiguity + its
         // (est id, A_r column) for the covariance request (ArRec).  GPS+Galileo only.
         std::map<std::pair<std::string, std::string>, ArSatPool> ar_pool;
-        // Card ARL: this search's mask, filled as the pool and the basis are built.
+        // This search's mask, filled as the pool and the basis are built.
         ArSuspectSearch mask = arSuspectOpenSearch(suspect_now_ep, suspect_window);
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;
@@ -843,7 +843,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 ar_pool[{cst, parts->signal}][parts->satellite][i] =
                     ArRec{value_m, static_cast<std::size_t>(est_index_of[i]),
                           static_cast<Eigen::Index>(hit->second), suspect};
-                // Card FCF: the band-arc's live column, where a fixed cycle through it lands.
+                // The band-arc's live column, where a fixed cycle through it lands.
                 if (fold_armed) {
                     const std::optional<SatId>    sat_id = SatId::parse(parts->satellite);
                     const std::optional<SignalId> sig_id = SignalId::fromObsCode(sys, parts->signal);
@@ -866,8 +866,8 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
             const int idx = static_cast<int>(reqs.size());
             reqs.push_back(k); req_idx[k] = idx; return idx;
         };
-        // The DD basis, one search row per DD: card AGT's cycle basis, per family of a
-        // constellation's signals (arCycleBasisRows), else card ARL's tree basis or the star,
+        // The DD basis, one search row per DD: the cycle basis, per family of a
+        // constellation's signals (arCycleBasisRows), else the tree basis or the star,
         // per (constellation, signal) (arSignalBasisRows).  Under the cycle basis each
         // family's build is held in cycle_epoch and stored as its memory after the search.
         std::vector<DDrow> dds;
@@ -891,7 +891,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
             }
             Eigen::MatrixXd Q_cyc;
             bool have_q = false;
-            // Card ARL: the block search reads no cross-baseline entry, so in block mode
+            // The block search reads no cross-baseline entry, so in block mode
             // only each baseline's block of the covariance is read back
             // (blockConditionalCovariances) and differenced in place; the entries
             // between blocks stay zero.  Same expression as the uncorrected joint
@@ -988,7 +988,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 // subset, ascending Q_aa) and the rest stay float.  The summary
                 // statistics (med σ / med frac / near-int) use the full basis, so the
                 // convergence gauge is unaffected by the cap.
-                // Card ARL: the suspect-corner mask.  A DD with a suspect corner is left
+                // The suspect-corner mask.  A DD with a suspect corner is left
                 // out of the search before the cap applies; it keeps its trace row
                 // (in_subset 0).  mask.masked stays empty while the mask is off.
                 if (mask.window > 0) {
@@ -1035,11 +1035,11 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 // An empty search (the mask left nothing) is not run: the result stays
                 // the empty IlsResult, the same as a search that threw.
                 if (nd_fix > 0) try {
-                    // Card ARL: the decorrelated-space partial fix reports the
+                    // The decorrelated-space partial fix reports the
                     // single-signal DDs its fixed combinations determine.
                     if (netar.decorrelated_partial && netar.block_search) {
                         // One block per baseline (its L1 and L2 DDs): sta_r and ref_sta; under
-                        // the cycle basis one block per station (card AGT: its partner and
+                        // the cycle basis one block per station (its partner and
                         // borrowed DDs in both bands).
                         std::map<std::string, int> block_id;
                         std::vector<int> block_of(static_cast<std::size_t>(nd_fix));
@@ -1085,7 +1085,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 // mask's re-entry outcome).
                 const std::vector<netar::DdFixLabel> labels =
                     netar::mapFixToBasis(nd, order, fix.kept, fix.afix);
-                // Card AGT, step AGT-6: the determined DDs (the trace's kept rows) as cycles,
+                // The determined DDs (the trace's kept rows) as cycles,
                 // the lattice observatory's offers.
                 if (handover)
                     for (int a = 0; a < nd; ++a) {
@@ -1095,11 +1095,11 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                         lattice_fixes.fixed.push_back(
                             ArFixedCycle{d.cycle, static_cast<long long>(std::llround(lb.fixed_int)), d.cycle_id});
                     }
-                // Card FCF: every searched DD with its float from this readback, the twin in
+                // Every searched DD with its float from this readback, the twin in
                 // the pair's other band, and whether it was determined.
                 if (fold_armed)
                     lattice_fixes.floats = arSearchedCycles(dds, y_cyc, Q_cyc, labels);
-                // Card ARL pair lanes (decorrelated_partial only): each L1/L2 pair's wide
+                // Pair lanes (decorrelated_partial only): each L1/L2 pair's wide
                 // lane before the fix and its wide lane and narrow lane conditioned on the
                 // fixed decorrelated components, so a pair left float can be read as "wide
                 // lane fixed, narrow lane not" or "neither".  Built for the trace and for
@@ -1115,7 +1115,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                                         d.lambda});
                     lanes = netar::pairLanes(keys, order, nd_fix, Q_fix, fix.a_cond, fix.Q_cond);
                 }
-                // Card ARL: close the mask's search epoch (both edges tallied, the released
+                // Close the mask's search epoch (both edges tallied, the released
                 // corners leave the ledger's masking set) and take its log clause; empty
                 // while the mask is off.
                 const std::string mask_text = arSuspectCloseSearch(
@@ -1180,7 +1180,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                         const DDrow& d = dds[static_cast<std::size_t>(a)];
                         const auto& lb = labels[static_cast<std::size_t>(a)];
                         const double sig = Q_cyc(a, a) > 0.0 ? std::sqrt(Q_cyc(a, a)) : -1.0;
-                        // Card ARL mask columns (armed only, kProducerArSuspectColumns): the
+                        // Suspect-corner mask columns (armed only, kProducerArSuspectColumns): the
                         // DD's suspect cause bits and its re-entry flag.
                         const std::string mask_cols =
                             mask.window > 0
@@ -1188,7 +1188,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                                               static_cast<int>(mask.dd_bits[static_cast<std::size_t>(a)]),
                                               static_cast<int>(mask.reentry[static_cast<std::size_t>(a)]))
                                 : std::string();
-                        // Card AGT cycle-basis columns (armed only, kProducerArCycleBasisColumns).
+                        // Cycle-basis columns (armed only, kProducerArCycleBasisColumns).
                         const std::string cycle_cols =
                             netar.cycle_basis
                                 ? fmt::format(",{},{},{},{}", arCycleKindName(d.cycle_kind),
@@ -1213,7 +1213,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
                 }
             }
         }
-        // Card AGT: each family's build becomes its memory for the next search, whether or not
+        // Each family's build becomes its memory for the next search, whether or not
         // this one ran (no covariance, no row): stickiness follows the basis, not the search.
         if (netar.cycle_basis)
             arCycleBasisStore(ctx.entities.constellations, cycle_epoch, suspect_now_ep);
@@ -1312,7 +1312,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     return lattice_fixes;
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the producer ambiguity-resolution search.
 int networkProducerArRunEnd(const NetworkRunEndView& v) {
@@ -1386,7 +1386,7 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
                   "is structurally empty (standing invariant #4); this run is evidence "
                   "about NOTHING in the card.", nc.ambiguity_resolution.min_epochs);
     }
-    // Card AGT: the cycle basis's clause (network/ar/ArCycleBasis.hpp), armed only.
+    // The cycle basis's clause (network/ar/ArCycleBasis.hpp), armed only.
     if (nc.ambiguity_resolution.cycle_basis)
         arCycleBasisRunEndClause(c.netar_cycle, nc.ambiguity_resolution.cycle_basis_sticky, log);
     return 0;

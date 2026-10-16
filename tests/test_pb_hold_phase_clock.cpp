@@ -1,6 +1,6 @@
 /**
  * @file test_pb_hold_phase_clock.cpp
- * @brief `network.emit_pb_hold_phase_clock` (card LAH): a held (satellite, signal)
+ * @brief `network.emit_pb_hold_phase_clock`: a held (satellite, signal)
  *        keeps the satellite's phase-visible clock c - p instead of its phase bias.
  *
  * The held emission is p(t0) + [c~(t) - c~(t0)], with c~ = c - M and M the accumulated
@@ -51,7 +51,7 @@ namespace GnssProcessor {
 namespace {
 
 /// The value behind an entity-table lookup, throwing like std::map::at when it is absent
-/// (card NOM step N4b moved the map the test read into the constellation table).
+/// (the map the test reads is in the constellation table).
 template <class V>
 const V& netAt(const V* p) {
     if (p == nullptr) throw std::out_of_range("netAt: absent");

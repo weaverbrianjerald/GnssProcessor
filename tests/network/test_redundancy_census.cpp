@@ -11,7 +11,7 @@
  * Baarda minimal detectable bias δ₀σ/√r → ∞: no residual-based test can see it,
  * however large it gets.
  *
- * The tests therefore target the four claims the card makes, each of which fails
+ * The tests therefore target the four claims the census makes, each of which fails
  * silently if it is wrong:
  *
  *   1. r_i is the Baarda number 1 − w·(HΣHᵀ)_ii, checked against an independent
@@ -491,7 +491,7 @@ TEST(RedundancyCensusTest, OffIsStructurallyInert) {
 
     // A fresh carry state allocates nothing for the census.
     NetworkCarryState carry;
-    EXPECT_EQ(NetworkServiceCounters{}.redun_epochs, 0);   // instrument state (card NOM step N4g)
+    EXPECT_EQ(NetworkServiceCounters{}.redun_epochs, 0);   // instrument state
     EXPECT_TRUE(carry.redun_escalate_pending.empty());
     EXPECT_EQ(net::present(net::NetworkEntities{}.los, &net::LosState::events,
                            &net::LosEventState::redun_event_last), 0u);

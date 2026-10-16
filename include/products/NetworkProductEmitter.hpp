@@ -73,7 +73,7 @@ struct NetworkPhaseBias {
     int    wide_lane_integer{0};  ///< Wide-lane integer indicator (2-bit, IGS-SSR).
     double sigma_m{0.0};          ///< Formal 1σ (m) of this phase-bias correction; 0 unless the driver populated it (network.emit_phase_bias_sigma, gauge-exact shared-cov diagonal) (B1b).
     double sigc_m{0.0};           ///< Formal 1σ (m) of the combined phase correction (clock + phase bias, cross-covariance included, no iono); 0 unless network.emit_combined_sigma populated it. Serialized as the P-record sigc= token; consumed through SsrPhaseBiasEntry::combined_sigma_m (M4, contract v2).
-    /// Hold generation that this emitted value belongs to (card PBH,
+    /// Hold generation that this emitted value belongs to (
     /// @c network.emit_pb_hold).  0 means not held (the knob is off, or this key is
     /// outside the hold's scope), and the value is the estimator's own per-epoch
     /// estimate.  Nonzero means @ref bias_m was overwritten with the first value of
@@ -103,7 +103,7 @@ struct NetworkSatSolution {
     /// reference signal (both share the clock term, so typically 0.6–0.9); 0 unless
     /// populated.  Serialized as the C-record rho= token (M4, contract v2).
     double                                  rho{0.0};
-    /// Level step of this satellite since its previous emission (m) (card CLV; the
+    /// Level step of this satellite since its previous emission (m) (the
     /// producer's re-base was removed, so only a wire written with it carries a nonzero
     /// step).  The code-only level re-base moved its clock record and each of its
     /// phase-bias records by this amount, so the phase side that the consumer applies
@@ -114,7 +114,7 @@ struct NetworkSatSolution {
     /// replay use the same arithmetic, so a replay reproduces every declaration.  0
     /// unless the wire declares a step.
     double                                  level_step_m{0.0};
-    /// Card CLV return plan R-A (removed from the producer; read from an old wire): per code-bias
+    /// Return plan R-A (removed from the producer; read from an old wire): per code-bias
     /// signal, the FOLLOW STEP of a free same-band column since this satellite's previous
     /// emission (m): the re-base moved that code-bias record by this amount together with
     /// the clock, so a consumer reading band 1 through it sees no level step.  Serialized
@@ -124,14 +124,14 @@ struct NetworkSatSolution {
     std::map<std::string, double>           cb_level_step_m;
     /// Broadcast ephemeris version (IODE, in the IGS-SSR matching convention) that the
     /// estimable clock @c clock_c0_m is a delta against, threaded from the producer
-    /// emission path in @c brdc_rts mode (RTF-2, Card 5).  -1 means sp3 mode or
+    /// emission path in @c brdc_rts mode (RTF-2).  -1 means sp3 mode or
     /// unstamped: @c emitToStore then leaves @c SsrClockCorrection.iode = -1 (so
-    /// @c getOrbitClock's clock gate inherits the orbit anchor, byte-identical;
-    /// Card 3) and the C record serializes no @c iode= field.  Card 4 owns the field,
-    /// its serialization and the store stamping; Card 5 populates it.
+    /// @c getOrbitClock's clock gate inherits the orbit anchor, byte-identical)
+    /// and the C record serializes no @c iode= field.  The SSR store owns the field,
+    /// its serialization and the stamping; the producer emission path populates it.
     int                                     clock_iode{-1};
     /// IOD-SSR of the RTS orbit correction that this clock was estimated against
-    /// (RTF-2, Card 5).  This is an orbit coherence echo: broadcast radial-orbit error
+    /// (RTF-2).  This is an orbit coherence echo: broadcast radial-orbit error
     /// is absorbed 1:1 into the clock, so the consumer verifies that it applied the
     /// same orbit update.  -1 means unstamped (brdc-only replay, sp3).  The orbit echo
     /// is subordinate to the @c iode= anchor: it is serialized as the C-record
@@ -141,7 +141,7 @@ struct NetworkSatSolution {
     /// set; a value set without @c clock_iode is dropped from the wire without notice.
     int                                     orbit_iod_ssr{-1};
     /// SSR content epoch of that referenced RTS orbit, the other operand of the
-    /// consumer orbit/clock age-skew budget (Card 7) (RTF-2, Card 5).  {0,0} means
+    /// consumer orbit/clock age-skew budget (RTF-2).  {0,0} means
     /// unstamped.  Like @c orbit_iod_ssr it is subordinate to the @c iode= anchor:
     /// serialized as the C-record @c oepoch= field only when @c clock_iode >= 0 and
     /// week != 0.
@@ -246,7 +246,7 @@ public:
     ///        6.37 cm.  Default 0.0 = the legacy flat @p disc_threshold_m
     ///        (byte-identical).  Travels in the S contract (@c discfrac=) for
     ///        @c makeReplayEmitter.
-    /// @param disc_mark_scope_channel When true (card MS, @c network.disc_mark_scope),
+    /// @param disc_mark_scope_channel When true (@c network.disc_mark_scope),
     ///        a per-satellite discontinuity mark bumps the generations of only the
     ///        channels that the marking site says moved (@ref markSatDiscontinuity's
     ///        @c channels argument), instead of the clock, code-bias and phase-bias
@@ -266,7 +266,7 @@ public:
                                    double disc_threshold_frac_cycles = 0.0,
                                    bool disc_mark_scope_channel = false);
 
-    /// Product channels that a per-satellite discontinuity mark applies to (card MS).
+    /// Product channels that a per-satellite discontinuity mark applies to.
     /// A bit mask, so a marking site that moves two channels names both, and two
     /// sites marking the same satellite in one epoch are OR-ed together.
     enum DiscChannel : unsigned {
@@ -280,7 +280,7 @@ public:
     };
 
     /// One mark that this emit did not apply to a channel because the mark's scope
-    /// excluded it: invariant #7's identity for the decoupling edge (card MS).
+    /// excluded it: invariant #7's identity for the decoupling edge.
     struct MarkScopeEvent {
         std::string sat;              ///< RINEX satellite id.
         unsigned    marked{0};        ///< The channel mask the marking sites asked for.
@@ -288,32 +288,32 @@ public:
     };
 
     /// Suppressed marks of the last @ref emitToStore call, cleared at the top of every
-    /// emit (card MS).  Always empty under the legacy satellite scope, so a run with
+    /// emit.  Always empty under the legacy satellite scope, so a run with
     /// the knob off allocates nothing and the driver's drain is a no-op.
     const std::vector<MarkScopeEvent>& markScopeEvents() const { return mark_scope_events_; }
 
     /// Number of marks this emit applied to each channel, indexed by
-    /// @ref DiscChannel (clock / code-bias / phase-bias) (card MS).  Cleared per emit;
+    /// @ref DiscChannel (clock / code-bias / phase-bias).  Cleared per emit;
     /// always zero under the legacy satellite scope (nothing is counted there).
     struct MarkChannelTally {
         long long clk{0};   ///< Satellite-epochs whose clock generation a mark bumped.
         long long cb{0};    ///< (sat, signal) code-bias cells a mark bumped.
         long long pb{0};    ///< (sat, signal) phase-bias cells a mark bumped.
     };
-    /// Applied-mark tally of the last @ref emitToStore call (card MS).
+    /// Applied-mark tally of the last @ref emitToStore call.
     const MarkChannelTally& markChannelTally() const { return mark_channel_tally_; }
 
-    /// Whether the per-channel mark scope is armed on this emitter (card MS).
+    /// Whether the per-channel mark scope is armed on this emitter.
     bool discMarkScopeChannel() const { return disc_mark_scope_channel_; }
 
     /**
-     * @brief Channel mask of the marks pending for one satellite (card PBH).
+     * @brief Channel mask of the marks pending for one satellite.
      *
      * A pure read of the same two sources that @c emitToStore's internal
      * @c constForced / @c satForced lambdas consult, without their side effects
      * (no tally, no @ref MarkScopeEvent row).  A caller can therefore ask what is
      * about to be declared for this satellite before the emit without changing the
-     * card-MS census by a single count.
+     * MS census by a single count.
      *
      * @param sat RINEX satellite id ("G01").
      * @return 0 when nothing is pending; otherwise the OR of @ref DiscChannel bits.
@@ -331,21 +331,21 @@ public:
     /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
     /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.  Public
     /// so the hold can read an estimator step against the bar the emitter applies to
-    /// the wire (card SMD's unmarked steps).
+    /// the wire (the smoothed-hold block member's unmarked steps).
     double discThresholdM(const std::string& sat, const std::string& signal) const;
 
     /// Stable lowercase name of one channel ("clk" / "cb" / "pb"), for trace events
-    /// and tests (card MS).
+    /// and tests.
     static const char* discChannelName(DiscChannel c);
 
     /// @brief Number of phase-bias value-jump tests whose raw step exceeded the bar
     ///        only because of the satellite's declared level step
     ///        (@ref NetworkSatSolution::level_step_m, the C-record lvl= token), and
-    ///        which therefore did not declare once the step was removed (card CLV).
+    ///        which therefore did not declare once the step was removed.
     /// @return the run count (0 unless the wire declares a level step).
     long long clvJumpExcluded() const { return clv_jump_excluded_; }
 
-    /// @brief Card CLV return plan R-A: code-bias value-jump tests whose raw step exceeded
+    /// @brief Return plan R-A: code-bias value-jump tests whose raw step exceeded
     ///        the bar only because of the column's declared follow step
     ///        (@ref NetworkSatSolution::cb_level_step_m, the B-record lvl= token), and
     ///        which the step's removal therefore did not declare.
@@ -383,7 +383,7 @@ public:
     ///
     /// @param satellites The satellites to mark.
     /// @param channels   Which product channels this mark reports, a bit-or of
-    ///        @ref DiscChannel (card MS).  Honoured only when the emitter was
+    ///        @ref DiscChannel.  Honoured only when the emitter was
     ///        constructed with @c disc_mark_scope_channel; under the legacy satellite
     ///        scope every mark bumps all three generations, so passing a narrower mask
     ///        is byte-identical there.  The default @ref kDiscChanAll is what an
@@ -436,7 +436,7 @@ public:
     int clockDiscontinuityCounter(const std::string& sat) const;
 
     /**
-     * @brief Whether this phase-bias key is a first sighting (card SID phase 5, E1).
+     * @brief Whether this phase-bias key is a first sighting.
      *
      * The emitter's own test, @c last_phase_bias_.find(key) == end(), exposed so it
      * can be compared with the arc ledger, which knows whether the family is
@@ -453,10 +453,10 @@ public:
      */
     bool isPhaseFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Code-bias twin of @ref isPhaseFirstSighting (card SID phase 5, E1).
+    /// Code-bias twin of @ref isPhaseFirstSighting.
     bool isCodeFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Clock twin of @ref isPhaseFirstSighting (card SID phase 5, E1).  Always true
+    /// Clock twin of @ref isPhaseFirstSighting.  Always true
     /// unless the emitter was constructed with @c emit_clock_disc (A2), which is what
     /// fills @c seen_clock_sats_.
     bool isClockFirstSighting(const std::string& sat) const;
@@ -496,7 +496,7 @@ public:
      * (@c seen_clock_sats_ / @c prev_code_satset_ / @c prev_band_tuple_, and
      * @c prev_clock_satset_ when armed), the RTA-11 last-seen timestamp maps, and the
      * RT0-5 pending forced-bump state (@c force_all_bump_ / @c forced_bump_consts_ /
-     * @c forced_bump_sats_, with each mark's channel mask under the card-MS channel
+     * @c forced_bump_sats_, with each mark's channel mask under the MS channel
      * scope).  Restoring the counters without the baselines, first-sighting sets and
      * pending flags would emit wrong counters after a resume (spurious first-sighting
      * resets, lost deferred datum bumps), which the consumer could not detect as a
@@ -547,13 +547,13 @@ private:
     /// When > 0, the per-(sat,signal) jump threshold is disc_threshold_frac_cycles_ ×
     /// λ(sat,signal) (fixed contract, uniform in cycles).  0 = legacy flat metres (H3).
     double disc_threshold_frac_cycles_{0.0};
-    /// Bump only the channels that a mark named (card MS).  Default false = the
+    /// Bump only the channels that a mark named.  Default false = the
     /// legacy satellite-wide scope (byte-identical).  Travels in the S contract
     /// (@c discscope=).  Declared here so that the ctor's init list stays in
     /// declaration order.
     bool   disc_mark_scope_channel_{false};
-    long long clv_jump_excluded_{0};   ///< See clvJumpExcluded() (card CLV).
-    long long clv_cb_jump_excluded_{0};   ///< card CLV R-A: see clvCbJumpExcluded()
+    long long clv_jump_excluded_{0};   ///< See clvJumpExcluded().
+    long long clv_cb_jump_excluded_{0};   ///< return plan R-A: see clvCbJumpExcluded()
     bool   emit_clock_disc_{false};       ///< Maintain and stamp the clock disc counter (A2).
     /// Staleness horizon (s, product time; 0 = off) (RTA-11).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time.  A key that
@@ -584,11 +584,11 @@ private:
     std::set<std::string> forced_bump_sats_;
     /// Channel mask that each marked satellite was marked with (a bit-or of
     /// @ref DiscChannel), kept in step with @ref forced_bump_sats_ and cleared with it
-    /// (card MS).  Populated only under @ref disc_mark_scope_channel_, so the legacy
+    ///.  Populated only under @ref disc_mark_scope_channel_, so the legacy
     /// scope allocates nothing and the emit path never reads it.
     std::map<std::string, unsigned> forced_bump_chan_;
     /// Per-emit scratch: the marks this emit withheld from a channel, and the marks
-    /// it applied (card MS).  Both empty/zero under the legacy scope.
+    /// it applied.  Both empty/zero under the legacy scope.
     std::vector<MarkScopeEvent> mark_scope_events_;
     MarkChannelTally            mark_channel_tally_{};
     std::map<std::string, int>    disc_counter_;    ///< "sat|signal" -> phase discontinuity counter.

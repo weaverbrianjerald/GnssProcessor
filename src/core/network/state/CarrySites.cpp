@@ -1,7 +1,7 @@
 /**
  * @file CarrySites.cpp
- * @brief The site table, the mechanism table and the traversal of carried references
- *        (card PRM phase 2).  The design is in the header's file comment.
+ * @brief The site table, the mechanism table and the traversal of carried references.
+ *        The design is in the header's file comment.
  */
 
 #include "network/state/CarrySites.hpp"
@@ -13,7 +13,7 @@
 #include <tuple>
 #include <utility>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include "network/diag/RunTraces.hpp"
@@ -27,13 +27,13 @@ namespace GnssProcessor {
 namespace {
 
 using S = CarrySite;
-using ES = net::StationState;         // the station carries (card NOM step N4a)
+using ES = net::StationState;         // the station carries
 using ESS = net::StationSignalState;
-using EC = net::ConstellationState;   // the constellation carries (card NOM step N4b)
+using EC = net::ConstellationState;   // the constellation carries
 using ECh = net::ChannelState;
-using EL = net::LosState;             // the line-of-sight carries (card NOM step N4c)
-using EG = net::SatSignalState;       // the satellite-signal carries (card NOM step N4d)
-using EA = net::SatelliteState;       // the satellite carries (card NOM step N4e1)
+using EL = net::LosState;             // the line-of-sight carries
+using EG = net::SatSignalState;       // the satellite-signal carries
+using EA = net::SatelliteState;       // the satellite carries
 using R = CarryRefRole;
 
 // One row per site, in the order of CarrySite (checked by the unit test).
@@ -45,7 +45,7 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
     {S::CxuPivot, "cxu_pivot", "cxu_pivot", "constellation -> (sat, value)", R::PinTarget,
      "the stash's pinned clock and its value (the exact coupling update's gauge deficit)",
      "value moves with the pivot's clock", nullptr,
-     "derived at restore from the QK/QP border with value 0 (card CTU)"},
+     "derived at restore from the QK/QP border with value 0"},
     {S::ClockOsc, "clock_osc", "clock_osc", "sat", R::Value,
      "the two-state oscillator's carried clock offset x0 (network.clock_model)",
      "x0 moves when the oscillator is initialized", "K", "always"},
@@ -122,12 +122,12 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
      "s_prev moves with its column", nullptr,
      "cold-started (RC restores the value only; the in-block route re-harvests)"},
     {S::PhaseColourCoupling, "phase_colour_coupling", "pc_carry", "(station, sat)",
-     R::Regression, "the phase-colour nuisance state's regression terms (card LGM)",
+     R::Regression, "the phase-colour nuisance state's regression terms",
      "s_prev moves with its column", nullptr, "cold-started (not snapshotted)"},
 }};
 
 // The reasons an exemption gives.  "Owed" exemptions are the gaps of the hand lists this
-// card replaced (card PRM section 15 and phase 3b), which network.carry_rebase_complete moves
+// table replaced, which network.carry_rebase_complete moves
 // (owedReason below); the others are by design.
 constexpr const char* kOwed =
     "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
@@ -155,8 +155,8 @@ constexpr const char* kPbHoldEmit =
     "held_m is a held emitted value in the emit frame: moving it needs its own design, so "
     "it is exempt from network.carry_rebase_complete too";
 
-/// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete,
-/// card PRM phase 3b step 2).  The handover's reasons, the receiver clock's included, are its
+/// Whether an exemption's reason is an owed gap (moved under network.carry_rebase_complete).
+/// The handover's reasons, the receiver clock's included, are its
 /// own design and its walks take no knob.
 bool owedReason(const char* reason) {
     return reason == kOwed || reason == kOwedClv64;
@@ -330,7 +330,7 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
                          hand(CarriedRef{S::CxuPivot, SharedParamKind::Clock, pv.first, kNone, -1,
                                          &pv.second, nullptr, false, nullptr, nullptr, nullptr, nullptr});
                      });
-    // The satellite carries (card NOM step N4e1), in satellite order: the order of their old
+    // The satellite carries, in satellite order: the order of their old
     // satellite-string keys (O1).
     if (on(S::ClockOsc))
         net::forEach(entities.sats, &EA::clock_osc, [&](const SatId& id, ClockOsc& o) {
@@ -352,7 +352,7 @@ long long forEachCarriedReference(NetworkCarryState& carry, net::NetworkEntities
             hand(CarriedRef{S::PbHoldPrevClock, SharedParamKind::Clock, net::satKey(id), kNone, -1, &v,
                             nullptr, false, nullptr, nullptr, nullptr, nullptr});
         });
-    // The satellite-signal carries (card NOM step N4d), in (satellite, signal) order: the
+    // The satellite-signal carries, in (satellite, signal) order: the
     // order of their old "sat_signal" / "sat|signal" keys (O1).
     if (on(S::PbLevelPrev))
         net::forEach(entities.sat_signals, &EG::pb_level_prev, [&](const SatSignalId& id, double& v) {
@@ -478,7 +478,7 @@ void carrySiteHeld(const NetworkCarryState& carry, const net::NetworkEntities& e
     for (int i = 0; i < kCarrySites; ++i) held[i] = c.visited[i];
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the carried references per site (PRM 2).
 int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
@@ -487,7 +487,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card PRM phase 2 (sections 5 and 6): the carried references of the border per site,
+    // The carried references of the border per site,
     // held at the run's end and moved by each mechanism over the run through the one
     // traversal; then, per mechanism, the sites it does not move with the reason.  The
     // same rows go to the run manifest as a `param_sites` record.
@@ -517,7 +517,7 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v) {
                           held[i], jm, sp.record ? sp.record : "");
     }
     js += "],\"mechanisms\":[";
-    // Card PRM phase 3b: under network.carry_rebase_complete a mechanism's owed sites are
+    // Under network.carry_rebase_complete a mechanism's owed sites are
     // moved, so they leave its "not moved" list for a list of their own (the line and the
     // record are unchanged with the knob off).
     const bool complete = ctx.knobs.rebase_complete;

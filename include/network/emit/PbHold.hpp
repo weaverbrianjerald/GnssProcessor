@@ -1,6 +1,6 @@
 /**
  * @file PbHold.hpp
- * @brief Emit-side phase-bias hold seam (@c network.emit_pb_hold, card PBH).
+ * @brief Emit-side phase-bias hold seam (@c network.emit_pb_hold).
  *
  * A single-concern seam in the network-producer decision tree.  The emitted phase
  * bias of a (satellite, signal) is frozen at the first value of its generation, and
@@ -51,10 +51,10 @@
  * cost is measured as well: the de-commoned satellite clock step at every such mark
  * that reaches a held key.
  *
- * ### The phase-clock mode (card LAH, @c network.emit_pb_hold_phase_clock)
+ * ### The phase-clock mode (@c network.emit_pb_hold_phase_clock)
  *
  * A held phase bias frozen while the emitted clock moves puts every clock move on the
- * wire's phase side @f$c - p@f$.  Under the exact coupling time update (card CTU) the
+ * wire's phase side @f$c - p@f$.  Under the exact coupling time update the
  * satellite's level converges, moving the clock and every phase bias of the satellite
  * together (invisible to phase), and the plain hold turns that code-only correction
  * into a phase-side drift the consumer's float ambiguities cannot follow.  The mode
@@ -67,7 +67,7 @@
  * clock's motion since @f$t_0@f$) was derived and rejected: under the estimator's own
  * covariance the phase-visible ionosphere-free clock is known to a few millimetres,
  * its regression on the generation start decays within minutes, and the rule then
- * passes the ionosphere-free phase-bias wander (card LAH).  Posture limit: within a
+ * passes the ionosphere-free phase-bias wander.  Posture limit: within a
  * generation the consumer's phase-visible clock motion is the a priori clock
  * product's, which is valid with a precise a priori clock and not with a broadcast one.
  */
@@ -90,7 +90,7 @@ struct NetworkSolutionEpoch;
 struct SyncedEpoch;
 
 /**
- * @brief Apply the emit-side phase-bias hold (card PBH) to one epoch's solution.
+ * @brief Apply the emit-side phase-bias hold to one epoch's solution.
  *
  * Per emitted (satellite, signal):
  *  - no held entry yet, or @c network.emit_pb_hold_max_gap_s is positive and the key
@@ -99,7 +99,7 @@ struct SyncedEpoch;
  *    1), and a @c PB_HOLD / @c gen_start event is emitted with action @c first or
  *    @c gap.
  *  - otherwise: overwrite @c NetworkPhaseBias::bias_m with the held value and record
- *    |estimate - held| into the run-end distribution.  With card LAH
+ *    |estimate - held| into the run-end distribution.  With the level-aware hold
  *    (@c network.emit_pb_hold_phase_clock) armed, the held value is shifted by the
  *    satellite's common-removed clock change since the generation started,
  *    @f$\tilde c(t) - \tilde c(t_0)@f$ (see the file header), so the phase-visible
@@ -136,7 +136,7 @@ void networkPbHold(NetworkRunContext& ctx,
                    NetworkSolutionEpoch& sol);
 
 /**
- * @brief The median emitted-clock step of one constellation in one epoch (card LAH).
+ * @brief The median emitted-clock step of one constellation in one epoch.
  *
  * The median, over the satellites of @p sol of constellation @p constellation (the
  * first character of the satellite id) with a finite emitted clock that also have an

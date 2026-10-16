@@ -3,11 +3,11 @@
  * @file SolveGlue.hpp
  * @brief The network producer's solve for one epoch: the datum rows, the null-space gate, the
  *        estimator solve, the within-epoch RAIM tier and the sigma0 ceiling, as a fixed list of
- *        stages (card NOM3 step SG).
+ *        stages.
  *
  * networkSolveGlue calls the stages below in this order and hands each the values the earlier
  * ones produced.  The order is load-bearing: the estimator accumulates the folds in this order
- * (its increments are not bit-symmetric, card KP), and every later stage reads what an earlier
+ * (its increments are not bit-symmetric), and every later stage reads what an earlier
  * one wrote.  Four stages can end the epoch, five ways; each way is a row of kSolveSkips.
  *
  *  #   stage                         home                              hands on              exit
@@ -54,7 +54,7 @@
  * the within-epoch replay calls networkBuildCarryDdPriors(run, ep, dd_build), which
  * reads the culprit sets as ep.ws.we_culprits while stage 13 adapts the sets through its ws
  * parameter.  They are one object because the spine passes ep.ws and every stage receives the
- * solve's own ws by reference (card WCF; never a copy).
+ * solve's own ws by reference (never a copy).
  *
  * Each stage takes the seam form (NetworkRun& run, const NetworkEpoch& ep[, kept...][,
  * outputs...]) and opens with a generated preamble (scripts/nom_sg_cut.py) that binds the
@@ -90,14 +90,14 @@ namespace GnssProcessor {
 class GnssConfig;
 struct NetworkRunContext;
 struct NetworkRunTraces;
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochEvents;             // network/driver/Epoch.hpp
-struct EpochDdBuild;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct EpochDdBuild;            // network/driver/Epoch.hpp
 
 /// What the post-fit tiers hand the epoch stash: seeded by the solve (the within-epoch tier's
 /// refloats), extended by networkPostFitRaim and networkClockQc, read by networkStashStatus.
-/// With prep.sol, the only epoch members a seam writes after the solve (card NOM3 step EP1).
+/// With prep.sol, the only epoch members a seam writes after the solve.
 struct NetworkPostFitHandoff {
     std::set<std::string> clock_refloat_sats;      ///< Satellites the stash refloats: the T2 and RAIM culprits, then the clock NIS and monitor culprits.
     std::set<std::string> retro_flag_sats;         ///< The retro-bump feed (networkRetroUraBookkeeping, inside networkClockQc).
@@ -115,7 +115,7 @@ struct NetworkSolveGlueResult {
     std::set<char>                                   changed_consts;
     bool                                             datum_changed{false};
     bool                                             clk_model_warm{false};
-    NetworkPostFitHandoff                            handoff;   ///< The post-fit hand-off (clock_refloat_sats, retro_flag_sats, n_arc_refloat_epoch), which RAIM and clock QC extend (card NOM3 step EP1).
+    NetworkPostFitHandoff                            handoff;   ///< The post-fit hand-off (clock_refloat_sats, retro_flag_sats, n_arc_refloat_epoch), which RAIM and clock QC extend.
     bool                                             retro_feed{false};
     int                                              n_adapt{0};
     double                                           sigma0_adapt{0.0};
@@ -126,7 +126,7 @@ struct NetworkSolveGlueResult {
     bool                                             we_t2_opp{false};
     bool                                             we_t2_flag{false};
     EpochAction                                      action{EpochAction::Proceed};
-    /// The landed within-epoch replay's culprits (card FCF), copied from the epoch
+    /// The landed within-epoch replay's culprits, copied from the epoch
     /// workspace's culprit sets (@ref EpochWorkspace::we_culprits) before the T2 block clears
     /// them; empty without a replay.  Read by the fixed-cycle ledger only (its evidence,
     /// networkArLatticeEvidence).
@@ -144,13 +144,13 @@ struct SolveDatum {
 struct WithinEpochOutcome {
     int       n_adapt{0};             ///< Re-solves that landed.
     double    sigma0_adapt{0.0};      ///< The final within-epoch sigma0; 0 when the tier did not assess (A4).
-    long long prm_free_landed{0};     ///< The landed replay's withheld carried priors (card PRM), counted on a kept epoch.
+    long long prm_free_landed{0};     ///< The landed replay's withheld carried priors, counted on a kept epoch.
     bool      era_live{false};        ///< The previous loop epoch was an A4-withheld decision (the era continues).
     bool      escalated{false};       ///< The withhold-era budget escalation was in effect this epoch.
     std::map<char, std::vector<double>> sigma0_pool_c;  ///< The last assessment's rows per constellation (the carve-out; permuted by stage 14).
     bool      t2_opp{false};          ///< The B8/T2 flag-rate opportunity, committed at the emit site.
     bool      t2_flag{false};         ///< The first-assess sigma0 exceeded the trigger.
-    WithinEpochCulprits landed;       ///< The landed replay's culprits, for the fixed-cycle ledger (card FCF).
+    WithinEpochCulprits landed;       ///< The landed replay's culprits, for the fixed-cycle ledger.
 };
 
 /// The sigma0 ceiling's per-constellation decision (stage 14), applied by NetworkSolPrep.
@@ -161,7 +161,7 @@ struct Sigma0CeilingDecision {
     std::map<char, NetworkEstimator::PerConstSigma0> stats; ///< sigma0_c and rows, for the log and the events.
 };
 
-/// The five ways the solve ends an epoch early (card NOM3 step SG).  Enumerators in the order
+/// The five ways the solve ends an epoch early.  Enumerators in the order
 /// the stages can reach them; kSolveSkips has one row per enumerator, in this order.
 enum class SolveSkip : std::uint8_t { DatumFailed, GateWithheld, SolveFailed, WeRestoreFailed, Sigma0Withheld };
 
@@ -254,7 +254,7 @@ void networkPostGatePriors(NetworkRun& run, const NetworkEpoch& ep, const SolveD
                            bool clk_model_warm, EpochWorkspace& ws, EpochEvents& events);
 
 /**
- * @brief Stage 11: the shared solve and the card-1d checksum.
+ * @brief Stage 11: the shared solve and the coupling checksum.
  * @param run   The run: the estimator solves; n_cpl_solve_dump is written.
  * @param ep    The epoch, read: se.
  * @param datum The clock datum (read: plan).
@@ -268,9 +268,9 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
  * @brief The datum build, the solve and the within-epoch RAIM adaptation of this epoch.
  * @see the file banner for the EpochAction and result-struct contract.  The within-epoch
  *      tier's arming and the resolved clock anchor sigma are read from @c ctx.knobs
- *      (within_epoch_armed, clk_anchor_sigma; card NOM3 step EP0).
+ *      (within_epoch_armed, clk_anchor_sigma).
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -288,7 +288,7 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
  *           ep.assembly.total_pins (total_pins), ep.clock.carry_warm (carry_warm), ep.clock.dt
  *           (dt), ep.clock.pl_now_s (pl_now_s).
  * @param ws [in/out] The capture channel the replay re-folds, the clock maps, and the
- *     within-epoch culprit sets the T2 block adapts and clears (card WCF).
+ *     within-epoch culprit sets the T2 block adapts and clears.
  * @param est_index_of [in/out] ep.assembly.est_index_of, rebuilt by each replay.
  * @param dd_build [in/out] ep.dd_build, rewritten by each replay's DD rebuild.
  *

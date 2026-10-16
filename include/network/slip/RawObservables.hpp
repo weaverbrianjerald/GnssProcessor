@@ -3,16 +3,16 @@
  * @file RawObservables.hpp
  * @brief Shared per-epoch raw cycle-slip observables (Melbourne-Wübbena,
  *        geometry-free, phase-minus-code, RINEX LLI) for the network run loop,
- *        and the empirical qualification pass whose verdicts cards L (LLI
- *        corroboration) and G (gap-coincident instrumentation) decide on.
+ *        and the empirical qualification pass whose verdicts the LLI
+ *        corroboration and the gap-coincident instrumentation decide on.
  *
  * ## Why this seam exists
  *
  * The raw MW/GF arithmetic has one definition, computed here once per epoch
  * whenever any consumer needs it.  The consumers are the `network.trace_slip_raw`
- * writer (`ApplicationNetworkAssembly.cpp`) and the decision cards that use the
+ * writer (`ApplicationNetworkAssembly.cpp`) and the decision instruments that use the
  * raw step as evidence rather than as a trace, among them the LLI-corroboration
- * gate (card L) and the arc-resumption instrument (card G);
+ * gate and the arc-resumption instrument;
  * @ref SlipQcParams::anyConsumer lists them all.  Computed inside the trace
  * writer, the numbers would be unavailable to every decision path and absent
  * whenever the trace is off; a copy in each drain would give several independent
@@ -41,7 +41,7 @@
 #include "common/GnssIdentity.hpp"       // LosId (RawSlipEpoch::gf_jump_flagged)
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
-#include "network/slip/GfArcJump.hpp"   // GfArcJumpParams / GfArcJumpArc / GfArcJumpCounters (card ARL)
+#include "network/slip/GfArcJump.hpp"   // GfArcJumpParams / GfArcJumpArc / GfArcJumpCounters
 
 #include <functional>
 #include <map>
@@ -55,12 +55,12 @@ namespace GnssProcessor {
 
 /**
  * @brief The phase signal that station @p station latched on a (system, band digit)
- *        cell, as @c PppModel::latchedCanonicalPhaseOnBandDigit returns it (card GRK).
+ *        cell, as @c PppModel::latchedCanonicalPhaseOnBandDigit returns it.
  *
  * The latch lives on each station's own @c PppModel and is locked for the run, so a
  * callable is used instead of a copied table: the call site binds one lambda over
  * the station vector, and the compute pass has no dependency on the model.  Under
- * @c network.roster_tracker (card SID phase 2) the call site binds the signal
+ * @c network.roster_tracker the call site binds the signal
  * roster's modelled phase instead, falling back to the station's latch where the
  * roster has no answer.  An empty return means the lookup does not know the cell:
  * the tracker then keeps its lexical pick, and the mismatch counter has no cell to
@@ -70,7 +70,7 @@ using TrackerLatchLookup =
     std::function<std::string(int station, const std::string& system, char band_digit)>;
 
 /**
- * @brief One phase signal of a (station, satellite) at one epoch (card GRS).
+ * @brief One phase signal of a (station, satellite) at one epoch.
  *
  * @ref RawSlipObs below summarizes a satellite through the two signals of its
  * primary pair and records nothing about the others.  The per-signal re-entry tier
@@ -121,7 +121,7 @@ struct RawSlipObs {
     int    lli1{0};               ///< RINEX LLI byte for sig1 (bit 0 = loss of lock).
     int    lli2{0};               ///< RINEX LLI byte for sig2 (0 when !dual).
     /// Every phase signal with a matching code and a resolvable wavelength, in the
-    /// lowest-band-first order the pair is picked from (card GRS).  Empty unless
+    /// lowest-band-first order the pair is picked from.  Empty unless
     /// @c SlipQcParams::gap_reentry_per_signal is armed.
     std::vector<RawSigObs> sigs;
 };
@@ -184,7 +184,7 @@ bool networkIonoCsUpdate(IonoCsState& cs, double i_code_m, double di_carrier_m,
  *
  * Produced by @ref networkQualifyRawObservables against the immediately adjacent
  * previous processed epoch.  @ref measured is false when there is no adjacent
- * predecessor (first sighting, or a gap, which card G reports separately as a
+ * predecessor (first sighting, or a gap, which is reported separately as a
  * @ref GapResumption) or when either row is single-band.  The step is then
  * unmeasurable and @ref stepped is false: an unmeasured step is evidence neither
  * of a slip nor of its absence.
@@ -201,14 +201,14 @@ struct RawSlipVerdict {
     /// The adjacent predecessor used a different (sig1, sig2) pair, so @ref d_mw
     /// differences two MW combinations built on different signals (and, when a
     /// band changed, on different wide-lane wavelengths).  @ref measured stays
-    /// true: the step exists, and the slip cards use it.  A consumer that converts
+    /// true: the step exists, and the slip decision instruments use it.  A consumer that converts
     /// @ref d_mw into cycles of a specific lane must refuse the row, because the
     /// step was not formed on that lane.
     bool   pair_changed{false};
 };
 
 /**
- * @brief One arc that reappeared after at least one missed processed epoch (card G).
+ * @brief One arc that reappeared after at least one missed processed epoch.
  *
  * Missed epochs are counted in processed epochs (the run's own loop index), so a
  * decimated or start-offset run reports gaps in the units its estimator sees.
@@ -241,7 +241,7 @@ struct GapResumption {
 
 /**
  * @brief One signal that reappeared after at least one missed processed epoch
- *        while its satellite's raw row survived the break (card GRS).
+ *        while its satellite's raw row survived the break.
  *
  * The satellite-level @ref GapResumption cannot see this population: it keys on
  * the row, the row is rebuilt from whichever phases have a matching code, and a
@@ -296,7 +296,7 @@ struct RawSlipHistory {
     std::map<std::string, Prev> prev;   ///< Previous raw row per satellite.
 
     /**
-     * @brief One signal's continuity record, per (satellite, signal) (card GRS).
+     * @brief One signal's continuity record, per (satellite, signal).
      *
      * Each field answers one question of the test:
      *  - @ref last_epoch: did this signal miss an epoch?  The row's own adjacency
@@ -318,24 +318,24 @@ struct RawSlipHistory {
         std::map<std::string, double> gf_snap;
     };
     /// satellite → signal → continuity record.  Filled only when
-    /// @c SlipQcParams::gap_reentry_per_signal and a row-level card (gap_instrument
+    /// @c SlipQcParams::gap_reentry_per_signal and a row-level instrument (gap_instrument
     /// or gap_reentry) are armed; empty and untouched otherwise.
     std::map<std::string, std::map<std::string, SigPrev>> sig_prev;
 
-    // --- Two-state LLI credibility (card L); neither state ignores LLI (see M1/M2) ---
+    // --- Two-state LLI credibility; neither state ignores LLI (see M1/M2) ---
     double    lli_frac_ewma{0.0};   ///< EWMA of the fraction of this station's tracked satellites asserting LLI.
     long      lli_frac_count{0};    ///< Epochs folded into the EWMA (hysteresis arming gate).
     bool      lli_credible{true};   ///< Two-state verdict: true ⇒ an uncorroborated LLI still acts.
     long long lli_demotions{0};     ///< credible → corroboration-required transitions over the run.
     long long lli_promotions{0};    ///< corroboration-required → credible transitions over the run.
 
-    // --- Robust EWMA scales of this station's own raw steps, in metres (cards L, G) ---
+    // --- Robust EWMA scales of this station's own raw steps, in metres ---
     double mw_step_scale{0.0};      ///< EWMA of 1.4826·median(|ΔMW|) over clean satellites.
     long   mw_step_count{0};        ///< Clean samples folded (0 ⇒ use this epoch's own robust median).
     double gf_step_scale{0.0};      ///< EWMA of 1.4826·median(|ΔGF|) over clean satellites.
     long   gf_step_count{0};        ///< Clean samples folded.
 
-    // --- Per-station LLI accounting for the top-offenders line (cards L, M4) ---
+    // --- Per-station LLI accounting for the top-offenders line ---
     long long lli_asserted{0};      ///< (satellite, epoch) LLI assertions seen.
     long long lli_acted{0};         ///< Assertions that drove a refloat / C3c funnel insert.
     long long lli_suppressed{0};    ///< Assertions suppressed as uncorroborated at a non-credible station.
@@ -344,7 +344,7 @@ struct RawSlipHistory {
     long long lli_unmeasurable{0};  ///< Assertions with no measurable step (first sighting / gap / single-band).
     long long lli_offpair{0};       ///< Assertions whose LLI'd band sits outside the primary pair (unwitnessable by MW/GF).
 
-    // --- Arc-scoped GF jump trigger (card ARL; network.cycle_slip.gf_arc_jump) ---
+    // --- Arc-scoped GF jump trigger (network.cycle_slip.gf_arc_jump) ---
     /// satellite → that arc's state.  Mutated only by @c networkSlipDrainGfArcJump;
     /// empty and untouched while the trigger is off.
     std::map<std::string, GfArcJumpArc> gf_arcs;
@@ -363,25 +363,25 @@ struct RawSlipEpoch {
     std::vector<std::vector<RawSlipObs>> rows;
     /// Per station, satellite → this epoch's step adjudication.
     std::vector<std::map<std::string, RawSlipVerdict>> verdict;
-    /// Per station, the card L credibility verdict used for this epoch's decisions;
+    /// Per station, the credibility verdict used for this epoch's decisions;
     /// 1 = credible.  char rather than bool to avoid std::vector<bool>.
     std::vector<char> lli_credible;
     /// Per station, this epoch's raw LLI-set fraction (telemetry / log only).
     std::vector<double> lli_frac;
-    /// Arcs that reappeared after ≥ 1 missed processed epoch (card G).
+    /// Arcs that reappeared after ≥ 1 missed processed epoch.
     std::vector<GapResumption> resumptions;
     /// Signals that reappeared after ≥ 1 missed processed epoch on a satellite
-    /// whose row survived the break (card GRS).  Disjoint from @ref resumptions by
+    /// whose row survived the break.  Disjoint from @ref resumptions by
     /// construction: a satellite that produced a row-level resumption this epoch
     /// contributes nothing here, so no break is counted twice.
     std::vector<SigResumption> sig_resumptions;
     /// (station index, satellite) pairs whose raw level stepped this epoch: the
-    /// cheap membership test the D5 attribution site needs (card G1c).
+    /// cheap membership test the D5 attribution site needs.
     std::set<std::pair<int, std::string>> stepped;
     /// The lines of sight the arc GF jump trigger flagged this epoch, whatever its
     /// action (refloat, coincident, cb_kept, no_arc, diagnostic, pivot).  Filled by
     /// @c networkSlipDrainGfArcJump; read by the producer AR search's suspect-corner
-    /// stamp (card ARL, network/ar/ArSuspect.hpp).  Empty while the trigger is off.
+    /// stamp (network/ar/ArSuspect.hpp).  Empty while the trigger is off.
     std::set<LosId> gf_jump_flagged;
     /// True once @ref networkComputeRawObservables has run this epoch (the
     /// consumers' "is there evidence at all" guard).
@@ -402,17 +402,17 @@ struct RawSlipEpoch {
 };
 
 /**
- * @brief Snapshot of the slip-QC knobs (cards L and G and the later cards that
+ * @brief Snapshot of the slip-QC knobs (the LLI and gap responses and the later mechanisms that
  *        consume the raw observables), taken once per run.
  *
  * All defaults are inert.  Every master arm defaults off, and the two sub-gates
  * that default on (@ref gap_reentry_lli, @ref gap_reentry_per_signal_unmeasurable)
  * act only under their master arm.  The qualification pass is cheap and runs only
- * when a decision card is armed (@ref SlipQcChannel::cardsArmed); with every card
+ * when a decision instrument is armed (@ref SlipQcChannel::cardsArmed); with every instrument
  * off, nothing is adjudicated.
  */
 struct SlipQcParams {
-    // --- LLI corroboration (card L; network.cycle_slip.mw_lli_*) ---
+    // --- LLI corroboration (network.cycle_slip.mw_lli_*) ---
     bool   lli_corroborate{false};  ///< Master arm for the LLI qualification.
     double chatter_frac_hi{0.6};    ///< LLI-set fraction EWMA above which a station is demoted.
     double chatter_frac_lo{0.3};    ///< …and below which it is promoted back (hysteresis).
@@ -424,12 +424,12 @@ struct SlipQcParams {
     double gf_floor_m{0.04};        ///< Physical GF floor in metres (audit's support test).
     double step_alpha{0.15};        ///< EWMA weight for the per-station step scales.
 
-    // --- Arc-resumption instrument (card G; network.cycle_slip.gap_instrument) ---
+    // --- Arc-resumption instrument (network.cycle_slip.gap_instrument) ---
     bool   gap_instrument{false};   ///< Master arm for the arc-resumption instrument.
 
-    // --- Gap re-entry response (card G; network.cycle_slip.gap_reentry_relevel) ---
+    // --- Gap re-entry response (network.cycle_slip.gap_reentry_relevel) ---
     /// Master arm for the gap re-entry slip response
-    /// (docs/SPEC_slip_qc_hardening §G3/W1, §12).  Card G's decision rule calls
+    /// (docs/SPEC_slip_qc_hardening §G3/W1, §12).  The gap-instrument decision rule calls
     /// for this response once `gap_shifted_bridged` is nonzero.
     ///
     /// The instrument and the response consume the same @ref GapResumption
@@ -461,13 +461,13 @@ struct SlipQcParams {
     /// list), and by the epoch driver's arc-resumption bridge census.
     bool collectsResumptions() const { return gap_instrument || gap_reentry; }
 
-    // --- Per-signal gap re-entry (card GRS; network.cycle_slip.gap_reentry_per_signal) ---
+    // --- Per-signal gap re-entry (network.cycle_slip.gap_reentry_per_signal) ---
     /// Rider of @ref gap_reentry: key the re-entry on the signal as well as on the
     /// row, so a loss of lock on the primary pair during which a third signal keeps
     /// the satellite present is still a re-entry.  Off by default; with it off, the
     /// run is byte-identical.  The per-signal response acts only with
     /// @ref gap_reentry armed (the loader warns otherwise), and the per-signal
-    /// collection needs a row-level card (@ref gap_reentry or @ref gap_instrument):
+    /// collection needs a row-level instrument (@ref gap_reentry or @ref gap_instrument):
     /// it de-duplicates against the row-level resumption list, and without that
     /// list one break would be counted by both tiers.
     bool   gap_reentry_per_signal{false};
@@ -496,7 +496,7 @@ struct SlipQcParams {
         return gap_reentry_coresumed_share && gap_reentry && gap_reentry_per_signal;
     }
 
-    // --- Latched tracker signal (card GRK; network.cycle_slip.tracker_modeled_first) ---
+    // --- Latched tracker signal (network.cycle_slip.tracker_modeled_first) ---
     /// Choose the arc-level tracker's signal on each band from the station's
     /// canonical phase latch (@ref TrackerLatchLookup) instead of lexically from
     /// @c raw_observed.  A band keeps the lexical pick when the latch has no entry
@@ -504,11 +504,11 @@ struct SlipQcParams {
     /// this epoch.  Off by default; with it off, the pair, the trace rows and every
     /// detection are byte-identical.  Armed, the tracker's key matches the carried
     /// ambiguity key, so the gap re-entry response reaches the arc instead of
-    /// counting @c gap_reentry_no_carry.  The per-signal tier (card GRS) is
+    /// counting @c gap_reentry_no_carry.  The per-signal tier is
     /// unaffected, since it keys on the signal.
     bool   tracker_modeled_first{false};
 
-    // --- Ledger-driven re-entry (card SID phase 3; network.ledger_reentry) ---
+    // --- Ledger-driven re-entry (network.ledger_reentry) ---
     /// The gap re-entry response takes its population from the arc ledger's
     /// admitted lifecycle instead of from this tier's own resumption list, and
     /// looks up this tier's verdict per arc.  Off by default; with it off, both
@@ -536,7 +536,7 @@ struct SlipQcParams {
     /// it arms both passes too.
     bool   iono_cs{false};
 
-    /// The arc-scoped GF jump trigger (card ARL; @c network.cycle_slip.gf_arc_jump*).
+    /// The arc-scoped GF jump trigger (@c network.cycle_slip.gf_arc_jump*).
     /// It reads the raw rows only (its own per-arc state forms the steps), so it arms
     /// @ref anyConsumer and not @ref SlipQcChannel::cardsArmed.
     GfArcJumpParams gf_jump;
@@ -564,7 +564,7 @@ struct IfTdPairTally {
     long long flagged{0};    ///< …of those, flagged by the pooled test.
     long long refloated{0};  ///< …of those, whose refloat actually freed ≥1 ambiguity (warm carry, not vetoed by the common-band scope, not oracle-handled).
 
-    // --- Post-flag re-seed (card ARL; network.cycle_slip.if_phase_td_reseed_on_flag) ---
+    // --- Post-flag re-seed (network.cycle_slip.if_phase_td_reseed_on_flag) ---
     // All zero while the knob is off.
     long long reseeded{0};             ///< Flags whose gradient was kept for the next epoch.
     long long reseed_nothing_kept{0};  ///< Flags with no flag-epoch gradient to keep (acted as a reset).
@@ -580,7 +580,7 @@ using IfTdPairTallies = std::map<std::string, IfTdPairTally>;
  *        of invariant #7).
  *
  * The row-level tier keeps its flat fields in @ref SlipQcCounters (the run-end
- * card G line and the unit suite name them); the per-signal tier (card GRS) uses
+ * gap-response line and the unit suite name them); the per-signal tier uses
  * this struct, so the two tiers are read side by side with the same partition.
  * The same code path fills both: @c networkSlipDrainGapReentry hands one of these
  * to the shared per-arc responder.  Closure, in arcs:
@@ -665,28 +665,28 @@ struct CoresumedShareLedger {
 };
 
 /**
- * @brief Run-end counters for the slip-QC hardening cards (standing invariant
+ * @brief Run-end counters for the slip-QC hardening instruments (standing invariant
  *        #4: inert wiring is visible only through counters).
  *
- * Card E counts detections separately from refloats: a cold run detects and does
+ * Detections are counted separately from refloats: a cold run detects and does
  * not refloat, and a count of refloats alone makes the MW/LLI arm look dead
- * (defect L3, fixed by card E).
+ * (defect L3).
  */
 struct SlipQcCounters {
-    // --- MW-detect and LLI detections against actions (card E) ---
+    // --- MW-detect and LLI detections against actions ---
     long long mw_detections{0};     ///< (station, satellite) wide-lane slip detections.
     long long mw_refloats{0};       ///< …of those, warm epochs that actually refloated.
-    long long lli_detections{0};    ///< (station, satellite) LLI detections that acted (after the card L qualification).
+    long long lli_detections{0};    ///< (station, satellite) LLI detections that acted (after the credibility qualification).
     long long lli_refloats{0};      ///< …of those, warm epochs that actually refloated.
 
     // --- Datum-station slip detect (network.cycle_slip.datum_station_detect) ---
-    // Kept separate from the card E populations above: those count non-pivot
+    // Kept separate from the populations above: those count non-pivot
     // detections, whose action is a local refloat; these count the gauge-pinned
     // datum station, whose action is a network re-reference.
     long long datum_slip_detections{0}; ///< (datum station, satellite) MW/LLI slip detections (queue edge).
     long long datum_slip_rerefs{0};     ///< …network re-references applied (pb reseed + all-station amb reseed + disc mark).
 
-    // --- LLI qualification (card L) ---
+    // --- LLI qualification ---
     long long lli_asserted{0};      ///< Raw (station, satellite) LLI assertions seen.
     long long lli_suppressed{0};    ///< Suppressed: uncorroborated at a non-credible station.
     long long lli_corr_mw{0};       ///< Corroborated by an MW step.
@@ -700,7 +700,7 @@ struct SlipQcCounters {
     long long lli_credible_epochs{0};   ///< (station, epoch) pairs judged credible.
     long long lli_demoted_epochs{0};    ///< (station, epoch) pairs judged corroboration-required.
 
-    // --- Arc resumptions across a tracking break (card G) ---
+    // --- Arc resumptions across a tracking break ---
     //
     // Units (spec-followups N3/H2, docs/SPEC_slip_qc_hardening.md §9).  The two
     // units are not interchangeable, and the summary line keeps them apart:
@@ -731,7 +731,7 @@ struct SlipQcCounters {
     long long gap_unmeas_bridged{0};
     long long gap_unmeas_fresh{0};      ///< Arcs of an unmeasurable resumption that re-entered fresh (the safe case; closes the arc ledger).
 
-    // --- Gap re-entry response (card G; network.cycle_slip.gap_reentry_relevel) ---
+    // --- Gap re-entry response (network.cycle_slip.gap_reentry_relevel) ---
     //
     // Invariant #7, both edges.  The decoupling edge is the re-entry itself,
     // counted by the three resumption counters above; the counters below count the
@@ -769,7 +769,7 @@ struct SlipQcCounters {
     /// Outside the closure: nothing was going to be bridged, so there is no
     /// response to make and none to report as missing.
     long long gap_reentry_no_carry{0};
-    /// The key-mismatch part of @ref gap_reentry_no_carry (card GRK).  Row-level
+    /// The key-mismatch part of @ref gap_reentry_no_carry.  Row-level
     /// re-entry arcs (the unit of @c networkSlipDrainGapReentry) that found no carry
     /// under the tracker's band signal while a @c LocalCarry entry for the same
     /// (station, satellite) existed on another signal of the same band, still
@@ -784,7 +784,7 @@ struct SlipQcCounters {
     ///    that reports C1C, C1L, L1L, C2L, L2L, C5Q and L5Q but no L1C, L2W or C2W
     ///    has the tracker fall back, correctly, to L1L / L2L, and the carried arcs
     ///    have no row at all;
-    ///  - only the row-level tier feeds it.  The per-signal tier (card GRS) keys on
+    ///  - only the row-level tier feeds it.  The per-signal tier keys on
     ///    the returning signal, so a key mismatch cannot occur there; without the
     ///    exclusion, a per-signal return on a signal the station does not model
     ///    would be scored against the modelled same-band carry that tracked through
@@ -796,7 +796,7 @@ struct SlipQcCounters {
     /// same band, inside the window) rather than reading a silent zero.
     long long gap_reentry_unreachable{0};
     /// Extra-channel arcs the row-level gap re-entry tier responded to beyond the
-    /// tracker's one phase per band, summed over the run (card SID phase 6b, R3).
+    /// tracker's one phase per band, summed over the run.
     /// The tier keys on the satellite and frees the tracker's two signals; under
     /// `processing.channel_mode: all` the station also carries every other admitted
     /// phase attribute of those bands, and a whole-row gap interrupts them too.  The
@@ -805,7 +805,7 @@ struct SlipQcCounters {
     /// never fired.  Structurally 0 on every one-channel-per-band posture, where the
     /// extra set is empty.
     long long gap_reentry_extra_channel{0};
-    /// The decoupling half of the key mismatch (card GRK): (station, satellite,
+    /// The decoupling half of the key mismatch: (station, satellite,
     /// epoch, band) cells at which the arc-level tracker's chosen signal differs
     /// from the phase this station latched on that band, counted only where the
     /// latch names a signal that is also tracked with its matching code this epoch.
@@ -827,7 +827,7 @@ struct SlipQcCounters {
     /// Arcs not freed because the leveling carry is cold (no warm value to be
     /// stale).  A diagnostic, reported the same way as by the MW/LLI and wind-up
     /// drains: a cold detection cannot act, and a count of actions alone makes
-    /// those arms look dead (defect L3, card E).
+    /// those arms look dead (defect L3).
     long long gap_reentry_cold_skipped{0};
     /// Arcs that would have been freed but @c cycle_slip.relevel_free_epoch is
     /// off: the pending-reseed mark is then consumed by the PASS-B pre-pass before
@@ -836,16 +836,16 @@ struct SlipQcCounters {
     /// silently, so "the response found nothing" and "the response could not act"
     /// stay distinguishable.
     long long gap_reentry_no_relevel{0};
-    /// Arcs whose only vehicle is the Card-4 C3c funnel: under
+    /// Arcs whose only vehicle is the invariant-carry C3c funnel: under
     /// @c network.carry_invariant the leveling local carry is superseded and
     /// structurally empty (which is why the loader disarms @c relevel_free_epoch
     /// there), so the funnel insert is the whole response and nothing is missing.
     /// Kept separate from @ref gap_reentry_no_relevel: this case is by design, the
     /// other is a response that could not land.
     long long gap_reentry_dd_only{0};
-    long long gap_reentry_dd_marked{0};     ///< Ambiguities inserted into the Card-4 C3c invariant-carry funnel (carry_invariant vehicle; orthogonal to the buckets above).
+    long long gap_reentry_dd_marked{0};     ///< Ambiguities inserted into the C3c invariant-carry funnel (carry_invariant vehicle; orthogonal to the buckets above).
 
-    // --- Per-signal re-entry tier (card GRS) ---------------------------------
+    // --- Per-signal re-entry tier ---------------------------------
     //
     // The decoupling edge (invariant #7): the first three counters below count
     // per-(station, satellite, signal) re-entries that the row-level tier cannot
@@ -871,7 +871,7 @@ struct SlipQcCounters {
     /// @ref CoresumedShareLedger for the closure).
     CoresumedShareLedger gap_sig_share;
 
-    // --- Ledger-driven re-entry population (card SID phase 3) -----------------
+    // --- Ledger-driven re-entry population -----------------
     //
     // Every counter here is zero unless @c SlipQcParams::ledger_reentry is armed,
     // and each is stated against a denominator so a zero can be read (standing
@@ -908,8 +908,8 @@ struct SlipQcCounters {
     long long ledger_reentry_state_recreated{0}; ///< Arcs whose ambiguity column had been pruned inside the gap they return from.
     long long ledger_reentry_events{0};       ///< `ARC` / `arc_reentry` event rows written for the no-verdict population (holdoff-throttled).
     /// The no-verdict population of @ref ledger_reentry_no_verdict, split by the
-    /// reason mask of the admitted gap that preceded the return (card SID phase 4a,
-    /// S1).  One entry per reason bit index (@c arcReasonIndex);
+    /// reason mask of the admitted gap that preceded the return.
+    /// One entry per reason bit index (@c arcReasonIndex);
     /// @ref ledger_reentry_nv_no_mask counts the returns whose gap carries no mask
     /// (the gap opened before the writers were armed, or the fold did not run for
     /// it).  Zero unless network.ledger_screens is armed.  This split is the
@@ -948,12 +948,12 @@ struct SlipQcCounters {
     //          + wu_restart_cold + wu_restart_beyond_carry + wu_restart_stale.
     long long wu_restart_events{0};        ///< (station, sat) restart ledger entries drained.
     long long wu_restart_refloated{0};     ///< ...responded: at least one arc marked + free-epoch latched (carry warm, gap within the carry horizon).
-    long long wu_restart_no_arc{0};        ///< ...warm and inside the carry horizon with nothing to free: no live column and no carry entry in the horizon (card WUP; before it these were counted as responded).
+    long long wu_restart_no_arc{0};        ///< ...warm and inside the carry horizon with nothing to free: no live column and no carry entry in the horizon (before it these were counted as responded).
     long long wu_restart_cold{0};          ///< ...carry not warm: diagnostic only (nothing stale to refloat yet).
     long long wu_restart_beyond_carry{0};  ///< ...gap exceeded the carry horizon: the carry ended with the gap, so no response is needed.
     long long wu_restart_stale{0};         ///< ...ledger entry from an earlier epoch (the station was absent at its restart): refused, since a response must not act on history.
     long long wu_restart_arcs{0};          ///< individual ambiguities refloated across all responses.
-    long long wu_restart_carry_arcs{0};    ///< ...of those, arcs reached through the leveling carry (a re-entering arc with no live column; card WUP).
+    long long wu_restart_carry_arcs{0};    ///< ...of those, arcs reached through the leveling carry (a re-entering arc with no live column).
     long long relevel_free_skips{0};       ///< Inject-site skips actually taken (arc had a live carry).
     /// Leveling-carry entries erased by the datum-slip re-reference inside the MW
     /// refloat drain: the frame moved under the arc, so the carried value is stale
@@ -981,7 +981,7 @@ struct SlipQcCounters {
     long long bridge_gf_applied{0};           ///< Applies whose (1,2) plane came from the E1+E4 float route.
     long long bridge_plane_reject{0};         ///< E2-route kernel rejects tripped by the E4 plane residual (wrong WL integer screen).
 
-    // --- Arc-scoped GF jump trigger (card ARL; network.cycle_slip.gf_arc_jump) ---
+    // --- Arc-scoped GF jump trigger (network.cycle_slip.gf_arc_jump) ---
     GfArcJumpCounters gf_jump;                ///< Tests, flags and the flag closure (networkGfArcJumpRunEnd).
 };
 
@@ -1003,13 +1003,13 @@ struct SlipQcChannel {
     RawSlipEpoch                epoch;     ///< This epoch's evidence (reset every epoch).
     SlipQcCounters              counters;  ///< Run-end telemetry (invariant #4).
     /// Wavelength provider for the raw observables.  Null when no consumer asked
-    /// for them this run; nothing is then computed and every card is inert.
+    /// for them this run; nothing is then computed and every instrument is inert.
     std::unique_ptr<PppUtils>   utils;
     long long                   epoch_idx{0};  ///< Monotonic processed-epoch index.
 
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
-    /// True when a decision card (not only the trace) is armed.
+    /// True when a decision instrument (not only the trace) is armed.
     bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.gap_reentry || params.gap_reentry_per_signal; }
 };
 
@@ -1033,14 +1033,14 @@ struct SlipQcChannel {
  *                     appended to `out.rows[i]` in `modeled[i]` order, and
  *                     `out.computed` is set.
  * @param per_signal   Also fill @ref RawSlipObs::sigs with every phase signal that
- *                     has a matching code and a resolvable wavelength (card GRS).
- *                     Default false: the row is byte-identical to the pre-card one
+ *                     has a matching code and a resolvable wavelength.
+ *                     Default false: the row is byte-identical to the previous one
  *                     and nothing extra is allocated.
  * @param tracker_modeled_first
  *                     Take each band's signal from the lookup @p latch when that
  *                     signal also has a raw phase and a matching raw code this
  *                     epoch, and otherwise apply the lexical rule on that band
- *                     (card GRK, @c network.cycle_slip.tracker_modeled_first; the
+ *                     (@c network.cycle_slip.tracker_modeled_first; the
  *                     call site also sets it under @c network.roster_tracker).  The
  *                     two bands of the pair are the two lowest distinct bands
  *                     either way.  Default false: the lexical rule alone,
@@ -1050,8 +1050,8 @@ struct SlipQcChannel {
  *                     accumulated in both states of @p tracker_modeled_first, one
  *                     per (station, satellite, epoch, band) cell whose tracker
  *                     signal differs from the latched one.  Default null, so every
- *                     pre-card caller compiles unchanged.
- * @param latch        The per-station canonical phase lookup (card GRK; see
+ *                     existing caller compiles unchanged.
+ * @param latch        The per-station canonical phase lookup (see
  *                     @ref TrackerLatchLookup).  Null (the default) leaves the
  *                     tracker on the lexical rule and the mismatch counter at 0
  *                     even with the knob armed, so an off run whose counter reads 0
@@ -1070,7 +1070,7 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
 
 /**
  * @brief Adjudicate this epoch's raw steps, update the per-station empirical
- *        scales and the card L credibility state, and collect card G arc
+ *        scales and the credibility state, and collect gap arc
  *        resumptions.  Serial and station-ordered, so deterministic.
  *
  * Does nothing unless `ep.computed` is set.  Order of operations per station (the
@@ -1086,7 +1086,7 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
  *      @ref SlipQcParams::gap_instrument or @ref SlipQcParams::gap_reentry is
  *      armed).
  *   5b. Record non-adjacent reappearances of an individual signal on a satellite
- *      whose row survived, as @ref SigResumption (card GRS; additionally needs
+ *      whose row survived, as @ref SigResumption (additionally needs
  *      @ref SlipQcParams::gap_reentry_per_signal).  A satellite that already
  *      produced a row-level resumption at (5) is skipped, so the two tiers never
  *      count the same break twice.

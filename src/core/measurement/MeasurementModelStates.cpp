@@ -46,7 +46,7 @@ namespace GnssProcessor {
         /// The ambiguity basis is NL/WL (one NL and one WL per non-reference band)
         /// instead of one ambiguity per band.
         bool nlwl{ false };
-        /// Phase-colour states (network.phase_colour_state, card LGM).
+        /// Phase-colour states (network.phase_colour_state).
         bool pc_on{ false };
         /// Between-satellite single differences: ambiguities are seeded relative
         /// to the constellation's pivot.
@@ -58,7 +58,7 @@ namespace GnssProcessor {
         /// The satellites with a code or phase row in uncombined mode, plus the
         /// satellites of the hold-protected keys: the ionosphere keep set.
         std::set<std::string> required_iono_sats;
-        /// Phase-colour states (network.phase_colour_state, card LGM): the
+        /// Phase-colour states (network.phase_colour_state): the
         /// satellites with an uncombined phase observation this epoch, with their
         /// elevation.
         std::map<std::string, double> required_pc_sats;
@@ -124,8 +124,7 @@ namespace GnssProcessor {
         // The prune passes the ambiguity prune sink, which records the removed
         // columns so the arc ledger can state that the column a later re-entry
         // lands on is a fresh one.  The sink is null unless the network producer
-        // armed the recorder, so every other path is unaffected (card SID phase 3,
-        // R3b).
+        // armed the recorder, so every other path is unaffected.
         state_manager_.pruneAmbiguitiesExcept(need.required_ambiguities,
                                               state_manager_.ambiguityPruneSink());
 
@@ -298,7 +297,7 @@ namespace GnssProcessor {
         const bool pc_on = need.pc_on;
         const auto& required_pc_sats = need.required_pc_sats;
 
-        // --- Phase-colour states (network.phase_colour_state; card LGM section 4.1) ---
+        // --- Phase-colour states (network.phase_colour_state) ---
         // One column per satellite with an uncombined phase observation, seeded 0 (the
         // network never writes the solution back, so the linearization point stays 0);
         // the satellite's elevation is recorded for the network's prior law.  Its

@@ -38,11 +38,11 @@
  */
 
 #include "network/solve/Estimator.hpp"
-#include "network/state/Entities.hpp"        // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
+#include "network/state/Entities.hpp"        // net::ArcTable: the arcs' leveling carry
 #include "network/driver/RunTypes.hpp"    // NetStation / PhaseDatumCandidates
 #include "network/solve/AnchorHygiene.hpp"  // AnchorHygiene / NetworkAnchorTallies
-#include "network/solve/PhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule (card EV7 §6)
-#include "network/solve/AnchorReentry.hpp"  // AnchorReentry and the drop memo (card SID phase 4)
+#include "network/solve/PhaseGateDrop.hpp"  // PhaseGateDropEvent and the edge rule
+#include "network/solve/AnchorReentry.hpp"  // AnchorReentry and the drop memo
 
 #include <cstddef>
 #include <map>
@@ -64,7 +64,7 @@ struct PppObservation;
 /// near-null direction the column spans most heavily, and that |component|.  The
 /// caller emits these as @c trace_events rows so every soft-anchored column is
 /// attributable from the trace; the success log line is at debug level, so without
-/// the rows a run that soft-anchors every epoch shows nothing (card PA2).
+/// the rows a run that soft-anchors every epoch shows nothing.
 struct PhaseHealEvent {
     std::string sat;      ///< satellite id
     std::string signal;   ///< signal id
@@ -78,7 +78,7 @@ struct PhaseHealEvent {
  *        one weak column does not withhold the whole epoch.
  *
  * The cutoff is @ref NetworkEstimator::rankGateTol · max(λmax, 1), the same
- * resolved cutoff as the rank gate this function protects (card DG2; it defaults to
+ * resolved cutoff as the rank gate this function protects (it defaults to
  * @ref NetworkEstimator::kNullSpaceTol).  Reading the gate's own value matters: with
  * an armed (deeper) tolerance, the families the calibration moved above the cutoff
  * are weak but real, and soft-anchoring them would put prior information on real
@@ -111,7 +111,7 @@ struct PhaseHealEvent {
  * @param cap_prior_kinds         [out, optional] the capture's kinds
  *                                (ws.cap_prior_kinds): one @c PbHeal per soft anchor
  *                                appended to @p cap_priors, so the two stay in step
- *                                (card NOM step N2b).  @c nullptr (the default) appends
+ *.  @c nullptr (the default) appends
  *                                none, and a replay of that capture is recorded under
  *                                one unnamed kind.
  * @return Number of phase-bias columns soft-anchored (0 when nothing is below the
@@ -172,7 +172,7 @@ void networkBuildPhaseDatumCandidates(
 /// is byte-identical: its existing branches are unchanged and nothing below is
 /// allocated.
 ///
-/// The four items of the card, in the order they act inside one election:
+/// The four items, in the order they act inside one election:
 ///  1. Held basis: a retained incumbent re-pins at the frozen @c basis value instead of
 ///     re-deriving it, so the datum is constant for the whole tenure.
 ///  2. Every handover declared: a new election records @c prev_value / @c prev_station
@@ -209,7 +209,7 @@ struct PhaseHeldBasis {
     /// restored-arc convention (@ref localCarryYoung), so a warm-resume-restored entry
     /// reads mature instead of being refused for min_age epochs after every resume.
     /// An arc with no carry entry is refused as newborn.  Null: no age gate.
-    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
+    const net::ArcTable* carry = nullptr;   ///< The arc table (its @c ArcState::amb).
     // ---- write-back (per call; the driver sums them into the run-end readout) ----
     long long n_held = 0;             ///< families re-pinned at their frozen basis value this epoch.
     /// New basis entries written: every election that did not re-pin a retained
@@ -253,7 +253,7 @@ struct PhaseHeldBasis {
     long long n_depose_unusable = 0;
 };
 
-/// Coverage-gate drop-edge bundle (card EV7 §6, @c network.phase_datum_gate_drop_erase;
+/// Coverage-gate drop-edge bundle (@c network.phase_datum_gate_drop_erase;
 /// the rule itself is @ref networkPhaseGateDropEdges in network/solve/PhaseGateDrop.hpp).
 ///
 /// The driver passes it on every run, armed or not, because requirement F2 asks the
@@ -276,7 +276,7 @@ struct PhaseGateDrop {
  * @brief Cold anchor-fallback inputs (@c network.phase_datum_candidacy_usable,
  *        docs/SPEC_event_harness.md §15): a read-only view shaped like
  *        @ref AnchorHygiene, so an election handed a default instance behaves as it
- *        does without the card.
+ *        does without the anchor hygiene.
  *
  * The election's sweep takes the first coverage-ranked tracker of the key; the
  * continuous branch then looks that successor up in the handover ledger and may
@@ -368,7 +368,7 @@ struct AnchorCandidacyUsable {
  * @param handover          Two-edge continuous handover
  *                          (docs/SPEC_pivot_visibility_gauge_defect.md §5.1).
  *                          @c nullptr (the default) is the election without the
- *                          card: every pin target is 0.0.  When supplied, a
+ *                          anchor hygiene: every pin target is 0.0.  When supplied, a
  *                          handover pins the incoming anchor at its own absolute
  *                          ambiguity estimate from the ledger, which is its value
  *                          in the outgoing frame, so the gauge change is an
@@ -470,8 +470,8 @@ struct AnchorCandidacyUsable {
  *                      the continuous/cold decision and every target computation
  *                      are unchanged; the pass changes only which station reaches
  *                      the continuous branch.
- * @param gate_drop     Coverage-gate drop edge (card EV7 §6,
- *                      @c network.phase_datum_gate_drop_erase), or @c nullptr, which
+ * @param gate_drop     Coverage-gate drop edge
+ *                      (@c network.phase_datum_gate_drop_erase), or @c nullptr, which
  *                      leaves the election unchanged.  When supplied, this epoch's
  *                      coverage-gate drop edges are detected immediately before the
  *                      incumbent swap (the last point at which @p anchor_incumbent
@@ -516,7 +516,7 @@ void networkElectPhaseAnchors(
         const AnchorCandidacyUsable* cand_usable = nullptr,
         PhaseHeldBasis* held = nullptr,
         PhaseGateDrop* gate_drop = nullptr,
-        /// Anchor re-entry (card SID phase 4, S2 / B1): the ledger read at the
+        /// Anchor re-entry: the ledger read at the
         /// first-sighting branch, and the drop-edge memory the restore decides on.
         /// Null (the default) leaves the election byte-identical; with only its
         /// observe half armed it counts and records events and changes nothing else.
@@ -610,7 +610,7 @@ int networkApplyPhaseAnchorCarryReref(
         std::vector<std::pair<std::tuple<int, std::string, std::string>, LocalCarry>>*
             erased_out = nullptr);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
@@ -618,7 +618,7 @@ struct NetworkRunEndView;
  * @brief Run-end report: the phase datum: the held S-basis (RF-2), the prioritized drop and heal,
  *        the anchored-union gate and its drop edge.
  *
- * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
  * beside it in PhaseDatum.cpp, print in this order, each gated on its own knob:
  *   - networkHeldSbasisRunEnd: the held S-basis (RF-2).
  *   - networkDropHealRunEnd: the prioritized-datum drop-and-heal.
@@ -631,9 +631,9 @@ int networkPhaseDatumRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
-// ---- PASS B station steps, declarations (card NOM3 step PB1b; generated by scripts/nom_pb1b_cut.py) ----
+// ---- PASS B station steps, declarations (generated by scripts/nom_pb1b_cut.py) ----
 
-struct StationBuild;                       // network/assembly/StationBuild.hpp (card NOM3 step PB1b)
+struct StationBuild;                       // network/assembly/StationBuild.hpp
 struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 class GnssConfig;
@@ -649,7 +649,7 @@ struct GlobalVtecShConfig;
  * Step `phase_datum_pins` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds:
  * AmbiguityPin, Eq34RpbPin, Eq34RpbRankFloor, Eq34RpbTimeLink. Records: np, pin_audit,
  * pin_seed_targets, pl_rpb, prm_rpb_gap_skip. The frozen text of networkPassB_'s produce loop
- * below its bindings (card NOM3 step PB1b).
+ * below its bindings.
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */
@@ -672,15 +672,15 @@ StationStep networkPhaseDatumPinRows(StationBuild& build);
  * prioritized machinery (no pivot-first, every station carries its arcs,
  * per-(sat,signal) shared set) and diverges only at the election (a spanning-tree
  * chain election) and the pin fold (per-tree-edge ambiguity pins with a target,
- * plus a datum-receiver RPB pin).  (Moved here from runNetwork at card NOM3 step
- * EP1, where it had stayed beside the phase-datum aliases.)
+ * plus a datum-receiver RPB pin).  (Moved here from runNetwork,
+ * where it had stayed beside the phase-datum aliases.)
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkIsGaugePinned_), so the station
+ * A free function (formerly Application::networkIsGaugePinned_), so the station
  * steps in the family files can call it.
  */
 bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_datum_prioritized,
                           size_t i, const std::string& sat, const std::string& signal);
 
-// ---- End of the PASS B station steps, declarations (card NOM3 step PB1b) ----
+// ---- End of the PASS B station steps, declarations ----
 
 } // namespace GnssProcessor

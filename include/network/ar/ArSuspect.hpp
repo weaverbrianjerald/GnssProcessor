@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file ArSuspect.hpp
- * @brief The producer AR search's suspect-corner mask (card ARL, slip-ladder defect 3):
+ * @brief The producer AR search's suspect-corner mask (slip-ladder defect 3):
  *        a run-scope ledger of the (station, satellite) corners whose ambiguity a slip
  *        response or a slip witness touched in the last few epochs, the rule that keeps
  *        every double difference touching such a corner out of the integer search, and
@@ -89,7 +89,7 @@
  */
 
 #include "common/GnssIdentity.hpp"      // LosId, StationId, SatId
-#include "network/state/Entities.hpp"      // net::ArcTable (card NOM step N4f1)
+#include "network/state/Entities.hpp"      // net::ArcTable
 #include "network/driver/RunTypes.hpp"   // LocalCarry, RelevelEpochState
 
 #include <array>

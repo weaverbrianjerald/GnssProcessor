@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file GapResumeCensus.hpp
- * @brief The arc-resumption bridge census of one network epoch (card G; card NOM3 step EP2).
+ * @brief The arc-resumption bridge census of one network epoch.
  *
  * Instrumentation only: nothing it writes changes a decision.  Of the arcs that came back
  * after a tracking break (SlipQcChannel::epoch.resumptions, collected by the PASS-A gap

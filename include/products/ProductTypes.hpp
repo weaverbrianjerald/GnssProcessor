@@ -120,7 +120,7 @@ namespace GnssProcessor {
      *
      * The records are parsed and stored only; nothing consumes them yet.  The
      * estimation rung (pinning receiver DCB states to product values) is a
-     * separate default-off card with its own A/B, gated on the CAS product being
+     * separate default-off change with its own A/B, gated on the CAS product being
      * on disk.
      */
     struct ReceiverBiasData {

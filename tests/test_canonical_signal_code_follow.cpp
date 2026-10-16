@@ -1,7 +1,7 @@
 /**
  * @file test_canonical_signal_code_follow.cpp
  * @brief Contract tests for `processing.canonical_signal_code_follows_phase`
- *        (card CSL section 7, the code half of the priority rule).
+ *        (the code half of the priority rule).
  *
  * Under @c CanonicalSignalRule::Priority the CSL-1 rule moves each band's code
  * pick onto the tracking attribute its phase latched.  On the multi-site census,
@@ -102,7 +102,7 @@ TEST(CanonicalSignalCodeFollow, FalseKeepsTheCodeOnItsOwnPriorityPick) {
 
 TEST(CanonicalSignalCodeFollow, ThePhaseLatchIsIdenticalUnderBothValues) {
     // The knob acts on the code half only: the band-1 phase attribute (the lever
-    // card CSL graded) does not move with it.
+    // that the canonical signal latch graded) does not move with it.
     for (const auto& v : { band1(9, 10, 9, 10), band1(2, 10, 2, 10),
                            band1(-1, 10, 10, 10), band1(10, 10, -1, 10) }) {
         const auto on  = decide(v, CanonicalSignalRule::Priority, 0.5, true);

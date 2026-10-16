@@ -8,7 +8,7 @@
  * the epoch-loop wall once, builds the @ref NetworkRunEndView every report reads, calls each
  * row of @ref kNetworkRunEndReports in order (network/runend/RunEnd.hpp: the table, how to
  * add a report, the order constraints), and returns the exit code.  Each report lives in the
- * file of the subsystem it reports (card NOM step TD1b); a new run-end line goes in its
+ * file of the subsystem it reports; a new run-end line goes in its
  * subsystem's report, and a new report is one row of the table.
  *
  * Owns no state.  Apart from the trace and product finalization (the first row closes the

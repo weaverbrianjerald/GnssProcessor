@@ -1,9 +1,9 @@
 /**
  * @file test_galileo_network.cpp
- * @brief Card GAL: GPS and Galileo dual frequency on the network path
+ * @brief GPS and Galileo dual frequency on the network path
  *        (docs/refound/GAL_gps_galileo_dual_2026-09-22.md).
  *
- * What the card builds and these cases pin:
+ * What the Galileo network path builds and these cases pin:
  *
  *  - the broadcast group delay rule of the RF-0c geometry-free pin, per
  *    constellation: T_GD on a GPS (L1, L2) pair, BGD(E1, E5a) on a Galileo
@@ -410,7 +410,7 @@ TEST(GalileoNetworkTest, GpsExtraAnchorIsUnchanged) {
 
 // The network admits observations by processing.active_systems, so a Galileo signal list
 // without Galileo active loads, is ignored, and logs a warning; the warning text is
-// asserted in test_active_system_admission.cpp (card OWD, O4).
+// asserted in test_active_system_admission.cpp.
 TEST(GalileoNetworkTest, GalileoListWithoutGalileoActiveIsIgnored) {
     LogManager log;
     const fs::path p = writeTempConfig("ignored",

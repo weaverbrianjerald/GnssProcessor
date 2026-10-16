@@ -1,7 +1,7 @@
 /**
  * @file test_arc_ledger.cpp
- * @brief Tests for the arc lifecycle state machine (card SID phase 1;
- *        docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
+ * @brief Tests for the arc lifecycle state machine
+ *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
  * The ledger is the single state machine that the 29 arc-keyed containers of the
  * audit can later read, so it has to be correct before anything reads it.  The
@@ -187,7 +187,7 @@ TEST(ArcLedgerTest, AnAbsentStationFreezesItsArcsInsteadOfGappingThem) {
 
     // Station 1 reports nothing at all, and its arc is not gapped.  Otherwise a
     // station outage would create a gap at every one of its arcs, while the
-    // population the card is about is the arc that vanished while its station
+    // population of interest is the arc that vanished while its station
     // kept reporting.
     const auto edges = runEpoch(led, 1, { a }, { 0 });
     EXPECT_TRUE(edges.empty());
@@ -249,7 +249,7 @@ TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest)
 }
 
 // ---------------------------------------------------------------------------
-// The admitted lifecycle beside the raw one (card SID phase 2)
+// The admitted lifecycle beside the raw one
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -417,7 +417,7 @@ TEST(ArcLedgerTest, AdmittedLiveCountIsItsOwnPopulation) {
 }
 
 // ---------------------------------------------------------------------------
-// The reason mask folded into the admitted gap (card SID phase 4, S1)
+// The reason mask folded into the admitted gap
 // ---------------------------------------------------------------------------
 
 namespace {

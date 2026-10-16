@@ -2,7 +2,7 @@
  * @file SignalIntegrity.hpp
  * @brief Flicker/gap signal integrity: a per-line-of-sight band-state classifier,
  *        demotion of degraded or unvetted phase, and refloat plus re-vet on a band
- *        regain.  Card: docs/SPEC_flicker_gap_integrity.md.
+ *        regain.  Spec: docs/SPEC_flicker_gap_integrity.md.
  *
  * ## Why this is not a detector
  *
@@ -59,7 +59,7 @@
  *   * after the PASS-A slip scans and their union into the funnel: INC-3 inserts into
  *     `carry_slipped_ambs` / `carry_slipped_raw`, and every consumer
  *     (`networkAnchorHygiene`, the T5v2 deviation erase in PASS B, the C3c DD-prior
- *     build, the Card-G gap classifier) must see those insertions;
+ *     build, the gap classifier) must see those insertions;
  *   * after `networkAssemblyPrefilter_`: the census counts the LOS set that actually
  *     folds rows, not the pre-prune set (a satellite erased by the two-station
  *     observability gate is not a signal-integrity event); and
@@ -70,7 +70,7 @@
  *
  * That window is a single point in the driver, immediately after
  * `networkAssemblyPrefilter_`.  It is not the PASS-B serial pre-pass, which runs
- * after the election (the eq34 hygiene card's recorded deviation #1).
+ * after the election (the eq34 hygiene spec's recorded deviation #1).
  *
  * The seam owns no state: the per-LOS band history lives in @ref NetworkCarryState,
  * the per-epoch σ map on @ref NetStation, and every counter in
@@ -181,14 +181,14 @@ struct SignalIntegrityArc {
 };
 
 /**
- * @brief Run tallies for the card (standing invariant #4: run-end counters are the
+ * @brief Run tallies for the seam (standing invariant #4: run-end counters are the
  *        telemetry of the armed path).  Embedded in @c NetworkServiceCounters as `sig`.
  *
  * @c epochs and @c los_epochs are the denominators.  An armed run that reports 0
  * classifier passes never ran the census, which differs from a census that ran on a
  * quiet network; log output alone cannot show the difference.
  *
- * The census block (INC-0) is split so it can be read against the Card-G resumption
+ * The census block (INC-0) is split so it can be read against the gap-classifier resumption
  * totals as a cross-check (spec §6C): @c reentries should track
  * `SlipQcCounters::gap_resumptions` on the same run, since both count the same
  * physical event from independent state.
@@ -242,7 +242,7 @@ struct NetworkSignalIntegrityTallies {
 
     // --- INC-3: the refloat and the re-vet ---
     long long refloat_regain = 0;         ///< LOS refloats driven by a FlickerRegain (the event count).
-    /// …ambiguity keys inserted into the Card-4 slip funnel.  Kept separate from the
+    /// …ambiguity keys inserted into the invariant-carry slip funnel.  Kept separate from the
     /// event count because the two feeds have disjoint gates (`carry_invariant`
     /// here, `carry_warm` for @c refloat_regain_reseeds); on a lineage without
     /// phase leveling only this feed can fire.
@@ -253,7 +253,7 @@ struct NetworkSignalIntegrityTallies {
     /// the recovery.  The spec's premise ("true REENTRY already refloats") predicts
     /// this dominates; the counter measures it instead of assuming it.
     long long reentry_already_refloated = 0;
-    long long reentry_unrefloated = 0;    ///< …and the complement.  A large value falsifies the premise and is the headline number of the §6C census leg; this card counts it and does not act on it (spec §2 INC-3a: "no change, but assert it with a counter").
+    long long reentry_unrefloated = 0;    ///< …and the complement.  A large value falsifies the premise and is the headline number of the §6C census leg; this seam counts it and does not act on it (spec §2 INC-3a: "no change, but assert it with a counter").
     /// Re-entries whose StateManager ambiguity state survived the outage.  Expected
     /// zero: `MeasurementModel::ensureRequiredStates` prunes every ambiguity whose
     /// phase observable is absent, with no grace epoch, except keys held by the
@@ -261,7 +261,7 @@ struct NetworkSignalIntegrityTallies {
     /// re-enters code-anchored and fresh at the state level.  A nonzero value means
     /// that prune did not fire (or a held key bridged the outage) and the re-entry
     /// premise needs re-deriving.  (What can bridge an outage is the phase-leveling /
-    /// invariant-DD carry one level up; that is Card G's instrument and this card
+    /// invariant-DD carry one level up; that is the gap classifier's instrument and this tally
     /// does not duplicate it.)
     long long reentry_amb_state_live = 0;
     /// LLI bit 0 asserted on a re-entry epoch (spec §2 INC-3c audit).
@@ -277,17 +277,17 @@ struct NetworkSignalIntegrityTallies {
     long long vet_completions = 0;        ///< LOS re-vets completed (a LOS returned to full phase weight).
 };
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
-struct EpochPassA;              // network/driver/Epoch.hpp (card NOM3 step EP1)
-struct NetworkSlipFunnel;       // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
+struct EpochPassA;              // network/driver/Epoch.hpp
+struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
 
 /**
  * @brief Classify this epoch's lines of sight, publish the INC-2 demotion, and run
  *        the INC-3 regain refloat.  See the file banner for the ordering contract.
  *
- * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * Epoch form; the explicit form and its forwarding adapter
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -303,13 +303,13 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp (card NOM3 step EP1)
  *   - @p log = run.log: producer logger (debug / warn).
  *   - @p traces = run.traces: SIGNAL-tier `trace_events` rows.
  *   - @p t = ep.se.time: this epoch's time (event stamps).
- *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  It is the same counter Card G measures gaps in (`SlipQcChannel::epoch_idx`), so the two instruments' re-entry totals are directly comparable (the spec's §6C acceptance test).
+ *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  It is the same counter the gap classifier measures gaps in (`SlipQcChannel::epoch_idx`), so the two instruments' re-entry totals are directly comparable (the spec's §6C acceptance test).
  *   - @p stations = run.setup.stations: [in/out] the σ map is republished per station, and a withheld key's phase-bias state is pruned the same way the coverage gate prunes a thin key's.
  *   - @p present = ep.pass_a.present: this epoch's presence mask.
  *   - @p modeled = pass_a.modeled: [in/out] per-station observations.  Read for the band census; under `withhold_instead` an unvetted LOS's phase entries are erased from `observed` (never from `raw_observed`, which the slip detectors own).
  *   - @p carry_slipped_ambs = funnel.carry_slipped_ambs: [in/out] the epoch's slip funnel: read to recognise an already-refloated arc, written by INC-3.
  *   - @p carry_slipped_raw = funnel.carry_slipped_raw: [in/out] the raw-detector provenance subset (Iono-2 v3k). A regain is a raw observable event (a band vanished and came back), so it is inserted here too; otherwise the deviation carry would D5-KEEP a level across a loss of lock.
- *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the Card-4 funnel is live (gates the funnel insertion).
+ *   - @p carry_invariant = run.ctx.knobs.carry_invariant: the invariant-carry funnel is live (gates the funnel insertion).
  *   - @p carry_warm = ep.clock.carry_warm: the phase-leveling carry is warm (gates pending-reseed).
  */
 void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a,
@@ -325,7 +325,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
  */
 std::set<std::string> signalIntegrityPhaseBands(const PppObservation& obs);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 

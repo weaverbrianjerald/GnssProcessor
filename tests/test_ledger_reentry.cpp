@@ -1,7 +1,7 @@
 /**
  * @file test_ledger_reentry.cpp
  * @brief Tests for the gap re-entry response driven by the arc ledger's admitted
- *        lifecycle (`network.ledger_reentry`, R5 of the build brief; Card SID
+ *        lifecycle (`network.ledger_reentry`, R5 of the build brief,
  *        phase 3).
  *
  * ## What is under test
@@ -16,7 +16,7 @@
  *    once per epoch well downstream of the response;
  *  - the verdict lookup and the response it drives: an arc whose satellite has a
  *    row-level `shifted` resumption is freed, and the response is keyed by the
- *    same (station, satellite, signal) as the population, so card GRK's
+ *    same (station, satellite, signal) as the population, so the modeled-first tracker's
  *    `gap_reentry_unreachable` cannot be incremented from this path;
  *  - the no-verdict policy: an arc that no raw tier saw is bridged and counted
  *    under `bridge`, and freed under `refloat` when the existing unmeasurable
@@ -298,7 +298,7 @@ TEST(LedgerReentryTest, ShiftedRowVerdictFreesTheLedgerArc) {
     EXPECT_EQ(h.counters.ledger_reentry_freed, 1);
     EXPECT_EQ(h.counters.ledger_reentry_bridged, 0);
     EXPECT_EQ(h.outcomeOf(kSig1), ArcReentryOutcome::Freed);
-    // This path cannot increment Card GRK's counter: the response key is the
+    // This path cannot increment the gap re-entry key-mismatch counter: the response key is the
     // ledger arc's key, so the two halves cannot name the band differently.
     EXPECT_EQ(h.counters.gap_reentry_unreachable, 0);
     // The band that tracked through is not in the population and is untouched.

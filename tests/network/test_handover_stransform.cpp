@@ -5,7 +5,7 @@
  *        docs/SPEC_event_harness.md §19): the structural direction, the rank-1
  *        kernel, its exactness, and the loader interlocks.
  *
- * The card rests on the claim that a clock-pivot handover moves a gauge, not the
+ * The mechanism rests on the claim that a clock-pivot handover moves a gauge, not the
  * information: the carried shared state is valid but expressed in the datum that
  * just retired, so it is re-expressed rather than dropped for an epoch.  The
  * claim holds only if three properties hold exactly, and a failure of any of them
@@ -100,7 +100,7 @@ std::vector<CarryPrior> makeCarry() {
     };
 }
 
-/// The kernel on a carried clock list: it walks the run's carried state (card PRM phase 2),
+/// The kernel on a carried clock list: it walks the run's carried state,
 /// so the list is moved into a NetworkCarryState's prev_carry and back.
 ClockStransformResult applyTo(std::vector<CarryPrior>& c,
                               const std::vector<std::pair<std::string, double>>& v_c,
@@ -382,7 +382,7 @@ TEST(HandoverStransformConfig, DefaultsOffArmsFromJsonAndInterlocksDisarm) {
 }
 
 // ===========================================================================
-// 9: card PRM phase 2, the transform before the coupling rows
+// 9: the transform before the coupling rows
 // ===========================================================================
 
 // The knob needs the transform it moves, and refuses the broadcast a priori (the ephemeris
@@ -444,7 +444,7 @@ struct PreviewBed {
     NetworkEstimator* est = nullptr;      ///< fx->est(), renewed by layout()
     std::vector<std::string> registered;
     // The anchor sigma the preview's declaration reads (ctx.knobs.clk_anchor_sigma) is set
-    // to the 3.0 m this bed passed as an argument before card NOM3 step EP0.
+    // to the 3.0 m this bed passed as an argument before NetworkKnobs held it.
     explicit PreviewBed(const std::string& tag, bool armed = true)
         : L(tag, std::string("    \"scoped_handover_response\": true,\n"
                              "    \"handover_stransform\": true,\n"

@@ -1,7 +1,7 @@
 /**
  * @file PbDiscCarryLedger.hpp
  * @brief The consumer's declared-step ambiguity carry: the per-key applied-bias
- *        ledger, the carry-vs-reset decision and its run-end counters (card CC, A).
+ *        ledger, the carry-vs-reset decision and its run-end counters.
  *
  * A network-product consumer's phase row is
  *
@@ -51,7 +51,7 @@ namespace GnssProcessor {
 
 class StateManager;
 
-/// Applied-bias ledger, carry-vs-reset decision and counters (card CC, A).
+/// Applied-bias ledger, carry-vs-reset decision and counters.
 class PbDiscCarryLedger {
 public:
     /// What @ref react did for one (key, epoch) event.

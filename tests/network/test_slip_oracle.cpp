@@ -43,7 +43,7 @@
  *   contrasts it with the same case under a window that ends at last_seen_s.
  * - `carry.birth_s` is the hard floor (@c SlipBeforeTheCarrysBirthIsAlreadyAbsorbed):
  *   a T4 erase-and-rebirth re-creates the level from a solve that already
- *   contains the earlier jump, so re-applying it would inject the error the card
+ *   contains the earlier jump, so re-applying it would inject the error the oracle
  *   is meant to remove.
  * - `last_applied` makes two detectors on one arc apply the jump once
  *   (@c ASecondDetectorInTheSameWindowCannotDoubleApply).
@@ -306,7 +306,7 @@ TEST(SlipOracleWindow, LateDetectorRepairsTheSlipItFiredOnEvenAfterARestash) {
 // The hard floor.  A T4 attribution erase deletes the carry entry; the next
 // harvest re-creates it from a solve whose level already contains every earlier
 // jump.  A truth slip stamped before birth_s is therefore absorbed by construction,
-// and re-applying it would inject the error this card is meant to remove, even
+// and re-applying it would inject the error this oracle is meant to remove, even
 // though it sits well inside the latency window.  Two-sided: a post-birth slip in
 // the same window is still repaired, so the floor trims the window instead of
 // closing it.
@@ -458,7 +458,7 @@ TEST(SlipOracleActuate, ExactRepairLeavesEverythingButValueAbsAlone) {
 // An arc with no carried level has nothing to preserve, so today's response is
 // already the right one and the hook declines (returns false) instead of
 // consuming the actuation.  Counted separately: a large `no_carry` in a run with
-// many actuations would mean the vehicle is not what the card assumed.
+// many actuations would mean the vehicle is not what the oracle assumed.
 TEST(SlipOracleActuate, NoCarryEntryFallsThroughToTodaysResponse) {
     Harness h;
     h.carry.clear();
@@ -912,7 +912,7 @@ TEST(SlipOracleInterlock, LoaderRefusesAMissingRootABadPolicyAndNegativeNoise) {
     }
     // …and the same contract on the other half of the 2x2.  A typo here would
     // fall back to `repair`, and the arm would report the ceiling while being read
-    // as the false-alarm isolation; the two verdicts point at different cards.
+    // as the false-alarm isolation; the two verdicts point at different mechanisms.
     {
         GnssConfig cfg;
         EXPECT_FALSE(loadInto("err_ts",

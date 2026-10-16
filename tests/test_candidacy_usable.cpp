@@ -631,7 +631,7 @@ TEST(CandidacyUsableElection, AKeptStickyIncumbentNeverEntersThePass) {
 TEST(CandidacyUsableElection, AFirstSightingNeverEntersThePass) {
     // No incumbent: there is no outgoing frame, the continuous branch cannot run,
     // and every pin is a 0-pin whichever station takes it.  Screening there would
-    // move elections the card cannot improve, so the pass is not entered.
+    // move elections the screening cannot improve, so the pass is not entered.
     auto r = makeRoster({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6});
     AnchorHandoverLedger ledger;
     ledger.value_abs[{2, ambKey()}] = {12.5, 1e-6, 1e-3};
@@ -723,7 +723,7 @@ TEST(CandidacyUsableElection, IterationOneSplitsTheSameSatelliteTwoWays) {
 TEST(CandidacyUsableElection, ABandNoCandidateCanServeIsPinnedColdAtTheJointHost) {
     // BBBB is usable for two bands and no station is usable for L5Q.  The joint host
     // is still BBBB and L5Q is pinned there at 0: a frame step on the same
-    // reference, which is what the card accepts in place of a split.
+    // reference, which is what the design accepts in place of a split.
     auto r = makeRoster3({"AAAA", "BBBB", "CCCC", "DDDD"}, {9, 8, 7, 6},
                          {kSigs3, kSigs3, kSigs3, kSigs3});
     AnchorHandoverLedger ledger;

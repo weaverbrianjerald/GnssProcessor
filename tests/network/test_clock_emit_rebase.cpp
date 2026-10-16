@@ -1,7 +1,7 @@
 /**
  * @file test_clock_emit_rebase.cpp
  * @brief The clock emission re-base leaf (NetworkClockEmitRebase) and its loader
- *        contract (card CLK-R, docs/SPEC_clock_emit_rebase.md).
+ *        contract (docs/SPEC_clock_emit_rebase.md).
  *
  * What is pinned here:
  *   1. Stage 1 removes the per-epoch common-mode step exactly (the census's

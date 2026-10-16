@@ -161,7 +161,7 @@ namespace GnssProcessor {
         // This mirrors the same preference logic the KF uses to populate
         // obs.observed in @c PppModel::buildFrequencyBandMap.
         // A companion code row is not KF-chosen for this detector's purposes
-        // (card SCC, R4).  With `network.second_code_channel` the KF estimates a
+        //.  With `network.second_code_channel` the KF estimates a
         // second band-1 code, so an unguarded `obs.observed` test would promote C1W
         // over C1C at every station that reports both, moving the detector's code for
         // the band and with it every MW arc, every threshold and every slip event the
@@ -170,7 +170,7 @@ namespace GnssProcessor {
         // `companion_codes` is empty on every unarmed posture, so this costs one
         // lookup on an empty set and the verdict is byte-identical.  A fallback code
         // is deliberately not in that set and stays eligible as before.
-        // The same rule applies to a second phase (card SID phase 6a, R4).  With
+        // The same rule applies to a second phase (R4).  With
         // `network.second_phase_channel` the KF estimates a second band-1 phase, and
         // GPS L1 attribute priority puts 'W' ahead of 'C', so an unguarded test would
         // promote L1W over L1C in the band's phase bucket at every station that
@@ -206,7 +206,7 @@ namespace GnssProcessor {
             const char prefix = key[0];
             if (prefix != 'C' && prefix != 'L') continue;
             if (key.find('_') != std::string::npos) continue;
-            // Second half of the companion-code guard (card SCC, R4).  When `source`
+            // Second half of the companion-code guard.  When `source`
             // is obs.observed (mw_frequency_mode Mirror) a companion key would enter a
             // bucket that did not hold it without the knob; skip it, so Mirror sees the
             // same key set as unarmed.  When `source` is obs.raw_observed the key was
@@ -214,14 +214,14 @@ namespace GnssProcessor {
             // stays, and the isKfChosen guard above keeps it from winning the band.
             // With the set empty (knob off) both paths are byte-identical.
             if (!use_raw && obs.companion_codes.count(key)) continue;
-            // Second half of the second-phase guard (card SID phase 6a, R4), with one
+            // Second half of the second-phase guard (R4), with one
             // deliberate difference from the line above.  In a single-channel bucket
             // (mw_channel_mode mirror or single) the second phase must be invisible, so
             // the detector keeps the key set it had unarmed.  In all-channel mode the
             // bucket asks for every tracking-mode channel of the band, which is the
-            // mode the card's G1c arm measures, so the second phase enters and the
+            // mode the G1c arm measures, so the second phase enters and the
             // cross-band pair loop below forms its own pairs with it.  Measured, not
-            // assumed: with mw_frequency_mode Mirror the card SCC line above has already
+            // assumed: with mw_frequency_mode Mirror the second-code-channel line above has already
             // removed the companion code, so `matchChannel` pairs an L1W phase with the
             // latched C1C.  That puts the receiver's C1C-minus-C1W inter-signal delay into
             // the MW value as a constant per arc, which the arc's own running reference

@@ -1,6 +1,6 @@
 /**
  * @file ConsumerSatTrace.cpp
- * @brief Pure CSV formatter for @ref GnssProcessor::ConsumerSatRow (card CST).
+ * @brief Pure CSV formatter for @ref GnssProcessor::ConsumerSatRow.
  *
  * Kept separate from the engine (which fills the row) and from NetworkRunTraces
  * (which owns the stream), so a unit test can pin the schema without constructing

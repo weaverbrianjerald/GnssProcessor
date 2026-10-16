@@ -2,7 +2,7 @@
 /**
  * @file Contributions.hpp
  * @brief Every contribution to the network producer's normal equations has a declared
- *        kind (card NOM step N2a, docs/refound/NOM_network_object_model_2026-10-08.md
+ *        kind (docs/refound/NOM_network_object_model_2026-10-08.md
  *        sections 3.4 and 17; docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
  *
  * ### What it answers
@@ -11,8 +11,8 @@
  * blocks, birth rows) with diagonal priors beside it, and the shared border receives
  * constraint rows, priors in three forms, pins, gauges and DD blocks.  Until this step a
  * reader that needed to know what a row was inferred it: from a coefficient magnitude, a
- * column's label prefix, or a row's position after @c cpl_row_start (card NOM section
- * 3.4).  Here each family is declared once, with its channel, its stage relative to the
+ * column's label prefix, or a row's position after @c cpl_row_start.
+ * Here each family is declared once, with its channel, its stage relative to the
  * rank gate, its subject, its unit, the parameter kinds it touches, its weight source and
  * its builder, and every row and fold carries its kind from the site that creates it.
  * The run-start table "contributions as armed" prints every declared family, a zero
@@ -53,13 +53,13 @@
  *     merges the epoch into the run and writes the table once after the first emitted
  *     epoch; @ref networkContributionsRunEnd writes the run's table in the teardown tail.
  *
- * The readers (card NOM step N2b): every reader that asks "what is this row" reads the
+ * The readers: every reader that asks "what is this row" reads the
  * tag through filter/NetworkRowClassify (@c rowClassOfKind, @c classifyRow,
  * @c raimPoolAdmitsKind): the prefit and redundancy censuses and their riders, the
  * post-fit row trace and the post-fit sigma0, the gross line-of-sight screen, the station
  * block audit, the clock level read, both RAIM pools and the RHS attribution, which also
  * names each diagonal prior entry and each shared fold by its kind.  Plain value types,
- * free functions and tables (card NOM section 10): no behaviour classes, no virtual
+ * free functions and tables: no behaviour classes, no virtual
  * dispatch.
  */
 
@@ -160,7 +160,7 @@ namespace GnssProcessor {
     /**
      * @brief The declaration of one contribution family: one row of the table.
      *
-     * Every text was checked against the code it names (card NOM N2a), every knob path
+     * Every text was checked against the code it names, every knob path
      * against the loader.
      */
     struct ContributionSpec {
@@ -364,7 +364,7 @@ namespace GnssProcessor {
         long long unset{0};         ///< Tags (rows and diagonal entries) whose kind is @c Unset or out of range.
         long long misplaced{0};     ///< Tags whose kind does not belong where the tag sits (see @ref checkStationTags).
         long long mismatches{0};    ///< Builder counters that disagree with the tags' per-kind counts.
-        long long unclassified{0};  ///< Rows of the block the row classifier files as @c obs_other (card NOM N2b: no tag, an unset kind, or a kind that is not a station row).
+        long long unclassified{0};  ///< Rows of the block the row classifier files as @c obs_other (no tag, an unset kind, or a kind that is not a station row).
     };
 
     /**
@@ -391,7 +391,7 @@ namespace GnssProcessor {
      *
      * It also counts the rows a reader would file as unclassified (@c obs_other of
      * filter/NetworkRowClassify @c rowClassOfKind): a row past the tags, an unset kind, or
-     * a kind that is not a station row (card NOM step N2b; 0 expected).
+     * a kind that is not a station row (0 expected).
      *
      * @param R The station's assembly (assembled: @c ok and not @c threw).
      * @return The counts.
@@ -399,8 +399,8 @@ namespace GnssProcessor {
     StationTagCheck checkStationTags(const StationAssembly& R);
 
     /**
-     * @brief The outcome of the GIM ionosphere row builder on one station-epoch (card NOM
-     *        section 16, suspect 4: the builder ran silently inert on the golden).
+     * @brief The outcome of the GIM ionosphere row builder on one station-epoch (the builder
+     *        ran silently inert on the golden).
      */
     enum class GimRowsOutcome : std::uint8_t {
         NotCalled = 0,  ///< The builder did not run for the station.
@@ -435,7 +435,7 @@ namespace GnssProcessor {
         long long unset_tags{0};              ///< @c StationTagCheck::unset summed over them.
         long long misplaced_rows{0};          ///< @c StationTagCheck::misplaced summed over them.
         long long counter_mismatches{0};      ///< @c StationTagCheck::mismatches summed over them.
-        long long unclassified_rows{0};       ///< @c StationTagCheck::unclassified summed over them (card NOM N2b).
+        long long unclassified_rows{0};       ///< @c StationTagCheck::unclassified summed over them.
         long long coalesced_entries{0};       ///< Diagonal prior entries merged into another entry of the same column.
         long long folds_without_kind{0};      ///< Shared folds whose site named no kind (@c Unset).
         long long replay_builds{0};           ///< Within-epoch replay builds.
@@ -469,7 +469,7 @@ namespace GnssProcessor {
         long long unset_tags_all{0};      ///< @c StationTagCheck::unset.
         long long misplaced_rows_all{0};  ///< @c StationTagCheck::misplaced.
         long long mismatches_all{0};      ///< @c StationTagCheck::mismatches.
-        long long unclassified_all{0};    ///< @c StationTagCheck::unclassified (card NOM N2b).
+        long long unclassified_all{0};    ///< @c StationTagCheck::unclassified.
         long long checked_all{0};         ///< Station blocks checked.
         bool      first_table_written{false};  ///< The first-emitted-epoch table is out.
     };
@@ -505,15 +505,15 @@ namespace GnssProcessor {
                                           const std::vector<int>& est_index_of,
                                           int week, double tow);
 
-    struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/Run.hpp
+    struct NetworkEpoch;            // network/driver/Epoch.hpp
 
     /**
      * @brief The epoch tail: the shared folds of the epoch's primary build, merged with the
      *        station side into the epoch's tally and the run's; the table and its manifest
      *        record once, after the first emitted epoch.
      *
-     * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+     * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
@@ -566,14 +566,14 @@ namespace GnssProcessor {
     std::string contributionsJson(const ContributionTally& epoch, const ContributionTally& run,
                                   const std::string& scope);
 
-    // ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+    // ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
     struct NetworkRunEndView;
 
     /**
      * @brief Run-end report: contributions as armed (NOM N2a).
      *
-     * The table's row for "contributions as armed" (card NOM N2a) and its manifest record;
+     * The table's row for "contributions as armed" and its manifest record;
      * the report is the overload above.
      *
      * Gate: none of its own: the row calls the report above on every run, as the teardown

@@ -1,6 +1,6 @@
 /**
  * @file SharedHistory.cpp
- * @brief The shared history of card SCL2's build X2 (@c network.carry_coupling_shared_history);
+ * @brief The shared history (@c network.carry_coupling_shared_history);
  *        the mechanism, the index spaces and the contract of each step are in the header.
  */
 
@@ -133,7 +133,7 @@ SharedHistoryCompression sharedHistoryCompress(const Eigen::MatrixXd& R,
         out.cross = std::max(0.0, whole - own);
     }
     out.ok = out.coef.allFinite() && out.rem.allFinite();
-    if (out.ok) {   // amendment A1 projects card SMH's rows on the same factor and directions
+    if (out.ok) {   // amendment A1 projects the smoothed hold's rows on the same factor and directions
         out.L = L;
         out.V = V;
     }
@@ -207,7 +207,7 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
     S.clearEpoch();
     if (!S.valid || S.kt <= 0) return;
     SharedHistoryCounters& C = ctx.counters.shx;
-    // The rows emit history terms only on card CTU's exact route, i.e. when they were
+    // The rows emit history terms only on the exact-update route, i.e. when they were
     // harvested at the stash the rows' epoch belongs to; a compression of any other harvest
     // is not that generation (a withheld epoch, a run without a valid stash).
     if (!ctx.carry.cxu_stash_valid
@@ -223,7 +223,7 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
         for (std::size_t j = 0; j < n; ++j)
             if (lc.shx_coef[j] != 0.0) ref[j] = 1;
     });
-    // Amendment A1: card SMH's live clone rows reference the directions too (empty unless the
+    // Amendment A1: the smoothed hold's live clone rows reference the directions too (empty unless the
     // smoothed hold is armed).
     const auto holdRef = [&](const PbHoldCloneShx& sh) {
         if (sh.coef.empty() || std::abs(sh.stash_s - S.stash_s) > kSharedHistoryStampTol) return;
@@ -231,7 +231,7 @@ void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est)
         for (std::size_t j = 0; j < n; ++j)
             if (sh.coef[j] != 0.0) ref[j] = 1;
     };
-    // The hold rows live in the satellite-signal table (card NOM step N4d), in key order.
+    // The hold rows live in the satellite-signal table, in key order.
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,
                  [&](const SatSignalId&, const PbHoldClone& c) { if (c.alive) holdRef(c.shx); });
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_block,
@@ -275,7 +275,7 @@ void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
         pri.push_back(p);
     }
     if (pri.empty()) return;
-    est.contributionKind(ContributionKind::SharedHistory);   // card NOM N2a
+    est.contributionKind(ContributionKind::SharedHistory);
     est.addSharedPrior(pri);
     ctx.counters.shx.fold_priors += static_cast<long long>(pri.size());
     if (within_epoch_armed) ws.cap_shx = std::move(pri);
@@ -284,7 +284,7 @@ void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, Networ
 void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWorkspace& ws,
                                     NetworkEstimator& est) {
     if (!ctx.knobs.carry_cpl_shx || ws.cap_shx.empty()) return;
-    est.contributionKind(ContributionKind::SharedHistory);   // card NOM N2b: the replay names its kind
+    est.contributionKind(ContributionKind::SharedHistory);   // the replay names its kind
     est.addSharedPrior(ws.cap_shx);
 }
 
@@ -446,14 +446,14 @@ void networkSharedHistoryHarvestEnd(SharedHistoryHarvest& H, const ClockCloneHar
         C.rem_share.push_back(X.remainder / X.total);
     }
     if (X.frob_total > 0.0) C.cross_share.push_back(X.cross / X.frob_total);
-    // Amendment A1: card SMH's clone rows, pending since this epoch's update, projected onto
+    // Amendment A1: the smoothed hold's clone rows, pending since this epoch's update, projected onto
     // the kept directions of the compression just formed.
     networkSharedHistoryProjectHoldRows(ctx, &X, now_s);
 }
 
 namespace {
 
-/// Every live hold row's shared-history record (card SMH's clock rows; card SMD's two rows).
+/// Every live hold row's shared-history record (the smoothed hold's clock rows; the block clone's two rows).
 template <typename Fn>
 void shxForEachHoldRow(NetworkRunContext& ctx, Fn&& fn) {
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::smh_clone,   // N4d
@@ -537,7 +537,7 @@ void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
     const auto cs = shxP50Max(C.cross_share);
     const double per = C.epochs > 0 ? 1.0 / static_cast<double>(C.epochs) : 0.0;
     const double pc  = C.compress_epochs > 0 ? 1.0 / static_cast<double>(C.compress_epochs) : 0.0;
-    // Amendment A1 (build X2b): card SMH's clone rows in the history, form p, appended to the
+    // Amendment A1 (build X2b): the smoothed hold's clone rows in the history, form p, appended to the
     // line when the smoothed hold is armed.
     std::string hold;
     if (ctx.knobs.emit_pb_hold_smoothed) {
@@ -585,7 +585,7 @@ void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                       "the per-row term).");
     }
     if (C.registered == 0 || X.terms_hist == 0)
-        log->warn("Network (card SCL2): network.carry_coupling_shared_history is ARMED but {}: "
+        log->warn("Network: network.carry_coupling_shared_history is ARMED but {}: "
                   "the build is INERT for this run.",
                   C.registered == 0 ? "no history column was registered"
                                     : "no row emitted a history term");

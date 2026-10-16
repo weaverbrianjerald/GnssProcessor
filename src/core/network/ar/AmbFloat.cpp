@@ -5,8 +5,8 @@
  *        @see include/network/ar/AmbFloat.hpp
  */
 #include "network/ar/AmbFloat.hpp"
-#include "network/driver/Epoch.hpp"          // NetworkEpoch (card NOM3 step EP2)
-#include "network/driver/Run.hpp"            // NetworkRun (card NOM3 step EP2)
+#include "network/driver/Epoch.hpp"          // NetworkEpoch
+#include "network/driver/Run.hpp"            // NetworkRun
 #include "network/driver/SetupResult.hpp"    // run.setup.stations
 #include "network/assembly/Responses.hpp"   // networkResponseLatchTally
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
@@ -26,7 +26,7 @@
 #include <cmath>
 #include <optional>
 
-// The run-end reports at the end of this file (card NOM step TD1b):
+// The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
 #include <cstddef>
 #include <memory>
@@ -65,7 +65,7 @@ bool ambFloatDrop(LocalCarry& lc, double floor_m2, double now_s, long long now_e
         // this one: the level is re-determined either way, and an OFF run reports the
         // walk it suffers whether or not the variance moved (RF-3a A2).
         lc.drop_walk_ph = 1;
-        // Card CTU section 14: the regression and the block row belong to the doubted
+        // The regression and the block row belong to the doubted
         // value whether or not the variance moved.  An arc that slips one epoch after its
         // birth is already at birth strength, and without this it keeps folding its
         // pre-slip value with full cross terms and a full border regression; under a
@@ -165,7 +165,7 @@ void networkAmbFloatApplyDrops(
     const double drop_base = ambFloatDropFloorNow(drop_base_knob, now_ep,
                                                   ctx.knobs.amb_drop_floor_after_ep);
     const bool   pre_gate  = (drop_base_knob > 0.0) && !(drop_base > 0.0);
-    // Card PRM phase 3a: whether the last dropAt call's idempotent drop cleared the arc's
+    // Whether the last dropAt call's idempotent drop cleared the arc's
     // regression and block row (network.amb_float_drop_decouple_always), the second way a
     // drop changes the carried prior.  Count-only: the loops below read it beside the
     // value dropAt returns, which is unchanged.
@@ -184,7 +184,7 @@ void networkAmbFloatApplyDrops(
         if (pre_gate)          ++n_pregate;
         return o.acted;
     };
-    // Card PRM phase 3a: the latch causes of the re-entry responses (gap re-entry, wind-up
+    // The latch causes of the re-entry responses (gap re-entry, wind-up
     // restart).  A latch is a re-entry only when its recorded cause is non-zero and has no
     // bit outside these two; a slip detector's bit, a T4 bit (the event harness tags its
     // free_epoch response with one), an unknown bit or no recorded cause is the slip row.
@@ -210,7 +210,7 @@ void networkAmbFloatApplyDrops(
         const bool acted = dropAt((*it), sta, parts->satellite);
         if (acted) ++n_free;
         else       ++n_idem;
-        // Card PRM phase 3a: a drop that changed the carried prior (the variance moved,
+        // A drop that changed the carried prior (the variance moved,
         // or the idempotent drop decoupled it), by what latched the arc (kReentryBits).
         // The two rows sum to n_free plus this loop's idempotent decouples.
         if (acted || last_decoupled_idem) {
@@ -236,7 +236,7 @@ void networkAmbFloatApplyDrops(
         const bool acted = dropAt(lc, id.station.index, net::satKey(id.sat));
         if (acted) ++n_stale;
         else       ++n_idem;
-        // Card PRM phase 3a: a drop that changed the carried prior (as in loop (1)).
+        // A drop that changed the carried prior (as in loop (1)).
         if (acted || last_decoupled_idem)
             prmRespond(counters.prm_resp, ResponseSite::AmbDropStaleGap);
         note(net::arcTuple(id), lc, AmbDropCause::kStaleGap);
@@ -268,7 +268,7 @@ void declaredHandoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& 
     // The phase-bias shift of the family, under the one rule of a phase-bias shift
     // (phaseBiasShiftOf), as the eq34 D4 shift applies it.
     const std::map<std::pair<std::string, std::string>, double> shift_sat{{{sat, sig}, +delta}};
-    // With network.carry_rebase_complete (card PRM phase 3b) the owed sites join: the gross
+    // With network.carry_rebase_complete the owed sites join: the gross
     // screen's held ambiguity as the ambiguity, the last solved phase bias and an open pin
     // bridge as the carried phase bias, and every other coupling map's terms on the family.
     forEachCarriedReference(
@@ -351,7 +351,7 @@ long long networkAmbFloatDeclaredHandover(
             continue;
         }
         // ---- The transform.  All three references on this identity move together, through
-        //      the traversal of carried references (card PRM phase 2): every carried ambiguity
+        //      the traversal of carried references: every carried ambiguity
         //      of the family by -Δ, and the satellite phase bias by the opposite shift
         //      (pinning N_{r_in} = 0 means b'_s = b_s + Δ), its carried prior and every
         //      coupling s_prev that references it, or the frame step is injected as row bias
@@ -363,7 +363,7 @@ long long networkAmbFloatDeclaredHandover(
                                    ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);
-        // Card PRM phase 3b step 2: the family's held emission, left in the old frame (PbHold
+        // The family's held emission, left in the old frame (PbHold
         // is exempt from the shift).  Measure-only.
         if (delta != 0.0
             && net::getSig(ctx.entities.sat_signals, sat + "|" + sig, &net::SatSignalState::pb_hold))
@@ -400,10 +400,10 @@ long long networkAmbFloatDeclaredHandover(
     return n_shift_total;
 }
 
-// ---- The epoch form (card NOM3 step EP2; frozen text of Application::networkProcessEpoch_,
+// ---- The epoch form (frozen text of Application::networkProcessEpoch_,
 //      moved by scripts/nom_ep2_cut.py) ----
 void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events) {
-    // ---- From the run and the epoch (card NOM3 step EP2; generated by scripts/nom_ep2_cut.py,
+    // ---- From the run and the epoch (generated by scripts/nom_ep2_cut.py,
     //      each line checked by scripts/nom_ep2_verify.py). Reads bind through `ep`; writes bind
     //      through the output parameters and are marked `// written`. ----
     const std::shared_ptr<spdlog::logger>& log = run.log;
@@ -429,13 +429,13 @@ void networkAmbFloatDropEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochEven
             for (const auto& mo : modeled[mi])
                 amb_elev_of[mi][mo.satellite] = mo.elevation;
     }
-    // Card PRM phase 3a: the latch per cause, before the response reads it.
+    // The latch per cause, before the response reads it.
     networkResponseLatchTally(ctx, events);
     networkAmbFloatApplyDrops(ctx, config_, log, stations, amb_elev_of,
                               se.time.week, se.time.tow, pl_now_s, events);
 }
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 // Run-end report: the ambiguity vehicle and the joint-block PD-fallback bar.
 int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
@@ -486,7 +486,7 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                  C.n_amb_birth_floored, C.n_cr_gap_prune,
                  C.n_relevel_free_skips, C.n_cr_inject_stale);
     }
-    // Card CTU section 14: drops at birth strength that decoupled the arc anyway.
+    // Drops at birth strength that decoupled the arc anyway.
     if (ctx.knobs.amb_drop_decouple_always)
         log->info("Network (card CTU / drop decouple): {} drop(s) found the arc already at "
                   "birth strength and still cleared its border regression and block row "

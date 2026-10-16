@@ -1,6 +1,6 @@
 /**
  * @file test_handover_stransform_dense.cpp
- * @brief The dense clock-pivot S-transform of card SCL build B2
+ * @brief The dense clock-pivot S-transform, build B2
  *        (@c network.handover_stransform_dense,
  *        docs/refound/SCL_self_contained_clock_level_2026-10-03.md, sections 5 and 6, U2).
  *
@@ -21,7 +21,7 @@
  *  (h) the seam: with the dense knob off it runs the diagonal kernel and leaves the block
  *      bitwise unchanged; on, it records the edge for the clone fold and the anchor keep;
  *  (i) the loader: default off, the INERT rules and the refusals;
- *  (j) card SCL B1 across the dense handover: the clone fold's joint prior equals the
+ *  (j) build B1 across the dense handover: the clone fold's joint prior equals the
  *      explicit law of (S y + w, y_C), in information form.
  */
 
@@ -553,7 +553,7 @@ TEST(HandoverStransformDense, LoaderDefaultOffInertRulesAndRefusals) {
     }
 }
 
-// (j): card SCL B1 across the dense handover.  The rows reference the clones c_s(t-1) in the
+// (j): build B1 across the dense handover.  The rows reference the clones c_s(t-1) in the
 // outgoing frame; the fold's joint prior over (the epoch's columns, the clones) must be the
 // law of (S y + w, y_C): [[S P+ S' + W, S P+ E_C], [E_C' P+ S', P_CC]] with mean (S x+, x_C),
 // in information form, with the outgoing pivot (absent from the layout) marginalized.
@@ -568,7 +568,7 @@ TEST(HandoverStransformDense, CloneFoldIsTheJointLawAcrossTheDenseHandover) {
     ASSERT_TRUE(B.ctx->knobs.handover_stransform_dense);
     const Eigen::MatrixXd P0 = fixtureP();
     const Reference ref = reference();
-    // Card CTU's copy of the block, taken before PASS B (before the transform).
+    // The exact update's copy of the block, taken before PASS B (before the transform).
     B.ctx->carry.cxu_epoch.ok = true;
     B.ctx->carry.cxu_epoch.P  = P0;
     B.handover();

@@ -71,7 +71,7 @@ TEST(ZwdSeamReseedConfig, DefaultsAreOffWithDocumentedHorizon) {
     ASSERT_TRUE(loadInto("defaults", networkConfig(), cfg));
     EXPECT_FALSE(cfg.networkZwdSeamReseed());
     EXPECT_EQ(cfg.networkZwdSeamReseedEpochs(), 480);
-    // The seam card leaves the falsified continuous carry exactly where it was.
+    // The seam leaves the falsified continuous carry exactly where it was.
     EXPECT_FALSE(cfg.networkCarryZwd());
     EXPECT_DOUBLE_EQ(cfg.networkZwdCarryQ(), 1e-9);
 }

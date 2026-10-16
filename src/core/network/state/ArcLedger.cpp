@@ -1,6 +1,6 @@
 /**
  * @file ArcLedger.cpp
- * @brief The arc lifecycle state machine (card SID phase 1; see ArcLedger.hpp).
+ * @brief The arc lifecycle state machine (see ArcLedger.hpp).
  */
 #include "network/state/ArcLedger.hpp"
 
@@ -33,7 +33,7 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
-    // Reason vocabulary and the per-epoch buffer (card SID phase 4, S1)
+    // Reason vocabulary and the per-epoch buffer
     // =====================================================================
 
     const char* arcReasonName(unsigned bit) {
@@ -274,7 +274,7 @@ namespace GnssProcessor {
         s.to            = a.state;
         s.generation    = a.generation;
         s.reason_mask   = a.reason_mask;
-        // The admitted side as it stands at this epoch (card SID phase 2), so a raw
+        // The admitted side as it stands at this epoch, so a raw
         // re-entry event states both gap lengths.  This epoch's admitted pass runs
         // later (downstream), so the number is the admitted gap that is open as the
         // raw arc returns, which is the quantity a reader of the raw edge needs.
@@ -304,7 +304,7 @@ namespace GnssProcessor {
             // record of the sighting (the epoch index strictly increases from one
             // beginEpoch to the next).  It replaces a per-epoch set of the observed
             // keys that held the same fact at the cost of one tree insert per
-            // observation and one lookup per arc (card NOM step N3a, where the
+            // observation and one lookup per arc (where the
             // ledger became part of every run).
             if (a.ep_last_seen == epoch_idx_) return;
 
@@ -344,7 +344,7 @@ namespace GnssProcessor {
                                std::vector<std::pair<Key, ArcStep>>& out,
                                const ArcReasonEpoch* reasons) {
         out.clear();
-        // The fold (card SID phase 4, S1).  A gap opened by this call takes the reasons
+        // The fold.  A gap opened by this call takes the reasons
         // the screens recorded for its arc, narrowed to the bits that can explain a
         // removal (a deweight is not one), or `unknown` when none did.  Unarmed, or
         // with no buffer, the mask stays as phase 3 wrote it.
@@ -392,7 +392,7 @@ namespace GnssProcessor {
                 a.adm_state            = ArcState::Reentered;
                 a.ep_adm_state_changed = epoch_idx_;
                 // The column this return lands on is a fresh one when the prune
-                // destroyed it inside the gap (card SID phase 3).  Reported on the edge
+                // destroyed it inside the gap.  Reported on the edge
                 // and then cleared, so the mark describes one gap and does not carry
                 // into the next.
                 s.state_recreated      = a.state_pruned;
@@ -423,8 +423,8 @@ namespace GnssProcessor {
             if (!present.count(id.station.index)) return;   // station absent: frozen
             // Admitted this epoch: step (1) stamped ep_last_admitted with the open
             // epoch's index, the only write to it, so the stamp answers what a
-            // lookup in `admitted` would (this call runs once per epoch; card NOM
-            // step N3a, as for the raw side's sighting stamp).
+            // lookup in `admitted` would (this call runs once per epoch,
+            // as for the raw side's sighting stamp).
             if (a.ep_last_admitted == epoch_idx_) return;
 
             ArcStep s;

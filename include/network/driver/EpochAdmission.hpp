@@ -2,7 +2,7 @@
 /**
  * @file EpochAdmission.hpp
  * @brief The epoch admission of the network producer: whether a synced epoch is processed,
- *        skipped or ends the run (card NOM3 step EP2).
+ *        skipped or ends the run.
  *
  * Two sites give the one verdict, because the steps between them run on every synced epoch
  * that is not fast-forwarded:
@@ -53,7 +53,7 @@ EpochAdmission networkFastForward(NetworkRun& run, const SyncedEpoch& se_raw);
  * In order: arms the estimator's shared-information recorder for the RHS attribution; clears
  * the trip hand-off and, under the datum-graph census, its spectral hand-off; feeds the staged
  * broadcast navigation records this epoch has reached (brdc_rts) and the native broadcast clock
- * a priori (card NBP); returns Stop once processing.max_duration_s of data has elapsed; returns
+ * a priori; returns Stop once processing.max_duration_s of data has elapsed; returns
  * Skip for an epoch decimation removes; else counts the epoch and returns Process.
  *
  * @param run The run: writes the estimator's recorder arm, ctx.carry (rhs_trip_pending,

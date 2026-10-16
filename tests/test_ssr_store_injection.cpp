@@ -13,7 +13,7 @@
  * PppModel / RINEX-parser chain.  MeasurementModel and the RealTimeEngine
  * forwarder share the same override member and resolver, and are exercised end to
  * end by the network closed-loop driver.  The first two tests use owned stores
- * only; the Card-7 tests also use the LiveEphemerisStore singleton, which each of
+ * only; the consumer-behaviour tests also use the LiveEphemerisStore singleton, which each of
  * them clears before use (and, where it inserts ephemerides, again at the end).
  */
 
@@ -88,7 +88,7 @@ TEST(SsrStoreInjectionTest, OverrideIsPerInstance) {
 }
 
 // ===========================================================================
-// The two consumer behaviours of Card 7 (RTF-2), end to end through
+// The two consumer behaviours, end to end through
 // getSatelliteClockCorrection: (a) D7 pinned broadcast-baseline eval, (b) the
 // orbit-coherence echo withhold under the store-armed skew budget.
 // ===========================================================================
@@ -118,7 +118,7 @@ TEST(SsrStoreInjectionTest, Card7PinnedEvalUsesStampedVersion) {
     // v10 (af0 1e-5 s, toe kT-600) then v11 (af0 2e-5 s, toe at the query
     // epoch kT), so v10 is the retained "previous".  The toe values make the
     // un-pinned selection (pickForSsr(-1) -> pick() -> nearest toe) land on v11
-    // (distance 0 against 600 s).  If the Card-7 pinned-eval expression reverts
+    // (distance 0 against 600 s).  If the pinned-eval expression reverts
     // to ssr->iode == -1 on a clock-only merge, the lookup evaluates v11, fails
     // the clock_iode=10 gate, and both assertions below fail.
     eph_store.insert(gpsEphAt("G01", 10, 1e-5, GnssTime{kT.week, kT.tow - 600.0}));

@@ -1,6 +1,6 @@
 /**
  * @file test_resume_frame_restore.cpp
- * @brief Contract tests for the resume frame restore card
+ * @brief Contract tests for the resume frame restore
  *        (SPEC_synthetic_minimum_network §18.10): the snapshot format-v2 frame
  *        records (PA/PT phase-anchor incumbent + sticky pin target, CA clock-anchor
  *        per-satellite state, FA/FP/FE CLK-R held frame), their backward
@@ -194,7 +194,7 @@ TEST(ResumeFrameRestoreTest, DenseCarryCovAndVarFirstRoundTripUnderV3) {
 }
 
 TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
-    // A snapshot with no frame state is written as before the card: v1 header and
+    // A snapshot with no frame state is written as before this feature: v1 header and
     // no frame rows.  (Frame capture is gated by network.state_snapshot_frame_capture;
     // the serializer picks the header from the rows actually present.)
     const NetworkStateSnapshot s = baseSnapshot();
@@ -209,7 +209,7 @@ TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
     EXPECT_EQ(text.find("\nFA,"), std::string::npos);
     EXPECT_EQ(text.find("\nFP,"), std::string::npos);
     EXPECT_EQ(text.find("\nFE,"), std::string::npos);
-    // The format-v3 coupling records (§18.12, Card-1) are absent too: the coupling
+    // The format-v3 coupling records (§18.12) are absent too: the coupling
     // capture is knob-gated and its containers stay default-constructed, so
     // hasCouplingState() is false, the three-way header selector yields v1, the
     // QS/QL/QZ/QR loops emit nothing and the END,<n> trailer is unchanged.  This
@@ -221,7 +221,7 @@ TEST(ResumeFrameRestoreTest, NoFrameStateWritesV1HeaderByteIdentical) {
 }
 
 TEST(ResumeFrameRestoreTest, V1FileParsesWithEmptyFrameMaps) {
-    // An old (pre-card) snapshot restores the cold-pin behaviour: every frame map
+    // An old (older) snapshot restores the cold-pin behaviour: every frame map
     // is empty and hasFrameState() is false, so an armed resume_frame_restore is
     // logged as inert.
     const NetworkStateSnapshot s = baseSnapshot();

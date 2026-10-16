@@ -73,10 +73,10 @@ inline constexpr std::string_view kDcbInfix = "DCB";
 /// Receiver phase-bias infix in receiver-phase-bias keys ("GPS_RPB_L1C").
 /// @c makeIfbKey / @c makeDcbKey cannot produce "_RPB_" (the infix with its
 /// surrounding underscores), so the receiver phase-bias keys stay disjoint
-/// from the receiver code-bias keys (Card 3, §4c).
+/// from the receiver code-bias keys.
 inline constexpr std::string_view kRpbInfix = "RPB";
 
-/// Receiver inter-signal code-bias infix ("GPS_ISC_C1W", card SCC, §4d).
+/// Receiver inter-signal code-bias infix ("GPS_ISC_C1W").
 /// As for @c kRpbInfix, @c makeIfbKey / @c makeDcbKey cannot produce "_ISC_",
 /// and "ISC" contains neither "IFB" nor "DCB", so the three receiver code-bias
 /// key families (IFB, DCB, ISC) never collide.
@@ -440,7 +440,7 @@ struct GlonassPerSlotIfbKeyParts {
     char band;       ///< FDMA band digit ('1' or '2').
     int  fcn_slot;   ///< GLONASS FDMA channel number k ∈ [-7,+6].
     /// The system name before "_IFB" ("GLONASS"); empty when the key does not open with
-    /// "<system>_" before the infix (the parser does not require it).  Card NOM N1: the
+    /// "<system>_" before the infix (the parser does not require it).  The
     /// parameter inventory reads the constellation from here rather than assuming it.
     std::string system{};
 };
@@ -551,8 +551,8 @@ inline std::optional<std::string> parseDcbKey(std::string_view key) {
 //            embedded '_').
 //
 // The per-(receiver, system, signal) satellite-phase-bias split state
-// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum (Card 3,
-// network.phase_datum_eq34).  With its own estimable state, the receiver
+// δ_{r,σ} of the Eq-34 / de Jonge single-receiver-chain phase datum
+// (network.phase_datum_eq34).  With its own estimable state, the receiver
 // fractional phase bias does not lump into the emitted satellite phase bias,
 // so the emitted between-satellite reference stays integer-consistent across
 // all satellites (each chain hop contributes only an integer).  These are
@@ -619,25 +619,24 @@ parseReceiverPhaseBiasKey(std::string_view key) {
 //            ("GPS", "Galileo", "BeiDou", "QZSS", ...).
 //   signal : full RINEX code-observation signal code (3 chars).
 //
-// Card SCC (docs/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
+// Second-code channel (docs/refound/SCC_second_code_channel_2026-09-21.md, R2).  With
 // `network.second_code_channel` a station contributes every allow-listed band-1
 // code it tracks, not only its latched canonical one (with
-// `processing.channel_mode: all`, any admitted non-canonical code on any band;
-// card SID phase 6b).  The receiver group delay
+// `processing.channel_mode: all`, any admitted non-canonical code on any band).
+// The receiver group delay
 // of the second code differs from the canonical one by an inter-signal
 // correction, and the per-band receiver key (§4, "<sys>_DCB" for a pin band)
 // cannot express it: C1C and C1W both resolve to "GPS_DCB" with the same
 // coefficient, so a second band-1 code would assert a zero receiver inter-signal
-// bias and push the difference into the satellite column.  (Card B5D records
-// what an asserted zero inter-signal bias costs on a third band.)
+// bias and push the difference into the satellite column.
 //
 // The non-canonical code therefore gets its own per-(receiver, system, signal)
 // state with unit coefficient: an absolute receiver delay in the frame the clock
 // and ionosphere datum leave free, rather than the ionosphere-referenced
 // difference the DCB state carries.  The one null direction this creates (every
 // receiver inter-signal bias against every satellite one) is closed by the
-// satellite family's own time-linked sum-to-zero row, so card SCC changes no
-// datum row (R3).
+// satellite family's own time-linked sum-to-zero row, so this changes no
+// datum row.
 //
 // Key disjointness: the key must match none of parseIfbKey, parseDcbKey and
 // isGlonassPerSlotIfbKey.  Application::networkSplitStation_ drops every receiver
@@ -929,7 +928,7 @@ inline std::string makePivotSeedKey(std::string_view cons,
 //   trig : 'C' (cosine term, includes m=0) or 'S' (sine term, m>=1).
 //   layer: shell index.  Layer 0 keeps the "SH" prefix, so single-layer keys,
 //          snapshots and traces written before the second layer existed
-//          (card Iono-2) stay valid.  The dual-layer field's second shell uses
+// stay valid.  The dual-layer field's second shell uses
 //          the separate prefix "SH2": parseVtecShKey rejects extra pipe fields,
 //          so a 5-field layer-extended key would be unparseable by older
 //          readers, and a separate prefix is the backward-compatible extension.
@@ -961,7 +960,7 @@ struct VtecShKeyParts {
 /// Build a global SH-VTEC coefficient key "SH|<n>|<m>|<C|S>" (layer 0) or
 /// "SH2|<n>|<m>|<C|S>" (layer 1; any @p layer > 0 selects "SH2").  Layer 0
 /// output is byte-identical to the single-layer three-argument form that
-/// preceded card Iono-2.
+/// preceded the layer parameter.
 inline std::string makeVtecShKey(int n, int m, char trig, int layer = 0) {
     std::string out;
     out.append(layer > 0 ? kVtecSh2Prefix : kVtecShPrefix);

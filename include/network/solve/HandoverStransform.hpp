@@ -57,7 +57,7 @@
  *     dominant common-mode case, so omitting the cross term overstates the
  *     variance.  The full @f$S D S^\top@f$ on the carry blob is deferred by §8.8;
  *     §8.7 gate 6 watches for the failure signature the omission would produce.
- *     Card SCL build B2 (@c network.handover_stransform_dense, default off) is that
+ *     The dense build (@c network.handover_stransform_dense, default off) is that
  *     full transform: @ref applyClockStransformDense re-expresses the values and the
  *     dense block together by @f$S P S^\top@f$, with the diagonal kernel as its fallback.
  *
@@ -86,7 +86,7 @@
  *    edge stays classified as FRAME there, which is the other answer §8.4 INC-2
  *    permits.
  *  - The **two-state clock oscillator** clear (`clk_model_warm`).  `clock_model`
- *    is not armed on any validated lineage (the card is a documented NO-GO), so
+ *    is not armed on any validated lineage (the model is a documented NO-GO), so
  *    transforming the oscillator state would be untested code on an unused path.
  *  - The **SH-VTEC** carry, which has no constellation and whose skip is
  *    deliberately global (see the RTA-2 loader warning).
@@ -125,7 +125,7 @@ struct ClockStransformResult {
 /// wiring fault.
 inline constexpr double kStsExactTolM = 1e-9;
 
-/// Self-check tolerance of the dense kernel's contrast invariance (card SCL B2), relative to
+/// Self-check tolerance of the dense kernel's contrast invariance, relative to
 /// the largest clock variance of the constellation's block.  The update is three
 /// subtractions per entry, so the change of a contrast variance is a few roundings of that
 /// scale; a value above this is a wiring fault.
@@ -133,7 +133,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
 
 /**
  * @brief The rank-1 S-transform kernel (§8.1) through the traversal of carried references
- *        (card PRM phase 2, @ref forEachCarriedReference); no context, no I/O.
+ *        (@ref forEachCarriedReference); no context, no I/O.
  *
  * Applies @f$x_i \leftarrow x_i - v_c[i] c_0@f$ and @f$\mathrm{var}_i \leftarrow
  * \mathrm{var}_i + v_c[i]^2 \mathrm{var}_q@f$, with @f$c_0 = x_q/v_c[q]@f$ and @c var_q read
@@ -153,7 +153,7 @@ inline constexpr double kStsDenseContrastTolRel = 1e-10;
  * (@c p_prev > 0; a pinned term keeps its pinned route); and the stash's pinned pivot value.
  *
  * @param carry  The run's carried state, mutated in place.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param v_c    The structural direction's nonzero (satellite, coefficient) entries.
  * @param q      The incoming pivot satellite.
  * @param mech   @c Handover or @c HandoverBeforeRows.
@@ -182,12 +182,12 @@ struct ClockStransformDenseResult {
     double      var_saved{0.0};       ///< summed (var_i + P_qq) - P'_ii over the re-expressed clocks other than q (m^2): what the diagonal bump over-states
     double      contrast_maxdev{0.0}; ///< largest |change| of a clock-contrast variance P_ii + P_jj - 2 P_ij over the constellation's rows (m^2)
     bool        selfcheck_ok{true};   ///< |x'_q|, the zero row, finite, symmetric, contrast invariance
-    CarrySiteCounts counts{};         ///< the traversal's tallies of the value moves (card PRM phase 2)
+    CarrySiteCounts counts{};         ///< the traversal's tallies of the value moves
 };
 
 /**
  * @brief The exact clock-pivot S-transform of the carried values and the dense block
- *        together (card SCL build B2, @c network.handover_stransform_dense); no context, no
+ *        together (@c network.handover_stransform_dense); no context, no
  *        I/O.
  *
  * The diagonal kernel (@ref applyClockStransform) moves the carried clock values and adds
@@ -213,7 +213,7 @@ struct ClockStransformDenseResult {
  * the constellation with a block row takes @f$\mathrm{var} = P'_{ii}@f$; one without (a
  * parked READMIT entry) takes the diagonal rule @f$x - c_0@f$, @f$\mathrm{var} + P_{qq}@f$.
  * The value moves go through the traversal of carried references
- * (@ref forEachCarriedReference, the @c Handover sites), so card PRM's tallies count them.
+ * (@ref forEachCarriedReference, the @c Handover sites), so the carried-reference tallies count them.
  *
  * Every between-satellite contrast @f$a@f$ with @f$a^\top u = 0@f$ keeps its variance
  * exactly (up to rounding): the diagonal kernel over-states a clock contrast by
@@ -227,7 +227,7 @@ struct ClockStransformDenseResult {
  * @p q, no block row for @p q, or @p q equal to @p p_out.
  *
  * @param carry The run's carried state: @c prev_carry and @c prev_carry_cov, mutated in place.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param c     The constellation's leading character.
  * @param q     The incoming pivot.
  * @param p_out The outgoing pivot (the frame the block is in); empty: nothing is appended.
@@ -239,13 +239,13 @@ ClockStransformDenseResult applyClockStransformDense(NetworkCarryState& carry, n
 
 /**
  * @brief Undo a transform @ref applyClockStransform applied with
- *        @c CarryMechanism::HandoverBeforeRows (card PRM phase 2): every clock reference of the
+ *        @c CarryMechanism::HandoverBeforeRows: every clock reference of the
  *        constellation moves back by @p c0 and every re-expressed variance (a carried clock's,
  *        a free coupling term's p_prev) gives back @p var_q.  The structural direction's
  *        coefficient is 1 for every clock of the constellation, so the membership is the
  *        constellation's, as the forward transform's before the rows.
  * @param carry         The run's carried state.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param constellation The constellation's leading character.
  * @param c0            The coefficient the transform applied (m).
  * @param var_q         The variance it added (m^2).
@@ -256,13 +256,13 @@ long long undoClockStransform(NetworkCarryState& carry, net::NetworkEntities& en
                               char constellation, double c0,
                               double var_q, CarrySiteCounts* counts = nullptr);
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochEvents;             // network/driver/Epoch.hpp
 
 /**
- * @brief The handover's S-transform before the coupling rows (card PRM phase 2,
- *        @c network.handover_stransform_before_rows).
+ * @brief The handover's S-transform before the coupling rows
+ *        (@c network.handover_stransform_before_rows).
  *
  * Call once per epoch before the fold decision (@ref networkCarryDecide) and PASS B.  The
  * call always clears @c NetworkCarryState::sts_pre first.  With the knob armed it previews
@@ -284,10 +284,10 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  * outgoing datum before anything else moves it.  A failing election (an exception) is left to
  * the solve glue, which skips the epoch.
  *
- * @c ctx.knobs.clk_anchor_sigma (card NOM3 step EP0).
+ * @c ctx.knobs.clk_anchor_sigma.
  *
- * Epoch form (card NOM3 step EP1); the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * Epoch form; the explicit form and its forwarding adapter
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -301,7 +301,7 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  *   - @p config_ = run.config: Config (the declaration).
  *   - @p log = run.log: Logger (unused; the seam signature).
  *   - @p traces = run.traces: Event sink (STRANSFORM sts_undone rows).
- *   - @p sat_health = run.setup.sat_health: The broadcast health the election passes over (card HLT).
+ *   - @p sat_health = run.setup.sat_health: The broadcast health the election passes over.
  *   - @p est = run.engines.est: This epoch's estimator, columns registered.
  *   - @p t = ep.se.time: This epoch's time.
  *   - @p registered_clock_sats = ep.columns.registered_clock_sats: This epoch's registered satellite clocks. The declaration reads the resolved broadcast anchor sigma from
@@ -352,14 +352,14 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const std::set<char>& changed_consts,
                                const std::vector<std::string>& registered_clock_sats, EpochEvents& events);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: satellite health (HLT) and clock-pivot handovers with their S-transform.
  *
- * The subsystem's one row of kNetworkRunEndReports (card NOM2 step TD2).  Its sections, defined
+ * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
  * beside it in HandoverStransform.cpp, print in this order, each gated on its own knob:
  *   - networkSatHealthRunEnd: broadcast satellite health (HLT).
  *   - networkPivotHandoverRunEnd: clock-pivot handovers and their S-transform.

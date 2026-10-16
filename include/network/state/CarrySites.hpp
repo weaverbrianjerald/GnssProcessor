@@ -2,7 +2,7 @@
 /**
  * @file CarrySites.hpp
  * @brief The carried references of the network's border parameters, and one traversal
- *        over them (card PRM phase 2, docs/refound/PRM_parameter_registry_2026-09-29.md
+ *        over them (docs/refound/PRM_parameter_registry_2026-09-29.md
  *        section 5).
  *
  * A border parameter (a satellite clock, phase bias, code bias or SH coefficient) is
@@ -16,9 +16,9 @@
  * shift, a declared anchor handover) must move every one of those
  * references by the same amount, or the next epoch reads the parameter in two frames.
  *
- * Until this card each such mechanism enumerated the containers by hand, and each list
- * was a different subset (card CLV section 6.4 item 6: the ephemeris re-level moved two
- * of the ten local carries; card LGM's phase-colour carry, added after card CLV, is in
+ * Until this table each such mechanism enumerated the containers by hand, and each list
+ * was a different subset (the ephemeris re-level moved two
+ * of the ten local carries; the phase-colour carry, added later, is in
  * no list).  This header declares the containers once (@ref CarrySite, one row per
  * container and reference role, with its key form, what it holds, how a shift applies
  * and whether the warm-resume snapshot restores it), one walk over them
@@ -41,7 +41,7 @@
  * or holding no value): the per-epoch scratch (@c cxu_epoch, @c readmit_seed_check,
  * @c sts_c0, @c sts_dense, @c oracle_pin), the smoothed hold's clones
  * (@c smh_clone, @c smh_block and their pending maps: their own re-base,
- * @c pbHoldCloneRebase, every epoch), card LAH's per-constellation state
+ * @c pbHoldCloneRebase, every epoch), the phase-clock hold's per-constellation state
  * (@c pb_hold_frz_M, @c pb_hold_frz_prev_clk), the clock-level monitor's previous
  * epoch (@c clm_prev_clk, cleared at a datum change), the anchor's one-epoch record
  * (@c clk_anchor), the phase-datum elections' own targets and ledgers (@c phase_basis,
@@ -60,7 +60,7 @@
 namespace GnssProcessor {
 
 struct NetworkCarryState;   // network/state/RunContext.hpp, included in the .cpp only
-namespace net { struct NetworkEntities; }   // network/state/Entities.hpp (card NOM step N4)
+namespace net { struct NetworkEntities; }   // network/state/Entities.hpp
 
 /**
  * @brief One container (and reference role) of @c NetworkCarryState that holds a
@@ -100,7 +100,7 @@ enum class CarrySite : int {
     RxPhaseBiasCoupling,   ///< @c rpb_carry coupling (empty by construction)
     RxCodeBiasValue,       ///< @c rx_cb_carry value_abs: the receiver code bias, in the code-bias datum's frame
     RxCodeBiasCoupling,    ///< @c rx_cb_carry coupling
-    PhaseColourCoupling,   ///< @c pc_carry coupling (card LGM)
+    PhaseColourCoupling,   ///< @c pc_carry coupling
 };
 
 /// Number of @ref CarrySite values (array sizing).
@@ -117,12 +117,12 @@ enum class CarryRefRole : int {
 };
 
 /**
- * @brief The declaration of one site: the row of the card's section 5 table.
+ * @brief The declaration of one site: the row of the section 5 table.
  *
  * @c record names the warm-resume snapshot record that restores the site (null when the
  * site is cold-started on a resume), and @c snapshot_note the capture knob or the reason
  * it is cold-started (the decomposition plan's two-place rule; the registry records the
- * membership as it is, card PRM section 9).
+ * membership as it is).
  */
 struct CarrySiteSpec {
     CarrySite    site;
@@ -157,7 +157,7 @@ inline constexpr std::uint32_t kAllCarrySites = (std::uint32_t{1} << kCarrySites
  * (@ref carryMechanismSites).  @c HandoverBeforeRows is the clock-pivot handover's
  * S-transform when it runs before the coupling rows are built: the same transform over a
  * wider site set (declared here with the kernel; the seam that runs it before PASS B is
- * card PRM phase 2's third step).
+ * a separate step).
  */
 enum class CarryMechanism : int {
     EphRelevel = 0,       ///< the ephemeris cut-over re-level (@c networkEphCutoverRelevel): one clock by -Δ_eph
@@ -191,10 +191,10 @@ std::uint32_t carryMechanismSites(CarryMechanism m);
 
 /**
  * @brief The mask of the sites @p m exempts as owed: the gaps of the hand-written lists
- *        (card PRM sections 16.2 and 16.7), which @c network.carry_rebase_complete moves.
+ *, which @c network.carry_rebase_complete moves.
  *
  * A site is owed when its exemption's reason is one of the owed reasons (a gap of the hand
- * list card PRM phase 2 replaced, card CLV section 6.4 item 6).  Never in the set: a site
+ * list this table replaced).  Never in the set: a site
  * the mechanism already moves, a site outside its direction (no reason), a by-design
  * exemption (the D4 shift's bridged root, the handover's reasons, the receiver clock under
  * the handover included), and @c PbHold for every mechanism: the phase hold's held value
@@ -208,7 +208,7 @@ std::uint32_t carryMechanismOwedSites(CarryMechanism m);
 
 /**
  * @brief The site mask a walk of @p m covers on a run: @ref carryMechanismSites, with the
- *        owed sites when @p complete (@c network.carry_rebase_complete, card PRM phase 3b).
+ *        owed sites when @p complete (@c network.carry_rebase_complete).
  * @param m        the mechanism.
  * @param complete whether the owed sites are moved.
  * @return @c carryMechanismSites(m) | (complete ? carryMechanismOwedSites(m) : 0).
@@ -258,13 +258,13 @@ using CarryRefVisitor = std::function<bool(const CarriedRef&)>;
 struct CarrySiteCounts {
     long long visited[kCarrySites]{};   ///< references handed to the visitor
     long long moved[kCarrySites]{};     ///< references the visitor reported moved
-    long long moved_border[4]{};        ///< the carried border values moved (@c PrevCarry and the clock oscillator's @c ClockOsc), per @c SharedParamKind (card PRM phase 3a)
+    long long moved_border[4]{};        ///< the carried border values moved (@c PrevCarry and the clock oscillator's @c ClockOsc), per @c SharedParamKind
 };
 
 /**
  * @brief The run-scope moved tallies: per [site][mechanism], and the @c PrevCarry moves per
  *        [@c SharedParamKind][mechanism] (the Stransform responses of the border kinds,
- *        card PRM phase 3a).
+ *        see @c network/assembly/Responses.hpp).
  */
 struct CarryMovedTally {
     long long site[kCarrySites][kCarryMechanisms]{};
@@ -283,7 +283,7 @@ struct CarryMovedTally {
  * nothing, creates no container entry and reads no value.
  *
  * @param carry  the run's carried state.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param sites  the site mask (@ref carrySiteBit, @ref carryMechanismSites).
  * @param visit  the visitor.
  * @param counts optional out: per-site visited and moved tallies (accumulated, not reset).
@@ -303,20 +303,20 @@ inline void carryTallyMoved(CarryMovedTally& moved, CarryMechanism m, const Carr
 /**
  * @brief The number of references each site holds (a walk with a counting visitor).
  * @param carry the run's carried state (not modified).
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param held  out: references per site.
  */
 void carrySiteHeld(const NetworkCarryState& carry, const net::NetworkEntities& entities,
                    long long (&held)[kCarrySites]);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 
 /**
  * @brief Run-end report: the carried references per site (PRM 2).
  *
- * The carried references of the border per site and mechanism (card PRM phase 2), with
+ * The carried references of the border per site and mechanism, with
  * the `param_sites` manifest record.
  *
  * Gate: prints always (a block).

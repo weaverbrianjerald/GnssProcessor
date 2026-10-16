@@ -30,7 +30,7 @@
  *   C,key,0|1                 A5 code-bias applied map
  *   END,n_lines
  *
- * Not in v1 (card CC (A)): the consumer's last-applied phase-bias value map (the
+ * Not in v1: the consumer's last-applied phase-bias value map (the
  * declared-step carry's Δ baseline, @c PbDiscCarryLedger).  A restored engine
  * therefore has the A5 applied flags but no applied values, so the first disc
  * bump or freshness flip per key after a restore falls back to the existing

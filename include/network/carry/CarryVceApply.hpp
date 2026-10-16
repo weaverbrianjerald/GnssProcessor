@@ -433,7 +433,7 @@ struct NetworkRun;
  * @brief Configures the carry-VCE apply step (M2 v2) when it is armed.
  *
  * A census arm: the monitor itself is an engine the run owns (run.engines.carry_vce).  Setup
- * builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * builder: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.ctx.carry.vce_apply.

@@ -1,6 +1,6 @@
 /**
  * @file test_network_invariant_carry_driver.cpp
- * @brief Tests for the live DD invariant-carry driver (card 4 (M1), phase C3b and later).
+ * @brief Tests for the live DD invariant-carry driver (phase C3b and later).
  *
  * The five phase-C3b gates, each with a negative or independent control so that a
  * pass is not vacuous:
@@ -128,7 +128,7 @@ std::size_t addNetStation(NetworkEstimator& est, const Net& n, int r,
 }
 
 // Build the driver's one (const,signal) group for a full-vis epoch under star(p,q).
-// @p slipped (optional): the (r,s) arcs to tag slipped this epoch (Card 4 C3c feed).
+// @p slipped (optional): the (r,s) arcs to tag slipped this epoch (C3c feed).
 NetworkInvariantCarryDriver::GroupInput
 makeGroup(const Net& n, const std::vector<std::size_t>& ids, int p, int q,
           const std::set<std::pair<int, int>>* slipped = nullptr) {
@@ -170,7 +170,7 @@ std::vector<Eigen::VectorXd> driveEpoch(NetworkInvariantCarryDriver& drv, const 
 
 // The (r,s) arcs the innovation gate flagged at the last install.  The caller
 // (ApplicationNetwork) feeds these into the next epoch's slipped set (the C3c re-tap).
-// Mirrors the production plumbing: chord ArcKey(rxV(r), satV(s)) → (r, s).  (card 4 D5)
+// Mirrors the production plumbing: chord ArcKey(rxV(r), satV(s)) → (r, s).
 std::set<std::pair<int, int>> innovSlips(const NetworkInvariantCarryDriver& drv) {
     std::set<std::pair<int, int>> out;
     for (const auto& [g, key] : drv.lastInnovFlags()) out.insert({key.u, key.v - kSatBase});
@@ -565,7 +565,7 @@ TEST(NetworkInvariantCarryDriverTest, ValidateCarryBindingRejectsUnboundVertices
 // ---------------------------------------------------------------------------
 // The diagonal-only carry blob (v3).  (RTB-7(e))
 //
-// The card's hypothesis (the resumed branch lives in the means, not in the
+// The hypothesis (the resumed branch lives in the means, not in the
 // cross-covariance) is an estimation claim that only the field A/B can decide.
 // These gates check what the serialization promises and nothing more: the means
 // and variances survive bit for bit, the cross-covariances are set to zero (and the
@@ -1143,7 +1143,7 @@ TEST(NetworkInvariantCarryDriverTest, InstallPosteriorParallelMatchesSerialByteF
 }
 
 // ---------------------------------------------------------------------------
-// Gate 8: slip integration on a chord arc, A/B with a negative control (card 4 C3c).
+// Gate 8: slip integration on a chord arc, A/B with a negative control (C3c).
 // After a tight carry is warmed, an integer jump is applied to a chord's true ambiguity.
 // Signaled (drvSig): the driver re-taps that DD fresh (free of the stale carry),
 // refloating that one chord only and leaving its neighbours' carry intact.
@@ -1250,7 +1250,7 @@ TEST(NetworkInvariantCarryDriverTest, SlippedTreeArcRefloatsDependentChordsOnly)
 }
 
 // ===========================================================================
-// The estimation-side fine-slip innovation gate (card 4 D5, spec D5 Def-1).
+// The estimation-side fine-slip innovation gate (D5, spec D5 Def-1).
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
@@ -1654,7 +1654,7 @@ TEST(NetworkInvariantCarryDriverTest, InnovationMatchesDiffusePriorPosterior) {
 }
 
 // ===========================================================================
-// LS-VCE calibration of Cov(v) (σ̂₀²) (card 4 D5 v2).
+// LS-VCE calibration of Cov(v) (σ̂₀²) (D5 v2).
 // ===========================================================================
 
 // ---------------------------------------------------------------------------

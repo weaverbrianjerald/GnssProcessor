@@ -23,17 +23,17 @@
  *     (`scripts/simnet_producer_ar_grade.py`); a fix count alone is not a grade.  The
  *     run-end readout is the "Network (producer AR, Phase 2 log-only)" clause of
  *     networkProducerArRunEnd (below), fed by the `ctx.counters.netar_*` tallies.
- *     With `network.ambiguity_resolution.suspect_epochs` (card ARL) every DD with a
+ *     With `network.ambiguity_resolution.suspect_epochs` every DD with a
  *     (station, satellite) corner that the slip layer freed, dropped or flagged in the
  *     last few epochs stays in the basis and the trace but is kept out of the search
  *     (network/ar/ArSuspect.hpp, @ref netar::maskedSearchOrder); the trace then
  *     carries the DD's suspect cause bits and its re-entry flag, and the release back
  *     into the search is counted (@ref netar::reentryOutcome).  The basis is the star
- *     unless `tree_basis` (card ARL: a spanning tree of station baselines per
- *     (constellation, signal)) or `cycle_basis` (card AGT: a sticky, full-coverage cycle
+ *     unless `tree_basis` (a spanning tree of station baselines per
+ *     (constellation, signal)) or `cycle_basis` (a sticky, full-coverage cycle
  *     basis per family of a constellation's signals, network/ar/ArCycleBasis.hpp,
  *     searched one block per station, @ref netar::searchBlockKey) is armed.  Under
- *     `trace_lattice` (card AGT step AGT-6) the seam returns the epoch's determined DDs as
+ *     `trace_lattice` the seam returns the epoch's determined DDs as
  *     cycles with every band-arc's life reading (@ref ArEpochFixes), which the measure-only
  *     lattice observatory (network/ar/ArLattice.hpp) reads next in the same bracket.
  *  2. **One-shot NEQ export** (`network.neq_export_epoch`): a post-solve, read-only dump
@@ -48,8 +48,8 @@
  */
 
 #include "filter/IlsCore.hpp"            // ils::IlsResult / IlsGateConfig (blockDecorrelatedFix)
-#include "network/ar/ArCycleBasis.hpp" // ArEpochFixes (the lattice observatory's input; card AGT)
-#include "network/ar/ArSuspect.hpp"   // ArSuspectReentry (reentryOutcome; card ARL)
+#include "network/ar/ArCycleBasis.hpp" // ArEpochFixes (the lattice observatory's input)
+#include "network/ar/ArSuspect.hpp"   // ArSuspectReentry (reentryOutcome)
 #include "network/solve/Estimator.hpp"   // NetworkEstimator
 #include "network/solve/Sbasis.hpp"      // NetworkSbasis::Plan (shared_datum)
 #include "network/driver/RunTypes.hpp"    // NetStation / StationAssembly
@@ -97,7 +97,7 @@ namespace netar {
 std::vector<int> lowestSigmaOrder(const Eigen::MatrixXd& Q_cyc, int cap);
 
 /**
- * @brief The search subset under the suspect-corner mask (card ARL,
+ * @brief The search subset under the suspect-corner mask (
  *        network/ar/ArSuspect.hpp).
  *
  * With @p masked empty or all zero this is exactly @ref lowestSigmaOrder, so an unarmed
@@ -149,7 +149,7 @@ struct DdPairKey {
 };
 
 /**
- * @brief The decorrelated partial fix run block by block (card ARL, block_search).
+ * @brief The decorrelated partial fix run block by block (block_search).
  *
  * Search rows sharing a @p block_of id (one baseline: its L1 and L2 DDs) are fixed
  * together by @ref ils::ilsFixDecorrelatedPartial on their marginal covariance, each
@@ -174,7 +174,7 @@ ils::IlsResult blockDecorrelatedFix(const Eigen::VectorXd& y, const Eigen::Matri
                                     const ils::IlsGateConfig& gates,
                                     double determined_sigma_cyc);
 
-/// One basis DD's pair lanes (card ARL, decorrelated_partial): the values behind the
+/// One basis DD's pair lanes (decorrelated_partial): the values behind the
 /// trace's four pair columns, equal on the two rows of a pair.
 struct PairLane {
     int    partner        = -1;     ///< Basis index of the other band's DD; -1 = no partner in the search.
@@ -186,7 +186,7 @@ struct PairLane {
 };
 
 /**
- * @brief The pair lanes per basis DD (card ARL, decorrelated_partial).
+ * @brief The pair lanes per basis DD (decorrelated_partial).
  *
  * For each basis DD whose pair partner (same @c key, other wavelength) is also in
  * the search: the pair's wide lane a1 - a2 formal sigma before the fix (from
@@ -238,8 +238,8 @@ std::vector<std::string> pairLaneColumns(const std::vector<DdPairKey>& keys,
                                          const Eigen::MatrixXd& Q_cond);
 
 /**
- * @brief What the DDs the suspect-corner mask released got at their first search (card
- *        ARL, the release edge of network/ar/ArSuspect.hpp).
+ * @brief What the DDs the suspect-corner mask released got at their first search
+ *        (the release edge of network/ar/ArSuspect.hpp).
  *
  * Counts the DDs flagged in @p reentry and those of them kept, and over the L1/L2 pairs
  * whose two DDs both re-entered (each pair once): both singles kept, or else the wide lane
@@ -258,9 +258,9 @@ ArSuspectReentry reentryOutcome(const std::vector<char>& reentry,
                                 const std::vector<PairLane>& lanes, double det_sigma_cyc);
 
 /**
- * @brief The search block of a DD: "cons|sta_r|ref_sta" (one block per baseline, card ARL
- *        block_search), or "cons|sta_r" under the cycle basis (one block per station, card
- *        AGT: a station's partner and borrowed DDs in every band, so the two bands of a chord
+ * @brief The search block of a DD: "cons|sta_r|ref_sta" (one block per baseline under the
+ *        block_search), or "cons|sta_r" under the cycle basis (one block per station:
+ *        a station's partner and borrowed DDs in every band, so the two bands of a chord
  *        share a block).  The covariance readback and the search use the same key.
  * @param cons        Constellation key ("G").
  * @param sta_r       The DD's station.
@@ -273,13 +273,13 @@ std::string searchBlockKey(const std::string& cons, const std::string& sta_r, co
 
 } // namespace netar
 
-struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
-struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
+struct NetworkRun;              // network/driver/Run.hpp
+struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Run the log-only producer-AR and NEQ-export tail for this epoch.
  *
- * Epoch form (card NOM3 step EP1; generated by scripts/nom_ep1_cut.py): the run and the epoch
+ * Epoch form (generated by scripts/nom_ep1_cut.py): the run and the epoch
  * replace the explicit parameters; the definition binds each former parameter in its preamble,
  * under its former name.
  *
@@ -293,13 +293,13 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  * The former parameters, by binding:
  *   - @p ctx = run.ctx: [in,out] run context: reads `counters.n_emitted` (the min_epochs and
  *     NEQ-export gates) and `knobs.carry_aware_covariance`, and adds to the `counters.netar_*`
- *     run-end tallies. With `knobs.ar_suspect_epochs` > 0 (card ARL, the suspect-corner mask,
+ *     run-end tallies. With `knobs.ar_suspect_epochs` > 0 (the suspect-corner mask,
  *     network/ar/ArSuspect.hpp) it also folds this epoch's `carry.relevel` latch and
  *     `entities.arcs` stamps into `carry.ar_suspect` at loop epoch
  *     `counters.n_loop_epochs`, keeps every DD with a suspect corner out of the search, counts
  *     the corners it releases back into the search and what their DDs get there
  *     (`carry.ar_suspect.masking`), and adds to `counters.netar_suspect`. Under
- *     `network.ambiguity_resolution.cycle_basis` (card AGT) it reads each family's memory in
+ *     `network.ambiguity_resolution.cycle_basis` it reads each family's memory in
  *     `carry.ar_basis` (the last search's links, basis and arc lives), the arc ledger,
  *     `entities.arcs`, `the station table's amb_flag_ep` and `carry.relevel.free_ambs` (the arc life
  *     stamps, network/ar/ArcLife.hpp), stores the memory back after the search and adds to
@@ -326,14 +326,14 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
  *   - @p log_dir_ = run.log_dir: Output root for the NEQ-export artifacts
  *     (log_dir_/neq_export).
  *
- * @return What the lattice observatory reads this epoch (card AGT step AGT-6): the cycle
+ * @return What the lattice observatory reads this epoch: the cycle
  *         basis built, the determined DDs as cycles and every band-arc's life reading.
  *         Empty (@c searched false) unless `network.ambiguity_resolution.trace_lattice` and
  *         the search block ran.
  */
 ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep);
 
-// ---- Run-end reports (card NOM step TD1b; generated by scripts/nom_td_cut.py) ----
+// ---- Run-end reports (generated by scripts/nom_td_cut.py) ----
 
 struct NetworkRunEndView;
 

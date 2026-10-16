@@ -14,7 +14,7 @@
 *       prioritized phase datum.  On that path it runs with deferred flagging:
 *       the driver pools the stations' double differences by signal pair, flags
 *       against the pooled MAD, and feeds the flags to the invariant-carry slip
-*       funnel (card 4, C3c) and, when the phase-leveling carry is the active
+*       funnel (C3c) and, when the phase-leveling carry is the active
 *       one, to its refloat.  In the general user pipeline (kinematic, or before
 *       convergence) the detector is inert: the position gating below is unsafe
 *       there, and the `enable_if_slip_detector` user toggle has no
@@ -195,7 +195,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Keep a flagged satellite's gradient as the origin of the next
-         *        double difference instead of clearing it (card ARL, slip-ladder
+         *        double difference instead of clearing it (slip-ladder
          *        defect 2; @c network.cycle_slip.if_phase_td_reseed_on_flag).
          *
          * The alternative to @ref resetSatellite for a driver that flags from the
@@ -334,7 +334,7 @@ namespace GnssProcessor {
         void setAllPairs(bool all) { all_pairs_ = all; }
 
         /**
-         * @brief Hardened reference-satellite slip gate (card R,
+         * @brief Hardened reference-satellite slip gate (
          *        docs/SPEC_slip_qc_hardening.md §2).
          *
          * The legacy gate is the last non-empirical decision in the IF-TD chain:
@@ -345,7 +345,7 @@ namespace GnssProcessor {
          * epoch, while the raw wide-lane and geometry-free series stay flat to
          * ±0.1 cycles and no LLI is set.  Once the carry is warm, every fire
          * refloats both band ambiguities and marks the invariant-carry chords
-         * slipped (card 4).
+         * slipped.
          *
          * When @ref RefGateParams::enable is set the decision becomes:
          *   1. Scale: |median| must exceed max(k·s_eff, floor_frac·λ_IF), where
@@ -493,7 +493,7 @@ namespace GnssProcessor {
         };
 
         /**
-         * @brief Reference-gate run telemetry (card R; standing invariant #4).
+         * @brief Reference-gate run telemetry (standing invariant #4).
          *
          * @c legacy_candidates counts the epochs on which the legacy condition
          * held while the hardened gate was armed, so `legacy_candidates − fires`
@@ -527,16 +527,16 @@ namespace GnssProcessor {
             long long suppressed_warmup{0};
         };
 
-        /// Verdict of the hardened reference gate on a candidate (card R).
+        /// Verdict of the hardened reference gate on a candidate.
         enum class RefGateVerdict {
             Suppress,       ///< Not a reference event: no candidate, warm-up abstention, drift, thin family, or a capped run.
             FireRebase,     ///< A coherent common step: the legacy action (reset key + median rebase of prev_grad).
             FireNoRebase    ///< A multi-satellite station event: reset the reference, but do not claim the median as its slip.
         };
 
-        /// Install the reference-gate parameters (card R); only network setup calls this.
+        /// Install the reference-gate parameters; only network setup calls this.
         void setRefGate(const RefGateParams& p) { ref_gate_ = p; }
-        /// Reference-gate run telemetry for the run-end summary (card R).
+        /// Reference-gate run telemetry for the run-end summary.
         const RefGateCounters& refGateCounters() const { return ref_gate_counters_; }
 
         /**
@@ -701,7 +701,7 @@ namespace GnssProcessor {
             /** Current reference satellite elevation (degrees). */
             double ref_elevation{ 0.0 };
 
-            // Hardened reference-gate state (card R).  With the gate disabled these
+            // Hardened reference-gate state.  With the gate disabled these
             // fields keep their initial values: only the gate sets them, although
             // selectReference reads and clears ref_force_reselect and ref_exclude.
             /** EWMA of the non-reference DD dispersion, 1.4826·MAD (raw m; the
@@ -1001,7 +1001,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Advance this chain's non-reference DD dispersion scale and
-         *        return the effective scale from before the update (card R).
+         *        return the effective scale from before the update.
          *
          * Called on every epoch that has a usable family (≥ 2 finite non-ref
          * DDs) while the gate is armed, not only on the epochs where the legacy
@@ -1029,7 +1029,7 @@ namespace GnssProcessor {
             double median_dd, double cold_prior, double sin_bar, double& disp_out);
 
         /**
-         * @brief Adjudicate a candidate reference-satellite slip (card R).
+         * @brief Adjudicate a candidate reference-satellite slip.
          *
          * Called only when the legacy condition (|median| > floor_frac·λ_IF,
          * n ≥ 2) already holds and @ref RefGateParams::enable is set.  Updates
@@ -1098,10 +1098,10 @@ namespace GnssProcessor {
         /// caller has closed.
         bool epoch_gated_{ false };
 
-        /** Reference-gate parameters (card R); default-constructed means the legacy behaviour. */
+        /** Reference-gate parameters; default-constructed means the legacy behaviour. */
         RefGateParams ref_gate_{};
 
-        /** Reference-gate run telemetry (card R). */
+        /** Reference-gate run telemetry. */
         RefGateCounters ref_gate_counters_{};
 
         /** Reference-arm run telemetry per gradient chain (§22.6).  Populated on
@@ -1111,7 +1111,7 @@ namespace GnssProcessor {
         std::map<std::string, RefArmChainCounters> ref_arm_chain_counters_;
 
         /** Monotonic detect() call index: the unit of the reference gate's
-         *  persistence run length (card R), an epoch identity that needs no
+         *  persistence run length, an epoch identity that needs no
          *  time model. */
         long long epoch_counter_{ 0 };
     };

@@ -1,10 +1,10 @@
 /**
  * @file test_mw_detect_pair_scope.cpp
- * @brief Contract tests for `network.cycle_slip.mw_detect_pairs` (card L5P,
+ * @brief Contract tests for `network.cycle_slip.mw_detect_pairs` (
  *        docs/refound/L5P_l5_phase_posture_2026-09-21.md knob A).
  *
  * The network's Melbourne-Wubbena detector forms one pair per distinct band pair
- * of a satellite's arc.  On a three-band lineage (card B5D) two of the three pairs
+ * of a satellite's arc.  On a three-band lineage two of the three pairs
  * carry band 5, and those pairs account for most `mw_wl_slip` detections.
  * `primary` forms only the pair whose two signals both sit on the constellation's
  * ionosphere-free pin bands; on a lineage that latches one signal per band, that

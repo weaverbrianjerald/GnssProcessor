@@ -4,7 +4,7 @@
  * @file GnssIdentity.hpp
  * @brief Typed identities of the GNSS entities the network producer models: the
  *        constellation's traits, a satellite, a tracking signal, an observable, a
- *        signal pair, a station, a line of sight and an arc (card NOM step N0a,
+ *        signal pair, a station, a line of sight and an arc (
  *        docs/refound/NOM_network_object_model_2026-10-08.md section 11.1).
  *
  * ### Why this header exists
@@ -13,7 +13,7 @@
  * @c System enum, as a RINEX letter ('E'), as a one-letter string ("E") and as a name
  * ("Galileo"), with private converters whose defaults disagree (an unknown letter is
  * GPS in some and "Unknown" in others); a satellite as a string that one reader
- * normalizes and another does not (card RXP: blank-padded ids dropped satellites below
+ * normalizes and another does not (blank-padded ids dropped satellites below
  * G10); a band as a digit read from @c sig[1].  Every disagreement between two such
  * readers is a defect waiting for an input that separates them.
  *
@@ -48,9 +48,9 @@
  * New types only: no existing call site reads them yet (step N0b migrates the call sites).
  * IRNSS has no @c System value: its letter 'I' maps to @c System::Unknown here, and
  * @ref SatId::parse refuses it.  Adding IRNSS to the enum is a user-side decision that
- * card NOM leaves out of its scope (section 15).
+ * is out of scope here.
  *
- * ### Step N0b additions (card NOM section 15)
+ * ### Step N0b additions
  *
  * The small helpers the network call sites need to read these types in one line:
  * @ref systemOfSat (the one place a satellite string's constellation is read until step
@@ -407,8 +407,8 @@ namespace GnssProcessor {
         /**
          * @brief Parse a RINEX satellite id.
          *
-         * Normalizes the three spellings in use: "G05", the blank-padded "G 5" (card
-         * RXP) and the unpadded "G5".  Refuses everything else: an empty or longer
+         * Normalizes the three spellings in use: "G05", the blank-padded "G 5"
+         * and the unpadded "G5".  Refuses everything else: an empty or longer
          * string, an unknown letter (@ref systemFromLetter gives Unknown), a lower-case
          * letter, a non-digit, PRN 0.
          *
@@ -693,8 +693,8 @@ namespace GnssProcessor {
     }
 
     /**
-     * @brief A signal of one satellite: (satellite, signal), such as G05 "1C" (card NOM
-     *        step N4.0).
+     * @brief A signal of one satellite: (satellite, signal), such as G05
+     *        "1C".
      *
      * Replaces the composite keys of the per-satellite-signal state: the strings
      * "G05|L1C" and "G05_L1C" and the (satellite, code) pairs.  Ordered by (satellite,

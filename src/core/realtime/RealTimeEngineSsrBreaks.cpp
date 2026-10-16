@@ -21,9 +21,9 @@
 #include "common/PppUtils.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "common/Constants.hpp"           // card CLV2: the L1 reference frequency
-#include "common/SignalBand.hpp"          // card CLV2: a phase signal's carrier
-#include "filter/StateKeySchema.hpp"      // card CLV2: the ambiguity keys
+#include "common/Constants.hpp"           // the L1 reference frequency
+#include "common/SignalBand.hpp"          // a phase signal's carrier
+#include "filter/StateKeySchema.hpp"      // the ambiguity keys
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -38,12 +38,12 @@ namespace GnssProcessor {
 namespace {
 /// Cap on the ARC rows one consumer writes for freshness flips, so a pathological
 /// wire cannot flood the log.  The counters record every flip regardless of the
-/// cap.  (Card SID phase 5, E3.)
+/// cap.
 constexpr long long kRosterFlipEventCap = 400;
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// The declared signal roster at the consumer (card SID phase 5)
+// The declared signal roster at the consumer
 // ---------------------------------------------------------------------------
 
 void RealTimeEngine::refreshDeclaredRoster_() {
@@ -100,7 +100,7 @@ bool RealTimeEngine::noteFreshnessFlip_(const std::string& key, const std::strin
     //   1. the declaration names no family for this signal at all: the network
     //      structurally does not carry it, so its absence is not a staleness;
     //   2. it does, but the store holds no record for this satellite: the family
-    //      exists and is absent here (the dropouts of card MSC);
+    //      exists and is absent here (the dropouts of the multi-site consumer);
     //   3. a record exists and the age gate refused it: a genuine staleness.
     const bool have_decl = ssr_declared_roster_.present;
     const FlipAttribution att = signalDeclarationAttributeFlip(
@@ -117,7 +117,7 @@ bool RealTimeEngine::noteFreshnessFlip_(const std::string& key, const std::strin
     if (roster_consumer_.flip_events < kRosterFlipEventCap) {
         ++roster_consumer_.flip_events;
         // Record the identity of the flip (satellite, signal, from, to, epoch)
-        // on the ARC tier the card's other lifecycle edges use, for both edges
+        // on the ARC tier the other lifecycle edges use, for both edges
         // of the gate.
         if (consumer_sat_trace_)
             noteConsumerSatEvent_(sat + "|" + signal,
@@ -143,7 +143,7 @@ void RealTimeEngine::logRosterConsumerSummary(const char* tag) const {
     const auto& r = roster_consumer_;
     const auto& d = ppp_model_->declaredLatchCounters();
     // Silent when no declaration was ever seen and the knob is off: a consumer of
-    // a pre-card wire prints nothing, so its log is byte-identical.
+    // an earlier wire prints nothing, so its log is byte-identical.
     if (r.epochs_declared == 0 && !config_.consumerRosterLatch()) return;
     auto log = log_manager_.getLogger("rt_engine");
     log->info("[RT] Card SID phase 5, declared roster ({}): {} of {} epoch(s) held a "
@@ -195,7 +195,7 @@ void RealTimeEngine::reactToGenerationChange(RtEpochContext& ctx) {
             for (const auto& k : keys) state_manager_->resetAmbiguity(k, reset_std);
             // Record the global reset per ambiguity key, so the per-satellite rows
             // of that epoch show it and a mass reset is not mistaken for an
-            // undeclared one.  No-op unarmed (card CST).
+            // undeclared one.  No-op unarmed.
             if (consumer_sat_trace_)
                 for (const auto& k : keys) {
                     const auto sep = k.find('_');
@@ -257,18 +257,18 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     // there lands in ctx.pb_hold_handled and is skipped by whichever of the three
     // reactions below runs, so each key is visited once per epoch (the same
     // guarantee the PBT-before-CC dispatch gives).  With an unheld product the set
-    // stays empty and all three bodies are unchanged (card PBH).
+    // stays empty and all three bodies are unchanged.
     reactToPbHold_(ctx);
     // With the step translation armed, it replaces the whole reaction for declared
-    // and undeclared steps alike, so it is dispatched before the card-CC carry.
+    // and undeclared steps alike, so it is dispatched before the declared-step carry.
     // That precedence is what gives the once-only guarantee when both knobs are
     // on: one seam reacts per epoch, it visits each (sat, signal) key once, and
     // PbStepTranslateLedger::react makes at most one shiftAmbiguity call per cell.
     // carryOnPhaseBiasDisc_ is then never entered, so a declared step cannot be
-    // translated twice (card PBT, A).
+    // translated twice.
     if (config_.ssrPhaseBiasStepTranslate()) { translatePhaseBiasStep_(ctx); return; }
     // With the declared-step carry armed, the whole reaction is the carry seam;
-    // everything below is the pre-card reset path, verbatim (card CC, A).
+    // everything below is the original reset path, verbatim.
     if (config_.ssrPhaseBiasDiscCarry()) { carryOnPhaseBiasDisc_(ctx); return; }
 
     auto log = log_manager_.getLogger("rt_engine");
@@ -284,7 +284,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
     // cycle hovering near max_age.
     const double bias_max_age  = config_.getSsrBiasMaxAge()
                                * config_.getSsrBiasStaleHoldFactor();
-    const bool   presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
+    const bool   presence_on_hold = config_.ssrPbHoldPresenceFlip();
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
@@ -292,9 +292,9 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key = obs.satellite + "|" + code;
             // A key the hold seam claimed skips the discontinuity-counter reaction,
-            // which the hold owns (card PBH).  With processing.ssr_pb_hold_presence_flip
+            // which the hold owns.  With processing.ssr_pb_hold_presence_flip
             // off it skips the A5 edge below as well; armed, that edge runs as on an
-            // unheld key (card PBF).
+            // unheld key.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             if (!claimed) {
@@ -302,8 +302,8 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                     if (state_manager_->noteSsrDiscontinuity(
                             key, pb->discontinuity_counter)) {
                         state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
-                        noteConsumerSatEvent_(key, "reset_disc");   // card CST (no-op unarmed)
-                        noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
+                        noteConsumerSatEvent_(key, "reset_disc");   // consumer satellite trace (no-op unarmed)
+                        noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias discontinuity: reset {} {}",
                                   epoch_prefix, obs.satellite, code);
                     }
@@ -330,14 +330,13 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                     // structurally absent, not stale, so resetting its ambiguity
                     // would re-float on a non-event.  Suppression needs
                     // network.closed_loop.roster_latch and a declaration, so every
-                    // pre-card wire keeps the existing reaction unchanged (card SID
-                    // phase 5, E3 / C2).
+                    // earlier wire keeps the existing reaction unchanged.
                     const bool suppress = noteFreshnessFlip_(
                         key, obs.satellite, code, PppUtils::getSystemString(obs.system),
                         "phase", it->second, applied_now,
                         static_cast<bool>(ssr.getPhaseBias(obs.satellite, code)),
                         obs.time);
-                    countPbHoldPresenceEdge_(key, applied_now, suppress);   // card PBF
+                    countPbHoldPresenceEdge_(key, applied_now, suppress);
                     if (suppress) {
                         ++roster_consumer_.flip_suppressed;
                         log->info("{}SSR phase-bias freshness flip ({} -> {}) on {} {}: NOT a "
@@ -347,8 +346,8 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
                                   applied_now ? "fresh" : "stale", obs.satellite, code);
                     } else {
                         state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
-                        noteConsumerSatEvent_(key, "reset_flip");   // card CST (no-op unarmed)
-                        noteAmbLevelDisturbed_(obs.satellite);      // card ALC (no-op unarmed)
+                        noteConsumerSatEvent_(key, "reset_flip");   // consumer satellite trace (no-op unarmed)
+                        noteAmbLevelDisturbed_(obs.satellite);      // ambiguity level check (no-op unarmed)
                         log->info("{}SSR phase-bias freshness flip ({} -> {}): reset {} {}",
                                   epoch_prefix, it->second ? "fresh" : "stale",
                                   applied_now ? "fresh" : "stale", obs.satellite, code);
@@ -362,7 +361,7 @@ void RealTimeEngine::resetOnPhaseBiasDisc(RtEpochContext& ctx) {
 
 /**
  * @brief SSR phase-bias discontinuity / freshness flip -> ambiguity carry
- *        (amb -= Δ), the knob-on counterpart of resetOnPhaseBiasDisc (card CC, A).
+ *        (amb -= Δ), the knob-on counterpart of resetOnPhaseBiasDisc.
  *
  * New code, not a relocation.  The per-key sweep matches the reset reaction
  * (the raw phase signals of every modeled satellite, the same ungated read for
@@ -392,15 +391,15 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                                * config_.getSsrBiasStaleHoldFactor();
     const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
     const bool bssd       = config_.enableBetweenSatelliteSd();
-    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
+    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
-            // is carried here as an unheld key's is (card PBF).
+            // A claimed key: the hold owns its counter; armed, its A5 edge
+            // is carried here as an unheld key's is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
@@ -425,25 +424,25 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                 const auto it = ssr_phase_bias_applied_.find(key);
                 flip = (it != ssr_phase_bias_applied_.end() && it->second != applied_now);
             }
-            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);   // card PBF
+            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);
 
             const auto d = pb_disc_carry_.react(*state_manager_, key, amb_key, bump, flip,
                                                 applied_now_m, basis_nlwl, bssd, reset_std);
             // Any action other than None wrote this key (a carry shifts the value, a
             // refusal resets it), so the level window for this satellite restarts
-            // (card ALC).
+            //.
             if (d.action != PbDiscCarryLedger::Action::None)
-                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
+                noteAmbLevelDisturbed_(obs.satellite);          // ambiguity level check (no-op unarmed)
             using A = PbDiscCarryLedger::Action;
             switch (d.action) {
                 case A::None: break;
                 case A::CarriedDisc:
-                    noteConsumerSatEvent_(key, "carry_disc");   // card CST (no-op unarmed)
+                    noteConsumerSatEvent_(key, "carry_disc");   // consumer satellite trace (no-op unarmed)
                     log->info("{}SSR phase-bias discontinuity: carried {} {} by {:+.3f} m",
                               epoch_prefix, obs.satellite, code, -d.delta_m);
                     break;
                 case A::CarriedFlip:
-                    noteConsumerSatEvent_(key, "carry_flip");   // card CST (no-op unarmed)
+                    noteConsumerSatEvent_(key, "carry_flip");   // consumer satellite trace (no-op unarmed)
                     log->info("{}SSR phase-bias freshness flip ({} -> {}): carried {} {} by "
                               "{:+.3f} m", epoch_prefix, applied_now ? "stale" : "fresh",
                               applied_now ? "fresh" : "stale", obs.satellite, code,
@@ -451,7 +450,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
                     break;
                 default:
                     // A refused carry took the reset; the event names the refusal so
-                    // the row differs from a plain declared reset (card CST).
+                    // the row differs from a plain declared reset.
                     noteConsumerSatEvent_(key, PbDiscCarryLedger::actionName(d.action));
                     log->info("{}SSR phase-bias {}: reset {} {} ({} — carry refused)",
                               epoch_prefix, bump ? "discontinuity" : "freshness flip",
@@ -468,7 +467,7 @@ void RealTimeEngine::carryOnPhaseBiasDisc_(RtEpochContext& ctx) {
 
 /**
  * @brief Every phase-bias product step, declared or not -> ambiguity translation.
- *        Replaces resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_ (card PBT, A).
+ *        Replaces resetOnPhaseBiasDisc / carryOnPhaseBiasDisc_.
  *
  * New code, not a relocation.  The per-key sweep matches the reset and carry
  * reactions (the raw phase signals of every modeled satellite, the same ungated
@@ -506,15 +505,15 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
                                * config_.getSsrBiasStaleHoldFactor();
     const bool basis_nlwl = (config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl);
     const bool bssd       = config_.enableBetweenSatelliteSd();
-    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();   // card PBF
+    const bool presence_on_hold = config_.ssrPbHoldPresenceFlip();
     for (const auto& obs : modeled_obs) {
         for (const auto& kv : obs.modeled) {
             const std::string& code = kv.first;
             if (code.empty() || code[0] != 'L') continue;       // phase only
             if (code.find('_') != std::string::npos) continue;   // raw signal only
             const std::string key     = obs.satellite + "|" + code;
-            // A claimed key: the hold owns its counter (card PBH); armed, its A5 edge
-            // is translated here as an unheld key's step is (card PBF).
+            // A claimed key: the hold owns its counter; armed, its A5 edge
+            // is translated here as an unheld key's step is.
             const bool claimed = ctx.pb_hold_handled.count(key) > 0;
             if (claimed && !presence_on_hold) continue;
             const std::string amb_key = obs.satellite + "_" + code;
@@ -542,13 +541,13 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             // Under a hold the applied value is constant within a generation, and the
             // hold seam already re-floated a generation change, so for a claimed key
             // only the presence edge is translated; any other epoch is recorded only
-            // (card PBF).
+            //.
             if (claimed && !flip) {
                 pb_step_translate_.record(key, applied_now, applied_now_m);
                 if (bias_age_gate) ssr_phase_bias_applied_[key] = applied_now;
                 continue;
             }
-            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);   // card PBF
+            if (flip) countPbHoldPresenceEdge_(key, applied_now, false);
 
             const auto d = pb_step_translate_.react(*state_manager_, key, amb_key,
                                                     bump || flip, applied_now, applied_now_m,
@@ -557,29 +556,29 @@ void RealTimeEngine::translatePhaseBiasStep_(RtEpochContext& ctx) {
             // key (a translation shifts the value, a declared refusal resets it), so
             // the level window for this satellite restarts.  The three that write
             // nothing leave the window alone, so an empty declaration does not cost
-            // the check a whole window (card ALC).
+            // the check a whole window.
             if (d.action != PbStepTranslateLedger::Action::None
                 && d.action != PbStepTranslateLedger::Action::SkippedEps
                 && d.action != PbStepTranslateLedger::Action::RefusedUndeclared)
-                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
+                noteAmbLevelDisturbed_(obs.satellite);          // ambiguity level check (no-op unarmed)
             using A = PbStepTranslateLedger::Action;
             switch (d.action) {
                 case A::None:
                 case A::SkippedEps:
                     break;                                       // nothing written
                 case A::TranslateDeclared:
-                    noteConsumerSatEvent_(key, "translate_disc");   // card CST (no-op unarmed)
+                    noteConsumerSatEvent_(key, "translate_disc");   // consumer satellite trace (no-op unarmed)
                     log->info("{}SSR phase-bias DECLARED step: translated {} {} by {:+.3f} m",
                               epoch_prefix, obs.satellite, code, -d.delta_m);
                     break;
                 case A::TranslateUndeclared:
-                    noteConsumerSatEvent_(key, "translate_undeclared");  // card CST (no-op unarmed)
+                    noteConsumerSatEvent_(key, "translate_undeclared");  // consumer satellite trace (no-op unarmed)
                     log->info("{}SSR phase-bias UNDECLARED step: translated {} {} by {:+.3f} m",
                               epoch_prefix, obs.satellite, code, -d.delta_m);
                     break;
                 case A::RefusedUndeclared:
                     // An undeclared step blocked by a refusal class: as on the
-                    // pre-card path, nothing is written, but the refusal is recorded
+                    // original path, nothing is written, but the refusal is recorded
                     // as an event so it is not silent (invariant #4).
                     noteConsumerSatEvent_(key, PbStepTranslateLedger::actionName(d.action));
                     break;
@@ -619,7 +618,7 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
 }
 
 /**
- * @brief Reaction to a held phase bias (card PBH).
+ * @brief Reaction to a held phase bias.
  *
  * New code, not a relocation.  Dispatched first inside @ref resetOnPhaseBiasDisc,
  * and keyed on the wire rather than on a knob: a consumer cannot know that the
@@ -629,7 +628,7 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
  * handles nothing, so the three reactions after it are byte-identical.
  *
  * Under a hold the emitted value is constant within a generation, which changes
- * the meaning of both signals the pre-card reactions key on:
+ * the meaning of both signals the original reactions key on:
  *
  *  - The discontinuity counter no longer implies a value step.  It is still read,
  *    so the per-key memory in @c StateManager advances and a key that later leaves
@@ -639,7 +638,7 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
  *  - The generation becomes the declaration.  A change of a previously seen nonzero
  *    generation means the producer re-levelled this key, so the ambiguity re-floats
  *    through the existing reset path (@c StateManager::resetAmbiguity at
- *    @c getAmbiguityStd, the same call @c reset_disc uses) and notifies card ALC
+ *    @c getAmbiguityStd, the same call @c reset_disc uses) and notifies the ambiguity level check
  *    as that reset does.  A first sighting is not a change: there is no prior
  *    state that could have drifted against it.
  *
@@ -648,7 +647,7 @@ void RealTimeEngine::logPbStepTranslateSummary_(const char* tag) {
  * touch.  Keys this seam handled are recorded in @c ctx.pb_hold_handled and skipped
  * downstream, so a held key is never visited twice in one epoch.
  *
- * Card PBF corrects two premises above.  A first sighting has no prior state only
+ * The presence-edge fix corrects two premises above.  A first sighting has no prior state only
  * when the row is new: a held bias that appears on a phase row the consumer was
  * already using without it steps the applied correction by the whole bias, and so
  * does one that leaves the row.  And the A5 edge is reachable on the closed-loop
@@ -683,8 +682,8 @@ void RealTimeEngine::reactToPbHold_(RtEpochContext& ctx) {
             const auto d = pb_hold_.react(key, pb->hold_generation, disc_changed);
             if (d.action == PbHoldLedger::Action::Refloat) {
                 state_manager_->resetAmbiguity(obs.satellite + "_" + code, reset_std);
-                noteConsumerSatEvent_(key, "reset_hold_gen");   // card CST (no-op unarmed)
-                noteAmbLevelDisturbed_(obs.satellite);          // card ALC (no-op unarmed)
+                noteConsumerSatEvent_(key, "reset_hold_gen");   // consumer satellite trace (no-op unarmed)
+                noteAmbLevelDisturbed_(obs.satellite);          // ambiguity level check (no-op unarmed)
                 log->info("{}SSR phase-bias HOLD generation {} -> {}: reset {} {}",
                           epoch_prefix, d.previous_generation, pb->hold_generation,
                           obs.satellite, code);
@@ -772,7 +771,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                         reref_systems.insert(PppUtils::getSystemString(obs.system));
                         // The rx code-bias re-inflation is constellation-scoped, but
                         // the declaration that triggered it belongs to this (sat,
-                        // signal), so the event is recorded there (card CST; no-op
+                        // signal), so the event is recorded there (no-op
                         // unarmed).
                         noteConsumerSatEvent_(obs.satellite + "|" + code, "reinflate_disc");
                         log->info("{}SSR code-bias discontinuity: {} {} (datum re-reference)",
@@ -794,11 +793,10 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                     const auto it = ssr_code_bias_applied_.find(fkey);
                     if (it != ssr_code_bias_applied_.end() && it->second != applied_now) {
                         // Record and attribute the flip.  The code-bias dropouts of
-                        // card MSC arrive through this edge, and the re-inflation it
+                        // the multi-site consumer arrive through this edge, and the re-inflation it
                         // drives is an unbounded decoupling edge.  A signal the
                         // producer declares no family for is structurally absent, not
-                        // stale, so its disappearance is not a datum re-reference
-                        // (card SID phase 5, E3 / C2).
+                        // stale, so its disappearance is not a datum re-reference.
                         const bool suppress = noteFreshnessFlip_(
                             fkey, obs.satellite, code,
                             PppUtils::getSystemString(obs.system), "code",
@@ -815,7 +813,7 @@ void RealTimeEngine::reinflateOnCodeBiasDisc(RtEpochContext& ctx) {
                         } else {
                             reref_systems.insert(PppUtils::getSystemString(obs.system));
                             noteConsumerSatEvent_(obs.satellite + "|" + code,
-                                                  "reinflate_flip");   // card CST (no-op unarmed)
+                                                  "reinflate_flip");   // consumer satellite trace (no-op unarmed)
                             log->info("{}SSR code-bias freshness flip ({} -> {}): {} {} "
                                       "(re-inflating rx code-bias states)",
                                       epoch_prefix, it->second ? "applied" : "absent",
@@ -910,7 +908,7 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
                 // below is necessarily constellation-scoped (one receiver clock, one
                 // ISB per constellation; see the T3g note below), so the row records
                 // that the declaration arrived and that the consumer's only possible
-                // response fired (card CST).
+                // response fired.
                 noteConsumerSatEvent_(obs.satellite + "|CLK", "reinflate_isb");
                 log->info("{}SSR clock discontinuity: {} (datum re-reference)",
                           epoch_prefix, obs.satellite);
@@ -949,7 +947,7 @@ void RealTimeEngine::reinflateOnClockDisc(RtEpochContext& ctx) {
     // On a reference re-reference, every allocated non-reference ISB is re-inflated,
     // observed this epoch or not.  The ISB is a difference of two clock datums, and the
     // declaration is consumed once per satellite, so an ISB whose constellation is absent
-    // from the step epoch would otherwise return stale by the whole step (card OWD, O2).
+    // from the step epoch would otherwise return stale by the whole step.
     const std::set<std::string> isbs =
         isbReinflationSet(reference_stepped, reref_isb,
                           state_manager_->getSystemTimeOffsetStates());

@@ -24,13 +24,13 @@
  */
 
 #include "common/Constants.hpp"
-#include "network/state/Entities.hpp"     // net::ArcTable: the arcs' leveling carry (card NOM step N4f1)
+#include "network/state/Entities.hpp"     // net::ArcTable: the arcs' leveling carry
 #include "network/driver/RunTypes.hpp"   // NetStation, LocalCarry, TurboEditResolver::SignalRepair, PppObservation (transitive)
-#include "network/state/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap (card SID phase 3)
+#include "network/state/ArcLedger.hpp"        // ArcReentryEpoch / ArcReentryOutcomeMap
 #include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey (parseIfPairResetKey)
 #include "network/carry/Inject.hpp"     // InjectArcErase / NetworkInjectState (event harness, Study 1)
 #include "network/diag/RunTraces.hpp" // NetworkRunTraces (emitEvent, if_slip_trace), FlagRate
-#include "network/slip/RawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters (Cards E/L/G)
+#include "network/slip/RawObservables.hpp" // RawSlipEpoch/History, SlipQcParams/Counters
 #include "network/slip/SlipOracle.hpp"   // NetworkSlipOracle (sim-only oracle slip response)
 #include "network/slip/CommonBandScope.hpp"  // Common-band verdict types for the drain hook (SPEC_event_harness §14)
 
@@ -49,7 +49,7 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct SyncedEpoch;
-struct RosterN3bCensus;   // network/assembly/SignalRoster.hpp (card NOM step N3b)
+struct RosterN3bCensus;   // network/assembly/SignalRoster.hpp
 
 /// Elevation mapping for the IF-phase slip stochastic model: the multiplicative
 /// factor by which between-epoch double-differenced carrier-phase noise grows
@@ -296,13 +296,13 @@ struct PassABuffers {
         long long drop_unknown{ 0 };          ///< No usable integer, refused.
         /// The satellite of each @ref drop_unknown verdict, in detector order (one entry
         /// per refused pair).  The identity the producer AR search's suspect-corner mask
-        /// stamps (card ARL, network/ar/ArSuspect.hpp); filled only while that mask is
+        /// stamps (network/ar/ArSuspect.hpp); filled only while that mask is
         /// armed, and read nowhere else.
         std::vector<std::string> drop_unknown_sats;
         long long evidence_admitted{ 0 };     ///< Admitted by the evidence rule alone (knob on).
         long long evidence_would_admit{ 0 };  ///< Knob off; the evidence rule alone would have admitted it.
         long long legacy_admitted{ 0 };       ///< Admitted by the legacy integer gate.
-        /// Detector pairs the network did not form under card L5P
+        /// Detector pairs the network did not form
         /// (`network.cycle_slip.mw_detect_pairs: primary`), because the pair
         /// carries a band outside the constellation's ionosphere-free pin pair.
         /// Zero under the default `all` and on a two-band lineage, so a nonzero
@@ -316,7 +316,7 @@ struct PassABuffers {
     /// per-satellite MW silence, MW flags and LLI of this epoch, filled in the
     /// parallel region (per-station slot, no shared write) and consumed by the
     /// serial verdict seam before either drain.  Collected whatever the knob
-    /// state, so the census sizes the card before it is armed (invariant #4).  It
+    /// state, so the census sizes the mechanism before it is armed (invariant #4).  It
     /// reads detector output PASS A already holds, so with the knob off the cost
     /// is a map insert.
     std::vector<std::map<std::string, CommonBandEvidence>> sta_cb_ev;
@@ -415,11 +415,11 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *
  * Gated inside on network.cycle_slip.mw_detect; call it unconditionally.  The
  * refloat_signal lambda lives in this drain and is deliberately kept separate
- * from the IF driver's refloat_pair.  The drain also feeds the Card-4 C3c
+ * from the IF driver's refloat_pair.  The drain also feeds the invariant-carry C3c
  * funnel: every flagged (station, ambiguity) is inserted into
  * @p carry_slipped_ambs from epoch 1, independent of the legacy carry's warm gate.
  *
- * ### Detections are emitted when the carry is cold (card E)
+ * ### Detections are emitted when the carry is cold
  *
  * refloat_signal reports matched and refloated separately.  Event emission and
  * the n_mw / n_lli log counters key on the detection; refloat accounting is a
@@ -429,7 +429,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * markAmbiguityPendingReseed and the @p carry_slipped_ambs insert run under the
  * same conditions as before it.
  *
- * ### The LLI arm is qualified, not excluded (card L)
+ * ### The LLI arm is qualified, not excluded
  *
  * An LLI assertion acts when an empirical MW or GF step corroborates it
  * (decisive at any station, so a real multi-satellite re-lock is always acted
@@ -449,19 +449,19 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @param modeled            Per-station modeled observations (LLI flag scan).
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry armed (C3c feed gate).
+ * @param carry_invariant    DD invariant carry armed (C3c feed gate).
  * @param carry_warm         Legacy phase-leveling carry past its warmup gate
  *                           (refloat is meaningful only when warm; cold, the
  *                           detection is diagnostic).
  * @param carry_slipped_ambs The per-epoch C3c slip-event set: the single instance
  *                           owned by the run loop, by non-const reference.  A value
  *                           copy anywhere on this path would silently disable the
- *                           Card-4 slip funnel (standing invariant #1).
- * @param raw                This epoch's shared raw observables and step verdicts
- *                           (card L evidence).  With @c computed false there is no
+ *                           invariant-carry slip funnel (standing invariant #1).
+ * @param raw                This epoch's shared raw observables and step verdicts.
+ *                          With @c computed false there is no
  *                           evidence: the qualification is skipped and LLI stays
  *                           decisive.
- * @param qc                 Card L / G knob snapshot (all off: legacy behaviour).
+ * @param qc                 Knob snapshot (all off: legacy behaviour).
  * @param raw_hist           Per-station cross-epoch slip-QC state; the per-station
  *                           LLI accounting for the M4 top-offenders line is
  *                           tallied here.
@@ -482,7 +482,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  * @p datum_amb_reref_sats, which the first drain after that skip consumes: a
  * block ahead of this drain's station loop pending-reseeds the satellite's
  * ambiguities at every non-pivot station, erases their local carry, feeds the
- * Card-4 C3c funnel, inserts the satellite into @p datum_mark_sats for a
+ * invariant-carry C3c funnel, inserts the satellite into @p datum_mark_sats for a
  * per-satellite disc mark at the next emit, and emits the `datum_reref` event.
  *
  * @param datum_pb_reref_sats  Per-satellite PhaseBias skip-stash queue
@@ -524,7 +524,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
 
 /**
  * @brief The arcs a wind-up accumulator restart of (station @p i, satellite
- *        @p sat) steps, as (ambiguity key, signal) pairs (card WUP).
+ *        @p sat) steps, as (ambiguity key, signal) pairs.
  *
  * The satellite's live ambiguity columns in @p sm, in the map's order, when it
  * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
@@ -541,7 +541,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @param pl_max_gap_s  @c network.phase_leveling_max_gap_s.
  * @param via_carry     Set to true when the targets came from the carry (may be null).
  * @param arc_ledger    The run's arc ledger, or null.  Given, the carry targets are named
- *                      by the ledger (card NOM step N3b): the carry entries of the
+ *                      by the ledger: the carry entries of the
  *                      (station, satellite) inside the horizon, in signal order, whose
  *                      ledger record is admitted and not dead.  A carried arc the ledger
  *                      holds no admission for (one admitted before a warm resume, which
@@ -583,7 +583,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * disarms that knob without @c estimation.accumulate_phase_windup (the restart
  * verdict exists only in accumulated mode) and without @c network.phase_leveling.
  *
- * ## The re-entering arc (card WUP)
+ * ## The re-entering arc
  *
  * A restart is a return after a gap longer than the wind-up horizon, so the arc
  * has usually left the model set: its ambiguity column was pruned with the gap and
@@ -595,7 +595,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
  * pending-reseed mark.  Counted: @c wu_restart_carry_arcs (arcs reached through the
  * carry) and @c wu_restart_no_arc (a warm, in-horizon restart with nothing to
  * free), which is outside @c wu_restart_refloated.  Without @p arcs the
- * drain reaches live columns only, the behaviour before the card.
+ * drain reaches live columns only, the earlier behaviour.
  *
  * @param arcs   The leveling carry (the arc table), read-only; null reaches live columns only.
  * @param pl_now_s      This epoch's continuous GPS seconds (the carry's clock).
@@ -623,7 +623,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @brief Gap re-entry response: mark the arcs that re-entered across a tracking
  *        break slipped, in the same epoch, so the PASS-B leveling inject sees a
  *        free arc instead of bridging a stale zero-q level across the break
- *        (card G, docs/SPEC_slip_qc_hardening.md §G3/W1).
+ *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
  *
  * ## Why
  *
@@ -672,7 +672,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *
  * The key is therefore built with @c StateKeys::makeAmbiguityKey, the format the
  * PASS-B inject site reads (@c relevel.free_ambs.count({i, key}) over
- * @c StateManager::getAmbiguities() keys) and the format the Card-G arc
+ * @c StateManager::getAmbiguities() keys) and the format the gap-instrumentation arc
  * classification synthesizes, so a freed arc reads @c shifted_fresh there by
  * construction.  The question "is there anything to protect?" is asked of the
  * carry: a @ref LocalCarry entry for (station, satellite, signal) whose
@@ -687,7 +687,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *
  * Limitation: under an IF-combination ambiguity basis the live key is
  * @c "<sat>_<sigA>_<sigB>", which this per-band key does not match.  The network
- * producer is uncombined (per-band), and the Card-G classification has the same
+ * producer is uncombined (per-band), and the gap classification has the same
  * exposure, so the two instruments agree; a combined basis would need both sites
  * widened together.
  *
@@ -710,7 +710,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param present              Per-station PASS-A presence (absent stations produce no resumptions anyway).
  * @param i_lo                 First non-pivot station index (0 under the prioritized datum).
  * @param n_sta_total          Station count.
- * @param carry_invariant      Card-4 DD invariant carry vehicle armed.
+ * @param carry_invariant      DD invariant carry vehicle armed.
  * @param carry_warm           The legacy phase-leveling carry is warm (a stale value can
  *                             exist).  Implies @c network.phase_leveling by
  *                             construction (ApplicationNetwork.cpp: `carry_warm = pl_on
@@ -737,7 +737,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  *                             any outstanding pend on the same (station, satellite),
  *                             as the raw-slip drains do.
  *
- * ## Ledger-driven population (@c SlipQcParams::ledger_reentry, card SID phase 3)
+ * ## Ledger-driven population (@c SlipQcParams::ledger_reentry)
  *
  * Armed, the arc list is not this tier's own resumption list but the arc
  * ledger's admitted Gap-to-Reentered population (@p sid), and the raw verdict is
@@ -760,8 +760,8 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @param sid     This epoch's ledger-driven population, or nullptr / @c armed
  *                false for the historical raw-driven path (byte-identical).
  * @param sid_out Per-arc outcome sink for the unified "answered" census (R4), or
- *                nullptr when no roster was set up (every network run sets one up
- *                since card NOM step N3a).  Written in both states of
+ *                nullptr when no roster was set up (every network run sets one up).
+ *                Written in both states of
  *                network.ledger_reentry.
  */
 void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
@@ -783,8 +783,8 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 ArcLedger* arc_ledger = nullptr);
 
 /**
- * @brief The gap re-entry response keyed on the signal instead of the row (card
- *        GRS, docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
+ * @brief The gap re-entry response keyed on the signal instead of the row
+ *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md).
  *
  * ## Population
  *
@@ -856,7 +856,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
  *
  * Parameters are the row-level drain's, with the same contracts.
  *
- * With the ledger armed (@p sid, card SID phase 3), this tier responds only to
+ * With the ledger armed (@p sid), this tier responds only to
  * the ledger arcs whose exact (station, satellite, signal) has a per-signal
  * resumption this epoch; the row-level drain owns the census and every other
  * arc.  The `sig_resume` decoupling-edge event is emitted for every raw
@@ -1011,7 +1011,7 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  *
  * Gated inside on network.cycle_slip.if_phase_td; call it unconditionally.  The
  * five threshold knobs are read inside, and so is
- * network.cycle_slip.if_phase_td_reseed_on_flag (card ARL): armed, a flag keeps
+ * network.cycle_slip.if_phase_td_reseed_on_flag: armed, a flag keeps
  * the satellite's flag-epoch gradient (IfPhaseSlipDetector::reseedSatellite)
  * instead of restarting its chain, so the next epoch is evaluated too.  The algorithm description, the
  * refloat_pair lambda and the PairSample struct are in the driver body in the
@@ -1027,7 +1027,7 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  * @param present            Per-station PASS-A presence.
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry armed (C3c feed gate).
+ * @param carry_invariant    DD invariant carry armed (C3c feed gate).
  * @param carry_warm         Legacy carry warm gate (refloat vs diagnostic).
  * @param carry_slipped_ambs The per-epoch C3c slip-event set, by non-const
  *                           reference (see networkSlipDrainMwRefloat).
@@ -1122,7 +1122,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
  * @param stations           Station roster; @c sm is modified (pending-reseed marks).
  * @param present            Per-station PASS-A presence.
  * @param n_sta_total        Station count.
- * @param carry_invariant    Card-4 DD invariant carry vehicle armed.
+ * @param carry_invariant    DD invariant carry vehicle armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
  * @param inject             Injector ledger: this drain closes @c n_applied,
@@ -1161,7 +1161,7 @@ struct NetworkRun;
  * The channel (run.engines.slip_qc) carries the knobs, the per-station cross-epoch state, the
  * epoch's raw evidence and the run-end counters into the PASS-A slip seam and the assembly
  * pre-filter; it is sized once so the per-station EWMAs survive the whole run.  Setup builder
- * (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ *: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.slip_qc.params and run.engines.slip_qc.hist.
@@ -1174,7 +1174,7 @@ class LogManager;
  * @brief Builds the raw-slip path's wavelength provider when any of its consumers is armed.
  *
  * Called after NetworkRunTraces::openAll: the raw-slip trace it opens is one of the consumers.
- * Setup builder (card NOM3 step EP4): called once from Application::runNetwork, in the order
+ * Setup builder: called once from Application::runNetwork, in the order
  * scripts/nom3_designs/EP4_design.md section 2 states.
  *
  * @param run The network run; fills run.engines.slip_qc.utils.

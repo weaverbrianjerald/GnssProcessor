@@ -1,6 +1,6 @@
 /**
  * @file test_resume_rxcb_lin_restore.cpp
- * @brief Contract tests for the rx-CB linearization-point restore (card RS-9,
+ * @brief Contract tests for the rx-CB linearization-point restore (
  *        docs/SPEC_event_harness.md §21.18): the snapshot's format-forward
  *        @c RL record (one code-bias @c x_lin per (station roster index, CB
  *        state key), written beside the RS-6 @c RC row), the loader's side of
@@ -36,7 +36,7 @@
  *       the @c uncovered counter: only a key the map carries a reference for
  *       (one with an rx-CB carry, whose @c x_lin the gate reads) can be a miss;
  *   (e) a snapshot with no @c RL rows restores nothing (an old file keeps the
- *       pre-card behaviour, and the container stays empty).
+ *       earlier behaviour, and the container stays empty).
  *
  * The seam mechanics (the withheld share falling to the continuous run's, and
  * the code-bias / clock / ZWD consequences at the withholding stations) are
@@ -316,7 +316,7 @@ TEST(ResumeRxCbLinRestore, SeedOverrideResolvesOnlyFiniteCarriedKeys) {
     // is the ordinary case (a field lineage carries GPS only).
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(ovr, "GAL_DCB").has_value());
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride(ovr, "gps_dcb").has_value());
-    // An empty map is the pre-card path: a run that leaves the knob off cannot
+    // An empty map is the earlier path: a run that leaves the knob off cannot
     // take a different branch here.
     EXPECT_FALSE(StateInitializer::resolveCodeBiasSeedOverride({}, "GPS_DCB").has_value());
     // A second guard, for any future producer of the map: the parser already
@@ -358,7 +358,7 @@ TEST(ResumeRxCbLinRestore, UncoveredIsScopedToTheKeysTheMapCarries) {
 // (e) an RL-less snapshot is inert
 // ---------------------------------------------------------------------------
 
-/// An RS-6 file (RC rows, no RL) is a legal input.  It keeps the pre-card
+/// An RS-6 file (RC rows, no RL) is a legal input.  It keeps the earlier
 /// behaviour (each station re-derives its linearization point from the resume
 /// epoch's code), and the restore container stays empty, which the run's RS-9
 /// line reports as INERT.
@@ -379,13 +379,13 @@ TEST(ResumeRxCbLinRestore, SnapshotWithoutRlRowsRestoresNothing) {
     EXPECT_TRUE(r.hasStationState());
 }
 
-/// With the write knob off the file is byte-identical to the pre-card bytes: the
+/// With the write knob off the file is byte-identical to the earlier bytes: the
 /// driver never fills the container, so the serializer emits no RL rows.
 TEST(ResumeRxCbLinRestore, WriteKnobOffLeavesTheSnapshotBytesUnchanged) {
     NetworkStateSnapshot with = linSnapshot();
     NetworkStateSnapshot without = with;
     without.rx_cb_lin.clear();                 // what an unarmed capture leaves
-    const std::string a = serialized(without); // the pre-card bytes
+    const std::string a = serialized(without); // the earlier bytes
     const std::string b = serialized(with);
     EXPECT_NE(a, b);
     // ...and the only difference is the added rows: strip them and the bytes match

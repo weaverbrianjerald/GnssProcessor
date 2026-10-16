@@ -17,7 +17,7 @@
  *   Setup / run end     network/driver/ApplicationNetworkSetup.cpp · filter/NetworkTeardown (the
  *                       run-end table, filter/NetworkRunEnd)
  *   Setup builders      one per concern, in that concern's file, called in order from
- *                       runNetwork (card NOM3 step EP4)
+ *                       runNetwork
  *   Assembly (PASS A/B) network/driver/ApplicationNetworkAssembly.cpp
  *   Datum / solve       filter/NetworkSbasis · NetworkChainDatum · NetworkPhaseDatum ·
  *                       NetworkSolveGlue · NetworkInstallCarry · NetworkDdPriorBuild ·
@@ -76,7 +76,7 @@
  */
 
 #include "app/Application.hpp"
-#include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec (card NOM3 step EP1)
+#include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
@@ -88,34 +88,34 @@
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
-#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (card 5, RTF-1)
+#include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader
 #include "network/solve/Estimator.hpp"
-#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
+#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
 #include "network/solve/Sbasis.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
 #include "network/driver/WlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
-#include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
+#include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally
 #include "network/qc/RobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
 #include "network/solve/PhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
 #include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
 #include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
-#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
+#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum
 #include "network/solve/AnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
 #include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
 #include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
-#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
+#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (§24.18)
 #include "network/qc/Raim.hpp"        // post-fit network RAIM (INC-9)
 #include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
 #include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
-#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (card ZP, §24.10)
+#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (§24.10)
 #include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
 #include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
 #include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
@@ -124,17 +124,17 @@
 #include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
 #include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
 #include "network/runend/Teardown.hpp"
-#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
-#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
-#include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
+#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument
+#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones
+#include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition
 #include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
-#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
+#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads
 #include "network/carry/Inject.hpp"
-#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
-#include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
-#include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail (card SID phase 6a)
-#include "network/assembly/ChannelAll.hpp"      // all-channel census (card SID phase 6b)
-#include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster (card SID phase 5a)
+#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam
+#include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory
+#include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail
+#include "network/assembly/ChannelAll.hpp"      // all-channel census
+#include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster
 #include "network/carry/InstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
 #include "network/carry/DdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
 #include "network/solve/SolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
@@ -250,13 +250,13 @@ int Application::runNetwork() {
     // blocks below keep the downstream use-sites under their former local names
     // (the INC-3 migration mechanic).
     NetworkRunContext ctx(config_, nc);
-    // The station names the entity tables convert name keys through (card NOM step N4).
+    // The station names the entity tables convert name keys through.
     {
         std::vector<std::string> names;
         for (const auto& st : setup.stations) names.push_back(st.name);
         ctx.entities.names.assign(std::move(names));
     }
-    // The marker -> ARP census of networkSetup_, into the counters the run end reads (card UPO).
+    // The marker -> ARP census of networkSetup_, into the counters the run end reads.
     networkMarkerArpCensusCopy(ctx, config_, setup);
 
     // --- Trace ----------------------------------------------------------------
@@ -266,13 +266,13 @@ int Application::runNetwork() {
     // per-epoch writers live in the seams, which receive `traces`; the reference
     // below keeps the former local name for the use left in this file.
     NetworkRunTraces traces(log_dir_);
-    // The run (network/driver/Run.hpp, card NOM3 step EP1): the references every epoch reads
+    // The run (network/driver/Run.hpp): the references every epoch reads
     // and the engines and groups the run owns, each built here in place from the engines'
     // constructor arguments (networkEngineSpec, a pure function of the configuration and
     // the knobs).  The builders below configure the owned engines through references.
     const NetworkEngineSpec engine_spec = networkEngineSpec(config_, nc, ctx);
     NetworkRun run(ctx, config_, nc, log, traces, setup, log_dir_, engine_spec);
-    // Setup builders (card NOM3 step EP4): each in its concern's file, filling the run member
+    // Setup builders: each in its concern's file, filling the run member
     // its name says, called in this order (scripts/nom3_designs/EP4_design.md section 2 states
     // the constraints).  The two simulation oracles throw on a bad fixture before any trace
     // file opens; the wavelength provider follows openAll, which opens one of its consumers.
@@ -318,7 +318,7 @@ int Application::runNetwork() {
     networkCbAdmissionCensus(run);
 
     // === One synced epoch through the full producer =========================
-    // Application::networkProcessEpoch_ (ApplicationNetworkEpoch.cpp, card NOM3 step EP1)
+    // Application::networkProcessEpoch_ (ApplicationNetworkEpoch.cpp)
     // runs one synced epoch over the run built above; the epoch source below calls it.
 
     // === Epoch source =======================================================
@@ -349,7 +349,7 @@ int Application::runNetwork() {
 
     if (parallel_on) Eigen::setNbThreads(eigen_threads_saved);  // restore Eigen's own threading
 
-    // The run end reads the run's groups through one const bundle (card NOM step TD1a).
+    // The run end reads the run's groups through one const bundle.
     return networkTeardown(ctx, config_, log, traces, setup,
                            NetworkRunEndInputs{ run.engines, run.emit, run.timing, run.closed_loop });
 }

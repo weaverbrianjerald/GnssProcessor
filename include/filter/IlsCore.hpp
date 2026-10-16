@@ -168,7 +168,7 @@ struct IlsResult {
     int    z_total = 0;             ///< Decorrelated components available (the input dimension).
     /// Floats conditioned on the fixed decorrelated components (cycles, input order),
     /// and their covariance (cycles²).  Empty unless @c z_fixed > 0.  A caller forms
-    /// any combination's conditional value and variance from them (card ARL: the
+    /// any combination's conditional value and variance from them (the
     /// wide lane and the narrow lane of an L1/L2 pair).
     Eigen::VectorXd a_cond;
     Eigen::MatrixXd Q_cond;
@@ -227,7 +227,7 @@ IlsResult ilsFix(const Eigen::VectorXd& a_hat_cycles,
 /**
  * @brief Partial fix in the decorrelated space, then the single-signal integers it determines.
  *
- * Card ARL (the integer-ambiguity ladder).  With a free slant ionosphere the
+ * Integer-ambiguity ladder.  With a free slant ionosphere the
  * uncombined L1/L2 double differences are each imprecise (about 0.3 cycle) while
  * combinations of a pair (the wide lane, the ionosphere-free part) are precise, so
  * a subset chosen entry by entry (@ref selectFixableSubset) finds nothing and the
