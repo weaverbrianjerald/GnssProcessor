@@ -194,7 +194,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     // exists (the trim bar is k·σ̂₀, which is not known until the pool closes).
     std::vector<std::vector<StationFactorRow>> staf_rows;
     if (staf_on) staf_rows.resize(stations.size());
-    ++ctx.counters.raim_pool_postfit.walks;   // one pool walk (card NOM N2b admission tally)
+    ++ctx.counters.raim_pool_postfit.walks;   // one pool walk (admission tally)
     for (size_t i = 0; i < stations.size(); ++i) {
         // The pivot station is skipped only when network.phase_datum_prioritized is
         // off.  With it on, the pivot is screened: its non-anchored arcs are in
@@ -272,8 +272,8 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
         // 0.5 on several of them; such a row enters the pool once per column it clears, as
         // a phase row would.  That is the population the coefficient test alone admitted
         // before the tags, stated as a rule; the prior and constraint rows stay in it on
-        // purpose until the science card RPA decides otherwise (
-        // suspect 1).  Every admission is
+        // purpose until the RAIM pool admission is decided otherwise
+        // (suspect 1).  Every admission is
         // counted per kind (ctx.counters.raim_pool_postfit), and a row of any other kind
         // that clears 0.5 is refused and counted (0 expected).  The ZWD, ionosphere and
         // receiver-clock block rows keep their own run-end counts, now read from the tag.
@@ -930,7 +930,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                                   (*lane_lit), "t4_attrib");
                                 net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
                                 prmRespond(ctx.counters.prm_resp,
-                                           ResponseSite::AmbRaimErase);   // card PRM phase 3a
+                                           ResponseSite::AmbRaimErase);
                                 }
                                 ++ctx.counters.n_cr_raim_attrib;   // census (C): T4 attribution refloat
                             }
@@ -947,7 +947,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::iono_blk)) {
                             ++ctx.counters.n_iono_blk_erased_t4;
                             prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::IonoRaimErase);   // card PRM phase 3a
+                                       ResponseSite::IonoRaimErase);
                         }
                         // Card LGM: the line of sight's phase-colour entry with them.  The
                         // T4 statistic reads its error in the same sum, so a level that is
@@ -957,7 +957,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             && net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::pc)) {
                             ++ctx.counters.n_pc_erase_raim;
                             prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::PcRaimErase);   // card PRM phase 3a
+                                       ResponseSite::PcRaimErase);
                         }
                         // The receiver clock in the carried block (RX-CLK-in-block) has no
                         // T4 edge here, by a triaged decision rather than an omission.
@@ -1139,7 +1139,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                               (*lane_lit), "t3_consensus");
                             net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
                             prmRespond(ctx.counters.prm_resp,
-                                       ResponseSite::AmbRaimErase);   // card PRM phase 3a
+                                       ResponseSite::AmbRaimErase);
                             }
                             ++ctx.counters.n_cr_raim_consensus;   // census (C): T3 consensus refloat
                         }
@@ -1220,8 +1220,8 @@ std::string RaimPoolAdmissionTally::ownColumnText() const {
 /**
  * @brief Run-end section: the carried-phase RAIM pools: admissions and the re-host.
  *
- * The carried-phase RAIM pools: their admissions per contribution kind (card NOM N2b,
- * card RPA; a pool that never walked prints nothing) and the RAIM pool re-host on the
+ * The carried-phase RAIM pools: their admissions per contribution kind
+ * (a pool that never walked prints nothing) and the RAIM pool re-host on the
  * invariant carry (network.raim_carry_invariant).
  *
  * Gate: each section under its own condition, as in the teardown: always (a block);
@@ -1235,7 +1235,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
     // --- The carried-phase RAIM pools' admissions, per contribution kind ---------
-    // (the instrumentation gap of card NOM section 16).  The pools admit
+    // (the instrumentation gap).  The pools admit
     // a row on an ambiguity column by a declared rule read from the row's tag
     // (raimPoolAdmitsKind): the observation phase rows, the coupling and block
     // carried-prior rows and the SD-EWL constraint rows whose coefficient on the column
@@ -1243,7 +1243,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
     // many prior rows enter beside the phase rows (visits: once per column the row clears,
     // the multiplicity the pool's sample has; rows: once per station and walk), and that
     // no row of another kind cleared the bar (refused, 0 expected).  A pool that never
-    // walked prints nothing.  With card RPA's knob on (network.raim_pool_data_rows_only)
+    // walked prints nothing.  With the data-rows-only knob on (network.raim_pool_data_rows_only)
     // the pools admit the observation phase rows only: the refused counts are then the
     // carried-prior and SD-EWL rows the rule keeps out (expected), the admitted prior kinds
     // must read 0, and the line closes with the own-column check, which warns on any

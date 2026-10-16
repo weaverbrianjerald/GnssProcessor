@@ -1,6 +1,6 @@
 /**
  * @file MultiGnss.cpp
- * @brief Implementation of the card GAL telemetry (see the header for the contract).
+ * @brief Implementation of the Galileo telemetry (see the header for the contract).
  */
 #include "network/assembly/MultiGnss.hpp"
 
@@ -183,7 +183,7 @@ void networkMultiGnssRunEnd(const NetworkRunContext& ctx, const GnssConfig& conf
                   t.empty() ? std::string("none") : t);
     }
 
-    // (4) The family census on a single-channel posture (card SID phase 6b's table,
+    // (4) The family census on a single-channel posture (the all-channel family table,
     //     which the widening prints itself when it is active).
     if (!config_.networkChannelModeAll()) {
         const auto& C = ctx.counters.channel_all;

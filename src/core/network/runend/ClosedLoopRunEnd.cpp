@@ -194,8 +194,8 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
         // Card SMH (network.emit_pb_hold_smoothed): the smoothed hold's ON-path
         // telemetry.  `0 update(s)` means no clone was ever advanced (the mode wrote
         // only the phase-clock fallback).  r reads the passed motion against its
-        // stated variance; under a consistent covariance it averages 1 (card SMH
-        // section 4).  The phase-clock line above counts the fallback's emissions.
+        // stated variance; under a consistent covariance it averages 1.
+        // The phase-clock line above counts the fallback's emissions.
         if (config_.getNetworkConfig().emit_pb_hold_smoothed) {
             auto xa = k.smh_xfer_abs;   // copies: run-end readout
             auto da = k.smh_diff_abs;
@@ -257,8 +257,8 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
             if (k.smh_updates == 0)
                 log->warn("Network: network.emit_pb_hold_smoothed is ARMED but no "
                           "clone was advanced: every held key wrote the phase-clock transfer.");
-            // Card SCL: the smoothed hold's rows on the clone epoch (invariant 4).  `0
-            // epoch(s)` with the clone armed means the rows read card CTU's epoch only.
+            // The smoothed hold's rows on the clone epoch (invariant 4).  `0
+            // epoch(s)` with the clone armed means the rows read the exact update's epoch only.
             if (ctx.knobs.carry_cpl_clone) {
                 const ClockCloneCounters& cc = k.ccl;
                 log->info("  pb hold, smoothed (SMH) on the clock clones (SCL): {} epoch(s) on "
@@ -331,7 +331,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   k.n_mark_suppressed_by_scope, k.n_mark_suppressed_by_scope_clk,
                   k.n_mark_suppressed_by_scope_cb, k.n_mark_suppressed_by_scope_pb);
     }
-    // Declared-step carry counters (card CC (A)), the consumer's ON-path telemetry
+    // Declared-step carry counters, the consumer's ON-path telemetry
     // (invariant #4).  Printed only when the knob is armed, so a run with it off keeps
     // a byte-identical summary.  Closure: carried + resets == events.
     if (consumer->pbDiscCarryArmed()) {
@@ -344,12 +344,12 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
                   c.reset_first_sight, c.reset_basis, c.reset_bssd, c.reset_unknown_key,
                   c.closureHolds() ? "HOLDS" : "BROKEN");
     }
-    // Every-step translation counters (card PBT (A)), the consumer's ON-path telemetry
+    // Every-step translation counters, the consumer's ON-path telemetry
     // (invariant #4), printed only when the knob is armed so a run with it off keeps a
     // byte-identical summary.  Both edges: the decoupling edge is what the ambiguity
     // absorbed (declared + undeclared, with Sigma|delta|), the re-coupling edge is
     // every cell it refused or reset, and the declared-but-empty count is the
-    // population card MS removes.
+    // population the per-channel mark scope removes.
     if (consumer->pbStepTranslateArmed()) {
         const auto& t = consumer->pbStepTranslateCounters();
         log->info("  pb step translate (PBT)   : cells {} (declared {}) -> "
@@ -409,7 +409,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
     consumer->logRosterConsumerSummary("closed loop");
     consumer->logPbHoldPresenceSummary("closed loop");   // held-key presence edges, silent unless armed
     consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary
-    // Consumer snapshots written beside the network history copies (card CC (B));
+    // Consumer snapshots written beside the network history copies;
     // 0 written on an armed seed means no warm start is on offer.
     if (cl.state_snapshot)
         log->info("  consumer snapshots (CC-B) : {} written beside network history copies "

@@ -34,14 +34,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -127,7 +127,7 @@ StationStep networkGlonassAnchorRows(StationBuild& build) {
     // the flag is off.
     if (!(config_.enableGlonassNetwork())) return StationStep::Next;
     std::vector<int> anchor_cols;
-    std::vector<RowTag> anchor_tag;   // one contribution tag per anchor row (card NOM N2a)
+    std::vector<RowTag> anchor_tag;   // one contribution tag per anchor row
     for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
         if (!StateKeys::isGlonassPerSlotIfbKey(key)) continue;
         const auto hit = h2local.find(static_cast<int>(sidx));

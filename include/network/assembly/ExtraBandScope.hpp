@@ -1,6 +1,6 @@
 /**
  * @file ExtraBandScope.hpp
- * @brief The extra-band primitive shared by the two knobs of card L5P
+ * @brief The extra-band primitive shared by the two knobs of the L5 phase posture
  *        (docs/refound/L5P_l5_phase_posture_2026-09-21.md).
  *
  * A three-band lineage carries one signal per band per station (the canonical

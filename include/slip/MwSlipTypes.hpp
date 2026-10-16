@@ -13,7 +13,7 @@
  * Two groups: the types every driver reads (the result and the WL-lock and across-gap
  * queries), then the network-only types (the per-epoch pair status with its LLI shadow,
  * the zero-differenced MW arc reads and the phase-bridge reads), which only the network
- * producer consumes and which card NOM owns with it.
+ * producer consumes and which belong with it.
  */
 
 #include <cstddef>
@@ -130,7 +130,7 @@ namespace GnssProcessor {
     };
 
     // ==========================================================================
-    // Network-only value types, owned with card NOM
+    // Network-only value types, owned with the network producer
     //
     // Read only by the network producer (the common-band scope, the MW wide-lane
     // layer, the lane carry); the user-side drivers never call the accessors that
@@ -181,7 +181,7 @@ namespace GnssProcessor {
      * arc is stored single-differenced (a non-pivot BIA arc) or undifferenced (a
      * pivot arc / no-BIA fallback), so a sign-weighted sum around a closed
      * station-satellite cycle cancels the receiver and satellite hardware biases
-     * exactly (M5 card WL-1; read by the SD pre-reduce EWL constraint).
+     * exactly (read by the SD pre-reduce EWL constraint).
      */
     struct MwArcZdMean {
         double      mean_m{ std::numeric_limits<double>::quiet_NaN() };        ///< ZD-consistent MW mean (m), lagged one epoch (SPEC_mw_wl_card §3.3 double-count guard).

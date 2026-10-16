@@ -184,7 +184,7 @@ TEST(NetworkRhsAttribClosureTest, ClassesSumToTheKernelWithAPrePdStationPrior) {
         EXPECT_EQ(d.class_total.count(cls), 1u) << cls;
 
     // The pre-PD channel carries a share of the reduced RHS, and without it the classes
-    // would not close: the defect of card NOM section 16, suspect 2.
+    // would not close: the missed-channel defect.
     const Eigen::VectorXd& pre = d.class_total.at("prior_rx_cb_datum_pre_pd");
     EXPECT_GT(pre.norm(), 1e-6);
     NetworkAttribFrame frame;

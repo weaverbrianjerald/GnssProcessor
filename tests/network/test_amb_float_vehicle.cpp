@@ -99,7 +99,7 @@ std::string networkConfig(const std::string& extra) {
           "}\n";
 }
 
-/// The frozen posture of card RF-0, reduced to the knobs the vehicle interlocks read: the
+/// The frozen posture of the re-founding baseline, reduced to the knobs the vehicle interlocks read: the
 /// leveling vehicle (phase_leveling on, carry_invariant off) with Card-1's conditional
 /// coupling; F1 and F3 are absent and therefore off.
 const char* kRf0Posture =
@@ -913,7 +913,7 @@ TEST(AmbFloatVehicleTest, AnchorStransformShiftsEveryCarryByTheIncomingAnchorsLe
 
 // Latent defect (i): the coupling s_prev on the shifted phase-bias column must move with
 // the levels, and only on that column.  D4 and this transform both apply phaseBiasShiftOf
-// through the traversal of carried references (card PRM phase 2), so the rule cannot drift
+// through the traversal of carried references, so the rule cannot drift
 // between them.
 TEST(AmbFloatVehicleTest, AnchorStransformMovesTheCouplingSprevOnTheSamePhaseBiasColumn) {
     using GnssProcessor::CoupledShared;

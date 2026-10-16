@@ -321,7 +321,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const long long holdoff = ctx.knobs.bb_event_holdoff;
     for (const BlockBaardaHit& h : bb_hits) {
         const std::string sname = stationName(stations, h.station);
-        // The line of sight's holdoff clock (the station by NAME, O3; card NOM step N4e2).
+        // The line of sight's holdoff clock (the station by NAME, O3).
         const std::optional<LosId> hid = net::losOfName(ctx.entities, sname, h.sat);
         const long long* last = hid ? net::get(ctx.entities.los, *hid, &net::LosState::bb_event_last)
                                     : nullptr;

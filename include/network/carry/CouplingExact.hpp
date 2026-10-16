@@ -101,7 +101,7 @@ struct CouplingExactCounters {
     long long terms_hist_marg{0};    ///< history coefficients marginalized
     double    hist_marg_var{0.0};    ///< their summed squares (m^2), added to the rows' variance
 
-    /// The |rho| bin of card WSX's histogram.
+    /// The |rho| bin of the within-station cross-term histogram.
     static int crossRhoBin(double r) {
         static constexpr double kEdges[kCrossRhoBins - 1] = {0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.8};
         int b = 0;
@@ -169,13 +169,13 @@ struct CouplingExactEpoch {
     /// diagonal leftovers), keyed like @c p_of_key: the scalar fallback of those terms.
     std::map<std::string, double> q_outside;
     /// Off-diagonal process noise between S columns, (S index, S index, m^2), both orders
-    /// listed (card CTU G5: the level noise of a switch-on seam, V u u' over a satellite's
+    /// listed (the level noise of a switch-on seam, V u u' over a satellite's
     /// clock and phase-bias columns, whose diagonal is in @c q_s).  Empty on every other
     /// epoch, which leaves Q_S diagonal as before.
     std::vector<std::tuple<int, int, double>> q_off;
     /// Card SCL (network.carry_coupling_clock_clone): S index -> 1 when the column is a
     /// clock clone (the rows' copy of the epoch puts a cloned clock on its clone at Q = 0).
-    /// Empty on card CTU's own epoch and whenever the knob is off; read only by the counters.
+    /// Empty on the exact update's own epoch and whenever the knob is off; read only by the counters.
     std::vector<char> clone_s;
 
     /// Number of S columns.
@@ -190,7 +190,7 @@ struct CouplingExactEpoch {
 ///         diagonal is not positive.
 bool couplingExactFactor(CouplingExactEpoch& ep);
 
-/// The exact update of one row's stashed terms (the one rule of card CTU section 4).
+/// The exact update of one row's stashed terms (the one rule of the exact coupling update).
 struct CouplingExactRow {
     bool ok{false};
     Eigen::VectorXd m_new;                    ///< new coefficients over S
@@ -216,7 +216,7 @@ CouplingExactRow couplingExactRow(const CouplingExactEpoch& ep,
 
 /// The time-update covariance @f$M_a^\top B M_b@f$ of two rows updated against the same
 /// epoch.  Equals @c a.var_raw for @p a == @p b.  The producer's per-row form drops it;
-/// card WSX's @c network.carry_coupling_exact_cross adds it between two rows of a
+/// @c network.carry_coupling_exact_cross adds it between two rows of a
 /// station's local block, and the unit gate's joint reference recursion uses it.
 double couplingExactCross(const CouplingExactEpoch& ep, const CouplingExactRow& a,
                           const CouplingExactRow& b);

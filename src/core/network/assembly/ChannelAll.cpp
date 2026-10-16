@@ -1,6 +1,6 @@
 /**
  * @file ChannelAll.cpp
- * @brief Implementation of the card SID phase 6b census (see the header for the
+ * @brief Implementation of the all-channel census (see the header for the
  *        contract and for which seam consumes each function).
  */
 #include "network/assembly/ChannelAll.hpp"
@@ -74,8 +74,7 @@ void networkChannelAllEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- End of the bindings ----
     // The census also runs on a single-channel posture when a second constellation
     // is active, so its families can be read per constellation.  The run-end line is
-    // then card GAL's; the three phase-6b lines are written only under `all`
-    //.
+    // then the Galileo telemetry's; the three all-channel lines are written only under `all`.
     if (!config_.networkChannelModeAll() && !networkMultiGnssActive(config_)) return;
     auto& C = ctx.counters.channel_all;
     ++C.epochs;

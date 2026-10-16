@@ -1,6 +1,6 @@
 /**
  * @file test_resume_emit_restore.cpp
- * @brief Contract tests for the emit-layer continuity card RS-5
+ * @brief Contract tests for the emit-layer continuity
  *        (docs/SPEC_event_harness.md §21.10): the snapshot's format-forward
  *        emit-layer records (@c ER: the emission frame of the Card-4 eq34 emit
  *        re-base), the engine's own export/restore, and the loader's side of the
@@ -17,7 +17,7 @@
  *   (c) a snapshot with no @c ER rows restores nothing (an older file keeps the
  *       cold-start behaviour, and the container stays empty);
  *   (d) with the write knob off none of the rows is written, so the file matches
- *       the format before card RS-5 byte for byte; arming it adds only the rows
+ *       the format before the emit rows byte for byte; arming it adds only the rows
  *       and the END line count they advance.
  *
  * The seam mechanics (the emitted level continuing across a warm resume) are
@@ -148,7 +148,7 @@ TEST(ResumeEmitRestore, EmitRecordsRoundTripExactly) {
 }
 
 /// strtod accepts a non-finite value, which would then corrupt every re-based
-/// emitted bias for that key.  As in card CBP, it is a hard parse failure (the
+/// emitted bias for that key.  It is a hard parse failure (the
 /// caller's documented cold-start signal), never a silent partial restore.
 TEST(ResumeEmitRestore, NonFiniteEmitFieldIsAHardParseFailure) {
     NetworkStateSnapshot s = baseSnapshot();
@@ -244,7 +244,7 @@ TEST(ResumeEmitRestore, SnapshotWithoutEmitRowsRestoresNothing) {
 
 /// The driver gates the capture on the write knob, so with it off the containers
 /// stay empty and the file the same snapshot produces is byte-identical to the
-/// format before card RS-5 (standing invariant #6, at the format level).
+/// format before the emit rows (standing invariant #6, at the format level).
 TEST(ResumeEmitRestore, WriteKnobOffEmitsNoneOfTheRows) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("nocapture",

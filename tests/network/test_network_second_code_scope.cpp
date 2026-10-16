@@ -30,7 +30,7 @@
  *   (e) the loader contract: default off, the default allow-list, a refused entry
  *       dropped and named, the sigma scale's floor of 1, the `carry_rx_code_bias`
  *       interlock, the disarm on fewer than two admitted codes, the subsumption
- *       by channel_mode `all` (card SID phase 6b), and the closed-loop consumer
+ *       by channel_mode `all`, and the closed-loop consumer
  *       pinned off.
  *
  * The mechanism itself (which rows enter the solve, which columns reach two
@@ -330,8 +330,8 @@ TEST(NetworkSecondCodeScope, IsDisarmedWithoutTheReceiverCodeBiasCarry) {
 }
 
 TEST(NetworkSecondCodeScope, IsSubsumedByChannelModeAllRatherThanRefused) {
-    // Under channel_mode `all` the card is subsumed rather than refused (card SID
-    // phase 6b).  This posture is the leveling vehicle, so the widening's own
+    // Under channel_mode `all` the second code channel is subsumed rather than refused.
+    // This posture is the leveling vehicle, so the widening's own
     // interlock clamps the mode back to single and the card is then armed in its
     // ordinary form; the two assertions below cover that contract.
     LogManager log;

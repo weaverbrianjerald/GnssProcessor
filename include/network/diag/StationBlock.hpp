@@ -2,7 +2,7 @@
 /**
  * @file StationBlock.hpp
  * @brief Per-station local-block audit (@c network.trace_station_block) and the pure
- *        algebra behind it (SPEC_event_harness §24.10, card ZP).
+ *        algebra behind it (SPEC_event_harness §24.10).
  *
  * The audit addresses a case recorded in §24.9: a station with post-fit code
  * residuals of 0.3–0.55 m reported a reconstructed ZWD of −18 ± 4.5 m, with 36 % of
@@ -185,7 +185,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Write the per-station local-block audit for this epoch
- *        (@c network.trace_station_block; SPEC_event_harness §24.10, card ZP).
+ *        (@c network.trace_station_block; SPEC_event_harness §24.10).
  *
  * Runs in the measure-only trigger-instrumentation group, after the solve and
  * after @ref networkEmitStore, so @c ctx.counters.n_emitted already includes this

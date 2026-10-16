@@ -153,7 +153,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                     // arcs are never in the set.  Standing invariant #1.
                     //
                     // The funnel entry itself is unchanged either way: the Iono-2 v3k erase
-                    // classifier, anchor hygiene, the PB emit filter and card G all read the
+                    // classifier, anchor hygiene, the PB emit filter and the gap response all read the
                     // same union as before.
                     if (!(retap_only && carry_innov_flat_now.count(sk)
                           && !carry_slipped_raw.count(sk)))
@@ -197,13 +197,13 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                 carry_arc_amb_key[gk][ArcKey(static_cast<int>(i), sv)] = key;
         }
     }
-    if (culprits_read)   // card WCF: the reader's ambiguity count, once per ambiguity
+    if (culprits_read)   // the reader's ambiguity count, once per ambiguity
         ctx.counters.we_culprit_withhold.ambs += static_cast<long long>(culprit_marked.size());
     std::vector<NetworkInvariantCarryDriver::GroupInput> glist;
     glist.reserve(groups.size());
     for (auto& [k, g] : groups) glist.push_back(std::move(g));
     auto blocks = carry_driver.buildDdPriors(glist);
-    est.contributionKind(ContributionKind::DdPriorBlock);   // card NOM N2a
+    est.contributionKind(ContributionKind::DdPriorBlock);
     est.setDdPriors(std::move(blocks));
 }
 

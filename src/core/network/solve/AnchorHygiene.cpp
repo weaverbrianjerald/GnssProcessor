@@ -9,7 +9,7 @@
 
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
+#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite
 #include "filter/StateKeySchema.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
@@ -370,7 +370,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
                 if (p && blocked.count(StateKeys::makeAmbiguityKey(p->satellite, p->signal))) {
                     drop_any = true;
-                    // The parameter inventory's absorbed instance (card NOM N1b).
+                    // The parameter inventory's absorbed instance.
                     if (stations[i].mm)
                         stations[i].mm->noteAbsorbedSharedState(
                             StateContainer::SatPhaseBiasStates, kv.first,

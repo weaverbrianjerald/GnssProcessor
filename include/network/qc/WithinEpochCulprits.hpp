@@ -2,7 +2,7 @@
 /**
  * @file WithinEpochCulprits.hpp
  * @brief The within-epoch RAIM tier's culprit sets and their hand-off to the DD-carry
- *        rebuild (card WCF): the set type, the run counters of both
+ *        rebuild: the set type, the run counters of both
  *        ends of the hand-off, the verdict that reads them, and the run-end report.
  *
  * ## The hand-off
@@ -28,7 +28,7 @@
  * The sets used to reach the rebuild through two pointer parameters.  The solve-glue cut
  * of 2026-07-24 (dee2824) took the pointers by value and pointed its own copies at the
  * sets, while the rebuild callback read the driver's pointers, which stayed null: no
- * rebuild withheld a culprit from then until card WCF.  Nothing counted the withhold, so
+ * rebuild withheld a culprit from then until the rebuild wiring was fixed.  Nothing counted the withhold, so
  * the dead wiring was invisible (standing invariant 4).  Both ends are now counted
  * (@ref WithinEpochCulpritTally) and the run end reads them against each other
  * (@ref withinEpochCulpritVerdict).
@@ -58,7 +58,7 @@ struct NetworkRunEndView;
  * list.  Two readers: during the T2 block, the DD-carry rebuild of each re-solve reads the
  * epoch workspace's instance (satellites and arcs only: an excluded station is out of the
  * estimator, so no rebuild sees it); after the block, the fixed-cycle ledger reads the
- * landed copy (@c NetworkSolveGlueResult::we_landed, card FCF; networkArLatticeEvidence).
+ * landed copy (@c NetworkSolveGlueResult::we_landed; networkArLatticeEvidence).
  */
 struct WithinEpochCulprits {
     std::set<std::string>                sats;      ///< Satellites refloated at every station.

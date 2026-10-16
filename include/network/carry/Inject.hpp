@@ -52,8 +52,8 @@
  *   * @c anchor_handover   -> @c networkElectPhaseAnchors (filter/NetworkPhaseDatum)
  *   * @c arc_erase         -> the T4 attribution refloat (filter/NetworkRaim), or the
  *                             PASS-A slip drain for mode @c free_epoch
- *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (filter/NetworkFixedCycles,
- *                             card FCF): a wrong integer planted on one arc
+ *   * @c fixed_cycle_plant -> the fixed-cycle seam's ledger (filter/NetworkFixedCycles):
+ *                             a wrong integer planted on one arc
  *
  * The eighth, @c oracle_pin (simulation only), is not handled by this seam
  * beyond the arming summary: filter/NetworkOraclePin reads it from the config

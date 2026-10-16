@@ -20,7 +20,7 @@ void networkCarryVceApplyArm(NetworkRun& run) {
     const GnssConfig& config_ = run.config;
     // ---- End of the bindings ----
     // The carry LS-VCE monitor is an engine the run owns (run.engines.carry_vce; a
-    // run-TU local until card NOM3 step EP1).  Its hourly trace flush is scheduled by
+    // run-TU local until the per-epoch seam refactor).  Its hourly trace flush is scheduled by
     // ctx.carry.first_vce_s and ctx.carry.last_vce_hour, which networkShHealth writes.
     // Apply step (M2 v2): arms the LASER 5-95 variance-factor iteration over that
     // monitor.  Unlike the monitor's estimator this is not engine state:

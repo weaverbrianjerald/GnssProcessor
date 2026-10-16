@@ -215,8 +215,8 @@ TEST(ResumeDatumRestore, NoDatumRowsWhenUnpopulatedAndRestoresNothing) {
     EXPECT_FALSE(r.hasDatumState());
 }
 
-// A file written before card RS-3 (v1/v2/v3) is still legal input: the restore finds no
-// rows, both halves report inert, and the resume behaves as it did before the card.
+// A file written before the datum restore (v1/v2/v3) is still legal input: the restore finds no
+// rows, both halves report inert, and the resume behaves as it did before the restore existed.
 // This test parses a v1 file.
 TEST(ResumeDatumRestore, PreCardFileParsesWithEmptyDatumMaps) {
     const std::string v1 =

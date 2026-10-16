@@ -1,6 +1,6 @@
 /**
  * @file test_network_shared_history.cpp
- * @brief Gate U3 of card SCL2's build X2, the shared history
+ * @brief Gate U3 of build X2, the shared history
  *        (@c network.carry_coupling_shared_history,
  *        docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 5, 6 and 9).
  *
@@ -15,11 +15,11 @@
  *    is N(0, 1), and the harvest's end writes each row's history coefficients, its remainder
  *    and the within-station F3 term so that the rows' joint law equals the shared term
  *    within the cap.
- * 4. The row builder emits a row's history terms on card CTU's exact route, and a stale
- *    generation or card 1d's route marginalizes them into the row's variance.
- * 5. The loader: default off, requires card SCL's clone, refuses a rank outside [1, 8].
+ * 4. The row builder emits a row's history terms on the exact update's route, and a stale
+ *    generation or the scalar update's route marginalizes them into the row's variance.
+ * 5. The loader: default off, requires the clock clone, refuses a rank outside [1, 8].
  * 6. The snapshot's write side stores the marginal, @c var plus the coefficients' squares.
- * 7. Gate U5 (amendment A1, build X2b): card SMH's clone rows projected onto the coupling rows'
+ * 7. Gate U5 (amendment A1, build X2b): the smoothed hold's clone rows projected onto the coupling rows'
  *    kept directions ("form p"): the projection's coefficients and remainder for given
  *    directions, the seam at the harvest's end and at the hold's re-harvest, the next epoch's
  *    revision or marginalization of a hold row's history terms, and both knobs' off paths.
@@ -63,7 +63,7 @@ namespace {
 
 constexpr double kStash = 1000.0;
 
-/// Config text: a two-station network with card SCL's chain (the exact update, the dense
+/// Config text: a two-station network with the clock clone's chain (the exact update, the dense
 /// carry and B2) and the given clone / shared-history switches; @p extra is spliced into
 /// the network section.
 std::string shxConfig(bool clone, bool shx, const std::string& extra = "") {
@@ -105,7 +105,7 @@ bool shxLoads(const std::string& body, const char* tag, bool* armed = nullptr, i
     return ok;
 }
 
-/// A run context from a loaded config with the shared history armed (and card SCL's
+/// A run context from a loaded config with the shared history armed (and the
 /// clone), for the seam functions.
 struct ShxCtx {
     LogManager log;
@@ -502,7 +502,7 @@ TEST(NetworkSharedHistoryTest, HarvestEndKeepsTheSharedTermAcrossStations) {
 namespace {
 
 /// Two registered clocks and a phase bias, two history columns after them, the layout
-/// frozen, and card CTU's exact epoch over the three keys stashed at kStash (the template
+/// frozen, and the exact update's epoch over the three keys stashed at kStash (the template
 /// of test_wsx_within_station_cross.cpp).
 struct RowFixture {
     NetworkEstimator est;
@@ -697,7 +697,7 @@ TEST(NetworkSharedHistoryTest, SnapshotWriteStoresTheMarginal) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Gate U5 (amendment A1, build X2b): card SMH's clone rows in the history.
+// Gate U5 (amendment A1, build X2b): the smoothed hold's clone rows in the history.
 // ---------------------------------------------------------------------------------------------
 
 namespace {
@@ -790,7 +790,7 @@ TEST(NetworkSharedHistoryTest, HoldRowProjectionKeepsItsCoordinatesOnTheKeptDire
 }
 
 // U5 (b): the seam at the harvest's end.  Armed with the smoothed hold, every live clone row
-// pending from this epoch's update (card SMH's clock row; card SMD's two rows) takes its
+// pending from this epoch's update (the smoothed hold's clock row; the block clone's two rows) takes its
 // projection's coefficients (stamped with the compression) and its remainder on its variance;
 // a row pending from another epoch or dead is not touched; with no compression the row takes
 // the per-row term (counted as a failure); the hold's re-harvest gives any row still pending

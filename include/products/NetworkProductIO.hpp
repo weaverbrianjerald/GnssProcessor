@@ -103,7 +103,7 @@
 
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, NetworkProductEmitter
 #include "products/SsrCorrectionStore.hpp"      // SsrCorrectionStore, NetworkProducerStatus (RTA-10)
-#include "products/SignalDeclaration.hpp"       // NetworkSignalDeclaration (card SID phase 5)
+#include "products/SignalDeclaration.hpp"       // NetworkSignalDeclaration
 #include "network/solve/Sbasis.hpp"             // SbasisDeclaration (B6 contract)
 
 #include <cstdint>
@@ -140,8 +140,8 @@ struct SbasisContract {
     double            disc_threshold_frac_cycles{0.0};
     /// Whether a per-satellite discontinuity mark bumped only the generations of the
     /// channels the marking site reported, rather than the satellite's clock,
-    /// code-bias and phase-bias generations together (@c network.disc_mark_scope,
-    /// card MS).  Seventh replay-emitter construction parameter.  Serialized as an
+    /// code-bias and phase-bias generations together (@c network.disc_mark_scope).
+    /// Seventh replay-emitter construction parameter.  Serialized as an
     /// optional trailing @c discscope=channel S-line field only when armed, so a
     /// producer without it writes the S line byte-for-byte.
     /// The @c R record carries satellite ids and no channel set, so a replay
@@ -149,7 +149,7 @@ struct SbasisContract {
     /// @c checkContract compares it so the divergence is reported.
     bool              disc_mark_scope_channel{false};
     /// Whether the producer held each (satellite, signal) emitted phase bias at the
-    /// first value of its generation (@c network.emit_pb_hold, card PBH).  Not a
+    /// first value of its generation (@c network.emit_pb_hold).  Not a
     /// replay-emitter parameter but a reading rule for the whole phase-bias channel:
     /// when held, a @c P record's @c bias_m is a generation constant rather than a
     /// per-epoch estimate, each record carries a @c gen= token, and a @c phase_disc
@@ -161,7 +161,7 @@ struct SbasisContract {
     /// file's contract and records disagree.
     bool              emit_pb_hold{false};
     /// Whether the hold keeps the phase-visible clock instead of the phase bias
-    /// (@c network.emit_pb_hold_phase_clock, card LAH): within a generation a held
+    /// (@c network.emit_pb_hold_phase_clock): within a generation a held
     /// @c bias_m moves with the satellite's common-removed clock, so @c clock - bias is
     /// the generation constant and a clock move reaches the code side only.  Serialized
     /// as @c pbhold=2 in place of @c pbhold=1 (a reader that tests @c pbhold != 0 still
@@ -359,13 +359,13 @@ struct NetworkProductRecord {
     /// epoch) attaches to no record; it surfaces through
     /// @c NetworkProductTail::lastStatus instead.  H lines never feed @c replay.
     std::optional<NetworkProducerStatus> epoch_status;
-    /// The producer's declared signal roster as of this epoch (card SID phase 5,
-    /// E2): set when an @c N declaration block immediately preceded this epoch's E
+    /// The producer's declared signal roster as of this epoch:
+    /// set when an @c N declaration block immediately preceded this epoch's E
     /// line.  A declaration replaces the previous one wholesale, so the record
     /// carries the whole roster, not a delta.  @c replay pushes it into the consumer
     /// store, where it is the only information that lets a freshness flip
     /// distinguish "the network carries no family for this signal" from "the record
-    /// is stale".  Absent on wires written before card SID.
+    /// is stale".  Absent on wires written before the signal declaration existed.
     std::optional<NetworkSignalDeclaration> declaration_refresh;
 };
 
@@ -437,7 +437,7 @@ public:
     void writeEpochStatus(const NetworkProducerStatus& status);
 
     /// Append the producer's declared signal roster as a contiguous block of @c N
-    /// records (card SID phase 5, E2; see @c products/SignalDeclaration.hpp for the
+    /// records (see @c products/SignalDeclaration.hpp for the
     /// grammar).  The caller writes it before the epoch block it describes, as for
     /// the S line, and only when the declaration changed, so an unarmed producer
     /// writes nothing and the wire is byte-identical.  The serializer skips a row
@@ -536,11 +536,11 @@ public:
      * @brief Whether a consumer may replay a wire that carries this contract
      *.
      *
-     * The S contract line is part of every wire written since card OWD: it carries
+     * The S contract line is part of every wire written since the line became mandatory: it carries
      * the replay emitter's construction (@ref makeReplayEmitter), the
      * clock-discontinuity channel included.  A wire without it replays with the
      * default emitter, and no clock re-reference the producer declared reaches the
-     * replay.  Such a wire (written before card OWD, when the line was optional) is
+     * replay.  Such a wire (written when the line was optional) is
      * refused unless the consumer requests it through
      * @c network.replay_allow_undeclared_wire, the switch for grading a legacy leg
      * deliberately.
@@ -702,14 +702,14 @@ std::string aprioriIdentityForWindow(const std::vector<std::filesystem::path>& p
                                      double t0_gps_s, double t1_gps_s,
                                      bool* named_all = nullptr);
 
-/// Prefix of the S line's a priori identity under card NBP's native broadcast clock a
+/// Prefix of the S line's a priori identity under the native broadcast clock a
 /// priori (@c network.apriori_source @c sp3_brdc_clock): "sp3+brdc:<SP3>|<nav>|ttom".
 /// Under it every C record's clock refers to the stamped broadcast ephemeris (@c iode=),
 /// so a consumer must hold that record and must not load a CLK product.
 inline constexpr const char* kNbpAprioriPrefix = "sp3+brdc:";
 
 /**
- * @brief Whether an S line's a priori identity declares card NBP's native broadcast clock.
+ * @brief Whether an S line's a priori identity declares the native broadcast clock.
  * @param apriori_product_id The S line's a priori identity.
  * @return True when it starts with @ref kNbpAprioriPrefix.
  */

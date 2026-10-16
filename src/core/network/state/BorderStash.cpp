@@ -17,8 +17,8 @@
  * INC-4) that binds the driver's former local names to members of the context, so the
  * relocated code keeps those names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -29,7 +29,7 @@
 #include "config/GnssConfig.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, constellationKey
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
-#include "network/state/CarryDisposition.hpp" // carryColumnPresent (card PRM phase 1b)
+#include "network/state/CarryDisposition.hpp" // carryColumnPresent
 #include "network/solve/Sbasis.hpp"          // NetworkSbasis::Plan
 #include "filter/StateKeySchema.hpp"         // StateKeys::parseSatPhaseBiasKey / makeAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
@@ -434,7 +434,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 cp.inflate_q = false;
                 prev_carry.push_back(std::move(cp));
                 ++ctx.counters.n_readmit_parked;
-                prmRespond(ctx.counters.prm_resp,   // card PRM phase 3a, per kind
+                prmRespond(ctx.counters.prm_resp,   // per kind
                            oc.kind == SharedParamKind::Clock ? ResponseSite::ClkPark
                                                              : ResponseSite::CbPark);
                 ++parked_now[oc.sat];
@@ -443,7 +443,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 traces.emitEvent(t, "READMIT", "park", sat, "", static_cast<double>(n),
                                  readmit_h, "park",
                                  "D2 clock + code-bias carry parked at departure");
-                // The READMIT writer (card SID phase 4a, S1).  The park is a shared
+                // The READMIT writer.  The park is a shared
                 // parameter's departure, so it names a satellite and never a station:
                 // the expansion writes the bit on every station's arcs of that satellite
                 // that the admitted lifecycle still considers alive.  This seam runs

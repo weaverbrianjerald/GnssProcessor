@@ -309,7 +309,7 @@ inline PriorResidualCorrob priorResidualOrVerdict(const PriorResidualEvidence& e
  *
  * One instance per producer run, with the same lifetime and ownership as
  * @ref NetworkCarryVce: an engine the run owns (run.engines.prires, network/driver/Run.hpp;
- * a run-TU local passed by reference until card NOM3 step EP1; see the note on engine
+ * a run-TU local passed by reference until the per-epoch seam refactor; see the note on engine
  * objects in the @c network/state/RunContext.hpp banner).
  */
 class NetworkPriorResidual {

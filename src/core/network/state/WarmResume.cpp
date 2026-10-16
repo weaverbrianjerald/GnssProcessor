@@ -21,8 +21,8 @@
  * driver's former local names to members of the context, so the relocated code keeps those
  * names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -276,7 +276,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // The arcs' leveling carries, with the restored-arc
                     // age convention (SPEC_event_harness §15.4, makeRestoredLocalCarry).
                     net::recordFromSnapshot("L", snap, ctx);
-                    // The Z rows (the station table's zwd, card NOM step N4a).  Same
+                    // The Z rows (the station table's zwd).  Same
                     // restored-entry convention as the L rows above.  The ZWD carry has no
                     // age reader and its harvest replaces the whole entry (so the sentinel
                     // does not survive the first stash), but a restored Z row is a restored
@@ -350,7 +350,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 st.last_var_eff = ca.last_var_eff;
                                 st.in_band      = ca.in_band;
                                 st.anchored     = ca.anchored;
-                                st.ever_anchored = ca.anchored;   // card PRM phase 3a, measure-only
+                                st.ever_anchored = ca.anchored;   // measure-only
                                 ctx.carry.clk_anchor.sat[sat] = st;
                                 ++ctx.counters.n_resume_frame_cta;
                                 if (ca.anchored) ++ctx.counters.n_resume_frame_cta_anchored;

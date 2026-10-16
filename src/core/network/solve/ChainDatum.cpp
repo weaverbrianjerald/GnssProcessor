@@ -15,7 +15,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/ar/ArcGraph.hpp"    // the group graph, its components and the chain forest
 #include "network/carry/Coupling.hpp"
-#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite (card PRM phase 3a)
+#include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, rinexLetter, constellationKey, SignalId, SatId, StationId, wavelengthM
 
@@ -890,7 +890,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (eq34_reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) {
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
-                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);   // card PRM phase 3a
+                prmRespond(ctx.counters.prm_resp, ResponseSite::AmbEq34Erase);
                 return true;
             }
             return false;
@@ -928,7 +928,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // are mutually exclusive by construction at the population site, so the shifted
     // keys are exactly those whose carries survive.  With coupling off the stashes
     // are empty and the walk leaves the output byte-identical.
-    // The walk is the traversal of carried references (card PRM phase 2): the ambiguities,
+    // The walk is the traversal of carried references: the ambiguities,
     // the receiver phase biases and the satellite phase biases, then the s_prev of the
     // phase-bias coupling terms in the ambiguity, receiver phase-bias and wet-delay carries.
     if (!shift_sat.empty() || !shift_rxg.empty()) {
@@ -1347,12 +1347,12 @@ void networkHarvestRxPhaseBias(NetworkRun& run, const NetworkEpoch& ep) {
         }
     }
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
-    // double as pl_max_gap_s; card PRM phase 3b).
+    // double as pl_max_gap_s).
     carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rpb, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxPhaseBias).gap_horizon_s,
                   [&](const auto&, const auto&, const auto&) {
                       ++ctx.counters.n_cr_rpb_gap_prune;   // same predicate, same census
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::RpbGapPrune);
                   });
 }
 

@@ -104,8 +104,8 @@ void NetworkProductEmitter::markDatumChange(const std::set<char>& constellations
 void NetworkProductEmitter::markSatDiscontinuity(const std::set<std::string>& satellites,
                                                  unsigned channels) {
     forced_bump_sats_.insert(satellites.begin(), satellites.end());
-    // Under the per-channel scope, record which channels the marking site names
-    //; an empty mask means all channels.  The legacy scope never reads
+    // Under the per-channel scope, record which channels the marking site names;
+    // an empty mask means all channels.  The legacy scope never reads
     // the map, so it is not built there and that path is unchanged.  Two sites
     // marking the same satellite in one epoch OR their masks; this is how a site
     // that moves two channels (the T3c δtˢ↔dˢ re-split, an ephemeris cutover with
@@ -191,7 +191,7 @@ int NetworkProductEmitter::clockDiscontinuityCounter(const std::string& sat) con
 // previous emission to difference against, so the jump test is skipped and the
 // baseline is seeded), and the clock side tests the seen-set that the A2 clock
 // channel fills.  Callers read them before emitToStore, so they describe the
-// previous emission (card SID phase 5, E1).
+// previous emission.
 bool NetworkProductEmitter::isPhaseFirstSighting(const std::string& sat,
                                                  const std::string& signal) const {
     return last_phase_bias_.find(sat + "|" + signal) == last_phase_bias_.end();
@@ -460,7 +460,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const bool have_baseline = (cb_last_it != last_code_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(code_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(cst))
-                                           || satForced(s.sat, kDiscChanCodeBias);  // per-sat retro-bump on the code channel (B1, card MS)
+                                           || satForced(s.sat, kDiscChanCodeBias);  // per-sat retro-bump on the code channel (B1)
                 // Opt-in magnitude test (network.code_bias_disc_jump_test): the phase
                 // jump test applied to code.  It catches value wander under weak
                 // separation, which the structural triggers cannot see (they detect
@@ -519,7 +519,7 @@ void NetworkProductEmitter::emitToStore(const NetworkSolutionEpoch& sol,
                 const bool have_baseline = (last_it != last_phase_bias_.end());
                 const bool fresh         = have_baseline && !staleKey(phase_last_seen_s_, key);
                 const bool forced        = (!s.sat.empty() && constForced(cst))
-                                           || satForced(s.sat, kDiscChanPhaseBias); // per-sat retro-bump on the phase channel (B1, card MS)
+                                           || satForced(s.sat, kDiscChanPhaseBias); // per-sat retro-bump on the phase channel (B1)
                 // A forced datum change (clock-pivot handover or global
                 // re-declaration) steps the counter even on a beyond-horizon return,
                 // because a consumer with an unbroken carrier arc across the gap still

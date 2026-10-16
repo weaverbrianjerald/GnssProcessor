@@ -1,6 +1,6 @@
 /**
  * @file test_signal_roster_sites.cpp
- * @brief The site census of card NOM step N3b (network/assembly/SignalRosterSites.cpp): the roster
+ * @brief The site census (network/assembly/SignalRosterSites.cpp): the roster
  *        read that the latch readers moved onto, and the rule sites the census
  *        evaluates on a roster.  Suite SignalRosterSitesTest.
  */

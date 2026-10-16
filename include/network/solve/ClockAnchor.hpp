@@ -8,7 +8,7 @@
  *
  * Without the anchor, the emitted per-satellite clock is a random walk with a robust
  * step σ of about 9.2 cm per 30 s, against a physical change of about 2 cm
- * (carrier-phase measured, card FC-1).  The walk is estimator noise, not clock
+ * (carrier-phase measured).  The walk is estimator noise, not clock
  * physics: the per-satellite σ varies by only 1.37× (7.93 … 10.87 cm) across 32
  * satellites of three clock technologies, which matches per-epoch estimator noise and
  * no physical process.
@@ -124,7 +124,7 @@ struct NetworkRunContext;
 struct NetworkRunTraces;
 
 /// @brief Gauge-projected variance of each member of one constellation's
-///        carried-clock group (§2.1 of card Q3).
+///        carried-clock group.
 ///
 /// The guard (and the census's `clk` family) standardize the common-removed residual,
 /// so both halves of `P⁻ − P⁺` must be the variance of that contrast:
@@ -216,7 +216,7 @@ struct ClockAnchorFold {
     /// The increment over the carried variance before the floor (m^2): cta_q·dt_sat
     /// anchored, the legacy rate over the driver's step (or over the true gap for a
     /// re-admission seed) loose.  @c var_eff is the carried variance plus this, floored
-    /// when anchored (card PRM phase 1b: the decision is the increment, the base is the
+    /// when anchored (the decision is the increment, the base is the
     /// caller's, @ref clockAnchorFoldAt).
     double inc_m2{0.0};
     /// The interval @c inc_m2 covers (s) and its rate (m^2/s), so that
@@ -230,7 +230,7 @@ struct ClockAnchorFold {
 ///        advance the per-satellite anchor bookkeeping: @ref clockAnchorFoldDecide
 ///        followed by @ref clockAnchorFoldCommit.
 ///
-/// The D2 fold no longer calls it: since card PRM phase 1b the decision is made before
+/// The D2 fold no longer calls it: the decision is made before
 /// PASS B (@ref networkCarryDecide), read by the coupling rows and by both fold branches
 /// (the diagonal one and the C1 dense block's `cov_eff` diagonal, so the marginal prior on
 /// the clock is the same either way, which makes the guard statistic independent of the
@@ -260,7 +260,7 @@ ClockAnchorFold clockAnchorFoldVariance(NetworkRunContext& ctx,
                                         double seed_horizon_s = 0.0);
 
 /// @brief The anchor's decision for this satellite this epoch, read from the current state
-///        without advancing it (card PRM phase 1b): the decision half of
+///        without advancing it: the decision half of
 ///        @ref clockAnchorFoldVariance.
 ///
 /// The coupling rows are built in PASS B, before the D2 fold runs, and the exact time update
@@ -277,7 +277,7 @@ ClockAnchorFold clockAnchorFoldDecide(const NetworkRunContext& ctx, const std::s
 
 /// @brief The anchor's decision @p f re-formed on the carried variance @p prev_var: the
 ///        variance is @p prev_var plus the decision's increment, floored at
-///        `clock_anchor_var_floor_m2` when anchored (card PRM phase 1b).
+///        `clock_anchor_var_floor_m2` when anchored.
 ///
 /// The one implementation of the anchor's floor: the decision applies it on the variance it
 /// was made on, and the fold on the variance it folds (a clock-pivot handover re-expresses
@@ -290,7 +290,7 @@ ClockAnchorFold clockAnchorFoldAt(const NetworkRunContext& ctx, const ClockAncho
                                   double prev_var);
 
 /// @brief Apply the anchor's fold decision @p f to the per-satellite state and counters,
-///        the bookkeeping half of @ref clockAnchorFoldVariance (card PRM phase 1b).
+///        the bookkeeping half of @ref clockAnchorFoldVariance.
 ///
 /// Marks a decoupling (`stale_pending`, which the guard turns into the edge), counts the fold
 /// (anchored or loose, the floor hits, per constellation) and stamps the satellite's last

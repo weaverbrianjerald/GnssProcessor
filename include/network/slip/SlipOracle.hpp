@@ -202,7 +202,7 @@ struct NetworkSlipOracle {
     /// and is never reallocated.  The oracle writes @ref LocalCarry::value_abs
     /// and nothing else: an `x_lin` shift is an exact solve no-op
     /// (docs/SPEC_lane_slip_response.md §7.2).
-    net::ArcTable* carry{nullptr};   ///< The arc table (its @c ArcState::amb, card NOM step N4f1).
+    net::ArcTable* carry{nullptr};   ///< The arc table (its @c ArcState::amb).
 
     /// Wavelength provider for the cycles->metres conversion (FDMA-correct via
     /// the satellite id).  Owned here so the oracle does not depend on whether

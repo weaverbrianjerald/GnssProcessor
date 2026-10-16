@@ -3,7 +3,7 @@
  * @brief Tests for the satellite clock level read from the code alone, and for its
  *        declaration on the wire.  Suite @c ClockLevelCarryTest (
  *        docs/refound/CLV_clock_level_2026-09-22.md; the producer's re-base was removed,
- *        the level read stays for card CTU's monitor and the wire's lvl= token stays).
+ *        the level read stays for the clock-level monitor and the wire's lvl= token stays).
  *
  * What is pinned here:
  *  - the level direction (+1 on the satellite clock, +1 on each of its phase biases) is
