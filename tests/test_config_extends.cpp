@@ -10,7 +10,7 @@
  *     parses exactly as it did before inheritance existed.  Every existing config takes
  *     that path, so a regression here would silently re-interpret all of them.
  *  2. **Arrays replace, never concatenate.**  `network.stations` is an array, and the
- *     warm-resume fingerprint hashes the roster in order (NetworkSnapshotFingerprint.cpp).
+ *     warm-resume fingerprint hashes the roster in order (SnapshotFingerprint.cpp).
  *     A base roster concatenated with a child roster would give duplicate stations, a
  *     different order, and a station count matching no intended regime, while still
  *     loading cleanly.

@@ -22,7 +22,7 @@ Conventions (stated once; every table below follows them)
     are kept when they carry >= `--min-arc` rows (default 30).
   * Level    = the unweighted mean of the code-row residual `resid_m` over the
     stated window.  `resid_m` is the signed post-fit residual v = y − A_s x_s −
-    A_r x_r in metres (NetworkFrameDiag.cpp), not standardized.  The level is a
+    A_r x_r in metres (FrameDiag.cpp), not standardized.  The level is a
     metre quantity, so weighting it by `w` would tilt it toward high elevation.
     `w` (the normal-equation weight, 1/σ²-like; pf_keyed pools |v|·sqrt(w)) is
     used only as the least-squares weight in R3 and as the LOS weight when a
@@ -34,7 +34,7 @@ Conventions (stated once; every table below follows them)
     `networkAppendShIonoRows_` (ApplicationNetworkAssembly.cpp) constrains to
     zero:  ι(rx,sat) − Σ_l M_l(el)·tecu_to_L1m·VTEC_l(IPP_l).  ι is
     `iono_total_m` = x_lin + x_r, never `iono_m` (x_r alone is a correction about
-    the allocation seed; CLAUDE.md Amendment 4, NetworkIonoDiag.cpp).
+    the allocation seed; CLAUDE.md Amendment 4, IonoDiag.cpp).
     The row's R keeps an all-ones per-(rx,const) block, so the per-station-epoch
     mean of the tie residual is a free datum the tie does not screen; both the raw
     and the station-epoch-demeaned form are reported, and the demeaned form is the

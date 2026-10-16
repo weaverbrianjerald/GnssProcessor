@@ -295,7 +295,7 @@ def read_csv(path, label):
                 cur.dirs.append((_f(row.get('ev')), parse_components(body)))
             elif kind == 'RUN':
                 # The RUN record reuses the numeric columns; see the writer's
-                # comment in NetworkRunTraces.cpp for the mapping.
+                # comment in RunTraces.cpp for the mapping.
                 arm.run = {
                     'gate_evaluated': _i(row.get('n_shared')),
                     'withheld_under': _i(row.get('declared_dim')),

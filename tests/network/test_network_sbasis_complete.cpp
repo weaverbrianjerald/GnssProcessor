@@ -41,8 +41,8 @@
 #include <vector>
 
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "logging/LogManager.hpp"
 
 namespace GnssProcessor {

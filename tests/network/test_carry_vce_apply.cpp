@@ -37,8 +37,8 @@
 //   Gate 9 (no redundancy) : rows with r <= floor or r < 0 are left out of the target
 //                            and of the warm-up count, and are counted.
 
-#include "network/carry/NetworkCarryVce.hpp"
-#include "network/carry/NetworkCarryVceApply.hpp"
+#include "network/carry/CarryVce.hpp"
+#include "network/carry/CarryVceApply.hpp"
 
 #include <gtest/gtest.h>
 
@@ -457,7 +457,7 @@ TEST(NetworkCarryVceApplyTest, MonitorTracksTheHandFoldVarianceSeparately) {
     EXPECT_NEAR(e.hand_fold_var, std::sqrt(1.0e-5 * 1.0e-4), 1.0e-12);
     // robust_floor is not affected by the new channel and stays independent of
     // alpha2; that independence makes the factor loop a tracker rather than a
-    // feedback loop (see NetworkCarryVceApply.hpp).
+    // feedback loop (see CarryVceApply.hpp).
     EXPECT_NEAR(e.robust_floor, 1.0e-6 / 0.2807297418, 1.0e-12);
     // The redundancy-corrected channel: r = 1 - v/f is 0.875 and 0.9875 on the two
     // row kinds, every row qualifies, and ê²/r is averaged geometrically.

@@ -19,15 +19,15 @@
 #include <gtest/gtest.h>
 
 #include "support/NetworkTestRun.hpp"   // the run and epoch networkPhaseVisibleMonitor's epoch form takes
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "common/SignalBand.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkClockAnchor.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/diag/NetworkPhaseVisibleDiag.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/ClockAnchor.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/diag/PhaseVisibleDiag.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
 #include <algorithm>

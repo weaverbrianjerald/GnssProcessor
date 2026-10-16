@@ -14,7 +14,7 @@
  * network-owned satellite code bias) are listed in the pre-pass table in
  * MeasurementModel.hpp.  The parameter inventory names
  * MeasurementModel::ensureNetworkSharedStates as a code site
- * (network/assembly/NetworkParamInventory.cpp); the name is load-bearing.
+ * (network/assembly/ParamInventory.cpp); the name is load-bearing.
  */
 
 #include "measurement/MeasurementModel.hpp"

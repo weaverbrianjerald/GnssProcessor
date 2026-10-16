@@ -46,7 +46,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/carry/NetworkCouplingExact.hpp"
+#include "network/carry/CouplingExact.hpp"
 
 #include <Eigen/Dense>
 

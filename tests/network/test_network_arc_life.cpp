@@ -1,7 +1,7 @@
 /**
  * @file test_network_arc_life.cpp
  * @brief Unit tests of the arc life stamp and the search's track of a life (card AGT, step
- *        AGT-5; include/network/ar/NetworkArcLife.hpp).
+ *        AGT-5; include/network/ar/ArcLife.hpp).
  *
  * Suite @c NetworkArcLife:
  *  - the stamp read from its three sources (the arc ledger's admitted side, the leveling carry,
@@ -18,12 +18,12 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/state/ArcLedger.hpp"
-#include "network/ar/NetworkArcLife.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/ar/ArcLife.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

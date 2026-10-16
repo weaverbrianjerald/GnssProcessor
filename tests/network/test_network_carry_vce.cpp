@@ -1,5 +1,5 @@
 // Unit tests for the standalone NetworkCarryVce accumulator
-// (include/network/carry/NetworkCarryVce.hpp), the residual-form variance-component
+// (include/network/carry/CarryVce.hpp), the residual-form variance-component
 // estimator into which the network producer feeds carry-row innovations (M2, the
 // LS-VCE carry-q monitor).  The tests drive the class directly with synthetic
 // carry rows of known truth, as test_neq_accumulator and the M4 combined-sigma
@@ -14,7 +14,7 @@
 //                       stays unbiased, while the ungated one is biased high,
 //                       which is the reason for the clean-epoch gate.
 
-#include "network/carry/NetworkCarryVce.hpp"
+#include "network/carry/CarryVce.hpp"
 
 #include <gtest/gtest.h>
 

@@ -44,11 +44,11 @@
 //                           provenance line and the byte-exact column header the
 //                           reader parses.
 
-#include "network/diag/NetworkStationBlock.hpp"
+#include "network/diag/StationBlock.hpp"
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>

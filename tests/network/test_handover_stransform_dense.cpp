@@ -27,16 +27,16 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/carry/NetworkClockClone.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkHandoverStransform.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/carry/ClockClone.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/HandoverStransform.hpp"
+#include "network/driver/RunTypes.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <Eigen/Dense>
 

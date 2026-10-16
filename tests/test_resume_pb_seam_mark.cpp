@@ -60,7 +60,7 @@ NetworkSolutionEpoch makeEpoch(double tow, int n, int n_jumped, double jump) {
     return sol;
 }
 
-/// The driver's rule (NetworkEmitStore.cpp), applied to a census: the set of
+/// The driver's rule (EmitStore.cpp), applied to a census: the set of
 /// constellations whose fresh-baseline key fraction beyond threshold clears the bar.
 std::set<char> markedConsts(
     const std::map<char, NetworkProductEmitter::PbSeamConstTally>& census) {

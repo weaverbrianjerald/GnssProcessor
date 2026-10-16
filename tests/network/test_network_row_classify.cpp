@@ -1,7 +1,7 @@
 /**
  * @file test_network_row_classify.cpp
  * @brief Card NOM step N2b: every reader of "what is this row" reads the row's
- *        contribution tag (network/assembly/NetworkRowClassify.hpp).
+ *        contribution tag (network/assembly/RowClassify.hpp).
  *
  * The contracts:
  *  - one map from contribution kind to row class covers every kind: the observation
@@ -22,10 +22,10 @@
 #include <gtest/gtest.h>
 
 #include "common/GnssIdentity.hpp"
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/qc/NetworkRaim.hpp"          // RaimPoolAdmissionTally
-#include "network/assembly/NetworkRowClassify.hpp"
-#include "network/driver/NetworkRunTypes.hpp"   // StationAssembly
+#include "network/assembly/Contributions.hpp"
+#include "network/qc/Raim.hpp"          // RaimPoolAdmissionTally
+#include "network/assembly/RowClassify.hpp"
+#include "network/driver/RunTypes.hpp"   // StationAssembly
 
 #include <Eigen/Dense>
 

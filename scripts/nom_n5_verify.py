@@ -7,7 +7,7 @@ Each check runs its negative control first; a control that passes is itself a fa
 
   E1  The 68 moved members.  None is declared in NetworkCarryState or reached as
       `carry.<member>` anywhere under src/, include/ or tests/; each is declared exactly once
-      in its EpochEvents group (include/network/driver/NetworkEpoch.hpp), and has exactly one net::kRunFields
+      in its EpochEvents group (include/network/driver/Epoch.hpp), and has exactly one net::kRunFields
       row, named "events.<group>.<member>", was == member, Persist::Epoch.
   E2  The hand clears.  Every hand clear of a moved member in the base revision (a `.clear()`
       of it or of an alias bound to it, or a reset to a literal) is listed by member with its
@@ -36,9 +36,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-RUN_CTX = 'include/network/state/NetworkRunContext.hpp'
-EPOCH_HPP = 'include/network/driver/NetworkEpoch.hpp'
-RUN_CPP = 'src/core/network/state/NetworkRunFields.cpp'
+RUN_CTX = 'include/network/state/RunContext.hpp'
+EPOCH_HPP = 'include/network/driver/Epoch.hpp'
+RUN_CPP = 'src/core/network/state/RunFields.cpp'
 
 GROUPS = {
     'slip': ['carry_innov_flat_now', 'relevel', 'sid_reentry_outcome'],
@@ -150,7 +150,7 @@ def e1(tree):
     rows = run_fields(tree)
     access = re.compile(r'\b(?:carry|cs)\s*(?:\.|->)\s*(' + '|'.join(GROUP_OF) + r')\b')
     for p in tree.walk('src', 'include', 'tests'):
-        if p.endswith('NetworkRunFields.cpp') or p in FAKE_CARRY:
+        if p.endswith('RunFields.cpp') or p in FAKE_CARRY:
             continue
         for m in access.finditer(strip_comments(tree.get(p))):
             fails.append(f'{p}: carry.{m.group(1)} (a moved member reached through the run state)')
@@ -284,7 +284,7 @@ def main():
     c1 = e1(mutated(tree, RUN_CTX, lambda s: s.replace('struct NetworkCarryState {',
                                                          'struct NetworkCarryState {\n        long long ep_d5_flags = 0;', 1)))
     report('E1 moved members', e1(tree), c1, f'{len(GROUP_OF)} members in {len(GROUPS)} groups')
-    gl = 'src/core/network/qc/NetworkGrossLos.cpp'
+    gl = 'src/core/network/qc/GrossLos.cpp'
     c2, _ = e2(mutated(tree, gl, lambda s: s.replace('// ---- End of the bindings ----',
                                                      'gross_ev.gl_act_declare.clear();\n    // ---- End of the bindings ----', 1)),
                a.base, base_files={})
@@ -297,7 +297,7 @@ def main():
         print(f'        {m}: {", ".join(by[m])}')
     c3 = e3(mutated(tree, RUN_CPP, lambda s: s.replace('Persist::Latch', 'Persist::Pending', 1)))
     report('E3 retained members', e3(tree), c3, f'{len(RETAINED)} members')
-    sp = 'src/core/network/carry/NetworkInstallCarry.cpp'
+    sp = 'src/core/network/carry/InstallCarry.cpp'
     c4 = body_spellings(mutated(tree, sp, lambda s: s.replace('    // ---- End of the bindings ----\n',
                                                               '    // ---- End of the bindings ----\n    (void)ep.events;\n', 1)))
     report('E4 seam contract (lint V0 V4 V10 V11 V12, bindings)', e4(tree), c4)

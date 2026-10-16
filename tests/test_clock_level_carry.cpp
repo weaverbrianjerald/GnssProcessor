@@ -31,11 +31,11 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/solve/NetworkClockLevel.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/ClockLevel.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/solve/Estimator.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"

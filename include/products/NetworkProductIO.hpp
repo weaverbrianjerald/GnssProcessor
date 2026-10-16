@@ -104,7 +104,7 @@
 #include "products/NetworkProductEmitter.hpp"   // NetworkSolutionEpoch, NetworkProductEmitter
 #include "products/SsrCorrectionStore.hpp"      // SsrCorrectionStore, NetworkProducerStatus (RTA-10)
 #include "products/SignalDeclaration.hpp"       // NetworkSignalDeclaration (card SID phase 5)
-#include "network/solve/NetworkSbasis.hpp"             // SbasisDeclaration (B6 contract)
+#include "network/solve/Sbasis.hpp"             // SbasisDeclaration (B6 contract)
 
 #include <cstdint>
 #include <filesystem>

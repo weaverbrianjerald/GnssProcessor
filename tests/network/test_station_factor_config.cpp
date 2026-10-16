@@ -15,7 +15,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/qc/NetworkRobustStats.hpp"
+#include "network/qc/RobustStats.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

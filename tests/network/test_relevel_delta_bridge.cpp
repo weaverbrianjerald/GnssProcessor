@@ -13,7 +13,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <cmath>
 #include <map>

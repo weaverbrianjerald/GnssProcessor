@@ -26,7 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkExtraBandScope.hpp"
+#include "network/assembly/ExtraBandScope.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

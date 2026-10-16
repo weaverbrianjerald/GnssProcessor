@@ -1,7 +1,7 @@
 /**
  * @file test_network_harvest_layout.cpp
  * @brief The station harvest layout of card NOM3 step HV1: harvestBlockSpans and
- *        StationHarvestBlock (network/carry/NetworkLocalCarryHarvest.hpp).
+ *        StationHarvestBlock (network/carry/LocalCarryHarvest.hpp).
  *
  * The layout replaced eleven per-station hand-forward vectors.  A frozen consumer saw the
  * station's block exactly when the station had one and its segment had columns, and read the
@@ -17,7 +17,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/carry/NetworkLocalCarryHarvest.hpp"
+#include "network/carry/LocalCarryHarvest.hpp"
 
 #include <memory>
 

@@ -1,7 +1,7 @@
 /**
  * @file test_network_contributions.cpp
  * @brief Card NOM step N2a: the contribution declarations, the row tags and the
- *        "contributions as armed" table of filter/NetworkContributions.hpp.
+ *        "contributions as armed" table of filter/Contributions.hpp.
  *
  * The contracts:
  *  - every kind has a declaration (name, unit, weight, builder) in enum order, the names
@@ -25,11 +25,11 @@
 
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfigTypes.hpp"     // GlobalVtecShConfig (the coupling builder)
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/carry/NetworkCoupling.hpp"     // CouplingRowBuilder, localBlockColKind
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/assembly/NetworkParamRegistry.hpp"
-#include "network/driver/NetworkRunTypes.hpp"     // StationAssembly, CplRowRaw
+#include "network/assembly/Contributions.hpp"
+#include "network/carry/Coupling.hpp"     // CouplingRowBuilder, localBlockColKind
+#include "network/solve/Estimator.hpp"
+#include "network/assembly/ParamRegistry.hpp"
+#include "network/driver/RunTypes.hpp"     // StationAssembly, CplRowRaw
 #include "filter/StateKeySchema.hpp"
 
 #include <Eigen/Dense>

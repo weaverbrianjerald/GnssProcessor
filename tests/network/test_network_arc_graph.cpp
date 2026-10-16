@@ -18,7 +18,7 @@
 //     elimination when a unit row holds the arc, ten held DDs on a slipped reference become nine,
 //     a planted wrong integer is Contradicted, a non-primitive residual is refused.
 
-#include "network/ar/NetworkArcGraph.hpp"
+#include "network/ar/ArcGraph.hpp"
 
 #include <gtest/gtest.h>
 

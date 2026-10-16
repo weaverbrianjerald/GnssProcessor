@@ -76,90 +76,90 @@
  */
 
 #include "app/Application.hpp"
-#include "network/driver/NetworkRun.hpp"     // NetworkRun, networkEngineSpec (card NOM3 step EP1)
+#include "network/driver/Run.hpp"     // NetworkRun, networkEngineSpec (card NOM3 step EP1)
 
 #include "rinex/MultiRinexSync.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/NetworkEmitRebase.hpp"   // emit-layer frame re-base
-#include "network/emit/NetworkClockEmitRebase.hpp" // clock emission re-base + per-sat step marks
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base
+#include "network/emit/ClockEmitRebase.hpp" // clock emission re-base + per-sat step marks
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts
 #include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (card 5, RTF-1)
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
+#include "network/solve/Estimator.hpp"
+#include "network/solve/ClockLevel.hpp"         // satellite-clock level monitor and restore raise (card CTU)
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
-#include "network/solve/NetworkSbasis.hpp"
-#include "network/solve/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
-#include "network/carry/NetworkCarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
-#include "network/qc/NetworkPriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
-#include "network/carry/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
+#include "network/solve/Sbasis.hpp"
+#include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "network/carry/CarryVce.hpp"        // LS-VCE variance-component monitor for carry rows (M2)
+#include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (card 4, M1 C3b)
 #include "filter/StateKeySchema.hpp"
 #include "common/GnssIdentity.hpp"         // systemOfSat, letterOfSat, rinexLetter, systemName
-#include "network/driver/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
-#include "network/driver/NetworkWlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
-#include "network/driver/NetworkRunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
-#include "network/qc/NetworkRobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
-#include "network/solve/NetworkPhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
-#include "network/diag/NetworkAmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
-#include "network/ar/NetworkAmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
-#include "network/solve/NetworkHandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
-#include "network/solve/NetworkChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
-#include "network/solve/NetworkAnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
-#include "network/assembly/NetworkSignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
-#include "network/assembly/NetworkMeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
-#include "network/qc/NetworkGrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
-#include "network/qc/NetworkRaim.hpp"        // post-fit network RAIM (INC-9)
-#include "network/qc/NetworkClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
-#include "network/diag/NetworkFrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
-#include "network/diag/NetworkStationBlock.hpp"  // per-station local-block audit, measure-only (card ZP, §24.10)
-#include "network/qc/NetworkRhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
-#include "network/qc/NetworkMdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
-#include "network/qc/NetworkRedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
-#include "network/qc/NetworkPrefitCensus.hpp"      // prefit census / fuse / birth check / topology (SPEC_prefit_census_observability)
-#include "network/solve/NetworkDatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
-#include "network/emit/NetworkSolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
-#include "network/emit/NetworkEmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
-#include "network/runend/NetworkTeardown.hpp"
-#include "network/diag/NetworkPhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
-#include "network/emit/NetworkPbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
-#include "network/state/NetworkCarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
-#include "network/ar/NetworkProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
-#include "network/ar/NetworkFixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
-#include "network/carry/NetworkInject.hpp"
-#include "network/assembly/NetworkCanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
+#include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
+#include "network/driver/WlRunTypes.hpp" // RAII and section-timer types hoisted out of runNetwork() (INC-9b)
+#include "network/driver/RunGroups.hpp"  // the driver-owned run groups: engines, emit engines, timing, closed-loop tally (card NOM TD1a)
+#include "network/qc/RobustStats.hpp"   // median / MAD helpers for robust attribution (INC-2)
+#include "network/solve/PhaseDatum.hpp"    // census, anchor election, drop-and-heal (INC-8b)
+#include "network/diag/AmbStateTrace.hpp" // per-arc carry-state trace: drain and erase capture (RF-1 §7.4)
+#include "network/ar/AmbFloat.hpp"      // floored birth prior and bounded drop (RF-1 step 4)
+#include "network/solve/HandoverStransform.hpp" // kStsExactTolM (RF-2b: the declaration step test)
+#include "network/solve/ChainDatum.hpp"    // eq34 single-receiver-chain datum (card 3, INC-8b)
+#include "network/solve/AnchorHygiene.hpp" // eq34 reattach hygiene: anchor-host eligibility + pin bridge
+#include "network/assembly/SignalIntegrity.hpp" // flicker/gap: band-state classifier + unvetted phase demotion
+#include "network/assembly/MeasurementAdmission.hpp" // product-referenced admission: the corrupt-channel screen
+#include "network/qc/GrossLos.hpp"    // gross line-of-sight screen (card GL, §24.18)
+#include "network/qc/Raim.hpp"        // post-fit network RAIM (INC-9)
+#include "network/qc/ClockQc.hpp"     // post-solve satellite-clock QC (INC-10)
+#include "network/diag/FrameDiag.hpp"   // frame-guard trigger instrumentation (P1-3/P1-4, SPEC_day129_frame_guards)
+#include "network/diag/StationBlock.hpp"  // per-station local-block audit, measure-only (card ZP, §24.10)
+#include "network/qc/RhsAttrib.hpp"   // reduced-RHS class attribution (era-2 injector probe)
+#include "network/qc/Mdb.hpp"               // Baarda reliability numbers / MDB (SPEC_redundancy_census)
+#include "network/qc/RedundancyCensus.hpp"  // redundancy / testability census (SPEC_redundancy_census)
+#include "network/qc/PrefitCensus.hpp"      // prefit census / fuse / birth check / topology (SPEC_prefit_census_observability)
+#include "network/solve/DatumGraph.hpp"        // structural S-basis dimension census (SPEC_datum_graph_census)
+#include "network/emit/SolPrep.hpp"    // emit-side solution prep and discontinuity signalling (INC-11pre)
+#include "network/emit/EmitStore.hpp"    // emit, store, product write and closed loop (INC-11)
+#include "network/runend/Teardown.hpp"
+#include "network/diag/PhaseVisibleDiag.hpp"  // phase-visible consistency instrument (card PVN)
+#include "network/emit/PbHoldClone.hpp"       // the smoothed hold's clock clones (card SMH)
+#include "network/state/CarryDisposition.hpp"  // the decided-once fold disposition (card PRM phase 1b)
+#include "network/ar/ProducerAr.hpp" // log-only producer AR and NEQ export (INC-9b)
+#include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads (card FCF)
+#include "network/carry/Inject.hpp"
+#include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam (card CPA)
 #include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory (card SID phase 1)
-#include "network/assembly/NetworkSecondPhaseScope.hpp"  // second phase channel, epoch tail (card SID phase 6a)
-#include "network/assembly/NetworkChannelAll.hpp"      // all-channel census (card SID phase 6b)
-#include "network/emit/NetworkLedgerEmit.hpp"  // emitter read against the ledger, declared roster (card SID phase 5a)
-#include "network/carry/NetworkInstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
-#include "network/carry/NetworkDdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
-#include "network/solve/NetworkSolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
-#include "network/diag/NetworkIonoDiag.hpp"    // iono / ZWD / anchor-info viz traces (INC-11b)
-#include "network/diag/NetworkDdFrac.hpp"    // cross-station DD fractional-residual trace (INC-11b)
-#include "network/ar/NetworkSdEwlAr.hpp"   // SD EWL Route-B integer decision (increment 2a)
-#include "network/diag/NetworkShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace (INC-11b)
-#include "network/diag/NetworkShHealth.hpp"    // SH-field health probe, carry LS-VCE (INC-11b)
-#include "network/carry/NetworkLevelAuthority.hpp"  // per-epoch level-authority census (LV-6)
-#include "network/diag/NetworkLeveling.hpp"    // phase-leveling carry harvest, D2/C1 stash (INC-11b)
-#include "network/diag/NetworkStashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row (INC-11b)
+#include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail (card SID phase 6a)
+#include "network/assembly/ChannelAll.hpp"      // all-channel census (card SID phase 6b)
+#include "network/emit/LedgerEmit.hpp"  // emitter read against the ledger, declared roster (card SID phase 5a)
+#include "network/carry/InstallCarry.hpp" // installPosterior and the WL zone-4 fold / inject (INC-9b)
+#include "network/carry/DdPriorBuild.hpp" // buildCarryDdPriors free function (INC-9b)
+#include "network/solve/SolveGlue.hpp" // datum, solve and within-epoch RAIM (INC-9b)
+#include "network/diag/IonoDiag.hpp"    // iono / ZWD / anchor-info viz traces (INC-11b)
+#include "network/diag/DdFrac.hpp"    // cross-station DD fractional-residual trace (INC-11b)
+#include "network/ar/SdEwlAr.hpp"   // SD EWL Route-B integer decision (increment 2a)
+#include "network/diag/ShDevVtec.hpp"    // SH-deviation carry KF and VTEC-coefficient trace (INC-11b)
+#include "network/diag/ShHealth.hpp"    // SH-field health probe, carry LS-VCE (INC-11b)
+#include "network/carry/LevelAuthority.hpp"  // per-epoch level-authority census (LV-6)
+#include "network/diag/Leveling.hpp"    // phase-leveling carry harvest, D2/C1 stash (INC-11b)
+#include "network/diag/StashStatus.hpp"    // carry re-stash, LS-VCE fold, epoch-status QC row (INC-11b)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
-#include "network/diag/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
-#include "network/state/NetworkRunContext.hpp"    // knobs, tier-1 carry state and service counters, as ctx (INC-4)
-#include "network/driver/NetworkSetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds (INC-5)
+#include "network/diag/RunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
+#include "network/state/RunContext.hpp"    // knobs, tier-1 carry state and service counters, as ctx (INC-4)
+#include "network/driver/SetupResult.hpp"   // setup-phase handoff (setup) and navAvailabilityGpsSeconds (INC-5)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
-#include "network/slip/NetworkSlipQc.hpp"       // pure slip-QC helpers: ifElevMap, parseIfPairResetKey (INC-2)
-#include "network/slip/NetworkSlipOracle.hpp"   // simulation-only oracle slip response (level-preserving ceiling)
+#include "network/slip/SlipQc.hpp"       // pure slip-QC helpers: ifElevMap, parseIfPairResetKey (INC-2)
+#include "network/slip/SlipOracle.hpp"   // simulation-only oracle slip response (level-preserving ceiling)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "common/PppUtils.hpp"        // the slip-QC wavelength provider (GLONASS slots)
 #include "realtime/RealTimeEngine.hpp"
-#include "network/driver/NetworkStreamFrontEnd.hpp"  // multi-station streaming epoch source (RTF-3)
+#include "network/driver/StreamFrontEnd.hpp"  // multi-station streaming epoch source (RTF-3)
 #include "math/TimeUtils.hpp"
 #include "math/Coordinates.hpp"
 
@@ -189,8 +189,8 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include "network/qc/NetworkCongruenceSetup.hpp"
-#include "network/slip/NetworkOraclePinSetup.hpp"
+#include "network/qc/CongruenceSetup.hpp"
+#include "network/slip/OraclePinSetup.hpp"
 
 namespace GnssProcessor {
 
@@ -228,7 +228,7 @@ int Application::runNetwork() {
     // --- Phases 2-4, sinks, contract and consumer (in ApplicationNetworkSetup.cpp)
     // `setup` stays at one address for the whole run: MultiRinexSync references
     // setup.roster, and the closed-loop engine holds &setup.network_store plus a
-    // GnssConfig& to setup.consumer_config (see NetworkSetupResult.hpp).
+    // GnssConfig& to setup.consumer_config (see SetupResult.hpp).
     NetworkSetupResult setup;
     if (const int rc = networkSetup_(setup); rc != 0) return rc;
     // Alias block (INC-3/4/5 migration mechanic): the run loop reads the setup
@@ -266,7 +266,7 @@ int Application::runNetwork() {
     // per-epoch writers live in the seams, which receive `traces`; the reference
     // below keeps the former local name for the use left in this file.
     NetworkRunTraces traces(log_dir_);
-    // The run (network/driver/NetworkRun.hpp, card NOM3 step EP1): the references every epoch reads
+    // The run (network/driver/Run.hpp, card NOM3 step EP1): the references every epoch reads
     // and the engines and groups the run owns, each built here in place from the engines'
     // constructor arguments (networkEngineSpec, a pure function of the configuration and
     // the knobs).  The builders below configure the owned engines through references.
@@ -305,7 +305,7 @@ int Application::runNetwork() {
     // cache load and per-station RINEX parse).  It isolates the per-epoch compute that
     // scales with station count, which is the scaling metric, and counts only epochs
     // that entered processing (past the max-duration cutoff).  The run's timing record
-    // (network/driver/NetworkRunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
+    // (network/driver/RunGroups.hpp) also holds the D0 assembly wall, the profiled-epoch
     // count and the D0b sub-block totals below; the run end reports all of them.
     NetworkRunTiming& timing = run.timing;
     timing.loop_begin = std::chrono::steady_clock::now();

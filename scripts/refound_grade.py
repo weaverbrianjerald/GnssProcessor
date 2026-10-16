@@ -269,7 +269,7 @@ Q3_PATTERNS = [
 ]
 
 
-# The producer's first run-end line (the run-timing report, filter/NetworkRunEnd.cpp).
+# The producer's first run-end line (the run-timing report, filter/RunEnd.cpp).
 RUN_END_START = "Network[timing]: epoch-loop wall"
 
 

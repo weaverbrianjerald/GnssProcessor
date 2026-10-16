@@ -545,7 +545,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             // exactly; Card 1e); only a negative or non-finite value is corrupt.  fmt
             // writes "nan"/"inf" and parseD consumes them fully, so without this screen a
             // corrupt value round-trips and then hits buildCplRow's non-finite RHS guard
-            // (NetworkCoupling.cpp), which skips the whole row and so loses the arc's
+            // (Coupling.cpp), which skips the whole row and so loses the arc's
             // level, not just its coupling.
             if (!std::isfinite(d1) || !std::isfinite(d2) || d2 < 0.0)
                 return fail("QS ŝ_prev/P_prev not finite, or P_prev < 0");
@@ -732,7 +732,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
 
     // Bind the staged coupling rows to their L / Z carries (§18.12 splice).  Every
     // failure here is a hard parse failure, never a partial restore.  The caller
-    // (networkTryWarmResume in NetworkWarmResume.cpp) treats a parse failure as a
+    // (networkTryWarmResume in WarmResume.cpp) treats a parse failure as a
     // cold start, byte-identical to a run without a snapshot, or refuses the run
     // under network.state_snapshot_require.  A file
     // whose regressors cannot be read whole must not resume with truncated rows

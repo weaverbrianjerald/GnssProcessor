@@ -64,7 +64,7 @@ inline constexpr double kBaardaPowerQuantile = 0.8416;
 
 /// Local-redundancy floor at or below which a row is uncheckable and its MDB is
 /// @c +infinity.  Guards the @f$1/\sqrt{r}@f$ division.  The network RAIM pool
-/// (@c NetworkRaim.cpp) uses the same constant to exclude a row from
+/// (@c Raim.cpp) uses the same constant to exclude a row from
 /// @f$\hat\sigma_0@f$, so the two boundaries agree by construction.
 inline constexpr double kBaardaRedundancyFloor = 1e-6;
 

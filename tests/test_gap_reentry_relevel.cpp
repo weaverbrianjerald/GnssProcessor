@@ -47,9 +47,9 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/null_sink.h>

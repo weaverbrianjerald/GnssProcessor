@@ -47,14 +47,14 @@
  */
 
 #include "config/GnssConfig.hpp"
-#include "network/qc/NetworkPrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
-#include "network/carry/NetworkCarryVce.hpp"       // parseComponents (prior-residual census family list)
-#include "network/carry/NetworkCarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
-#include "network/slip/NetworkOraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
-#include "network/assembly/NetworkParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
-#include "network/assembly/NetworkSecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
-#include "network/assembly/NetworkSecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
-#include "network/solve/NetworkSbasis.hpp"         // pinPairContinuityBlocker (card GFC)
+#include "network/qc/PrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
+#include "network/carry/CarryVce.hpp"       // parseComponents (prior-residual census family list)
+#include "network/carry/CarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
+#include "network/slip/OraclePinScope.hpp" // oraclePinParseScope (the one grammar for the oracle_pin scope)
+#include "network/assembly/ParamInventory.hpp" // rxExtraBandDelayEffective (card L5B, the one predicate)
+#include "network/assembly/SecondCodeScope.hpp" // secondCodeAllowEntryValid (card SCC allow-list grammar)
+#include "network/assembly/SecondPhaseScope.hpp" // secondPhaseAllowEntryValid (card SID phase 6a)
+#include "network/solve/Sbasis.hpp"         // pinPairContinuityBlocker (card GFC)
 #include "config/GnssConfigJsonHelpers.hpp"
 #include "common/Constants.hpp"                   // GPS_Lx_WAVELENGTH (H3 per-λ log line)
 #include "products/NetworkProductEmitter.hpp"   // kDefaultDiscThresholdM (R9 single source of truth)
@@ -622,7 +622,7 @@ namespace GnssProcessor {
                       "SOLVE-AFFECTING through the detections and the response; the "
                       "gap_tracker_key_mismatch and gap_reentry_unreachable counters are "
                       "reported at run end in BOTH knob states.");
-        // Arc-scoped GF jump trigger interlock (card ARL; include/network/slip/NetworkGfArcJump.hpp),
+        // Arc-scoped GF jump trigger interlock (card ARL; include/network/slip/GfArcJump.hpp),
         // placed here for the load-order reason above.  It warns and does not disarm, as
         // the card-G checks do: without the free-epoch latch the trigger still marks
         // pending-reseed, and its run-end flag closure states what it did.
@@ -647,7 +647,7 @@ namespace GnssProcessor {
                       sq.gf_arc_jump_min_count);
         }
         // Interlocks for the sim-only oracle slip response
-        // (include/network/slip/NetworkSlipOracle.hpp), placed here for the same load-order
+        // (include/network/slip/SlipOracle.hpp), placed here for the same load-order
         // reason as the blocks above: carry_invariant and phase_leveling are both
         // parsed well after the cycle_slip block.
         //
@@ -717,7 +717,7 @@ namespace GnssProcessor {
         // raw MW/GF step verdicts, which are filled by the slip-QC qualify pass.  That
         // pass runs only when a decision card is armed: SlipQcState::cardsArmed() =
         // lli_corroborate || gap_instrument || bridge_gf || iono_cs
-        // (include/network/slip/NetworkRawObservables.hpp; the gate is the qc.cardsArmed() test
+        // (include/network/slip/RawObservables.hpp; the gate is the qc.cardsArmed() test
         // in ApplicationNetworkAssembly.cpp).  `network_config_.trace_slip_raw` does not
         // supply the verdicts: it arms only the compute pass
         // (SlipQcParams::anyConsumer).
@@ -725,7 +725,7 @@ namespace GnssProcessor {
         // Without a decision card the failure is silent.  The compute pass sets
         // `epoch.computed = true`, and `epoch.reset(n_sta)` sizes `epoch.verdict` to
         // n_sta with empty maps, so the consumers' `slip_qc.epoch.computed` gates in
-        // NetworkInstallCarry.cpp pass, every per-satellite lookup misses, and the
+        // InstallCarry.cpp pass, every per-satellite lookup misses, and the
         // suppression set is empty.  The gate logs as armed and suppresses nothing
         // (invariant #4).  The gap is also latent: the sets fill as soon as any
         // decision card arms (the LV-6 census arming the CS advance does that), which
@@ -1263,7 +1263,7 @@ namespace GnssProcessor {
                                        "network_ar_tree_basis", false);
             ar.block_search = jval<bool>(json, "network.ambiguity_resolution.block_search",
                                          "network_ar_block_search", false);
-            // Card ARL: the suspect-corner mask (network/ar/NetworkArSuspect.hpp), in loop
+            // Card ARL: the suspect-corner mask (network/ar/ArSuspect.hpp), in loop
             // epochs; 0 = off.  A negative window is named and replaced by off.
             ar.suspect_epochs = jval<int>(json, "network.ambiguity_resolution.suspect_epochs",
                                           "network_ar_suspect_epochs", 0);
@@ -1284,7 +1284,7 @@ namespace GnssProcessor {
                           "suspect_bits and reentry columns).  The release is time-only.  "
                           "Log-only: the products do not change.", ar.suspect_epochs);
             // Card AGT (step AGT-5): the sticky full-coverage cycle basis
-            // (network/ar/NetworkArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
+            // (network/ar/ArCycleBasis.hpp).  It replaces tree_basis's per-signal Prim and
             // keeps decorrelated_partial's search and block_search's blocks, so it needs all
             // three; otherwise it is named and forced off.
             ar.cycle_basis = jval<bool>(json, "network.ambiguity_resolution.cycle_basis",
@@ -1316,7 +1316,7 @@ namespace GnssProcessor {
                 log->warn("Network producer AR: ambiguity_resolution.cycle_basis_sticky is false "
                           "but cycle_basis is OFF; the setting is INERT.");
             // Card AGT (step AGT-6): the measure-only lattice observatory
-            // (network/ar/NetworkArLattice.hpp).  Its offers are the cycle basis's determined DDs and
+            // (network/ar/ArLattice.hpp).  Its offers are the cycle basis's determined DDs and
             // its releases the cycle basis's arc life readings, so it needs the cycle basis;
             // otherwise it is named and forced off.
             ar.trace_lattice = jval<bool>(json, "network.ambiguity_resolution.trace_lattice",
@@ -1364,7 +1364,7 @@ namespace GnssProcessor {
                 // the record's text, on its condition, unchanged.
                 log->warn("{}", fixedCycleEmitWarning(ar));
             } else if (ar.enable) {
-                // networkProducerAr() (src/core/network/ar/NetworkProducerAr.cpp, INC-9b), the
+                // networkProducerAr() (src/core/network/ar/ProducerAr.cpp, INC-9b), the
                 // Phase-2 DD-fixability diagnostic, consumes these gates: min_epochs and
                 // ils_max_dim directly, and min_success_rate / ratio_threshold /
                 // ratio_upper_bound / nl_max_per_pair_frac / enable_partial_ar through
@@ -2444,7 +2444,7 @@ namespace GnssProcessor {
             jval<bool>(json, "network.trace_epoch_status", "trace_epoch_status", false);
         // Trigger instrumentation (SPEC_day129_frame_guards P1-3/P1-4).  Both knobs are
         // trace-only and absent from the resume fingerprint (the config fingerprint in
-        // NetworkSnapshotFingerprint.cpp), so they may be armed on a warm resume against an
+        // SnapshotFingerprint.cpp), so they may be armed on a warm resume against an
         // untraced snapshot.
         network_config_.trace_sh_spectrum =
             jval<bool>(json, "network.trace_sh_spectrum", "trace_sh_spectrum", false);
@@ -2464,7 +2464,7 @@ namespace GnssProcessor {
                       "whenever this or trace_postfit_sigma0 is armed).");
         // Signed per-(station, satellite, signal) post-fit residual rows from the same
         // P1-4 pass (SPEC_event_harness §24.6).  Trace-only and fingerprint-safe (absent
-        // from NetworkSnapshotFingerprint.cpp's fingerprint list, like the two riders above);
+        // from SnapshotFingerprint.cpp's fingerprint list, like the two riders above);
         // it makes the pass run even without the sigma0 / keyed traces.
         network_config_.trace_postfit_rows =
             jval<bool>(json, "network.trace_postfit_rows", "trace_postfit_rows", false);
@@ -2475,7 +2475,7 @@ namespace GnssProcessor {
                       "(trace-only; the P1-4 residual pass runs whenever this, "
                       "trace_postfit_keyed or trace_postfit_sigma0 is armed).");
         // Per-station local-block audit (SPEC_event_harness §24.10, card ZP).
-        // Trace-only, fingerprint-safe (absent from NetworkSnapshotFingerprint.cpp's fingerprint
+        // Trace-only, fingerprint-safe (absent from SnapshotFingerprint.cpp's fingerprint
         // list, like the three riders above) and measure-only: it reads the solved
         // estimator through const accessors after the solve.
         network_config_.trace_station_block =
@@ -3261,7 +3261,7 @@ namespace GnssProcessor {
                        "sat_gf_extra_band_free", false);
         // The receiver-side counterpart (card L5B): estimate the receiver's extra-band
         // code delay instead of holding it at its seed (RxIfbRule,
-        // network/assembly/NetworkParamInventory.hpp).  Its interlocks need the resolved carry and
+        // network/assembly/ParamInventory.hpp).  Its interlocks need the resolved carry and
         // datum knobs, so they are logged by logNetworkRxExtraBandDelay_ after the carry
         // posture is validated.
         network_config_.estimate_rx_extra_band_code_delay =
@@ -4125,7 +4125,7 @@ namespace GnssProcessor {
         // what the knob changes and falls back to the default "level" rather than
         // ending the run.  "float_kf" changes the solve (the joint block of
         // CouplingRowBuilder::buildLocalBlock, the floored birth prior and bounded drop of
-        // network/ar/NetworkAmbFloat.hpp) and reaches the driver as
+        // network/ar/AmbFloat.hpp) and reaches the driver as
         // NetworkKnobs::amb_float_kf.  The cross-section interlocks (float_kf requires
         // phase_leveling and !carry_invariant; F3 is refused under it) live in
         // validateNetworkCarryPosture_, the first point where network_carry_invariant_ is
@@ -4813,7 +4813,7 @@ namespace GnssProcessor {
                 "restore is legal ONLY because an x_lin shift is an exact solve no-op for "
                 "a state that enters linearly, so the gate is its only consumer.  The "
                 "receiver code-bias DATUM breaks that — its prior's RHS is η = λ·(0 − "
-                "x_lin(cb)) (NetworkRxCodeBiasCarry.cpp), so moving x_lin MOVES the "
+                "x_lin(cb)) (RxCodeBiasCarry.cpp), so moving x_lin MOVES the "
                 "target and therefore the solve.  Run the RS-9 restore without the datum, "
                 "or the datum without the restore.");
         // Re-admission continuity: E2 seed-first re-admission and the block re-coupling
@@ -5734,7 +5734,7 @@ namespace GnssProcessor {
                               "a flag is evaluated and a slip repeated there is seen.  "
                               "SOLVE-AFFECTING through those evaluations; not fingerprinted.");
             }
-            // Sim-only oracle slip response (include/network/slip/NetworkSlipOracle.hpp): shifts
+            // Sim-only oracle slip response (include/network/slip/SlipOracle.hpp): shifts
             // the carried level by the true integer jump instead of freeing the arc, to
             // measure the ceiling of a level-preserving re-level.  Changes the solve;
             // default off ⇒ byte-identical.  The truth-root existence check below keeps
@@ -6369,9 +6369,9 @@ namespace GnssProcessor {
         // Parsed here, next to the post-fit tiers whose blind spot it closes: each of
         // them pools carried-ambiguity phase rows, so a code-only gross error on one
         // line of sight is invisible to all of them (the `|A_r(row, amb_col)| > 0.5`
-        // admission test in NetworkRaim.cpp), and the one tier that does see the row,
+        // admission test in Raim.cpp), and the one tier that does see the row,
         // MDB, publishes a reliability number and the literal action "observe"
-        // (NetworkMdb.cpp:286).  The only solve-affecting knob in this neighbourhood;
+        // (Mdb.cpp:286).  The only solve-affecting knob in this neighbourhood;
         // default off, byte-identical when off, and not fingerprinted (it changes no
         // carried state's meaning, only which rows are trusted this epoch, so a
         // snapshot written with it off stays readable with it on, as for trace knobs).
@@ -7076,7 +7076,7 @@ namespace GnssProcessor {
             jval<double>(json, "network.clock_monitor_reinit_sigma_m", "network_clock_monitor_reinit_sigma_m", 30.0);
         // SPEC_day129_frame_guards Phase 2.1: CB-carry event response (invariant #1).
         // Solve-determining when armed ⇒ conditional-appended to the resume
-        // fingerprint (NetworkSnapshotFingerprint.cpp), so an unarmed run's fingerprint is
+        // fingerprint (SnapshotFingerprint.cpp), so an unarmed run's fingerprint is
         // byte-identical and a resume cannot cross a flip of the toggle.
         network_config_.cb_excursion_reinit =
             jval<bool>(json, "network.cb_excursion_reinit", "cb_excursion_reinit", false);
@@ -11497,7 +11497,7 @@ namespace GnssProcessor {
      *
      * Warnings only, never a refusal (standing invariant #4: an armed knob that changes
      * nothing says so).  Whether the knob acts is decided by @c rxExtraBandDelayEffective
-     * (network/assembly/NetworkParamInventory.hpp), the predicate the rule, the snapshot fingerprint
+     * (network/assembly/ParamInventory.hpp), the predicate the rule, the snapshot fingerprint
      * and the run-end report read too.  Runs after @c validateNetworkCarryPosture_, so the
      * carry and datum knobs it names are final.  Prints nothing unless the knob is armed.
      *
@@ -12261,7 +12261,7 @@ namespace GnssProcessor {
                                   && ev.delta_cycles == std::round(ev.delta_cycles),
                               "a non-zero integer delta_cycles")) return false;
                 } else if (ev.kind == "oracle_pin") {
-                    // Sim-only diagnostic (include/network/slip/NetworkOraclePin.hpp).  Both
+                    // Sim-only diagnostic (include/network/slip/OraclePin.hpp).  Both
                     // fields are validated, and a failure names the field: a scope
                     // that silently widened, or a sigma that silently became the
                     // default, would be graded as though it were the one the operator

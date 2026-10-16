@@ -29,15 +29,15 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
-#include "network/driver/NetworkSetupResult.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
+#include "network/driver/SetupResult.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkSbasis.hpp"
-#include "network/emit/NetworkSolPrep.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/Sbasis.hpp"
+#include "network/emit/SolPrep.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "../support/NetworkTestRun.hpp"   // the run and epoch networkSolPrep's epoch form takes
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"

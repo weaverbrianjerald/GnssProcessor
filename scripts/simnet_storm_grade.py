@@ -79,7 +79,7 @@ so = open(so_path, encoding="utf-8", errors="replace").read()
 # campaign arms (confirmed 2026-09-12 on runs/golden_sim_campaign_zwdblk_{refarc,sts}:
 # the reader and the regex are both correct; the line is genuinely absent there):
 #   * "Network (band-scoped responses, §Z)" is the response-scope clause, emitted
-#     only behind `if (t4_bs || det_bs)` (NetworkTeardown.cpp), i.e. only when
+#     only behind `if (t4_bs || det_bs)` (Teardown.cpp), i.e. only when
 #     network.raim_erase_band_scope = min_keep_one or
 #     network.cycle_slip.refloat_band_scope = implicated is armed.  The campaign
 #     lineage arms neither, so the producer never writes the line.

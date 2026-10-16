@@ -38,9 +38,9 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

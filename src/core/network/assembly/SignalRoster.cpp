@@ -5,18 +5,18 @@
  */
 #include "network/assembly/SignalRoster.hpp"
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"           // obsTypeOf, systemName, systemOfSat, ObservableId
 #include "config/GnssConfig.hpp"
-#include "network/driver/NetworkRunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
+#include "network/driver/RunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
 #include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys (card SID phase 3)
 #include "filter/StateManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "model/PppModel.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "rinex/MultiRinexSync.hpp"
-#include "network/slip/NetworkRawObservables.hpp"
+#include "network/slip/RawObservables.hpp"
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -27,11 +27,11 @@
 #include <iterator>
 
 // The run-end reports at the end of this file (card NOM step TD1b):
-#include "network/runend/NetworkRunEnd.hpp"
+#include "network/runend/RunEnd.hpp"
 #include <memory>
-#include "network/driver/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
-#include "network/driver/NetworkSetupResult.hpp"
+#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/SetupResult.hpp"
 
 namespace GnssProcessor {
 
@@ -160,7 +160,7 @@ namespace GnssProcessor {
         // 3. The companion codes (card SCC).  Band 1 only, the allow list walked in
         //    its configured order, skipping the canonical code, untracked codes, codes
         //    outside the allowlist and duplicates, with the canonical code required
-        //    present this epoch.  NetworkSecondCodeScope.cpp and PppModel implement
+        //    present this epoch.  SecondCodeScope.cpp and PppModel implement
         //    the same rule.
         if (companions_armed) {
             auto bit = out.find('1');
@@ -187,7 +187,7 @@ namespace GnssProcessor {
         }
 
         // 3b. The second phases (card SID phase 6a).  The same walk as the companion
-        //     codes above and the rule NetworkSecondPhaseScope.cpp and PppModel
+        //     codes above and the rule SecondPhaseScope.cpp and PppModel
         //     implement: band 1 only, the allow list in its configured order, skipping
         //     the latched phase, untracked phases, phases outside the allowlist and
         //     duplicates, with the latched phase required present this epoch
@@ -519,7 +519,7 @@ namespace GnssProcessor {
               "previous epoch)",
               "the family's arcs had just returned: a return read as a first sighting" },
             { RosterSite::GapReentry, "gap_reentry", "arc",
-              "the gap re-entry response (the gap re-entry tiers of NetworkSlipQc.cpp)",
+              "the gap re-entry response (the gap re-entry tiers of SlipQc.cpp)",
               "admitted returns after 2 to 30 missed epochs",
               "no response tier examined the return (bridged with no verdict)" },
             { RosterSite::CoverageGate, "coverage_gate", "arc",
@@ -1659,7 +1659,7 @@ namespace GnssProcessor {
         // --- (e) the anchor election's first sightings against the ledger ------
         // A key that has an incumbent now and had none at the previous epoch's read
         // is what the election treated as a first sighting.  The ledger is asked
-        // whether its arcs had just returned, a distinction NetworkPhaseDatum.cpp
+        // whether its arcs had just returned, a distinction PhaseDatum.cpp
         // does not make.
         {
             std::set<std::string> now;
@@ -2385,7 +2385,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     static int networkSignalRosterPlanRunEnd(const NetworkRunEndView& v) {
@@ -2411,7 +2411,7 @@ namespace GnssProcessor {
      * Gate: none of its own: the row calls the report above on every run, as the teardown
      * did, and that report applies its own.
      *
-     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     static int networkSignalRosterLedgerRunEnd(const NetworkRunEndView& v) {

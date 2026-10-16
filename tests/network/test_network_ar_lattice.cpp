@@ -1,7 +1,7 @@
 /**
  * @file test_network_ar_lattice.cpp
  * @brief Unit gates of the producer AR search's lattice observatory (card AGT, step AGT-6;
- *        network/ar/NetworkArLattice.hpp).
+ *        network/ar/ArLattice.hpp).
  *
  * Suite @c NetworkArLattice (the ledger's steps, pure; card AGT step AGT-6 as re-scoped by card
  * FCF step FCF-3, run here with @c persist_ep 1, the observatory's immediate offers):
@@ -30,10 +30,10 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/ar/NetworkArLattice.hpp"
-#include "network/driver/NetworkRunTypes.hpp"     // RelevelEpochState::kCause*
+#include "network/ar/ArLattice.hpp"
+#include "network/driver/RunTypes.hpp"     // RelevelEpochState::kCause*
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <algorithm>
 #include <filesystem>

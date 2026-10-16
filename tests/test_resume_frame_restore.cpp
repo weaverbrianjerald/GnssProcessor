@@ -23,7 +23,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkStateSnapshot.hpp"
-#include "network/emit/NetworkClockEmitRebase.hpp"
+#include "network/emit/ClockEmitRebase.hpp"
 #include <filesystem>
 #include <fstream>
 #include <sstream>

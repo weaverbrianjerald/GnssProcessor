@@ -35,14 +35,14 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/state/NetworkEntities.hpp"
+#include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/null_sink.h>

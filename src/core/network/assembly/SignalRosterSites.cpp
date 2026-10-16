@@ -13,12 +13,12 @@
  * Nothing in the solve reads the census; it prints at run end only.
  */
 #include "network/assembly/SignalRoster.hpp"
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"           // SignalId, systemFromName, systemOfSat, traitsOf
-#include "network/solve/NetworkDatumGraph.hpp"      // netDatumGraphFamily (F2)
-#include "network/assembly/NetworkExtraBandScope.hpp"  // networkPinBandsFor (A5 and its readers)
-#include "network/runend/NetworkRunEnd.hpp"
-#include "network/solve/NetworkSbasis.hpp"          // broadcastGroupDelayDescribesPair (A2), channelFamilyOf (F1)
+#include "network/solve/DatumGraph.hpp"      // netDatumGraphFamily (F2)
+#include "network/assembly/ExtraBandScope.hpp"  // networkPinBandsFor (A5 and its readers)
+#include "network/runend/RunEnd.hpp"
+#include "network/solve/Sbasis.hpp"          // broadcastGroupDelayDescribesPair (A2), channelFamilyOf (F1)
 #include "products/ProductCache.hpp"         // the BIA clock-reference signals
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>

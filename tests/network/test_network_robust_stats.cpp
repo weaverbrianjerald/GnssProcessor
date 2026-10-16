@@ -1,14 +1,14 @@
 /**
  * @file test_network_robust_stats.cpp
  * @brief Unit tests for the network run loop's pure robust-stats and slip-QC
- *        helpers in network/qc/NetworkRobustStats.hpp and network/slip/NetworkSlipQc.hpp
+ *        helpers in network/qc/RobustStats.hpp and network/slip/SlipQc.hpp
  *        (moved verbatim out of ApplicationNetwork.cpp at decomposition INC-2).
  */
 
 #include <gtest/gtest.h>
 
-#include "network/qc/NetworkRobustStats.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/qc/RobustStats.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <cmath>
 #include <map>

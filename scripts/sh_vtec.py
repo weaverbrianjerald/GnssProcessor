@@ -13,7 +13,7 @@ longitude, and ``Pbar_nm`` normalized by
 makes ``Pbar_00 = 1`` so the ``C_00`` coefficient is the mean VTEC in TECU.
 
 Why this exists: ``network_ionosphere.csv`` is not the absolute slant ionosphere.
-``NetworkIonoDiag.cpp:92`` emits ``x_r`` alone, and the per-LOS iono state is
+``IonoDiag.cpp:92`` emits ``x_r`` alone, and the per-LOS iono state is
 seeded at allocation by ``computeIonosphereSeed`` (``MeasurementModel.cpp:404``,
 bounded +-200 m), so its linearization point is non-zero and the trace is a
 correction, not an absolute value.  Measured on a converged 61-station run it

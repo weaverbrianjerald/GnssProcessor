@@ -16,7 +16,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <filesystem>
 #include <fstream>

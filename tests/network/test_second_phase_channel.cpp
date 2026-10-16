@@ -38,7 +38,7 @@
 
 #include "network/assembly/SignalRoster.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkSecondPhaseScope.hpp"
+#include "network/assembly/SecondPhaseScope.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

@@ -10,7 +10,7 @@ instead of from epoch 42, so ``carry_warm``, which is
 counts emitted epochs rather than loop epochs (ApplicationNetwork.cpp:1515),
 opens 70 epochs earlier. The phase-leveling zero-q level carry is therefore
 born out of a colder network (the whole harvest sits inside
-``if (carry_warm)`` in NetworkLocalCarryHarvest.cpp).
+``if (carry_warm)`` in LocalCarryHarvest.cpp).
 
 Report-only: nothing here writes into a run, every number is read off the
 trace files the run already wrote, and there is no plotting.

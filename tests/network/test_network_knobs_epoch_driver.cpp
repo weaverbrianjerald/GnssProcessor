@@ -27,11 +27,11 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/carry/NetworkCarryVce.hpp"
+#include "network/carry/CarryVce.hpp"
 #include "logging/LogManager.hpp"
-#include "network/slip/NetworkRawObservables.hpp"
+#include "network/slip/RawObservables.hpp"
 
 #include <algorithm>
 #include <cstddef>

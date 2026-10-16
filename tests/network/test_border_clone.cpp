@@ -19,11 +19,11 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/carry/NetworkClockClone.hpp"
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/carry/ClockClone.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/solve/Estimator.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

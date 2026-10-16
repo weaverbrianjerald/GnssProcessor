@@ -26,7 +26,7 @@
  * What is pinned here:
  * (1) every regressor round-trips bit-exactly and in harvest order.  The order is
  *     observable at the ulp: @c CouplingRowBuilder::buildCplRow accumulates
- *     @c rhs += coeff*s_prev in vector order (NetworkCoupling.cpp), and the card 1f
+ *     @c rhs += coeff*s_prev in vector order (Coupling.cpp), and the card 1f
  *     family deficit sums in the same order;
  * (2) @c serialize is idempotent through a parse;
  * (3) the three cases the format exists to handle: a card 1e pinned column
@@ -318,7 +318,7 @@ TEST(ResumeCouplingSnapshotTest, SerializeIsIdempotent) {
 // 3. p_prev == 0 (card 1e) is the meaningful "datum-pinned / ensemble-gauge column,
 //    exactly known" value, not a missing one.  A reader that dropped or defaulted
 //    it would activate the κ shrink (guarded on p_prev > 0 in
-//    CouplingRowBuilder::buildCplRow, NetworkCoupling.cpp) on a column the datum
+//    CouplingRowBuilder::buildCplRow, Coupling.cpp) on a column the datum
 //    re-applies exactly, changing the row's gauge sum.
 TEST(ResumeCouplingSnapshotTest, PinnedColumnZeroPPrevSurvives) {
     NetworkStateSnapshot r;
@@ -333,7 +333,7 @@ TEST(ResumeCouplingSnapshotTest, PinnedColumnZeroPPrevSurvives) {
 
 // 4. sh_layer is its own field.  The D record has no room for it and tags layer 1
 //    in the sat string as the literal "L1" (networkWriteStateSnapshot,
-//    NetworkStateSnapshotWrite.cpp).  Reusing that tag here would make resolveSharedCol
+//    StateSnapshotWrite.cpp).  Reusing that tag here would make resolveSharedCol
 //    (vtecCoeffColumn(n, m, trig, sh_layer)) bind a layer-1 coefficient to the
 //    live layer-0 column, which is strictly worse than departing.
 TEST(ResumeCouplingSnapshotTest, ShLayerRoundTripsAsItsOwnField) {
@@ -381,7 +381,7 @@ TEST(ResumeCouplingSnapshotTest, DistinctVintagesOfOneIdentityBothSurvive) {
 
 // 6. hasCouplingState() is deliberately separate from hasFrameState().  The latter
 //    also gates the resume-side frame restore (networkTryWarmResume,
-//    NetworkWarmResume.cpp), so widening it would let a coupling-bearing snapshot
+//    WarmResume.cpp), so widening it would let a coupling-bearing snapshot
 //    with no PA/PT/CA rows claim frame state it does not have: the restore would
 //    proceed with an empty anchor_incumbent, the QUEUE-1(d) erase would fire
 //    anyway, and the carries this card restores would be erased without a warning.
@@ -507,7 +507,7 @@ TEST(ResumeCouplingSnapshotTest, DuplicateQlRowFailsParse) {
 // 15. The one path in this format where a bad value passes without an error: fmt
 //     writes "nan"/"inf" and parseD's strtod accepts and fully consumes them.
 //     Without an explicit finite screen, a non-finite coefficient round-trips and
-//     then hits buildCplRow's own non-finite-RHS guard (NetworkCoupling.cpp), which
+//     then hits buildCplRow's own non-finite-RHS guard (Coupling.cpp), which
 //     drops the whole row: the arc loses its level, not just its coupling.
 TEST(ResumeCouplingSnapshotTest, NonFiniteCoefficientFailsParse) {
     std::string text = serializeToString(couplingSnapshot());

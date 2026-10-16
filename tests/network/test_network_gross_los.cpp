@@ -4,7 +4,7 @@
  *        config gate (docs/SPEC_event_harness.md §24.18) (card GL).
  *
  * The screen exists because every post-fit tier of this producer pools
- * carried-ambiguity phase rows: networkPostFitRaim (NetworkRaim.cpp) admits a
+ * carried-ambiguity phase rows: networkPostFitRaim (Raim.cpp) admits a
  * row by `|A_r(row, amb_col)| > 0.5`, which is +1 on a phase row and exactly 0
  * on a code row.  A gross code error on one line of sight is therefore not
  * under-weighted there but unreachable.  §24.18 records the field cases: one
@@ -29,11 +29,11 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"     // the act half's carry + counters (RF-3b)
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"     // the act half's carry + counters (RF-3b)
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/qc/NetworkGrossLos.hpp"
-#include "network/driver/NetworkRunTypes.hpp"    // NetStation / StationAssembly / LocalCarry (RF-3b)
+#include "network/qc/GrossLos.hpp"
+#include "network/driver/RunTypes.hpp"    // NetStation / StationAssembly / LocalCarry (RF-3b)
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

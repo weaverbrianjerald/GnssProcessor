@@ -23,7 +23,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkEntities.hpp"
+#include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
 
 #include <set>
@@ -229,7 +229,7 @@ TEST(ArcLedgerTest, FirstEpochBirthsAreSuppressedAndTheHoldoffRateLimitsTheRest)
     led.configure(900.0, kArcLedgerForgetEp);
 
     // Epoch 0: every arc is born there and the volume carries no information, so
-    // no birth is evented (the NetworkSignalIntegrity.cpp rule).
+    // no birth is evented (the SignalIntegrity.cpp rule).
     led.beginEpoch(0, 0.0);
     EXPECT_FALSE(led.eventAllowed(0, ArcTransition::Birth));
     EXPECT_FALSE(led.eventAllowed(1, ArcTransition::Birth));

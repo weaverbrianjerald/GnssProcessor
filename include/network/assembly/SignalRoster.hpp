@@ -70,7 +70,7 @@
 
 #include "common/GnssTypes.hpp"         // System (the tracker cell census key)
 #include "network/state/ArcLedger.hpp"
-#include "network/solve/NetworkAnchorReentry.hpp"  // AnchorReentry (card SID phase 4)
+#include "network/solve/AnchorReentry.hpp"  // AnchorReentry (card SID phase 4)
 
 #include <array>
 #include <map>
@@ -87,12 +87,12 @@ namespace GnssProcessor {
 
     class GnssConfig;
     class NetworkRunTraces;
-    struct NetStation;               // network/driver/NetworkRunTypes.hpp
+    struct NetStation;               // network/driver/RunTypes.hpp
     struct NetworkRunContext;
     struct PppObservation;           // common/PppObservation.hpp
     struct SyncedEpoch;              // rinex/MultiRinexSync.hpp
     struct GnssTime;                 // common/GnssTypes.hpp
-    struct RawSlipEpoch;             // network/slip/NetworkRawObservables.hpp
+    struct RawSlipEpoch;             // network/slip/RawObservables.hpp
     struct NetworkSolutionEpoch;     // products/NetworkProductEmitter.hpp
 
     /**
@@ -164,7 +164,7 @@ namespace GnssProcessor {
      *
      * The selection rules are reproduced, not re-derived: @c modelled_phase and
      * @c modelled_code are the latch's own rows, and the companion walk applies the
-     * card SCC rule (@c NetworkSecondCodeScope.cpp) in its configured order.
+     * card SCC rule (@c SecondCodeScope.cpp) in its configured order.
      *
      * @param tracked           Raw observation keys this epoch.  Keys that are not
      *                          'C' or 'L' keys of at least three characters are
@@ -200,7 +200,7 @@ namespace GnssProcessor {
     /**
      * @brief The arc-level tracker's own band pick, reproduced for comparison.
      *
-     * @c NetworkRawObservables.cpp forms its primary pair from the phases that have
+     * @c RawObservables.cpp forms its primary pair from the phases that have
      * a matching code, sorted on the band digit alone, and takes the first entry plus
      * the first entry of a different band.  That comparator is not a strict weak
      * ordering over same-band signals and @c std::sort is not stable, so the
@@ -949,8 +949,8 @@ namespace GnssProcessor {
                                 const std::shared_ptr<spdlog::logger>& log,
                                 const std::vector<NetStation>& stations);
 
-    struct NetworkRun;              // network/driver/NetworkRun.hpp (card NOM3 step EP1)
-    struct NetworkEpoch;            // network/driver/NetworkEpoch.hpp (card NOM3 step EP1)
+    struct NetworkRun;              // network/driver/Run.hpp (card NOM3 step EP1)
+    struct NetworkEpoch;            // network/driver/Epoch.hpp (card NOM3 step EP1)
 
     /**
      * @brief Build this epoch's roster and advance the arc ledger (the single call
@@ -964,10 +964,10 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.config (config_), run.log (log),
      *            run.setup.stations (stations).
-     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se).
+     * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.se (se).
      *
      * The former parameters, by binding:
      *   - @p ctx = run.ctx: Run context (the roster, the ledger and the counters).
@@ -1137,11 +1137,11 @@ namespace GnssProcessor {
      * replace the explicit parameters; the definition binds each former parameter in its preamble,
      * under its former name.
      *
-     * @param run The run (network/driver/NetworkRun.hpp). Written through non-const bindings: run.ctx (ctx),
+     * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
      *            run.traces (traces). Read: run.config (config_), run.log (log),
      *            run.setup.stations (stations), run.engines.slip_qc.epoch.computed ?
      *            &run.engines.slip_qc.epoch : nullptr (raw).
-     * @param ep The epoch (network/driver/NetworkEpoch.hpp), read only. Bindings: ep.se (se),
+     * @param ep The epoch (network/driver/Epoch.hpp), read only. Bindings: ep.se (se),
      *           ep.pass_a.modeled (modeled), ep.pass_a.present (present),
      *           ep.funnel.carry_slipped_ambs (freed), ep.prep.sol (sol), ep.emitted (emitted).
      *
@@ -1246,7 +1246,7 @@ namespace GnssProcessor {
      *   - networkSignalRosterPlanRunEnd: signals as planned (NOM N3a).
      *   - networkSignalRosterLedgerRunEnd: the signal roster and the arc ledger (SID phase 1).
      *
-     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return 0, or the last non-zero verdict of its sections.
      */
     int networkSignalRosterRunEnd(const NetworkRunEndView& v);
@@ -1258,7 +1258,7 @@ namespace GnssProcessor {
      * disagreeing counts over the run, its fallback reads, and its most frequent
      * disagreements.  Trace class (no trace file, product or manifest record).
      *
-     * @param v The run at its end (network/runend/NetworkRunEnd.hpp).
+     * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return 0 (this report does not set the exit code).
      */
     int networkSignalRosterSitesRunEnd(const NetworkRunEndView& v);

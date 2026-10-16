@@ -27,7 +27,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
-#include "network/emit/NetworkEmitRebase.hpp"
+#include "network/emit/EmitRebase.hpp"
 #include "products/NetworkStateSnapshot.hpp"
 
 #include <cmath>

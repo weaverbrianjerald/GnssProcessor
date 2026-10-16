@@ -14,7 +14,7 @@
 #include <gtest/gtest.h>
 
 #include "filter/IlsCore.hpp"
-#include "network/ar/NetworkProducerAr.hpp"
+#include "network/ar/ProducerAr.hpp"
 
 #include <Eigen/Dense>
 

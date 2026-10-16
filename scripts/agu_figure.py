@@ -137,7 +137,7 @@ def panel_iono(ax, log_dir: Path, cfg: Path | None, window_min: float,
 
     Synthesized from ``network_vtec_sh.csv``, the estimated coefficients, i.e.
     the actual emitted product. Deliberately not ``network_ionosphere.csv``:
-    that trace emits ``x_r`` without its linearization point (NetworkIonoDiag.cpp:92)
+    that trace emits ``x_r`` without its linearization point (IonoDiag.cpp:92)
     while the per-LOS iono state is seeded at allocation (MeasurementModel.cpp:404),
     so it is a correction, not absolute slant ionosphere. Measured on this run it
     medians about 10 TECU against the field's own about 30 TECU a00, with 37% negative

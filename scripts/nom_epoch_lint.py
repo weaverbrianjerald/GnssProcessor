@@ -63,7 +63,7 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       its executable form.
   V11 Writer banners.  For every group, the set of seams whose spine call passes `ep.<group>`
       (or a member of it) to an output parameter equals the seams named in the group's
-      "written by" cell of the banner table in include/network/driver/NetworkEpoch.hpp, and the seams
+      "written by" cell of the banner table in include/network/driver/Epoch.hpp, and the seams
       whose return the driver stores into the group (`ep.<group> = networkX(...)`) equal the
       cell's "stores networkX's return" phrases ("the solve's return" names networkSolveGlue,
       "that seam" the seam of the "available from" cell).  A banner writer with no epoch
@@ -103,12 +103,12 @@ from rt_seam_verify import strip_comments  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EPOCH_CPP = "src/core/network/driver/ApplicationNetworkEpoch.cpp"
-EPOCH_HPP = "include/network/driver/NetworkEpoch.hpp"
+EPOCH_HPP = "include/network/driver/Epoch.hpp"
 EPOCH_FN = "networkProcessEpoch_"
 SOLVE = "networkSolveGlue"
 EMIT = "networkEmitStore"
 OBSERVE = "networkObserveEpoch"   # the observer table's slot walk (card NOM3 step EP3)
-OBSERVERS_CPP = "src/core/network/driver/NetworkEpochObservers.cpp"
+OBSERVERS_CPP = "src/core/network/driver/EpochObservers.cpp"
 _OBSERVER_ROW = re.compile(r'\{"(\w+)",\s*"[^"]*",\s*"[^"]*",\s*Slot::(\w+),\s*&(\w+)\}')
 PREAMBLE_OPEN = re.compile(r"//\s*-{2,}\s*From the run\b")
 PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
@@ -117,7 +117,7 @@ PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
 DRIVER_STORES = ("ep.ar_fixes", "ep.fixed_cycles", "ep.prep", "ep.emitted")
 POST_SOLVE_OUTPUTS = {"ep.solve.handoff": ("networkPostFitRaim", "networkClockQc"),
                       "ep.prep.sol": ("networkEmitStore",),
-                      # the epoch's events: each writer its own group (network/driver/NetworkEpoch.hpp)
+                      # the epoch's events: each writer its own group (network/driver/Epoch.hpp)
                       "ep.events": ("networkInstallCarry", "networkGrossLosScreen", "networkSolPrep",
                                     "networkShHealth", "networkLeveling", "networkClockQc",
                                     "networkObserveEpoch", "networkStashStatus")}
@@ -1030,7 +1030,7 @@ def check_v4(T, solve_end, b, epath, decls, emit_call_tok, skip=()):
 
 
 # ---------------------------------------------------------------------------------------------
-# The banner of include/network/driver/NetworkEpoch.hpp (V10, V11)
+# The banner of include/network/driver/Epoch.hpp (V10, V11)
 # ---------------------------------------------------------------------------------------------
 # Phrases of the banner's "written by" cells that name a seam without its identifier.
 BANNER_PHRASES = {"the solve": SOLVE}
@@ -1038,7 +1038,7 @@ BANNER_PHRASES = {"the solve": SOLVE}
 
 def parse_banner(text):
     """{member: {'type', 'avail', 'written', 'writers', 'stores'}} from the banner table of
-    NetworkEpoch.hpp: the comment lines after the header line holding `member`, `available
+    Epoch.hpp: the comment lines after the header line holding `member`, `available
     from` and `written by`, up to the first empty comment line.  A row starts with the member
     name at the header's member column; its cells are separated by two or more spaces (group
     type, available from, written by); a line with nothing at the member column continues the
@@ -1542,7 +1542,7 @@ class Lint:
 # ---------------------------------------------------------------------------------------------
 # V12: the entity-table writers
 # ---------------------------------------------------------------------------------------------
-ENTITIES_CPP = "src/core/network/state/NetworkEntities.cpp"
+ENTITIES_CPP = "src/core/network/state/Entities.cpp"
 TABLE_OF_TYPE = {"ConstellationTable": "constellations", "SatelliteTable": "sats",
                  "SatSignalTable": "sat_signals", "StationTable": "stations", "LosTable": "los",
                  "ArcTable": "arcs", "NetworkEntities": "all"}
@@ -1603,7 +1603,7 @@ def entity_writer_bindings(tree):
 
 
 def entity_writer_rows(tree):
-    """{(seam, home): set of tables} from kEntityWriters in NetworkEntities.cpp."""
+    """{(seam, home): set of tables} from kEntityWriters in Entities.cpp."""
     text = tree.read(ENTITIES_CPP) or ""
     k = text.find("kEntityWriters = {")
     if k < 0:

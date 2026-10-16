@@ -1,7 +1,7 @@
 /**
  * @file test_producer_ar_cycle_basis.cpp
  * @brief Unit tests of the producer AR search's cycle basis (card AGT, step AGT-5;
- *        include/network/ar/NetworkArCycleBasis.hpp).
+ *        include/network/ar/ArCycleBasis.hpp).
  *
  * Suite @c ProducerArCycleBasis:
  *  - the families: the two signals with the most arcs share one graph, every further signal
@@ -22,9 +22,9 @@
 #include <gtest/gtest.h>
 
 #include "common/GnssIdentity.hpp"
-#include "network/ar/NetworkArCycleBasis.hpp"
-#include "network/ar/NetworkArcGraph.hpp"
-#include "network/ar/NetworkProducerAr.hpp"
+#include "network/ar/ArCycleBasis.hpp"
+#include "network/ar/ArcGraph.hpp"
+#include "network/ar/ProducerAr.hpp"
 
 #include <algorithm>
 #include <cstdint>

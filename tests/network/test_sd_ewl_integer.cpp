@@ -25,7 +25,7 @@
 
 #include "common/Constants.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/ar/NetworkSdEwlAr.hpp"
+#include "network/ar/SdEwlAr.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

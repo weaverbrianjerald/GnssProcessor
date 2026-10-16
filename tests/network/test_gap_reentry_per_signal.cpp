@@ -34,7 +34,7 @@
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
-#include "network/slip/NetworkRawObservables.hpp"
+#include "network/slip/RawObservables.hpp"
 
 #include <cmath>
 #include <cstddef>

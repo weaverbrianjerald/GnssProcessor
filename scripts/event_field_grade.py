@@ -40,29 +40,29 @@ Channels
 
 Bands freed: where the identity comes from (formats read from source, and the
 lines are cited so a format drift is findable):
-  * ``T0_mw_detect``/``mw_wl_slip``  (src/core/slip/NetworkSlipQc.cpp:964)
+  * ``T0_mw_detect``/``mw_wl_slip``  (src/core/slip/SlipQc.cpp:964)
     action = refloat | diagnostic | oracle_repair | oracle_keep
     detail = "<sig1>;<sig2>" [";band_scope=implicated;kept=<sig>"]
              [";src=evidence;ratio=<r>;n=<n>;int=known|unknown"]
     The MW row does not name the common-band keeps; those come from the epoch's
     one verdict row (below).  A band of the pair is freed only if the action
     frees it (``refloat``), the band is not the §Z ``kept=`` pin, and the
-    common-band verdict did not exonerate it (NetworkSlipQc.cpp:915-921).
-  * ``T0_mw_detect``/``band_scope`` (NetworkSlipQc.cpp:906) action = keep,
+    common-band verdict did not exonerate it (SlipQc.cpp:915-921).
+  * ``T0_mw_detect``/``band_scope`` (SlipQc.cpp:906) action = keep,
     detail = "<sig1>;<sig2>;band_scope=implicated;kept=<sig>": the second-pair
     keep that would otherwise be silent.
-  * ``T1_if_slip``/``if_slip`` (NetworkSlipQc.cpp:1493) action = refloat |
+  * ``T1_if_slip``/``if_slip`` (SlipQc.cpp:1493) action = refloat |
     diagnostic | oracle_*, detail = "<sig1>;<sig2>"[";<oracle detail>"]
     [";cb_kept=<sigA>[+<sigB>]"]: here the common-band keeps are named
-    explicitly (NetworkSlipQc.cpp:1515).
-  * ``T0_band_scope``/``common_band`` (src/core/slip/NetworkCommonBandScope.cpp
+    explicitly (SlipQc.cpp:1515).
+  * ``T0_band_scope``/``common_band`` (src/core/slip/CommonBandScope.cpp
     :477-503): the epoch's one verdict for a (station, satellite):
       action "keep" : ["rule=lli_epoch;"] "implicated=<set>" [";exonerated=<set>"]
                       [";narrowed=0|1"] ";basis=<pair+pair...>"
       action "all"  : ["rule=lli_epoch;"] "reason=inconsistent|anchor_colocate|
                       no_exoneration;implicated=<set>;basis=<...>"
     Sets are rendered with ``+`` separators, since a comma would break the
-    one-field CSV detail (NetworkCommonBandScope.cpp:52).
+    one-field CSV detail (CommonBandScope.cpp:52).
 
 mw_slip_detector.log is a text spdlog file, not a CSV, and its per-detection line
 carries no station (station_label_ appears only on the debug ``MWDEC`` line,
@@ -182,7 +182,7 @@ def parse_detail(detail):
     """-> dict with pair, kept, cb_kept, implicated, exonerated, basis, reason, rule, src.
 
     The set separator is the same character as the field separator.
-    NetworkCommonBandScope.cpp:52 renders a band set with ',' and the event
+    CommonBandScope.cpp:52 renders a band set with ',' and the event
     writer then rewrites every comma to a semicolon so `detail` stays one CSV
     field, so a two-band set arrives as ``exonerated=L2W;L5X`` and its second
     element is indistinguishable from a new bare token.  A naive split

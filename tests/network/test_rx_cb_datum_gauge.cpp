@@ -33,14 +33,14 @@
 
 #include <gtest/gtest.h>
 
-#include "network/carry/NetworkLocalCarryHarvest.hpp"   // networkHarvestLocalCarries (card NOM3 step HV1)
-#include "network/state/NetworkRunContext.hpp"
+#include "network/carry/LocalCarryHarvest.hpp"   // networkHarvestLocalCarries (card NOM3 step HV1)
+#include "network/state/RunContext.hpp"
 #include "../support/NetworkTestRun.hpp"   // the run and epoch the harvest's epoch form takes
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/qc/NetworkPriorResidual.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/qc/PriorResidual.hpp"
+#include "network/driver/RunTypes.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

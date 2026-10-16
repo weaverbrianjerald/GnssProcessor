@@ -37,9 +37,9 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/solve/NetworkPhaseDatum.hpp"
+#include "network/solve/PhaseDatum.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 
 #include <cmath>

@@ -89,7 +89,7 @@ TEST(BridgeV3RiderConfig, BridgeV3RidersSurviveWithDeltaBridge) {
 }
 
 // --- CS-GF authority: the pure recursion (network.level_authority_csgf).
-#include "network/slip/NetworkRawObservables.hpp"
+#include "network/slip/RawObservables.hpp"
 
 TEST(IonoCsKernel, FirstSightingSeedsFromCodeAtHonestVariance) {
     IonoCsState cs;

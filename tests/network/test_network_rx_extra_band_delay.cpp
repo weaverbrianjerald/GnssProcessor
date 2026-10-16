@@ -2,7 +2,7 @@
  * @file test_network_rx_extra_band_delay.cpp
  * @brief Card L5B: @c network.estimate_rx_extra_band_code_delay, the knob that turns the
  *        receiver IFB drop of the declared rule @c RxIfbRule off
- *        (network/assembly/NetworkParamInventory.hpp).
+ *        (network/assembly/ParamInventory.hpp).
  *
  * Seven contracts:
  *  - the loader: default off, and parsed when set;
@@ -29,10 +29,10 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"   // the snapshot fingerprint (NetworkRunContext, NetStation)
+#include "network/state/RunContext.hpp"   // the snapshot fingerprint (NetworkRunContext, NetStation)
 #include "common/EpochMeasurement.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkParamInventory.hpp"
+#include "network/assembly/ParamInventory.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"

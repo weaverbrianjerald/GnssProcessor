@@ -38,7 +38,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "slip/MwSlipDetector.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/SlipQc.hpp"
 
 using namespace GnssProcessor;
 

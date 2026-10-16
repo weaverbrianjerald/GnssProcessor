@@ -57,11 +57,11 @@
 
 #include <Eigen/Dense>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/BaardaReliability.hpp"
-#include "network/qc/NetworkMdb.hpp"
-#include "network/assembly/NetworkRowClassify.hpp"
+#include "network/qc/Mdb.hpp"
+#include "network/assembly/RowClassify.hpp"
 #include "logging/LogManager.hpp"
 
 namespace fs = std::filesystem;

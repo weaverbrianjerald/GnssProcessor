@@ -47,7 +47,7 @@ function Say([string]$m) {
 
 # Snapshot M/N header -> object.  Authoritative counter ledger; exit code alone
 # does NOT prove a segment did work (n_emitted is restored from the snapshot on
-# resume, so the zero-emit guard at NetworkTeardown.cpp:1059 is unreachable).
+# resume, so the zero-emit guard at Teardown.cpp:1059 is unreachable).
 #
 # NB: read with Get-Content -TotalCount, which opens and CLOSES the file.  Do NOT
 # use [System.IO.File]::ReadLines() here -- breaking out of that lazy enumeration

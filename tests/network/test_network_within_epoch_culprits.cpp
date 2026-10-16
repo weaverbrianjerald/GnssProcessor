@@ -1,7 +1,7 @@
 /**
  * @file test_network_within_epoch_culprits.cpp
  * @brief Unit gates of the within-epoch culprit hand-off (card WCF;
- *        network/qc/NetworkWithinEpochCulprits.hpp).
+ *        network/qc/WithinEpochCulprits.hpp).
  *
  * Suite @c WithinEpochCulprits (the set the T2 block writes and the DD-carry rebuild reads):
  *  - a whole-satellite culprit names that satellite at every station, and no other;
@@ -35,8 +35,8 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"                  // the goldens' knobs (report gate)
-#include "network/driver/NetworkRunTypes.hpp"             // EpochWorkspace
-#include "network/qc/NetworkWithinEpochCulprits.hpp"
+#include "network/driver/RunTypes.hpp"             // EpochWorkspace
+#include "network/qc/WithinEpochCulprits.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

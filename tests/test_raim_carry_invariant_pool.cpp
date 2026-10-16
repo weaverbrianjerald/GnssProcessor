@@ -164,7 +164,7 @@ TEST(RaimCarryInvariantPool, ScreenDisabledWithoutRaim) {
 // For the re-host, this means the eq34 conjunct in
 // `k.raim_ci_on = raim_on && k.carry_invariant && …` never decides anything for a
 // loadable config.  `k.carry_invariant` ANDs eq34 in (NetworkKnobs::snapshot in
-// NetworkKnobs.cpp) and the knob inherits that, but any config that could
+// Knobs.cpp) and the knob inherits that, but any config that could
 // exercise the difference is already rejected here.  The conjunct is defensive redundancy that matches how
 // every other carry_invariant-derived knob resolves, not a live discriminator.  The
 // test pins the hard error so that, if the requirement is relaxed to a warning, the

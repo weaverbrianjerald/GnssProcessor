@@ -2,7 +2,7 @@
  * @file test_phase_gate_drop_edge.cpp
  * @brief Coverage-gate drop-edge predicate
  *        (@ref GnssProcessor::networkPhaseGateDropEdges,
- *        network/solve/NetworkPhaseGateDrop.hpp) and the knob that gates its response
+ *        network/solve/PhaseGateDrop.hpp) and the knob that gates its response
  *        (@c network.phase_datum_gate_drop_erase).  Card EV7 §6, requirement F3.
  *
  * The defect produces no signal at the site where it happens
@@ -37,7 +37,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/solve/NetworkPhaseGateDrop.hpp"
+#include "network/solve/PhaseGateDrop.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 

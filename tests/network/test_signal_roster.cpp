@@ -23,14 +23,14 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkEntities.hpp"
+#include "network/state/Entities.hpp"
 #include "network/assembly/SignalRoster.hpp"
 #include "common/Constants.hpp"
 #include "common/PppObservation.hpp"
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
-#include "network/solve/NetworkAnchorReentry.hpp"
-#include "network/slip/NetworkRawObservables.hpp"
+#include "network/solve/AnchorReentry.hpp"
+#include "network/slip/RawObservables.hpp"
 
 #include <algorithm>
 #include <map>
@@ -175,7 +175,7 @@ TEST(SignalRosterTest, CompanionCodesCarryTheCompanionRoleAndAreNotExclusions) {
 
 TEST(SignalRosterTest, CompanionsNeedTheCanonicalPresentAndStayOnBandOne) {
     // The canonical must be tracked this epoch, which is the rule
-    // NetworkSecondCodeScope.cpp and PppModel implement.  Without it the second
+    // SecondCodeScope.cpp and PppModel implement.  Without it the second
     // channel would ride alone and its inter-signal state would have nothing to be
     // measured against.
     const auto no_canon = signalRosterBuildCells(
@@ -225,7 +225,7 @@ TEST(SignalRosterTest, AnEmptyAllowListAdmitsEverything) {
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
-    // NetworkRawObservables.cpp keeps a phase only when its matching code is
+    // RawObservables.cpp keeps a phase only when its matching code is
     // reported, then sorts on the band digit alone and takes the front.  On this
     // toolchain that is lexical order within a band, which is why a station
     // latching L1W is tracked as L1C.

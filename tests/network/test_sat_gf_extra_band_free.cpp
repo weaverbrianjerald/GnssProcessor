@@ -38,8 +38,8 @@
 #include <vector>
 
 #include "config/GnssConfigTypes.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/Sbasis.hpp"
 
 using namespace GnssProcessor;
 

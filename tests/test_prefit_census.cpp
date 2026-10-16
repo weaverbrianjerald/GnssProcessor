@@ -48,16 +48,16 @@
 #include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/qc/NetworkPrefitCensus.hpp"
-#include "network/qc/NetworkRhsAttrib.hpp"
-#include "network/assembly/NetworkRowClassify.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/qc/PrefitCensus.hpp"
+#include "network/qc/RhsAttrib.hpp"
+#include "network/assembly/RowClassify.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
 namespace fs = std::filesystem;

@@ -24,7 +24,7 @@ explicitly marked skippable by the spec; the landing-site instruments
 (trace_postfit_keyed/sigma0, SH health) ride the whole run from this config.
 
 The s2z knob is conditional-appended to the resume fingerprint
-(NetworkSnapshotFingerprint.cpp: "clkdatum:s2z"), which is why this arm needs its own
+(SnapshotFingerprint.cpp: "clkdatum:s2z"), which is why this arm needs its own
 cold 6 h seed: no existing snapshot can be resumed.
 
 Phase-0 loader-sweep guarantees (GnssConfigLoadNetwork.cpp:2283-2312, :2424-2450):

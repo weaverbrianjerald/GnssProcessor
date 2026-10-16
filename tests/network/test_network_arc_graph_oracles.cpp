@@ -5,26 +5,26 @@
 // code it replaces, taken from main b5592b6 (the BEGIN FROZEN / END FROZEN blocks below; every
 // block is the named line range with only the line endings normalized):
 //
-//   - the eq34 chain walk, NetworkChainDatum.cpp 351 to 806 (the string union-find, the r1
+//   - the eq34 chain walk, ChainDatum.cpp 351 to 806 (the string union-find, the r1
 //     election and the two-queue, two-pass walk), with the lines it reads from earlier in the
 //     same function (arcSlipped 135-145, cov 151-154, the vertex names 267-271, arcLife 273-301,
 //     the incumbent seed 303-349);
-//   - the ARL Prim, NetworkProducerAr.cpp 386 to 478 (the ar_pool loop head and the tree_basis
+//   - the ARL Prim, ProducerAr.cpp 386 to 478 (the ar_pool loop head and the tree_basis
 //     branch) with the DDrow struct 379 to 385, ArRec 323 and reqOf 362 to 370;
-//   - the Card-4 driver's UnionFind (NetworkInvariantCarryDriver.cpp 73 to 90) and its pair-group
+//   - the Card-4 driver's UnionFind (InvariantCarryDriver.cpp 73 to 90) and its pair-group
 //     tree completion (674 to 689);
 //   - added at AGT-3, when those owners move onto the shared Dsu: the datum-graph census's
-//     union-by-size UnionFind and its component reduction (NetworkDatumGraph.cpp 54 to 85 and
+//     union-by-size UnionFind and its component reduction (DatumGraph.cpp 54 to 85 and
 //     166 to 229, the whole of netDatumGraphComponents), and the emit re-base's string union-find
-//     and component ids (NetworkEmitStore.cpp 197 to 240).  Their live replacements are called
+//     and component ids (EmitStore.cpp 197 to 240).  Their live replacements are called
 //     directly: netDatumGraphComponents and networkEmitRebaseComponents;
 //   - added at AGT-4, when the chain datum moves onto the module: the whole of the election,
-//     networkElectChainDatum (NetworkChainDatum.cpp 99 to 1057), which compiles against the real
+//     networkElectChainDatum (ChainDatum.cpp 99 to 1057), which compiles against the real
 //     run context.  The frozen and the live election run side by side over random multi-epoch
 //     lineages, and every output is compared after every epoch (the pins, the incumbent maps, the
 //     best datum receiver, the re-references, the carry erasures and shifts, the counters).
 //
-// The live ZComponent (NetworkZStore.hpp) is the oracle of singleTreeOf and fundamentalCycle.
+// The live ZComponent (ZStore.hpp) is the oracle of singleTreeOf and fundamentalCycle.
 //
 // The AGT-1 to AGT-3 frozen blocks compile against stand-ins for the run context (FakeCtx,
 // ChainStation, FakeHygiene).  The stand-ins also observe the walk without editing it: a shared tape records,
@@ -33,22 +33,22 @@
 // edge is a new edge when the eligibility test just before it named the same arc; it is a pass-2
 // edge when a vertex popped twice before it (pass 2 re-pushes the whole visited set).
 
-#include "network/ar/NetworkArcGraph.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
-#include "network/ar/NetworkZStore.hpp"      // ZComponent, the live phase-B oracle
-#include "network/ar/NetworkArSuspect.hpp"   // ArSuspectCornerState, arSuspectCombine (the frozen DDrow)
-#include "network/solve/NetworkDatumGraph.hpp"  // netDatumGraphComponents and its types (the census, AGT-3)
+#include "network/ar/ArcGraph.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
+#include "network/ar/ZStore.hpp"      // ZComponent, the live phase-B oracle
+#include "network/ar/ArSuspect.hpp"   // ArSuspectCornerState, arSuspectCombine (the frozen DDrow)
+#include "network/solve/DatumGraph.hpp"  // netDatumGraphComponents and its types (the census, AGT-3)
 #include "filter/StateKeySchema.hpp"     // StateKeys (the frozen chain walk and emit re-base)
-#include "network/emit/NetworkEmitRebase.hpp" // networkEmitRebaseComponents (the emit re-base, AGT-3)
+#include "network/emit/EmitRebase.hpp" // networkEmitRebaseComponents (the emit re-base, AGT-3)
 #include "common/GnssIdentity.hpp"
 // The chain election end to end (AGT-4): the real run context, config, census and hygiene.
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkAnchorHygiene.hpp"
-#include "network/solve/NetworkChainDatum.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/assembly/NetworkResponses.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/AnchorHygiene.hpp"
+#include "network/solve/ChainDatum.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/assembly/Responses.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 
 #include <gtest/gtest.h>
@@ -342,7 +342,7 @@ std::map<std::string, int> frozenEmitRebaseComponents(const EmitRebaseEpoch& ep)
 }
 
 /// The live step (b) up to its call: the same walk and filters as the frozen block (unchanged in
-/// NetworkEmitStore.cpp at AGT-3), gathering the arcs that networkEmitRebaseComponents partitions.
+/// EmitStore.cpp at AGT-3), gathering the arcs that networkEmitRebaseComponents partitions.
 EmitRebaseArcs liveEmitRebaseArcs(const EmitRebaseEpoch& ep) {
     EmitRebaseArcs arcs;
     for (std::size_t i = 0; i < ep.stations.size(); ++i) {
@@ -2068,7 +2068,7 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 // =====================================================================================
 
 /// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
-/// from NetworkCarryState into the station table (network/state/NetworkEntities.hpp).  The frozen body
+/// from NetworkCarryState into the station table (network/state/Entities.hpp).  The frozen body
 /// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
 /// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
 /// eq34 datum receivers into the constellation table's channels, and N4c the eq34 arc elevations
@@ -2979,7 +2979,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     // `x_s(j)` at harvest: the NetworkRunContext.cpp s_prev assignment and the
     // prev_carry stash).  For a gauge-invariant row the two moves cancel under a
     // known frame step; shifting one reference without the other injects the frame
-    // step as row bias.  The same rule holds at NetworkRelevel.cpp's Card-6 eph
+    // step as row bias.  The same rule holds at Relevel.cpp's Card-6 eph
     // cutover: the row's functional u = r + Mᵀs is frame-consistent only if all
     // carried references move together.
     //

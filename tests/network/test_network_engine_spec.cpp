@@ -22,13 +22,13 @@
 
 #include <gtest/gtest.h>
 
-#include "network/driver/NetworkRun.hpp"
-#include "network/state/NetworkRunContext.hpp"
+#include "network/driver/Run.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/carry/NetworkCarryVce.hpp"
-#include "network/carry/NetworkInvariantCarryDriver.hpp"
+#include "network/carry/CarryVce.hpp"
+#include "network/carry/InvariantCarryDriver.hpp"
 #include "logging/LogManager.hpp"
-#include "network/emit/NetworkClockEmitRebase.hpp"
+#include "network/emit/ClockEmitRebase.hpp"
 
 #include <filesystem>
 #include <fstream>

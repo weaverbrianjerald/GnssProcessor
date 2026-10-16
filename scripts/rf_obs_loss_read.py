@@ -5,7 +5,7 @@ Why this exists
 ---------------
 `network_pf_keyed.csv` / `network_pf_rows.csv` are written only for stations that
 survived `NetworkNormalEquations::addStation` (the per-station PD test,
-`src/core/filter/NetworkNormalEquations.cpp:476-484`); every trace that keys off
+`src/core/filter/NormalEquations.cpp:476-484`); every trace that keys off
 `est_index_of[i] >= 0` inherits that filter.  Reading a satellite's post-fit row
 count as "the satellite left the network" therefore confounds
 

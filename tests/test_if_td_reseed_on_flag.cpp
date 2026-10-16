@@ -35,14 +35,14 @@
 #include "common/Constants.hpp"
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include "slip/IfPhaseSlipDetector.hpp"
-#include "network/slip/NetworkRawObservables.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/RawObservables.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/null_sink.h>

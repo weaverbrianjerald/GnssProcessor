@@ -4,7 +4,7 @@
  */
 #include "network/state/ArcLedger.hpp"
 
-#include "network/state/NetworkEntities.hpp"   // the arc table the records live in (step N4f2)
+#include "network/state/Entities.hpp"   // the arc table the records live in (step N4f2)
 
 #include <algorithm>
 
@@ -502,7 +502,7 @@ namespace GnssProcessor {
     }
 
     bool ArcLedger::eventAllowed(int station, ArcTransition t) {
-        // The first epoch's births are the volume NetworkSignalIntegrity.cpp names
+        // The first epoch's births are the volume SignalIntegrity.cpp names
         // (about 12 000 rows at 305 stations), and they carry no information: every
         // arc is born there.  The counter records that volume instead.
         if (t == ArcTransition::Birth && epoch_idx_ <= 0) return false;

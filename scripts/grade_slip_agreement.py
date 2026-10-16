@@ -135,7 +135,7 @@ LAMBDA_WL_DEFAULT = 0.8619
 # window; they belong to a lane-integer instrument, not a slip counter.
 _TIMING_NOISE = ('other-net ms', ' ms (', 'lane observatory')
 # The producer's first run-end line (the run-timing report, the second row of the run-end
-# table, filter/NetworkRunEnd.cpp).
+# table, filter/RunEnd.cpp).
 _RUN_END_START = 'Network[timing]: epoch-loop wall'
 
 

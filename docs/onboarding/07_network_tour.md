@@ -141,9 +141,9 @@ counts that disagree with the builders' own counters, shared folds without a kin
 
 Every check that asks what a row is (the post-fit outlier tests, the censuses, the
 residual traces, the right-hand-side attribution) reads the row's tag. The row classifier
-(`include\network\assembly\NetworkRowClassify.hpp`) maps each kind to its class in one table, and
+(`include\network\assembly\RowClassify.hpp`) maps each kind to its class in one table, and
 the outlier pool's admission rule is one declared predicate there (`raimPoolAdmitsKind`);
-`NetworkRaim` counts each kind the pool admits.
+`Raim` counts each kind the pool admits.
 
 **The signals as planned** (`Network (signals as planned)`, card NOM step N3a): for each
 constellation and frequency band, which signal every station models, the companions, the
@@ -185,7 +185,7 @@ code reads these types instead of testing `sat[0] == 'G'` or `signal[1] == '5'`.
 The network code reads identities through these types (card NOM step N0b): a satellite
 string's constellation comes from `systemOfSat` or `letterOfSat` and nowhere else, band
 digits from `SignalId`, carrier frequencies from the traits table, and an estimator
-column's family from `sharedColumnFamily` (`include\network\assembly\NetworkRowClassify.hpp`).
+column's family from `sharedColumnFamily` (`include\network\assembly\RowClassify.hpp`).
 
 *In progress:* many network containers are still keyed by composite strings such as
 `"G05|L1C"`; card NOM step N4 re-keys them by the types above. Five estimator-label parses
@@ -197,7 +197,7 @@ The network producer's sources are in one tree: `include\network\<concern>\` and
 `src\core\network\<concern>\`, mirrored, with the unit tests in `tests\network\`. A file
 keeps its basename, so a name found in a log line or a report is found by searching for
 it. Headers are included with the full prefix, for example
-`#include "network/qc/NetworkRaim.hpp"`.
+`#include "network/qc/Raim.hpp"`.
 
 | folder | holds |
 | --- | --- |
@@ -221,35 +221,35 @@ stay in `include\products\`: the consumers and the real-time engine include them
 One epoch is `Application::networkProcessEpoch_` (`src\core\network\driver\ApplicationNetworkEpoch.cpp`),
 called by `runNetwork()` (`src\core\network\driver\ApplicationNetwork.cpp`) for each synced epoch. Each
 stage is a function in its own file, called in this order with the run (`NetworkRun`,
-`network\driver\NetworkRun.hpp`: the context, configuration, traces and engines) and the epoch
-(`NetworkEpoch`, `network\driver\NetworkEpoch.hpp`: this epoch's values, grouped by the stage that
+`network\driver\Run.hpp`: the context, configuration, traces and engines) and the epoch
+(`NetworkEpoch`, `network\driver\Epoch.hpp`: this epoch's values, grouped by the stage that
 writes them, const to every reader).
 
 | # | stage | main functions (file) |
 | --- | --- | --- |
 | 1 | **signals:** which signals each station tracks and models | `networkBuildSignalRoster` (`network\assembly\SignalRoster.cpp`) |
 | 2 | **per-station models and slips** (PASS A): geometry, corrections, cycle-slip detection, allocation of the satellite states | `networkPassAHead_`, `networkPassASlipScan_` (`network\driver\ApplicationNetworkAssembly.cpp`) |
-| 3 | **datum:** the reference satellite clock and phase anchors that fix what the data cannot | `networkElectPhaseAnchors` (`network\solve\NetworkPhaseDatum.cpp`) and the chain and ensemble elections beside it |
-| 4 | **the carry decided:** how each carried value enters this epoch (process noise, routes) | `networkCarryDecide` (`network\state\NetworkCarryDisposition.cpp`) |
+| 3 | **datum:** the reference satellite clock and phase anchors that fix what the data cannot | `networkElectPhaseAnchors` (`network\solve\PhaseDatum.cpp`) and the chain and ensemble elections beside it |
+| 4 | **the carry decided:** how each carried value enters this epoch (process noise, routes) | `networkCarryDecide` (`network\state\CarryDisposition.cpp`) |
 | 5 | **per-station rows** (PASS B): each station's design matrix, split into border and local columns, folded into the joint system | `networkPassB_`, `networkSplitStation_` (`network\driver\ApplicationNetworkAssembly.cpp`); the parameter inventory is recorded here |
-| 6 | **the solve:** datum rows, carried priors, the joint solve, the within-epoch quality checks | `networkSolveGlue` (`network\solve\NetworkSolveGlue.cpp`), `networkInstallCarry` (`network\carry\NetworkInstallCarry.cpp`) |
-| 7 | **the product:** the satellite corrections prepared and written | `networkSolPrep` (`network\emit\NetworkSolPrep.cpp`), `networkEmitStore` (`network\emit\NetworkEmitStore.cpp`) |
-| 8 | **after the product:** post-fit checks, the carries for the next epoch, diagnostics, the state snapshot | `networkLeveling`, `networkPostFitRaim` (`network\qc\NetworkRaim.cpp`), `networkClockQc`, `networkStashStatus`, `networkWriteStateSnapshot` |
+| 6 | **the solve:** datum rows, carried priors, the joint solve, the within-epoch quality checks | `networkSolveGlue` (`network\solve\SolveGlue.cpp`), `networkInstallCarry` (`network\carry\InstallCarry.cpp`) |
+| 7 | **the product:** the satellite corrections prepared and written | `networkSolPrep` (`network\emit\SolPrep.cpp`), `networkEmitStore` (`network\emit\EmitStore.cpp`) |
+| 8 | **after the product:** post-fit checks, the carries for the next epoch, diagnostics, the state snapshot | `networkLeveling`, `networkPostFitRaim` (`network\qc\Raim.cpp`), `networkClockQc`, `networkStashStatus`, `networkWriteStateSnapshot` |
 
 The order of stages 7 and 8 matters: the product is written before the post-fit checks
 run, so a check's response reaches the product one epoch later.
 
 The state the stages share has three homes. What belongs to one constellation, satellite,
 satellite signal, station, line of sight or arc is a row of an entity table
-(`net::NetworkEntities`, `include\network\state\NetworkEntities.hpp`), keyed by its typed identity, so
+(`net::NetworkEntities`, `include\network\state\Entities.hpp`), keyed by its typed identity, so
 everything about one satellite sits in one record; each field's declaration row states how it
 survives a restart. What one stage hands later stages of the same epoch is an epoch event
-(`EpochEvents`, `include\network\driver\NetworkEpoch.hpp`, read as `ep.events`): it is built empty with
+(`EpochEvents`, `include\network\driver\Epoch.hpp`, read as `ep.events`): it is built empty with
 the epoch, one group per writing stage, so nothing is cleared by hand and nothing from a
 skipped epoch reaches the next one. What stays run-wide (the carried priors, latches set at
 one epoch and read at the next, hand-offs a later stage drains, run counters) is
 `NetworkCarryState` and `NetworkServiceCounters` in `NetworkRunContext`
-(`include\network\state\NetworkRunContext.hpp`), each member with its row in `net::kRunFields`. A stage
+(`include\network\state\RunContext.hpp`), each member with its row in `net::kRunFields`. A stage
 names what it writes: an events group arrives as an output parameter, and an entity table it
 binds for writing has its row in `net::kEntityWriters`.
 
@@ -259,13 +259,13 @@ After the last epoch, every mechanism prints what it did over the run: counters,
 INERT clauses for armed knobs that never acted. These lines are the run's own telemetry
 (an armed knob reading "0 driven" is dead wiring), and grading scripts parse them.
 
-The run end is a table. `include\network\runend\NetworkRunEnd.hpp` declares
+The run end is a table. `include\network\runend\RunEnd.hpp` declares
 `kNetworkRunEndReports`: 83 rows in print order, one report per subsystem (each printed
 under a `Network[run-end] <row name>` heading line), each row naming what it reports and
-the file it lives in. `networkTeardown` (`src\core\network\runend\NetworkTeardown.cpp`, 68 lines)
+the file it lives in. `networkTeardown` (`src\core\network\runend\Teardown.cpp`, 68 lines)
 walks the table. A report is one function, `int networkXxxRunEnd(const NetworkRunEndView&)`,
-in the file of the subsystem it describes: the RAIM pool's report is in `NetworkRaim.cpp`,
-the gross line-of-sight screen's in `NetworkGrossLos.cpp`. It reads the run through the
+in the file of the subsystem it describes: the RAIM pool's report is in `Raim.cpp`,
+the gross line-of-sight screen's in `GrossLos.cpp`. It reads the run through the
 view, prints its lines when its subsystem is armed, and returns 0, or a verdict for the
 exit code. To find what a mechanism reports at run end, open its file and search for
 `RunEnd`; to see the whole run end in order, read the table.
@@ -274,7 +274,7 @@ exit code. To find what a mechanism reports at run end, open its file and search
 
 `CLAUDE.md` (section "Network producer: where new code goes") maps each kind of change to
 its file: a new per-epoch step to a `Network*` stage file, a new per-epoch event to the
-writing stage's group of `EpochEvents`, new run state to `NetworkRunContext`, new emission behaviour to `NetworkSolPrep` or `NetworkEmitStore`, a
+writing stage's group of `EpochEvents`, new run state to `NetworkRunContext`, new emission behaviour to `SolPrep` or `EmitStore`, a
 new run-end readout to a report in the subsystem's own file plus one row of
 `kNetworkRunEndReports` (the table's header lists the order rules). The loop itself stays a
 list of calls.
