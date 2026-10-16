@@ -1,6 +1,6 @@
 /**
  * @file test_ledger_anchor.cpp
- * @brief The anchor election's re-entry rule, card SID phase 4b
+ * @brief The anchor election's re-entry rule
  *        (@c network.ledger_anchor, docs/refound/SID_signal_identity_2026-09-22.md).
  *
  * The election decides "first sighting or return" by one test: whether the key had
@@ -84,7 +84,7 @@ TEST(LedgerAnchorTest, SameGenerationReturnRestoresTheIncumbent) {
     EXPECT_EQ(st.drop["G30_L1W"].n_tracking, 2);
     EXPECT_EQ(st.drop["G30_L1W"].generation.at(0), 1);
 
-    // The gated era: the rows keep coming, which is card EV7's own mechanism.
+    // The gated era: the rows keep coming, which is the coverage-gate's own mechanism.
     for (long long ep = 4; ep <= 8; ++ep) admit(led, ep, { a, b });
 
     int sta = -1;

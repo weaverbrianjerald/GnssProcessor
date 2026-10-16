@@ -9,7 +9,7 @@
  * rhs_attrib), so a shared-snapshot replay leg with only this
  * armed stays A/B-comparable against an unarmed control.  It changes no weight,
  * state or decision (standing invariant #6), and §7 of the spec assigns any
- * automatic response to the cross-flag to a separate card.
+ * automatic response to the cross-flag to a separate change.
  *
  * ## Why redundancy and not magnitude
  *
@@ -102,7 +102,7 @@
  *
  * ## Deviation from the spec
  *
- * §4 has the redundancy census consume the INC-1 metric of the prefit census card and warn
+ * §4 has the redundancy census consume the INC-1 metric of the prefit census and warn
  * when armed without `network.trace_prefit_census`.  The centred metric is
  * computed here instead (identical definition, same hoisted classifier, one
  * extra O(rows) pass when both are armed), so no inert-guard is needed and the
@@ -173,7 +173,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *     station and passes it to both, and the riders inherit the census's stride and escalation
  *     schedule instead of adding their own. Pass @c sg_.x_s (the final accepted solution,
  *     after any within-epoch re-solve); an empty vector disarms both riders.  (sg_ was
- *     the driver's solve result until card NOM3 step EP1; the binding above reads it as
+ *     the driver's solve result until the epoch object took it over; the binding above reads it as
  *     ep.solve.x_s.)
  * @param events The epoch's events; writes census (the epoch-status scalars and the hits).
  */

@@ -165,7 +165,7 @@ void networkShSpectrum(NetworkRun& run, const NetworkEpoch& ep);
  * The keyed pools identify which station / satellite / signal; the rows give the
  * residual of one LOS: its mean (a constant no state absorbed), its dispersive
  * ratio across signals, its elevation shape.  The satellite and the signal written
- * are the row tag's (the observation's own code, card OWD), so a code row whose only
+ * are the row tag's (the observation's own code), so a code row whose only
  * shared column is the satellite clock (a code signal tracked at one station, or a
  * posture with the satellite code biases supplied externally) keeps its signal and
  * joins the per-signal pool.  Rows that are not observations are counted
@@ -245,7 +245,7 @@ void networkPostfitSigma0(NetworkRun& run, const NetworkEpoch& ep);
  * @param gate_over_withheld True when this epoch was withheld as over-specified; the
  *                     coincidence counter that makes the run-end advice actionable.
  * @param N_gate       The normals the gate judged when it did not judge
- *                     @c est.reducedSharedNormals(): card SCL's view with the clock
+ *                     @c est.reducedSharedNormals(): the view with the clock
  *                     clones marginalized (filter/NetworkClockClone), over the non-clone
  *                     columns, whose indices are those of the layout.  Null (the default)
  *                     reads the reduced normals, as before.

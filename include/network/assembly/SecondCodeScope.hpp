@@ -14,7 +14,7 @@
  *
  *  - @ref secondCodeAllowEntryValid: what the loader accepts in
  *    `network.second_code_signals` (a 3-character code type on band 1; band 2 is
- *    left to a follow-up card because it would activate the untested bridging
+ *    left to a follow-up because it would activate the untested bridging
  *    path of `network.sat_isc_state`);
  *  - @ref secondCodeCompanions: which codes a station contributes for one
  *    satellite, given what it reports, what it already selected, and the
@@ -43,9 +43,9 @@ namespace GnssProcessor {
  *
  * Pure.  Accepts only a 3-character RINEX observation code of type 'C' whose band
  * digit is '1'.  Every other entry is refused rather than clamped: a phase type
- * belongs to a different card (the exact-integer slip witness), and a band-2
+ * belongs to a different mechanism (the exact-integer slip witness), and a band-2
  * entry would make the `network.sat_isc_state` bridging roster non-empty, which
- * card SCC defers.
+ * the second code channel defers.
  *
  * @param entry The configured string, e.g. "C1W".
  * @param why   Optional; on refusal, set to a one-clause reason for the log.

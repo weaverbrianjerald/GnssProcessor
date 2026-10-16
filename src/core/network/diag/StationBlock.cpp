@@ -1,7 +1,7 @@
 /**
  * @file StationBlock.cpp
- * @brief Implementation of the station-block audit (SPEC_event_harness §24.10,
- *        card ZP): the pure algebra (@ref GnssProcessor::StationBlockAudit) and the
+ * @brief Implementation of the station-block audit (SPEC_event_harness §24.10):
+ *        the pure algebra (@ref GnssProcessor::StationBlockAudit) and the
  *        measure-only seam that writes @c network_station_block.csv.
  */
 
@@ -189,7 +189,7 @@ namespace {
 ///
 /// Every state kind the manager exposes is covered, because an unlabelled column
 /// appears in a span as `col<k>`, which names no state and so no mechanism.
-/// Kinds: the card's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
+/// Kinds: the audit's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
 /// `amb:<sat>:<sig>`, plus `pos:<xyz>`, `vel:<xyz>`, `clkrate`, `phclk`,
 /// `grdn` / `grde`, `dzwd`, `iono` (the single-LOS state), `ionorate:<sat>`,
 /// `isb:<sys>`, `satbias:<key>`, `satpb:<key>`, `rxpb:<key>` and
@@ -342,8 +342,8 @@ void networkStationBlock(NetworkRun& run, const NetworkEpoch& ep) {
         // enter N_rr), but only the rows that are not carry statements or SH ties are
         // counted: the SH pseudo-observation constrains the iono field and the coupling
         // and block rows constrain the carry, so neither is an observation whose
-        // checkability the card measures.  Each row's kind is read from its tag (card NOM
-        // step N2b): code and phase by the declared observation type; a row of neither
+        // checkability the audit measures.  Each row's kind is read from its tag:
+        // code and phase by the declared observation type; a row of neither
         // kind (a pin, a local prior or anchor row) counts toward n_data only.
         const Eigen::VectorXd red = StationBlockAudit::redundancy(sp, R.A_r, R.w);
         long long n_code = 0, n_phase = 0, n_data = 0, zr_code = 0, zr_phase = 0;

@@ -2,7 +2,7 @@
  * @file GnssIdentity.cpp
  * @brief The name map, the frequency functions and the parsers of the identity types
  *        (see GnssIdentity.hpp, which holds the constellation traits table and the inline
- *        letter reads; card NOM step N0a), and the call-site helpers of step N0b.
+ *        letter reads), and the call-site helpers.
  */
 
 #include "common/GnssIdentity.hpp"

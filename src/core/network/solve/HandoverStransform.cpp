@@ -384,7 +384,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
             continue;
         }
         // Every clock reference of the constellation the rows read, through the one
-        // traversal (card PRM phase 2): the carried clocks, the coupling terms on them and
+        // traversal: the carried clocks, the coupling terms on them and
         // the stash's pivot value.
         CarrySiteCounts prm_cc;
         const ClockStransformResult r = applyClockStransform(
@@ -478,13 +478,13 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                           key, q);
             }
         }
-        // Card SCL B2: the exact S P S^T over the values and the dense block together; an edge
+        // The exact S P S^T over the values and the dense block together; an edge
         // the dense kernel cannot apply takes the diagonal kernel below (counted).
         std::string dense_detail;
         bool dense_done = false;
         if (!before_rows && ctx.knobs.handover_stransform_dense) {
             // The outgoing pivot is the frame the stashed block is in: the stash's pinned clock
-            // (card CTU's record), else the last pivot the wire declared.
+            // (the exact update's record), else the last pivot the wire declared.
             std::string p_out;
             if (const std::optional<System> csys = net::constellationOfLetter(ctx.entities, c)) {
                 const net::ConstellationTable& cons_rows = ctx.entities.constellations;
@@ -559,8 +559,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
             }
         }
         if (!before_rows && !dense_done) {
-            // Every carried clock of the constellation through the one traversal (card PRM
-            // phase 2).
+            // Every carried clock of the constellation through the one traversal.
             CarrySiteCounts prm_cc;
             r = applyClockStransform(ctx.carry, ctx.entities, v_c, q, CarryMechanism::Handover, &prm_cc);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
@@ -623,7 +622,7 @@ static int networkSatHealthRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     const NetworkSetupResult& setup = v.setup;
 
-    // Card HLT: broadcast health on the network path (silent unless network.sat_health).
+    // Broadcast health on the network path (silent unless network.sat_health).
     // Standing invariant #4: the counters are the evidence the rule acted.
     if (!(ctx.knobs.sat_health != 0)) return 0;
     const auto& c = ctx.counters;
@@ -719,7 +718,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
                           "the preview's declaration or inputs diverged.",
                           sc.sts_pre_mismatch);
         }
-        // Card SCL B2: the dense kernel's on-path counters (invariant #4: handovers with 0
+        // The dense kernel's on-path counters (invariant #4: handovers with 0
         // dense edges mean the kernel never ran).
         if (ctx.knobs.handover_stransform_dense) {
             log->info("Network (card SCL B2, dense handover S-transform): {} edge(s) "

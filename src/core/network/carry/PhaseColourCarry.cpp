@@ -39,14 +39,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -113,7 +113,7 @@ StationStep networkPhaseColourRows(StationBuild& build) {
     std::map<int, int>& h2local = R.h2local;
     // ---- End of the bindings ----
 
-    // --- Card LGM: the phase-colour columns' record and birth rows ----------
+    // --- The phase-colour columns' record and birth rows ----------
     // Every present column is recorded for the harvest.  A column whose carried
     // prior did not fold this epoch (cold, stale, erased, before the leveling carry
     // is warm, or refused by the builder) gets one pseudo-observation row, x = 0 at
@@ -125,7 +125,7 @@ StationStep networkPhaseColourRows(StationBuild& build) {
     if (!ctx.knobs.pc_on) return StationStep::Next;
     const Eigen::VectorXd x_lin_pc = st.sm->getStateVector();
     std::vector<std::tuple<Eigen::Index, double, double>> brows;   // (col, w, y)
-    std::vector<RowTag> brow_tag;   // one contribution tag per row (card NOM N2a)
+    std::vector<RowTag> brow_tag;   // one contribution tag per row
     for (const auto& [pc_sat, pc_sidx] : st.sm->getPhaseColourStates()) {
         const int pidx = static_cast<int>(pc_sidx);
         if (pidx < 0 || pidx >= x_lin_pc.size() || !std::isfinite(x_lin_pc(pidx)))
@@ -183,14 +183,14 @@ void networkPhaseColourBlockColumns(StationCarryFrame& carry) {
     const bool do_amb_carry = carry.do_amb_carry;
     const Eigen::VectorXd& x_lin = carry.x_lin;
     // The alias lines of networkPassB_ this function reads, verbatim.
-    // Live predicate for F3: the block's rows are Card-1 coupling rows (A_s/A_r) (the
+    // Live predicate for F3: the block's rows are coupling rows (A_s/A_r) (the
     // loader warns that the knob is inert without them).  A single const bool, so the
     // off path never reaches a block branch.
     const bool   pl_blk_on = ctx.knobs.pl_blk_on;
     // ---- End of the bindings ----
 
     if (!(legacy_local_inject && do_amb_carry)) return;
-    // Card LGM (network.phase_colour_state, section 4.1): the station's carried
+    // Phase-colour state (network.phase_colour_state, section 4.1): the station's carried
     // phase-colour columns as more columns of the same block.  Each enters as a
     // predicted copy of its entry (the Gauss-Markov transition: value and every
     // border coefficient times phi = exp(-gap / tau), variance
@@ -223,12 +223,12 @@ void networkPhaseColourBlockColumns(StationCarryFrame& carry) {
             LocalCarry& pr = pc_pred.back();
             pr.value_abs *= phi;
             for (CoupledShared& cs : pr.coupling) cs.coeff *= phi;
-            for (double& c : pr.shx_coef) c *= phi;   // card SCL2 X2: empty off
+            for (double& c : pr.shx_coef) c *= phi;   // shared-history terms: empty off
             LocalBlockCol pcol{static_cast<Eigen::Index>(phit->second), x_lin(pidx),
                                &pr, pvar, std::max(0.0, pgap), /*vce_fac=*/1.0};
             pcol.phi   = phi;
             pcol.is_pc = true;
-            if (const auto col_sat = SatId::parse(pc_sat))   // its block row's tag (card NOM N2a)
+            if (const auto col_sat = SatId::parse(pc_sat))   // its block row's tag
                 pcol.sat = *col_sat;
             pc_bc.push_back(pcol);
             R.pc_planned.push_back(pcol.col);
@@ -261,7 +261,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
     const bool pc_in_cols = ctx.knobs.pc_on && !R.pl_pc.empty();
     EpochEvents::Harvest& harvest_ev = events.harvest;   // written
     // ---- End of the bindings ----
-    // Card LGM: stash each phase-colour column's posterior (the estimate, its pure
+    // Stash each phase-colour column's posterior (the estimate, its pure
     // conditional variance, its border regression) and its row of the station's
     // harvest block, so the next epoch folds it jointly with the ambiguities it
     // shares the phase rows with.  The coupling carry is the posture's (the
@@ -291,7 +291,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
         }
         net::putLos(ctx.entities, static_cast<int>(i), pp.sat, &net::LosState::pc) = std::move(ent);
         networkSharedHistoryNoteEntry(shx_h, est_idx, pp.col, SharedHistoryMap::Pc,
-                                      static_cast<int>(i), pp.sat);   // card SCL2 X2; no-op off
+                                      static_cast<int>(i), pp.sat);   // shared history; no-op off
         ++ctx.counters.n_pc_stash;
         ctx.counters.pc_abs_sum += std::abs(value_abs);
         ctx.counters.pc_sq_sum  += value_abs * value_abs;
@@ -309,16 +309,16 @@ void networkPrunePhaseColour(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunContext& ctx = run.ctx;
     double pl_now_s = ep.clock.pl_now_s;
     // ---- End of the bindings ----
-    // Card LGM: prune phase-colour entries past the maximum gap.  Such an entry would
+    // Prune phase-colour entries past the maximum gap.  Such an entry would
     // not be folded anyway (the inject re-births the line of sight); the prune keeps
     // the map to the live lines of sight and counts the edge.  The horizon is the
-    // registry's (network.phase_colour_max_gap_s, the same double; card PRM phase 3b).
+    // registry's (network.phase_colour_max_gap_s, the same double).
     if (ctx.knobs.pc_on)
         carryGapPrune(ctx.entities.los, &net::LosState::pc, pl_now_s,
                       ctx.params.spec(NetworkParamKind::PhaseColour).gap_horizon_s,
                       [&](const auto&, const auto&) {
                           ++ctx.counters.n_pc_gap_prune;
-                          prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);   // card PRM phase 3a
+                          prmRespond(ctx.counters.prm_resp, ResponseSite::PcGapPrune);
                       });
 }
 
@@ -331,7 +331,7 @@ int networkPhaseColourRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // Card LGM: the phase-colour state's edges (invariant #4: the run-end counters are the
+    // The phase-colour state's edges (invariant #4: the run-end counters are the
     // ON-path telemetry).
     if (!ctx.knobs.pc_on) return 0;
     const auto& C = ctx.counters;

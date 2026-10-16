@@ -1,6 +1,6 @@
 /**
  * @file test_gap_reentry_relevel.cpp
- * @brief Card G response: @c networkSlipDrainGapReentry, the wired invariant-#1
+ * @brief Gap re-entry response: @c networkSlipDrainGapReentry, the wired invariant-#1
  *        response to an arc that re-enters across a tracking break while its stiff
  *        zero-q leveling level is still bridged
  *        (docs/SPEC_slip_qc_hardening.md §G3/W1).
@@ -179,7 +179,7 @@ struct Harness {
             {0, StateKeys::makeAmbiguityKey(kSat, sig)});
         return it == relevel.free_cause.end() ? 0 : it->second;
     }
-    /// The closure the run-end card G line asserts (SlipQcCounters block comment).
+    /// The closure the run-end gap re-entry line asserts (SlipQcCounters block comment).
     long long bucketSum() const {
         return counters.gap_reentry_freed_shifted + counters.gap_reentry_freed_lli
              + counters.gap_reentry_freed_unmeas + counters.gap_reentry_no_relevel
@@ -234,7 +234,7 @@ TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
 // after every PASS-A slip drain), while its leveling carry entry is alive and
 // in-window, which is why the inject would bridge the break.  The response therefore
 // keys off the carry and latches the synthesised ambiguity key (the format the inject
-// site and the card G arc classification use); a response keyed on the live state
+// site and the gap re-entry arc classification use); a response keyed on the live state
 // would be inert on the whole population it exists for.
 TEST(GapReentryRelevel, StateAbsentAtDrainTimeIsTheCommonCaseAndStillFrees) {
     Harness h(/*with_states=*/false);
@@ -320,7 +320,7 @@ TEST(GapReentryRelevel, CarryInvariantFunnelTakesTheSynthesisedKeyWithNoState) {
     EXPECT_EQ(h.counters.gap_reentry_arcs, h.bucketSum());
 }
 
-// Under carry_invariant the vehicle is the C3c funnel (card 4), and the loader
+// Under carry_invariant the vehicle is the C3c funnel, and the loader
 // disarms relevel_free_epoch there (the leveling local carry is superseded and
 // structurally empty).  The response still fires, into the funnel, and the arcs are
 // counted as answered by design, not as a response that failed to land.  That
@@ -358,7 +358,7 @@ TEST(GapReentryRelevel, LevelingVehicleWithoutTheFreeEpochLatchCountsTheLoss) {
 }
 
 // A cold carry has nothing stale to refloat, so the verdict is diagnostic only.  This
-// is the same split card E makes between detections and refloats; reporting refloats
+// is the same split the earlier response makes between detections and refloats; reporting refloats
 // alone makes a cold MW/LLI arm look dead (limitation L3).
 TEST(GapReentryRelevel, ColdCarryCountsTheDetectionWithoutActing) {
     Harness h;
@@ -413,7 +413,7 @@ TEST(GapReentryRelevel, LliOnReturnFreesOnlyUnderItsSubKnob) {
 // The two negative controls that bound the population
 // ===========================================================================
 
-// A measured, unshifted, unflagged return is the benign case card G counts as
+// A measured, unshifted, unflagged return is the benign case the gap re-entry response counts as
 // `clean_bridged` and calls "the intended behaviour": the level did not move across
 // the break, so bridging the carry is correct and the response leaves it alone.  This
 // test keeps the response evidence-gated rather than refloat-always (the two postures

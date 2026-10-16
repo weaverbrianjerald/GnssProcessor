@@ -24,7 +24,7 @@ struct SolveDatum;   // network/solve/SolveGlue.hpp
  *        sum-to-zero, or a configured pivot satellite).
  *
  * One implementation, read by the election in @ref networkClockDatum and by the handover
- * preview before PASS B (@ref networkHandoverStransformBeforeRows, card PRM phase 2), so the
+ * preview before PASS B (@ref networkHandoverStransformBeforeRows), so the
  * two elect from the same declaration.
  * @param ctx              the run context (the knobs).
  * @param config_          the configuration (the network block).

@@ -9,7 +9,7 @@
 #include "common/GnssIdentity.hpp"           // obsTypeOf, systemName, systemOfSat, ObservableId
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
-#include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys (card SID phase 3)
+#include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys
 #include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"
@@ -186,7 +186,7 @@ namespace GnssProcessor {
             }
         }
 
-        // 3b. The second phases (card SID phase 6a).  The same walk as the companion
+        // 3b. The second phases.  The same walk as the companion
         //     codes above and the rule SecondPhaseScope.cpp and PppModel
         //     implement: band 1 only, the allow list in its configured order, skipping
         //     the latched phase, untracked phases, phases outside the allowlist and
@@ -216,7 +216,7 @@ namespace GnssProcessor {
             }
         }
 
-        // 3c. The all-channel widening (card SID phase 6b).  It subsumes 3 and 3b, so it
+        // 3c. The all-channel widening.  It subsumes 3 and 3b, so it
         //     runs in their place (the caller passes their flags as false) and over
         //     every band rather than band 1 alone: every tracked, admitted phase of a
         //     band other than its modelled one joins `modelled_extra`, and every
@@ -461,7 +461,7 @@ namespace GnssProcessor {
     }
 
     // =====================================================================
-    // Card NOM step N3a: the decision sites and the "signals as planned" table
+    // The decision sites and the "signals as planned" table
     // =====================================================================
 
     namespace {
@@ -993,7 +993,7 @@ namespace GnssProcessor {
         arcReasonBeginEpoch(ctx.reasons, epoch_idx);
 
         const auto& nc = config_.getNetworkConfig();
-        // The all-channel widening subsumes both cards (card SID phase 6b), so the two
+        // The all-channel widening subsumes both, so the two
         // allow-list walks stand down and the all-channel walk fills the same two fields.
         const bool all_channels = config_.networkChannelModeAll();
         const bool companions_armed = config_.networkSecondCodeChannel() && !all_channels;
@@ -1150,7 +1150,7 @@ namespace GnssProcessor {
                             const auto cc = c.find(key);
                             if (cc != c.end() && cc->second.signal == pick.signal) continue;
                             rs.rule_differs.insert(stations[i].name);
-                            // The population of card CSL is the band-1 phase, the pick
+                            // The population of the canonical latch is the band-1 phase, the pick
                             // the estimator depends on; the wider count over any
                             // (band, obs type) is reported beside it.
                             const auto pick_sig =
@@ -1172,7 +1172,7 @@ namespace GnssProcessor {
                             if (!isObsKey(key, ObsType::Phase)) continue;
                             const auto sig = SignalId::fromObsCode(o->system, key);
                             const auto cell = sig ? cells.find(sig->digit) : cells.end();
-                            // A second phase is modelled too (card SID phase 6a): it
+                            // A second phase is modelled too: it
                             // carries its own float ambiguity and joins its signal's
                             // satellite phase-bias family, so the ledger's `modelled`
                             // flag reads the extra set beside the latch.  The set is
@@ -1321,8 +1321,8 @@ namespace GnssProcessor {
         if (!rs.active) return;
         auto& ctr = ctx.counters.sid;
         Stopwatch watch(ctr.audit_ms);
-        // The N3b site census (network/assembly/SignalRosterSites.cpp): the rule sites of card NOM
-        // section 18 against this epoch's roster, after the IF pin wrote its datum role.
+        // The N3b site census (network/assembly/SignalRosterSites.cpp): the rule sites
+        // against this epoch's roster, after the IF pin wrote its datum role.
         signalRosterSiteCensus(rs, ctr.n3b);
         // The epoch's continuous-GPS seconds, the unit every carry horizon is in.
         const double now_s = TimeUtils::continuousGpsSeconds(se.time);
@@ -1384,7 +1384,7 @@ namespace GnssProcessor {
         // --- Phase 2: the admitted lifecycle, before every class that reads it ---
         // The feed is the station's modelled phase rows.  `modeled[i]` exists only
         // for satellites that passed the elevation mask, and `observed` holds only
-        // the signals the model built (the canonical latch, its card SCC companions
+        // the signals the model built (the canonical latch, its second-code-channel companions
         // and whatever the allow list admitted), which is the set `local_carry` and
         // the ambiguity states are keyed from.  The raw side, fed at the build seam
         // upstream of all of that, is a strict superset; the two are reported side
@@ -1440,7 +1440,7 @@ namespace GnssProcessor {
                     if (n_bits > 1) ++ctr.gap_multi;
                 }
                 // The carry-side census on the admitted lifecycle: returns at arcs
-                // whose leveling carry is still live, the population card SID
+                // whose leveling carry is still live, the population the signal roster
                 // measures, read off the admitted arc's own edge rather than the
                 // carry's re-stash stamp.
                 const bool carried =
@@ -1534,7 +1534,7 @@ namespace GnssProcessor {
                                          parts->signal };
                 const ArcRecord* a = ctx.arc_ledger.find(ak);
                 // Only a column removed while its admitted arc is in a Gap inside
-                // the horizon is the silent death path the card names: past the
+                // the horizon is the silent death path the design names: past the
                 // horizon the arc is dead anyway, and the ledger can say nothing
                 // about a key it never admitted.
                 if (a == nullptr || a->ep_last_admitted < 0) {
@@ -1722,8 +1722,8 @@ namespace GnssProcessor {
                         (void)band;
                         if (!br.modelled_phase.empty()) want_phase.insert(br.modelled_phase);
                         // The wire's coverage denominator is the set of families the
-                        // network models, so a second phase belongs in it (card SID
-                        // phase 6a).  Without it, the L1W family is never counted on a
+                        // network models, so a second phase belongs in it.
+                        // Without it, the L1W family is never counted on a
                         // bed where no station latches L1W (the sim with a cloned
                         // second phase is such a bed), and `wire_pb_missing[L1W]`
                         // reads zero for the wrong reason.  Empty unless the
@@ -1799,7 +1799,7 @@ namespace GnssProcessor {
             }
         }
 
-        // --- The epoch's decision-site census and the first table (card NOM N3a) --
+        // --- The epoch's decision-site census and the first table --
         // Every site counted this epoch has run by now (the IF pin writer in the solve
         // glue, the coverage gate and the anchor read after the election, every class
         // above), so the difference from the build seam's snapshot is this epoch's.
@@ -2379,7 +2379,7 @@ namespace GnssProcessor {
     /**
      * @brief Run-end section: signals as planned (NOM N3a).
      *
-     * The table's row for "signals as planned" (card NOM N3a) and its manifest record; the
+     * The table's row for "signals as planned" and its manifest record; the
      * report is the overload above.
      *
      * Gate: none of its own: the row calls the report above on every run, as the teardown
@@ -2394,7 +2394,7 @@ namespace GnssProcessor {
         const std::shared_ptr<spdlog::logger>& log = v.log;
         NetworkRunTraces& traces = v.traces;
 
-        // Card NOM N3a: the signal roster's "signals as planned" at run end (the last
+        // The signal roster's "signals as planned" at run end (the last
         // audited epoch's band rows, the run's decision-site census) and its manifest
         // record, beside the two tables above and before the manifest's complete record,
         // so that record stays the manifest's last.  Written on every network run.

@@ -3,14 +3,14 @@
  * @file LedgerEmit.hpp
  * @brief The emitter's per-family bookkeeping read against the arc ledger, and the
  *        producer's declaration of its signal roster on the wire
- *        (@c network.ledger_emit, off by default; card SID phase 5a).
+ *        (@c network.ledger_emit, off by default).
  *
  * ### What this observes
  *
  * **E1, the emitter against the ledger.**  Two containers track a lifecycle that the
  * ledger also tracks, each in its own key space, and neither reads the other:
  *
- *  - The @c pb_hold of card PBH keeps a generation counter per (satellite, signal);
+ *  - The @c pb_hold keeps a generation counter per (satellite, signal);
  *    a change of that counter is the declaration on which a consumer refloats.  The
  *    ledger keeps an admitted generation per (station, satellite, signal), which
  *    advances at an arc birth.  A new hold generation with no arc birth behind it is
@@ -24,7 +24,7 @@
  *
  * **E2, the declaration.**  The producer states on the wire, per constellation and
  * RINEX band digit, which phase and code signals it models, which codes are carried
- * as card SCC companions, and which signal the S-basis pins (grammar in
+ * as second-code-channel companions, and which signal the S-basis pins (grammar in
  * @c products/SignalDeclaration.hpp).  Nothing on the producer reads it back.  It lets
  * a consumer distinguish "the network carries no family for this signal" from "the
  * record is stale", which the freshness flip cannot distinguish (audit Part C).
@@ -69,11 +69,11 @@ namespace GnssProcessor {
     struct NetworkSolutionEpoch;
     struct SyncedEpoch;
 
-    /// @brief One emitted family's state at the emit site (E1, card SID phase 5).
+    /// @brief One emitted family's state at the emit site (E1).
     struct LedgerEmitFamily {
         std::string   satellite;
         std::string   signal;
-        std::uint32_t hold_generation{ 0 };   ///< hold generation of card PBH, 0 when the hold is not armed.
+        std::uint32_t hold_generation{ 0 };   ///< hold generation of the phase-bias hold, 0 when the hold is not armed.
         bool          phase_first{ false };   ///< the emitter treated the phase bias as a first sighting.
         bool          has_phase{ false };     ///< the epoch carried a phase bias for this key.
         bool          code_first{ false };    ///< the emitter treated the code bias as a first sighting.
@@ -217,7 +217,7 @@ namespace GnssProcessor {
      * epoch), every counter is left unchanged.
      *
      * Epoch form; the explicit form and its forwarding adapter
-     * retired in card NOM3 step EP2 (the unit tests call this form through
+     * retired (the unit tests call this form through
      * tests/support/NetworkTestRun.hpp).
      *
      * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -239,7 +239,7 @@ namespace GnssProcessor {
      * statement per (constellation, band digit): the modelled phases and codes the
      * producer's stations carry, ordered by the number of stations that model them
      * (descending, lexical tie break; this is the network's preference order, which a
-     * consumer keyed to the declaration walks), the card SCC companions, and the
+     * consumer keyed to the declaration walks), the second-code-channel companions, and the
      * S-basis datum designation when all of the epoch's pins agreed on one signal.  A
      * row that names no modelled phase or code is dropped.
      *
@@ -249,7 +249,7 @@ namespace GnssProcessor {
      * false statement that the consumer would act on and against which its own latch
      * would be decided.  A cell the roster cannot answer therefore falls back to that
      * station's canonical latch, which is the source the roster reproduces one epoch
-     * later and the same fall-back the phase-2 tracker of card SID uses.  The
+     * later and the same fall-back the phase-2 tracker of the signal roster uses.  The
      * fall-backs are counted (@ref NetworkLedgerEmitCounters::decl_cells_latch), and a
      * declaration that still names no modelled signal is returned with @c present
      * false, so nothing reaches the wire or the consumer store.

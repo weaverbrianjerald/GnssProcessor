@@ -4,12 +4,12 @@
  *        family pass (see RowClassify.hpp; INC-0 of
  *        docs/SPEC_prefit_census_observability.md).
  *
- * Card NOM step N0b: a column's family, its satellite and the two SH mean columns
+ * A column's family, its satellite and the two SH mean columns
  * are read from the estimator's column identity (@ref sharedColumnFamily,
  * @c NetworkEstimator::vtecCoeffColumn) instead of being parsed from the label; the
  * label is still built, for the traces.
  *
- * Card NOM step N2b: a row's class is read from its contribution tag
+ * A row's class is read from its contribution tag
  * (@ref rowClassOfKind), so @ref classifyRow no longer reads the shared columns, the
  * ambiguity list @c pl_amb or the coupling region's position.  @ref rowClassName maps
  * the class to the same strings as before, so every dumped class name is unchanged.
@@ -52,7 +52,7 @@ NetColFam sharedColumnFamily(const NetworkEstimator& est, Eigen::Index col, std:
         }
         return NetColFam::Other;
     }
-    // No satellite identity: a clone of any kind (card SCL's clocks, card BCL's biases), a
+    // No satellite identity: a clone of any kind (a clock or a bias clone), a
     // shared-history column or an SH coefficient.
     if (est.isClockClone(col) || est.isHistoryColumn(col)) return NetColFam::Other;
     return NetColFam::Sh;

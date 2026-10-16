@@ -14,18 +14,18 @@
 #include "network/solve/ChainDatum.hpp"
 #include "network/solve/ClockAnchor.hpp"   // guarded temporal clock anchor
 #include "network/carry/ClockClone.hpp"    // the one-epoch clock clone
-#include "network/carry/SharedHistory.hpp" // the shared history (card SCL2 X2)
+#include "network/carry/SharedHistory.hpp" // the shared history
 #include "network/solve/DatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "network/diag/FrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "network/solve/HandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
 #include "network/solve/PhaseDatum.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/PrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
-#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally (card NOM N2b)
+#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally
 #include "network/qc/Relevel.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "network/qc/RobustStats.hpp"
-#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule (card NOM N2b)
+#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -119,7 +119,7 @@ std::set<std::string> networkExtraBandRoster(const std::vector<NetStation>& stat
     //
     // Keys carry the pin pair's band digits as well as the satellite and signal
     // ("sat|signal|b1b2"), because the builder's realized pair is not always (L1, L2)
-    // (the selection follows the registered signal set, and card GFC's pair hold can hold
+    // (the selection follows the registered signal set, and the family pair hold can hold
     // it), and a roster that answered for the wrong pair would free a column that nothing
     // determines.  Built here rather than in the row builder because only the driver sees
     // the stations.  Empty unless network.sat_gf_extra_band_free is armed, so an unarmed
@@ -202,7 +202,7 @@ void networkCodeBiasDatumRecord(NetworkRun& run, const NetworkEpoch& ep,
             static_cast<std::size_t>(cbd.n_s2z_suppressed);
         ctx.counters.n_sat_gf_carried += static_cast<std::size_t>(cbd.n_sat_gf_carried);
         ctx.counters.n_sat_gf_anchored+= static_cast<std::size_t>(cbd.n_sat_gf_anchored);
-        // Card PRM phase 3a: the anchored rows of satellites seen before (row-epochs).
+        // The anchored rows of satellites seen before (row-epochs).
         prmRespond(ctx.counters.prm_resp, ResponseSite::CbTimeLinkReanchor,
                    cbd.n_sat_gf_reanchored);
         ctx.counters.n_isc_observed += static_cast<std::size_t>(cbd.n_isc_observed);
@@ -343,7 +343,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
         net::satSet(ctx.entities.sats, &net::SatelliteState::code_bias_seen);
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
     const bool   emit_clock_disc = ctx.knobs.emit_clock_disc;            // clock disc channel and per-constellation bump scoping (A2)
-    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero (card 2, W6)
+    const bool   cb_time_linked  = ctx.knobs.cb_time_linked;      // impose the code-bias datum (IF pin and per-(constellation, signal) s2z) as a time datum: pin the change from the previous epoch's solved values rather than the level to zero (W6)
     auto& cap_H = ws.cap_H;
     auto& cap_z = ws.cap_z;
     auto& cap_constraint_weight = ws.cap_constraint_weight;
@@ -351,7 +351,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
     // ---- End of the bindings ----
     // The W6 satellite code-bias datum rows are built by
     // NetworkSbasis::buildCodeBiasDatumRows (INC-8), whose Doxygen holds the design
-    // (IF pin and per-(constellation, signal) sum-to-zero, card-2 time-linking).  The
+    // (IF pin and per-(constellation, signal) sum-to-zero, time-linking).  The
     // fold, the RAIM-replay cap_* capture and the first-N summary stay here (writer-site
     // contract, RunTypes.hpp).
     // The code-datum events start empty every epoch (EpochEvents), so an entry of an epoch
@@ -372,7 +372,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
 
         std::set<std::string> extra_band_determined = networkExtraBandRoster(stations, present, config_);
 
-        // Card GFC step 2: the first-sighting family prior keys its birth test on how this
+        // The first-sighting family prior keys its birth test on how this
         // epoch's carry folds each code-bias column (decided before PASS B by
         // networkCarryDecide), so a READMIT seed is not a birth.  Collected only with the prior
         // armed; the builder reads it only then.
@@ -395,13 +395,13 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
             code_bias_sat_seen_, code_bias_datum_resumed_,
             this_epoch_if_pin_sel, this_epoch_if_pin_real,
             this_epoch_cb_ifpin, this_epoch_cb_reseed,
-            // Card GFC's arms; the builder reads them only under the time link (and step 2's
+            // The family clock datum's arms; the builder reads them only under the time link (and the
             // first-sighting prior only with the family difference).
             NetworkSbasis::CodeDatumFamilyArms{config_.networkCodeDatumPairContinuity(),
                                                config_.networkCodeDatumFamilyDifference(),
                                                config_.networkCodeFamilyBirthPriorSigmaM()},
             cb_carry);
-        // Card GFC: hand this epoch's pair holds, pair changes, family-row realizations and
+        // Hand this epoch's pair holds, pair changes, family-row realizations and
         // first-sighting prior rows and skips to the emit site, which counts them once per kept
         // epoch (networkCodeDatumFamilyKeptEpoch).  The containers are empty unless an arm is
         // effective, so the default path copies nothing.
@@ -410,30 +410,30 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
         code_datum_ev.this_epoch_cb_family_rows = cbd.family_rows;
         code_datum_ev.this_epoch_cb_family_births = cbd.family_birth_priors;
         code_datum_ev.this_epoch_cb_family_birth_skips = cbd.family_birth_skips;
-        // The channels whose sum-to-zero row re-seeded, for the receiver IFB carry of card L5B
+        // The channels whose sum-to-zero row re-seeded, for the receiver IFB carry of the band-5 receiver delay
         // (the harvest erases the entries of a re-seeded family; nothing reads it otherwise).
         code_datum_ev.this_epoch_cb_reseed_channels = cbd.reseed_channels;
         // Record the IF pin pair election in the signal roster.  This is the only site that
-        // knows which signals the S-basis pinned this epoch (the realized pair, after card
-        // GFC's pair hold).  It fills BandRoster::datum_code / datum_phase and a
+        // knows which signals the S-basis pinned this epoch (the realized pair, after the family
+        // pair hold).  It fills BandRoster::datum_code / datum_phase and a
         // census; the solve does not read them (the wire's signal declaration does, in
         // networkLedgerEmitBuildDeclaration).  Runs on every network epoch, since the roster
         // is built on every run; a no-op only in a context no run set up.
         networkSignalRosterDatumPin(ctx, this_epoch_if_pin_real);
         if (cbd.H.rows() > 0) {
-            // Card NOM N2a: one kind per row, by row type (the builder's row_kinds); a size
+            // One kind per row, by row type (the builder's row_kinds); a size
             // mismatch would leave the fold without a kind, on the table's integrity line.
             est.contributionRowKinds(&cbd.row_kinds);
             est.addSharedConstraintRows(cbd.H, cbd.z, NetworkSbasis::kCodeBiasGaugeWeight);
             networkCodeBiasDatumRecord(run, ep, cbd, isc_bridged, events);
             if (within_epoch_armed) {
                 cap_H = cbd.H; cap_z = cbd.z;
-                ws.cap_row_kinds = cbd.row_kinds;   // the replay names the same kinds (card NOM N2b)
+                ws.cap_row_kinds = cbd.row_kinds;   // the replay names the same kinds
                 cap_constraint_weight = NetworkSbasis::kCodeBiasGaugeWeight;
                 cap_has_constraint = true;
             }
         }
-        // --- Card GFC step 2: the first-sighting family prior (network.code_family_birth_prior_sigma_m) ---
+        // --- The first-sighting family prior (network.code_family_birth_prior_sigma_m) ---
         // One soft row d_X - d_P = mu per satellite whose Galileo band-1 X column or partner
         // column is born this epoch (NetworkSbasis::codeFamilyBirthPriors).  The fold path is
         // its own call at its own weight 1/sigma^2 (NetworkSbasis::foldFamilyBirthRows, kind

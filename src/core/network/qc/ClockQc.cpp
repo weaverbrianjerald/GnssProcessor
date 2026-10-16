@@ -16,7 +16,7 @@
 #include "common/GnssIdentity.hpp"            // systemOfSat: the per-constellation medians
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig() (nc.trace_clock_full)
 #include "network/solve/PivotHandover.hpp"    // datumChangeAffectsKey
-#include "network/assembly/Responses.hpp"        // prmRespond / ResponseSite (card PRM phase 3a)
+#include "network/assembly/Responses.hpp"        // prmRespond / ResponseSite
 #include "network/diag/RunTraces.hpp"       // clk_mon_trace + emitEvent
 
 #include <spdlog/spdlog.h>
@@ -118,7 +118,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
     // instead of freezing.  On a pivot handover the models are re-seeded (the datum moved).
     if (clk_model_warm) {
         if (datum_changed && !scoped_handover) {
-            // Card PRM phase 3a: the entries the wipe removes.
+            // The entries the wipe removes.
             prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe,
                        static_cast<long long>(net::present(ctx.entities.sats, &net::SatelliteState::clock_osc)));
             net::dropAll(ctx.entities.sats, &net::SatelliteState::clock_osc);   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
@@ -138,7 +138,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 net::eraseIf(ctx.entities.sats, &net::SatelliteState::clock_osc, [&](const SatId& id, const ClockOsc&) {
                     if (!datumChangeAffectsKey(net::satKey(id), changed_consts, /*scoped=*/true))
                         return false;
-                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);   // card PRM phase 3a
+                    prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);
                     return true;
                 });
                 std::string consts;
@@ -198,7 +198,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                     // from the solved value, zero drift, loose covariance; no fault test
                     // until it has a prediction.  Stamp t_last so the next epoch's drift
                     // finite difference and prediction use the true per-sat interval.
-                    // Card PRM phase 3a: a carried oscillator re-seeded past its maximum
+                    // A carried oscillator re-seeded past its maximum
                     // gap is the gap response (the prediction step's stale test, repeated
                     // on the same t_last, pl_now_s and dt; a first sighting is not
                     // counted, and neither is a prediction dropped by its finite screen).
@@ -242,13 +242,13 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 const double sat_dt   = (osc.t_last > 0.0) ? (pl_now_s - osc.t_last) : dt;
                 const bool contiguous = (osc.t_last > 0.0) && sat_dt > 0.0
                                         && sat_dt <= clk_model_max_gap;   // R11
-                // Card PRM phase 3a: the drift reset past the maximum gap (not the reset of
+                // The drift reset past the maximum gap (not the reset of
                 // a zero or unstamped interval).  The prediction step drops a stale
                 // oscillator's prediction on the same test, so a stale return normally
                 // re-seeds above; this counts the branch should it ever act.
                 if (!contiguous && osc.t_last > 0.0 && sat_dt > clk_model_max_gap)
                     prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscGapReset);
-                // Card PRM phase 3a: the fault response re-initializes this oscillator.
+                // The fault response re-initializes this oscillator.
                 if (flagged)
                     prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscReinit);
                 osc.x1  = contiguous ? (z - x0_prev) / sat_dt : 0.0;
@@ -496,7 +496,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                     if (!mark.count(s2)) { ++n_nonpivot_jumpers; ++ctx.counters.cb_exc_nonpivot_would; }
 
                 ctx.counters.cb_exc_reinits += static_cast<long long>(mark.size());
-                // A value step has to coincide with a signalled discontinuity (Card-2
+                // A value step has to coincide with a signalled discontinuity (the code-bias time-link
                 // rule).  The reinit lands in the next epoch's fold, so the bump is
                 // queued for the next emit (consumed in NetworkSolPrep).
                 for (const std::string& s2 : mark)

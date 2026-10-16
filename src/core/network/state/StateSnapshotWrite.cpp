@@ -12,8 +12,8 @@
  * The body opens with an alias block (decomposition INC-4) that binds the driver's former
  * local names to members of the context, so the relocated code keeps those names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions: they were split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -55,7 +55,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
     const std::shared_ptr<spdlog::logger>& log = run.log;
     const NetworkClockEmitRebase* clk_rebase = &run.emit.clk_rebase;  // frame rows, v2 (§18.10)
     const NetworkEmitRebase* emit_rebase = &run.emit.rebase;  // emit-layer ER rows (RS-5 §21.10)
-    RealTimeEngine* consumer = run.setup.consumer.get();  // consumer snapshot beside each history copy (card CC (B))
+    RealTimeEngine* consumer = run.setup.consumer.get();  // consumer snapshot beside each history copy
     // ---- End of the bindings ----
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
@@ -160,8 +160,8 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         net::recordToSnapshot("Y", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("R", ctx, snap);   // the satellites (N4e1)
         net::recordToSnapshot("A", ctx, snap);   // the satellites (N4e1)
-        net::recordToSnapshot("I", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
-        net::recordToSnapshot("X", ctx, snap);   // eph cutover (card 6): the satellites (N4e2)
+        net::recordToSnapshot("I", ctx, snap);   // eph cutover: the satellites (N4e2)
+        net::recordToSnapshot("X", ctx, snap);   // eph cutover: the satellites (N4e2)
         // Resume frame state (§18.10, snapshot format v2), captured when
         // network.state_snapshot_frame_capture is armed: the per-(sat,signal)
         // phase-anchor incumbents and R2 sticky targets as of this epoch's election, the
@@ -190,7 +190,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             snap.clk_frame_epochs = fs.epochs;
         }
         }   // state_snapshot_frame_capture
-        // Card-1 coupling regressors (§18.12, snapshot format v3), captured under
+        // Coupling regressors (§18.12, snapshot format v3), captured under
         // network.state_snapshot_coupling_capture.  This is a separate knob from the frame
         // knob because the rows make the file about 37 times larger (and the keep-history
         // library with it), and a frame-only writer stays available for cheap legs and for
@@ -206,7 +206,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // wrong frame (the frozen-frame defect class, the reason the lane seed-site snap
         // was deleted).
         //
-        // Row atomicity (card 1e): a row is written whole or not at all.  A truncated
+        // Row atomicity: a row is written whole or not at all.  A truncated
         // coefficient vector loses the exact gauge identity Mᵀg_s = −g_r(c); every
         // coupling row then observes the clock gauge, and the W5 null-space gate withholds
         // each epoch that carries rows, which is worse than the diagonal degrade an empty
@@ -231,7 +231,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                 // they inflate snap_cpl_dict_last (the '{}-column dictionary' the run-end
                 // line prints), and if every row drops, hasCouplingState() stays true and a
                 // v3 header is written for a file with a dictionary and zero rows, a shape
-                // the format description rules out.  Row atomicity (card 1e) covers the
+                // the format description rules out.  Row atomicity covers the
                 // dictionary half as well.
                 for (const CoupledShared& cs : cpl)
                     if (!std::isfinite(cs.coeff) || !std::isfinite(cs.s_prev)
@@ -275,8 +275,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
                              snap.coupling_zrows[id.index] = ents;
                          });
             // The refloat set has no D-row carrier (a hard-refloated satellite is
-            // skip-stashed), so without this the resume cannot reproduce the pre-pass mark
-            // (cards 1d/1g).
+            // skip-stashed), so without this the resume cannot reproduce the pre-pass mark.
             net::recordToSnapshot("QR", ctx, snap);   // the satellites (N4e2)
             ctx.counters.snap_cpl_dict_last    = static_cast<long long>(snap.coupling_dict.size());
             ctx.counters.snap_cpl_rows_last    = static_cast<long long>(snap.coupling_rows.size());
@@ -399,7 +398,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             ctx.counters.snap_station_rows_last =
                 static_cast<long long>(snap.rx_cb_carry.size() + snap.sh_dev_carry.size());
         }
-        // Card CTU G5: the monitor's contrast-frame level information (LB rows).
+        // The monitor's contrast-frame level information (LB rows).
         if (ctx.knobs.clm_on) {
             net::recordToSnapshot("LB", ctx, snap);   // the satellites (N4e1)
         }   // state_snapshot_station_capture

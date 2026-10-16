@@ -39,14 +39,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -158,7 +158,7 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;
     // The alias lines of networkPassB_ this function reads, verbatim.
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows (Card 1); requires fullcov_on (enforced at load)
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // carry per-station ZWD across epochs (B9)
     // ZWD carry random-walk process noise (B9, m²/s): both fold sites read
     // `zwd_q_eff` below rather than a bare `zwd_q` alias, so a seam window's own q
@@ -254,7 +254,7 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
                         }
                     } else if (carryPastHorizon(pl_now_s, zit->last_seen_s,
                                                 pl_max_gap_s)) {
-                        // Card PRM phase 3a: a carried wet delay past the
+                        // A carried wet delay past the
                         // horizon, not folded.  Counted here once for both
                         // routes: an in-block gap refusal above leaves
                         // pl_zwd_in_block false, so it always reaches this
@@ -319,7 +319,7 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         Eigen::VectorXd xr, vard;
         try {
             xr = est.reconstructStation(est_idx, x_s);
-            if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
+            if (!carry_cpl_cond)   // the coupling carry uses the pure conditional (N_rr⁻¹)_cc
                 vard = est.conditionalLocalVarianceDiag(
                     est_idx, {R.pl_zwd.col}, plan.shared_datum);
         } catch (...) { continue; }
@@ -407,7 +407,7 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         net::put(sta_rows, StationId{static_cast<int>(i)}, &net::StationState::zwd) =
             LocalCarry{value_abs, var, pl_now_s, std::move(coupling)};
         networkSharedHistoryNoteEntry(shx_h, est_idx, R.pl_zwd.col, SharedHistoryMap::Zwd,
-                                      static_cast<int>(i));   // card SCL2 X2; no-op off
+                                      static_cast<int>(i));   // shared history; no-op off
         // ZWD in the local block: row n of the station's harvest block is the
         // ZWD column's own n_c read at every carried column (its last entry
         // equals `var`, the pure conditional).  The entry then points at the same
@@ -426,12 +426,12 @@ void networkHarvestZwd(NetworkRun& run, const NetworkEpoch& ep, HarvestBorder& b
         }
     }
     // The horizon is the registry's (network.phase_leveling_max_gap_s, the same
-    // double as pl_max_gap_s; card PRM phase 3b).
+    // double as pl_max_gap_s).
     carryGapPrune(sta_rows, &net::StationState::zwd, pl_now_s,
                   ctx.params.spec(NetworkParamKind::Zwd).gap_horizon_s,
                   [&](const auto&, const auto&) {
                       ++ctx.counters.n_cr_zwd_gap_prune;   // same predicate, same census
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::ZwdGapPrune);
                   });
     networkZwdSeamWindowStep(run, ep);
 }

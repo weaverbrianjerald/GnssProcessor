@@ -3,7 +3,7 @@
  * @file RowClassify.hpp
  * @brief The shared row classifier for every assembled network row, read from the row's
  *        declared contribution kind, and the shared-column family pass
- *        (INC-0 of docs/SPEC_prefit_census_observability.md; card NOM step N2b,
+ *        (INC-0 of docs/SPEC_prefit_census_observability.md;
  *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md).
  *
  * `classifyRow` and the shared-column family/label pass live here so that the
@@ -22,7 +22,7 @@
  * coupling from the row's position after @c R.cpl_row_start.  That inference filed the
  * phase rows of a station-unique (satellite, signal) as @c obs_other until the carry was
  * warm (no phase-bias column, an empty @c pl_amb) and the code rows of a station-unique
- * code signal as @c obs_other (no code-bias column); card NOM section 16, suspect 3.
+ * code signal as @c obs_other (no code-bias column); docs/refound/NOM_network_object_model_2026-10-08.md section 16, suspect 3.
  *
  * ## What a class means
  *
@@ -56,11 +56,11 @@
  * declares: the observation phase rows, the coupling and block carried-prior rows, and the
  * SD-EWL constraint rows.
  * That is today's population stated as a rule (suspect 1): the
- * prior rows are in it on purpose until the science card RPA decides otherwise.  Every
+ * prior rows are in it on purpose until a later science decision changes that.  Every
  * admission is counted per kind (@c RaimPoolAdmissionTally, network/qc/Raim.hpp), and a
  * row of any other kind that clears 0.5 is counted as refused (expected 0).
  *
- * Card RPA's knob (@c network.raim_pool_data_rows_only, default off) replaces the rule in
+ * The knob @c network.raim_pool_data_rows_only (default off) replaces the rule in
  * both pools by @ref raimPoolAdmitsRow's second setting: the observation phase rows only,
  * each to the pool of the column its tag names.  The refused counts then hold the
  * carried-prior and SD-EWL rows that cleared 0.5.
@@ -83,7 +83,7 @@ struct StationAssembly;
 /// Family tag of a shared column, read once per epoch from the estimator's column
 /// identity (@ref sharedColumnFamily).  The families match the label prefixes of
 /// NetworkEstimator::sharedColumnLabel ("SH" / "PB:" / "CB:" / "CLK:"); a clone of any
-/// kind (a clock clone "CLKC:", card SCL; a bias clone "PBC:" or "CBC:", card BCL) and a
+/// kind (a clock clone "CLKC:"; a bias clone "PBC:" or "CBC:") and a
 /// shared-history column ("HIST:") are @c Other.
 enum class NetColFam : char { Sh, Pb, Cb, Clk, Other };
 
@@ -93,8 +93,8 @@ enum class NetColFam : char { Sh, Pb, Cb, Clk, Other };
  *
  * A satellite column (clock, code bias, phase bias) gives @c Clk, @c Cb or @c Pb and
  * its satellite.  A column with no satellite identity is an SH-VTEC coefficient
- * (@c Sh, either shell) unless it is a clone (a clock clone, card SCL, or a phase- or
- * code-bias clone, card BCL) or a shared-history column (card SCL2 X2), which are
+ * (@c Sh, either shell) unless it is a clone (a clock clone, or a phase- or
+ * code-bias clone) or a shared-history column, which are
  * @c Other, as is a column out of range.  A bias clone is not a bias of its family: its
  * label ("PBC:", "CBC:") never matched the "PB:" and "CB:" prefixes this function
  * replaced, and its column identity is withheld (@c sharedColumnIdentity is false).
@@ -219,10 +219,10 @@ NetRowClass classifyRow(const StationAssembly& R, Eigen::Index row, std::string*
  * (@c CouplingScalar and the six @c Block*Carry kinds: a whitened block
  * row is one row of L⁻¹ and touches the ambiguity columns pushed before its own), and the
  * SD-EWL constraint rows (@c SdEwl: whitened between-satellite rows on the ambiguity
- * columns, which the SD-EWL smoke of card NOM step N2b measured clearing 0.5).  The rule
- * reproduces the population the coefficient test alone admitted before card NOM step
- * N2b; the prior and constraint rows are kept on purpose (suspect
- * 1, and the science card RPA, which decides whether they stay).
+ * columns, which the SD-EWL smoke measured clearing 0.5).  The rule
+ * reproduces the population the coefficient test alone admitted before this change;
+ * the prior and constraint rows are kept on purpose (suspect
+ * 1, and the science question of whether they stay).
  *
  * @param k The row's kind.
  * @return True for the eleven admitted kinds.

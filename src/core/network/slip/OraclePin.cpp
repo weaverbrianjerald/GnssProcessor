@@ -590,7 +590,7 @@ void networkOraclePinEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     const std::map<std::string, std::string>& this_epoch_anchor = ep.events.phase_datum.this_epoch_anchor;
     // ---- End of the bindings ----
     auto* pin = ctx.carry.oracle_pin.get();
-    if (!pin) return;                    // the gate: no oracle_pin event (the driver's test went in card NOM3 step EP2)
+    if (!pin) return;                    // the gate: no oracle_pin event
 
     const auto& nc   = config_.getNetworkConfig();
     const double tow   = t.tow;

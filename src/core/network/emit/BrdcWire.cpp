@@ -1,6 +1,6 @@
 /**
  * @file BrdcWire.cpp
- * @brief Card NBP's emit seam: C_wire = C_est + O with iode=k (see BrdcWire.hpp).
+ * @brief The native broadcast clock's emit seam: C_wire = C_est + O with iode=k (see BrdcWire.hpp).
  */
 
 #include "network/emit/BrdcWire.hpp"

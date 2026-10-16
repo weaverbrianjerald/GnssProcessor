@@ -1,4 +1,4 @@
-// Unit gate U0 of card PFQ (docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md):
+// Unit gate U0 of the pivot-frame process noise (docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md):
 // the carried satellite clocks' process noise in the pivot frame.
 //
 // The clock datum pins one satellite clock per constellation, so a carried clock is
@@ -257,7 +257,7 @@ TEST(PivotFrameProcessNoiseTest, ExactUpdateWithPairwiseQEqualsBruteForce) {
 }
 
 // ---------------------------------------------------------------------------
-// (d) Section 6: on card SCL's clone, the stood-in clocks' walks share the pivot's walk,
+// (d) Section 6: on the clock clone, the stood-in clocks' walks share the pivot's walk,
 // so they fold as one factor A x = mean with the walks' joint covariance Qw.  The factor
 // equals the brute force A' Qw^-1 A (and A' Qw^-1 mean); sign -1 withdraws it exactly; a
 // diagonal Qw folds what the per-walk form folds; a Qw that is not positive definite throws

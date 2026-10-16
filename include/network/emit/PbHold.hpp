@@ -1,6 +1,6 @@
 /**
  * @file PbHold.hpp
- * @brief Emit-side phase-bias hold seam (@c network.emit_pb_hold, card PBH).
+ * @brief Emit-side phase-bias hold seam (@c network.emit_pb_hold).
  *
  * A single-concern seam in the network-producer decision tree.  The emitted phase
  * bias of a (satellite, signal) is frozen at the first value of its generation, and
@@ -99,7 +99,7 @@ struct SyncedEpoch;
  *    1), and a @c PB_HOLD / @c gen_start event is emitted with action @c first or
  *    @c gap.
  *  - otherwise: overwrite @c NetworkPhaseBias::bias_m with the held value and record
- *    |estimate - held| into the run-end distribution.  With card LAH
+ *    |estimate - held| into the run-end distribution.  With the level-aware hold
  *    (@c network.emit_pb_hold_phase_clock) armed, the held value is shifted by the
  *    satellite's common-removed clock change since the generation started,
  *    @f$\tilde c(t) - \tilde c(t_0)@f$ (see the file header), so the phase-visible

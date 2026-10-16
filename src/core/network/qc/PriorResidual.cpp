@@ -750,7 +750,7 @@ void networkPriorResidualArm(NetworkRun& run) {
     // ---- End of the bindings ----
     // Prior-residual census.  An engine the run owns, like the carry-VCE monitor
     // (run.engines.prires and run.engines.carry_vce, network/driver/Run.hpp; both were
-    // run-TU locals until card NOM3 step EP1), read by the same four seams: SB_T1A
+    // run-TU locals formerly), read by the same four seams: SB_T1A
     // advances it, SB_LEVELING feeds pl/zwd/rxcb, SB_STASH_STATUS feeds pb/cb and
     // drains it, and the teardown reads it.  It shares the M2 monitor's per-row
     // arithmetic and does not affect the solve: with the census armed the

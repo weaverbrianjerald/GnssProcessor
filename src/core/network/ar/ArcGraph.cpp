@@ -173,8 +173,8 @@ std::optional<Cycle> treePathCycle(const ArcGraph& g, const TreeIndex& t, int ch
 }
 
 /// The double difference (r, p; j, k) in one band: +(r,j) -(r,k) -(p,j) +(p,k).  The four terms
-/// are sorted directly (a map per cycle dominated the 300-station basis build, card AGT section
-/// 9); equal arcs merge and a zero drops, as through cycleOf.
+/// are sorted directly (a map per cycle dominated the 300-station basis build);
+/// equal arcs merge and a zero drops, as through cycleOf.
 Cycle ddCycle(const ArcGraph& g, int a_rj, int a_rk, int a_pj, int a_pk, int band) {
     std::array<CycleTerm, 4> t{{{arcIdOf(g, a_rj, band), +1}, {arcIdOf(g, a_rk, band), -1},
                                 {arcIdOf(g, a_pj, band), -1}, {arcIdOf(g, a_pk, band), +1}}};
@@ -1357,7 +1357,7 @@ Cycle combineCycles(const CycleBasis& b, const Coordinates& coeffs) {
 
 namespace {
 
-/// One entry epoch per row (a lattice filled before card FCF, or by hand, has none: 0).
+/// One entry epoch per row (a lattice filled before entry epochs were recorded, or by hand, has none: 0).
 void alignEntered(CycleLattice& L) {
     if (L.entered_ep.size() != L.rows.size()) L.entered_ep.resize(L.rows.size(), 0);
 }

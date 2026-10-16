@@ -1,19 +1,19 @@
 /**
  * @file test_network_column_family.cpp
  * @brief The one shared-column classifier, @c sharedColumnFamily
- *        (network/assembly/RowClassify.hpp; card NOM step N0b).
+ *        (network/assembly/RowClassify.hpp).
  *
  * The family of a shared column is read from the estimator's column identity
  * (@c NetworkEstimator::sharedColumnIdentity), and a column with no satellite identity
- * is classified by exclusion: an SH-VTEC coefficient unless it is a clock clone (card
- * SCL) or a shared-history column (card SCL2 X2).  The run-time gates exercise only the
+ * is classified by exclusion: an SH-VTEC coefficient unless it is a clock clone or a shared-history column.
+ * The run-time gates exercise only the
  * columns of the armed posture, which registers neither a clone nor a history column, so
  * the exclusion is tested here over an estimator that holds every kind of column: two
  * satellites' clocks, code biases and phase biases, SH coefficients of both shells, a
  * clock clone and two history columns.  @c buildSharedColumnMap (the map the RHS
- * attribution and the topology ledger read; the row classifier reads the row tags since
- * card NOM step N2b) and the frame diagnostic's mass partition both take the family from
- * this function.  The bias clones of card BCL (@c NetworkEstimator::registerClone) are
+ * attribution and the topology ledger read; the row classifier reads the row tags)
+ * and the frame diagnostic's mass partition both take the family from
+ * this function.  The bias clones (@c NetworkEstimator::registerClone) are
  * tested on their own: they carry a bias kind with the clone flag, and every reader that
  * used to parse the label prefix gave them no family.
  */
@@ -117,7 +117,7 @@ TEST(NetworkColumnFamilyTest, ShIsTheExclusionOfCloneAndHistory) {
     EXPECT_EQ(sharedColumnFamily(est, h), NetColFam::Other);
 }
 
-// Card BCL's phase- and code-bias clones are Other, as card SCL's clock clone is, and
+// The phase- and code-bias clones are Other, as the clock clone is, and
 // their satellite is not written: the answer the "PB:" / "CB:" label-prefix parses gave
 // (a "PBC:" or "CBC:" label matches neither), which the migrated readers must keep.  The
 // clone keys of every kind resolve through one key function.

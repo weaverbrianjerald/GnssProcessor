@@ -77,7 +77,7 @@ struct LineAssembler {
     /// fully withheld epoch therefore never attaches to a later epoch.
     NetworkProducerStatus pending_h;
     bool                  pending_h_valid{false};
-    /// The declared signal roster block under assembly (Card SID phase 5, E2).
+    /// The declared signal roster block under assembly (E2).
     /// A declaration replaces the previous one wholesale, so the producer writes
     /// every row together and the first @c N record after any non-@c N line
     /// starts a fresh block (@ref decl_block_open).  When the block closes, the
@@ -132,7 +132,7 @@ struct LineAssembler {
         if (f.empty() || f[0].empty()) return completed;
         const std::string& tag = f[0];
 
-        // An N block is contiguous, so any other tag ends it (card SID phase 5).
+        // An N block is contiguous, so any other tag ends it.
         if (tag != "N") closeDeclBlock();
 
         try {
@@ -166,13 +166,13 @@ struct LineAssembler {
                 // The declaration block that preceded this epoch.  It is stamped on
                 // the record whose epoch it describes, as contract_refresh is, so a
                 // consumer applies it at its position in the stream rather than at
-                // end of file (card SID phase 5, E2).
+                // end of file.
                 if (decl_fresh) {
                     cur.declaration_refresh = declaration;
                     decl_fresh              = false;
                 }
                 have_cur = true;
-            } else if (tag == "N") {   // declared signal roster (card SID phase 5)
+            } else if (tag == "N") {   // declared signal roster
                 if (!decl_block_open) {
                     decl_block      = NetworkSignalDeclaration{};
                     decl_block_open = true;
@@ -185,7 +185,7 @@ struct LineAssembler {
                 s.clock_c0_m = std::stod(f[2]);
                 // Optional positional fields: c1 (field 4, B3b), then the post-emit
                 // clock disc counter (field 5, RTA-4).  Self-describing key=value
-                // tokens (iode=, oiod=, oepoch=, ...) follow them (Card 4, RTF-2).  A
+                // tokens (iode=, oiod=, oepoch=, ...) follow them (RTF-2).  A
                 // field containing '=' is a key=value token, never a positional
                 // number, so the positional parse stops at the first '=' field.  A
                 // file without key=value tokens parses as c1 plus clock disc only.
@@ -194,7 +194,7 @@ struct LineAssembler {
                     s.clock_c1_m_s = std::stod(f[k++]);                    // drift c1 (B3b)
                 if (k < f.size() && f[k].find('=') == std::string::npos)   // clock disc (RTA-4)
                     cur.serialized_disc.clock[f[1]] = std::stoi(f[k++]);
-                for (; k < f.size(); ++k) {   // brdc_rts anchor and orbit echo (Card 4)
+                for (; k < f.size(); ++k) {   // brdc_rts anchor and orbit echo
                     if (f[k].rfind("iode=", 0) == 0) {
                         s.clock_iode = std::stoi(f[k].substr(5));
                     } else if (f[k].rfind("oiod=", 0) == 0) {
@@ -228,7 +228,7 @@ struct LineAssembler {
                         // Only the value "obs" is recognized; any other value is ignored.
                         if (f[k].substr(4) == "obs")
                             satSolution(f[1]).isc_observed.insert(f[2]);
-                    } else if (f[k].rfind("lvl=", 0) == 0) {   // card CLV R-A: declared follow step
+                    } else if (f[k].rfind("lvl=", 0) == 0) {   // R-A: declared follow step
                         satSolution(f[1]).cb_level_step_m[f[2]] = std::stod(f[k].substr(4));
                     } else if (f[k].find('=') == std::string::npos && !f[k].empty()) {
                         try {
@@ -251,7 +251,7 @@ struct LineAssembler {
                         pb.sigma_m = std::stod(f[k].substr(6));
                     else if (f[k].rfind("sigc=", 0) == 0)   // combined phase-correction σ (M4)
                         pb.sigc_m = std::stod(f[k].substr(5));
-                    else if (f[k].rfind("gen=", 0) == 0)    // hold generation (Card PBH)
+                    else if (f[k].rfind("gen=", 0) == 0)    // hold generation
                         pb.hold_generation =
                             static_cast<std::uint32_t>(std::stoul(f[k].substr(4)));
                     else if (f[k].find('=') == std::string::npos)
@@ -335,20 +335,20 @@ struct LineAssembler {
                         } else if (f[k].rfind("oref=", 0) == 0) {
                             c.orbit_ref = f[k].substr(5);
                         } else if (f[k].rfind("pdr=", 0) == 0) {
-                            c.decl.eq34_datum_receiver = f[k].substr(4);   // diagnostic (Card 3)
+                            c.decl.eq34_datum_receiver = f[k].substr(4);   // diagnostic
                         } else if (f[k].rfind("agek=", 0) == 0) {
                             c.age_scale_k = std::stod(f[k].substr(5));      // age-scaling coeff (M4)
                         } else if (f[k].rfind("discfrac=", 0) == 0) {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // per-λ jump gate (H3)
                         } else if (f[k].rfind("discscope=", 0) == 0) {
-                            c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope (Card MS)
+                            c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope
                         } else if (f[k].rfind("pbhold=", 0) == 0) {
                             const int ph = std::stoi(f[k].substr(7));
-                            c.emit_pb_hold = (ph != 0);               // phase-bias hold (Card PBH)
-                            c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode (Card LAH)
-                            // pbhold=4 (the removed block member, card SMD) still reads as a
+                            c.emit_pb_hold = (ph != 0);               // phase-bias hold
+                            c.emit_pb_hold_phase_clock = (ph == 2);   // phase-clock mode
+                            // pbhold=4 (the removed block member) still reads as a
                             // smoothed hold, so an older product file keeps its meaning.
-                            c.emit_pb_hold_smoothed    = (ph == 3 || ph == 4);   // smoothed mode (Card SMH)
+                            c.emit_pb_hold_smoothed    = (ph == 3 || ph == 4);   // smoothed mode
                         } else if (f[k].rfind("hsig=", 0) == 0) {
                             c.h_sigma0_source = f[k].substr(5);   // sigma0 statistic id (H-rider)
                         } else if (f[k].rfind("cbpin=", 0) == 0) {
@@ -498,7 +498,7 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
         out_ << ",atx=" << contract.atx_id;
     if (!contract.orbit_ref.empty())
         out_ << ",oref=" << contract.orbit_ref;
-    // Diagnostic: the datum receiver r1 (Card 3, SingleReceiverChain).  Written only
+    // Diagnostic: the datum receiver r1 (SingleReceiverChain).  Written only
     // when non-empty, so a non-eq34 producer's S line is byte-identical without it.
     if (!contract.decl.eq34_datum_receiver.empty())
         out_ << ",pdr=" << contract.decl.eq34_datum_receiver;
@@ -555,7 +555,7 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     if (!contract.sat_gf_datum.empty())
         out_ << ",sat_gf_datum=" << contract.sat_gf_datum;
     // A per-satellite discontinuity mark bumped only the channels the marking site
-    // reported (network.disc_mark_scope, Card MS).  A replay-emitter parameter in the
+    // reported (network.disc_mark_scope).  A replay-emitter parameter in the
     // same sense as discfrac=, with one limit: the R record carries no channel set,
     // so a replay re-marks with the full satellite scope regardless.  The token lets
     // checkContract report that divergence.  Written only when armed, so a producer
@@ -563,7 +563,7 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     if (contract.disc_mark_scope_channel)
         out_ << ",discscope=channel";
     // The emitted phase bias is held at the first value of its generation
-    // (network.emit_pb_hold, Card PBH), so a P record's bias_m is constant over a
+    // (network.emit_pb_hold), so a P record's bias_m is constant over a
     // generation, not a per-epoch estimate.  This governs how the whole phase-bias
     // channel is read, so it is declared on the contract line and not only on the
     // per-record gen= token.  A reader that sees pbhold=1 knows a phase_disc bump
@@ -574,7 +574,7 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     // pbhold=2: the hold keeps the phase-visible clock instead, so a held
     // bias_m moves with the satellite's common-removed clock within a generation.
     // pbhold=3: the smoothed hold, a held bias_m follows the clock clone.
-    // (pbhold=4, the removed block member of card SMD, is no longer written.)
+    // (pbhold=4, the removed block member, is no longer written.)
     if (contract.emit_pb_hold)
         out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"
                  : contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
@@ -710,7 +710,7 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
                 out_ << ',' << fmt::format("{}", s.clock_c1_m_s);
             }
             // brdc_rts clock ephemeris-anchor and orbit-echo fields as trailing
-            // key=value tokens (Card 4, RTF-2).  They are self-describing and
+            // key=value tokens (RTF-2).  They are self-describing and
             // position-independent, because the c1/clock_disc positional fields above
             // vary in count and orbit_iod_ssr/orbit_epoch are independently optional.
             // Written only when the producer stamped a broadcast IODE (clock_iode >= 0,
@@ -739,7 +739,7 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             }
             // The satellite's level step since its previous emission: the declaration
             // the phase-bias jump test needs to reproduce the producer's counters on a
-            // replay (Card CLV).  Written only when nonzero and finite, so an unarmed
+            // replay.  Written only when nonzero and finite, so an unarmed
             // wire is byte-identical.
             if (s.level_step_m != 0.0 && std::isfinite(s.level_step_m))
                 out_ << ",lvl=" << fmt::format("{}", s.level_step_m);
@@ -758,7 +758,7 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             // flagged.  Absent unless network.sat_isc_state is armed, so a run with it
             // off writes byte-identical records.
             if (s.isc_observed.count(signal)) out_ << ",isc=obs";
-            // Card CLV return plan R-A: the free column's follow step since the
+            // Return plan R-A: the free column's follow step since the
             // satellite's previous emission, the declaration the code-bias jump test
             // needs to reproduce the producer's counters on a replay.  Written ONLY
             // when nonzero, so an unarmed wire is byte-identical.
@@ -789,7 +789,7 @@ void NetworkProductWriter::write(const NetworkSolutionEpoch& sol, bool datum_cha
             if (pb.sigc_m > 0.0 && std::isfinite(pb.sigc_m))
                 out_ << ",sigc=" << fmt::format("{}", pb.sigc_m);
             // The hold generation as a self-describing key=value token beside sigma= /
-            // sigc= (Card PBH).  pb.hold_generation is 0 unless network.emit_pb_hold
+            // sigc=.  pb.hold_generation is 0 unless network.emit_pb_hold
             // held this key, so a run with it off emits no token and is byte-identical.
             // A change of gen= is the declaration a file consumer refloats on; the
             // token's presence states that bias_m is constant for the life of that
@@ -857,7 +857,7 @@ void NetworkProductReader::replay(const NetworkProductRecord& rec,
     // forces a global bump (A2).
     // The producer's declared signal roster reaches the consumer store here, before
     // the epoch's records, so a consumer reading this epoch already holds the
-    // declaration that describes it (card SID phase 5, E2).  A wire without an N
+    // declaration that describes it.  A wire without an N
     // block never calls this, so the store's declaration stays absent and every
     // consumer gating on presence is unchanged.
     if (rec.declaration_refresh) store.setDeclaredRoster(*rec.declaration_refresh);
@@ -868,7 +868,7 @@ void NetworkProductReader::replay(const NetworkProductRecord& rec,
     // kDiscChanAll is the only reconstruction available here: a replay of a
     // channel-scoped producer re-marks more channels than the producer did.  The
     // scope travels in the S contract (discscope=) so checkContract reports it;
-    // closing the gap needs an R-record grammar extension (open item, card MS).
+    // closing the gap needs an R-record grammar extension (open item).
     if (!rec.retro_sats.empty()) emitter.markSatDiscontinuity(rec.retro_sats);
     emitter.emitToStore(rec.epoch, store);
 
@@ -1006,14 +1006,14 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.disc_threshold_frac_cycles != expected.disc_threshold_frac_cycles)
         note(fmt::format("disc_threshold_frac_cycles: file {} vs expected {}",
                          file.disc_threshold_frac_cycles, expected.disc_threshold_frac_cycles));
-    // The per-channel mark scope (Card MS).  A mismatch means the producer declared
+    // The per-channel mark scope.  A mismatch means the producer declared
     // a different channel population from the one the replay reconstructs.  Even a
     // match does not make the replay exact, because the R record carries no channel
     // set (see the field's doc); the check makes the scope visible to a consumer.
     if (file.disc_mark_scope_channel != expected.disc_mark_scope_channel)
         note(fmt::format("disc_mark_scope_channel: file {} vs expected {}",
                          file.disc_mark_scope_channel, expected.disc_mark_scope_channel));
-    // The emit-side phase-bias hold (Card PBH).  This is not a replay-emitter
+    // The emit-side phase-bias hold.  This is not a replay-emitter
     // parameter but a statement about how the P records are read: when held, a
     // bias_m is constant over a generation and a phase_disc bump carries no value
     // step, so a consumer that assumes the unheld semantics either ignores a real
@@ -1022,7 +1022,7 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.emit_pb_hold != expected.emit_pb_hold)
         note(fmt::format("emit_pb_hold: file {} vs expected {}",
                          file.emit_pb_hold, expected.emit_pb_hold));
-    // The phase-clock mode (Card LAH) changes what a held bias_m is (the phase-visible
+    // The phase-clock mode changes what a held bias_m is (the phase-visible
     // clock is the constant), so a disagreement is reported like the hold itself.
     if (file.emit_pb_hold_phase_clock != expected.emit_pb_hold_phase_clock)
         note(fmt::format("emit_pb_hold_phase_clock: file {} vs expected {}",
@@ -1078,7 +1078,7 @@ NetworkProductEmitter NetworkProductReader::makeReplayEmitter(const SbasisContra
                                  contract.code_bias_jump_test,
                                  contract.clock_disc_on_set_change,
                                  contract.disc_threshold_frac_cycles,
-                                 contract.disc_mark_scope_channel);   // disc mark scope (Card MS)
+                                 contract.disc_mark_scope_channel);   // disc mark scope
 }
 
 bool NetworkProductReader::admitsWire(const SbasisContract& file, bool allow_undeclared,
@@ -1308,7 +1308,7 @@ std::vector<NetworkProductRecord> NetworkProductTail::pollInto(SsrCorrectionStor
 }
 
 // ===========================================================================
-// A-priori identity of the run's own product files (Card OWD, O1)
+// A-priori identity of the run's own product files
 // ===========================================================================
 
 namespace {

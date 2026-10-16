@@ -1,7 +1,7 @@
 /**
  * @file test_station_marker_to_arp.cpp
  * @brief The roster-site marker -> antenna-reference-point reduction
- *        (`network.station_marker_to_arp`, card UPO).
+ *        (`network.station_marker_to_arp`).
  *
  * A network station is held fixed at `network.stations[].position_ecef`, a
  * published coordinate (IGS SSC/SINEX, NGS SIF, a surveyed RINEX header) that by
@@ -156,7 +156,7 @@ TEST(StationMarkerToArpTest, RosterSiteReductionTakesHenInRinexOrder) {
 
 // (1b) Direction: the antenna sits above the monument, so a station reduced to
 // its ARP is held higher, never lower.  This sign sets the direction of the
-// consumer's standing Up offset that card UPO addresses.
+// consumer's standing Up offset that this reduction addresses.
 TEST(StationMarkerToArpTest, ReductionRaisesTheStation) {
     const Eigen::Vector3d arp = rosterSitePosition(kGrazMonument, kGrazHen);
     EXPECT_GT(Coordinates::ecefToLlh(arp).h_m, Coordinates::ecefToLlh(kGrazMonument).h_m);

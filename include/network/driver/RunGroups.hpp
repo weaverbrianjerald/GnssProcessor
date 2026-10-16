@@ -4,9 +4,9 @@
  * @brief @internal The driver-owned groups of run objects that the network seams share,
  *        and @ref NetworkRunEndInputs, the run-end bundle of them.
  *
- * The run (network/driver/Run.hpp, card NOM3 step EP1) owns one of each group for the whole
+ * The run (network/driver/Run.hpp) owns one of each group for the whole
  * run, and a seam reads the group it needs instead of one parameter per member:
- *   - @ref NetworkRunEngines: the run's estimation engines, owned since card NOM3 step EP1
+ *   - @ref NetworkRunEngines: the run's estimation engines, owned
  *     (built in place inside NetworkRun from a @ref NetworkEngineSpec);
  *   - @ref NetworkEmitEngines: the two emit-layer engines (networkEmitStore, the run end);
  *   - @ref NetworkRunTiming: the epoch-loop wall clock and the D0/D0b section-timer totals
@@ -22,7 +22,7 @@
 
 #include "network/driver/WlRunTypes.hpp"        // SubBlockTimer / SB_COUNT
 #include "network/emit/ClockEmitRebase.hpp" // NetworkClockEmitRebase
-#include "network/emit/EmitRebase.hpp"      // NetworkEmitRebase (card 4 phase D)
+#include "network/emit/EmitRebase.hpp"      // NetworkEmitRebase
 #include "network/carry/CarryVce.hpp"             // NetworkCarryVce
 #include "network/solve/Estimator.hpp"            // NetworkEstimator
 #include "network/carry/InvariantCarryDriver.hpp" // NetworkInvariantCarryDriver (+ ::Config)
@@ -64,7 +64,7 @@ struct NetworkEngineSpec {
     NetworkClockEmitRebase::Config      clk_rebase_cfg;          ///< The clock emission re-base's configuration.
 };
 
-/// The run's estimation engines, owned (card NOM2 step TD1a made this name
+/// The run's estimation engines, owned (this name is
 /// a const view, so every run-end report's `engines.X` reads unchanged).  Built in place inside
 /// NetworkRun from a NetworkEngineSpec; setup then configures the members through references
 /// (slip-QC parameters, corroborators, release tracking, estimator settings, warm resume).
@@ -84,7 +84,7 @@ struct NetworkRunEngines {
     SlipQcChannel               slip_qc;
     NetworkCarryVce             carry_vce;    ///< The LS-VCE carry-row monitor (M2); was carry_vce_est.
     NetworkPriorResidual        prires;       ///< The prior-residual census; was prires_est.
-    NetworkInvariantCarryDriver carry_driver; ///< The DD cycle-basis invariant carry (card 4).
+    NetworkInvariantCarryDriver carry_driver; ///< The DD cycle-basis invariant carry.
     NetworkEstimator            est;          ///< The joint estimator: one instance, reset and reused every epoch (its station-block pool).
 };
 static_assert(!std::is_copy_constructible_v<NetworkRunEngines> && !std::is_move_constructible_v<NetworkRunEngines>);
@@ -93,7 +93,7 @@ static_assert(!std::is_copy_constructible_v<NetworkRunEngines> && !std::is_move_
 /// networkEmitStore runs them on every emitted epoch, the warm-resume restore and the
 /// state snapshot read and write their held frames, and the run end reports their tallies.
 struct NetworkEmitEngines {
-    NetworkEmitRebase      rebase;     ///< Emit-layer frame re-base of the emitted phase biases (card 4 phase D); run under NetworkKnobs::emit_rebase_on.
+    NetworkEmitRebase      rebase;     ///< Emit-layer frame re-base of the emitted phase biases; run under NetworkKnobs::emit_rebase_on.
     NetworkClockEmitRebase clk_rebase; ///< Clock emission re-base: the common-mode frame hold and the per-satellite step marks.
 };
 

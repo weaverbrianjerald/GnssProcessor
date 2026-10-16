@@ -4,10 +4,10 @@
  * @brief Stage 2 of the network solve: the W6 satellite code-bias datum.
  *        The per-epoch clears of the datum scratch, the two data rosters (RF-0f, B5D), the rows
  *        NetworkSbasis::buildCodeBiasDatumRows builds, their fold, telemetry and replay capture,
- *        the card GFC first-sighting family prior, the card KP prior and the first-N summary.
+ *        the first-sighting family prior, the physical-bound prior and the first-N summary.
  *
  * The row builder's Doxygen holds the datum design (IF pin and per-(constellation, signal)
- * sum-to-zero, card-2 time-linking); this file holds the epoch's use of it.
+ * sum-to-zero, time-linking); this file holds the epoch's use of it.
  */
 
 #include "network/solve/Sbasis.hpp"     // NetworkSbasis::CodeBiasDatumRows
@@ -65,7 +65,7 @@ std::set<std::string> networkExtraBandRoster(const std::vector<NetStation>& stat
                                              const GnssConfig& config_);
 
 /**
- * @brief The on-path telemetry of the folded W6 rows (RF-0b, RF-0c, card GAL), the held
+ * @brief The on-path telemetry of the folded W6 rows (RF-0b, RF-0c), the held
  *        extra-band keys (B5D) and the emit site's per-key ISC verdicts (RF-0f).
  * @param run         The run: ctx counters (n_w6_*, n_sat_gf_*, n_isc_*, n_extra_band_*,
  *                    n_s2z_reseed_*, prm_resp) and ctx carry (this_epoch_extra_band_held,

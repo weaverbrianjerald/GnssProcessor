@@ -1,7 +1,7 @@
 /**
  * @file test_signal_roster_always_on.cpp
- * @brief What changed when the signal roster went on for every network run (card NOM
- *        step N3a, docs/refound/NOM2_network_object_model_rows_2026-10-09.md
+ * @brief What changed when the signal roster went on for every network run (see
+ *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md
  *        section 4): the loader's reader interlocks and the bounded run-scope census.
  *
  * Since step N3a the roster, the arc ledger and their census are built on every

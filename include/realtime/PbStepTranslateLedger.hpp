@@ -1,7 +1,7 @@
 /**
  * @file PbStepTranslateLedger.hpp
  * @brief Consumer-side translation of every phase-bias product step, declared or
- *        not, into the float ambiguity (card PBT (A)).  Holds the per-key
+ *        not, into the float ambiguity.  Holds the per-key
  *        applied-value ledger, the translate / skip / refuse decision, and its
  *        counters.
  *
@@ -21,14 +21,14 @@
  * declared the step, and it holds for a move common to every tracked satellite,
  * which is then absorbed uniformly with no de-commoning and no change to the wire.
  *
- * Card CC (@ref PbDiscCarryLedger) performs the same translation, but only on the
+ * The declared-step carry (@ref PbDiscCarryLedger) performs the same translation, but only on the
  * cells the producer declared.  Two populations measured on the RF-0hv field
  * lineage fall outside that gate:
  *   - 451 of 545 de-commoned phase-bias steps > 0.10 m are undeclared and land in
  *     live consumer ambiguities (EV6 / JT §4);
  *   - 117 of 390 declared cell-epochs are empty (< 0.02 m of PB motion), because
  *     `markSatDiscontinuity` bumps all three channel generations at once
- *     (CST §7.1 / card MS).
+ *     (CST §7.1).
  * One rule covers both: translate on the step, not on the declaration.
  *
  * Scope.  A key with no phase bias applied at k−1 (first sighting, re-admission)
@@ -38,7 +38,7 @@
  * @c StateManager::resetAmbiguity call; either way it is counted.  The three
  * structural refusals (@c NL/WL state basis, a BSSD consumer, an ambiguity key
  * absent from the state) are handled the same way: a declared cell falls back to
- * that reset, as card CC's refusals do, while an undeclared cell, on which the
+ * that reset, as the declared-step carry's refusals do, while an undeclared cell, on which the
  * reset path does nothing, stays a no-op with a counter and is never reset.
  *
  * Inside the eps band (@c pb_step_translate_eps_m, default 5 mm) the filter
@@ -59,7 +59,7 @@ namespace GnssProcessor {
 
 class StateManager;
 
-/// Applied-value ledger, translate decision and counters (card PBT (A)).
+/// Applied-value ledger, translate decision and counters.
 class PbStepTranslateLedger {
 public:
     /// What @ref react did for one (key, epoch) cell.
@@ -127,7 +127,7 @@ public:
      *
      * One translation per (key, epoch): the caller visits each key once, and this
      * function makes at most one @c StateManager::shiftAmbiguity call, the same
-     * value-only call card CC's carry makes (RealTimeEngineSsrBreaks.cpp).
+     * value-only call the declared-step carry makes (RealTimeEngineSsrBreaks.cpp).
      */
     Decision react(StateManager& sm, const std::string& key, const std::string& amb_key,
                    bool declared, bool applied_now, double applied_now_m,
