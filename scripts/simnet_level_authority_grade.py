@@ -17,7 +17,7 @@ fixture's two bias-sign traps):
     cs.val = I1 - (b1-b2)/(gamma-1) - (B1-B2)/(gamma-1)      [slant, L1 metres]
 
     src/core/app/ApplicationNetworkAssembly.cpp:1440   i_code = -row.gf_code_m / row.gf_denom
-    include/slip/NetworkRawObservables.hpp:70-71       gf_code_m = P1-P2, gf_denom = gamma-1
+    include/slip/RawObservables.hpp:70-71       gf_code_m = P1-P2, gf_denom = gamma-1
 
 so an injected receiver GF bias enters at -1/(gamma-1)/K_L1 = -9.5196 slant TECU
 per metre of b(C1C)-b(C2W), and the satellite OSB contrast enters identically.
@@ -25,7 +25,7 @@ Both are added here, so the operator lands in the census's own realization.
 
 The two shells differ. The census maps to vertical with the SH configuration's
 shell (`estimation.global_vtec_sh.layer_height_km`, 450 km on the wsh lineage;
-`NetworkLevelAuthority.cpp` reads `shc.layer_height_km`), while
+`LevelAuthority.cpp` reads `shc.layer_height_km`), while
 `truth_atmo.csv`'s `obliquity` column was computed by the sim at
 `iono.shell_height_km` (350 km). Using the truth column would bias every
 vertical value by several percent at low elevation. This script recomputes the

@@ -7,7 +7,7 @@ the epoch. A chord born this epoch has no carried prior: its Cov(v) is the diffu
 ``carry_invariant_fresh_prior_var``, so the standardized ratio is not a hypothesis
 test, the "reset" it triggers is a no-op (a diffuse chord's posterior already is the
 data-only tap-off), and the flag's one lasting effect is the funnel entry that
-re-borns the chord next epoch, which flags again. In ``NetworkInvariantCarryDriver.cpp``,
+re-borns the chord next epoch, which flags again. In ``InvariantCarryDriver.cpp``,
 ``bornSkipped()`` skips a row that is topologically born (``chord_carried`` false)
 or informationally diffuse (``var_v >= 0.5 * fresh_prior_var``), counted before the
 threshold test, so ``innov_born_skipped`` is the whole born population, not just the
@@ -86,7 +86,7 @@ def _median(xs):
 
 
 # ------------------------------------------------------------------- stdout parsing
-# Every pattern is anchored on the emitter's own wording (NetworkTeardown.cpp) so a
+# Every pattern is anchored on the emitter's own wording (Teardown.cpp) so a
 # renamed counter fails loudly (value None) instead of silently reading zero.
 _PATTERNS = {
     'd5_flags': (r'D5 fine-slip innovation gate\):\s*([\d,]+)\s*carried-DD innovation flag', int),

@@ -4,7 +4,7 @@
 The companion `simnet_dd_reref.py` grades the sim against `truth_ambiguities.csv`. The field has no truth, so
 the only observable is the trace's own `frac_cyc` = dd_cyc - round(dd_cyc), which lives on the unit circle.
 That is enough: the producer forms every chord of a (constellation, signal) against one reference satellite
-(filter/NetworkDdFrac.cpp: the lexically-lowest satellite present at >= 2 stations), so within one
+(filter/DdFrac.cpp: the lexically-lowest satellite present at >= 2 stations), so within one
 (epoch, cons, signal, sta_a, sta_b) group
 
     f_i = frac( s_i - s_ref )      s = between-station SD ambiguity error of a satellite

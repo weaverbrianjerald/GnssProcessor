@@ -139,7 +139,7 @@ Fixture build, truth grading, reporting — `docs/topics/sim-bed.md`.
 | `simnet_lane_slip_age.py` | simnet_lane_slip_age.py -- WHERE does the lane-integer slip cost live? Follow-up to the wu93 campaign finding (SPEC_slip_relevel_walk.md section 9): … | 5 |
 | `simnet_level_authority_grade.py` | LV-6 G1 grader — the census operator applied to TRUTH. `docs/SPEC_level_authority_internal.md` §4 G1 / §5 item 5. The gate is corr(L_cs(t), censusOpe… | 2 |
 | `simnet_make_seam_leg.py` | Generate a warm-resume BRANCH LEG of the 24 h quiet bed from its .ep snapshot library. STABILITY campaign (SPEC_synthetic_minimum_network §18.7 / §18… | 13 |
-| `simnet_oracle_grade.py` | ORACLE SLIP-RESPONSE REPAIR-EFFECT CENSUS — did the truth-fed repair actuate? `network.cycle_slip.oracle_relevel` (include/slip/NetworkSlipOracle.hpp… | 2 |
+| `simnet_oracle_grade.py` | ORACLE SLIP-RESPONSE REPAIR-EFFECT CENSUS — did the truth-fed repair actuate? `network.cycle_slip.oracle_relevel` (include/slip/SlipOracle.hpp… | 2 |
 | `simnet_plateau_decompose.py` | Plateau decomposition for the post-relevel-fix stationary ZWD/iono plateau (QUEUE 8b). Promoted from the 2026-08-20 session scratch join (docs/SPEC_i… | 8 |
 | `simnet_producer_ar_grade.py` | TRUTH GRADE of the producer's Phase-2 AR search (docs/network_ambiguity_resolution_design.md, the 2026-09-10 note §4.1: "a fix count is not a grade")… | 11 |
 | `simnet_report.py` | One-command HTML dashboard for a SIMULATED NETWORK run. Chains the two halves that already exist, in the order the artifacts flow: 1. ``scripts/simne… | 7 |

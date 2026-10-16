@@ -80,7 +80,7 @@ def derive(cfg):
     derivations a reader reconstructs wrongly from the JSON alone.
     """
     d = {}
-    # NetworkKnobs.cpp: carry_invariant without eq34 is a hard load
+    # Knobs.cpp: carry_invariant without eq34 is a hard load
     # error (GnssConfigLoadNetwork.cpp:6129-6135), so the conjunct is defensive.
     d["eq34"] = _b(cfg, "network.phase_datum_eq34")
     d["carry_invariant"] = d["eq34"] and _b(cfg, "network.carry_invariant")
@@ -119,7 +119,7 @@ def assess(d):
         out.append({"target": target, "state": state, "why": why, "fix": fix})
 
     # ---- slip detection ----------------------------------------------------------
-    # NetworkSlipQc.cpp:160-162 / :464-465: neither carry_invariant nor carry_warm
+    # SlipQc.cpp:160-162 / :464-465: neither carry_invariant nor carry_warm
     # gates detection; they only select the action target. So *_detections
     # increments on a Card-4 lineage while *_refloats stays 0, and that asymmetry
     # is deliberate.
@@ -132,7 +132,7 @@ def assess(d):
     else:
         add("slip_detect", LIVE,
             f"detectors armed: {', '.join(det)}; detection is NOT gated by "
-            f"carry_invariant/carry_warm (NetworkSlipQc.cpp:160-162)")
+            f"carry_invariant/carry_warm (SlipQc.cpp:160-162)")
 
     # The legacy refloat action is carry_warm-gated even though detection is not.
     if det:
@@ -154,10 +154,10 @@ def assess(d):
                 "arm network.phase_leveling, or carry_invariant for the funnel path")
 
     if d["datum_station_detect"]:
-        # NetworkKnobs.cpp: && !phase_datum_prioritized, and eq34 implies
+        # Knobs.cpp: && !phase_datum_prioritized, and eq34 implies
         # a no-pivot datum.
         add("slip_datum_station", INERT if d["eq34"] else LIVE,
-            "inert under eq34 / any no-pivot datum (NetworkKnobs.cpp)"
+            "inert under eq34 / any no-pivot datum (Knobs.cpp)"
             if d["eq34"] else "armed and reachable")
 
     # ---- post-fit RAIM (T3/T3c, + T4) --------------------------------------------
@@ -174,7 +174,7 @@ def assess(d):
             "qc_amb census)")
     elif d["carry_invariant"] and d["raim_ci"]:
         add("raim_postfit", LIVE,
-            "pool re-hosted onto qc_amb (NetworkRaim.cpp:99-101); seam gate widened to "
+            "pool re-hosted onto qc_amb (Raim.cpp:99-101); seam gate widened to "
             "`raim_on && (carry_warm || raim_ci_on)`")
     elif d["carry_warm_possible"]:
         add("raim_postfit", LIVE, "legacy posture: phase_leveling fills pl_amb and "
@@ -199,14 +199,14 @@ def assess(d):
     if d["raim_within_epoch"]:
         if not d["carry_warm_possible"]:
             add("raim_within_epoch", INERT,
-                "gated `within_epoch_armed && carry_warm` (NetworkSolveGlue.cpp:1102) and "
+                "gated `within_epoch_armed && carry_warm` (SolveGlue.cpp:1102) and "
                 "carry_warm needs phase_leveling.  NOT re-hosted by the pool card - this "
                 "is the standing open gap",
                 "arm network.phase_leveling (the decouple is a sanctioned open fix)")
         elif d["carry_invariant"]:
             add("raim_within_epoch", DEGRADED,
                 "seam runs, but its ambiguity/phase pool is still pl_amb "
-                "(NetworkSolveGlue.cpp:1211) which carry_invariant empties; only the "
+                "(SolveGlue.cpp:1211) which carry_invariant empties; only the "
                 "WE-CI code/iono rows can populate" if d["we_ci"] else
                 "seam runs but the pool is pl_amb, empty under carry_invariant, and "
                 "raim_we_code_iono is off so no other rows enter",
@@ -228,7 +228,7 @@ def assess(d):
             add("a4_withhold", INERT,
                 f"raim_withhold_sigma0={d['withhold_sigma0']} but A4 consumes sigma0_adapt, "
                 "computed INSIDE `within_epoch_armed && carry_warm` "
-                "(NetworkSolveGlue.cpp:1102).  It cannot fire on this posture regardless "
+                "(SolveGlue.cpp:1102).  It cannot fire on this posture regardless "
                 "of the post-fit screen - so 'does A4 start firing' is not a question this "
                 "arm can answer",
                 "arm network.raim_within_epoch + network.phase_leveling, or accept that "
@@ -242,7 +242,7 @@ def assess(d):
     if d["raim_ci"] and d["emit_ura"]:
         add("ura_ewma", LIVE,
             "filling the pool makes sigma0 real, and it folds into ura_sigma0_ewma "
-            "(NetworkRaim.cpp:276-278) with a one-epoch lag: emitted URA WILL move. "
+            "(Raim.cpp:276-278) with a one-epoch lag: emitted URA WILL move. "
             "A 'measure-only' arm is not emission-neutral")
 
     # eq34 hygiene knobs superseded by Card 4 are handled by eq34_hygiene(): they are
@@ -256,11 +256,11 @@ def eq34_hygiene(cfg, d):
     injection targets, they are confounders that cost wall-clock time for nothing)."""
     checks = [
         ("network.phase_datum_eq34_pin_round",
-         "NetworkChainDatum.cpp:136-137 `&& !carry_invariant`"),
+         "ChainDatum.cpp:136-137 `&& !carry_invariant`"),
         ("network.phase_datum_eq34_carry_shift",
-         "NetworkKnobs.cpp `&& !k.carry_invariant`"),
+         "Knobs.cpp `&& !k.carry_invariant`"),
         ("network.phase_datum_eq34_rpb_q_m2s",
-         "NetworkKnobs.cpp ternary forces q to 0.0"),
+         "Knobs.cpp ternary forces q to 0.0"),
         ("network.phase_datum_eq34_seed_round_rehost_frame",
          "apply path transforms local_carry/rpb_carry/prev_carry, all empty under "
          "carry_invariant: measured 537 FRAMED re-hosts with byte-identical output "

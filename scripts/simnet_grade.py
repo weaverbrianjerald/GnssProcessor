@@ -730,7 +730,7 @@ def detect_ura_scale(run_dir):
     """Detect the scale factor the published URA carries, so vf is interpretable.
 
     URA = s0 * sqrt(scov(clock,clock)) with s0 = max(1.0, sigma0_EWMA)
-    (networkSolPrep() in NetworkSolPrep.cpp).  That EWMA is unavailable unless
+    (networkSolPrep() in SolPrep.cpp).  That EWMA is unavailable unless
     emit_ura + raim + phase_leveling are all armed; otherwise the RTB-6 sentinel
     applies, s0 is exactly 1.0, and the URA is the pure marginal formal sigma.
 

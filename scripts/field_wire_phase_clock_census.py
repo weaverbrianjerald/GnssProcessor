@@ -57,14 +57,14 @@ Conventions relied on (read from the source, not assumed)
   wander magnitudes are sign-blind, and only the closure sign depends on this.
 * IF combination: P_IF = (f1^2 P_L1C - f2^2 P_L2W)/(f1^2 - f2^2), f1 = 1575.42 MHz,
   f2 = 1227.60 MHz; the clock is band-independent so A_IF = P_IF - C0.
-* Consumer error sign: NetworkEmitStore.cpp `d = pos - cl_truth`, so the trace's
+* Consumer error sign: EmitStore.cpp `d = pos - cl_truth`, so the trace's
   east_m/north_m/up_m are (estimate - truth).  dx above is the estimate's displacement
   caused by the wire anomaly, so a real drive shows a positive correlation; a negative
   one is inconsistent with direct drive, not the same effect with a sign slip.
 * Elevation mask: taken from the run's own resolved config
   (`processing.elevation_mask_deg`), overridable with --elev-mask; printed.
 * The emitted C0 differs from the estimator's clock by a per-constellation,
-  per-epoch scalar only (NetworkClockEmitRebase.cpp: `held = c0 - acc` with one
+  per-epoch scalar only (ClockEmitRebase.cpp: `held = c0 - acc` with one
   accumulator per constellation, "between-sat differences preserved exactly"), which
   the per-epoch datum removal cancels exactly.
 
@@ -1267,7 +1267,7 @@ def main():
         say("    NOTE — the a-priori the C records are a correction ABOUT is itself a")
         say(f"    final SP3+CLK ('{ap_id}').  The emitted C0 is therefore ALREADY")
         say("    (estimator clock - final clock), up to the per-constellation per-epoch")
-        say("    scalar the CLK-R emit re-base subtracts (NetworkClockEmitRebase.cpp:")
+        say("    scalar the CLK-R emit re-base subtracts (ClockEmitRebase.cpp:")
         say("    `held = c0 - acc`; between-sat differences preserved exactly), which the")
         say("    per-epoch mean removal above kills.  So channel `clk` IS the")
         say("    truth-graded clock error e_s(t); no independent .CLK is needed for it.")

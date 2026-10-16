@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reference-satellite re-referencing of the DD-integer grade (SPEC_amb_iono_split_overcount §6.12, 2026-09-06).
 
-The producer's DD trace (network_dd_fractional.csv, filter/NetworkDdFrac.cpp) forms every chord against a
+The producer's DD trace (network_dd_fractional.csv, filter/DdFrac.cpp) forms every chord against a
 single reference satellite per (constellation, signal): the lexically-lowest satellite present at >= 2 stations,
 i.e. G01 / E02 for the whole day.  Every graded chord therefore inherits that satellite's own between-station SD
 ambiguity error, and when the reference leaves and returns (eclipse exclusion: G01 twice a day at the GPS

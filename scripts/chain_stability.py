@@ -7,12 +7,12 @@ Earlier versions of this script graded ``rms_clock_m`` from network_trace.csv.
 That was wrong twice over:
 
   1. ``rms_clock_m`` is RMS about zero of the raw satellite clock state
-     (NetworkStashStatus.cpp:149-155).  It is datum-dependent, so it confounds
+     (StashStatus.cpp:149-155).  It is datum-dependent, so it confounds
      benign frame drift with real defects, which is exactly what standing
      invariant #5 ("grade only datum-invariant / SD quantities") forbids.
 
   2. Even the datum-free clock statistics (clock_median_m / clock_std_m /
-     worst_sat / worst_dev_m, NetworkStashStatus.cpp:176-195, already written to
+     worst_sat / worst_dev_m, StashStatus.cpp:176-195, already written to
      network_epoch_status.csv) are insufficient.  The clock datum pins one
      satellite's clock to exactly 0.0000: measured on DOY 129, G01 for 2051 of
      2160 epochs.  Damage that lands in that satellite's code bias is invisible

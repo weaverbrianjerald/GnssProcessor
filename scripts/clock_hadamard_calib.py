@@ -9,7 +9,7 @@ diffusion coefficients (q1, q2) of the Zucca-Tavella two-state clock model that
 (analysis only; no C++ change).
 
 ------------------------------------------------------------------------------
-The model (matches ``clockOscPredict`` in include/filter/NetworkRunTypes.hpp)
+The model (matches ``clockOscPredict`` in include/filter/RunTypes.hpp)
 ------------------------------------------------------------------------------
 State x = [offset (m), drift (m/s)];  process noise over dt:
 
@@ -696,7 +696,7 @@ def render(results, out_path, args):
           "the large-τ slope as the physical clock.")
     if net:
         W("- **network** source = the emitted `clock_c0_m` "
-          "(= Δδtˢ-vs-precise, `NetworkEstimator.cpp:644`).")
+          "(= Δδtˢ-vs-precise, `Estimator.cpp:644`).")
     W("")
 
     # ---- intrinsic-vs-network comparison (Phase A.5) ----

@@ -51,7 +51,7 @@ Items (numbered as in the SPEC):
      plus a self-consistency check of the dump against the leg's own pf_keyed STA
      rows.
 
-Conventions taken from the code (NetworkFrameDiag.cpp): resid_m = v = y - A_s x_s -
+Conventions taken from the code (FrameDiag.cpp): resid_m = v = y - A_s x_s -
 A_r x_r (observed minus predicted, metres, not standardized); the pass pools
 |v|*sqrt(w).
 """

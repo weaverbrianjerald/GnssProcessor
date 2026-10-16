@@ -15,7 +15,7 @@ files and, for V7, one `git diff` against --base.
       that row's name is a member of exactly one entity row struct.
   V2  no stale access: zero `carry.<m>` / `cs.<m>` / `ctx.carry.<m>` under src/, include/, tests/
       (the compiler is the second tool: the build fails on a stale access).
-  V3  order: no range loop over an entity table outside network/state/NetworkEntities.*; a member keyed by
+  V3  order: no range loop over an entity table outside network/state/Entities.*; a member keyed by
       station NAME is never walked by forEach (byStationName only, O3); no lower_bound /
       upper_bound / equal_range on a moved field (O8).  The loops over moved fields are listed.
   V4  round trip: every reach-table converter line of every --runs dir reads 0 failures
@@ -59,14 +59,14 @@ ROW_STRUCTS = {'station': ['StationState', 'StationSignalState'],
                'los': ['LosState', 'LosEventState'], 'sat_signal': ['SatSignalState'],
                'satellite': ['SatelliteState'], 'arc': ['ArcState']}
 TABLES = ('constellations', 'sats', 'sat_signals', 'stations', 'los', 'arcs')
-RUN_CTX = 'include/network/state/NetworkRunContext.hpp'
-ENT_HPP = 'include/network/state/NetworkEntities.hpp'
-ENT_CPP = 'src/core/network/state/NetworkEntities.cpp'
-RUN_CPP = 'src/core/network/state/NetworkRunFields.cpp'
+RUN_CTX = 'include/network/state/RunContext.hpp'
+ENT_HPP = 'include/network/state/Entities.hpp'
+ENT_CPP = 'src/core/network/state/Entities.cpp'
+RUN_CPP = 'src/core/network/state/RunFields.cpp'
 TSV = 'scripts/nom3_designs/N4_fields.tsv'
-WRITER = 'src/core/network/state/NetworkStateSnapshotWrite.cpp'
-READER = 'src/core/network/state/NetworkWarmResume.cpp'
-BUILD = 'src/core/network/assembly/NetworkStationBuild.cpp'
+WRITER = 'src/core/network/state/StateSnapshotWrite.cpp'
+READER = 'src/core/network/state/WarmResume.cpp'
+BUILD = 'src/core/network/assembly/StationBuild.cpp'
 CONTRACT = 'tests/network/test_network_epoch_contract.cpp'
 
 
@@ -389,7 +389,7 @@ def v7(tree, entity, run_lint=True):
     for line in tree.contract_diff.splitlines():
         if line.startswith(('+++', '---')) or not line.startswith(('+', '-')):
             continue
-        if 'networkEntitiesReachSample' in line or 'network/state/NetworkEntities.hpp' in line:
+        if 'networkEntitiesReachSample' in line or 'network/state/Entities.hpp' in line:
             continue
         fails.append('contract test changed: ' + line.strip())
     return fails

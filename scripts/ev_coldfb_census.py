@@ -20,7 +20,7 @@ Two traces, both written by the seed itself:
     appears in it, SPEC_event_harness.md §15.)
 
 The candidate order is reproduced the way `networkElectPhaseAnchors` builds it
-(`src/core/filter/NetworkPhaseDatum.cpp`): per constellation, stations ranked by
+(`src/core/filter/PhaseDatum.cpp`): per constellation, stations ranked by
 descending coverage, the number of satellites of that constellation the station
 tracks at elevation >= `network.phase_datum_pref_elev_deg` (default 15), then by
 ascending station name.  `usable_keys` (the station allocated a phase-bias state

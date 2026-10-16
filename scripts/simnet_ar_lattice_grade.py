@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Truth grade of the producer AR search's lattice observatory (card AGT, step AGT-6;
-network.ambiguity_resolution.trace_lattice, filter/NetworkArLattice.hpp).
+network.ambiguity_resolution.trace_lattice, filter/ArLattice.hpp).
 
 The observatory keeps the search's fixed DDs as a lattice of fixed cycles.  Each search epoch it
 releases the lattice arcs whose life ended (vanished, first seen, freed, or a life-stamp change),

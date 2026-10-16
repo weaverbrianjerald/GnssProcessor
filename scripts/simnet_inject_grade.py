@@ -57,7 +57,7 @@ RAIM_TIERS = ("T2_within_epoch", "T3_raim", "T4_attrib")
 
 # Run-end counter lines are spdlog-only: no CSV sink exists for either family, so a
 # bench has to scrape them.  Anchored on the message prefixes emitted by
-# NetworkTeardown.cpp (slip: :1599-1626, RAIM pool re-host: :583-632).
+# Teardown.cpp (slip: :1599-1626, RAIM pool re-host: :583-632).
 COUNTER_PATTERNS = [
     ("slip", re.compile(r"Network \(slip-QC[^)]*\):(?P<body>.*)")),
     ("raim_ci", re.compile(r"Network \(RAIM pool re-host\):(?P<body>.*)")),

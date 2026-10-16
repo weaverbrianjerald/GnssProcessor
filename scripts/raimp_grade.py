@@ -37,40 +37,40 @@ What is read, and from which instrument (formats read from source, cited):
            events, LLI bits (network_slip_raw.csv), the mw_slip_detector.log DET
            lines for G24 (station-blind by design), and D5 rows on the arc
            (network_d5_flags.csv: chord = (receiver u, satellite 1000000+j),
-           NetworkDdPriorBuild.cpp:182; `station` is u, `amb_key` the arc).
+           DdPriorBuild.cpp:182; `station` is u, `amb_key` the arc).
            A D5 trip that the v3 corroboration gate suppresses never reaches the
-           dump (NetworkInvariantCarryDriver.cpp:1646-1648 `continue`s before
+           dump (InvariantCarryDriver.cpp:1646-1648 `continue`s before
            last_innov_flags_), so the refused outcome is visible only in the
            run-end "{} of {} gate trips SUPPRESSED" total (leg minus null,
-           NetworkTeardown.cpp:5021) and in the tri-state `raw_stepped` of the
+           Teardown.cpp:5021) and in the tri-state `raw_stepped` of the
            rows that do land (0 = measured flat, i.e. the corroboration set;
-           NetworkInstallCarry.cpp:152-170).
+           InstallCarry.cpp:152-170).
            The (1,2) IF-TD bar is max(k_mad·s_eff·elev_map, floor_frac·λ_IF(1,1))
-           (NetworkSlipQc.cpp:1194-1197; if_phase_td_floor_frac default 1.0,
+           (SlipQc.cpp:1194-1197; if_phase_td_floor_frac default 1.0,
            GnssConfigLoadNetwork.cpp:4600) = 0.106953 m on this chain, equal to
            the step an equal-count n = 1 slip adds to the chain's dd, so the
            margin |dd| - thr at the event epoch is what decides P0 per draw.
   SIGMA0   three instruments, because the pre-registered column is not the
            re-hosted statistic: (a) network_epoch_status.csv `sigma0` is the
-           within-epoch tier's `sigma0_adapt` (NetworkStashStatus.cpp:530, "0.0
+           within-epoch tier's `sigma0_adapt` (StashStatus.cpp:530, "0.0
            unless within-epoch RAIM ran"), pooled over R.pl_amb which is empty on
            this lineage, printed anyway because it is pre-registered; (b) the
-           re-hosted σ̂0 (NetworkRaim.cpp:417-428) is tallied only at run end
+           re-hosted σ̂0 (Raim.cpp:417-428) is tallied only at run end
            (mean / max over live-pool epochs) and feeds ura_sigma0_ewma
            (:435, alpha 0.1), which scales the emitted URA by max(1, ewma)
-           (NetworkSolPrep.cpp:433); the per-epoch U-record ratio leg/twin (same
+           (SolPrep.cpp:433); the per-epoch U-record ratio leg/twin (same
            solve) therefore reads the EWMA, and sigma0_k = (ewma_k - 0.9
            ewma_{k-1}) / 0.1 inverts it where both sides are above the clip
            (raim_gate_grade.py's inversion); (c) network_raim.csv rows (spiked
            cells only) and network_raim_attrib.csv rows carry σ̂0 per flagged
            cell. network_pf_keyed.csv STA / SAT rows (trace_postfit_keyed,
-           NetworkFrameDiag.cpp) are the coarse post-fit residual read on the
+           FrameDiag.cpp) are the coarse post-fit residual read on the
            failure branch.
   T3/T4    every T3_* / T4_* event row per leg, with identity; raim_attribution
            is on for this lineage, so the T4 path drives the refloat and the T3
-           consensus block (NetworkRaim.cpp:1180, `!attrib_act`) never emits.
+           consensus block (Raim.cpp:1180, `!attrib_act`) never emits.
   DRAIN    act legs: run-end "queued into the deferred funnel and delivered"
-           (NetworkTeardown.cpp:868); the drain itself (ApplicationNetwork.cpp
+           (Teardown.cpp:868); the drain itself (ApplicationNetwork.cpp
            :1590-1596) logs no identity, so the identity is the T4_attrib row
            that queued it plus the next epoch's chord births / arc refloats.
   WIRE     products.txt G24 CLK / per-signal PB, event minus null at the same
@@ -846,7 +846,7 @@ def main():
 
     # ---------------------------------------------------------------- SIGMA0
     hdr("3. SIGMA0 — (a) pre-registered column network_epoch_status.csv sigma0, k = kev-6..kev+14")
-    print("   ⚠ this column is the WITHIN-EPOCH tier's sigma0_adapt (NetworkStashStatus.cpp:530),"
+    print("   ⚠ this column is the WITHIN-EPOCH tier's sigma0_adapt (StashStatus.cpp:530),"
           " pooled over R.pl_amb — empty on this lineage — not the re-hosted screen's statistic.")
     S = {}
     print(f"{'leg':<18}{'kev':>4}  " + "".join(f"{d:>+6}" for d in range(-6, 15)) + f"{'spread':>8}")

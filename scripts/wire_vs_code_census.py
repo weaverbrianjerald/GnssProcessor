@@ -30,8 +30,8 @@ Every field order, unit and sign below was taken from the source, not from memor
   units  include/products/NetworkProductEmitter.hpp
     clock_c0_m "Estimable satellite clock C0 (m)"                  :82
     NetworkPhaseBias::bias_m "(m)", code_bias_m "(m)"              :71, :120
-  producer fill  NetworkEstimator.cpp:1042 clock_c0_m = x_s(c) (the residual-clock column);
-    NetworkEmitStore.cpp:354 overrides it with the CLK-R held/rebased value when armed.
+  producer fill  Estimator.cpp:1042 clock_c0_m = x_s(c) (the residual-clock column);
+    EmitStore.cpp:354 overrides it with the CLK-R held/rebased value when armed.
 
   what the consumer applies (signs)
     emitter -> store, all +1:  rec.c0 = clock_c0_m                 NetworkProductEmitter.cpp:273

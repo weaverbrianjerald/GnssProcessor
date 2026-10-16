@@ -37,7 +37,7 @@ update alone. Those identical leading epochs are also the pair's own validity ch
 
 Every key written here is verified absent from the warm-resume fingerprint, so a leg may
 arm them against a seed that did not: ``sd_ewl.*`` (grep-verified absent from
-NetworkSnapshotFingerprint.cpp's fingerprint chain) and the trace knobs. ``start_offset_hours``
+SnapshotFingerprint.cpp's fingerprint chain) and the trace knobs. ``start_offset_hours``
 carries the +15 s half-epoch back-off for the same reason chain_make_leg.py does: epoch
 elapsed times carry ~2e-5 s of double-precision residue and the fast-forward gate is a
 strict ``<``.

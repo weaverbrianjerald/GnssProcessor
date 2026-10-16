@@ -347,21 +347,21 @@ def class_table(t, eps, title, out):
 RAW_NOTE = """\
 WHERE A RAW (PRE-FILTER) PHASE BIAS WOULD LIVE -- candidate audit
   The emit path writes the emitted phase bias `npb.bias_m` in exactly three places
-  (grep `bias_m =` over NetworkEmitStore.cpp / NetworkSolPrep.cpp):
-    NetworkEmitStore.cpp:243   reads npb.bias_m into the re-base entry (not a write)
-    NetworkEmitStore.cpp:256   emit RE-BASE write-back      -- inside `if (emit_rebase_on)`
-    NetworkEmitStore.cpp:295   PB emit FILTER write-back    -- inside `if (emit_pb_filter_on)`
+  (grep `bias_m =` over EmitStore.cpp / SolPrep.cpp):
+    EmitStore.cpp:243   reads npb.bias_m into the re-base entry (not a write)
+    EmitStore.cpp:256   emit RE-BASE write-back      -- inside `if (emit_rebase_on)`
+    EmitStore.cpp:295   PB emit FILTER write-back    -- inside `if (emit_pb_filter_on)`
   Every other phase-bias site on the emit path writes `sigma_m` only
-  (NetworkSolPrep.cpp:538/567/592/1308 -- emitted-sigma, SD-sigma, combined sigc).
+  (SolPrep.cpp:538/567/592/1308 -- emitted-sigma, SD-sigma, combined sigc).
 
   ApplicationNetwork.cpp:919  emit_rebase_on   = carry_invariant && carry_invariant_emit_rebase
   ApplicationNetwork.cpp:927  emit_pb_filter_on= emit_rebase_on  && emit_pb_filter
 
   Candidate on-disk sources, each resolved against those line numbers:
     products.txt P records        POST-filter by construction (the wire).
-    network_solution.csv kind=PB  POST-filter: written at NetworkEmitStore.cpp:871-873,
+    network_solution.csv kind=PB  POST-filter: written at EmitStore.cpp:871-873,
                                   i.e. AFTER the :295 write-back, from the same `sol`.
-    network_sat_bias_states.csv   CODE bias only -- NetworkSolPrep.cpp:1367 iterates
+    network_sat_bias_states.csv   CODE bias only -- SolPrep.cpp:1367 iterates
                                   `s.code_bias_m`; there is no phase row in the file.
     network_amb_state.csv         per (station, satellite, signal) CARRIED ambiguity
                                   (value_abs_m), not the satellite phase bias.
@@ -435,7 +435,7 @@ def raw_mode(run, out):
         for tag in ("emit re-base", "continuity filter", "GATE v2"):
             counts[tag] = body.count(tag)
     out.append("")
-    out.append("(ii) run-end telemetry (NetworkTeardown.cpp:5002 / :5021 / :5035 -- each is")
+    out.append("(ii) run-end telemetry (Teardown.cpp:5002 / :5021 / :5035 -- each is")
     out.append("     UNCONDITIONAL inside `if (emit_rebase_on)` / `if (emit_pb_filter_on)`):")
     for tag, n in counts.items():
         out.append(f"      lines matching {tag!r:<22} in main_log.log : {n}")
@@ -455,7 +455,7 @@ def raw_mode(run, out):
     out.append("")
     out.append("(iii) the filter's posterior sigma stamp.  emit_pb_filter_emit_sigma is armed,")
     out.append("      so an ACTIVE filter stamps `sigma=<m>` onto every P record")
-    out.append("      (NetworkEmitStore.cpp:296-297).  Observed P-record field counts:")
+    out.append("      (EmitStore.cpp:296-297).  Observed P-record field counts:")
     out.append(f"      {dict(nf)}   records carrying a sigma= token: {nsig}")
 
     # (iv) the loader's own inertness warning
@@ -494,7 +494,7 @@ def raw_mode(run, out):
         out.append("")
         out.append("TO ACTUALLY TEST H-FILT one of the following is needed:")
         out.append("  - a run with network.carry_invariant armed (so the filter is live), or")
-        out.append("  - a new trace stream emitting Entry.value_m BEFORE NetworkEmitStore.cpp:295")
+        out.append("  - a new trace stream emitting Entry.value_m BEFORE EmitStore.cpp:295")
         out.append("    (a C++ change, out of scope for a trace-only read).")
 
     out.append(hdr("3. WHAT AN ARMED FILTER WOULD DO (from source + this config)"))

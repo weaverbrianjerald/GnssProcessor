@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle slip-response repair-effect census: grades whether the truth-fed repair actuated.
 
-`network.cycle_slip.oracle_relevel` (include/slip/NetworkSlipOracle.hpp) answers
+`network.cycle_slip.oracle_relevel` (include/slip/SlipOracle.hpp) answers
 every detector actuation on a carried arc by shifting `LocalCarry::value_abs` by
 the true integer jump sum d*lambda instead of freeing the arc.  The run-end
 counters report how many arcs it touched; they cannot show whether the touch had

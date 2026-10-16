@@ -109,7 +109,7 @@ def gim_at(maps, sod, lat, lon):
 
 
 def level_authority_reduce(sta_rows, min_los):
-    """Transliteration of levelAuthorityReduce in include/filter/NetworkRobustStats.hpp.
+    """Transliteration of levelAuthorityReduce in include/filter/RobustStats.hpp.
 
     Tier 1: per-station information-weighted mean (stations with fewer than
     min_los rows or a non-positive weight sum are skipped).  Tier 2: fleet
