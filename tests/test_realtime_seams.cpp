@@ -161,7 +161,7 @@ TEST(RealtimeEphStalenessTest, GalileoWindowTighterThanGps) {
 // no orbit IODE, so getOrbitClock reports iode = -1 ("unknown") for it.  The
 // downstream clock gate (GnssCorrections) computes
 //     ssr_iode  = has_clock ? (clock_iode >= 0 ? clock_iode : ssr->iode) : -1;
-//                 (Card 7 pinned eval; clock_iode == -1 on every unstamped
+//                 (pinned eval; clock_iode == -1 on every unstamped
 //                  record, so this reduces to ssr->iode here)
 //     brdc_iode = live broadcast IODE (>= 0 in RT, -1 in post-processing);
 // and applies the SSR clock only when SsrCorrectionStore::iodeMatches passes.
@@ -210,7 +210,7 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
     // Reproduce the GnssCorrections clock gate (GnssCorrections.cpp: the
     // ssr_iode / brdc_iode / iodeMatches trio) against the shared gate function.
     // The baseline pins to a stamped clock_iode first; an unstamped record (-1,
-    // as here) falls through to the orbit anchor, the RT0-1 expression (Card 7).
+    // as here) falls through to the orbit anchor, the RT0-1 expression.
     const int  ssr_iode  = (ssr && ssr->has_clock)
         ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
         : -1;
@@ -224,7 +224,7 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
 
     // The clock gate keys on clock_iode.  A standalone network clock carries no
     // wire IODE and no orbit, so clock_iode inherits the -1 "unknown" anchor and
-    // is permissive, the same result as a gate on ssr->iode (RTF-2, Card 3).
+    // is permissive, the same result as a gate on ssr->iode (RTF-2).
     EXPECT_EQ(ssr->clock_iode, -1);
     // The gate passes, so the network clock is applied.
     EXPECT_TRUE(SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode));
@@ -252,7 +252,7 @@ TEST(RealtimeSsrIodeGateTest, NetworkClockAppliesAgainstPopulatedBroadcastIode) 
 // A brdc_rts producer stamps the clock's own broadcast IODE and an orbit
 // coherence echo.  getOrbitClock propagates them onto the merged record's
 // clock_iode / orbit_iod_ssr / orbit_epoch, and the consumer gates the clock on
-// clock_iode: applied on a broadcast match, dropped on a mismatch (RTF-2, Card 3).
+// clock_iode: applied on a broadcast match, dropped on a mismatch (RTF-2).
 TEST(RealtimeSsrIodeGateTest, StampedClockIodePropagatesAndGates) {
     SsrCorrectionStore store;   // owned: no singleton coupling
     SsrClockCorrection c = makeClock("G07", 0.05, GnssTime{2300, 100.0});
@@ -274,7 +274,7 @@ TEST(RealtimeSsrIodeGateTest, StampedClockIodePropagatesAndGates) {
 
 // Byte-identity: a standard SSR clock (no wire IODE) merged with a standalone
 // orbit inherits the orbit's IODE for the clock gate, which matches a gate keyed
-// on the orbit anchor (RTF-2, Card 3).
+// on the orbit anchor (RTF-2).
 TEST(RealtimeSsrIodeGateTest, StandardClockInheritsOrbitIodeForGate) {
     SsrCorrectionStore store;   // owned
     SsrOrbitCorrection o;
@@ -295,7 +295,7 @@ TEST(RealtimeSsrIodeGateTest, StandardClockInheritsOrbitIodeForGate) {
 }
 
 // A combined record shares one IOD, so clock_iode == iode and the orbit echo is
-// the record's own IOD-SSR / content epoch (RTF-2, Card 3).
+// the record's own IOD-SSR / content epoch (RTF-2).
 TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
     SsrCorrectionStore store;   // owned
     SsrCombinedCorrection cb;
@@ -314,14 +314,14 @@ TEST(RealtimeSsrIodeGateTest, CombinedPropagatesClockIode) {
     EXPECT_NEAR(q->orbit_epoch.tow, 95.0, 1e-9);
     // A combined record is self-coherent: the applied orbit's own IOD-SSR equals
     // the echo by construction, which is the condition the GnssCorrections echo
-    // check short-circuits on (no second lookup).  (Card 7)
+    // check short-circuits on (no second lookup).
     EXPECT_EQ(q->applied_orbit_iod_ssr, 6);
     EXPECT_EQ(SsrCorrectionStore::classifyOrbitEcho(*q, q, /*max_skew_s=*/30.0),
               SsrCorrectionStore::OrbitEchoVerdict::Match);
 }
 
 // ===========================================================================
-// Consumer pinned clock eval and orbit-coherence echo check (Card 7, RTF-2).
+// Consumer pinned clock eval and orbit-coherence echo check (RTF-2).
 // The producer's brdc_rts clock is a delta against broadcast(clock_iode) and
 // echoes the RTS orbit it was estimated against.  The consumer (a) evaluates
 // the broadcast baseline pinned to that version (current/previous retention
@@ -364,7 +364,7 @@ TEST(Card7ConsumerTest, PinnedBaselineEvaluatesStampedEphVersion) {
     ASSERT_TRUE(q.has_value());
     EXPECT_EQ(q->clock_iode, 10);
 
-    // The Card-7 baseline selection, restated locally: this test pins the
+    // The baseline selection, restated locally: this test pins the
     // store's pinned-retention contract (computeSatelliteClock honors the pin
     // across a demotion); the production selection expression itself is pinned
     // end-to-end by SsrStoreInjectionTest.Card7PinnedEvalUsesStampedVersion,

@@ -1,7 +1,7 @@
 /**
  * @file test_card4_emit_rebase.cpp
  * @brief Gate 5 (EmitRebaseInteger) for the emit-layer frame re-base
- *        (docs/SPEC_card4_invariant_carry.md §10, gate 5 block; Card 4 (M1) phase D).
+ *        (docs/SPEC_card4_invariant_carry.md §10, gate 5 block).
  *
  * Feeds the production re-base (`NetworkEmitRebase`, the object ApplicationNetwork
  * runs before each emit) into the production emitter (`NetworkProductEmitter`, whose

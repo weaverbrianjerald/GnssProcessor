@@ -695,7 +695,7 @@ namespace GnssProcessor {
                           "stay 0).  The declared population is handled by the translation and "
                           "is reported on its own summary line.");
         }
-        // Presence edges of a held phase bias.  Default false keeps the card-PBH
+        // Presence edges of a held phase bias.  Default false keeps the phase-bias-hold
         // dispatch, under which a held key skips every reaction, byte-identical.  The
         // closed-loop harness derives it from network.closed_loop.pb_hold_presence_flip
         // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
@@ -1069,7 +1069,7 @@ namespace GnssProcessor {
             nc.expect_orbit_ref = jval<std::string>(
                 json, "processing.network_consumer.expect_orbit_ref",
                 "network_consumer_expect_orbit_ref", std::string{});
-            // Orbit/clock coherence age-skew budget (card 7, RTF-2).  0 (default)
+            // Orbit/clock coherence age-skew budget (RTF-2).  0 (default)
             // turns off the epoch-skew comparison and the clock withhold; IOD-SSR
             // identity mismatches are still counted.  Armed on the stores at the
             // setCodeBiasBandFallback sites (RealTimeEngine::initialize,
@@ -2301,7 +2301,7 @@ namespace GnssProcessor {
         // invariant #7; see SPEC_phase_windup_sign.md §7 for details).  A config
         // that omits estimation.accumulate_phase_windup reads false and runs in
         // this mode.  The warning changes no behavior; flipping the loader default
-        // is a migration card (fingerprint-invalidating), not a quick edit.
+        // is a migration (fingerprint-invalidating), not a quick edit.
         if (model_corrections_.enable_phase_windup && !accumulate_phase_windup_) {
             log->warn("Phase wind-up runs in FRACTIONAL (wrapping) mode — "
                       "estimation.accumulate_phase_windup is absent/false.  Each "

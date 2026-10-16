@@ -9,7 +9,7 @@
  *  - the level direction (+1 on the satellite clock, +1 on each of its phase biases) is
  *    blind to every phase row and seen by every code row, on the shared border the
  *    estimator actually reduces;
- *  - why the carry freezes it: Card 1d's time update shrinks a coupling row's clock
+ *  - why the carry freezes it: the kappa time update shrinks a coupling row's clock
  *    term at the legacy clock rate and keeps its phase-bias term, so a carried
  *    ambiguity row states its satellite's level;
  *  - the code-only information (the ionosphere-free pair formulas);
@@ -190,7 +190,7 @@ TEST(ClockLevelCarryTest, LevelDirectionIsBlindToPhaseAndSeenByCode) {
 }
 
 // ---------------------------------------------------------------------------
-// The mechanism: Card 1d's time update turns a carried ambiguity into a level statement.
+// The mechanism: the kappa time update turns a carried ambiguity into a level statement.
 // ---------------------------------------------------------------------------
 
 // An ambiguity's exact regression is on the phase side (-clock + phase bias) of its own

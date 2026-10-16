@@ -41,7 +41,7 @@
  *   C,<sat>,<c0>[,<c1>][,<clock_disc>]      # RTA-4: with counters on, c1 is always
  *     [,iode=<n>][,oiod=<n>]                #   written (0 when absent) so the clock
  *     [,oepoch=<week>:<tow>]                #   disc counter sits at fixed field 5.
- *                                           #   Card 4 (RTF-2): the iode=/oiod=/
+ *                                           #   RTF-2: the iode=/oiod=/
  *                                           #   oepoch= key=value tokens carry the
  *                                           #   brdc_rts broadcast-IODE anchor and RTS
  *                                           #   orbit echo (all absent in sp3 mode;
@@ -168,8 +168,8 @@ struct SbasisContract {
     /// reads a hold); @c checkContract compares it.  Never true without
     /// @c emit_pb_hold.
     bool              emit_pb_hold_phase_clock{false};
-    /// Whether the hold is the smoothed member (@c network.emit_pb_hold_smoothed, card
-    /// SMH): a held @c bias_m follows the phase-clock transfer minus the clock clone's
+    /// Whether the hold is the smoothed member (@c network.emit_pb_hold_smoothed):
+    /// a held @c bias_m follows the phase-clock transfer minus the clock clone's
     /// passed motion within a generation.  Serialized as @c pbhold=3; @c checkContract compares it.  Never true
     /// without @c emit_pb_hold.
     bool              emit_pb_hold_smoothed{false};

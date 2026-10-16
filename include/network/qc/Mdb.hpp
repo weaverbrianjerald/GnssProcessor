@@ -9,7 +9,7 @@
  * state (as rhs_attrib and the redundancy census are), so a
  * shared-snapshot replay leg with only this armed remains a legal A/B against an
  * unarmed control.  Nothing here writes a weight, a state or a decision; §9 of the
- * spec assigns any gate, deweight or admission driven by MDB to a separate card.
+ * spec assigns any gate, deweight or admission driven by MDB to a separate change.
  *
  * ## Purpose
  *
@@ -28,7 +28,7 @@
  *
  * ## Two reporting rules
  *
- *  1. **Formal MDB inherits the optimism of the formal σ.**  Card D5 measured the
+ *  1. **Formal MDB inherits the optimism of the formal σ.**  Field measurement found the
  *     formal @f$\sigma@f$ 10–30x optimistic on this data; MDB scales linearly with
  *     @f$\sigma@f$, so a formal MDB is optimistic by the same factor.  Every trace
  *     row therefore carries both `mdb_formal` and

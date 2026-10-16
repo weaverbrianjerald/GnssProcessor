@@ -254,7 +254,7 @@ TEST(PrefitCensusObservability, CentredMetricCancelsAClockStepAndKeepsAParkedCel
 // ===========================================================================
 //
 // A healthy pivot pin carries w = 1e10 against a zero innovation and would
-// contribute s ~ 1e7 as soon as it entered a pool.  A card-1 coupling row is a
+// contribute s ~ 1e7 as soon as it entered a pool.  A conditional coupling row is a
 // statement about the carry, not a measurement.  Both are excluded from the census
 // and, more importantly, from the fuse, which would otherwise cap the datum.
 TEST(PrefitCensusObservability, PinAndCouplingRowsAreExcludedFromEveryPool) {

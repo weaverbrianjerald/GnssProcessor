@@ -369,7 +369,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
 
     // Structure summaries for this epoch (INC-3 presence, INC-4 kinds and ties).
     std::set<std::pair<int, std::string>>           present_now;
-    /// Vet trigger for the measurement-admission card (its INC-4,
+    /// Vet trigger for measurement admission (its INC-4,
     /// docs/SPEC_measurement_admission.md §10): the (station index, satellite)
     /// cells whose worst established @c obs_code deviation exceeded
     /// @ref pc_event_sigma this epoch.  Published below into
@@ -475,7 +475,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
         // --- exceedance events (INC-1; established cells, rate-limited) -------
         for (const auto& [key, cw] : worst) {
             if (ev_sigma <= 0.0 || cw.s <= ev_sigma) continue;
-            // --- vet trigger for the measurement-admission card ----------------
+            // --- vet trigger for measurement admission ----------------
             // Recorded from the exceedance itself, ahead of `census_on`, the
             // event-class mask and the per-cell holdoff.  As with birth detection,
             // the detection does not depend on which consumers are armed, and a

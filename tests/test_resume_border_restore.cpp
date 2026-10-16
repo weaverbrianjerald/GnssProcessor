@@ -1,6 +1,6 @@
 /**
  * @file test_resume_border_restore.cpp
- * @brief Contract tests for the RS-7 dense-border continuity card
+ * @brief Contract tests for the RS-7 dense-border continuity mechanism
  *        (docs/SPEC_event_harness.md §21.14): the read knob
  *        @c network.resume_border_restore, its interlocks, and the restore
  *        convention it applies to the snapshot's @c QK / @c QP records.
@@ -15,9 +15,9 @@
  * @c QK keys and @c QP lower-triangle rows written by
  * @c network.state_snapshot_coupling_capture); its other reader is
  * @c network.resume_coupling_restore, which the loader refuses on a
- * @c carry_invariant field lineage because it requires Card 1f.
+ * @c carry_invariant field lineage because it requires the coupling gauge projection.
  *
- * The split, which is the substance of the card and the reason a test guards it.
+ * The split, which is the substance of the mechanism and the reason a test guards it.
  * One capture knob writes two independent populations:
  *   * the coupling rows (@c QL / @c QZ) are per-row regressions @f$M_r@f$ on
  *     the border.  A truncated one breaks the family identity
@@ -35,7 +35,7 @@
  * is expressed in the realization frame, the RS-6 argument); the warn-and-disarm
  * without @c shared_carry_full_cov (nothing consumes the block, so an armed knob
  * would be inert without any message, invariant #4); the independence from
- * Card 1f and from conditional coupling; and the restore convention itself:
+ * the gauge projection and from conditional coupling; and the restore convention itself:
  * which keys are kept, which are dropped (row and column), that the rebuilt @c P
  * is symmetric from the stored lower triangle, and that a snapshot without
  * @c QK / @c QP rows restores nothing rather than something partial.
@@ -254,8 +254,8 @@ TEST(ResumeBorderRestore, RestoreWithoutFullCovWarnsAndDisarms) {
         << "an armed-but-unconsumed border restore must be disarmed, not carried";
 }
 
-/// The central contract of the card.  network.resume_coupling_restore requires
-/// carry_coupling_gauge_project (Card 1f) because it also restores the coupling
+/// The central contract of the knob.  network.resume_coupling_restore requires
+/// carry_coupling_gauge_project because it also restores the coupling
 /// rows, whose truncation breaks Mᵀg_s = −g_r(c).  A covariance block carries no
 /// regression and no gauge identity, so the border restore loads without 1f.
 /// That makes it reachable on the carry_invariant field lineage, where 1f is out

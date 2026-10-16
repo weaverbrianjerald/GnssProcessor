@@ -119,7 +119,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                              carry_slipped_ambs, cnd, hyg);
 
         if (phase_datum_eq34) {
-            // Chain datum (card 3).  It mutates the carries before the solve and
+            // Chain datum.  It mutates the carries before the solve and
             // fills the epoch's eq34_reref, so it must stay ahead of the D3c RPB
             // allocation below (it is the sole writer of shared_phase_keys on this
             // path, and D3c derives its need_rpb set from that) and therefore ahead
@@ -174,7 +174,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // every member is a run-scope carry object: the freed sets this epoch's
             // drains just filled, and the leveling carry the age bar reads
             // `birth_ep` from.  Default-constructed when the knob is off, which
-            // reproduces the election without the card.
+            // reproduces the election without the knob.
             AnchorCandidacyUsable cand_usable;
             if (ctx.knobs.pd_candidacy_usable) {
                 cand_usable.on           = true;
@@ -452,7 +452,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                  // candidacy record, that is, how many better-ranked
                                  // candidates this successor was chosen over, and
                                  // the first one refused.  Absent with the knob off,
-                                 // so rows without the card are byte-identical.
+                                 // so rows without the knob are byte-identical.
                                  + (ctx.knobs.pd_candidacy_usable
                                         ? fmt::format(";cand_skipped={};cand_first_unusable={}",
                                                       h.cand_skipped,
@@ -613,7 +613,7 @@ void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep)
     const std::vector<bool>& present = ep.pass_a.present;
     const std::set<std::string>& shared_phase_keys = ep.pass_a.shared_phase_keys;
     // ---- End of the bindings ----
-    // RPB allocation (card 3 eq34, rule D3c): a present station gets the
+    // RPB allocation (eq34, rule D3c): a present station gets the
     // per-(receiver,system,signal) split state δ_{r,σ} if and only if it carries an
     // ungated shared phase-bias column on σ (a phase-bias state whose key is in
     // shared_phase_keys), that is, if it is a vertex of the D2 graph.  A station whose

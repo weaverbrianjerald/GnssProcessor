@@ -69,7 +69,7 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
     // Continuity targets: the carried shared state mapped into this epoch's
     // columns.  Phase biases come from pb_level_prev (prev_carry omits them under
     // carry_invariant, the same gap the INC-2 pin bridge meets); code biases take
-    // the card-2 kept-epoch map where it has a value.  On a datum re-reference the
+    // the time-linked kept-epoch map where it has a value.  On a datum re-reference the
     // carried values belong to the retired frame, so the targets re-seed at 0, like
     // every other re-referenced quantity.
     Eigen::VectorXd sbc_x_prev = Eigen::VectorXd::Zero(est.numShared());
@@ -264,7 +264,7 @@ int networkSbasisCompletionRunEnd(const NetworkRunEndView& v) {
     // SBC (network.sbasis_complete) run-end telemetry.  An armed completion that never
     // fired on a multi-constellation run means either that the deficiency it targets
     // never occurred (fine) or that the block is miswired (invariant #4, read as for
-    // WE-CI).  The observed-count envelope in the Card-DG line above separates the two:
+    // WE-CI).  The observed-count envelope in the DG line above separates the two:
     // a max above the declared dimension with n_sbc_epochs == 0 is the miswire.
     // Refusals are counted per cause because each needs a different fix.
     if (!ctx.knobs.sbasis_complete_on) return 0;

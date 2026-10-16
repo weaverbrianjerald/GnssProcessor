@@ -70,14 +70,14 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
     // Read-only parallel consult of the latched free-epoch set
     // (SPEC_slip_relevel_walk; filled serially in PASS-A, const for the whole produce).
     const bool   relevel_free_on = ctx.knobs.relevel_free_on;
-    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows (Card 1); requires fullcov_on (enforced at load)
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
     auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
     auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
     auto& n_cpl_terms_shrunk = ctx.counters.n_cpl_terms_shrunk;
     auto& n_cpl_row_dump = ctx.counters.n_cpl_row_dump;
 
-    // Coupling observability (Card 1/1d), serial and post-produce: fold the
-    // per-station coupling-term counts into the run totals, plus the one-shot Card-1d
+    // Coupling observability, serial and post-produce: fold the
+    // per-station coupling-term counts into the run totals, plus the one-shot
     // debug dump of the first few assembled coupling rows (see
     // network/carry/Coupling.hpp).  Free-epoch skips (SPEC_slip_relevel_walk): fold
     // the per-station counts (serial, post-produce, the same discipline as the
@@ -85,12 +85,12 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
     if (relevel_free_on)
         for (const StationAssembly& Rc : asm_res)
             ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
-    // Card NOM N1: the stations' parameter inventories, folded serially (the same
+    // The stations' parameter inventories, folded serially (the same
     // discipline); networkParamInventoryEpochTail writes the table after the first
     // emitted epoch and the teardown writes the run's.  `present` tells a roster station
     // with no usable observations from one that was assembled but never reached its split.
     networkParamInventoryDrain(ctx.param_inventory, asm_res, present, se.time.week, se.time.tow);
-    // Card PRM phase 3a: the produce phase's per-station response counts, folded into the
+    // The produce phase's per-station response counts, folded into the
     // run's response table (serial, the same discipline; zero where a site is unarmed).
     for (const StationAssembly& Rc : asm_res) {
         prmRespond(ctx.counters.prm_resp, ResponseSite::AmbFreeEpochLatch,    Rc.prm_amb_free_latch);
@@ -192,7 +192,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
             if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
                 ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
         }
-    // Card LGM: the phase-colour prior edges, counted in the parallel produce and reduced
+    // The phase-colour prior edges, counted in the parallel produce and reduced
     // here.  Off: the loop does not run.
     if (ctx.knobs.pc_on)
         for (const StationAssembly& Rc : asm_res) {
@@ -222,7 +222,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
         ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
         ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
     }
-    // Card CTU: fold each station's exact-update counts into the run totals (serial; the
+    // Fold each station's exact-update counts into the run totals (serial; the
     // produce wrote only its own slot).
     if (ctx.knobs.carry_cpl_exact)
         for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);

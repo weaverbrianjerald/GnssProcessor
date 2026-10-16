@@ -6,7 +6,7 @@
  * A three-band lineage carries one signal per band per station (the canonical
  * latch), so "the station's primary pair" and "the pair whose two signals are
  * both on the constellation's ionosphere-free pin bands" name the same two
- * signals.  Card B5D uses the same vocabulary: an extra-band signal is one whose
+ * signals.  The extra-band scoping uses the same vocabulary: an extra-band signal is one whose
  * band is neither band of the pin pair; on the RF-0hv GPS posture that is band 5
  * against the pinned L1/L2.
  *

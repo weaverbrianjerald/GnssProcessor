@@ -6,7 +6,7 @@
  *
  * A carried local (a float ambiguity, a ZWD, a slant ionosphere) is stashed at the
  * harvest as a conditional row on the shared border s, @f$l = r + M^\top s + e@f$ with
- * @f$e\sim N(0,C)@f$ (card 1).  The border then moves, @f$s^+ = s + w@f$,
+ * @f$e\sim N(0,C)@f$.  The border then moves, @f$s^+ = s + w@f$,
  * @f$w\sim N(0,Q)@f$.  With @f$P@f$ the stashed border posterior, the row's regression
  * on the moved border is
  *
@@ -17,10 +17,10 @@
  * epoch that the border fold carries with a finite inflation @f$Q_S@f$, @f$D@f$ the
  * columns the fold does not carry (departed, decoupled, re-realized or skipped).  The
  * coefficients of @f$D@f$ are re-attributed to @f$S@f$ through @f$P@f$, which is the
- * difference between this rule and the scalar kappa shrink of card 1d: a clock
+ * difference between this rule and the scalar kappa shrink: a clock
  * coefficient re-attributed to the correlated phase-bias columns keeps the row's
  * co-movement with the satellite's level instead of stating it at the row's precision.
- * With @f$D@f$ empty and @f$P@f$ diagonal the rule is card 1d's kappa exactly.
+ * With @f$D@f$ empty and @f$P@f$ diagonal the rule is the scalar kappa shrink exactly.
  *
  * Both halves are evaluated in forms free of cancellation (with
  * @f$F=(P_{SS}+Q_S)^{-1}@f$, @f$g=Q_SM_S@f$, @f$u=P_{S,D}M_D@f$, @f$z=Fu@f$): the
@@ -28,7 +28,7 @@
  * inflation moves the row by a small, accurately computed correction, and @f$Q=0@f$
  * returns the harvested row exactly), and the variance as
  * @f$M^\top BM = m_{new}^\top g + g^\top z + (M_D^\top P_{DD}M_D - u^\top z)@f$, using
- * @f$P_{SS}-P_{SS}FP_{SS} = P_{SS}FQ_S@f$.  The producer applies the per-row form (card
+ * @f$P_{SS}-P_{SS}FP_{SS} = P_{SS}FQ_S@f$.  The producer applies the per-row form (the design note above,
  * section 9.1 item 3): each row gets its own @f$M^\top BM@f$, and the time-update
  * covariance between rows is dropped, across stations and within a station alike.  The
  * same split gives that covariance (@ref couplingExactCross); the unit gate uses it for
@@ -65,14 +65,14 @@ inline constexpr int kCouplingExactRoutes = 5;
 /// Per-station (and, summed, per-run) telemetry of the exact update (standing invariant 4).
 struct CouplingExactCounters {
     long long rows_exact{0};         ///< rows updated by the one rule
-    long long rows_stale{0};         ///< rows harvested before the stash that P belongs to: card 1d route
-    long long rows_unfactored{0};    ///< rows met on an epoch whose P_SS + Q_S did not factor: card 1d route
+    long long rows_stale{0};         ///< rows harvested before the stash that P belongs to: scalar-kappa route
+    long long rows_unfactored{0};    ///< rows met on an epoch whose P_SS + Q_S did not factor: scalar-kappa route
     long long terms_s{0};            ///< harvested terms on an S column, updated exactly
     long long terms_d[kCouplingExactRoutes]{};   ///< harvested terms on a D column, re-attributed, by route
     long long terms_pinned{0};       ///< datum-pinned terms kept outside S and D with their coefficient
     long long terms_out_scalar{0};   ///< present terms with no dense row: scalar kappa at the fold's inflation
     long long terms_out_departed{0}; ///< terms with no dense row whose column departed or was re-realized: marginalized
-    long long terms_out_sh{0};       ///< SH-VTEC terms (never in the dense block): the card 1d treatment
+    long long terms_out_sh{0};       ///< SH-VTEC terms (never in the dense block): the scalar-kappa treatment
     long long terms_emitted{0};      ///< coefficients written to the rows (the dense spread over S included)
     long long gauge_held{0};         ///< clock-family deficits moved onto the constellation's pinned pivot
     long long gauge_orphan{0};       ///< clock-family deficits with no known pivot and no present clock of the constellation (the row stays gauge-dirty)
@@ -81,7 +81,7 @@ struct CouplingExactCounters {
     long long var_negative{0};       ///< rows whose bracket term came out below 0 (rounding) and was clamped
     double    var_add_sum{0.0};      ///< summed per-row inflation M'BM (m^2), the mass the per-row form adds
     double    shrink_abs_sum{0.0};   ///< summed |M_S - m_new| over the S terms (how much of each row moved)
-    // Card WSX (network.carry_coupling_exact_cross): the within-station bracket M_i'BM_k.
+    // Within-station cross term (network.carry_coupling_exact_cross): the within-station bracket M_i'BM_k.
     static constexpr int kCrossRhoBins = 8;   ///< |rho| bins: 0.01, 0.03, 0.1, 0.2, 0.3, 0.5, 0.8, above
     long long cross_blocks{0};       ///< local blocks that took the term
     long long cross_pairs{0};        ///< row pairs that took the term
@@ -91,13 +91,13 @@ struct CouplingExactCounters {
     long long cross_rho_hist[2][kCrossRhoBins]{};
     double    cross_rho_max[2]{};
     double    cross_abs_sum{0.0};    ///< summed |M_i'BM_k| over the pairs (m^2)
-    // Card SCL (network.carry_coupling_clock_clone): the rows' terms on the clock clones.
+    // Clock clones (network.carry_coupling_clock_clone): the rows' terms on the clock clones.
     long long rows_clone{0};         ///< exact rows with at least one term on a clock clone
     long long terms_clone{0};        ///< coefficients written onto clock clone columns
-    // Card SCL2 X2 (network.carry_coupling_shared_history): the rows' terms on the history.
+    // Shared history (network.carry_coupling_shared_history): the rows' terms on the history.
     long long rows_hist{0};          ///< exact rows with at least one term on a shared-history column
     long long terms_hist{0};         ///< coefficients written onto shared-history columns
-    long long rows_hist_marg{0};     ///< rows whose history terms were marginalized (stale generation, card 1d route, column absent)
+    long long rows_hist_marg{0};     ///< rows whose history terms were marginalized (stale generation, scalar-kappa route, column absent)
     long long terms_hist_marg{0};    ///< history coefficients marginalized
     double    hist_marg_var{0.0};    ///< their summed squares (m^2), added to the rows' variance
 
@@ -140,7 +140,7 @@ struct CouplingExactCounters {
 /// clock, phase-bias and code-bias entries of the previous kept epoch, in the datum frame
 /// of that epoch); "S index" is the subset carried into this epoch with a finite
 /// inflation.  A default-constructed epoch has @c ok false, and every row then takes the
-/// card 1d route.
+/// scalar-kappa route.
 struct CouplingExactEpoch {
     bool   ok{false};                    ///< built and factored this epoch
     double stash_s{0.0};                 ///< content time (continuous GPS s) of the stash @c P belongs to
@@ -173,7 +173,7 @@ struct CouplingExactEpoch {
     /// clock and phase-bias columns, whose diagonal is in @c q_s).  Empty on every other
     /// epoch, which leaves Q_S diagonal as before.
     std::vector<std::tuple<int, int, double>> q_off;
-    /// Card SCL (network.carry_coupling_clock_clone): S index -> 1 when the column is a
+    /// Clock clones (network.carry_coupling_clock_clone): S index -> 1 when the column is a
     /// clock clone (the rows' copy of the epoch puts a cloned clock on its clone at Q = 0).
     /// Empty on the exact update's own epoch and whenever the knob is off; read only by the counters.
     std::vector<char> clone_s;

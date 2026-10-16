@@ -4,7 +4,7 @@
  *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §2.6).
  *
  * The case under test is a gap the row-level tier cannot see.  The row-level
- * Card-G instrument keys on the raw row, the row is rebuilt every epoch from
+ * gap-coincident instrument keys on the raw row, the row is rebuilt every epoch from
  * whichever phase signals carry a matching code, and a satellite that keeps one
  * signal through a dropout keeps its row.  A receiver losing lock on the
  * semi-codeless L1/L2 phases while the civil L5 tracks through therefore
@@ -225,7 +225,7 @@ TEST(GapReentryPerSignalQualify, PrimaryPairDropoutWithThirdBandThroughFiresBoth
                 ballast("G03", wobble), ballast("G04", wobble) });
     }
 
-    // The row-level tier does not see this gap; that is the case the card covers.
+    // The row-level tier does not see this gap; that is the case this test covers.
     EXPECT_EQ(h.counters.gap_resumptions, 0);
     EXPECT_TRUE(h.epoch.resumptions.empty());
 

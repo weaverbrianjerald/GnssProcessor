@@ -12,7 +12,7 @@
  *     exactly one direction, the direction its own loose prior row gauges, is
  *     rejected with the prior empty (the behaviour with the knob off; see
  *     `docs/refound/RF-PD_station_rejection_2026-09-15.md`) and admitted with the
- *     same rows handed to `addStation`.  The synthetic block is the card's §5
+ *     same rows handed to `addStation`.  The synthetic block is the design's §5
  *     mechanism in miniature: a code/phase pair per band and satellite over
  *     `{receiver DCB, slant iono, L1 amb, L2 amb}` whose one null direction is the
  *     DCB ↔ iono ↔ ambiguity confound, with the ambiguity/iono mass ratio
@@ -41,13 +41,13 @@
 namespace GnssProcessor {
 namespace {
 
-constexpr double kGamma = 1.646944444;  // (f_L1/f_L2)^2, the card's γ
+constexpr double kGamma = 1.646944444;  // (f_L1/f_L2)^2, the design's γ
 
 /// One station's raw design rows over locals
 /// `[rx DCB, iono_1, N1_1, N2_1, iono_2, N1_2, N2_2, ...]` and a shared border
 /// of @p n_shared satellite columns.  Four rows per satellite (C1, L1, C2, L2),
 /// each touching one shared column (the satellite's), so the local block carries
-/// the whole DCB↔iono↔ambiguity structure the card names.
+/// the whole DCB↔iono↔ambiguity structure the design names.
 ///
 /// With `d1 = 1`, `d2 = γ` (the IGS DCB convention of §5) the observation-only
 /// local block is rank-deficient by exactly one: the direction
@@ -114,7 +114,7 @@ NetworkNormalEquations::StationPrior dcbDatum(Eigen::Index dcb_col, double sigma
 // ---------------------------------------------------------------------------
 
 /// Sanity check: the synthetic block is singular in exactly one direction, and that
-/// direction is the card's closed-form null (mass ratio 1+γ² of ambiguity to iono).
+/// direction is the design's closed-form null (mass ratio 1+γ² of ambiguity to iono).
 /// Without this the admission test below could pass on a block that is merely
 /// ill-conditioned, which is a different finding.
 TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
@@ -129,7 +129,7 @@ TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
     EXPECT_LT(std::abs(ev(0)), 1e-12 * ev_max) << "smallest eigenvalue is not numerically zero";
     EXPECT_GT(std::abs(ev(1)), 1e-8 * ev_max) << "the null is not rank ONE";
 
-    // Per-family mass of the null eigenvector, the card's §4(1) census.
+    // Per-family mass of the null eigenvector, the design's §4(1) census.
     const Eigen::VectorXd v = es.eigenvectors().col(0);
     double m_cbias = v(0) * v(0), m_iono = 0.0, m_amb = 0.0;
     for (int s = 0; s < 5; ++s) {
@@ -141,7 +141,7 @@ TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
     EXPECT_NEAR(m_amb / m_iono, 1.0 + kGamma * kGamma, 1e-6);  // §5's (b²+c²)/a²
 }
 
-/// The card's main case.  Same station, same rows, same PD test: rejected with no
+/// The main case.  Same station, same rows, same PD test: rejected with no
 /// prior, admitted when the station's own datum row is folded in first.
 TEST(NeqStationPriorBeforePdTest, RejectedWithoutPriorAdmittedWithPriorBeforePd) {
     const StationRows S = buildStation(5, 6, 0, 1.0, kGamma, 1.0);

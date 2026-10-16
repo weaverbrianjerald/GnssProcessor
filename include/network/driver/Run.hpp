@@ -121,8 +121,7 @@ EpochSectionTimers networkSectionTimersBegin(NetworkRun& run);
  *        kernel cost against @p sec and the per-sub-block attribution of the rest.
  *
  * Two log lines per epoch and one NetworkRunTiming::profiled_epochs count, only under
- * network.trace_section_timers (its first line).  The body is the frozen driver text (card
- * NOM3 step EP2).
+ * network.trace_section_timers (its first line).  The body is the frozen driver text.
  *
  * @param run The run: reads the estimator's section timers and timing.sub_blocks; writes
  *            timing.profiled_epochs; logs.

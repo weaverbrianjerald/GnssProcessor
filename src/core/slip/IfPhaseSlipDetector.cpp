@@ -426,7 +426,7 @@ namespace GnssProcessor {
             // "Independently slip-sized" means larger than a full IF cycle
             // (λ_IF), not the half-cycle candidate floor: a sub-slip drift can sit
             // just above phys on every member and would otherwise be promoted to a
-            // station event, which is the false family this card removes.  At
+            // station event, which is the false family this check removes.  At
             // least max(2, ⌈n/2⌉) members must exceed it.
             std::size_t n_large = 0;
             for (const double d : non_ref_dds) if (std::abs(d) > lambda_if) ++n_large;

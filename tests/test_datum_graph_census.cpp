@@ -353,7 +353,7 @@ TEST(NetworkDatumGraphCensus, CellsWithoutPhaseBiasAreNotCensused) {
 
 // Thin but nonzero support is the orphan class (eigenvalue ~1e-6, well below
 // the cutoff, invisible to topology because the column and its support both
-// exist).  Predicting it would be a claim about weights, which this card does
+// exist).  Predicting it would be a claim about weights, which this census does
 // not make; such a direction belongs in the `observed only` cell.
 TEST(NetworkDatumGraphCensus, ThinButNonzeroSupportPredictsNothing) {
     const std::set<std::string> pb{pbKey("E03", "L5X"), pbKey("E03", "L7X")};

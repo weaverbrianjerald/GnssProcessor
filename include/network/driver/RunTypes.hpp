@@ -2,7 +2,7 @@
 /**
  * @file RunTypes.hpp
  * @brief @internal Run-loop record types for Application::runNetwork: the
- *        per-station bundle, the PASS-B assembly slot, the carry PODs (D2, card 1)
+ *        per-station bundle, the PASS-B assembly slot, the carry PODs (D2)
  *        and the other run-loop-local helper types that the network seams share.
  *
  * Support header for the network run loop, not a public API; each type carries its
@@ -152,7 +152,7 @@ struct NetStation {
     // (sat, signal) pairs and is an ordinary carry-eligible station for the rest:
     // membership is per (sat, signal), never a station-level role.
     std::map<std::string, double> pinned_amb_targets;
-    // eq34 only (card 3): the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
+    // eq34 only: the "<sys>_RPB_<σ>" receiver-phase-bias keys for which this
     // station is the datum receiver r1 this epoch, each folded as a 1e10 pin on the
     // RPB column in this station's own block (δ_{r1,σ} = 0, the receiver half of the
     // single-receiver-chain gauge).  Cleared and rebuilt every epoch by the chain
@@ -169,7 +169,7 @@ struct NetStation {
     // off never reads this map and the fold is byte-identical.  Cleared and rebuilt
     // with the pins.
     std::map<std::string, double> pinned_amb_sigma_scale;
-    // Seed-round, fold-deferred path (docs/SPEC_eq34_seed_round.md §3.2, card 3):
+    // Seed-round, fold-deferred path (docs/SPEC_eq34_seed_round.md §3.2):
     // the wavelength of each elected pin whose ambiguity state did not exist at
     // election time (a cold start, or a new arc that PASS B's pre-pass allocates), so
     // the election had no value to round.  The fold computes target = λ·round(piv_x/λ)
@@ -336,12 +336,12 @@ struct SdEwlFix {
 /// (section 4.4).  Decided once per epoch, before PASS B, by
 /// @ref networkCarryDecide, and read by every consumer of the decision: the exact
 /// coupling update's rows (through @c cxu_epoch), the fold itself and the run-end
-/// tally.  The card's seven names map as: Anchored and Loose (a satellite clock under
-/// the Q3 anchor), Reinit, Reref and Parked as named; the card's Skipped is split into
-/// @c Held, @c OnOscillator, @c Screened and @c Retired; the card's Departed is the
+/// tally.  The design's seven names map as: Anchored and Loose (a satellite clock under
+/// the Q3 anchor), Reinit, Reref and Parked as named; the design's Skipped is split into
+/// @c Held, @c OnOscillator, @c Screened and @c Retired; the design's Departed is the
 /// decision's @c departed flag (a foldable entry whose column left the layout, which the
 /// estimator marginalizes); @c Folded (a bias at its kind's process noise, or a clock with
-/// the anchor disarmed) and @c Seeded (READMIT) are the two the card did not list.
+/// the anchor disarmed) and @c Seeded (READMIT) are the two the design did not list.
 enum class CarryDisposition : int {
     Undecided = 0,  ///< not decided this epoch (a fresh stash or restore entry)
     Folded,         ///< folded at its kind's process noise over the gap
@@ -494,7 +494,7 @@ struct SharedCarryCov {
 };
 
 /// One non-negligible entry of a carried local column's regression @f$M_r@f$ on the
-/// shared border (card 1, network.carry_conditional_coupling).  The coupling makes the
+/// shared border (network.carry_conditional_coupling).  The coupling makes the
 /// between-epoch carry conditional (a pseudo-observation row over @f$(x_s\mid x_r)@f$)
 /// rather than an independent marginal.  The entry holds the shared parameter's
 /// identity (kind plus sat/signal, or SH n/m/trig), so that it re-maps across the
@@ -505,7 +505,7 @@ struct SharedCarryCov {
 /// this epoch.  Datum-pinned and folded-gauge columns are carried with their
 /// coefficient but with @c p_prev = 0, because they are exactly known (the datum
 /// re-applies them each epoch).  Keeping them preserves the row's exact gauge
-/// invariance (card 1e); without them every coupling row observes the clock gauge,
+/// invariance; without them every coupling row observes the clock gauge,
 /// and the W5 null-space gate withholds the rows every epoch.
 struct CoupledShared {
     SharedParamKind kind{SharedParamKind::Clock};  ///< shared parameter kind
@@ -522,7 +522,7 @@ struct CoupledShared {
 
 /// Relative sparsification threshold for a carried column's regression row: an
 /// entry @f$M_{rj}@f$ is stashed only when @f$|M_{rj}| > @f$ @c kCouplingSparsifyRelThresh
-/// @f$\cdot\max_k|M_{rk}|@f$ (Card 1).  1e-8 keeps only the numerically meaningful
+/// @f$\cdot\max_k|M_{rk}|@f$.  1e-8 keeps only the numerically meaningful
 /// couplings; the dropped near-zero entries contribute negligibly to the row.
 inline constexpr double kCouplingSparsifyRelThresh = 1e-8;
 
@@ -530,7 +530,7 @@ inline constexpr double kCouplingSparsifyRelThresh = 1e-8;
 /// whitened local block (F3; @ref PlBlockRaw), retained so that the block can be
 /// re-whitened if a within-epoch RAIM refloat later drops some of its columns.
 /// @c shared holds the present shared terms, kept as ordinary @f$A_s@f$ coefficients as
-/// in card 1; the departed terms are already marginalized into @c var_eff.
+/// in the scalar coupling row; the departed terms are already marginalized into @c var_eff.
 struct CplRowRaw {
     Eigen::Index local_col{0};                            ///< carried local (A_r) column this row targets (+1).
     std::vector<std::pair<Eigen::Index, double>> shared;  ///< present shared terms: (shared col, M_rj).
@@ -549,8 +549,8 @@ struct CplRowRaw {
 /// columns marginalized (their rows and columns deleted from Σ before the factor,
 /// never conditioned on; the decoupling edge of standing invariant #7).  @c rows holds
 /// the per-column scalar-path ingredients: the same +1 local coefficient, the present
-/// shared terms (κ-shrunk per card 1d, gauge-restored per card 1f), the RHS, and
-/// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the card 1 scalar row
+/// shared terms (κ-shrunk, gauge-restored), the RHS, and
+/// σ² = var_eff + Σ_departed M²P_prev + Σ_present M²κqΔt, which the scalar coupling row
 /// would have carried.  Here @c var_eff is that σ², i.e. the diagonal of Σ; the
 /// departed-column marginalization stays per row and diagonal, as on the scalar path.
 /// @c Sigma is the n×n joint prior covariance over those columns: that diagonal, and off
@@ -595,7 +595,7 @@ struct LocalCarry {
     double value_abs;     ///< Carried absolute ambiguity estimate (m).
     double var;           ///< Last-solve posterior variance (m²): the marginal (conditionalLocalVarianceDiag) on the legacy diagonal carry, or, under network.carry_conditional_coupling, the pure conditional @f$(N_{rr}^{-1})_{rr}@f$.
     double last_seen_s;   ///< Continuous-GPS seconds when last stashed (gap inflation).
-    std::vector<CoupledShared> coupling{};  ///< The regression on the free shared border (card 1).  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off.  An empty coupling injects as a plain diagonal row (a one-epoch degradation).
+    std::vector<CoupledShared> coupling{};  ///< The regression on the free shared border.  Empty on the legacy diagonal path, and for a warm-resume-restored entry unless network.resume_coupling_restore rebuilt it from a v3 snapshot's QL/QZ record (§18.12); empty on a v1/v2 file or with the knob off.  An empty coupling injects as a plain diagonal row (a one-epoch degradation).
     std::shared_ptr<const PlHarvestBlock> blk{};  ///< The harvest cross-covariance block that holds this entry's off-diagonals (F3, network.phase_leveling_local_block).  Null when the knob is off, on the ZWD carry, and for a warm-resume-restored entry; with no block, every pair with this entry is zeroed and counted at inject.
     int blk_idx{-1};                              ///< This entry's row and column in @c blk->C (−1 = none; F3).
     double var_first{0.0};                        ///< The arc's first-stash conditional variance (m²; 0 = unknown): set once at birth and kept across re-stashes (an erase-and-rebirth starts it over; a re-level keeps it).  The unfloored σ-scale denominator of network.phase_datum_handover_max_var_ratio; snapshotted only when that knob is armed.
@@ -723,7 +723,7 @@ enum class AmbFoldRoute {
     None,           ///< No prior was folded for this column this epoch (skipped: freed / stale-gap / pending reseed / no carry / non-finite / gauge-pinned).
     Diag,           ///< A plain diagonal local prior row (Λ, η): the legacy per-column route.
     Block,          ///< A row of the station-wide jointly-whitened local block (F3 / the float_kf vehicle's structural fold).
-    CouplingScalar  ///< A card 1 conditional coupling row: +1 on the local column, M_r on the free shared border (the RF-0 route).
+    CouplingScalar  ///< A conditional coupling row: +1 on the local column, M_r on the free shared border (the RF-0 route).
 };
 
 /// One row of @c network_amb_state.csv, the per-arc carry-state trace (RF-1 §7.4).
@@ -742,7 +742,7 @@ struct AmbStateRow {
     std::string sat;                ///< Satellite (e.g. G07).
     std::string signal;             ///< RINEX signal (e.g. L1C).
     double      value_abs_m{0.0};   ///< The carried absolute float ambiguity after this epoch's harvest (m).  On an erase row, the value the entry held when it was deleted.
-    double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²); the conditional variance under card 1.
+    double      var_m2{0.0};        ///< The carried posterior variance after this epoch's harvest (m²); the conditional variance under the conditional coupling.
     double      var_first_m2{0.0};  ///< @ref LocalCarry::var_first: the arc's first-stash variance, unfloored.
     double      var_birth_m2{0.0};  ///< @ref LocalCarry::var_birth: the floored birth prior that the drop restores (RF-1 step 4).
     double      fold_var_m2{0.0};   ///< The variance the fold used this epoch (0 when @ref folded is false).
@@ -1228,7 +1228,7 @@ struct StationAssembly {
     std::vector<Eigen::Index> prior_cols;  ///< A_r columns receiving a pre-PD datum row (ascending).
     Eigen::VectorXd           prior_dNrr;  ///< Per-column information increment Λ = 1/σ².
     Eigen::VectorXd           prior_dur;   ///< Per-column RHS increment η = Λ·(0 − x_lin).
-    // Conditional coupling rows (card 1, network.carry_conditional_coupling).  The
+    // Conditional coupling rows (network.carry_conditional_coupling).  The
     // appended rows live in A_s/A_r (not in carry_cols), so the within-epoch RAIM
     // refloat must know which rows to withhold.  cpl_row_start = the first A_s/A_r row
     // index of the coupling block (−1 when none); cpl_row_local_cols = the carried local
@@ -1236,7 +1236,7 @@ struct StationAssembly {
     // row can be zeroed).
     Eigen::Index              cpl_row_start{-1};
     std::vector<Eigen::Index> cpl_row_local_cols;
-    // Coupling-term counts of this station-epoch's injected rows (card 1 and 1d
+    // Coupling-term counts of this station-epoch's injected rows (coupling and κ-shrink
     // observability): layout-present terms, departed (marginalized) terms, and present
     // terms κ-shrunk by the border time update.  Summed serially into run totals.
     long long                 cpl_terms_present{0};
@@ -1245,8 +1245,8 @@ struct StationAssembly {
     /// (constellation, kind) families whose coefficient sum was held at its harvest
     /// value against a truncated column, and families with truncated mass but no present
     /// recipient to carry it, which leaves the row gauge-dirty for that family this
-    /// epoch (card 1f, network.carry_coupling_gauge_project).  Both stay 0 with the
-    /// card off, so a nonzero pair shows that the wiring ran.
+    /// epoch (network.carry_coupling_gauge_project).  Both stay 0 with the
+    /// knob off, so a nonzero pair shows that the wiring ran.
     long long                 cpl_gauge_held{0};
     long long                 cpl_gauge_orphan{0};
     /// Orphan attribution: per (constellation, SharedParamKind) family, the orphan
@@ -1255,12 +1255,12 @@ struct StationAssembly {
     /// because the datum is, so holding an orphaned family's mass against the row's
     /// other constellation family would move a different datum's gauge.  The residue
     /// stays counted, attributed and unfixed by construction; a fallback needs its own
-    /// derivation card.
+    /// derivation.
     std::map<std::pair<char,int>, std::pair<long long,double>> cpl_orphan_fam;
     /// Coupling terms diverted to the departed route by the widened (kind, sat, signal)
     /// probe specifically, i.e. terms that the legacy satellite-wide probe would have
-    /// folded as present (card 1g, network.carry_coupling_reinit_sources).  This is the
-    /// card's own denominator: the run-total departed count moves for many reasons and
+    /// folded as present (network.carry_coupling_reinit_sources).  This is the
+    /// knob's own denominator: the run-total departed count moves for many reasons and
     /// cannot distinguish armed-and-working from armed-and-inert.
     long long                 cpl_reinit_diverted{0};
     /// Coupling terms diverted to the departed route this station-epoch because their
@@ -1269,7 +1269,7 @@ struct StationAssembly {
     long long                 cpl_readmit_diverted{0};
     /// Exact coupling update (network.carry_coupling_exact_update): this station-epoch's exact-update
     /// row and term counts, accumulated in the parallel produce phase and folded into
-    /// the run totals serially afterwards.  All zero when the card is off.
+    /// the run totals serially afterwards.  All zero when the knob is off.
     CouplingExactCounters     cxu{};
     /// Inject-site free-epoch skips taken this station-epoch: the arc had a live carry
     /// that the latched set suppressed (SPEC_slip_relevel_walk).
@@ -1426,7 +1426,7 @@ struct StationAssembly {
     bool                      pl_zwd_injected{false}; ///< A ZWD carry prior was injected this epoch (the "carried" flag of network_zwd.csv, distinct from carry-eligible; L7).
     PlZwd                     pl_zwd{};               ///< The ZWD present-record for the post-solve stash (B9).
     /// Present unpinned RPB columns recorded for the post-solve stash, as (rpb_key, A_r
-    /// column, linearization point) (eq34 RPB time-linking, card 3).  Empty unless
+    /// column, linearization point) (eq34 RPB time-linking).  Empty unless
     /// network.phase_datum_eq34 is on with phase_datum_eq34_rpb_q_m2s > 0.
     std::vector<std::tuple<std::string, Eigen::Index, double>> pl_rpb;
     /// Present per-LOS iono columns recorded for the post-solve harvest, as (sat, A_r
@@ -1479,7 +1479,7 @@ struct StationAssembly {
     /// data rows, so only rows @f$[0,\text{rows}())@f$ can carry a non-zero triple.
     ///
     /// Empty unless @c network.congruence_screen is armed: an unarmed run allocates
-    /// nothing and executes no extra floating-point operation, which the card's
+    /// nothing and executes no extra floating-point operation, which the knob's
     /// byte-identity A/B checks.
     Eigen::MatrixXd           row_pos_enu;
     /// Pre-formatted `network_sd_ewl.csv` rows for this station-epoch (SD pre-reduce
@@ -1490,7 +1490,7 @@ struct StationAssembly {
     /// the file is deterministic for any thread count.  Empty unless the trace is armed
     /// (log-only; it changes no solve).
     std::vector<std::string>  sd_ewl_trace;
-    /// Chain-pin audit (card 3, docs/SPEC_synthetic_minimum_network.md §14 T1, measured
+    /// Chain-pin audit (docs/SPEC_synthetic_minimum_network.md §14 T1, measured
     /// record §12.8): per (constellation, signal) fold tallies for this station-epoch's
     /// elected datum pins, keyed `"<cons>|<signal>"` (the election's @c dr_key), with
     /// value {folded, miss_state, miss_row} counting @c foldAmb / @c foldRpb outcomes.
@@ -1502,8 +1502,8 @@ struct StationAssembly {
     /// consume, so run totals do not depend on the thread count.  Empty unless
     /// @c network.phase_datum_eq34 is on.
     std::map<std::string, std::array<int, 3>> pin_audit;
-    /// Fold-deferred realized targets of the seed-round path (card 3,
-    /// docs/SPEC_eq34_seed_round.md §3.4): (ambiguity key, realized target m, pin
+    /// Fold-deferred realized targets of the seed-round path
+    /// (docs/SPEC_eq34_seed_round.md §3.4): (ambiguity key, realized target m, pin
     /// innovation y m) for every pin whose target the fold computed because the state
     /// was absent at election time.  Drained serially after the consume into
     /// @c ctx.carry.eq34_prev_target for accepted stations.  Without this feedback the
@@ -1879,7 +1879,7 @@ struct EpochStatusRow {
     std::optional<int>    datum_changed;
     std::optional<int>    n_arc_refloat;   ///< Isolated-arc RAIM refloats this epoch (the churn metric; distinct from n_refloat_sats, which is the clock-refloat set; T2d).
     // --- per-epoch carry churn (SPEC_day129_frame_guards P1-1) -----------------
-    // The card 4 run-end log line reports run totals only, which cannot show whether
+    // The run-end log line reports run totals only, which cannot show whether
     // the churn spiked at a given epoch.  These are the same quantities differenced
     // per epoch (NetworkInstallCarry).  Appended columns; existing positions are
     // preserved (as for T2d).
@@ -2108,7 +2108,7 @@ inline void networkCapturePriors(std::vector<NetworkEstimator::SharedPrior>& cap
 /// `union_keys` is post-gate: the network.phase_datum_min_stations coverage gate
 /// erases from it in place inside the builder.  There is no pre-gate copy, and none
 /// may be added: a pre-gate census would re-admit every one-tracker (sat, signal)
-/// into shared_phase_keys, which the card 3 D3c RPB allocation reads directly (the
+/// into shared_phase_keys, which the D3c RPB allocation reads directly (the
 /// non-PD ejection, one-station re-level and split-leak class that the gate exists
 /// to prevent).
 struct PhaseDatumCandidates {

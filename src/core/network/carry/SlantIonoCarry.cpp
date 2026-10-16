@@ -41,9 +41,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -120,7 +120,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     // Live predicate for I-in-block (network.carry_iono_in_block): the station's
     // carried per-LOS slant-iono columns join the F3 whitened block.  Conjoined with
-    // pl_blk_on as for the ZWD, and here the conjunction is load-bearing: the card has
+    // pl_blk_on as for the ZWD, and here the conjunction is load-bearing: the carry has
     // no diagonal fallback row (a diagonal per-LOS iono prior is the FALSIFIED
     // QUEUE-8(b) vehicle), so off the block path there is nothing to do.  The loader
     // already refuses the arm without phase_leveling + phase_leveling_local_block;
@@ -256,7 +256,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
         Eigen::VectorXd xr, vard;
         try {
             xr = est.reconstructStation(est_idx, x_s);
-            if (!carry_cpl_cond)   // the coupling carry (card 1) uses the pure conditional (N_rr⁻¹)_cc
+            if (!carry_cpl_cond)   // the coupling carry uses the pure conditional (N_rr⁻¹)_cc
                 vard = est.conditionalLocalVarianceDiag(est_idx, icols,
                                                         plan.shared_datum);
         } catch (...) { continue; }

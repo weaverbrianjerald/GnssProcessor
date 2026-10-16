@@ -1,6 +1,6 @@
 /**
  * @file test_rhs_attrib_local.cpp
- * @brief Card L5B: the attribution's station-local readout (`LOC:<station>:<key>` labels in
+ * @brief The attribution's station-local readout (`LOC:<station>:<key>` labels in
  *        @c network.rhs_attrib_columns, @c networkRhsAttribLocalShares and the `loc_<tow>.csv`
  *        writer in network/qc/RhsAttrib.hpp) and the kernel's
  *        @c NetworkNormalEquations::reconstructStationParts.
@@ -210,7 +210,7 @@ void buildRows(Fixture& f, int r, bool pins, StationAssembly& R) {
 /// the phase datum; otherwise the ensemble sum-to-zero gauges are.  @p zero_sta /
 /// @p zero_row: one row whose prefit is set to zero (a perturbation of the fixture).
 /// @p dd: also fold one DD-prior block on the G01/G02 L1C double difference of stations 1
-/// and 2 (the Card-4 carry; it needs the pin datum, the two folds being exclusive).
+/// and 2 (the invariant DD carry; it needs the pin datum, the two folds being exclusive).
 void solveFixture(Fixture& f, bool pins, int zero_sta = -1, Eigen::Index zero_row = -1,
                   bool dd = false) {
     const char* sats[2] = {"G01", "G02"};

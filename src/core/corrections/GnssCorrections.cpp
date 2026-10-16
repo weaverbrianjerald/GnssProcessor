@@ -218,9 +218,9 @@ namespace GnssProcessor {
         // anchor, so across a producer/consumer ephemeris-cutover skew the store's
         // current+previous retention re-references the baseline to the producer's
         // version instead of dropping the satellite.  Every unstamped path has
-        // clock_iode == iode (combined or inherited, Card 3) or clock_iode == -1
+        // clock_iode == iode (combined or inherited) or clock_iode == -1
         // (falls through to iode), so its output is byte-identical.
-        // (Card 7, RTF-2 / plan D7.)
+        // (RTF-2 / plan D7.)
         const int  ssr_iode = (ssr && ssr->has_clock)
             ? (ssr->clock_iode >= 0 ? ssr->clock_iode : ssr->iode)
             : -1;
@@ -297,7 +297,7 @@ namespace GnssProcessor {
             // when the skew budget (processing.network_consumer.orbit_clock_max_skew_s,
             // armed on the clock store) is > 0.  A stream that stamps no echo on a
             // separate clock record never reaches the lookup, so the default path
-            // is byte-identical.  (Card 7, RTF-2 / conventions §2.)
+            // is byte-identical.  (RTF-2 / conventions §2.)
             bool echo_ok = true;
             if (ssr->orbit_iod_ssr >= 0
                 && !(ssr->has_orbit
@@ -352,7 +352,7 @@ namespace GnssProcessor {
             // getOrbitClock; standalone network clocks stay -1), so the output is
             // byte-identical; only a brdc_rts producer's stamped clock IODE makes
             // the two differ.  The orbit overlay gate (ModelGeometry) stays on
-            // iode.  (RTF-2, Card 3.)
+            // iode.  (RTF-2.)
             if (std::isfinite(clock_corr) && echo_ok
                 && SsrCorrectionStore::iodeMatches(brdc_iode, ssr->clock_iode)) {
                 const double dt = TimeUtils::continuousGpsSeconds(time)
@@ -379,7 +379,7 @@ namespace GnssProcessor {
                 // Logging both IODs lets a live run tell a decode problem (garbage
                 // ssr_iode) from a convention problem (plausible but unequal) per
                 // constellation (GAL low-8-bit IODnav, BDS mod(toe/720,240)).
-                // echo_ok=false is the Card-7 orbit-coherence withhold (the debug
+                // echo_ok=false is the orbit-coherence withhold (the debug
                 // line above carries the echo detail).
                 log->trace("SSR clock present for {} ({}) but NOT applied: "
                            "brdc_iode={} clock_iode={} clock_finite={} echo_ok={}",

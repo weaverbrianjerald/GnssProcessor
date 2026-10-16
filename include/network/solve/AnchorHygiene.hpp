@@ -2,7 +2,7 @@
  * @file AnchorHygiene.hpp
  * @brief eq34 reattach hygiene: anchor-host eligibility, the time-linked phase
  *        datum ("pin bridge") and the fresh-pin deweight ramp.
- *        Card: docs/SPEC_eq34_reattach_hygiene.md.
+ *        Spec: docs/SPEC_eq34_reattach_hygiene.md.
  *
  * ## Problem
  *
@@ -20,7 +20,7 @@
  * through the right-hand side along the weak phase-bias subspace; the datum row holds
  * the pinned satellite's bias at the cold value, the other satellites' biases
  * re-express themselves around it, and the resulting between-satellite total_IF shift
- * persists.  The field case and its NEQ-SVD attribution are in the card.
+ * persists.  The field case and its NEQ-SVD attribution are in the spec.
  *
  * The existing QC does not see this event: RAIM T2 is carry_warm-gated (no opportunity
  * with leveling off), T3/T4 have no opportunity under carry_invariant, the clock-runaway
@@ -96,7 +96,7 @@ class NetworkRunTraces;
 struct GnssTime;
 
 /**
- * @brief Run tallies for the card (standing invariant #4: run-end counters are the
+ * @brief Run tallies for the hygiene seam (standing invariant #4: run-end counters are the
  *        on-path telemetry).  Embedded in @c NetworkServiceCounters as `hyg`, so the
  *        eq34 election (which has the context) increments it directly and the anchor
  *        election (a pure function) takes it as an out-parameter.
@@ -139,7 +139,7 @@ struct NetworkAnchorTallies {
     // default sweep" and from "it never ran" needs all three counts.
     // `candidacy_rank_changed` is the main one: the number of elections where the
     // usable candidate is not the station the default sweep would have taken, which
-    // is the population the card targets.
+    // is the population this hygiene targets.
     long long candidacy_usable_elected = 0;      ///< Handovers whose successor came from the usable-first pass.
     long long candidacy_rank_changed = 0;        ///< ...and the elected station differs from the default sweep's pick (the pass changed the outcome).
     long long candidacy_no_usable_fallback = 0;  ///< Handovers where no candidate was usable, so the default sweeps and the cold path apply.

@@ -18,8 +18,7 @@ struct NetworkRunEndView;
  *
  * The stations in the solve on every run (the in-solve count's minimum,
  * median and maximum, the PD drops and the re-admissions), and, with
- * network.trace_station_pd_null, the addStation PD rejection census by family (card
- * RF-PD).
+ * network.trace_station_pd_null, the addStation PD rejection census by family.
  *
  * Gate: each section under its own condition, as in the teardown: always (a block);
  * `config_.getNetworkConfig().trace_station_pd_null`.

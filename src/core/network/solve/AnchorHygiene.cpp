@@ -96,7 +96,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     // assigns this container the reader role
     // (`runs/_msc/sid_audit_report_2026-09-22.md` E.2: "age is ep - ep_state_changed").
     // S2 compares the two and counts disagreements; B2 takes the ledger's answer
-    // (Card SID phase 4).  Both are reachable only while this seam runs, which needs
+    // Both are reachable only while this seam runs, which needs
     // network.eq34_anchor_min_arc_ep, the pin bridge or the fresh-pin ramp armed.
     // On a posture with none of them the class has a zero denominator, and the
     // run-end table reports dead wiring rather than agreement.
@@ -228,7 +228,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             const char* drop = nullptr;
             if (slipped_any)            { drop = "slip";  ++ctr.hyg.bridge_drop_slip; }
             else if (datum_retired)     { drop = "datum"; ++ctr.hyg.bridge_drop_datum;
-                                          // Card PRM phase 3a: the bridge erased below.
+                                          // The bridge erased below.
                                           prmRespond(ctr.prm_resp,
                                                      ResponseSite::PbPinBridgeDiscard); }
             else if (br->folds >= bridge_max)

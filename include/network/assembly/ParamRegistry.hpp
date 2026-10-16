@@ -75,7 +75,7 @@ enum class ParamQRule {
     None,                ///< Not carried, or carried with no process noise stated.
     RandomWalk,          ///< var += q · gap_s (q in m²/s).
     RandomWalkPerDegree, ///< SH ladder: q / n² per degree n ≥ 1, q at n = 0 (TECU²/s).
-    AnchorElapsed,       ///< Card Q3: anchored at the anchor's q over the satellite's own elapsed time, loose at the legacy q until the guard re-validates.
+    AnchorElapsed,       ///< Q3 clock anchor: anchored at the anchor's q over the satellite's own elapsed time, loose at the legacy q until the guard re-validates.
     RandomWalkPerEpoch,  ///< var += q · gap_s / epoch (q in m² per epoch; the in-block local carries).
     GaussMarkov,         ///< x' = phi x + w, phi = exp(-gap/tau), var(w) = q (1 - phi²); q is the stationary variance (m²) at the zenith.
 };
@@ -86,7 +86,7 @@ enum class ParamRoute {
     DenseBorder,          ///< One information block over the border carry (C1, shared_carry_full_cov).
     DiagonalBorder,       ///< A diagonal prior per border key (D2).
     LocalBlock,           ///< A row of the station's jointly whitened local block (F3 / the float vehicle).
-    ConditionalRow,       ///< A conditional coupling row on the border, one per column (card 1).
+    ConditionalRow,       ///< A conditional coupling row on the border, one per column.
     DiagonalStationPrior, ///< A diagonal prior on the local column (addStationPrior).
     PriorRow,             ///< A pseudo-observation row of the station's A_r (before the PD test).
 };
@@ -233,7 +233,7 @@ public:
      * the satellite clock's legacy rate (which the clock anchor replaces per satellite
      * while it holds the clock), the phase bias's and the code bias's.  For @c VtecSh it
      * is the degree-0 rate of the legacy shell (TECU²/s); the per-degree ladder stays in
-     * @c CouplingRowBuilder::couplingQ and the SH prior inject until an SH card re-arms
+     * @c CouplingRowBuilder::couplingQ and the SH prior inject until a later SH build re-arms
      * them.
      *
      * @param kind The border kind.
