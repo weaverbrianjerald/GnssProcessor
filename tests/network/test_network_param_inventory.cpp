@@ -1,6 +1,6 @@
 /**
  * @file test_network_param_inventory.cpp
- * @brief Card NOM step N1: the parameter inventory of network/assembly/ParamInventory.hpp.
+ * @brief The parameter inventory of network/assembly/ParamInventory.hpp.
  *
  * Five contracts: the one classifier reads every key family a station's state manager
  * can hold (each key built by its @c StateKeySchema maker and read back); the receiver
@@ -11,7 +11,7 @@
  * drain keeps a station rejected after its split out of the classes; and the table prints
  * one line per class with the WARNING line where the rule's premise does not hold.
  *
- * Card NOM N1b adds three: the reason table names every gate that withholds a shared
+ * The absorbed-instances step adds three: the reason table names every gate that withholds a shared
  * state and what takes it up; a withheld state is recorded as absorbed only while the
  * station holds its absorbing column, and the table's note and reason lines state the
  * counts per reason; and the drain counts every roster station that did not reach its
@@ -567,7 +567,7 @@ TEST(NetworkParamInventoryTest, DrainCountsEveryStationThatDidNotReachItsSplitBy
 }
 
 // ---------------------------------------------------------------------------
-// Absorbed instances (card NOM N1b)
+// Absorbed instances
 // ---------------------------------------------------------------------------
 
 TEST(NetworkParamInventoryTest, ReasonTableNamesEveryGateAndWhatTakesItUp) {

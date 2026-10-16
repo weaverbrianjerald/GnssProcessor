@@ -7,8 +7,8 @@
  *
  * Measure-only, off by default, fingerprint-safe.  This translation unit writes no
  * weight, state, datum row or decision.  It does not move
- * @c NetworkSbasis::Plan::declared_dimension and does not feed the null-space gate,
- * SBC or card PA.  Acting on a prediction is the successor card (spec §8); v1
+ * @c NetworkSbasis::Plan::declared_dimension and does not feed the null-space gate or
+ * SBC.  Acting on a prediction is a later step (spec §8); v1
  * measures how good the prediction is before anything depends on it.
  *
  * ## Why a structural census when the dimension is already measured

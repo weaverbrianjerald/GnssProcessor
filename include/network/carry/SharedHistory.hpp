@@ -2,10 +2,10 @@
 
 /**
  * @file SharedHistory.hpp
- * @brief The shared history of card SCL2's build X2 (@c network.carry_coupling_shared_history,
+ * @brief The shared history (@c network.carry_coupling_shared_history,
  *        docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md, sections 4, 5, 6 and 9).
  *
- * Card SCL's clock clone (B1, filter/NetworkClockClone) marginalizes the clones out of every
+ * The clock clone (B1, filter/NetworkClockClone) marginalizes the clones out of every
  * carried row at the harvest, one station at a time: each row takes the clones' conditional
  * variance @f$r_C^\top B' r_C@f$ on its own diagonal (and within a station on the F3 block),
  * and the cross-station half of that shared term is dropped.  One epoch's dropped piece is
@@ -31,7 +31,7 @@
  *   referenced history directions are registered after every other column (after B1's
  *   clones), keyed @c "HIST|j", and folded by identity with the prior N(0, 1), independent of
  *   the border; the rows emit their history terms (@ref sharedHistoryRowTerms, the exact
- *   route of card CTU).  A history column is read by the gate view and the S-basis
+ *   route of the coupling update).  A history column is read by the gate view and the S-basis
  *   completion as nuisance (marginalized with the clones), never emitted, never stashed and
  *   never snapshotted.
  * - Events: a row of an older compression (a stale station, card 1d's route, a history
@@ -64,12 +64,12 @@ struct NetworkRunContext;   // network/state/RunContext.hpp defines it as a stru
 /// The largest @c network.carry_coupling_shared_history_rank the loader accepts.
 inline constexpr int kSharedHistoryRankMax = 8;
 /// A direction of the shared term whose Gram eigenvalue is at or below this fraction of the
-/// largest is empty (the unit fixture's tolerance, card SCL2 section 9).
+/// largest is empty (the unit fixture's tolerance, design section 9).
 inline constexpr double kSharedHistoryRankTol = 1e-14;
-/// Two continuous-GPS stamps within this many seconds are the same epoch (card CTU's test).
+/// Two continuous-GPS stamps within this many seconds are the same epoch (the exact coupling update's test).
 inline constexpr double kSharedHistoryStampTol = 1e-6;
 
-/// Card SCL2 X2's carried state (@c ctx.carry.shx).  The compression's stamp and width
+/// The shared history's carried state (@c ctx.carry.shx).  The compression's stamp and width
 /// persist to the next epoch; @c col and @c on are rebuilt at every registration.
 struct SharedHistoryState {
     bool   valid{false};                ///< a compression is held (@c stash_s, @c kt)
@@ -85,7 +85,7 @@ struct SharedHistoryState {
     }
 };
 
-/// Card SCL2 X2's run-end telemetry (@c ctx.counters.shx; standing invariant 4).  The rows'
+/// The shared history's run-end telemetry (@c ctx.counters.shx; standing invariant 4).  The rows'
 /// terms at the inject are in @c CouplingExactCounters (@c rows_hist and siblings).
 struct SharedHistoryCounters {
     long long epochs = 0;              ///< epochs with history columns registered
@@ -113,7 +113,7 @@ struct SharedHistoryCounters {
     std::vector<double> kept_share;    ///< per compression: kept eigenvalue mass over the total
     std::vector<double> rem_share;     ///< per compression: remainder mass over the total (the fixture's "dropped mass")
     std::vector<double> cross_share;   ///< per compression: Frobenius mass of the dropped cross-station remainder over that of the whole shared term
-    // Amendment A1 (build X2b): card SMH's clone rows in the history, form p (counted only
+    // Amendment A1 (build X2b): the smoothed-hold clone's rows in the history, form p (counted only
     // when the smoothed hold is armed).
     long long hold_pending = 0;        ///< hold rows whose Y term was kept pending at the update
     long long hold_projected = 0;      ///< hold rows projected onto the kept directions at the harvest's end
@@ -185,7 +185,7 @@ struct SharedHistoryProjection {
 };
 
 /**
- * @brief Compress a shared conditional term (card SCL2 X2; mode 6 of the unit network).
+ * @brief Compress a shared conditional term (mode 6 of the unit network).
  *
  * The rows' joint term is @f$R\,\Sigma\,R^\top@f$ with @f$R@f$ the rows' coefficients on Y.
  * With @f$L L^\top = \Sigma@f$ and @f$F = R L@f$, the leading right singular directions of
@@ -222,17 +222,17 @@ SharedHistoryProjection sharedHistoryProject(const Eigen::VectorXd& r, const Eig
                                              const Eigen::MatrixXd& V, int kt);
 
 /// @return Whether @p lc holds history coefficients of the compression it was last stashed
-///         at (card SCL2 X2): non-empty and @c shx_stash_s equal to @c last_seen_s.
+///         at: non-empty and @c shx_stash_s equal to @c last_seen_s.
 bool sharedHistoryCoefValid(const LocalCarry& lc);
 
-/// @return The marginal variance of @p lc (card SCL2 X2): @c var plus the squared norm of
+/// @return The marginal variance of @p lc: @c var plus the squared norm of
 ///         its valid history coefficients, @c var otherwise.  What the snapshot writes.
 double sharedHistoryMarginalVar(const LocalCarry& lc);
 
 /**
- * @brief The history terms of one coupling row at the inject (card SCL2 X2).
+ * @brief The history terms of one coupling row at the inject.
  *
- * With @p emit (card CTU's exact route) and the row's coefficients of the compression the
+ * With @p emit (the exact coupling route) and the row's coefficients of the compression the
  * registered columns belong to, each nonzero coefficient is added to @p emit on its
  * column (the right-hand side does not move: the prior mean is 0).  Otherwise (card 1d's
  * route, @p emit null; a stale generation; a column not registered) the coefficient's
@@ -244,7 +244,7 @@ void sharedHistoryRowTerms(const SharedHistoryState& shx, const LocalCarry& lc,
                            CouplingExactCounters& X);
 
 /**
- * @brief Register this epoch's history columns (card SCL2 X2), after every other column
+ * @brief Register this epoch's history columns, after every other column
  *        (call it after @c networkClockCloneRegister).
  *
  * Armed, with a compression held of the stash the rows' epoch belongs to
@@ -256,20 +256,20 @@ void sharedHistoryRowTerms(const SharedHistoryState& shx, const LocalCarry& lc,
 void networkSharedHistoryRegister(NetworkRunContext& ctx, NetworkEstimator& est);
 
 /**
- * @brief Fold the registered history columns' priors (card SCL2 X2): N(0, 1) on each,
+ * @brief Fold the registered history columns' priors: N(0, 1) on each,
  *        independent of the border, by identity.  Call after @c networkClockCloneFoldEnd.
  *        Captured in @c ws.cap_shx with @p within_epoch_armed.  No-op off.
  */
 void networkSharedHistoryFold(NetworkRunContext& ctx, EpochWorkspace& ws, NetworkEstimator& est,
                               bool within_epoch_armed);
 
-/// Re-fold the captured history priors on the within-epoch replay's fresh arrowhead
-/// (card SCL2 X2).  No-op off and when nothing was captured.
+/// Re-fold the captured history priors on the within-epoch replay's fresh arrowhead.
+/// No-op off and when nothing was captured.
 void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWorkspace& ws,
                                     NetworkEstimator& est);
 
 /**
- * @brief Open the harvest's history record (card SCL2 X2).  Inert (@c on false) off and when
+ * @brief Open the harvest's history record.  Inert (@c on false) off and when
  *        B1's regression is not available this epoch (B1 then drops the rows' Y terms, as
  *        it drops its clone terms; counted when history was registered).
  * @param h B1's harvest record, formed by @c networkClockCloneHarvestBegin over Y.
@@ -277,14 +277,14 @@ void networkSharedHistoryReplayFold(const NetworkRunContext& ctx, const EpochWor
 SharedHistoryHarvest networkSharedHistoryHarvestBegin(NetworkRunContext& ctx,
                                                       const ClockCloneHarvest& h);
 
-/// Note where a harvested row's entry was written (card SCL2 X2): call after each of the six
+/// Note where a harvested row's entry was written: call after each of the six
 /// carry-map writes of the harvest.  No-op when @p H is inert.
 void networkSharedHistoryNoteEntry(SharedHistoryHarvest& H, std::size_t est_idx, Eigen::Index col,
                                    SharedHistoryMap map, int sta, const std::string& sat = "",
                                    const std::string& sig = "");
 
 /**
- * @brief The compression (card SCL2 X2), once every carried row of the network is harvested:
+ * @brief The compression, once every carried row of the network is harvested:
  *        the rows' Y coefficients through @ref sharedHistoryCompress at the cap
  *        @c rank x the clones registered this epoch, each noted entry's history
  *        coefficients and stamp written, its remainder added to its variance, the
@@ -299,9 +299,9 @@ void networkSharedHistoryHarvestEnd(SharedHistoryHarvest& H, const ClockCloneHar
                                     NetworkRunContext& ctx, double now_s);
 
 /**
- * @brief Amendment A1 (build X2b): card SMH's clone rows at the harvest's end.
+ * @brief Amendment A1 (build X2b): the smoothed-hold clone's rows at the harvest's end.
  *
- * Every live clone row (card SMH's clock rows; card SMD's clock and phase-visible rows) that
+ * Every live clone row (the smoothed-hold clone's clock rows; the smoothed-hold block member's clock and phase-visible rows) that
  * kept its Y coefficients pending at this epoch's update (@c PbHoldCloneShx::rc, stamped with
  * @c n_loop_epochs) is projected onto @p X's kept directions (@ref sharedHistoryProject): its
  * history coefficients are stamped @p now_s (emitted with the history columns at the next
@@ -323,7 +323,7 @@ void networkSharedHistoryProjectHoldRows(NetworkRunContext& ctx, const SharedHis
  */
 void networkSharedHistoryFinalizeHoldRows(NetworkRunContext& ctx, long long ep);
 
-/// The run-end line of card SCL2 X2 and its INERT warning (invariant 4).  No-op off.
+/// The run-end line of the shared history and its INERT warning (invariant 4).  No-op off.
 void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log);
 

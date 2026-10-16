@@ -1,6 +1,6 @@
 /**
  * @file CanonicalPairAdmission.cpp
- * @brief Canonical-pair admission, card CPA (design in CanonicalPairAdmission.hpp).
+ * @brief Canonical-pair admission (design in CanonicalPairAdmission.hpp).
  */
 #include "network/assembly/CanonicalPairAdmission.hpp"
 
@@ -39,7 +39,7 @@ namespace GnssProcessor {
             for (const auto& e : model.exportCanonicalSignals()) {
                 const auto signal = SignalId::fromObsCode(systemFromName(e.constellation), e.signal);
                 if (!signal) continue;
-                // The pair's bands are the digits 1 and 2 (a band role, card NOM step N3).
+                // The pair's bands are the digits 1 and 2 (a band role).
                 const bool band1 = signal->digit == '1';
                 if (!band1 && signal->digit != '2') continue;
                 CanonicalPair& p = out[e.constellation];

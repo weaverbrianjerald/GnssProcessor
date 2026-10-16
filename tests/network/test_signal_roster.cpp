@@ -1,6 +1,6 @@
 /**
  * @file test_signal_roster.cpp
- * @brief The per-station signal roster, card SID phase 1
+ * @brief The per-station signal roster
  *        (docs/refound/SID_signal_identity_2026-09-22.md section 5, P5).
  *
  * The roster reproduces the rules that already decide which signal stands for a
@@ -12,7 +12,7 @@
  *    count rule alike (the roster never re-runs the decision, so both cases are one
  *    code path fed two different latches, and the roster does not depend on which
  *    rule produced the latch);
- *  - a card SCC companion carries the Companion role and is not an exclusion;
+ *  - a second-code-channel companion carries the Companion role and is not an exclusion;
  *  - every other tracked signal is an exclusion with a reason, and the reasons
  *    distinguish the allow list, a band the latch decided against, and a band the
  *    latch does not carry;
@@ -96,7 +96,7 @@ TEST(SignalRosterTest, ModelledRoleIsTheLatchUnderThePriorityRule) {
 
 TEST(SignalRosterTest, ModelledRoleIsTheLatchUnderTheCountRule) {
     // The count rule at the same station latches the channel with the most
-    // satellites, which on the six stations card CSL names is L1C.  The roster is
+    // satellites, which on the six stations the canonical-signal-latch study names is L1C.  The roster is
     // the same code path: it reads the latch it is given, so the rule that produced
     // it is invisible here.  That is the property, not an accident of the fixture.
     const auto cells = signalRosterBuildCells(
@@ -183,7 +183,7 @@ TEST(SignalRosterTest, CompanionsNeedTheCanonicalPresentAndStayOnBandOne) {
         { "C1C" }, true, nullptr);
     EXPECT_TRUE(no_canon.at('1').companion_code.empty());
 
-    // Band 2 has no companion mechanism at all (card SCC is band 1 only).
+    // Band 2 has no companion mechanism at all (the second code channel is band 1 only).
     const auto b2 = signalRosterBuildCells(
         { "C2W", "L2W", "C2L" }, latch({ { 'L', "L2W" }, { 'C', "C2W" } }),
         { "C2L" }, true, nullptr);
@@ -244,7 +244,7 @@ TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
 }
 
 // ---------------------------------------------------------------------------
-// The IF pin as a roster writer (card SID phase 2)
+// The IF pin as a roster writer
 // ---------------------------------------------------------------------------
 
 TEST(SignalRosterTest, TheIfPinDesignationIsPerConstellationAndBand) {
@@ -321,7 +321,7 @@ TEST(SignalRosterTest, TheDatumFieldsAreWrittenAndThePhaseIsNeverDerived) {
 }
 
 // ---------------------------------------------------------------------------
-// The tracker's lookup bound to the roster (card SID phase 2)
+// The tracker's lookup bound to the roster
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -374,8 +374,8 @@ TEST(SignalRosterTest, TheTrackerLookupBoundToTheRosterReturnsTheModelledPhase) 
 }
 
 TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWithoutItsCode) {
-    // The selection rule of card GRK, driven from the roster instead of the station
-    // latch: card SID phase 2 in one pass.
+    // The gap re-entry selection rule, driven from the roster instead of the station
+    // latch, in one pass.
     LogManager     lm;
     PppUtils       utils{ lm };
     const auto     rs = oneStationRoster(kTrackedL1cL1w,
@@ -421,7 +421,7 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
 
     // (3) Unarmed with the same lookup bound: the lexical rule is unchanged and the
     //     counter reports the size of the affected population instead (the
-    //     both-states telemetry of card GRK, inherited by this phase).
+    //     both-states telemetry of the gap re-entry key fix, inherited by this phase).
     {
         const std::vector<std::vector<PppObservation>> modeled{
             { rawObs("G01", { "L1C", "L1W", "L2W" }) } };
@@ -437,7 +437,7 @@ TEST(SignalRosterTest, TheRosterBoundTrackerNamesTheModelledPhaseAndFallsBackWit
 }
 
 // ---------------------------------------------------------------------------
-// First-sighting-on-return detection (card SID phase 4, S2)
+// First-sighting-on-return detection
 // ---------------------------------------------------------------------------
 //
 // The election calls a family a first sighting when it had no incumbent at the

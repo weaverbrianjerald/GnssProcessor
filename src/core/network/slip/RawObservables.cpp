@@ -1,7 +1,7 @@
 /**
  * @file RawObservables.cpp
  * @brief Shared raw cycle-slip observables and the empirical qualification pass
- *        (slip-QC hardening, cards L and G).
+ *        (slip-QC hardening).
  *
  * @ref networkComputeRawObservables carries the arithmetic of the
  * `network.trace_slip_raw` writer in ApplicationNetworkAssembly.cpp unchanged:
@@ -422,8 +422,8 @@ void networkQualifyRawObservables(const std::vector<std::vector<PppObservation>>
         // the instrument off disarm the response without notice.  With both off,
         // the block is not reached and every card-G output is byte-identical.
         // row_resumed holds the satellites with a row-level resumption this
-        // epoch and is the de-duplication key of the per-signal tier (5b, card
-        // GRS).  It is filled only when gap_reentry_per_signal is on, so a run
+        // epoch and is the de-duplication key of the per-signal tier (5b,
+        // per-signal gap re-entry).  It is filled only when gap_reentry_per_signal is on, so a run
         // without it pays for one empty container.
         std::set<std::string> row_resumed;
         if (p.collectsResumptions()) {

@@ -102,7 +102,7 @@ TEST(CanonicalSignalCodeFollow, FalseKeepsTheCodeOnItsOwnPriorityPick) {
 
 TEST(CanonicalSignalCodeFollow, ThePhaseLatchIsIdenticalUnderBothValues) {
     // The knob acts on the code half only: the band-1 phase attribute (the lever
-    // card CSL graded) does not move with it.
+    // that the canonical signal latch graded) does not move with it.
     for (const auto& v : { band1(9, 10, 9, 10), band1(2, 10, 2, 10),
                            band1(-1, 10, 10, 10), band1(10, 10, -1, 10) }) {
         const auto on  = decide(v, CanonicalSignalRule::Priority, 0.5, true);

@@ -23,18 +23,18 @@
 #include "network/solve/ChainDatum.hpp"
 #include "network/solve/ClockAnchor.hpp"   // guarded temporal clock anchor
 #include "network/carry/ClockClone.hpp"    // the one-epoch clock clone
-#include "network/carry/SharedHistory.hpp" // the shared history (card SCL2 X2)
+#include "network/carry/SharedHistory.hpp" // the shared history
 #include "network/solve/DatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "network/diag/FrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "network/solve/HandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
 #include "network/solve/PhaseDatum.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/PrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
-#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally (card NOM N2b)
+#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally
 #include "network/qc/Relevel.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "network/qc/RobustStats.hpp"
-#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule (card NOM N2b)
+#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"

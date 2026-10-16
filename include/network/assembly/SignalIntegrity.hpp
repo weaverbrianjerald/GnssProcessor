@@ -261,7 +261,7 @@ struct NetworkSignalIntegrityTallies {
     /// re-enters code-anchored and fresh at the state level.  A nonzero value means
     /// that prune did not fire (or a held key bridged the outage) and the re-entry
     /// premise needs re-deriving.  (What can bridge an outage is the phase-leveling /
-    /// invariant-DD carry one level up; that is Card G's instrument and this card
+    /// invariant-DD carry one level up; that is the gap classifier's instrument and this tally
     /// does not duplicate it.)
     long long reentry_amb_state_live = 0;
     /// LLI bit 0 asserted on a re-entry epoch (spec §2 INC-3c audit).
@@ -287,7 +287,7 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
  *        the INC-3 regain refloat.  See the file banner for the ordering contract.
  *
  * Epoch form; the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),
@@ -303,7 +303,7 @@ struct NetworkSlipFunnel;       // network/driver/Epoch.hpp
  *   - @p log = run.log: producer logger (debug / warn).
  *   - @p traces = run.traces: SIGNAL-tier `trace_events` rows.
  *   - @p t = ep.se.time: this epoch's time (event stamps).
- *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  It is the same counter Card G measures gaps in (`SlipQcChannel::epoch_idx`), so the two instruments' re-entry totals are directly comparable (the spec's §6C acceptance test).
+ *   - @p epoch_idx = run.engines.slip_qc.epoch_idx: the monotonic processed-epoch index.  It is the same counter the gap classifier measures gaps in (`SlipQcChannel::epoch_idx`), so the two instruments' re-entry totals are directly comparable (the spec's §6C acceptance test).
  *   - @p stations = run.setup.stations: [in/out] the σ map is republished per station, and a withheld key's phase-bias state is pruned the same way the coverage gate prunes a thin key's.
  *   - @p present = ep.pass_a.present: this epoch's presence mask.
  *   - @p modeled = pass_a.modeled: [in/out] per-station observations.  Read for the band census; under `withhold_instead` an unvetted LOS's phase entries are erased from `observed` (never from `raw_observed`, which the slip detectors own).

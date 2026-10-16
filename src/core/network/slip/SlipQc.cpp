@@ -344,7 +344,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
     // is refloated like any other station.
     if (config_.networkCycleSlipMwDetect()) {
         // Matched (a detection landed on a live ambiguity) and refloated (the warm
-        // carry was reset) are recorded separately (Card E).  A cold run matches,
+        // carry was reset) are recorded separately.  A cold run matches,
         // and feeds the C3c funnel, without refloating; the separate flag lets it
         // still report its MW/LLI events, with action "diagnostic" (limitation L3).
         struct SignalAction { bool matched{false}; bool refloated{false};
@@ -419,7 +419,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
             }
             return act;
         };
-        // The LLI qualification (Card L) is armed only when the toggle is on and
+        // The LLI qualification is armed only when the toggle is on and
         // this epoch has raw evidence.  Without evidence an LLI stays decisive: a
         // gate that fires on missing data would do more harm than the LLI chatter
         // it is meant to filter.
@@ -711,7 +711,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 !lli_qual || (i < static_cast<int>(raw.lli_credible.size())
                               && raw.lli_credible[static_cast<std::size_t>(i)] != 0);
             for (const auto& obs : modeled[i]) {
-                // The LLI qualification (Card L) is a per-(station, satellite)
+                // The LLI qualification is a per-(station, satellite)
                 // decision, so first establish whether this satellite asserts LLI.
                 bool asserts = false;
                 for (const auto& [code, lli] : obs.lli_flags)
@@ -1635,7 +1635,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                 // that never reached the carry, or one the band scope kept whole).
                 // Counted apart from the responses, so a run whose restarts all
                 // land here reads as unanswered rather than answered (invariant
-                // #4; card WUP section 1).
+                // #4).
                 ++qc_cnt.wu_restart_no_arc;
             }
             traces.emitEvent(se.time, "T0_windup", "wu_restart", sat,
@@ -1794,8 +1794,8 @@ struct GapArcOutcome {
 /**
  * @brief Free one (station, satellite, signal) arc at a gap re-entry.
  *
- * The response body shared by the row-level tier (Card G) and the per-signal
- * rider (Card GRS): both answer the same question about the same carry, and a
+ * The response body shared by the row-level tier and the per-signal
+ * rider: both answer the same question about the same carry, and a
  * single copy keeps the two tiers from drifting apart.  Counters land in @p led
  * so each tier keeps its own closed partition; the caller emits the event,
  * because only it knows the tier's identity fields.
@@ -1819,12 +1819,12 @@ struct GapArcOutcome {
  * @param relevel            Free-epoch latch, or nullptr when relevel_free_epoch is off.
  * @param present_sigs       The phase signals of this (station, satellite) that
  *                           are present this epoch with a matching code, used
- *                           only to qualify @c gap_reentry_unreachable (Card
- *                           GRK).  Null (the default) keeps the broader count,
+ *                           only to qualify @c gap_reentry_unreachable.
+ *                           Null (the default) keeps the broader count,
  *                           which is what a posture without the per-signal list
  *                           can state.
  * @param count_unreachable  Whether this call may feed @c gap_reentry_unreachable
- *                           at all (Card GRK).  True only from the row-level
+ *                           at all.  True only from the row-level
  *                           tier, whose key is the tracker's band signal and can
  *                           therefore differ from the carried one.  The
  *                           per-signal tier passes false: there the returning
@@ -1880,7 +1880,7 @@ GapArcOutcome gapReentryRespondArc(
     // (gap_shifted_bridged / _fresh) can, from the driver.
     if (!(out.pl_bridged || carry_invariant)) {
         ++led.no_carry;
-        // Why there was no carry under this key (Card GRK).  A LocalCarry entry
+        // Why there was no carry under this key.  A LocalCarry entry
         // for the same (station, satellite) on another signal of the same band,
         // still inside the max-gap window, is what the PASS-B inject will fold
         // across this break, and this response cannot reach it: the tracker
@@ -1980,7 +1980,7 @@ GapArcOutcome gapReentryRespondArc(
     return out;
 }
 
-/// This epoch's raw row for (station @p i, @p satellite), or null (Card GRK).
+/// This epoch's raw row for (station @p i, @p satellite), or null.
 ///
 /// The row carries the per-signal list that @c gap_reentry_unreachable qualifies
 /// on.  A linear scan suffices: a station's row vector holds one entry per
@@ -1994,7 +1994,7 @@ const RawSlipObs* gapReentryFindRow(const RawSlipEpoch& raw, int i,
 }
 
 /// The phase signals of @p row that are present with a matching code, or an
-/// empty set when the row carries no per-signal list (the Card GRS tier
+/// empty set when the row carries no per-signal list (the per-signal tier
 /// unarmed).  An empty set is passed to the responder as a null pointer, which
 /// keeps the broader unreachable count instead of reporting a zero.
 std::set<std::string> gapReentryPresentSignals(const RawSlipObs* row) {
@@ -2020,12 +2020,12 @@ void gapReentryVoidPends(int i, const std::string& satellite,
 }
 
 // ---------------------------------------------------------------------------
-// Shared lookup helpers (Card SID phase 3)
+// Shared lookup helpers
 // ---------------------------------------------------------------------------
 
 /// Record one arc's response outcome for the unified census (R4).  Null sink ⇒
 /// no roster was set up (a context no network run built, such as a unit test's;
-/// every network run builds it since card NOM step N3a) and nothing is recorded.
+/// every network run builds it) and nothing is recorded.
 void sidRecordOutcome(ArcReentryOutcomeMap* sink, int i, const std::string& sat,
                       const std::string& sig, ArcReentryOutcome o) {
     if (sink == nullptr) return;
@@ -2252,7 +2252,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                                 ArcReentryOutcomeMap* sid_out,
                                 ArcLedger* arc_ledger) {
     if (!qc.gap_reentry) return;
-    // With the ledger armed (Card SID phase 3), the population is the ledger's and
+    // With the ledger armed, the population is the ledger's and
     // the raw list is only the verdict source, so an epoch with no raw resumption
     // still has work.
     const bool ledger_driven = (sid != nullptr && sid->armed);
@@ -2306,7 +2306,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         }
         const GapCause primary = g.shifted ? GapCause::Shifted
                                            : (lli_set ? GapCause::Lli : GapCause::Unmeas);
-        // With the ledger armed (Card SID phase 3), this tier's detections,
+        // With the ledger armed, this tier's detections,
         // verdicts and traces are everything above, unchanged so an A/B can still
         // read what the raw tier saw, and the response moves to the ledger loop
         // below.
@@ -2314,13 +2314,13 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
         // The signals this (station, satellite) tracks this epoch, which qualify
-        // the unreachable count (Card GRK).  Built once per resumption and shared
+        // the unreachable count.  Built once per resumption and shared
         // by both bands.
         const std::set<std::string> present_sigs =
             gapReentryPresentSignals(gapReentryFindRow(raw, i, g.satellite));
         const std::set<std::string>* present_ptr =
             present_sigs.empty() ? nullptr : &present_sigs;
-        // --- Extra channels of the same two bands (Card SID phase 6b, R3) --------
+        // --- Extra channels of the same two bands (R3) --------
         // This tier keys on the satellite and frees the tracker's one phase per band.
         // That is the whole modelled set on a one-channel-per-band posture, but not
         // under `processing.channel_mode: all`: there the station also carries every
@@ -2371,7 +2371,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             // an identity, not only a count).  `statistic` is the raw ΔMW in
             // metres when the break was measurable and blank otherwise: a 0.0
             // would read as "the level did not move", an absence-of-evidence
-            // claim that Card G is designed not to make.
+            // claim that the gap classifier is designed not to make.
             traces.emitEvent(se.time, "T0_gap", "reentry_relevel", g.satellite,
                              stations[static_cast<std::size_t>(i)].name,
                              g.measurable ? std::optional<double>(g.d_mw) : std::nullopt,
@@ -2404,7 +2404,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     }
 
     // ----------------------------------------------------------------------
-    // The response over the ledger's admitted population (Card SID phase 3)
+    // The response over the ledger's admitted population
     // ----------------------------------------------------------------------
     //
     // This loop owns the census of the whole population, including the arcs it
@@ -2469,7 +2469,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 if (v.shared) ++qc_cnt.ledger_reentry_v_shared;
             } else {
                 ++qc_cnt.ledger_reentry_no_verdict;
-                // Attribute the no-verdict return (Card SID phase 4a, S1).  This
+                // Attribute the no-verdict return.  This
                 // population is a screen-side decoupling: the modelled row of a
                 // signal disappears while `raw_observed` keeps it and the satellite
                 // stays modelled, so neither raw tier sees a break.  The reason mask
@@ -2607,7 +2607,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
 }
 
 // ---------------------------------------------------------------------------
-// Per-signal gap re-entry response (Card GRS)
+// Per-signal gap re-entry response
 // ---------------------------------------------------------------------------
 void networkSlipDrainGapReentryPerSignal(
     std::vector<NetStation>& stations, const std::vector<bool>& present,
@@ -2622,8 +2622,8 @@ void networkSlipDrainGapReentryPerSignal(
     const ArcReentryEpoch* sid, ArcReentryOutcomeMap* sid_out) {
     if (!qc.gap_reentry || !qc.gap_reentry_per_signal) return;
     if (raw.sig_resumptions.empty()) return;
-    // The decoupling-edge trace below is the same in both ledger states (Card SID
-    // phase 3).  With the ledger armed, the response runs over the ledger arcs
+    // The decoupling-edge trace below is the same in both ledger states.
+    // With the ledger armed, the response runs over the ledger arcs
     // that carry one of this tier's verdicts, and the row-level drain owns the
     // census.
     const bool ledger_driven = (sid != nullptr && sid->armed);
@@ -2716,8 +2716,8 @@ void networkSlipDrainGapReentryPerSignal(
             if (share != nullptr) ++sh.skipped;
             continue;
         }
-        // With the ledger armed, the population is the ledger's (Card SID phase
-        // 3).  A raw per-signal resumption whose arc is not in the admitted
+        // With the ledger armed, the population is the ledger's.
+        // A raw per-signal resumption whose arc is not in the admitted
         // population (the estimator never lost the row, or the gap outran the
         // carry horizon) is still detected, given a verdict and traced, but gets
         // no response.  A shared verdict is a verdict here too.
@@ -2762,7 +2762,7 @@ void networkSlipDrainGapReentryPerSignal(
         // valid, and freeing them would add the response cost that
         // SPEC_lane_slip_response measures (the slip cost of a whole-satellite
         // refloat is 100 % response-inflicted).
-        // This tier does not feed gap_reentry_unreachable (Card GRK).  Its key is
+        // This tier does not feed gap_reentry_unreachable.  Its key is
         // the returning signal, so the tracker and the carry cannot disagree
         // about which signal names the band; a return on a signal the station
         // does not model correctly finds no carry, and the modelled same-band
@@ -2899,7 +2899,7 @@ void networkSlipQcConfigure(NetworkRun& run) {
     // ledger's admitted lifecycle, and the raw tiers become the verdict source,
     // looked up per arc.  The loader already refuses the knob without the roster, the roster
     // read and the row-level response, so no interlock is re-tested here.
-    // Unarmed, both drains stay on their raw-driven path (card SID phase 3).
+    // Unarmed, both drains stay on their raw-driven path.
     sp.ledger_reentry          = config_.networkLedgerReentry();
     sp.ledger_reentry_refloat  =
         config_.networkLedgerReentryNoVerdict() == LedgerReentryNoVerdict::Refloat;
@@ -2931,7 +2931,7 @@ void networkSlipQcArmWavelengthProvider(NetworkRun& run, LogManager& log_manager
     // ---- End of the bindings ----
     // Wavelength provider for the raw-slip path, gated on the streams openAll just
     // opened.  It is built here because it needs log_manager_, which the traces
-    // unit does not hold.  The raw-slip provider serves three consumers (the trace, card L and card G) and is built when any
+    // unit does not hold.  The raw-slip provider serves three consumers (the trace, the LLI qualification and the gap classifier) and is built when any
     // of them is armed, per spec §1: "compute once per epoch when any consumer
     // needs it".  With none armed it stays null and the raw-observable path is
     // skipped.

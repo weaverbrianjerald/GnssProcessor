@@ -779,7 +779,7 @@ namespace GnssProcessor {
         // The prune always shrinks the state vector.  A caller that passes
         // removed_out also receives the removed keys, so the arc ledger can
         // record that a later re-entry returns to a fresh column.  With the
-        // default null sink nothing is reported (card SID phase 3, R3b).
+        // default null sink nothing is reported.
         if (removed_out != nullptr)
             removed_out->insert(removed_out->end(), to_remove.begin(), to_remove.end());
         for (const auto& key : to_remove)
@@ -1646,7 +1646,7 @@ namespace GnssProcessor {
     }
 
     // ===================================================================
-    // Phase-colour states (network.phase_colour_state, card LGM): one band-common,
+    // Phase-colour states (network.phase_colour_state): one band-common,
     // phase-only Gauss-Markov nuisance per satellite, keyed by the bare satellite id.
     // The network carries the estimate; this map holds the column only.
     // ===================================================================

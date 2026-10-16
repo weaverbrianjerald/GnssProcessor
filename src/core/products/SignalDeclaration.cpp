@@ -1,7 +1,7 @@
 /**
  * @file SignalDeclaration.cpp
  * @brief Implementation of the declared signal roster and its wire form (the `N`
- *        record) (card SID phase 5).
+ *        record).
  *
  * Pure functions: no logging, no I/O, no config.  The writer and the reader
  * share these functions so the two cannot diverge.

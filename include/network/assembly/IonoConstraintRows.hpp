@@ -9,7 +9,7 @@
  */
 
 #include <cstdint>
-#include "network/state/Entities.hpp"   // net::LosTable (the SH deviation carries, card NOM step N4c)
+#include "network/state/Entities.hpp"   // net::LosTable (the SH deviation carries)
 #include "network/driver/RunTypes.hpp"
 #include "network/assembly/Contributions.hpp"
 #include "common/PppObservation.hpp"
@@ -51,12 +51,12 @@ StationStep networkIonoConstraintRows(StationBuild& build);
  *        Implemented in @c ApplicationNetworkAssembly.cpp.
  *
  * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
- * @param[in,out] tags  The station's row tags (card NOM N2a): one @c GimIono tag per
+ * @param[in,out] tags  The station's row tags: one @c GimIono tag per
  *                      appended row, in row order.
  * @return What the builder did (suspect 4): no GIM loaded, the
  *         ionosphere weighting off, no qualifying line of sight, or rows appended.
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkAppendGimIonoRows_), so the station
+ * A free function (formerly Application::networkAppendGimIonoRows_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration, @p gim_ Application::gim_.
  */
 GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
@@ -79,10 +79,10 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
  * this function only looks entries up).  Implemented in
  * @c ApplicationNetworkAssembly.cpp.
  *
- * @param[in,out] tags  The station's row tags (card NOM N2a): one @c ShIonoTie tag per
+ * @param[in,out] tags  The station's row tags: one @c ShIonoTie tag per
  *                      appended row (its line of sight's satellite), in row order.
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkAppendShIonoRows_), so the station
+ * A free function (formerly Application::networkAppendShIonoRows_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration.
  */
 void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,

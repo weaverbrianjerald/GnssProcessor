@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file BrdcClockApriori.hpp
- * @brief The native broadcast-clock a priori of card NBP: the ephemeris selector, the
+ * @brief The native broadcast-clock a priori: the ephemeris selector, the
  *        continuous internal a priori with its per-ephemeris offset table, the
  *        transmission-time store feed and the per-IODE wire stamp.
  *
@@ -10,7 +10,7 @@
  * is loaded.  The record of satellite s at epoch t is the latest one with a transmission
  * time at or before t and health 0 (@c network.brdc_select @c ttom, the real-time rule
  * and the rule of the bed `scripts/clock_level/scl_brdc_apriori.py --continuous --rule
- * ttom` that cards SCL, SCL2 and SCL2B measured).
+ * ttom` that the clock-level studies measured).
  *
  * The a priori is kept continuous across every ephemeris cut-over by an offset table O:
  *
@@ -56,7 +56,7 @@ enum class BrdcSelectRule {
 
 /**
  * @class BrdcClockApriori
- * @brief Selector, continuous a priori, store feed and wire stamp of card NBP.
+ * @brief Selector, continuous a priori, store feed and wire stamp.
  *
  * Built once at setup from the parsed navigation records.  Every query is const except
  * @ref feedStore, which advances its own cursor through the staged records.

@@ -1,6 +1,6 @@
 /**
  * @file test_brdc_clock_apriori.cpp
- * @brief Card NBP gates U1 to U3: the ORBIT-7 parse, the native broadcast clock
+ * @brief Native broadcast clock gates U1 to U3: the ORBIT-7 parse, the native broadcast clock
  *        selector and continuous a priori against the bed, and the per-IODE wire.
  *
  * Gates (docs/refound/NBP_native_broadcast_clock_posture_2026-10-07.md section 5):
@@ -455,7 +455,7 @@ bool loadSimGoldenWith(const std::function<void(nlohmann::json&)>& edit, GnssCon
     return ok;
 }
 
-/// The SCL2B hold posture (card SMH's smoothed hold, no phase-clock hold).
+/// The SCL2B hold posture (the smoothed hold, no phase-clock hold).
 void smhHold(nlohmann::json& j) {
     j["network"]["emit_pb_hold_phase_clock"] = false;
     j["network"]["emit_pb_hold_smoothed"]    = true;
@@ -493,7 +493,7 @@ TEST(NbpBrdcConfig, ArmsWithTheSmoothedHoldAndKeepsTheSp3AnchorSigma) {
 
 TEST(NbpBrdcConfig, RefusesThePhaseClockHoldAndRequiresTheSmoothedHold) {
     GnssConfig a, b, c;
-    // The golden's own hold is card LAH's phase-clock hold: refused under the new value.
+    // The golden's own hold is the level-aware phase-clock hold: refused under the new value.
     EXPECT_FALSE(loadSimGoldenWith([](nlohmann::json& j) {
         j["network"]["apriori_source"] = "sp3_brdc_clock";
     }, a, "lah"));

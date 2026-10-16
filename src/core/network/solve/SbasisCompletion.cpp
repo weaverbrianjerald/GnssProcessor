@@ -15,18 +15,18 @@
 #include "network/solve/ChainDatum.hpp"
 #include "network/solve/ClockAnchor.hpp"   // guarded temporal clock anchor
 #include "network/carry/ClockClone.hpp"    // the one-epoch clock clone
-#include "network/carry/SharedHistory.hpp" // the shared history (card SCL2 X2)
+#include "network/carry/SharedHistory.hpp" // the shared history
 #include "network/solve/DatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "network/diag/FrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "network/solve/HandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
 #include "network/solve/PhaseDatum.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/PrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
-#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally (card NOM N2b)
+#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally
 #include "network/qc/Relevel.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "network/qc/RobustStats.hpp"
-#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule (card NOM N2b)
+#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -89,7 +89,7 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
                 }
             } catch (...) { /* departed key: no target */ }
         }
-        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev,   // card NOM step N4d
+        net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev,
                      [&](const SatSignalId& id, double v) {
             const std::string key = net::ambKey(id);
             const auto parts = StateKeys::parseAmbiguityKey(key);   // "G01_L1C"
@@ -145,11 +145,11 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
     // instead of stepping (engage edge) and the data re-determine it from the held
     // level when observability returns (release edge); both edges are evented
     // (standing invariant #7).  A refusal (cap, degenerate split, marginal weight)
-    // folds nothing and falls through to the unchanged gate, which withholds; card PA
-    // remains the armed backstop.
+    // folds nothing and falls through to the unchanged gate, which withholds; the armed backstop
+    // stays in force.
     if (ctx.knobs.sbasis_complete_on) {
         Eigen::VectorXd sbc_x_prev = networkSbcContinuityTargets(ctx, est, datum_changed);
-        // Card SCL: with clock clones registered, the completion judges the border with the
+        // With clock clones registered, the completion judges the border with the
         // clones marginalized (filter/NetworkClockClone); the non-clone columns keep their
         // indices, so the targets are the leading part and the rows are padded below.  Off,
         // the view is not formed and the call is the one before.
@@ -163,7 +163,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
             ctx.knobs.sbasis_complete_max);
         networkDatumGraphSpectralHandoff(ctx, sbc, plan);
         // A per-direction skip (a direction not separated from the declared-gauge
-        // cluster: an orphaned exact gauge, card PA's class) does not end the epoch:
+        // cluster: an orphaned exact gauge) does not end the epoch:
         // the separated extras still fold below, the gate then throws by exactly
         // n_skipped, and the drop-and-heal works on that remainder.  Skips are
         // counted per direction and each one is evented, so none goes unreported.
@@ -196,11 +196,11 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
             // the epoch is headed for a withhold, so a release edge here would report a
             // re-coupling that did not happen.
         } else if (sbc.n_extra > 0) {
-            // Card SCL: rows formed over the clone-free view take zero clone columns (off, the
+            // Rows formed over the clone-free view take zero clone columns (off, the
             // completion's own rows, value for value).
             const Eigen::MatrixXd sbc_H =
                 ccl_sbc ? networkClockClonePadRows(sbc.H, est.numShared()) : sbc.H;
-            est.contributionKind(ContributionKind::SbasisCompletion);   // card NOM N2a
+            est.contributionKind(ContributionKind::SbasisCompletion);
             est.addSharedConstraintRows(sbc_H, sbc.z,
                                         NetworkSbasis::kSbasisCompleteWeight);
             if (within_epoch_armed) {   // RAIM-replay capture (EpochWorkspace contract)
@@ -254,7 +254,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
 }
 // ---- End of the solve stages ----
 
-// ---- Run-end report (moved here by card NOM3 step SG) ----
+// ---- Run-end report ----
 
 // Run-end report: S-basis completion (SBC).
 int networkSbasisCompletionRunEnd(const NetworkRunEndView& v) {

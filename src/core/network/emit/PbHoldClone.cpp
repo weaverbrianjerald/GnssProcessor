@@ -63,7 +63,7 @@ void killClone(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why) {
     ++ctx.counters.smh_deaths[static_cast<int>(why)];
 }
 
-/// Card SMD: a block clone's death (its own counters; the epoch kept for the hold).
+/// A block clone's death (its own counters; the epoch kept for the hold).
 void killBlock(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why, long long ep) {
     c.alive   = false;
     c.death   = why;
@@ -71,7 +71,7 @@ void killBlock(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why, lon
     ++ctx.counters.smh_pv_deaths[static_cast<int>(why)];
 }
 
-/// Card SMD: queue a block clone's birth again within its generation (after a withdrawal, a
+/// Queue a block clone's birth again within its generation (after a withdrawal, a
 /// disengagement, a followed step or a lost pair).  A newer generation's entry wins.
 void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHoldClone& c,
                      long long ep) {
@@ -85,8 +85,8 @@ void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHol
     net::emplaceSig(ctx.entities, key, &SG::smh_block_pending, q);
 }
 
-/// Card SMH section 9's engagement test for a clone of either map: @c Withdrawn when card
-/// Q3's guard decoupled the parent clock this epoch, @c Disengaged when its fold was not the
+/// The engagement test (section 9 of the smoothed-hold design) for a clone of either map: @c Withdrawn when the
+/// temporal clock anchor's guard decoupled the parent clock this epoch, @c Disengaged when its fold was not the
 /// anchored one (the constellation's pinned clock exempt), otherwise @c None.
 PbHoldCloneDeath engagementDeath(const NetworkRunContext& ctx, const PbHoldClone& c) {
     const ClockAnchorState& an = ctx.carry.clk_anchor;
@@ -123,8 +123,8 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
         out.death = PbHoldCloneDeath::Stale;
         return out;
     }
-    // The row's own keys (the parent clock for card SMH's row; the clock and the band pair
-    // for card SMD's phase-visible row).
+    // The row's own keys (the parent clock for the clock row; the clock and the band pair
+    // for the block member's phase-visible row).
     std::vector<std::string> own_key(own.size());
     for (std::size_t i = 0; i < own.size(); ++i)
         own_key[i] = sharedCarryKey(own[i].kind, sat, own[i].signal);
@@ -160,7 +160,7 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
         }
         // Outside the dense block.  The clone's own clock there is card 1d's route in
         // all but name, which the card forbids: the clone dies (so does a row whose other
-        // own key, a phase bias of card SMD's pair, is there).
+        // own key, a phase bias of the block member's pair, is there).
         for (std::size_t i = 0; i < own_key.size(); ++i) {
             if (key == own_key[i]) {
                 out.death       = PbHoldCloneDeath::ParentOutside;
@@ -233,9 +233,9 @@ PbHoldCloneStep pbHoldCloneAdvanceRow(const PbHoldCloneInputs& in, const std::st
     out.var   = var + xr.var_add + dep_var + tu_var;
     // The fold's inflation along the functional, g'Qg over the own keys, when every one of
     // them is in S (for the clock alone, its q).  The seam's off-diagonal noise lists pairs
-    // of distinct S columns only; its diagonal is in q_s.  Card SCL: on the clone epoch a
+    // of distinct S columns only; its diagonal is in q_s.  On the clone epoch a
     // cloned clock's walk is the walk factor's, not a Q of the rows' epoch, so Q is read
-    // from card CTU's epoch over the same S index space (W stays the modelled walk since
+    // from the exact coupling epoch over the same S index space (W stays the modelled walk since
     // birth).
     const CouplingExactEpoch* xw =
         (in.xe_walk && in.xe_walk->nS() == xe->nS()) ? in.xe_walk : xe;
@@ -499,7 +499,7 @@ PbHoldCloneMarg pbHoldCloneMarginalizeClones(
     }
     const double add = rc.dot(B * rc);
     if (defer_rc) {
-        // Card SCL2 X2b: the shared term stays with the row's Y coefficients, projected onto
+        // The shared term stays with the row's Y coefficients, projected onto
         // the history at the harvest's end; the per-row term is only reported.
         *defer_rc = rc;
         if (std::isfinite(add) && add > 0.0) out.var_add = add;
@@ -564,12 +564,12 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
     net::SatSignalTable& sigs = ctx.entities.sat_signals;   // the clones
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-    // Card SCL2 X2b (amendment A1): a row still pending from an earlier epoch never reached
+    // Amendment A1: a row still pending from an earlier epoch never reached
     // its compression; it takes the per-row term before it advances (no-op off).
     const bool shx_on = ctx.knobs.carry_cpl_shx;
     if (shx_on) networkSharedHistoryFinalizeHoldRows(ctx, ep - 1);
 
-    // The clone lives while its parent's anchor is engaged (section 9).  A clock card Q3's
+    // The clone lives while its parent's anchor is engaged (section 9).  A clock that the temporal clock anchor's
     // guard decoupled this epoch (a trip, a gap, a retired frame), or one whose fold this
     // epoch was not the anchored one (LOOSE, or no clock prior folded), kills the clone
     // before the exact route reads the epoch: the LOOSE fold's q is a datum device, and
@@ -577,7 +577,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     // and the birth is queued again for the first stash at which the anchor holds.  The
     // constellation's pinned clock has no anchor fold and passes nothing: exempt from the
     // second test.
-    // Card SMD's block clones: SatSignalState::smh_block.
+    // The block clones: SatSignalState::smh_block.
     if (ctx.knobs.cta_on) {
         net::forEach(sigs, &SG::smh_clone, [&](const SatSignalId& id, PbHoldClone& c) {
             const std::string key = net::holdKey(id);
@@ -603,7 +603,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         });
     }
 
-    // Card SMD section 3: a block clone follows the phase datum's declared steps of its pair
+    // A block clone follows the phase datum's declared steps of its pair
     // by retiring at them, before the exact route reads the epoch.  A re-reference withholds
     // the key's prior (no frame-free step exists); a new anchor tenure without one is a
     // continuous handover, whose pin at the successor's ledger value steps the family by an
@@ -647,11 +647,11 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
 
     const CouplingExactEpoch& xe0 = ctx.carry.cxu_epoch;
     const Eigen::Index nx = x_s.size();
-    // The final solve's priors: the dense fold's capture (trimmed by card Q3's in-epoch
+    // The final solve's priors: the dense fold's capture (trimmed by the temporal clock anchor's in-epoch
     // refloat) and the diagonal ones.  Their means are the prior means the solve used,
     // after any in-place frame transform of this epoch.
     std::map<std::string, double> folded, diag;
-    // A clock clone of card SCL is not its clock: skipped (the clone fold keeps its joint
+    // A clock clone is not its clock: skipped (the clone fold keeps its joint
     // prior in a capture of its own, so none reaches these two; the test is a guard).
     for (const auto& sp : ws.cap_dense_keys)
         if (sp.kind != SharedParamKind::VtecSh && !sp.clone) folded[sharedCarryKey(sp.kind, sp.sat, sp.signal)] = sp.value;
@@ -670,7 +670,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         d.sat    = cp.sat;
         d.signal = cp.signal;
     }
-    // Card SCL: the clocks whose clones stood in at this epoch's fold (P row -> clone
+    // The clocks whose clones stood in at this epoch's fold (P row -> clone
     // column).  Empty off, and on an epoch with no stand-in (no clone epoch, a fold
     // fallback), which leaves every step below as before.
     std::map<int, Eigen::Index> clone_of_p;
@@ -681,7 +681,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             if (a == E.active.end() || a->second.p < 0 || a->second.col < 0) continue;
             clone_of_p[a->second.p] = a->second.col;
         }
-        // Card BCL-a: the bias clones that stood in with a walk, the same way (empty off).
+        // BCL-a: the bias clones that stood in with a walk, the same way (empty off).
         for (const std::string& key : E.xstandin) {
             const auto a = E.xactive.find(key);
             if (a == E.xactive.end() || a->second.p < 0 || a->second.col < 0) continue;
@@ -690,7 +690,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     }
     // An S key the solve did not fold took no carried prior: the Reinit route for the
     // clones (a withdrawn clock, a constellation skipped at an un-transformed handover).
-    // Card SCL: a clock whose clone stood in keeps it (card Q3's refloat withdraws the walk
+    // A clock whose clone stood in keeps it (the temporal clock anchor's refloat withdraws the walk
     // factor and keeps the clone with its stand-in prior), so its rows' terms stay on it.
     std::vector<int> unfolded;
     long long kept_unfolded = 0;
@@ -713,7 +713,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         ++ctx.counters.smh_epochs_restricted;
         ctx.counters.smh_keys_unfolded += static_cast<long long>(unfolded.size());
     }
-    // Card SCL: the rows advance on the clone epoch (the stood-in clocks on their clones at
+    // The rows advance on the clone epoch (the stood-in clocks on their clones at
     // Q = 0), and the walk share reads the epoch they were moved from.
     CouplingExactEpoch xe_c;
     if (!clone_of_p.empty()) {
@@ -735,7 +735,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         const Eigen::Index col = xe->col_of_s[static_cast<std::size_t>(s)];
         in.post_s(s)  = (col >= 0 && col < nx) ? x_s(col) : xe->shat_s(s);
         in.prior_s(s) = xe->shat_s(s);
-        // Card SCL: a clone's prior mean is the stashed value the fold centred it on (the
+        // A clone's prior mean is the stashed value the fold centred it on (the
         // rows' shat), not its clock's fold-time mean, which the walk factor carries.
         if (static_cast<std::size_t>(s) < xe->clone_s.size() && xe->clone_s[static_cast<std::size_t>(s)])
             continue;
@@ -773,18 +773,18 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     const Eigen::MatrixXd& Sig = est.sharedCovariance();
     const Eigen::Index     ns  = Sig.rows();
 
-    // Card SCL: a clone lives one epoch, so an advanced row's terms on the clones are
+    // A clone lives one epoch, so an advanced row's terms on the clones are
     // marginalized through the solve's posterior regression of the clones on the rest of
     // the border (the coupling rows' harvest regression, formed here on the final solve),
     // with the clock-family deficit onto the datum-pinned clock of the constellation.
     Eigen::MatrixXd ccl_K, ccl_B;
     bool ccl_reg = false;
     std::map<char, PbHoldCloneTerm> ccl_pin;
-    // Card SCL2 X2: the regression is over Y = the clones and the shared history (equal to the
+    // The regression is over Y = the clones and the shared history (equal to the
     // clones off); these rows hold no history term, and r_C' B' r_C over Y's clone block is
     // Var(c | s') with the history marginalized, the correct per-row marginal.
     const Eigen::Index ccl_n0 = est.numShared() - est.numBorderNuisance();
-    // Card SCL2 X2b: with history columns registered this epoch the rows carry history terms
+    // With history columns registered this epoch the rows carry history terms
     // (pbHoldCloneAttachHistory), which the same regression re-expresses, so it is formed
     // whenever either kind of Y term can be present (the clones alone off).
     const bool ccl_need = !clone_of_p.empty() || (shx_on && ctx.carry.shx.on);
@@ -817,7 +817,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         return true;
     };
     // Re-express one advanced row; false (the row is then killed RowFailed) when it has clone
-    // terms and the regression is unavailable.  A no-op off (clone_of_p empty).  Card SCL2 X2b:
+    // terms and the regression is unavailable.  A no-op off (clone_of_p empty).  With the shared history,
     // the row's Y coefficients (clones and history) are kept pending in @p sh, projected onto
     // the history at the harvest's end, instead of adding r' B' r to the row now.
     const auto ccl_marg = [&](PbHoldCloneStep& st, PbHoldCloneShx& sh) {
@@ -850,7 +850,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         }
         return true;
     };
-    // Card SCL2 X2b: the row's history terms of the previous compression (no-op off).
+    // The row's history terms of the previous compression (no-op off).
     const auto shx_attach = [&](PbHoldCloneStep& st, PbHoldCloneShx& sh) {
         if (!shx_on) return;
         const PbHoldCloneHistAttach a =
@@ -941,9 +941,9 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         c.vpost = c.var + c.shx.pendingVar(ep) + q;   // X2b: the pending share is the row's
     });
 
-    // Card SMD: the block clones, both rows on one lifetime.  The clock row takes card SMH's
+    // The block clones, both rows on one lifetime.  The clock row takes the smoothed-hold clone's
     // rule; the phase-visible row takes the same rule over its functional {c: 1, pair: -w_j}.
-    // A failure of the clock row is card SMH's structural death; a pair phase bias outside
+    // A failure of the clock row is the smoothed-hold clone's structural death; a pair phase bias outside
     // the block, without a column or without a folded prior is PairLost (the birth queued
     // again on the next stash, which may pick another pair).
     const auto prior_of_key = [&folded, &diag](const std::string& k) {
@@ -989,7 +989,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             }
             return;
         }
-        // Card SCL: both rows re-expressed off the clones (no-op off); card SCL2 X2b: each
+        // Both rows re-expressed off the clones (no-op off); with the shared history, each
         // row's history terms first.
         shx_attach(sc, c.shx);
         shx_attach(sd, c.pv_shx);
@@ -1045,7 +1045,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
         c.terms      = sc.terms;
         c.pv_phi    += step_d - (sd.value - c.pv_value);
         c.pv_phi_ok  = true;
-        // Card REV: the revision of D(t0) and the step it splits from (Phi_D + R = S_D).
+        // The revision of D(t0) and the step it splits from (Phi_D + R = S_D).
         c.pv_rev    += sd.value - c.pv_value;
         c.pv_sd     += step_d;
         c.pv_value   = sd.value;
@@ -1075,7 +1075,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             if (t.col >= 0 && t.p_prev > 0.0) gd[t.col] += t.coeff;
         c.vpost    = c.var + c.shx.pendingVar(ep) + quad(gc);
         c.pv_vpost = c.pv_var + c.pv_shx.pendingVar(ep) + quad(gd);
-        // Card REV: the row's stated variance of D(t0), the filtered variance of D now
+        // The row's stated variance of D(t0), the filtered variance of D now
         // (the functional alone) and the walk this epoch added along D.
         c.pv_vd0 = pbHoldCloneRowValueVar(c.pv_terms, c.pv_var + c.pv_shx.pendingVar(ep), Sig);
         std::map<Eigen::Index, double> gown;
@@ -1097,7 +1097,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
     double now_s = TimeUtils::continuousGpsSeconds(nep.se.time);
     // ---- End of the bindings ----
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
-    // Card SCL2 X2b (amendment A1): the harvest's end, earlier in the epoch, projected every
+    // Amendment A1: the harvest's end, earlier in the epoch, projected every
     // row the update kept pending; a row it did not reach takes the per-row term here, before
     // the re-harvest (no-op off and when every row was projected).
     networkSharedHistoryFinalizeHoldRows(ctx, static_cast<long long>(ctx.counters.n_loop_epochs));
@@ -1164,7 +1164,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         t.coeff = -1.0;                // x0 = v - (-1)(c - s_prev) = c
         const auto sit = stash.find(parent);
         const auto pit = pinned.find(parent);
-        // Section 9: born only while card Q3's anchor holds the clock after this epoch's
+        // Section 9: born only while the temporal clock anchor holds the clock after this epoch's
         // guard, so every fold the clone passes is an anchored one.
         bool engaged = true;
         if (ctx.knobs.cta_on) {
@@ -1222,7 +1222,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         return true;
     });
 
-    // Card SMD: the block clones, re-harvested row by row, and born under card SMH's rule
+    // The block clones, re-harvested row by row, and born under the smoothed-hold clone's rule
     // when the stash also holds the satellite's phase biases on two bands (the pair, fixed
     // for the clone's life).
     net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
@@ -1293,7 +1293,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         else           ++ctx.counters.smh_pv_births;
         if (c.rebirth) ++ctx.counters.smh_pv_rebirths;
         try { t.col = est.clockColumn(c.sat); } catch (...) { t.col = -1; }
-        // The clock row: card SMH's birth.
+        // The clock row: the smoothed-hold clone's birth.
         c.terms      = {t};
         c.value      = t.s_prev;
         c.c_ref      = t.s_prev;
@@ -1331,7 +1331,7 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& nep) {
         c.pv_w_valid = true;
         c.pv_vpost   = 0.0;
         c.pv_step_d  = 0.0;
-        // Card REV: the revision starts at zero; V at birth is the filtered variance of D
+        // The revision starts at zero; V at birth is the filtered variance of D
         // at the stash (the row's coefficients are the functional, sigma2 = 0).
         c.pv_rev       = 0.0;
         c.pv_sd        = 0.0;
@@ -1371,7 +1371,7 @@ void networkPbHoldBlockAtHold(NetworkRunContext& ctx, const std::string& key,
     }
     if (c.updated_ep != ep) return;
     if (pb_marked) {
-        // Card SMD section 3: the emitter's mark on the phase channel is a declared step.
+        // The emitter's mark on the phase channel is a declared step.
         c.follow = PbHoldFollow::Mark;
         ++ctx.counters.smh_pv_follow[static_cast<int>(PbHoldFollow::Mark)];
         killBlock(ctx, c, PbHoldCloneDeath::Followed, ep);

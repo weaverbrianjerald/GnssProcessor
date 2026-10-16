@@ -23,10 +23,10 @@
  * counted as bridged), Application::networkPassB_ (the T5 erase policy reads the raw subset),
  * networkBuildCarryDdPriors and the solve glue's replay rebuild (the DD carry's membership
  * exclusion: a funnel arc re-taps fresh), networkEmitStore, networkSignalRosterAudit.  The DD
- * build reads the funnel through the epoch, and the solve glue does not take it (card NOM3
- * step EP1c removed both writable parameters).
+ * build reads the funnel through the epoch, and the solve glue does not take it (both writable
+ * parameters were removed).
  *
- * The standing invariants it serves (CLAUDE.md, "Standing invariants"; card NOM section 3.5):
+ * The standing invariants it serves (CLAUDE.md, "Standing invariants"):
  *   - Invariant 1, every stiff carried quantity has a wired slip response: the funnel is the
  *     response's feed for the DD carry (a funnel arc leaves A_old and is re-born), the phase
  *     anchor (a just-freed arc is not mature, a freed anchor hands over) and the T5 deviation

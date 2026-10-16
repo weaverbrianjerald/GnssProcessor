@@ -1,6 +1,6 @@
 /**
  * @file test_gap_reentry_per_signal.cpp
- * @brief The gap re-entry tier keyed on the signal, card GRS
+ * @brief The gap re-entry tier keyed on the signal
  *        (docs/refound/GRS_gap_reentry_per_signal_2026-09-20.md §2.6).
  *
  * The case under test is a gap the row-level tier cannot see.  The row-level

@@ -38,14 +38,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -113,7 +113,7 @@ StationStep networkRxIfbRecoupleEdge(StationBuild& build) {
     std::map<int, int>& h2local = R.h2local;
     // ---- End of the bindings ----
 
-    // Card L5B: the re-coupling edge of an estimated receiver IFB (invariant #7).  A
+    // The re-coupling edge of an estimated receiver IFB (invariant #7).  A
     // governed column back in the block after at least one loop epoch out of it,
     // with its carry entry still live, re-couples through that entry's stored
     // regression; counted, since its coupling row is gauge-restored per
@@ -132,8 +132,7 @@ StationStep networkRxIfbRecoupleEdge(StationBuild& build) {
         st.l5b.last_est_epoch[cb_key] = ep;
     }
     // The observation's own signal of every data row travels in its row tag
-    // (R.row_tags, set by the split): the post-fit row writer reads it there
-    // (card NOM step N2b).
+    // (R.row_tags, set by the split): the post-fit row writer reads it there.
     return StationStep::Next;
 }
 
@@ -180,7 +179,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
     // harvested absolutes, at the harvest (the receiver clock's rule).  The
     // carry map is read-only here; the columns point at the entries.
     std::vector<LocalBlockCol>& rxcb_bc = carry.rxcb_bc;
-    // Card L5B: which of rxcb_bc are receiver IFB columns, for the fold count
+    // Which of rxcb_bc are receiver IFB columns, for the fold count
     // (filled only when network.estimate_rx_extra_band_code_delay is effective).
     std::vector<char>& rxcb_ifb = carry.rxcb_ifb;
     if (rxcb_blk_on) {
@@ -207,7 +206,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
                 /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff,
                 /*innov_test=*/false);
             if (act != RxCbInjectAction::Fold) {
-                // Card PRM phase 3a: the horizon's skip only, not the gate's
+                // The horizon's skip only, not the gate's
                 // variance guard (which returns the same action).
                 if (carryPastHorizon(pl_now_s, cbit->last_seen_s, kRxCbMaxGapS))
                     ++R.prm_rxcb_gap_skip;
@@ -220,7 +219,7 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
                 /*vce_fac=*/1.0, /*is_zwd=*/false, /*is_iono=*/false,
                 /*is_rx_clk=*/false, /*is_rx_isb=*/false,
                 /*is_rx_cb=*/true});
-            rxcb_bc.back().signal = rxCodeBiasSignal(cb_key);   // its block row's tag (card NOM N2a)
+            rxcb_bc.back().signal = rxCodeBiasSignal(cb_key);   // its block row's tag
             if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
                 const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
                 rxcb_ifb.resize(rxcb_bc.size(), 0);
@@ -286,7 +285,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         // --- RXCB-DATUM: loose zero-mean prior on the receiver DCB ----
         // The receiver-side counterpart of the W6 satellite code-bias
         // sum-to-zero, realized pre-reduce through the same diagonal
-        // prior channel Card KP uses for satellite OSBs, not as a
+        // prior channel the satellite OSBs use, not as a
         // post-reduce cross-station SumZeroGauge: NetworkEstimator::solve
         // correctly refuses to compose a post-reduce Woodbury gauge with
         // the Card-4 DD priors (both fold against the same cached local
@@ -337,7 +336,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         const auto* cbit = net::get(sta_rows, StationId{static_cast<int>(i)},
                                     &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb);
         if (cbit == nullptr) continue;   // cold: the harvest seeds it
-        // Card L5B: a receiver IFB column's folds and withholds on this route,
+        // A receiver IFB column's folds and withholds on this route,
         // counted at its own station (nothing is counted unless the knob is
         // effective).
         bool cb_is_ifb = false;
@@ -353,12 +352,12 @@ void networkRxCbPriors(StationCarryFrame& carry) {
             /*k_sigma=*/10.0, /*guard_var=*/0.25, cb_var_eff);
         if (act == RxCbInjectAction::SkipInnov) {
             ++R.pl_cb_innov_skips;   // receiver-reset response: withhold, harvest re-seeds
-            ++R.prm_rxcb_jump_skip;  // card PRM phase 3a
+            ++R.prm_rxcb_jump_skip;
             if (cb_is_ifb) ++st.l5b.diag_innov_skips;
             continue;
         }
         if (act != RxCbInjectAction::Fold) {
-            // Card PRM phase 3a: the horizon's skip only, not the gate's
+            // The horizon's skip only, not the gate's
             // variance guard (which returns the same action).
             if (carryPastHorizon(pl_now_s, cbit->last_seen_s, kRxCbMaxGapS))
                 ++R.prm_rxcb_gap_skip;
@@ -389,7 +388,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const std::vector<StationAssembly>& asm_res = ep.assembly.asm_res;
     double pl_now_s = ep.clock.pl_now_s;
-    // RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block, card CTU section 14): the
+    // RXCB-IN-BLOCK (network.carry_rx_code_bias_in_block): the
     // receiver code-bias columns join the same harvest block and are stashed with their
     // border regression and block row here; the standalone diagonal harvest below then
     // skips its stash.  Off => `cols` is untouched (byte-identical).
@@ -432,7 +431,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
                 continue;
             }
             const auto key = std::make_pair(static_cast<int>(i), cb_key);
-            // Card L5B: the satellite sum-to-zero of this receiver IFB's family
+            // The satellite sum-to-zero of this receiver IFB's family
             // re-seeded this epoch (no veteran satellite), so the satellite side
             // realizes a new level of the family's null direction while a carried
             // entry holds the old one.  Erase it (reset, not repair; counted) and
@@ -468,7 +467,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
                             net::drop(sta_rows, StationId{key.first}, &net::StationState::signals,
                                       key.second, &net::StationSignalState::rx_cb);
                             ++ctx.counters.n_rxcb_blk_step_reset;
-                            prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbStepErase);   // card PRM phase 3a
+                            prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbStepErase);
                             continue;
                         }
                     }
@@ -498,7 +497,7 @@ void networkHarvestRxCbBlock(NetworkRun& run, const NetworkEpoch& ep, HarvestBor
             net::put(sta_rows, StationId{key.first}, &net::StationState::signals, key.second,
                      &net::StationSignalState::rx_cb) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, ccol, SharedHistoryMap::RxCb,
-                                          static_cast<int>(i), cb_key);   // card SCL2 X2; no-op off
+                                          static_cast<int>(i), cb_key);   // shared history; no-op off
             ++ctx.counters.n_rxcb_blk_harvested;
             ++ctx.counters.rx_cb_harvested_total;
         }
@@ -607,7 +606,7 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
                                    ? vard(a) : -1.0;
             if (!std::isfinite(value_abs) || !(var > 0.0)
                 || !std::isfinite(var)) continue;
-            // Card L5B: a re-seeded family's carried receiver IFB entries are erased and
+            // A re-seeded family's carried receiver IFB entries are erased and
             // not re-stashed this epoch, as in the block harvest above (reset, not
             // repair; counted).
             if (ctx.param_inventory.rx_ifb.estimated_by_knob
@@ -668,11 +667,11 @@ void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep) {
             ++ctx.counters.rx_cb_harvested_total;
         }
     }
-    // The horizon is the registry's (kRxCbMaxGapS, the same constant; card PRM phase 3b).
+    // The horizon is the registry's (kRxCbMaxGapS, the same constant).
     carryGapPrune(sta_rows, &net::StationState::signals, &net::StationSignalState::rx_cb, pl_now_s,
                   ctx.params.spec(NetworkParamKind::RxCodeBias).gap_horizon_s,
                   [&](const auto&, const auto&, const auto&) {
-                      prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);   // card PRM phase 3a
+                      prmRespond(ctx.counters.prm_resp, ResponseSite::RxcbGapPrune);
                   });
 }
 

@@ -718,7 +718,7 @@ StationStep networkSdEwlStationRows(StationBuild& build) {
     networkAppendSdEwlRows(config_, st, est, modeled[i], h2local, se.time,
                             R.A_s, R.A_r, R.w, R.y, R.row_tags, R.sd_ewl_trace,
                             &ctx.entities.stations, i);
-    // The builder's own count this station-epoch, for the tag check (card NOM N2a).
+    // The builder's own count this station-epoch, for the tag check.
     R.sd_ewl_rows = st.sd_ewl_ctr.rows_built - sd_rows0;
     return StationStep::Next;
 }
@@ -1235,7 +1235,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
         A_s.middleRows(m0, mc) = llt.matrixL().solve(Hs);
         y.segment(m0, mc) = llt.matrixL().solve(zc);
         w.segment(m0, mc).setOnes();
-        // One tag per row (card NOM N2a), in row order: the row's satellite (the arc on
+        // One tag per row, in row order: the row's satellite (the arc on
         // the diagonal of L^-1; the pivot arc is common to every row of the group).
         for (int k = 0; k < mc; ++k)
             tags.push_back(makeRowTag(ContributionKind::SdEwl,

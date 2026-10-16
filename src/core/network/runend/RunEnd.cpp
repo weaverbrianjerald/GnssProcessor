@@ -1,8 +1,8 @@
 /**
  * @file RunEnd.cpp
  * @brief The run-end table, kNetworkRunEndReports: every run-end report of the network
- *        producer in print order, with what it reports and its home file (card NOM step
- *        TD1b), one row per subsystem, and the walk's two helpers.
+ *        producer in print order, with what it reports and its home file,
+ *        one row per subsystem, and the walk's two helpers.
  *        network/runend/RunEnd.hpp states how to add a row and the order constraints.
  *
  * The rows were written by scripts/nom_td_cut.py (TD1b) and regrouped by subsystem by

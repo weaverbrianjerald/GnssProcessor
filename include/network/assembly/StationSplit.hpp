@@ -51,7 +51,7 @@ StationStep networkStationDataRows(StationBuild& build);
  * Fills the H-column → A_r-column map @p h2local and, per state column, the
  * disposition it took (@p col_disp: border, local block, held coordinate,
  * held at its seed by @p ifb_rule, or unobserved), which the parameter
- * inventory records (card NOM N1).  Throws (linearity invariant) if a
+ * inventory records.  Throws (linearity invariant) if a
  * position column ever survives into A_r; the per-station try/catch of the
  * PASS-B produce loop catches the throw.  Implemented in
  * @c ApplicationNetworkAssembly.cpp.
@@ -59,13 +59,13 @@ StationStep networkStationDataRows(StationBuild& build);
  * @param ifb_rule The run's receiver IFB rule (@c ctx.param_inventory.rx_ifb,
  *                 built once per run by @c networkRxIfbRule): which receiver
  *                 IFB columns are left out of the local block.
- * @param[out] tags One contribution tag per data row (card NOM N2a): @c DataCode or
+ * @param[out] tags One contribution tag per data row: @c DataCode or
  *                 @c DataPhase with the row's satellite and signal
  *                 (@c tagDataRows), changed to @c DataCodeCompanion or
  *                 @c DataPhaseSecond by the weight pass that scales the row, so a
  *                 tag and a weight cannot disagree.
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkSplitStation_), so the station
+ * A free function (formerly Application::networkSplitStation_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration.
  */
 void networkSplitStation(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,

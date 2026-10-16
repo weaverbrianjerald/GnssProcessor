@@ -3,7 +3,7 @@
  * @brief Declared signal roster on the wire, the emitter's per-family
  *        bookkeeping read against the arc ledger (@c network.ledger_emit), and
  *        the consumer's latch and freshness response keyed on the declaration
- *        (@c network.closed_loop.roster_latch).  Card SID phase 5.
+ *        (@c network.closed_loop.roster_latch).
  *
  * ## What is under test
  *
@@ -17,7 +17,7 @@
  *  - the reader's tolerance.  The format ignores unknown key=value tokens.  An
  *    unknown record tag is a separate case: parsing continues past it and every
  *    epoch is recovered, while the sticky @c ok flag goes false;
- *  - the generation comparison.  The hold generation of card PBH and the
+ *  - the generation comparison.  The hold generation of the phase-bias hold and the
  *    ledger's admitted arc generation are two lifecycles of the same family in
  *    two key spaces.  The three classes (a generation change with a birth behind
  *    it, one without, and a birth the generation never reports) must be
@@ -86,7 +86,7 @@ std::string tempFile(const char* name) {
 
 /// The declaration the field posture would state: two bands, two phases and two
 /// codes on band 1 (the L1C / L1W split the audit measured), one of each on band
-/// 2, a card SCC companion, and an S-basis datum designation.
+/// 2, a second-code-channel companion, and an S-basis datum designation.
 NetworkSignalDeclaration fieldDeclaration() {
     NetworkSignalDeclaration d;
     d.present = true;
@@ -435,7 +435,7 @@ TEST(LedgerEmitTest, ReplayPushesTheDeclarationIntoTheConsumerStore) {
     fs::remove(path);
 }
 
-/// The lookups a consumer makes, by role: a card SCC companion code is a family
+/// The lookups a consumer makes, by role: a second-code-channel companion code is a family
 /// the network emits, so it answers the code question yes.
 TEST(LedgerEmitTest, DeclarationLookupsAnswerByRole) {
     const NetworkSignalDeclaration d = fieldDeclaration();
@@ -583,7 +583,7 @@ TEST(LedgerEmitTest, DisarmedTheSeamsDoNothing) {
     EXPECT_EQ(ctx.counters.le.first_phase, 0);
 }
 
-/// The knob needs no other since card NOM step N3a: the roster and the ledger it
+/// The knob needs no other: the roster and the ledger it
 /// reads are built on every network run, and network.signal_roster is only the
 /// ledger's trace switch.  The loader used to refuse it without that key, when an
 /// unbuilt roster would have put an empty declaration on the wire.

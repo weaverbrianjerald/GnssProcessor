@@ -2,7 +2,7 @@
  * @file LevelingCarryRunEnd.cpp
  * @brief Run-end report of the phase-leveling carry: the retirement census and the F3 local
  *        block (its phase-colour and receiver-clock jump-gate lines moved beside their
- *        harvests in card NOM2 step TD2).
+ *        harvests).
  *
  * The leveling carry is injected by the PASS B assembly and harvested by
  * networkHarvestLocalCarries (network/carry/LocalCarryHarvest.cpp); neither has a seam of its

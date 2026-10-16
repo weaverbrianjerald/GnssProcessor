@@ -1387,7 +1387,7 @@ namespace GnssProcessor {
 
 
         // ======================================================================
-        // Network-only surface, owned with card NOM
+        // Network-only surface, owned with the network object model
         //
         // The per-station detectors of the network producer call these; the user
         // drivers (post-processing, real time, baseline) and the closed-loop

@@ -397,7 +397,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * @param h2local   Global state index → local column within @p A_r.
  * @param t         Epoch time (trace stamp only).
  * @param[in,out] A_s,A_r,w,y  The station's design blocks, extended in place.
- * @param[in,out] tags  The station's row tags (card NOM N2a): one @c SdEwl tag per
+ * @param[in,out] tags  The station's row tags: one @c SdEwl tag per
  *                      appended row (its satellite), in row order.
  * @param[out] trace_rows  Pre-formatted @c network_sd_ewl.csv lines for this
  *                  station-epoch, drained by PASS B's serial consume.  Untouched
@@ -429,7 +429,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  *             usable entry for an arc => that row takes the increment-1 float path.
  * @param station_index  This station's index into @p fix.
  *
- * Card NOM3 step PB1b: a free function (formerly Application::networkAppendSdEwlRows_), so the station
+ * A free function (formerly Application::networkAppendSdEwlRows_), so the station
  * steps in the family files can call it; @p config_ is the run's configuration.
  */
 void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const NetworkEstimator& est,
