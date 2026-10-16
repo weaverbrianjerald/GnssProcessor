@@ -518,7 +518,7 @@ int networkArLatticeRunEnd(const NetworkRunEndView& v) {
     long long released = 0;
     for (long long n : C.released_by) released += n;
 
-    v.log->info("Network (producer AR lattice ledger, cards AGT and FCF): {} step(s), {} epoch(s) "
+    v.log->info("Network (producer AR lattice ledger): {} step(s), {} epoch(s) "
                 "without a search.  {} fix(es) met: {} waiting for {} epoch(s) at one integer, {} "
                 "added, {} confirmed, {} CONTRADICTED ({} epoch(s), first at TOW {:.1f}), {} not "
                 "primitive.  Lattice dimension {} at the end (p50 {:.0f}, at most {}); row length "
@@ -530,7 +530,7 @@ int networkArLatticeRunEnd(const NetworkRunEndView& v) {
                 C.first_contradicted_tow, C.verdicts[verdictIndex(LatticeVerdict::NotPrimitive)],
                 L.rows.size(), RobustStats::median(C.rows), C.max_rows, RobustStats::median(C.mean_len),
                 C.max_len);
-    v.log->info("Network (producer AR lattice ledger, cards AGT and FCF): {} release(s) [{}]; {} of "
+    v.log->info("Network (producer AR lattice ledger): {} release(s) [{}]; {} of "
                 "them found rows [{}] and cost {} dimension(s) [{}] ({} arc elimination(s) with no "
                 "unit row); arc releases that found rows by stamp field [{}], by free-epoch cause "
                 "[{}].  Units implied {} ({} failing their float test).  Cost per epoch: p50 "
@@ -542,13 +542,13 @@ int networkArLatticeRunEnd(const NetworkRunEndView& v) {
                 tallyText(C.free_by, [](std::size_t k) { return latchCauseName(static_cast<int>(k)); }),
                 C.units, C.units_failed, RobustStats::median(C.ms), maxOf(C.ms));
     if (C.verdicts[verdictIndex(LatticeVerdict::Contradicted)] > 0)
-        v.log->warn("Network (producer AR lattice ledger, cards AGT and FCF): {} fix(es) "
+        v.log->warn("Network (producer AR lattice ledger): {} fix(es) "
                     "CONTRADICTED the lattice: each is a wrong fix or a missed release; grade "
                     "logs/network_ar_lattice_events.csv against truth "
                     "(scripts/simnet_ar_lattice_grade.py).",
                     C.verdicts[verdictIndex(LatticeVerdict::Contradicted)]);
     if (C.epochs == 0 || C.fixes == C.waiting)
-        v.log->warn("Network (producer AR lattice ledger, cards AGT and FCF): ARMED, but no fixed DD "
+        v.log->warn("Network (producer AR lattice ledger): ARMED, but no fixed DD "
                     "was ever offered ({} step(s)); every lattice number above is structurally empty "
                     "(standing invariant 4).", C.epochs);
     return 0;

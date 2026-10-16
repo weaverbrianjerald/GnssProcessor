@@ -247,7 +247,7 @@ void Application::reportReinflations_(const PppRunEndView& v) {
     // the current one is kept, and each such case is a "kept" count.
     if (state_manager_)
         log_manager_.getLogger("main_log")->info(
-            "card OWD re-inflations ({}): {}", is_ppp_rtk ? "PPP-RTK" : "PPP",
+            "state re-inflations ({}): {}", is_ppp_rtk ? "PPP-RTK" : "PPP",
             StateManager::reinflateSummary(state_manager_->reinflateCounters()));
 }
 

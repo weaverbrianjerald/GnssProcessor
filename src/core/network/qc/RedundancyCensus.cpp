@@ -708,7 +708,7 @@ int networkRedundancyCensusRunEnd(const NetworkRunEndView& v) {
     if (q.redun_passes == 0)
         log->warn("Network (redundancy census): ARMED but the seam ran on ZERO "
                   "epochs — the wiring never executed.  Nothing in this run is "
-                  "evidence about the card.");
+                  "evidence about the redundancy census.");
     else if (q.redun_sweeps == 0)
         log->warn("Network (redundancy census): ARMED and the seam ran on {} "
                   "epoch(s), but NOT ONE sweep completed — with stride {} and "

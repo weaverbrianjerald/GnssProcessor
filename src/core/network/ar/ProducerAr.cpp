@@ -1385,7 +1385,7 @@ int networkProducerArRunEnd(const NetworkRunEndView& v) {
                   "conditional covariance never returned, or the DD basis never had "
                   "two undifferenced columns.  Every producer-AR number for this run "
                   "is structurally empty (standing invariant #4); this run is evidence "
-                  "about NOTHING in the card.", nc.ambiguity_resolution.min_epochs);
+                  "about NOTHING in the producer AR search.", nc.ambiguity_resolution.min_epochs);
     }
     // The cycle basis's clause (network/ar/ArCycleBasis.hpp), armed only.
     if (nc.ambiguity_resolution.cycle_basis)

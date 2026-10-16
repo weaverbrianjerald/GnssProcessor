@@ -735,7 +735,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
         if (trip.empty()) break;
         if (!ctx.knobs.cta_resolve) break;
         if (trip_resolve.empty()) {
-            log->warn("Network (Card Q3): TOW {:.1f} — {} clock-anchor trip(s) [{}] decoupled "
+            log->warn("Network (clock anchor): TOW {:.1f} — {} clock-anchor trip(s) [{}] decoupled "
                       "and marked, but their carry redundancy (P⁻−P⁺)/P⁻ is below {:.2f}: the "
                       "column is prior-dominated, so withdrawing the prior would leave it "
                       "near-unobservable.  The epoch emits the anchored value for those "
@@ -763,7 +763,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             // The capture channel is the only record of what was folded; with it
             // unarmed there is nothing to withdraw exactly, and a guess would leave
             // residual prior information behind.  Log it and stop.
-            log->warn("Network (Card Q3): TOW {:.1f} — {} clock-anchor trip(s) cannot be "
+            log->warn("Network (clock anchor): TOW {:.1f} — {} clock-anchor trip(s) cannot be "
                       "value-corrected in-epoch: no captured clock prior to withdraw (the "
                       "RAIM-replay capture channel is unarmed for this fold).  Decoupled and "
                       "marked; the correction lands next epoch.",
@@ -808,7 +808,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             x_try = est.solve(plan.shared_datum);
         } catch (const std::exception& ex) {
             ++ctx.counters.cta_resolve_failed;
-            log->warn("Network (Card Q3): TOW {:.1f} in-epoch clock refloat re-solve failed "
+            log->warn("Network (clock anchor): TOW {:.1f} in-epoch clock refloat re-solve failed "
                       "({}); restoring the anchored solve.  The {} tripped satellite(s) stay "
                       "decoupled and marked — only the same-epoch VALUE correction is lost.",
                       se_time.tow, ex.what(), trip_resolve.size());
@@ -833,7 +833,7 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
                 }
                 x_s = est.solve(plan.shared_datum);   // refresh shared_cov_ consistently
             } catch (const std::exception& ex2) {
-                log->error("Network (Card Q3): TOW {:.1f} the restore after a failed refloat "
+                log->error("Network (clock anchor): TOW {:.1f} the restore after a failed refloat "
                            "re-solve ALSO failed ({}) — this epoch's shared covariance no "
                            "longer matches its solution.",
                            se_time.tow, ex2.what());
@@ -888,12 +888,12 @@ void networkClockAnchorGuard(NetworkRunContext& ctx, const GnssConfig& config_,
             ws.cap_dense_cov  = std::move(nc);
             networkClockCloneRefloatTrim(ws, dense_drop);   // no-op off
         }
-        log->info("Network (Card Q3): TOW {:.1f} clock-anchor refloat — {} satellite(s) [{}] "
+        log->info("Network (clock anchor): TOW {:.1f} clock-anchor refloat — {} satellite(s) [{}] "
                   "withdrawn and the epoch RE-SOLVED before emission (pass {}).",
                   se_time.tow, trip_resolve.size(), joinSats(trip_resolve), pass + 1);
     }
     if (pass >= kCtaMaxPasses)
-        log->warn("Network (Card Q3): TOW {:.1f} hit the {}-pass in-epoch refloat cap — any "
+        log->warn("Network (clock anchor): TOW {:.1f} hit the {}-pass in-epoch refloat cap — any "
                   "further clock-anchor trip this epoch is decoupled and marked but not "
                   "value-corrected.  A run that reaches this cap regularly is telling you the "
                   "anchor q or k is mis-specified, not that the data has that many faults.",
@@ -920,7 +920,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     const long long folds = c.cta_folded_anchored + c.cta_folded_loose;
     const long long trips = c.cta_trip_nis + c.cta_trip_abs + c.cta_trip_gap
                           + c.cta_trip_datum + c.cta_trip_ext;
-    log->info("Network (Card Q3 / guarded temporal clock anchor): {} epoch(s); {} clock "
+    log->info("Network (guarded temporal clock anchor): {} epoch(s); {} clock "
               "carry fold(s) — {} ANCHORED at q = {:.3e} m²/s (targets √(q·Δt) = {:.2f} cm "
               "at 30 s), {} LOOSE, {} at the variance floor.  Trips {} = {} nis + {} abs + "
               "{} gap + {} datum + {} ext; {} in-epoch re-solve(s) ({} failed), {} "
@@ -942,7 +942,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
             wl += fmt::format("{}>={:g}:{}", b ? " " : "", kCtaWLadder[b], c.cta_phi_w_ge[b]);
         for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
             el += fmt::format("{}>={:g}:{}", b ? " " : "", kCtaELadder[b], c.cta_phi_e_ge[b]);
-        log->info("Network (Card Q3 / phase-space guard, {}): {} anchored row(s) with the "
+        log->info("Network (phase-space guard, {}): {} anchored row(s) with the "
                   "ionosphere-free phase clock statistic, {} without one (abs only in phase "
                   "mode), {} at the {:.3f} m floor; sigma0_phi {:.3f}; over k on both {}, on "
                   "the CLOCK statistic only {} (the level's motion), on the PHASE statistic "
@@ -959,20 +959,20 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
         // means the downdate never reached a group of ≥ 2 carried clocks, so the
         // anchor still constrains the gauge: the failure the step exists to prevent,
         // which only this line shows.
-        log->info("Network (Card Q3 §2.1 / gauge-free fold): {} clock prior key(s) "
+        log->info("Network (gauge-free fold): {} clock prior key(s) "
                   "gauge-downdated over {} epoch(s); {} epoch(s) INERT (no constellation "
                   "contributed 2+ carried clocks, or UᵀΛU was singular).  Expect the "
                   "CLK-R drained common mode Σ|μ| to RETURN toward the control's level — "
                   "the anchor no longer does the datum's work.",
                   c.cta_gf_keys, c.cta_epochs, c.cta_gf_inert);
         if (c.cta_gf_keys == 0)
-            log->warn("Network (Card Q3 §2.1): the gauge-free fold is ARMED but downdated "
+            log->warn("Network: the gauge-free fold is ARMED but downdated "
                       "ZERO keys — it is INERT for this run and the anchor is folding on "
                       "the RAW state exactly as if the knob were off.  Any A/B against a "
                       "raw-state arm is measuring nothing.");
     }
     if (c.cta_folded_anchored == 0)
-        log->warn("Network (Card Q3): the anchor folded ZERO anchored rows — it is INERT for "
+        log->warn("Network (clock anchor): the anchor folded ZERO anchored rows — it is INERT for "
                   "this run.  Every satellite stayed LOOSE, so the emitted clock is the "
                   "legacy carry's.  Check that satellites are surviving the re-coupling "
                   "re-validation ({} consecutive in-band epochs) and that the staleness "
@@ -985,7 +985,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     // denominator makes a working run read as a broken one.
     if (const long long fault_trips = c.cta_trip_nis + c.cta_trip_abs;
         ctx.knobs.cta_resolve && c.cta_resolves == 0 && fault_trips > 0)
-        log->warn("Network (Card Q3): {} FAULT trip(s) (nis+abs) but ZERO in-epoch "
+        log->warn("Network (clock anchor): {} FAULT trip(s) (nis+abs) but ZERO in-epoch "
                   "re-solves — every one was decoupled and marked WITHOUT the same-epoch "
                   "value correction, so each shipped an anchor-warped epoch.  See the "
                   "per-trip warnings for the cause (prior-dominated column, or no "
@@ -993,7 +993,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
     // The denominator this run's guard and census standardized by (§2.1).  Two arms
     // of the bisection differ only here, so without this line the pair cannot be told
     // apart in the archived console.
-    log->info("Network (Card Q3 §2.1): guard/census denominator — P⁻ {} , P⁺ {} (fold: {}).",
+    log->info("Network: guard/census denominator — P⁻ {} , P⁺ {} (fold: {}).",
               ctx.knobs.cta_stat_proj_prior ? "GAUGE-PROJECTED" : "raw per-satellite var_eff",
               ctx.knobs.cta_stat_proj_post  ? "GAUGE-PROJECTED" : "raw marginal cov(c,c)",
               ctx.knobs.carry_gauge_free ? "gauge-free" : "raw state");
@@ -1013,12 +1013,12 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
         for (std::size_t b = 0; b < kCtaELadder.size(); ++b)
             el += fmt::format("{}>={:g}m:{} ({:.3g}%)", b ? "  " : "", kCtaELadder[b],
                               c.cta_e_ge[b], 100.0 * static_cast<double>(c.cta_e_ge[b]) / n);
-        log->info("Network (Card Q3 §3 / guard ladder over {} ANCHORED row(s)): mean √S = "
+        log->info("Network (guard ladder over {} ANCHORED row(s)): mean √S = "
                   "{:.4f} m ⇒ the armed k = {:.2f} is a {:.3f} m bar at this rung; mean |ê| = "
                   "{:.4f} m; guard σ̂₀ = √(Σw²/n) = {:.3f}.  |w| ladder: {}.  |ê| ladder: {}.",
                   c.cta_w_rows, msq, ctx.knobs.cta_k, ctx.knobs.cta_k * msq,
                   c.cta_sum_abs_e / n, s0, wl, el);
-        log->info("Network (Card Q3 §3): read k off the |w| ladder ABOVE, not off a trip "
+        log->info("Network: read k off the |w| ladder ABOVE, not off a trip "
                   "count — but note this population is TRUNCATED across epochs (a tripped "
                   "satellite goes LOOSE and stops contributing until it re-couples), so the "
                   "upper bins UNDER-report.  The un-truncated null needs an arm with "
@@ -1026,7 +1026,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
                   "= 0 — that is what §3 means by 'with the guard disarmed'.");
     }
     if (ctx.knobs.cta_var_floor > 0.0 && c.cta_floor_hits == 0 && c.cta_folded_anchored > 0)
-        log->info("Network (Card Q3): the variance floor never bound ({:.3e} m² vs the armed "
+        log->info("Network (clock anchor): the variance floor never bound ({:.3e} m² vs the armed "
                   "q·Δt) — the consistency cap is armed but inactive at this q, which is the "
                   "expected reading while q·Δt stays above it.", ctx.knobs.cta_var_floor);
     else if (ctx.knobs.cta_var_floor > 0.0 && c.cta_folded_anchored > 0)
@@ -1036,7 +1036,7 @@ int networkClockAnchorRunEnd(const NetworkRunEndView& v) {
         // #1's consistency cap stops it.  The line reports how often it bound,
         // because "the floor governs" and "the floor is a rounding error" are
         // different postures and only the fraction separates them.
-        log->info("Network (Card Q3 / deviation-#1 consistency floor): the floor BOUND on {} "
+        log->info("Network (deviation-#1 consistency floor): the floor BOUND on {} "
                   "of {} anchored fold(s) ({:.1f} %) at {:.3e} m² (σ = {:.2f} mm) against the "
                   "armed q·Δt = {:.3e} m² at 30 s.  A binding floor is the DESIGN at these "
                   "rungs, not a fault: it is the cap that keeps an independence-assuming "

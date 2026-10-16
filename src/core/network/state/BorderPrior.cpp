@@ -222,7 +222,7 @@ void networkInjectPinBridgePrior(NetworkRunContext& ctx, EpochWorkspace& ws,
             else
                 log->warn("Network (eq34 hygiene INC-2): bridge row info {:.3e} sits "
                           "only {:.1f} decades above the rank-gate cutoff {:.3e} — "
-                          "BELOW the Card-KP K2 minimum of 2.0.  A datum row at the "
+                          "BELOW the K2 minimum of 2.0.  A datum row at the "
                           "cutoff is counted as a NULL direction, so the gate will "
                           "withhold the very epochs the bridge exists to save.  "
                           "TIGHTEN network.phase_datum_bridge_sigma_m (currently {:g} "
@@ -910,7 +910,7 @@ void networkCouplingExactPrepare(NetworkRun& run, const NetworkEpoch& nep) {
     if (!couplingExactFactor(ep)) {
         ++ctx.counters.cxu_epochs_unfactored;
         log->warn("Network: P_SS + Q_S over {} carried key(s) did not factor at "
-                  "TOW {:.1f}; the coupling rows take the card 1d route this epoch.",
+                  "TOW {:.1f}; the coupling rows take the coupling-carry route this epoch.",
                   ep.nS(), t.tow);
         return;
     }

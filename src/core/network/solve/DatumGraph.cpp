@@ -699,13 +699,13 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v) {
         log->info("Network (datum graph): {} of {} gate-evaluated epoch(s) never "
                   "reached the census — a WITHHELD epoch skips before SB_FRAMEDIAG, "
                   "so the epochs whose datum actually failed are precisely the ones "
-                  "with no census row.  Read this line next to the Card-DG withhold "
+                  "with no census row.  Read this line next to the datum-graph withhold "
                   "counts, not on its own.",
                   ctx.counters.n_gate_evaluated - static_cast<std::size_t>(dg.epochs),
                   ctx.counters.n_gate_evaluated);
     if (dg.ms_max > 2.0)
         log->warn("Network (datum graph): worst census pass {:.3f} ms exceeds the "
-                  "card's 2.0 ms hard limit (§7) — the implementation is walking "
+                  "datum graph's 2.0 ms hard limit (§7) — the implementation is walking "
                   "something it should not.",
                   dg.ms_max);
     return 0;

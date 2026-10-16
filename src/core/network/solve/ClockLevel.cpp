@@ -536,7 +536,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
     SharedCarryCov& pcc = ctx.carry.prev_carry_cov;
     const Eigen::Index np = pcc.P.rows();
     if (np == 0 || pcc.P.cols() != np) {
-        log->warn("Network (card CTU G5): level raise on restore armed but no dense border "
+        log->warn("Network (clock level restore): level raise on restore armed but no dense border "
                   "block was restored: INERT.");
         return;
     }
@@ -582,7 +582,7 @@ void networkClockLevelRestoreRaise(NetworkRun& run) {
     ctx.counters.clm_restore_raised = n;
     ctx.counters.clm_restore_raise_sum = sum;
     ctx.counters.clm_restore_raise_max = mx;
-    log->info("Network (card CTU G5): level noise on restore armed for {} satellite(s): this "
+    log->info("Network (clock level restore): level noise on restore armed for {} satellite(s): this "
               "epoch's time update adds each satellite's code-only level variance along its level "
               "direction (sum {:.4e} m^2, largest {:.4e} m^2); phase-visible combinations get "
               "none.", n, sum, mx);
@@ -726,7 +726,7 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
         med = r[r.size() / 2];
         p10 = r[r.size() / 10];
     }
-    log->info("Network (card CTU / level monitor): {} epoch(s) ({} skipped at a datum "
+    log->info("Network (level monitor): {} epoch(s) ({} skipped at a datum "
               "change); {} satellite-epoch ratio(s) P_L/(1/I_L): min {:.3e}, p10 {:.3e}, "
               "median {:.3e}, {} below 1 ({:.1f} %); {} satellite-epoch(s) without a carried "
               "clock (the pivot).  Bound raise {}: {} raise(s) over {} satellite(s), summed "
@@ -752,7 +752,7 @@ int networkClockLevelMonitorRunEnd(const NetworkRunEndView& v) {
             tt   += fmt::format("{}{:.2f}", sep, c.clm_win_T[w]);
             phi  += fmt::format("{}{:.2f}", sep, c.clm_win_phi[w]);
         }
-        log->info("Network (card CTU / level innovation): {} satellite-epoch innovation(s) "
+        log->info("Network (level innovation): {} satellite-epoch innovation(s) "
                   "({} left out, the anchor withdrew the prior); NIS mean {:.3f} over {} after "
                   "epoch 15, {:.1f} % above 6.63; per {}-epoch window: truth-free level NEES "
                   "[{}], rms mean innovation [{}] m, mean T [{}] ({:.1f} % of window "

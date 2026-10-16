@@ -130,9 +130,9 @@ const std::array<CarrySiteSpec, kCarrySites> kSites{{
 // table replaced, which network.carry_rebase_complete moves
 // (owedReason below); the others are by design.
 constexpr const char* kOwed =
-    "not moved before card PRM phase 2 (a gap of the hand-written list; owed to phase 3b)";
+    "not moved before parameter-registry phase 2 (a gap of the hand-written list; owed to phase 3b)";
 constexpr const char* kOwedClv64 =
-    "not moved before card PRM phase 2 (card CLV section 6.4 item 6; owed to phase 3b)";
+    "not moved before parameter-registry phase 2 (clock level section 6.4 item 6; owed to phase 3b)";
 constexpr const char* kStsRowsBefore =
     "the handover epoch's rows are built before the transform; from the next epoch every "
     "term is re-harvested in the incoming datum";

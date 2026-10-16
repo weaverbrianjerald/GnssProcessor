@@ -490,7 +490,7 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
     }
     // Drops at birth strength that decoupled the arc anyway.
     if (ctx.knobs.amb_drop_decouple_always)
-        log->info("Network (card CTU / drop decouple): {} drop(s) found the arc already at "
+        log->info("Network (drop decouple): {} drop(s) found the arc already at "
                   "birth strength and still cleared its border regression and block row "
                   "(network.amb_float_drop_decouple_always).",
                   ctx.counters.n_amb_drop_decoupled_idem);
@@ -533,7 +533,7 @@ int networkAmbVehicleRunEnd(const NetworkRunEndView& v) {
                   "fold after a drop absorbed max {:.3f} m / median {:.3f} m over {} "
                   "measured drop(s); the SECOND fold absorbed max {:.3f} m / median "
                   "{:.3f} m over {}.  A drop floor of 0 with a large second-fold walk is "
-                  "the re-coupling edge this card names: the restored prior is too stiff "
+                  "the re-coupling edge this drop-only floor names: the restored prior is too stiff "
                   "for a level the response has just doubted.",
                   ctx.knobs.amb_drop_var_floor,
                   ctx.knobs.amb_drop_var_floor > 0.0 ? "ARMED" : "OFF (today's behaviour)",

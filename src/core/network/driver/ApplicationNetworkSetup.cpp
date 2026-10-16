@@ -687,7 +687,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                     || g.reason == NetworkSbasis::GroupDelayLatchReason::AllUnhealthyInForceAtStart)
                     all_unhealthy += (all_unhealthy.empty() ? "" : " ") + sat;
             }
-            log->info("Network (RF-0c, card OWD): latched broadcast group delays for {} "
+            log->info("Network (RF-0c): latched broadcast group delays for {} "
                       "satellite(s) from '{}' ({} record(s) scanned) over the processing window "
                       "[TOW {:.1f}, TOW {:.1f}): the low median of each satellite's healthy "
                       "records whose clock epoch lies in the window, Galileo's F/NAV (E1, E5a) "
@@ -834,7 +834,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                    chan_all_tally);
         reportGate("phase-bias (float)",     pb_cover_min,  phase_bias_allowlist, true);
         if (chan_all_tally && sig_cover_min <= 0.0)
-            log->info("Network (card SID phase 6b): the coverage gate "
+            log->info("Network: the coverage gate "
                       "network.signal_min_station_fraction is 0, so EVERY tracked "
                       "channel above is admitted and the widening models all of them.  "
                       "The KEEP list is the whole tally and the GATE list is empty by "
@@ -1382,7 +1382,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     setup.carry_par = parallel_on && nc.parallel_carry;
     const bool carry_par = setup.carry_par;
     if (carry_par)
-        log->info("Network: Card-4 carry dense algebra Eigen-THREADED across {} threads "
+        log->info("Network: Invariant-carry dense algebra Eigen-THREADED across {} threads "
                   "(buildDdPriors / foldReducedDdPriors / installPosterior; serial≡parallel "
                   "byte-identity intentionally relaxed to ~1e-X — physically null)", n_threads);
 #ifndef _OPENMP

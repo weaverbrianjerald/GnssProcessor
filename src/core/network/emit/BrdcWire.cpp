@@ -84,7 +84,7 @@ int networkBrdcWireRunEnd(const NetworkRunEndView& v) {
     const auto& c = ctx.counters;
     const std::size_t fed = setup.brdc_apriori ? setup.brdc_apriori->fedCount() : 0;
     const std::size_t table_sw = setup.brdc_apriori ? setup.brdc_apriori->stats().n_switches : 0;
-    log->info("Network (card NBP / native broadcast clock a priori): {} emitted epoch(s) "
+    log->info("Network (native broadcast clock a priori): {} emitted epoch(s) "
               "stamped; {} clock record(s) stamped, {} unstamped (no selectable record); "
               "{} distinct broadcast records selected on the wire; {} stamp switch(es) "
               "between emissions ({} cut-overs in the table); O on the wire [{:.4f}, "

@@ -583,7 +583,7 @@ int networkSdEwlRunEnd(const NetworkRunEndView& v) {
               "arc absent), {} mixed BIA frame, {} no ambiguity-column pair, {} "
               "missing shared PB/CB column, {} arc without code channels, {} bad "
               "lambda, {} |z| over limit.  FLOAT rows only (increment 1); these fold "
-              "PRE-reduce so they compose exactly with the Card-4 post-reduce DD fold.",
+              "PRE-reduce so they compose exactly with the invariant-carry post-reduce DD fold.",
               t.rows_built, t.sat_seen, mean_var, std::sqrt(std::max(mean_var, 0.0)),
               t.rows_capped, t.skip_no_detector, t.skip_no_pivot, t.skip_no_arc,
               t.skip_immature, config_.getNetworkConfig().sd_ewl.min_arc_epochs,

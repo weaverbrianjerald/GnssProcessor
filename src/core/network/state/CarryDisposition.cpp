@@ -251,7 +251,7 @@ static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
     // Pivot-frame process-noise run-end telemetry (invariant 4): how many clocks took the pivot's walk, at
     // which rate source, and how many pairs the dense fold and the exact update carried.
     const PivotFrameCounters& P = ctx.counters.pfq;
-    log->info("Network (card PFQ / pivot-frame clock noise): {} decision pass(es); {} clock "
+    log->info("Network (pivot-frame clock noise): {} decision pass(es); {} clock "
               "key-epoch(s) took r_p dt (summed {:.4e} m^2); pivot rate: the model's (pinned "
               "pivot, not carried) {} / a carried pivot anchored {} / loose {} "
               "(constellation-epochs), largest r_p {:.3e} m^2/s; pairs: {} in the dense fold, "
@@ -260,7 +260,7 @@ static int networkPivotFrameQRunEnd(const NetworkRunEndView& v) {
               P.pivot_loose, P.rate_max, P.dense_pairs, P.cxu_pairs);
     if (P.keys == 0)
         log->warn("Network: network.clock_pivot_frame_q is ARMED but no clock took "
-                  "the term (no recorded pivot, or no folding clock): the card is INERT for "
+                  "the term (no recorded pivot, or no folding clock): the pivot-frame noise is INERT for "
                   "this run.");
     return 0;
 }
@@ -315,7 +315,7 @@ static int networkCarryDispositionTableRunEnd(const NetworkRunEndView& v) {
                       C.prm_reexpressed, C.prm_reexpressed_epochs,
                       C.prm_reexpressed_max_dvar, C.prm_undecided_at_fold);
     traces.appendRunManifestRecord(config_.getNetworkConfig(), js);
-    log->info("Network (card PRM phase 1b): the border's fold decided once before PASS B "
+    log->info("Network (carry disposition): the border's fold decided once before PASS B "
               "over {} epoch(s); {} key-epoch(s) re-expressed between the decision and the "
               "fold in {} epoch(s) (largest variance change {:.3e} m^2: a clock-pivot "
               "handover's S-transform, after the coupling rows were built); {} entr(ies) "
@@ -323,7 +323,7 @@ static int networkCarryDispositionTableRunEnd(const NetworkRunEndView& v) {
               C.prm_decide_epochs, C.prm_reexpressed, C.prm_reexpressed_epochs,
               C.prm_reexpressed_max_dvar, C.prm_undecided_at_fold);
     if (C.prm_undecided_at_fold > 0)
-        log->warn("Network (card PRM phase 1b): {} entr(ies) reached the fold with no "
+        log->warn("Network (carry disposition): {} entr(ies) reached the fold with no "
                   "decision this epoch and were decided there; the coupling rows did not "
                   "read a decision for them.", C.prm_undecided_at_fold);
     return 0;

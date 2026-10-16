@@ -171,7 +171,7 @@ void networkChannelAllRunEnd(const NetworkRunContext& ctx, const GnssConfig& con
     if (!config_.networkChannelModeAll()) return;
     const auto& C = ctx.counters.channel_all;
     if (C.epochs == 0) {
-        log->warn("Network (card SID phase 6b, ALL-CHANNEL): armed and the census never "
+        log->warn("Network (ALL-CHANNEL): armed and the census never "
                   "ran over any epoch — dead wiring, not a clean run (standing "
                   "invariant #4).");
         return;
@@ -185,7 +185,7 @@ void networkChannelAllRunEnd(const NetworkRunContext& ctx, const GnssConfig& con
                              row.sta_modelling, row.columns, row.rows_canonical,
                              row.rows_extra);
     }
-    log->info("Network (card SID phase 6b, ALL-CHANNEL FAMILY CENSUS over {} epoch(s), "
+    log->info("Network (ALL-CHANNEL FAMILY CENSUS over {} epoch(s), "
               "coverage gate network.signal_min_station_fraction = {:.3f}): {} "
               "(constellation, signal) famil(y|ies), {} of them carrying EXTRA-channel "
               "rows, {} extra row-epoch(s) in all.  Per family, peak in one epoch: "
@@ -196,12 +196,12 @@ void networkChannelAllRunEnd(const NetworkRunContext& ctx, const GnssConfig& con
               static_cast<long long>(C.family.size()), extra_families, extra_rows,
               table);
     if (extra_families == 0)
-        log->warn("Network (card SID phase 6b, ALL-CHANNEL): the widening is active and "
+        log->warn("Network (ALL-CHANNEL): the widening is active and "
                   "NO family ever carried an extra-channel row — every station reports "
                   "one attribute per selected band, so this run is byte-equivalent to "
                   "the single-channel posture (standing invariant #4).  Every simulated "
                   "bed as delivered reads this way by construction.");
-    log->info("Network (card SID phase 6b, CROSS-CHANNEL EXPOSURE, R5): {} of {} "
+    log->info("Network (CROSS-CHANNEL EXPOSURE, R5): {} of {} "
               "(station, satellite, band) cell-epoch(s) carry more than one modelled "
               "PHASE and {} more than one modelled CODE.  Those are the cells a screen "
               "keyed on the BAND (NetworkMeasurementAdmission, 'SAT|<band>') or on the "
@@ -209,25 +209,25 @@ void networkChannelAllRunEnd(const NetworkRunContext& ctx, const GnssConfig& con
               "WHOLESALE: one channel's verdict reaches every channel of the cell.  The "
               "eight pair sites the audit named select BANDS, not channels, and are "
               "unchanged.  ACTIONS taken on an extra channel are counted separately: "
-              "the row-level gap re-entry tier reached {} of them (card SID phase 6b "
-              "R3), and the per-tier slip census of the second-phase line above covers "
+              "the row-level gap re-entry tier reached {} of them"
+              ", and the per-tier slip census of the second-phase line above covers "
               "the rest.",
               C.xchan_phase_cells, C.xchan_cells_total, C.xchan_code_cells,
               gap_extra_channel);
-    log->info("Network (card SID phase 6b, INTER-SIGNAL STATES): {} station-epoch(s) "
+    log->info("Network (INTER-SIGNAL STATES): {} station-epoch(s) "
               "held at least one receiver inter-signal code state, naming at most {} "
               "distinct SIGNAL(s) in one epoch; extra CODE channels appeared on at most "
               "{} band digit(s) in one epoch, {} of them on band 2 or above.  A band-2 "
               "or higher extra code is the population network.sat_isc_state ({}) "
               "decides: with it OFF the RF-0d geometry-free pin asserts that column's "
-              "inter-signal correction to ZERO (card B5D's class); with it ON the "
+              "inter-signal correction to ZERO (the band-5 code-datum class); with it ON the "
               "column is freed wherever a station bridges both signals of the "
               "satellite, which under this widening is every widened station.",
               C.isc_station_epochs, C.isc_signals_max, C.extra_code_bands_max,
               C.extra_code_bands_ge2_max,
               config_.getNetworkConfig().sat_isc_state ? "armed" : "OFF");
     if (C.extra_code_bands_ge2_max > 0 && !config_.getNetworkConfig().sat_isc_state)
-        log->warn("Network (card SID phase 6b): extra CODE channels were modelled on "
+        log->warn("Network: extra CODE channels were modelled on "
                   "band 2 or above with network.sat_isc_state OFF, so each of those "
                   "satellite columns carries an ASSERTED zero inter-signal correction "
                   "(standing invariant #7's decoupling edge with nothing bounding what "

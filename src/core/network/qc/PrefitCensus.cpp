@@ -790,7 +790,7 @@ int networkPrefitCensusRunEnd(const NetworkRunEndView& v) {
         if (p.epochs == 0)
             log->warn("Network (prefit census): ARMED but the walk ran on ZERO epochs "
                       "— the wiring never executed.  Nothing in this run is evidence "
-                      "about the card.");
+                      "about the prefit census.");
         else if (p.rows == 0)
             log->warn("Network (prefit census): ARMED, {} walk(s) ran and ZERO DATA "
                       "rows were classified — every station was skipped (no solve "

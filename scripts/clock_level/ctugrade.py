@@ -119,7 +119,7 @@ def runend(d):
                 m = re.search(r'reason=(\w+)', r[9]); trip_kind[m.group(1) if m else '?'] += 1
     out['trips'] = sum(trip_kind.values()); out['trip_kinds'] = dict(trip_kind)
     for ln in open(os.path.join(d, 'stdout.txt'), encoding='utf-8', errors='replace'):
-        m2 = re.search(r'Card Q3 / guarded temporal clock anchor\): (\d+) epoch\(s\); (\d+) clock carry', ln)
+        m2 = re.search(r'(?:Card Q3 / )?guarded temporal clock anchor\): (\d+) epoch\(s\); (\d+) clock carry', ln)
         m = re.search(r', (\d+) at the variance floor', ln)
         if m and m2:
             out['floor_pct'] = f'{100.0 * int(m.group(1)) / max(int(m2.group(2)), 1):.1f}'

@@ -226,7 +226,7 @@ namespace GnssProcessor {
         const std::shared_ptr<spdlog::logger>& log = v.log;
         if (!ctx.roster.active) return 0;
         const RosterN3bCensus& c = ctx.counters.sid.n3b;
-        log->info("Network (roster site census, N3b): {} site(s) of card NOM section 18 "
+        log->info("Network (roster site census, N3b): {} site(s) of the object-model audit "
                   "measured against the roster or the arc ledger over the run; a read site "
                   "at 0 answers as its old rule did at every read",
                   kRosterN3bSites);

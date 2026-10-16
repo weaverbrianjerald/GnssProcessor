@@ -2397,7 +2397,8 @@ static int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       "because a value chosen to keep the rank is indistinguishable from "
                       "an estimate.  Every one of these would have been an ASSERTION of a "
                       "zero inter-signal correction under RF-0d alone (counted beside this "
-                      "as n_sat_gf_isc_zero = {}), which card TBI measured at metres across "
+                      "as n_sat_gf_isc_zero = {}), which the three-band ignition study measured at "
+                      "metres across "
                       "a band.  The freed channels' LEVEL now re-references whenever the "
                       "veteran link re-seeds: {} sum-to-zero row(s) re-seeded over the run, "
                       "marking {} satellite-epoch(s) for the consumer's discontinuity "
@@ -2424,7 +2425,7 @@ static int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       "over the run (one per station-epoch per constellation, sigma {:.1f} m, "
                       "realized common-mode information 1/sigma^2 = {:.3e} INDEPENDENT of station "
                       "count).  Folded PRE-reduce through the diagonal prior channel, so it "
-                      "composes with the Card-4 DD priors that refuse a post-reduce Woodbury "
+                      "composes with the invariant-carry DD priors that refuse a post-reduce Woodbury "
                       "gauge.  This is the IGS zero-mean-over-receivers DCB convention, replacing "
                       "the datum the satellite code-bias sum-to-zero silently also provided.",
                       ctx.counters.n_rxcb_gauges,

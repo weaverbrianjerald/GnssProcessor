@@ -312,7 +312,7 @@ int networkGfArcJumpRunEnd(const NetworkRunEndView& v) {
     const GfArcJumpCounters& C = slip_qc.counters.gf_jump;
     const auto& stations = v.setup.stations;
 
-    v.log->info("Network (GF arc jump, card ARL): {} test(s) over {} dual-band sample(s); "
+    v.log->info("Network (GF arc jump): {} test(s) over {} dual-band sample(s); "
                 "{} flag(s) ({:.2e} per test): {} freed ({} band(s)), {} coincident with an "
                 "earlier drain ({} band(s)), {} kept whole by the common-band verdict ({} "
                 "band(s)), {} with no live arc, {} cold (diagnostic), {} at a pinned station.  "
@@ -345,11 +345,11 @@ int networkGfArcJumpRunEnd(const NetworkRunEndView& v) {
         top += fmt::format("{}{} {}/{}", top.empty() ? "" : ", ", name, by_sta[k].first,
                            slip_qc.hist[i].gf_jump_tests);
     }
-    v.log->info("Network (GF arc jump, card ARL): {} station(s) flagged; top (flags/tests): {}.",
+    v.log->info("Network (GF arc jump): {} station(s) flagged; top (flags/tests): {}.",
                 by_sta.size(), top.empty() ? std::string("none") : top);
 
     if (C.tests == 0)
-        v.log->warn("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump is armed "
+        v.log->warn("Network (GF arc jump): network.cycle_slip.gf_arc_jump is armed "
                     "and tested NOTHING.  The raw observables were not computed, or no arc "
                     "held three consecutive dual-band samples: the trigger is inert this run "
                     "(standing invariant 4).");

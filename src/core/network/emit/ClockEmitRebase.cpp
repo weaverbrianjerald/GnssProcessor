@@ -158,7 +158,7 @@ int networkClockEmitRebaseRunEnd(const NetworkRunEndView& v) {
     // re-anchors count the leash's marked re-coupling edges, expected 0 on a run of
     // 24 h or less (the measured 12 h frame wander is about 23 m against a 50 m leash).
     const auto& cr = clk_rebase_engine.counters();
-    log->info("Network (Card CLK-R / clock emission re-base): {} emit epoch(s), {} row(s); "
+    log->info("Network (clock emission re-base): {} emit epoch(s), {} row(s); "
               "frame hold {} — Σ|μ| drained {:.2f} m, max |A_c| {:.2f} m, {} leash "
               "re-anchor(s); step marks {} — {} mark(s) > {:.2f} m; {} init(s), {} gap "
               "re-init(s), {} gap-return mark(s) (stage 2b {}).  OUTPUTS-only: solve "

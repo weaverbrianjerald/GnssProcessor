@@ -258,8 +258,8 @@ def zwd_table(run_dir, n_hours, bar_m=0.5):
 
 Q3_PATTERNS = [
     ("producer complete", re.compile(r"Network producer complete")),
-    ("Q3 clock time-link", re.compile(r"Card Q3 / guarded temporal clock anchor")),
-    ("wire contract / step marks", re.compile(r"Card CLK-R / clock emission re-base")),
+    ("Q3 clock time-link", re.compile(r"(?:Card Q3 / )?guarded temporal clock anchor")),
+    ("wire contract / step marks", re.compile(r"(?:Card CLK-R / )?clock emission re-base")),
     ("leveling vehicle", re.compile(r"leveling-carry retirement census|relevel_free_epoch|"
                                     r"free-epoch")),
     ("phase datum", re.compile(r"phase[- ]datum family|PHASE_ANCHOR|phase anchor")),

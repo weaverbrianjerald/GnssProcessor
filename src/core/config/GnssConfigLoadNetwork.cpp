@@ -189,10 +189,10 @@ namespace GnssProcessor {
                 "L1/L2 pairs, held at {} cycle), screened by a per-unit test (alpha {:.0e}) and "
                 "block acceptance (alpha {:.0e}), which see a wrong integer only where the float "
                 "disagrees with it; against a slip no detector flags (a stale zero-q float) the "
-                "guard is the slip fixes of card ARL section 13, required here.  The estimator, "
+                "guard is the slip fixes, required here.  The estimator, "
                 "the carry, the search, the DD trace, post-fit QC and every emitted sigma stay "
                 "float.  This is a measurement "
-                "arm of card FCF decision D1 on a sim fixture, not a product: the producer AR "
+                "arm of fixed-cycle fold decision D1 on a sim fixture, not a product: the producer AR "
                 "record (docs/network_ambiguity_resolution_design.md) stands until the author "
                 "rules.  Search gates: min_epochs={}, FFR>={:.4f}, ratio>={:.1f}, trace {}.",
                 ar.fixed_cycle_sigma_cyc, ar.fixed_cycle_unit_alpha, ar.fixed_cycle_gate_alpha,
@@ -311,13 +311,11 @@ namespace GnssProcessor {
             if (network_config_.emit_pb_hold_phase_clock)
                 throw std::runtime_error("network.apriori_source sp3_brdc_clock refuses "
                                          "network.emit_pb_hold_phase_clock: the phase-clock hold "
-                                         "is valid only with a precise a priori clock product "
-                                         "(card NBP)");
+                                         "is valid only with a precise a priori clock product");
             if (!(network_config_.emit_pb_hold && network_config_.emit_pb_hold_smoothed))
                 throw std::runtime_error("network.apriori_source sp3_brdc_clock requires "
                                          "network.emit_pb_hold with network.emit_pb_hold_smoothed "
-                                         "(card SMH's smoothed hold, the hold the posture was "
-                                         "measured with; card NBP)");
+                                         "(the smoothed hold, the hold the posture was measured with)");
         }
 
         // The fixed-cycle fold's interlocks, here for the reason given for the
@@ -341,10 +339,10 @@ namespace GnssProcessor {
         // arm.
         if (network_carry_coupling_reinit_sources_
             && !network_phase_datum_eq34_ && !network_phase_anchor_carry_reref_)
-            log->warn("Network producer (Card 1g): carry_coupling_reinit_sources is armed but "
+            log->warn("Network producer: carry_coupling_reinit_sources is armed but "
                       "NEITHER network.phase_datum_eq34 NOR network.phase_anchor_carry_reref is "
                       "on, so no realization-step source will ever populate the reinit history "
-                      "and the card is INERT (the clock-QC feeds it shares with Card 1d are "
+                      "and the knob is INERT (the clock-QC feeds it shares with the coupling carry are "
                       "unaffected).  Arm one of those two, or drop this knob — do not read the "
                       "resulting A/B as 'no effect'.");
 
@@ -482,19 +480,19 @@ namespace GnssProcessor {
         if (network_config_.slip_qc.gap_reentry
             && !network_cycle_slip_relevel_free_epoch_
             && !network_carry_invariant_ && network_phase_leveling_) {
-            log->warn("Network (slip-QC card G response): network.cycle_slip.gap_reentry_relevel "
+            log->warn("Network (slip-QC response): network.cycle_slip.gap_reentry_relevel "
                       "is armed on a PHASE-LEVELING lineage with cycle_slip.relevel_free_epoch "
                       "OFF.  The re-entry mark alone does NOT deliver the free epoch — PASS B's "
                       "measurement pre-pass consumes the pending-reseed flag before the leveling "
                       "inject reads it, so the stale pre-gap level still folds across the break "
                       "(SPEC_slip_relevel_walk §6).  The response is NOT disabled: every arc it "
                       "would have freed is counted as gap_reentry_no_relevel and reported in the "
-                      "run-end Card-G line, so the loss is measured rather than hidden.  Arm "
+                      "run-end gap re-entry line, so the loss is measured rather than hidden.  Arm "
                       "network.cycle_slip.relevel_free_epoch to make it act.");
         }
         if (network_config_.slip_qc.gap_reentry
             && !network_phase_leveling_ && !network_carry_invariant_) {
-            log->warn("Network (slip-QC card G response): network.cycle_slip.gap_reentry_relevel "
+            log->warn("Network (slip-QC response): network.cycle_slip.gap_reentry_relevel "
                       "is armed with NEITHER network.phase_leveling NOR network.carry_invariant — "
                       "there is no stiff time-linked carry for a re-entry to bridge, so the "
                       "response has nothing to protect and every arc will report as "
@@ -502,7 +500,7 @@ namespace GnssProcessor {
                       "on so the counters say so rather than being silently dropped.");
         }
         if (network_config_.slip_qc.gap_reentry)
-            log->info("Network (slip-QC card G response): gap RE-ENTRY refloat ON — an arc that "
+            log->info("Network (slip-QC response): gap RE-ENTRY refloat ON — an arc that "
                       "re-appears after ≥1 missed processed epoch is marked SLIPPED in that same "
                       "epoch when the raw MW/GF level shifted across the break{}{}.  No detector "
                       "covers a return epoch (MW needs an adjacent predecessor, IF-TD three "
@@ -528,18 +526,18 @@ namespace GnssProcessor {
         // (invariant #4).
         if (network_config_.slip_qc.gap_reentry_per_signal
             && !network_config_.slip_qc.gap_reentry) {
-            log->warn("Network (slip-QC card GRS): network.cycle_slip.gap_reentry_per_signal "
+            log->warn("Network (slip-QC): network.cycle_slip.gap_reentry_per_signal "
                       "is armed WITHOUT network.cycle_slip.gap_reentry_relevel.  The per-signal "
                       "RESPONSE is gated on it and cannot act; the per-signal COLLECTION also "
-                      "needs a row-level card armed (gap_instrument or gap_reentry_relevel), "
+                      "needs a row-level response armed (gap_instrument or gap_reentry_relevel), "
                       "because it de-duplicates against the row-level resumption list and "
                       "would otherwise answer a whole-satellite gap twice.  Every counter in "
-                      "the run-end Card-G per-signal clause will read 0: armed-and-inert, not "
+                      "the run-end gap re-entry per-signal clause will read 0: armed-and-inert, not "
                       "a quiet run.  Arm network.cycle_slip.gap_reentry_relevel to make it act.");
         }
         if (network_config_.slip_qc.gap_reentry_per_signal
             && network_config_.slip_qc.gap_reentry)
-            log->info("Network (slip-QC card GRS): PER-SIGNAL gap re-entry ON.  A phase signal "
+            log->info("Network (slip-QC): PER-SIGNAL gap re-entry ON.  A phase signal "
                       "that re-appears after ≥1 missed processed epoch is marked SLIPPED even "
                       "when its satellite stayed present on another signal.  The row-level tier "
                       "is blind to that case by construction (the raw row survives on a "
@@ -599,17 +597,17 @@ namespace GnssProcessor {
         if (network_config_.slip_qc.tracker_modeled_first
             && !network_config_.slip_qc.gap_reentry
             && !network_config_.slip_qc.gap_instrument) {
-            log->warn("Network (slip-QC card GRK): network.cycle_slip.tracker_modeled_first "
+            log->warn("Network (slip-QC): network.cycle_slip.tracker_modeled_first "
                       "is armed with NEITHER network.cycle_slip.gap_reentry_relevel NOR "
                       "network.cycle_slip.gap_instrument.  The defect it closes is a KEY "
                       "MISMATCH between the tracker's band signal and the carried ambiguity "
-                      "the gap re-entry response looks up, and with no Card-G consumer armed "
+                      "the gap re-entry response looks up, and with no gap re-entry consumer armed "
                       "there is no such lookup: the changed choice reaches only the "
                       "trace_slip_raw rows and the MW/GF detections.  Arm "
                       "network.cycle_slip.gap_reentry_relevel for the response half.");
         }
         if (network_config_.slip_qc.tracker_modeled_first)
-            log->info("Network (slip-QC card GRK): tracker MODELED-FIRST ON.  The arc-level "
+            log->info("Network (slip-QC): tracker MODELED-FIRST ON.  The arc-level "
                       "tracker takes, on each band, the phase signal this station LATCHED for "
                       "that band, and falls back to the lexically lowest raw phase with a "
                       "matching code only where the latch names none or the latched phase is "
@@ -630,14 +628,14 @@ namespace GnssProcessor {
             const auto& sq = network_config_.slip_qc;
             if (!network_cycle_slip_relevel_free_epoch_ && !network_carry_invariant_
                 && network_phase_leveling_)
-                log->warn("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump is "
+                log->warn("Network (GF arc jump): network.cycle_slip.gf_arc_jump is "
                           "armed on a phase-leveling lineage with "
                           "network.cycle_slip.relevel_free_epoch OFF.  A flag marks the pair "
                           "pending-reseed, and PASS B's measurement pre-pass consumes that "
                           "mark before the leveling inject reads it, so the stale level "
                           "still folds (SPEC_slip_relevel_walk section 6).  Arm "
                           "relevel_free_epoch to make the trigger act.");
-            log->info("Network (GF arc jump, card ARL): arc-scoped GF jump trigger ON.  Per "
+            log->info("Network (GF arc jump): arc-scoped GF jump trigger ON.  Per "
                       "dual-band arc, r = d(t) - d(last clean step), d the one-epoch "
                       "geometry-free phase step; a flag when |r| > max({:.3f} m, {} * 1.4826 * "
                       "MAD of the arc's last {} clean r, once {} are held) frees both bands of "
@@ -756,15 +754,15 @@ namespace GnssProcessor {
                                      || iono_cs_armed;
             if (!cards_armed) {
                 network_config_.slip_qc.gap_instrument = true;
-                log->info("Network (Card 4 D5 {}): auto-arming "
+                log->info("Network (D5 {}): auto-arming "
                           "network.cycle_slip.gap_instrument — the raw MW/GF step verdicts "
                           "it needs are filled by the slip-QC QUALIFY pass, which runs only "
-                          "for a DECISION card (cycle_slip.mw_lli_corroborate / "
+                          "for a DECISION knob (cycle_slip.mw_lli_corroborate / "
                           "cycle_slip.gap_instrument / cycle_slip.relevel_bridge_gf / the "
                           "CS-GF authority).  network.trace_slip_raw does NOT qualify — it "
                           "computes the observables but adjudicates none, so the suppression "
                           "set would have arrived EMPTY and the gate would have been silently "
-                          "inert.  Card G is instrumentation-only (counters + trace rows), so "
+                          "inert.  gap_instrument is instrumentation-only (counters + trace rows), so "
                           "the solve is unchanged.",
                           network_carry_invariant_innov_corroborate_
                               ? (network_carry_invariant_innov_retap_only_ ? "v3/v4" : "v3")
@@ -863,7 +861,7 @@ namespace GnssProcessor {
                           "-- disabled.");
                 network_carry_rebase_complete_ = false;
             } else {
-                log->info("Network producer (card PRM phase 3b): carry re-base COMPLETE ({}{}{}): "
+                log->info("Network producer: carry re-base COMPLETE ({}{}{}): "
                           "each armed re-base mechanism also moves the carried references its "
                           "exemption table marks as owed (the stash's pivot value, the clock "
                           "baselines, the last solved phase bias, an open pin bridge, the gross "
@@ -1465,7 +1463,7 @@ namespace GnssProcessor {
             refuse("requires network.phase_datum_held_basis, the only phase datum it was designed on");
         if (network_carry_invariant_)
             refuse("refuses network.carry_invariant: the held solve reads the unfolded station "
-                   "factors, and the Card-4 DD priors fold into the same normals");
+                   "factors, and the invariant-carry DD priors fold into the same normals");
         if (network_phase_datum_eq34_)
             refuse("refuses network.phase_datum_eq34 (a phase datum never measured with the fold)");
         if (network_cycle_slip_turbo_edit_)
@@ -1479,8 +1477,9 @@ namespace GnssProcessor {
             refuse("requires fixed_cycles.source (epoch or lattice): the source is always named");
         if (ar.fixed_cycle_source == FixedCycleSource::Lattice && ar.fixed_cycle_fold == FixedCycleFold::Emit)
             refuse("refuses fixed_cycles.source lattice: the hold from the ledger (step FCF-4) is not "
-                   "built (decision D1 failed, card FCFB section 4) and the author's ruling on the "
-                   "producer AR record is not quoted in card FCF; source lattice runs under observe");
+                   "built (decision D1 failed) and the author's ruling on the "
+                   "producer AR record is not quoted in the fixed-cycle fold record; source "
+                   "lattice runs under observe");
 
         // The guard against a slip no detector flags.  The per-unit test
         // and block acceptance see a wrong integer only where the float disagrees with it; a
@@ -1508,10 +1507,9 @@ namespace GnssProcessor {
 
         if (ar.fixed_cycle_fold == FixedCycleFold::Emit) {
             if (!slip_missing.empty())
-                refuse("requires the slip fixes of card ARL section 13 (missing: " + slip_list
+                refuse("requires the slip fixes (missing: " + slip_list
                        + "): the per-unit test and block acceptance cannot see a slip no detector "
-                         "flags, because the zero-q float then sits on the wrong integer (card "
-                         "FCFB section 5)");
+                         "flags, because the zero-q float then sits on the wrong integer");
             if (network_config_.emit_pb_hold_smoothed)
                 refuse("refuses network.emit_pb_hold_smoothed: its clock clones are estimator-side "
                        "and read the float");
@@ -1521,8 +1519,9 @@ namespace GnssProcessor {
                        "resume into Emit would read state the snapshot does not carry");
             if (ar.fixed_cycle_source != FixedCycleSource::Epoch || !ar.fixed_cycle_emit_measurement_only)
                 refuse("requires fixed_cycles.source epoch and fixed_cycles.emit_measurement_only "
-                       "true until the author's ruling on the producer AR record is quoted in card "
-                       "FCF: only the D1 measurement arms emit");
+                       "true until the author's ruling on the producer AR record is quoted in the "
+                       "fixed-cycle fold record"
+                       ": only the D1 measurement arms emit");
             const std::vector<std::string> off_bed = stationsOffSimFixture(network_config_.stations);
             if (!off_bed.empty())
                 refuse("with fixed_cycles.emit_measurement_only requires every station's RINEX file "
@@ -1535,7 +1534,7 @@ namespace GnssProcessor {
                        + (off_bed.size() > 5 ? fmt::format(" and {} more", off_bed.size() - 5) : ""));
         } else if (!slip_missing.empty()) {
             log->warn("Network producer AR: fixed_cycles.fold observe runs without the "
-                      "slip fixes of card ARL section 13 (missing: {}).  A slip no detector flags "
+                      "slip fixes (missing: {}).  A slip no detector flags "
                       "leaves the zero-q float on the wrong integer, which the per-unit test and "
                       "block acceptance cannot see, so the {} it and traces it as folded "
                       "(FCFC section 5).  Measure-only: the products do not "
@@ -1704,7 +1703,7 @@ namespace GnssProcessor {
                           "each station's OWN pre-reduce block (min_arc_epochs={}, "
                           "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
                           "Reaches the shared satellite PHASE + CODE bias columns "
-                          "directly; composes EXACTLY with the post-reduce Card-4 DD "
+                          "directly; composes EXACTLY with the post-reduce invariant-carry DD "
                           "fold.  FLOAT rows only — no integer fixing (increment 2, "
                           "unbuilt).  Rows are skipped at the clock-datum station "
                           "(no MW detector there) and wherever an arc is immature or "
@@ -1997,13 +1996,13 @@ namespace GnssProcessor {
         if (!cols && json.contains("rhs_attrib_columns")) cols = &json["rhs_attrib_columns"];
         if (cols) {
             if (!cols->is_array()) {
-                log->error("Network (rhs-attrib, card ICF): network.rhs_attrib_columns must be "
+                log->error("Network (rhs-attrib): network.rhs_attrib_columns must be "
                            "an array of column labels (e.g. [\"CLK:G07\", "
                            "\"CB:G07:C1W\", \"LOC:MAJU00MHL:GPS_DCB\"]); ignored.");
             } else {
                 for (const auto& c : *cols) {
                     if (!c.is_string() || c.get<std::string>().empty()) {
-                        log->error("Network (rhs-attrib, card ICF): network.rhs_attrib_columns "
+                        log->error("Network (rhs-attrib): network.rhs_attrib_columns "
                                    "holds an entry that is not a non-empty string; ignored.");
                         continue;
                     }
@@ -2035,7 +2034,7 @@ namespace GnssProcessor {
             // previous frame does not hold: with the trip recorder alone, the LOC labels
             // are decomposed only at the epoch a trip fires, never at the frame before it.
             if (any_local && network_config_.rhs_attrib_tow < 0.0 && on_trip)
-                log->warn("Network (rhs-attrib, card L5B): network.rhs_attrib_columns names "
+                log->warn("Network (rhs-attrib): network.rhs_attrib_columns names "
                           "LOC:<station>:<key> labels with only network.rhs_attrib_on_trip "
                           "armed: loc_<tow>.csv is written for a trip's own epoch only, never "
                           "for the retained previous frame (it holds no solve x_s); arm "
@@ -2212,7 +2211,7 @@ namespace GnssProcessor {
                               tokn, network_config_.prefit_fuse_classes);
                 log->warn("Network (prefit fuse): ARMED at S_fuse = {:g} over classes "
                           "[{}] — this is the ONE SOLVE-AFFECTING knob of the "
-                          "prefit-census card.  A DATA row of an in-domain class whose "
+                          "prefit census.  A DATA row of an in-domain class whose "
                           "common-mode-removed s exceeds S is CAPPED to w*(S/s)^2 (not "
                           "dropped); pins (w >= 1e6) and rows whose station type-median "
                           "was unavailable are skipped.  Grade this arm on its own leg "
@@ -2337,7 +2336,7 @@ namespace GnssProcessor {
                       "refused, and above 1 the 'tighter' vet bound would be LOOSER than "
                       "network.adm_bound_m, which inverts the knob's meaning.  Clamped "
                       "to the 0.2 default (200 m at the 1000 m bound; measured at 3.2x "
-                      "above the worst legitimate re-entry |z| in the card's sample).",
+                      "above the worst legitimate re-entry |z| in the measurement-admission sample).",
                       network_config_.adm_revet_bound_scale);
             network_config_.adm_revet_bound_scale = 0.2;
         }
@@ -2369,7 +2368,7 @@ namespace GnssProcessor {
                       network_config_.adm_heal_ep, network_config_.adm_max_frac);
             if (network_config_.adm_screen)
                 log->warn("Network (measurement admission): the screen is the ONE "
-                          "solve-affecting knob of this card -- a failing (station, "
+                          "solve-affecting knob of measurement admission -- a failing (station, "
                           "satellite, band) has BOTH its observables removed from the "
                           "model set for the epoch, its orphaned satellite phase-bias / "
                           "code-bias / clock states pruned, and (except at a pure BIRTH, "
@@ -2481,7 +2480,7 @@ namespace GnssProcessor {
         network_config_.trace_station_block =
             jval<bool>(json, "network.trace_station_block", "trace_station_block", false);
         if (network_config_.trace_station_block)
-            log->info("Network (§24.10 card ZP): network.trace_station_block ON — per-station "
+            log->info("Network (§24.10): network.trace_station_block ON — per-station "
                       "LOCAL-block audit (rank, condition number, the 3 smallest eigenpairs and "
                       "the local states spanning them, the ZWD column's effective vs raw "
                       "information, the reconstructed local correction, and zero-redundancy row "
@@ -2588,7 +2587,7 @@ namespace GnssProcessor {
         if (network_config_.emit_pb_hold_phase_clock) {
             if (!network_config_.emit_pb_hold)
                 throw std::runtime_error("network.emit_pb_hold_phase_clock requires "
-                                         "network.emit_pb_hold (it is a mode of the hold; card LAH)");
+                                         "network.emit_pb_hold (it is a mode of the hold)");
             log->info("Network: network.emit_pb_hold_phase_clock = true: a held "
                       "(satellite, signal) keeps its phase-visible clock over the generation. "
                       "The held emission is p(t0) + [c~(t) - c~(t0)], c~ the emitted clock less "
@@ -2616,7 +2615,7 @@ namespace GnssProcessor {
         if (network_config_.emit_pb_hold_smoothed) {
             if (!network_config_.emit_pb_hold)
                 throw std::runtime_error("network.emit_pb_hold_smoothed requires "
-                                         "network.emit_pb_hold (it is a mode of the hold; card SMH)");
+                                         "network.emit_pb_hold (it is a mode of the hold)");
             if (network_config_.emit_pb_hold_phase_clock)
                 throw std::runtime_error("network.emit_pb_hold_smoothed excludes "
                                          "network.emit_pb_hold_phase_clock: the smoothed hold carries "
@@ -2625,7 +2624,7 @@ namespace GnssProcessor {
                             "carry_coupling_exact_update", false))
                 throw std::runtime_error("network.emit_pb_hold_smoothed requires "
                                          "network.carry_coupling_exact_update: the clock clone is "
-                                         "time-updated by the exact rule, and card 1d's shrink "
+                                         "time-updated by the exact rule, and the coupling-carry shrink "
                                          "would destroy it in one epoch");
             // network.raim_within_epoch and the clock anchor are refused at the end of this
             // section, on their resolved values (the within-epoch tier can be armed by
@@ -2633,7 +2632,7 @@ namespace GnssProcessor {
             log->info("Network: network.emit_pb_hold_smoothed = true: a held "
                       "(satellite, signal) emits the phase-clock transfer minus the passed motion "
                       "Phi = c(t|t) - c(t0|t), with c(t0|t) a clock clone time-updated by the "
-                      "exact rule and alive while card Q3's anchor holds the clock; the "
+                      "exact rule and alive while the clock anchor holds the clock; the "
                       "phase-clock transfer bridges the rest.  S line pbhold=3; "
                       "the solve, C and B records are unchanged; trace "
                       "logs/network_pb_hold_clone.csv.");
@@ -2790,7 +2789,7 @@ namespace GnssProcessor {
                           "is written, INERT.");
             else
                 log->info("Network (coupling capture): every snapshot also carries the "
-                          "Card-1 coupling regressors (QS shared-column dictionary + one "
+                          "coupling regressors (QS shared-column dictionary + one "
                           "packed QL/QZ line per carried row + the QR write-epoch "
                           "clock-refloat set) under the format-v3 header.  Write-side "
                           "only; products and every trace are byte-identical.  ⚠ ~37x the "
@@ -2838,7 +2837,7 @@ namespace GnssProcessor {
                           "written, INERT.");
             else
                 log->info("Network (resume emit capture): every snapshot also carries the "
-                          "EMIT LAYER (ER — the Card-4 eq34 emit re-base's emission frame, "
+                          "EMIT LAYER (ER — the eq34 emit re-base's emission frame, "
                           "one previous emitted bias per sat|signal) as format-forward "
                           "rows under the existing header.  The engine is a bare run "
                           "local today, so without these rows a warm resume emits the RAW "
@@ -3020,7 +3019,7 @@ namespace GnssProcessor {
                           "network.trace_events is OFF — the run-end totals and the "
                           "per-epoch |z| columns survive, but every adm_reject_birth / "
                           "adm_reject_resume / adm_onset / adm_heal / adm_station_event "
-                          "IDENTITY is dropped on the floor.  This card's whole claim is "
+                          "IDENTITY is dropped on the floor.  The screen's whole claim is "
                           "that it NAMES the corrupt channel; arm trace_events with it.");
             if (!network_config_.trace_epoch_status)
                 log->warn("Network (measurement admission): ARMED but "
@@ -3350,7 +3349,7 @@ namespace GnssProcessor {
             if (nwj.contains("second_phase_signals")) {
                 const auto& arr = nwj["second_phase_signals"];
                 if (!arr.is_array()) {
-                    log->error("Network (card SID phase 6a): network.second_phase_signals "
+                    log->error("Network: network.second_phase_signals "
                                "must be an array of RINEX phase types (e.g. [\"L1C\", "
                                "\"L1W\"]) — keeping the default list.");
                 } else {
@@ -3360,7 +3359,7 @@ namespace GnssProcessor {
                     std::vector<std::string> sigs;
                     for (const auto& s : arr) {
                         if (!s.is_string()) {
-                            log->error("Network (card SID phase 6a): "
+                            log->error("Network: "
                                        "network.second_phase_signals holds a non-string "
                                        "entry — ignored.");
                             continue;
@@ -3368,7 +3367,7 @@ namespace GnssProcessor {
                         const std::string sig = s.get<std::string>();
                         std::string why;
                         if (!secondPhaseAllowEntryValid(sig, &why)) {
-                            log->error("Network (card SID phase 6a): "
+                            log->error("Network: "
                                        "network.second_phase_signals entry '{}' is refused "
                                        "({}) — ignored.", sig, why);
                             continue;
@@ -3384,7 +3383,7 @@ namespace GnssProcessor {
             jval<double>(json, "network.second_phase_sigma_scale",
                          "second_phase_sigma_scale", 1.0);
         if (!(network_config_.second_phase_sigma_scale >= 1.0)) {
-            log->error("Network (card SID phase 6a): network.second_phase_sigma_scale = {} "
+            log->error("Network: network.second_phase_sigma_scale = {} "
                        "is not at or above 1 (or is not a number) — falling back to 1.0 (no "
                        "scaling).  The knob only ever DEWEIGHTS the second-phase rows.",
                        network_config_.second_phase_sigma_scale);
@@ -3704,8 +3703,8 @@ namespace GnssProcessor {
                 if (rxExtraBandDelayEffective(*this))
                     log->info("Network producer (RXCB-DATUM): receiver code-bias sum-to-zero ON "
                               "ALONGSIDE the W6 satellite code-bias gauge, and LOAD-BEARING on this "
-                              "run: with network.estimate_rx_extra_band_code_delay effective (card "
-                              "L5B) the receiver extra-band code delay is estimated, so it is the "
+                              "run: with network.estimate_rx_extra_band_code_delay effective"
+                              " the receiver extra-band code delay is estimated, so it is the "
                               "only closure of each station's geometry-free level direction "
                               "(ionosphere level, receiver DCB, ambiguities).");
                 else
@@ -3729,7 +3728,7 @@ namespace GnssProcessor {
                           "Realized common-mode information is 1/sigma^2 = {:.3e}, INDEPENDENT of "
                           "the station count — it must clear the per-epoch rank cutoff "
                           "(~1e-9*lambda_max) on its own.  Pre-reduce deliberately: a post-reduce "
-                          "cross-station Woodbury gauge cannot compose with the Card-4 DD priors "
+                          "cross-station Woodbury gauge cannot compose with the invariant-carry DD priors "
                           "(NetworkEstimator::solve refuses it).",
                           network_rx_code_bias_datum_sigma_m_,
                           1.0 / (network_rx_code_bias_datum_sigma_m_
@@ -3918,7 +3917,7 @@ namespace GnssProcessor {
                       "broadcast(IODE) + the applied RTS orbit; a-priori clock anchor σ = {} m "
                       "(0 = auto → broadcast grade).  NOTE: the producer core path (RINEX-nav "
                       "load, broadcast-phase-gate suppression, anchor re-base) lands in later "
-                      "RTF-1 cards — this card is config plumbing only.",
+                      "RTF-1 steps — this step is config plumbing only.",
                       network_apriori_clock_anchor_sigma_m_);
         }
 
@@ -4281,7 +4280,7 @@ namespace GnssProcessor {
                 "network.carry_conditional_coupling requires network.shared_carry_full_cov = true "
                 "(the conditional local carry is exact only against a dense shared-border carry).");
         if (network_carry_conditional_coupling_)
-            log->info("Network producer (Card 1): CONDITIONAL local carry enabled — each carried "
+            log->info("Network producer: CONDITIONAL local carry enabled — each carried "
                       "phase-leveling ambiguity / ZWD is injected as a pseudo-observation row "
                       "coupling it to the free shared border (coeff +1 on the local, regression "
                       "M_r on the border, variance = pure conditional (N_rr⁻¹)_rr), not an "
@@ -4300,7 +4299,7 @@ namespace GnssProcessor {
         if (network_carry_coupling_time_update_ && !network_carry_conditional_coupling_)
             throw std::runtime_error(
                 "network.carry_coupling_time_update requires network.carry_conditional_coupling = true "
-                "(it only corrects how that card's coupling rows re-map to the moved border).");
+                "(it only corrects how the conditional coupling's rows re-map to the moved border).");
         // The exact conditional time update.  It conditions every row on the
         // stashed dense border block, so the dense carry must exist; and it replaces the
         // kappa shrink on the rows it can take, so the border time update must be armed for the rest.
@@ -4311,7 +4310,7 @@ namespace GnssProcessor {
             if (!network_carry_coupling_time_update_)
                 throw std::runtime_error(
                     "network.carry_coupling_exact_update requires "
-                    "network.carry_coupling_time_update = true (the card 1d kappa stays the "
+                    "network.carry_coupling_time_update = true (the coupling-carry kappa stays the "
                     "treatment of the rows and terms the exact rule cannot take).");
             if (!network_shared_carry_full_cov_)
                 throw std::runtime_error(
@@ -4322,7 +4321,7 @@ namespace GnssProcessor {
                       "M_new = (P_SS + Q_S)^-1 P_S,K M_K with the fold's own inflation Q, the "
                       "bracket variance added per row, decoupled and departed columns "
                       "re-attributed through P, and the clock-family deficit moved onto the "
-                      "pinned pivot.  Card 1d's kappa remains for stale rows, terms with no "
+                      "pinned pivot.  The coupling-carry kappa remains for stale rows, terms with no "
                       "dense row and SH terms.");
         }
         // The carried clocks' process noise in the pivot frame.  The pairwise half
@@ -4367,7 +4366,7 @@ namespace GnssProcessor {
                 throw std::runtime_error(
                     "network.carry_coupling_exact_cross requires "
                     "network.carry_coupling_exact_update = true (it adds that rule's bracket "
-                    "between two rows of a station; card WSX).");
+                    "between two rows of a station).");
             log->info("Network producer: network.carry_coupling_exact_cross = true — "
                       "the exact update's bracket M_i' B M_k between two rows of a station that "
                       "both took the exact route is added to the station's whitened local "
@@ -4411,7 +4410,7 @@ namespace GnssProcessor {
                       "harvested clock coefficients on the clone, the walk enters the border prior "
                       "once at the fold's own variance, the rank gate judges the border with the "
                       "clones marginalized, and the harvest marginalizes them out of every row.  "
-                      "UNVALIDATED; run-end line in the card CTU block.");
+                      "UNVALIDATED; run-end line in the coupling time update block.");
         }
         // The shared history: the clones' shared conditional, which B1's
         // per-station harvest drops across stations, kept as at most k constant border
@@ -4427,22 +4426,22 @@ namespace GnssProcessor {
         if (network_carry_coupling_shared_history_rank_ < 1
             || network_carry_coupling_shared_history_rank_ > 8)
             throw std::runtime_error(fmt::format(
-                "network.carry_coupling_shared_history_rank = {} is outside [1, 8] (card SCL2 X2: "
+                "network.carry_coupling_shared_history_rank = {} is outside [1, 8] ("
                 "history columns kept per cloned clock).",
                 network_carry_coupling_shared_history_rank_));
         if (network_carry_coupling_shared_history_) {
             if (!network_carry_coupling_clock_clone_)
                 throw std::runtime_error(
                     "network.carry_coupling_shared_history requires "
-                    "network.carry_coupling_clock_clone = true (card SCL2 X2: the history is the "
+                    "network.carry_coupling_clock_clone = true (the history is the "
                     "clones' shared conditional, kept at B1's harvest).");
-            log->info("Network producer (card SCL2 X2): network.carry_coupling_shared_history = "
+            log->info("Network producer: network.carry_coupling_shared_history = "
                       "true, rank {}: at the harvest each carried row's terms on the clones and "
                       "the previous history are regressed onto the free border and compressed "
                       "across stations into at most {} history column(s) per cloned clock "
                       "(prior N(0, 1), never emitted or stashed); the remainder is added per "
                       "station and its cross-station part dropped (counted).  UNVALIDATED; "
-                      "run-end line in the card CTU block.",
+                      "run-end line in the coupling time update block.",
                       network_carry_coupling_shared_history_rank_,
                       network_carry_coupling_shared_history_rank_);
         }
@@ -4458,7 +4457,7 @@ namespace GnssProcessor {
             && !network_carry_coupling_clock_clone_)
             throw std::runtime_error(fmt::format(
                 "network.carry_coupling_{}_clone requires network.carry_coupling_clock_clone = "
-                "true (the clones of the rest of the border are a mode of card SCL's "
+                "true (the clones of the rest of the border are a mode of the "
                 "clock clone).",
                 network_carry_coupling_bias_clone_ ? "bias" : "departed"));
         if (network_carry_coupling_bias_clone_)
@@ -4466,21 +4465,21 @@ namespace GnssProcessor {
                       "each satellite phase and code bias with a row in the stashed dense block "
                       "gets a one-epoch clone column; the rows keep their bias coefficients on "
                       "it and each bias walk enters the border prior once, in the clones' joint "
-                      "walk factor.  UNVALIDATED; run-end line in the card CTU block.");
+                      "walk factor.  UNVALIDATED; run-end line in the coupling time update block.");
         if (network_carry_coupling_departed_clone_)
             log->info("Network producer: network.carry_coupling_departed_clone = "
                       "true: a stashed key the fold does not carry (departed, reinit, "
                       "re-referenced, skipped) keeps the rows' terms on a one-epoch clone with "
-                      "the stashed prior and no walk, instead of card CTU's per-row "
-                      "re-attribution.  UNVALIDATED; run-end line in the card CTU block.");
+                      "the stashed prior and no walk, instead of the coupling time update's per-row "
+                      "re-attribution.  UNVALIDATED; run-end line in the coupling time update block.");
         if (network_carry_coupling_time_update_)
-            log->info("Network producer (Card 1d): coupling-row border TIME UPDATE enabled — "
+            log->info("Network producer: coupling-row border TIME UPDATE enabled — "
                       "each PRESENT coupled column of every injected coupling row is shrunk by "
                       "κ_j = P_prev/(P_prev + q_j·Δt) (coefficient + RHS term) and the row "
                       "variance inflated by M²·κ_j·q_j·Δt, with the per-kind q ladder exactly "
                       "the dense border fold's (clock-monitor-reinit sats treated as q=∞ ⇒ full "
                       "marginalization).  Removes the stale-row over-assertion (the carried-DD "
-                      "random-walk / flat-σ defect, Card 1c).");
+                      "random-walk / flat-σ defect).");
         // Gauge projection of a truncated coupling row.  A harvested row is
         // gauge-invariant by the identity Mᵀg_s = −g_r(c): it observes the datum gauge
         // exactly as much as its own A_r = +1 local requires.  Deleting a departed
@@ -4501,10 +4500,10 @@ namespace GnssProcessor {
         if (network_carry_coupling_gauge_project_ && !network_carry_conditional_coupling_)
             throw std::runtime_error(
                 "network.carry_coupling_gauge_project requires network.carry_conditional_coupling "
-                "= true (it only changes how that card's TRUNCATED coupling rows treat the datum "
+                "= true (it only changes how the conditional coupling's TRUNCATED rows treat the datum "
                 "gauge).");
         if (network_carry_coupling_gauge_project_)
-            log->info("Network producer (Card 1f): coupling-row DATUM-GAUGE PROJECTION enabled — "
+            log->info("Network producer (coupling gauge): coupling-row DATUM-GAUGE PROJECTION enabled — "
                       "each (constellation,kind) coefficient sum of a TRUNCATED row is held at "
                       "its HARVEST value instead of at the surviving-present value, so a departed "
                       "or re-realized column can no longer turn the row into a high-weight "
@@ -4527,16 +4526,16 @@ namespace GnssProcessor {
         if (network_carry_coupling_reinit_sources_ && !network_carry_conditional_coupling_)
             throw std::runtime_error(
                 "network.carry_coupling_reinit_sources requires network.carry_conditional_coupling "
-                "= true (it only changes which of that card's coupling terms take the departed "
+                "= true (it only changes which of the conditional coupling's terms take the departed "
                 "route).");
         if (network_carry_coupling_reinit_sources_ && !network_carry_coupling_gauge_project_)
-            log->warn("Network producer (Card 1g): carry_coupling_reinit_sources is armed WITHOUT "
+            log->warn("Network producer: carry_coupling_reinit_sources is armed WITHOUT "
                       "network.carry_coupling_gauge_project.  Routing a re-realized column to the "
                       "departed route removes its stale frame step but OPENS the same "
                       "family-sum deficit a departure opens — the row then observes the datum "
-                      "gauge.  The two cards are designed to be armed together.");
+                      "gauge.  The two knobs are designed to be armed together.");
         if (network_carry_coupling_reinit_sources_)
-            log->info("Network producer (Card 1g): coupling REINIT sources widened — the reinit "
+            log->info("Network producer: coupling REINIT sources widened — the reinit "
                       "history is now keyed (kind,sat,signal) with an empty signal as the "
                       "sat-wide wildcard, fed by the phase-anchor / eq34 / datum-slip "
                       "re-reference sets as well as the clock-QC sources, and honoured "
@@ -4647,7 +4646,7 @@ namespace GnssProcessor {
             throw std::runtime_error("network.resume_d5_warmup_ep must be >= 0");
         if (network_resume_d5_warmup_ep_ > 0)
             log->info("Network (RS-2b): resume D5 warm-up armed — for the first {} PROCESSED "
-                      "epoch(s) after a warm resume the Card-4 D5 innovation gate is "
+                      "epoch(s) after a warm resume the invariant-carry D5 innovation gate is "
                       "DIAGNOSTIC-ONLY: a chord that trips k·σ̂₀ is counted (run-end "
                       "d5_warmup_suppressed and the epoch's n_d5_flags — n_d5_retaps stays "
                       "0) but is NOT "
@@ -4683,7 +4682,7 @@ namespace GnssProcessor {
             if (!network_carry_coupling_gauge_project_)
                 throw std::runtime_error(
                     "network.resume_coupling_restore requires "
-                    "network.carry_coupling_gauge_project (Card 1f): the resume seam is "
+                    "network.carry_coupling_gauge_project (coupling gauge): the resume seam is "
                     "the maximum-scale truncation regime for a carried row, and 1f is "
                     "the shipped repair for the family-sum defect a truncated row leaves "
                     "(Mᵀg_s = −g_r(c)).  Without it the W5 null-space gate can withhold "
@@ -4786,7 +4785,7 @@ namespace GnssProcessor {
                 "re-elected frame would pin each station to the writer's channels while "
                 "the datum underneath them is re-realized from this run's own tracker "
                 "set, which is a different, unmeasured seam rather than the continuous "
-                "one the card is about.");
+                "one this restore is about.");
         // rx-CB linearization-point restore, the read side of
         // network.state_snapshot_rxcb_lin_capture (RS-9, SPEC_event_harness §21.18).
         // Same exemption class as every restore above: forward-only resume response
@@ -4864,7 +4863,7 @@ namespace GnssProcessor {
                           "are restored before the first election/fold/emit (§18.10; "
                           "frame rows are captured under network.state_snapshot_frame_"
                           "capture, snapshot format v2 — v3 when "
-                          "network.state_snapshot_coupling_capture also carries the Card-1 "
+                          "network.state_snapshot_coupling_capture also carries the coupling "
                           "regressors, §18.12); MW/LLI "
                           "drain diagnostic-only for {} post-resume epoch(s).  Neither is "
                           "in the warm-resume fingerprint (forward-only resume response "
@@ -5001,7 +5000,7 @@ namespace GnssProcessor {
                           "and counted; a file without QK/QP rows leaves the border "
                           "exactly as today and says so.  The coupling ROWS (QL/QZ) are a "
                           "SEPARATE population and stay behind "
-                          "network.resume_coupling_restore with its Card-1f interlock — a "
+                          "network.resume_coupling_restore with its truncated-row gauge interlock — a "
                           "covariance block carries no regression and no gauge identity, "
                           "so this half is legal on a carry_invariant lineage.  Not in "
                           "the warm-resume fingerprint (forward-only resume response "
@@ -5690,25 +5689,25 @@ namespace GnssProcessor {
             // A bar that is not a positive finite number would flag every step (or none)
             // and read as a detector result; a typo is named and the default taken.
             if (!(sq.gf_arc_jump_m > 0.0) || !std::isfinite(sq.gf_arc_jump_m)) {
-                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_m "
+                log->error("Network (GF arc jump): network.cycle_slip.gf_arc_jump_m "
                            "= {} is not a positive finite length; the default 0.04 m is used.",
                            sq.gf_arc_jump_m);
                 sq.gf_arc_jump_m = 0.04;
             }
             if (!(sq.gf_arc_jump_k >= 0.0) || !std::isfinite(sq.gf_arc_jump_k)) {
-                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_k "
+                log->error("Network (GF arc jump): network.cycle_slip.gf_arc_jump_k "
                            "= {} is negative or non-finite; 0 (the scale term off) is used.",
                            sq.gf_arc_jump_k);
                 sq.gf_arc_jump_k = 0.0;
             }
             if (sq.gf_arc_jump_window < 1) {
-                log->error("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_window "
+                log->error("Network (GF arc jump): network.cycle_slip.gf_arc_jump_window "
                            "= {} is below 1; the default 20 is used.", sq.gf_arc_jump_window);
                 sq.gf_arc_jump_window = 20;
             }
             if (sq.gf_arc_jump_min_count < 1 || sq.gf_arc_jump_min_count > sq.gf_arc_jump_window) {
                 const int clamped = std::clamp(sq.gf_arc_jump_min_count, 1, sq.gf_arc_jump_window);
-                log->warn("Network (GF arc jump, card ARL): network.cycle_slip.gf_arc_jump_min_count "
+                log->warn("Network (GF arc jump): network.cycle_slip.gf_arc_jump_min_count "
                           "= {} lies outside [1, window = {}]; {} is used (a count the window "
                           "cannot hold would leave the scale term off for the whole run).",
                           sq.gf_arc_jump_min_count, sq.gf_arc_jump_window, clamped);
@@ -5723,12 +5722,12 @@ namespace GnssProcessor {
                            "network_cycle_slip_if_phase_td_reseed_on_flag", false);
             if (sq.if_phase_td_reseed_on_flag) {
                 if (!network_cycle_slip_if_phase_td_)
-                    log->warn("Network (IF-TD re-seed, card ARL): "
+                    log->warn("Network (IF-TD re-seed): "
                               "network.cycle_slip.if_phase_td_reseed_on_flag is armed without "
                               "network.cycle_slip.if_phase_td.  No IF-TD detector is built, so "
                               "nothing is flagged or re-seeded: the knob is INERT.");
                 else
-                    log->info("Network (IF-TD re-seed, card ARL): post-flag re-seed ON.  A pooled "
+                    log->info("Network (IF-TD re-seed): post-flag re-seed ON.  A pooled "
                               "IF-TD flag keeps the satellite's flag-epoch gradient as the next "
                               "epoch's origin instead of restarting its chain, so the epoch after "
                               "a flag is evaluated and a slip repeated there is seen.  "
@@ -5811,7 +5810,7 @@ namespace GnssProcessor {
             // inert feature is the "clean log, dead wiring" failure invariant #4 exists to
             // prevent.
             if (sq.ref_gate && !network_cycle_slip_if_phase_td_) {
-                log->warn("Network (slip-QC card R): network.cycle_slip.if_phase_td_ref_gate "
+                log->warn("Network (slip-QC): network.cycle_slip.if_phase_td_ref_gate "
                           "is set but .if_phase_td is OFF — no IF-phase detector is built, so "
                           "the hardened reference gate is INERT this run.");
                 sq.ref_gate = false;
@@ -5821,7 +5820,7 @@ namespace GnssProcessor {
             // ref_gate is armed.  Left set with the host arm off, they would read as
             // posture in a config that cannot act on them.
             if ((sq.ref_warmup_abstain || sq.ref_elev_norm) && !sq.ref_gate) {
-                log->warn("Network (slip-QC card R): if_phase_td_ref_{}{}{} set but "
+                log->warn("Network (slip-QC): if_phase_td_ref_{}{}{} set but "
                           ".if_phase_td_ref_gate is OFF — the legacy fixed floor IS the "
                           "decision, so the warm-up abstention and the elevation-normalized "
                           "scale are both INERT this run.",
@@ -5878,20 +5877,20 @@ namespace GnssProcessor {
                           "GOPE00CZE/G24).  Run-end reports opportunities / candidates / own "
                           "fires / inherited fires / fan-out rows suppressed PER CHAIN.");
             if (sq.lli_corroborate && !network_cycle_slip_mw_detect_) {
-                log->warn("Network (slip-QC card L): network.cycle_slip.mw_lli_corroborate is "
+                log->warn("Network (slip-QC): network.cycle_slip.mw_lli_corroborate is "
                           "set but .mw_detect is OFF — the LLI arm it qualifies never runs, so "
                           "the corroboration gate is INERT this run.");
                 sq.lli_corroborate = false;
             }
             if (sq.lli_chatter_frac_lo > sq.lli_chatter_frac_hi) {
-                log->warn("Network (slip-QC card L): mw_lli_chatter_frac_lo ({:.2f}) exceeds "
+                log->warn("Network (slip-QC): mw_lli_chatter_frac_lo ({:.2f}) exceeds "
                           "_hi ({:.2f}) — the hysteresis band is inverted and the credibility "
                           "state would chatter.  Clamping _lo to _hi.",
                           sq.lli_chatter_frac_lo, sq.lli_chatter_frac_hi);
                 sq.lli_chatter_frac_lo = sq.lli_chatter_frac_hi;
             }
             if (sq.ref_gate)
-                log->info("Network (slip-QC card R): hardened IF-TD reference gate ON — fire "
+                log->info("Network (slip-QC): hardened IF-TD reference gate ON — fire "
                           "only when |median(non-ref ΔΔ)| > max({:.1f}·s_eff, {:.2f}·λ_IF) AND "
                           "the family agrees (MAD ≤ {:.2f}·|median|); thin families (< {} DDs) "
                           "widen the physical floor {:.1f}× and are counted; at most {} "
@@ -5900,7 +5899,7 @@ namespace GnssProcessor {
                           sq.ref_coherence, sq.ref_min_n, sq.ref_thin_widen,
                           sq.ref_max_consecutive);
             if (sq.ref_gate && (sq.ref_warmup_abstain || sq.ref_elev_norm))
-                log->info("Network (slip-QC card R, §6.14.6): {}{}{} — the reference arm's "
+                log->info("Network (slip-QC, §6.14.6): {}{}{} — the reference arm's "
                           "own noise is {:.0f}% of the tested median and no family size "
                           "averages it away, so the bar is rebuilt from the elevation it "
                           "actually depends on rather than from the family's raw scatter.",
@@ -5918,7 +5917,7 @@ namespace GnssProcessor {
                               : std::string{},
                           88.0);
             if (sq.lli_corroborate)
-                log->info("Network (slip-QC card L): LLI corroboration ON — an assertion acts "
+                log->info("Network (slip-QC): LLI corroboration ON — an assertion acts "
                           "when an empirical MW step (> max({:.1f}·σ̂, {:.2f} WL cyc)) or GF step "
                           "(> max({:.1f}·σ̂, {:.3f} m)) confirms it, or while the station's "
                           "LLI-set-fraction EWMA (α={:.2f}) stays credible (demote > {:.2f}, "
@@ -5946,10 +5945,10 @@ namespace GnssProcessor {
                           "computed them, so every contingency cell would have landed in the "
                           "'no_evidence' column.  gap_instrument is instrumentation-only and "
                           "verified byte-identical; mw_lli_corroborate is deliberately NOT armed "
-                          "(a decision card would perturb what is being measured).");
+                          "(a decision knob would perturb what is being measured).");
             }
             if (sq.gap_instrument)
-                log->info("Network (slip-QC card G): gap-coincident instrumentation ON — "
+                log->info("Network (slip-QC): gap-coincident instrumentation ON — "
                           "counting arc resumptions across a tracking break, whether the raw "
                           "MW/GF level shifted, and whether the arc re-entered with BRIDGED "
                           "carry state.  Instrumentation only: zero mechanism change.");
@@ -6111,7 +6110,7 @@ namespace GnssProcessor {
             } else {
                 network_ledger_reentry_no_verdict_ = LedgerReentryNoVerdict::Bridge;
                 if (nv != "bridge" && !nv.empty())
-                    log->warn("Network producer (card SID phase 3): "
+                    log->warn("Network producer: "
                               "network.ledger_reentry_no_verdict = '{}' is not one of "
                               "'bridge' or 'refloat'.  Falling back to 'bridge' (the "
                               "default: a no-verdict re-entry is left to the PASS-B "
@@ -6301,7 +6300,7 @@ namespace GnssProcessor {
         if (network_level_authority_csgf_)
             log->info("Network (LV-6 level-authority census, SPEC_level_authority_internal): "
                       "per-epoch fleet CS-GF reduction (min_n {}, min_los {}) — MEASURE-ONLY, "
-                      "folds nothing; the fold is a future card gated on this census's "
+                      "folds nothing; the fold is a future step gated on this census's "
                       "tracking verdict.  ⚠ A/B pairs must pin cycle_slip.gap_instrument in "
                       "BOTH arms (the cardsArmed() side-effect, SPEC §5.3).",
                       network_level_authority_min_n_, network_level_authority_min_los_);
@@ -6448,13 +6447,13 @@ namespace GnssProcessor {
                              "gross_los_cold_bound_m", 0.0);
             if (!(std::isfinite(gnc.gross_los_cold_bound_m)
                   && gnc.gross_los_cold_bound_m >= 0.0)) {
-                log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m = {} "
+                log->warn("Network (gross-LOS): network.gross_los_cold_bound_m = {} "
                           "is not a non-negative number of metres; clamped to 0 (off).",
                           gnc.gross_los_cold_bound_m);
                 gnc.gross_los_cold_bound_m = 0.0;
             }
             if (gnc.gross_los_cold_bound_m > 0.0 && !gnc.gross_los_screen)
-                log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m = {:g} m "
+                log->warn("Network (gross-LOS): network.gross_los_cold_bound_m = {:g} m "
                           "while network.gross_los_screen is OFF; the seam is never entered, so "
                           "the bound is INERT.  Read this as a miswired arm, not as a null "
                           "result.", gnc.gross_los_cold_bound_m);
@@ -6624,7 +6623,7 @@ namespace GnssProcessor {
                               "a line of sight sitting near the bar will flap declare/clear "
                               "every other epoch.  Running as configured.",
                               gnc.gross_los_clear_sigma, gnc.gross_los_k);
-                log->info("Network producer (gross-LOS screen, card GL): ON — per (station, "
+                log->info("Network producer (gross-LOS screen): ON — per (station, "
                           "satellite) POST-FIT CODE residuals standardized by each row's OWN σ; "
                           "≥ {} rows over {:g}σ for {} consecutive epochs DECLARES the line of "
                           "sight gross (event, decoupling edge): its carried ambiguity levels "
@@ -6651,18 +6650,18 @@ namespace GnssProcessor {
                 // --- The cold-start bound ---------------------
                 if (gnc.gross_los_cold_bound_m > 0.0) {
                     if (gnc.gross_los_bound)
-                        log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m "
+                        log->warn("Network (gross-LOS): network.gross_los_cold_bound_m "
                                   "= {:g} m is INERT under network.gross_los_bound: the cold "
                                   "response erases the faulted carried ambiguity every epoch "
                                   "the bound is exceeded, and the hold would keep it.",
                                   gnc.gross_los_cold_bound_m);
                     else if (gnc.gross_los_warmup_epochs == 0)
-                        log->warn("Network (gross-LOS, card ICF): network.gross_los_cold_bound_m "
+                        log->warn("Network (gross-LOS): network.gross_los_cold_bound_m "
                                   "= {:g} m with network.gross_los_warmup_epochs = 0: there is no "
                                   "maturity hold for the bound to act in, so it never declares.",
                                   gnc.gross_los_cold_bound_m);
                     else
-                        log->info("Network producer (gross-LOS, card ICF cold-start bound): "
+                        log->info("Network producer (gross-LOS, cold-start bound): "
                                   "inside the first {} emitted epochs a line of sight whose "
                                   "largest POST-FIT code |v| exceeds {:g} m is declared AT ONCE "
                                   "(one epoch, no persistence) with the screen's response: its "
@@ -6798,7 +6797,7 @@ namespace GnssProcessor {
                         "network.block_baarda requires the redundancy census as its sweep host "
                         "(network.redundancy_census_stride > 0 or network.redundancy_escalate_sigma "
                         "> 0).  The block sweep deliberately adds no scheduler: it rides that "
-                        "card's swept stations, so with the census off it would enumerate zero "
+                        "census's swept stations, so with the census off it would enumerate zero "
                         "blocks and report a clean run indistinguishable from a genuine negative.");
 
                 // Invariant-#4 tripwire: a constellation letter with no hook.  The census
@@ -6862,7 +6861,7 @@ namespace GnssProcessor {
                               "would have landed in the 'no_evidence' column and the b-cell "
                               "would be unmeasurable.  gap_instrument is instrumentation-only "
                               "and verified byte-identical; mw_lli_corroborate is deliberately "
-                              "NOT armed (a decision card would perturb what is measured).");
+                              "NOT armed (a decision knob would perturb what is measured).");
                 }
                 // Invariant-#4 sink dependency: the ladder survives without trace_events,
                 // but every block identity is emitted through emitEvent, which is a hard
@@ -6938,7 +6937,7 @@ namespace GnssProcessor {
                         "network.congruence_screen requires the redundancy census as its "
                         "sweep host (network.redundancy_census_stride > 0 or "
                         "network.redundancy_escalate_sigma > 0).  The congruence screen "
-                        "deliberately adds no scheduler: it rides that card's swept "
+                        "deliberately adds no scheduler: it rides that census's swept "
                         "stations, so with the census off it would sweep zero stations and "
                         "report a clean run indistinguishable from a genuine negative.");
 
@@ -7035,7 +7034,7 @@ namespace GnssProcessor {
                           "ARMED everywhere, and the data side will see ZERO rows for the whole "
                           "run: every epoch carries the NO_DATA flag, prior_tension_ratio is "
                           "UNDEFINED (there is no denominator) and sigma0_global degrades to a "
-                          "PRIOR-ONLY variance component.  The headline of this card is NOT "
+                          "PRIOR-ONLY variance component.  The headline of the global σ̂₀ is NOT "
                           "measurable on this lineage — grade it on a phase_leveling one (see "
                           "config/test_suite/_ft63_s0g_raimlive.json).");
             if (!network_raim_)
@@ -7585,7 +7584,7 @@ namespace GnssProcessor {
                           "slipped arcs out of, so it is INERT this run.");
                 network_phase_datum_eq34_slip_aware_election_ = false;
             } else {
-                log->warn("Network (Card 3/4): SLIP-AWARE eq34 election ON — ⚠ MEASURED "
+                log->warn("Network: SLIP-AWARE eq34 election ON — ⚠ MEASURED "
                           "NET-HARMFUL, see docs/SPEC_d5_churn_limit_cycle.md.  The MECHANISM "
                           "works: on a 3 h 63-sta DOY-129 leg it de-seeded 102 slipped "
                           "incumbents against only 9 unavoidable re-admissions (ratio 0.09 — the "
@@ -7628,7 +7627,7 @@ namespace GnssProcessor {
         // written once and never cleared).
         if (network_carry_invariant_ && network_carry_invariant_qz_ <= 0.0
             && !network_carry_invariant_innov_gate_) {
-            log->warn("Network (Card 4 / invariant #1): carry_invariant is ON with "
+            log->warn("Network (invariant #1): carry_invariant is ON with "
                       "carry_invariant_qz = {} and carry_invariant_innov_gate OFF — a "
                       "zero-q carried cycle basis with NO wired jump response beyond the "
                       "pre-processor slip detectors.  A missed jump is carried stiff "
@@ -7656,7 +7655,7 @@ namespace GnssProcessor {
             // Two ways this arms into silence, both invariant-#4 cases ("clean log, dead
             // wiring"), so neither passes quietly.
             if (!network_carry_invariant_innov_gate_) {
-                log->warn("Network (Card 4 D5 v3): network.carry_invariant_innov_corroborate is "
+                log->warn("Network (D5 v3): network.carry_invariant_innov_corroborate is "
                           "set but .carry_invariant_innov_gate is OFF — there are no D5 re-taps "
                           "to corroborate, so the gate is INERT this run.");
                 network_carry_invariant_innov_corroborate_ = false;
@@ -7665,7 +7664,7 @@ namespace GnssProcessor {
                 // makes that pass run is auto-armed from the settled-state interlock at the
                 // end of loadNetworkSection_, not here.  @see the "Evidence interlock for
                 // the D5 v3/v4 consumers" block in loadNetworkSection_.
-                log->info("Network (Card 4 D5 v3): D5 re-tap corroboration ON — a flagged chord "
+                log->info("Network (D5 v3): D5 re-tap corroboration ON — a flagged chord "
                           "is re-tapped UNLESS the raw observables positively measured its arc "
                           "as continuous.  No-evidence still re-taps (invariant #1).  Magnitude "
                           "backstop {} (0 = pure corroboration).  Watch the run-end "
@@ -7674,7 +7673,7 @@ namespace GnssProcessor {
             }
         }
         if (network_carry_invariant_innov_corroborate_backstop_k_ < 0.0) {
-            log->warn("Network (Card 4 D5 v3): network.carry_invariant_innov_corroborate_backstop_k "
+            log->warn("Network (D5 v3): network.carry_invariant_innov_corroborate_backstop_k "
                       "= {} is negative; clamping to 0 (pure corroboration).",
                       network_carry_invariant_innov_corroborate_backstop_k_);
             network_carry_invariant_innov_corroborate_backstop_k_ = 0.0;
@@ -7685,12 +7684,12 @@ namespace GnssProcessor {
                        "network_carry_invariant_innov_carried_only", false);
         if (network_carry_invariant_innov_carried_only_) {
             if (!network_carry_invariant_innov_gate_) {
-                log->warn("Network (Card 4 D5 v5): network.carry_invariant_innov_carried_only "
+                log->warn("Network (D5 v5): network.carry_invariant_innov_carried_only "
                           "is set but .carry_invariant_innov_gate is OFF — there is no gate to "
                           "restrict, so it is INERT this run.");
                 network_carry_invariant_innov_carried_only_ = false;
             } else {
-                log->info("Network (Card 4 D5 v5): CARRIED-ONLY innovation gate ON — a chord "
+                log->info("Network (D5 v5): CARRIED-ONLY innovation gate ON — a chord "
                           "BORN this epoch is no longer tested.  The gate standardizes against "
                           "Cov(v), the H0 covariance about the CARRIED prior; a fresh chord's "
                           "prior is the diffuse fresh-chord variance, so there is no hypothesis "
@@ -7725,7 +7724,7 @@ namespace GnssProcessor {
                        "network_carry_invariant_innov_retap_only", false);
         if (network_carry_invariant_innov_retap_only_) {
             if (!network_carry_invariant_innov_gate_) {
-                log->warn("Network (Card 4 D5 v4): network.carry_invariant_innov_retap_only is set "
+                log->warn("Network (D5 v4): network.carry_invariant_innov_retap_only is set "
                           "but .carry_invariant_innov_gate is OFF — there are no D5 flags to keep "
                           "out of the funnel, so it is INERT this run.");
                 network_carry_invariant_innov_retap_only_ = false;
@@ -7734,7 +7733,7 @@ namespace GnssProcessor {
                 // qualify pass run is auto-armed from the settled-state interlock at the
                 // end of loadNetworkSection_, where all four of cardsArmed()'s inputs are
                 // final.  @see the "Evidence interlock for the D5 v3/v4 consumers" block.
-                log->info("Network (Card 4 D5 v4): D5 re-tap-ONLY ON — a flagged chord whose arc "
+                log->info("Network (D5 v4): D5 re-tap-ONLY ON — a flagged chord whose arc "
                           "the raw observables MEASURED as continuous is reset in-epoch and its "
                           "arc is NOT excluded from next epoch's carry membership, so the gate "
                           "stops discarding the DD it just re-tapped.  A chord arc has cycle "
@@ -7747,7 +7746,7 @@ namespace GnssProcessor {
                           "consumer still see the entry.  Watch the run-end suppressed-kill "
                           "counter: 0 means nothing reached it.");
                 if (network_carry_invariant_innov_corroborate_)
-                    log->warn("Network (Card 4 D5 v4): .carry_invariant_innov_corroborate is ALSO "
+                    log->warn("Network (D5 v4): .carry_invariant_innov_corroborate is ALSO "
                               "armed.  v3 suppresses the measured-and-flat flags one level "
                               "earlier, so they never reach the funnel and this knob is largely "
                               "INERT by construction — expect a near-zero suppressed-kill count.  "
@@ -8087,7 +8086,7 @@ namespace GnssProcessor {
                     log->warn("Network (signal integrity RESUME WARMUP): DISABLED — a "
                               "warm resume will run its first epochs with fully-warm "
                               "carries and no detector history at all.  That is the one "
-                              "situation this card exists for, at network scale; "
+                              "situation this warm-up exists for, at network scale; "
                               "disable only for a branch-faithful byte comparison.");
                 if (si.refloat_on_regain)
                     log->info("Network (signal integrity INC-3): regain REFLOAT ON — a "
@@ -8108,7 +8107,7 @@ namespace GnssProcessor {
                               "post-transition window in which NO time-difference "
                               "detector can operate (MW needs 2 samples, IF-TD needs 3 "
                               "epochs) carries FULL phase weight.  That is the exact "
-                              "hazard this card exists to close; 3 is the spec default.",
+                              "hazard this setting exists to close; 3 is the spec default.",
                               si.revet_ep);
                 else
                     log->info("Network (signal integrity INC-3b): re-vet window {} "
@@ -8274,16 +8273,16 @@ namespace GnssProcessor {
             jval<double>(json, "network.clock_disc_gap_jump_m",
                          "network_clock_disc_gap_jump_m", 0.0);
         if (network_clock_disc_gap_jump_m_ < 0.0) {
-            log->warn("Network (Card CLK-R/E1): network.clock_disc_gap_jump_m {} < 0 — "
+            log->warn("Network: network.clock_disc_gap_jump_m {} < 0 — "
                       "clamped to 0 (OFF).", network_clock_disc_gap_jump_m_);
             network_clock_disc_gap_jump_m_ = 0.0;
         }
         if (network_clock_disc_gap_jump_m_ > 0.0 && !network_clock_disc_jump_test_)
-            log->warn("Network (Card CLK-R/E1): network.clock_disc_gap_jump_m is set but "
+            log->warn("Network: network.clock_disc_gap_jump_m is set but "
                       "network.clock_disc_jump_test is OFF — stage 2b rides stage 2's engine "
                       "walk, so the gap test is INERT.  Arm clock_disc_jump_test with it.");
         if (network_clock_disc_gap_jump_m_ > 0.0 && network_clock_disc_jump_test_)
-            log->info("Network (Card CLK-R/E1): GAP-AWARE clock step test ON — a satellite "
+            log->info("Network: GAP-AWARE clock step test ON — a satellite "
                       "returning after > the stage-2 horizon is tested against its RETAINED "
                       "pre-gap held-frame baseline at {:.2f} m (0 was the old behavior: an "
                       "untested first sighting — the measured eclipse-readmission blindness, "
@@ -8291,7 +8290,7 @@ namespace GnssProcessor {
                       "the same markSatDiscontinuity retro-bump chain.",
                       network_clock_disc_gap_jump_m_);
         if (network_emit_clock_frame_hold_) {
-            log->info("Network producer (Card CLK-R): CLOCK EMISSION FRAME HOLD ON — the emitted "
+            log->info("Network producer: CLOCK EMISSION FRAME HOLD ON — the emitted "
                       "satellite clocks ride a per-constellation HELD frame (per-epoch median "
                       "common-mode innovation drained into a frame accumulator that never re-enters "
                       "the wire; between-sat differences preserved exactly).  Outputs-only: solve "
@@ -8299,13 +8298,13 @@ namespace GnssProcessor {
                       "datum mark (markDatumChange — invariant #7's marked re-coupling edge).",
                       network_clock_frame_leash_m_);
             if (network_clock_frame_leash_m_ > 0.0 && network_clock_frame_leash_m_ < 5.0)
-                log->warn("Network (Card CLK-R): network.clock_frame_leash_m = {:.1f} is BELOW 5 m — "
+                log->warn("Network: network.clock_frame_leash_m = {:.1f} is BELOW 5 m — "
                           "the measured 12 h frame wander is ~23 m, so a tight leash re-anchors (and "
                           "datum-marks) repeatedly, defeating the hold.  Raise it or accept the churn.",
                           network_clock_frame_leash_m_);
         }
         if (network_clock_disc_jump_test_) {
-            log->info("Network producer (Card CLK-R): CLOCK DISC JUMP TEST ON — per-sat common-"
+            log->info("Network producer: CLOCK DISC JUMP TEST ON — per-sat common-"
                       "removed emitted-clock steps > {:.2f} m route to the markSatDiscontinuity "
                       "retro-bump (R record + per-sat phase/code/clock counters; the consumer resets "
                       "that satellite at the event epoch).  The emitter's clock counter keeps NO "
@@ -8316,7 +8315,7 @@ namespace GnssProcessor {
                           ? "; statistic taken in the HELD frame (frame hold armed)"
                           : "; statistic taken on the RAW wire (frame hold off)");
             if (network_clock_disc_jump_m_ < 0.5)
-                log->warn("Network (Card CLK-R): network.clock_disc_jump_m = {:.2f} is BELOW the "
+                log->warn("Network: network.clock_disc_jump_m = {:.2f} is BELOW the "
                           "0.5 m census outlier floor — the per-sat channel is a random walk "
                           "(robust step σ ≈ 0.1 m), so a sub-floor gate marks the walk itself "
                           "(~70+/h) and storms the consumer with resets.",
@@ -8396,7 +8395,7 @@ namespace GnssProcessor {
             else if (s == "proj")              network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Proj;
             else {
                 network_clock_anchor_gauge_free_stat_ = NetworkClockAnchorStat::Auto;
-                log->error("Network (Card Q3 §2.1): network.clock_anchor_gauge_free_stat = '{}' is not "
+                log->error("Network: network.clock_anchor_gauge_free_stat = '{}' is not "
                            "one of auto|raw|post|proj — falling back to 'auto'.  Fix the config: a "
                            "mis-named denominator produces a clean-looking run standardized by the "
                            "wrong variance.", s);
@@ -8407,7 +8406,7 @@ namespace GnssProcessor {
             // scalar identity), so the armed q is reported as the walk it targets, the
             // number the wire census is graded against.
             const double sigma_w_30 = std::sqrt(std::max(0.0, network_clock_anchor_q_) * 30.0);
-            log->info("Network producer (Card Q3): GUARDED TEMPORAL CLOCK ANCHOR ON — the satellite "
+            log->info("Network producer (clock anchor): GUARDED TEMPORAL CLOCK ANCHOR ON — the satellite "
                       "clock carry folds at q = {:.3e} m²/s (targets a √(q·Δt) = {:.2f} cm walk at "
                       "30 s, vs the measured 9.23 cm and the ~2 cm physical) over a PER-SATELLITE "
                       "elapsed time capped at {:.0f} s, variance floor {:.3e} m². Guard: |w| > {:.2f} "
@@ -8423,7 +8422,7 @@ namespace GnssProcessor {
                                                       "epoch ships per event, marked)",
                       network_clock_anchor_mark_ ? " + wire mark" : " (UNMARKED — wire-invisible)",
                       network_clock_anchor_recouple_epochs_);
-            log->info("Network producer (Card Q3 §2.1): clock prior folds {} — {}.",
+            log->info("Network producer: clock prior folds {} — {}.",
                       network_clock_anchor_gauge_free_ ? "GAUGE-FREE" : "on the RAW state",
                       network_clock_anchor_gauge_free_
                           ? "the per-constellation clock common direction is marginalized out of "
@@ -8448,7 +8447,7 @@ namespace GnssProcessor {
                   : network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Post ? "post"
                   : network_clock_anchor_gauge_free_stat_ == NetworkClockAnchorStat::Proj ? "proj"
                   : (network_clock_anchor_gauge_free_ ? "auto->post" : "auto->raw");
-                log->info("Network producer (Card Q3 §2.1): guard/census DENOMINATOR = '{}' — P⁻ from the "
+                log->info("Network producer: guard/census DENOMINATOR = '{}' — P⁻ from the "
                           "{} prior variance, P⁺ from the {} posterior variance.  The statistic is on the "
                           "COMMON-REMOVED residual, so both halves have to be the variances of that "
                           "CONTRAST: 'proj' is the only setting that projects both, and it is the "
@@ -8460,23 +8459,23 @@ namespace GnssProcessor {
             }
             // The interlocks that decide whether the mechanism can work at all.
             if (!(network_clock_anchor_q_ > 0.0))
-                log->error("Network (Card Q3): network.clock_anchor_q = {:.3e} is not positive — the "
-                           "anchor cannot fold.  Set a positive rate or disarm the card.",
+                log->error("Network (clock anchor): network.clock_anchor_q = {:.3e} is not positive — the "
+                           "anchor cannot fold.  Set a positive rate or disarm the anchor.",
                            network_clock_anchor_q_);
             if (network_clock_anchor_q_ >= process_noise_.sat_clock)
-                log->warn("Network (Card Q3): network.clock_anchor_q ({:.3e}) is NOT tighter than "
+                log->warn("Network (clock anchor): network.clock_anchor_q ({:.3e}) is NOT tighter than "
                           "filter.process_noise.sat_clock_q ({:.3e}) — the anchor is then looser than "
-                          "the carry it replaces and the card is inert by construction (its whole "
+                          "the carry it replaces and the anchor is inert by construction (its whole "
                           "premise is that √(q·Δt) must fall BELOW the realized per-epoch spread).",
                           network_clock_anchor_q_, process_noise_.sat_clock);
             if (network_clock_anchor_max_gap_s_ <= 0.0)
-                log->warn("Network (Card Q3): network.clock_anchor_max_gap_s = {:.1f} disables the "
+                log->warn("Network (clock anchor): network.clock_anchor_max_gap_s = {:.1f} disables the "
                           "staleness guard — a binding prior would then fold an arbitrarily old "
                           "carried clock as if it were one epoch old (the DOY-129 278-epoch withhold "
                           "class).  This is a standing-invariant-#1 violation; raise it.",
                           network_clock_anchor_max_gap_s_);
             if (network_clock_anchor_var_floor_m2_ <= 0.0)
-                log->warn("Network (Card Q3): network.clock_anchor_var_floor_m2 = 0 leaves the stiff "
+                log->warn("Network (clock anchor): network.clock_anchor_var_floor_m2 = 0 leaves the stiff "
                           "clock carry UNFLOORED.  A diagonal (or dense-diagonal) carry accumulates "
                           "information ~n against a time-correlated error floor, so its formal "
                           "variance drifts to 0 — assessment deviation #1, the mechanism behind the "
@@ -8484,7 +8483,7 @@ namespace GnssProcessor {
                           "this reason; the clock's historical exemption assumed a carry that never "
                           "bound.");
             if (network_clock_anchor_recouple_epochs_ < 1)
-                log->warn("Network (Card Q3): network.clock_anchor_recouple_epochs = {} re-engages the "
+                log->warn("Network (clock anchor): network.clock_anchor_recouple_epochs = {} re-engages the "
                           "anchor with NO re-validation — standing invariant #7 requires the "
                           "re-coupling edge to re-validate or re-seed what it reconnects.",
                           network_clock_anchor_recouple_epochs_);
@@ -8533,10 +8532,11 @@ namespace GnssProcessor {
         network_ctu_switch_on_resume_ =
             jval<bool>(json, "network.ctu_switch_on_resume", "ctu_switch_on_resume", false);
         if (network_ctu_switch_on_resume_)
-            log->warn("Network (card CTU G5): network.ctu_switch_on_resume ON: a snapshot written "
+            log->warn("Network (clock level restore): network.ctu_switch_on_resume ON: a snapshot written "
                       "without the exact update, the bound raise, the in-block receiver code-bias "
                       "carry, the drop decouple or the phase-space guard is resumed into a run that "
-                      "arms them.  That seam FAILED card CTU's G5 (the restored ambiguities hold the "
+                      "arms them.  That seam FAILED the coupling time update's G5 (the restored "
+                      "ambiguities hold the "
                       "frozen level); a measurement lineage only.");
         network_clock_level_restore_credit_ep_ =
             jval<int>(json, "network.clock_level_restore_credit_ep", "clock_level_restore_credit_ep", 0);
@@ -8749,13 +8749,13 @@ namespace GnssProcessor {
         }
         if (network_cb_kaula_prior_) {
             if (!estimate_network_sat_code_bias_)
-                log->warn("Network (Card KP): network.cb_kaula_prior is ON but "
+                log->warn("Network: network.cb_kaula_prior is ON but "
                           "network.estimate_sat_code_bias is OFF — there are no satellite "
                           "code-bias columns to put a prior on, so the toggle is INERT.  "
-                          "[Standing invariant #4: an armed card with nothing to act on is "
+                          "[Standing invariant #4: an armed knob with nothing to act on is "
                           "a miswire, not a quiet run.]");
             else
-                log->info("Network producer (Card KP): admitted-OSB physical-bound prior ON — "
+                log->info("Network producer: admitted-OSB physical-bound prior ON — "
                           "value 0, sigma {:g} m (info {:g}) on every REGISTERED satellite "
                           "code-bias column, folded through the diagonal prior channel (NOT "
                           "the tight code-bias gauge rows), so the declared S-basis dimension "
@@ -8846,7 +8846,7 @@ namespace GnssProcessor {
                       "rank gate's declared dimension stays the STRUCTURAL count; "
                       "realized extra near-null directions are constrained along their "
                       "own eigenvectors at the carried level (engage/release events, "
-                      "tier GATE) instead of withholding or Card-PA column-anchoring.",
+                      "tier GATE) instead of withholding or column anchoring.",
                       network_sbasis_complete_max_);
         }
         // Datum graph census (docs/SPEC_datum_graph_census.md).  Parsed here, next to
@@ -8898,7 +8898,7 @@ namespace GnssProcessor {
                           "observation into predicted-and-observed / predicted-only / "
                           "observed-only cells.  Trace network_datum_graph.csv, events tier "
                           "DATUMGRAPH.  MEASURE-ONLY: nothing here feeds the null-space "
-                          "gate, SBC, Card PA or Plan::declared_dimension.  Identities are "
+                          "gate, SBC, the column anchoring or Plan::declared_dimension.  Identities are "
                           "available on the spectral side only with network.sbasis_complete "
                           "armed; without it the reconciliation is COUNT-level and says so "
                           "(obs_src=count).",
@@ -9118,7 +9118,7 @@ namespace GnssProcessor {
                           "datum it re-times only exists when the network estimates its own "
                           "satellite code biases (W6).");
             else
-                log->info("Network producer (Card 2): TIME-LINKED code-bias datum ON — the per-"
+                log->info("Network producer: TIME-LINKED code-bias datum ON — the per-"
                           "satellite IF pin and per-(constellation,signal) sum-to-zero rows pin "
                           "the CHANGE of the previous epoch's solved values (veteran-referenced "
                           "sum-to-zero RHS, previous-IF-combination pin RHS) instead of the level "
@@ -9254,8 +9254,7 @@ namespace GnssProcessor {
                               "the family row re-seeds at 0; no row where neither exists) is "
                               "folded with information {:g}, once per (satellite, birth): the "
                               "column is carried from the next kept epoch on.  Each fold is a "
-                              "CB_DATUM/family_birth_prior event.  Unvalidated (card GFC step "
-                              "2).",
+                              "CB_DATUM/family_birth_prior event.  Unvalidated.",
                               bp_sigma, 1.0 / (bp_sigma * bp_sigma));
             }
         }
@@ -9302,9 +9301,9 @@ namespace GnssProcessor {
         // check there would fire on every run regardless of the config.  By this point
         // every flag is settled.
         if (network_phase_datum_eq34_slip_aware_election_ && !network_carry_invariant_)
-            log->warn("Network (Card 3/4): the slip-aware eq34 election is armed WITHOUT "
+            log->warn("Network: the slip-aware eq34 election is armed WITHOUT "
                       "network.carry_invariant — it will still keep slipped arcs out of the "
-                      "spanning tree, but the payoff it exists for is measured in Card-4 chord "
+                      "spanning tree, but the payoff it exists for is measured in invariant-carry chord "
                       "refloats, which do not exist on the legacy carry path.  Harmless; just "
                       "understand that nothing in this run will show the benefit.");
         if (network_code_bias_disc_jump_test_) {
@@ -9384,9 +9383,9 @@ namespace GnssProcessor {
                     "network.handover_stransform_before_rows refuses network.apriori_source "
                     "brdc_rts: the ephemeris cut-over re-level runs in the solve glue, after "
                     "PASS B, and must precede the handover's S-transform (the two re-bases "
-                    "compose in the order the carry experienced them; card PRM section 16)");
+                    "compose in the order the carry experienced them)");
             } else {
-                log->info("Network producer (card PRM phase 2): handover S-transform BEFORE THE "
+                log->info("Network producer: handover S-transform BEFORE THE "
                           "ROWS: at a clock-pivot handover the election and the handover test are "
                           "previewed before the fold decision and PASS B, and the transform "
                           "re-expresses every clock reference of the changed constellation the "
@@ -9413,16 +9412,16 @@ namespace GnssProcessor {
                     "network.handover_stransform_dense refuses "
                     "network.handover_stransform_before_rows: the exact transform zeroes the "
                     "incoming pivot's row, which before the rows would put a pinned column into "
-                    "card CTU's S and swap the pinned route of every coupling row, and the undo "
+                    "the coupling time update's S and swap the pinned route of every coupling row, "
+                    "and the undo "
                     "of a skipped preview would need the saved block");
             } else if (network_carry_rx_clock_in_block_) {
                 throw std::runtime_error(
                     "network.handover_stransform_dense refuses network.carry_rx_clock_in_block: "
                     "the receiver clock is on the clock datum's direction and its carried value "
-                    "is not re-expressed, so the block would hold two frames (card PRM section "
-                    "16.6)");
+                    "is not re-expressed, so the block would hold two frames");
             } else {
-                log->info("Network producer (card SCL B2): handover S-transform DENSE: at a "
+                log->info("Network producer: handover S-transform DENSE: at a "
                           "clock-pivot handover the stashed border is re-expressed exactly, "
                           "x' = S x and P' = S P S^T with S = I - u e_q' over the constellation's "
                           "clock family (the incoming pivot's row zeroed, the outgoing pivot "
@@ -9455,7 +9454,7 @@ namespace GnssProcessor {
                           "network.clock_temporal_anchor: there is no anchor to keep.");
                 network_clock_anchor_datum_keep_ = false;
             } else {
-                log->info("Network producer (card SCL B2): the clock anchor is KEPT across a "
+                log->info("Network producer: the clock anchor is KEPT across a "
                           "handover whose carry the dense S-transform re-expressed (self-check "
                           "passed, a block row, an anchored fold): no datum decouple, no disc "
                           "mark, the guard's statistic still tests the satellite.  "
@@ -9534,7 +9533,7 @@ namespace GnssProcessor {
         // a missing response impossible to reach silently.
         if (network_carry_invariant_ && !network_cycle_slip_mw_detect_
             && !network_cycle_slip_if_phase_td_ && !network_carry_invariant_innov_gate_) {
-            log->warn("Network (Card 4, standing invariant #1): network.carry_invariant carries "
+            log->warn("Network (standing invariant #1): network.carry_invariant carries "
                       "the DD cycle basis as a stiff time-linked state (q_z = {:g} m²/s) but NO "
                       "event response is wired — network.cycle_slip.mw_detect and "
                       ".cycle_slip.if_phase_td are both off, so carry_slipped_ambs is never fed, "
@@ -9559,7 +9558,7 @@ namespace GnssProcessor {
             // (the target of D5, not of the detectors) has none at all.  This is the
             // posture the settled-trio arm of SPEC_synthetic_minimum_network §13.7 was
             // measured on.
-            log->warn("Network (Card 4, standing invariant #1): network.carry_invariant is armed "
+            log->warn("Network (standing invariant #1): network.carry_invariant is armed "
                       "with q_z = 0 (random-constant DDs) and network.carry_invariant_innov_gate "
                       "OFF, so the ONLY event response on the carry is the pre-fit raw detector "
                       "drain (mw_detect={}, if_phase_td={}).  That covers DETECTED slips and "
@@ -9579,13 +9578,13 @@ namespace GnssProcessor {
         // error).  Placed in this cross-knob pass, not the parse block, per the note
         // there.
         if (network_carry_invariant_pd_safe_ && !network_carry_invariant_) {
-            log->warn("Network (Card 4 PD-safe fold): network.carry_invariant_pd_safe is set "
+            log->warn("Network (PD-safe fold): network.carry_invariant_pd_safe is set "
                       "WITHOUT network.carry_invariant — there is no DD-prior fold to make "
-                      "PD-safe, so nothing in this run is evidence about the card.  "
+                      "PD-safe, so nothing in this run is evidence about the PD-safe fold.  "
                       "DISARMED for this run.");
             network_carry_invariant_pd_safe_ = false;
         } else if (network_carry_invariant_pd_safe_) {
-            log->info("Network (Card 4 PD-safe fold): ON — the DD-prior fold reads its "
+            log->info("Network (PD-safe fold): ON — the DD-prior fold reads its "
                       "posterior back in PRODUCT form sym(Pᶻ·M·B) instead of subtracting "
                       "Pᶻ−PᶻMPᶻ, factorizes the EQUILIBRATED S(Pᶻ+B)S against a "
                       "scale-RELATIVE pivot floor, repairs a still-tripping block by "
@@ -9605,7 +9604,7 @@ namespace GnssProcessor {
             log->warn("Network (carry-aware covariance): network.carry_aware_covariance is "
                       "set WITHOUT network.carry_invariant — there are no folded DD priors "
                       "to read back, so the correction is identically zero and nothing in "
-                      "this run is evidence about the card.  DISARMED for this run.");
+                      "this run is evidence about the carry-aware covariance.  DISARMED for this run.");
             network_carry_aware_covariance_ = false;
         } else if (network_carry_aware_covariance_) {
             log->info("Network (carry-aware covariance): ON — dd_sigma_cyc and the "
@@ -9613,7 +9612,7 @@ namespace GnssProcessor {
                       "solve used (Ã⁻¹ = N_rr⁻¹ − Σ_b Y_b M_b Y_bᵀ, the fold's own rank-K "
                       "term) instead of the prior-free N_rr⁻¹.  Both consumers are "
                       "READ-ONLY, so the SOLVE must stay BYTE-IDENTICAL to the OFF arm — "
-                      "that is this card's gate, not merely its OFF-path check.  NOT "
+                      "that is this option's gate, not merely its OFF-path check.  NOT "
                       "fingerprinted (no stored state changes meaning).  Watch the run-end "
                       "covcarry line: ratio ≡ 1.00 means the correction never moved "
                       "anything (dead wiring), and any nonpos_rows is the first "
@@ -9689,7 +9688,7 @@ namespace GnssProcessor {
     bool GnssConfig::validateNetworkPhaseDatum_(
                                    const std::shared_ptr<spdlog::logger>& log) {
         if (network_phase_datum_eq34_) {
-            log->info("Network producer: Eq-34 SINGLE-RECEIVER-CHAIN phase-bias datum ON (Card 3) — "
+            log->info("Network producer: Eq-34 SINGLE-RECEIVER-CHAIN phase-bias datum ON — "
                       "each (constellation,signal) connected component gets a per-(receiver,system,"
                       "signal) RPB split state δ_{{r,σ}}, ONE datum-receiver RPB pin, and a "
                       "spanning-tree of ambiguity pins over the bipartite (receiver × satellite) "
@@ -9745,7 +9744,7 @@ namespace GnssProcessor {
                           "in the run-end producer summary.",
                           network_phase_leveling_max_gap_s_);
             if (network_carry_invariant_)
-                log->info("Network producer: Card 4 (M1) INVARIANT CARRY ON — the DD cycle-basis "
+                log->info("Network producer: INVARIANT CARRY ON — the DD cycle-basis "
                           "z-store time-links the S-system-invariant double differences (chords of "
                           "the eq34 spanning tree, q_z={} m²/s) through the producer solve, "
                           "SUPERSEDING the PhaseBias shared carry + phase-leveling local carry + RPB "
@@ -9755,15 +9754,16 @@ namespace GnssProcessor {
                           network_carry_invariant_qz_,
                           network_carry_invariant_emit_rebase_ ? "true" : "false");
             if (network_carry_invariant_innov_gate_) {
-                log->info("Network producer: Card 4 (M1) D5 FINE-SLIP INNOVATION GATE ON — after each "
+                log->info("Network producer: D5 FINE-SLIP INNOVATION GATE ON — after each "
                           "accepted solve, every carried DD's standardized innovation "
                           "|z_free−Gᵀx_s−ẑ|/√(M⁻¹−GᵀΣG) is tested at k={}; a chord above threshold is "
                           "re-tapped FRESH (reset, not repair) and its arc marked slipped for the next "
-                          "epoch (the C3c membership-exclusion path).  The Card-4-native replacement "
+                          "epoch (the C3c membership-exclusion path).  The invariant-carry-native "
+                          "replacement "
                           "for the RAIM fine-slip layer the invariant bypass empties; watch "
                           "innov_flags/retaps in the run-end summary.", network_carry_invariant_innov_k_);
                 if (network_carry_invariant_innov_calibrate_)
-                    log->info("Network producer: Card 4 (M1) D5 v2 LS-VCE CALIBRATION ON — the gate "
+                    log->info("Network producer: D5 v2 LS-VCE CALIBRATION ON — the gate "
                               "standardizes by the empirical innovation inflation σ̂₀² (robust geo-mean "
                               "of the standardized innovations, the M2 NetworkCarryVce instrument; "
                               "forgetting half-life {} epochs) instead of the raw formal Cov(v) that the "
@@ -9833,7 +9833,7 @@ namespace GnssProcessor {
                       "network.phase_datum_handover_continuous is on with the eq34 CHAIN datum, "
                       "which owns its own pin-target policy (pin-round / seed-round) and would "
                       "fight this one for the same target.  DISABLED — the chain datum's "
-                      "handover continuity is a separate card.");
+                      "handover continuity is a separate change.");
             network_phase_datum_handover_continuous_ = false;
         }
         if (network_phase_datum_handover_continuous_)
@@ -9952,7 +9952,7 @@ namespace GnssProcessor {
                           : "");
         if (network_readmit_coupling_marg_ep_ > 0)
             log->info("Network producer (READMIT re-coupling edge): for {} epoch(s) after a "
-                      "satellite's clock column returns from a >= 3-epoch absence, every Card-1 "
+                      "satellite's clock column returns from a >= 3-epoch absence, every "
                       "coupling term on its shared columns takes the DEPARTED route (block/row "
                       "re-coupling edge).{}",
                       network_readmit_coupling_marg_ep_,
@@ -10032,7 +10032,7 @@ namespace GnssProcessor {
                       "drop edges are still counted and traced, but no carry is erased.");
         if (network_phase_datum_gate_drop_erase_ && network_phase_anchor_carry_reref_
             && network_phase_datum_min_stations_ > 1)
-            log->info("Network producer (EV7 gate-drop erase, card EV7 §6): when the coverage "
+            log->info("Network producer (EV7 gate-drop erase): when the coverage "
                       "gate (< {} trackers) removes a (sat,signal) phase-bias column that was "
                       "ANCHORED last epoch, the family joins this epoch's re-reference set and "
                       "every station's CARRIED ambiguity of it is erased before assembly — the "
@@ -10062,7 +10062,7 @@ namespace GnssProcessor {
         // and their census are built on every run whatever the key says,
         // so the line names only the files this run writes in addition.
         if (network_signal_roster_)
-            log->info("Network producer (card SID phase 1): network.signal_roster is ON: the "
+            log->info("Network producer: network.signal_roster is ON: the "
                       "ARC LEDGER's trace is written, logs/network_arc_ledger.csv (one row per "
                       "arc transition) and the ARC event rows of the roster's build and audit in "
                       "network_events.csv (holdoff-throttled).  The signal roster, the ledger "
@@ -10072,21 +10072,21 @@ namespace GnssProcessor {
         // reads is built on every run, so the refusal that guarded an
         // unbuilt roster is gone.
         if (network_roster_tracker_)
-            log->info("Network producer (card SID phase 2): network.roster_tracker is ON — the "
+            log->info("Network producer: network.roster_tracker is ON — the "
                       "arc-level slip tracker (networkComputeRawObservables) names each band by "
                       "the ROSTER's modelled_phase for that (station, constellation, band) when "
                       "that phase is reported with its matching code this epoch, and falls back "
                       "to the lexically lowest raw phase with a matching code only where the "
-                      "roster names none.  The per-signal tier of card GRS is untouched (it keys "
+                      "roster names none.  The per-signal tier of the gap re-entry is untouched (it keys "
                       "on the signal).  The roster is built upstream of computeModels, so the "
                       "FIRST epoch of a constellation has no modelled role yet and the reader "
                       "falls back to that station's latch there; the two fall-back counts are "
                       "reported at run end.");
         if (network_roster_tracker_ && network_config_.slip_qc.tracker_modeled_first)
-            log->info("Network producer (card SID phase 2): network.roster_tracker and "
+            log->info("Network producer: network.roster_tracker and "
                       "network.cycle_slip.tracker_modeled_first are BOTH armed.  The ROSTER READ "
                       "SUPERSEDES the latch lookup: the tracker's band signal comes from the "
-                      "roster's modelled_phase, and card GRK's latch lookup is not bound at all.  "
+                      "roster's modelled_phase, and the tracker's latch lookup is not bound at all.  "
                       "The result is identical either way (the roster's modelled role IS that "
                       "latch, phase 1's roster_latch_disagree counter at its bar of 0), so this "
                       "is a notice and not a conflict.");
@@ -10095,21 +10095,21 @@ namespace GnssProcessor {
         // the population does, reintroducing the earlier modeled-first defect one layer up.  The arc
         // ledger it reads is built on every run.
         if (network_ledger_reentry_ && !network_roster_tracker_) {
-            log->error("Network producer (card SID phase 3): network.ledger_reentry is armed "
+            log->error("Network producer: network.ledger_reentry is armed "
                        "WITHOUT network.roster_tracker, so there is no roster read behind the "
                        "tracker's band names.  DISARMED.  Arm the phase-2 roster read "
                        "alongside it.");
             network_ledger_reentry_ = false;
         }
         if (network_ledger_reentry_ && !network_config_.slip_qc.gap_reentry) {
-            log->error("Network producer (card SID phase 3): network.ledger_reentry is armed "
+            log->error("Network producer: network.ledger_reentry is armed "
                        "WITHOUT network.cycle_slip.gap_reentry_relevel, so there is no gap "
                        "re-entry RESPONSE for the ledger to drive.  DISARMED.  Arm the "
-                       "row-level response (the card G drain) alongside it.");
+                       "row-level response (the gap re-entry drain) alongside it.");
             network_ledger_reentry_ = false;
         }
         if (network_ledger_reentry_)
-            log->info("Network producer (card SID phase 3): network.ledger_reentry is ON — the "
+            log->info("Network producer: network.ledger_reentry is ON — the "
                       "gap RE-ENTRY RESPONSE takes its population from the arc ledger's ADMITTED "
                       "lifecycle (every arc whose admitted state goes Gap to Reentered at this "
                       "epoch, whose signal the roster calls Modelled, and whose gap is inside "
@@ -10129,7 +10129,7 @@ namespace GnssProcessor {
         // SID phase 4a (the reason-mask writers and the anchor observatory) needs no
         // other knob: the ledger it folds into is built on every run.
         if (network_ledger_screens_)
-            log->info("Network producer (card SID phase 4a): network.ledger_screens is ON — every "
+            log->info("Network producer: network.ledger_screens is ON — every "
                       "screen that removes a modelled row, a satellite or a station (the "
                       "elevation mask, the model's own no-product / no-pair refusals, the network "
                       "signal allow list, the measurement-admission and DW withholds, the readmit "
@@ -10149,14 +10149,14 @@ namespace GnssProcessor {
         // buffer carries the drop-edge memory and the generation test the restore
         // decides on.
         if (network_ledger_anchor_ && !network_ledger_screens_) {
-            log->error("Network producer (card SID phase 4b): network.ledger_anchor is armed "
+            log->error("Network producer: network.ledger_anchor is armed "
                        "WITHOUT network.ledger_screens, so the election has no drop-edge memory "
                        "and no generation test to decide a restore on.  DISARMED.  Arm "
                        "network.ledger_screens (the phase-4a observatory) alongside it.");
             network_ledger_anchor_ = false;
         }
         if (network_ledger_anchor_)
-            log->info("Network producer (card SID phase 4b): network.ledger_anchor is ON — a "
+            log->info("Network producer: network.ledger_anchor is ON — a "
                       "(satellite, signal) family the coverage gate's DROP EDGE erased, and that "
                       "returns to the anchored union with the previous incumbent still tracking "
                       "it at the SAME admitted generation, restores that incumbent as the "
@@ -10171,7 +10171,7 @@ namespace GnssProcessor {
                       "after a gate drop, so it is graded as a behaviour change and it is "
                       "FINGERPRINTED (fresh convergence only).");
         if (network_ledger_anchor_ && network_phase_datum_min_stations_ <= 1)
-            log->warn("Network producer (card SID phase 4b): network.ledger_anchor is armed with "
+            log->warn("Network producer: network.ledger_anchor is armed with "
                       "network.phase_datum_min_stations at 1, so the coverage gate never drops a "
                       "family and the restore has no population.  The knob is INERT here.");
         // SID phase 5a (the emitter read and the declared roster) needs no other knob:
@@ -10180,27 +10180,27 @@ namespace GnssProcessor {
         // role still yields no declaration (networkLedgerEmitBuildDeclaration refuses an
         // empty one).
         if (network_ledger_emit_)
-            log->info("Network producer (card SID phase 5a): network.ledger_emit is ON: the "
-                      "emitter's per-family bookkeeping is READ against the arc ledger (card "
-                      "PBH's hold generation against the ledger's admitted arc births, both "
+            log->info("Network producer: network.ledger_emit is ON: the "
+                      "emitter's per-family bookkeeping is READ against the arc ledger (the phase-bia"
+                      "s hold generation against the ledger's admitted arc births, both "
                       "directions counted and evented; the emitter's first-sighting test "
                       "against the ledger's memory of the family, so a RETURN read as a first "
                       "sighting is named), and the producer DECLARES its signal roster on the "
                       "wire as a block of N records naming, per constellation and band digit, "
-                      "the modelled phase and code signals, the card SCC companions and the "
+                      "the modelled phase and code signals, the second-code-channel companions and the "
                       "S-basis datum designation.  OBSERVATORY: nothing on the producer reads "
                       "either back, so the solve and every C / B / P / E record are "
                       "byte-identical against an unarmed run and the only difference in "
                       "products.txt is the N records themselves.");
         if (network_ledger_emit_ && !network_config_.emit_pb_hold)
-            log->warn("Network producer (card SID phase 5a): network.ledger_emit is armed "
+            log->warn("Network producer: network.ledger_emit is armed "
                       "without network.emit_pb_hold, so no emitted phase bias carries a hold "
                       "generation and the E1a class (the generation against the ledger's arc "
                       "births) has a ZERO DENOMINATOR: dead wiring, not agreement.  The "
                       "first-sighting class and the declaration are unaffected.");
         if (!network_ledger_reentry_
             && network_ledger_reentry_no_verdict_ == LedgerReentryNoVerdict::Refloat)
-            log->warn("Network producer (card SID phase 3): "
+            log->warn("Network producer: "
                       "network.ledger_reentry_no_verdict = refloat is INERT without "
                       "network.ledger_reentry — the no-verdict population only exists when the "
                       "ledger drives the response.");
@@ -10434,7 +10434,7 @@ namespace GnssProcessor {
         //     force-arms the oscillator, and a recorded defect is a clock-knob
         //     interaction logged from the pre-arming value.
         if (network_clock_temporal_anchor_ && network_clock_model_) {
-            log->error("Network (Card Q3): network.clock_temporal_anchor is armed but "
+            log->error("Network (clock anchor): network.clock_temporal_anchor is armed but "
                        "network.clock_model is ON{} — the two-state oscillator owns the clock's "
                        "cross-epoch memory and the D2 clock carry the anchor modifies is never "
                        "stashed, so the anchor is INERT (0 folds; its run-end counters will say "
@@ -10621,7 +10621,7 @@ namespace GnssProcessor {
             log->warn("Network: network.phase_leveling_local_block is on but the station-wide "
                       "whitened block cannot be built on this lineage (phase_leveling={}, "
                       "carry_invariant={}, carry_conditional_coupling={}) — it needs the "
-                      "phase-leveling carry folded as Card-1 coupling rows (phase_leveling "
+                      "phase-leveling carry folded as coupling rows (phase_leveling "
                       "on, carry_invariant off, carry_conditional_coupling on): this knob is "
                       "INERT on this posture (standing invariant #4).",
                       network_phase_leveling_, network_carry_invariant_,
@@ -10643,7 +10643,7 @@ namespace GnssProcessor {
                            "network.phase_leveling = true AND network.carry_invariant = false "
                            "(got phase_leveling={}, carry_invariant={}).  float_kf replaces the "
                            "LEVELING carry's scalar prior with a float state carrying a joint "
-                           "covariance; on a carry_invariant lineage the Card-4 DD carry IS the "
+                           "covariance; on a carry_invariant lineage the invariant DD carry IS the "
                            "ambiguity time-link and NetworkStationCarry's do_amb_carry "
                            "skips the leveling inject outright, so there is nothing for the "
                            "vehicle to replace and the arm could not move a byte.",
@@ -10678,7 +10678,7 @@ namespace GnssProcessor {
                 log->error("Network (RF-1 step 3): network.ambiguity_vehicle = \"float_kf\" "
                            "requires network.carry_conditional_coupling = true.  The vehicle's "
                            "fold IS CouplingRowBuilder::buildLocalBlock, whose rows live in "
-                           "A_s/A_r as Card-1 coupling rows and whose off-diagonals are the "
+                           "A_s/A_r as coupling rows and whose off-diagonals are the "
                            "harvested conditional cross covariances; without the conditional "
                            "coupling there is no block to build and every station-epoch would "
                            "silently take the per-column route — an arm that reads clean and "
@@ -10782,7 +10782,7 @@ namespace GnssProcessor {
             if (apply_pl && (!network_phase_leveling_ || network_carry_invariant_))
                 log->warn("Network (M2 v2): carry_vce_apply_families includes 'pl' but the "
                           "phase-leveling ambiguity carry is NOT folded on this lineage "
-                          "(phase_leveling={}, carry_invariant={}) — Card 4's DD carry "
+                          "(phase_leveling={}, carry_invariant={}) — the invariant DD carry "
                           "supersedes it, so the pl carry has no inject site and the M2 "
                           "monitor sees no pl rows.  The pl factor will sit at 1.0 for the "
                           "whole run: this arm is structurally INERT (standing invariant #4). "
@@ -10831,7 +10831,7 @@ namespace GnssProcessor {
             if (!network_carry_conditional_coupling_) {
                 log->error("Network: network.carry_rx_code_bias_in_block requires "
                            "network.carry_conditional_coupling (the block rows are the "
-                           "card 1 coupling rows, whitened per station).");
+                           "coupling rows, whitened per station).");
                 return false;
             }
             if (!float_kf && !network_phase_leveling_local_block_) {
@@ -10888,10 +10888,10 @@ namespace GnssProcessor {
                 // So the knob stays armed and its allow-list is ignored; only its sigma
                 // scale still applies, now over every non-canonical code row rather than
                 // over the listed ones.
-                log->info("Network (card SID phase 6b): network.second_code_channel is "
+                log->info("Network: network.second_code_channel is "
                           "SUBSUMED by processing.channel_mode = 'all'.  The widening adds "
                           "every admitted code attribute of every selected band, which "
-                          "contains card SCC's allow-listed band-1 set, so "
+                          "contains the second code channel's allow-listed band-1 set, so "
                           "network.second_code_signals is IGNORED and "
                           "network.second_code_sigma_scale ({:.3f}) applies to every "
                           "NON-CANONICAL code row instead.  Every such row still routes "
@@ -10900,7 +10900,7 @@ namespace GnssProcessor {
             } else if (!network_carry_rx_code_bias_) {
                 log->error("Network: network.second_code_channel requires "
                            "network.carry_rx_code_bias — the receiver INTER-SIGNAL state the "
-                           "card creates is a receiver code bias like any other and has to be "
+                           "second code channel creates is a receiver code bias like any other and has to be "
                            "restored across epochs by that carry, or it cold-starts every "
                            "epoch and determines itself from one epoch of code.  DISARMED.");
                 network_config_.second_code_channel = false;
@@ -10942,17 +10942,17 @@ namespace GnssProcessor {
                 // modelled identically (an ordinary float arc in the existing satellite
                 // phase-bias family), so the allow-list is ignored and only the sigma scale
                 // still applies, over every non-canonical phase row.
-                log->info("Network (card SID phase 6b): network.second_phase_channel is "
+                log->info("Network: network.second_phase_channel is "
                           "SUBSUMED by processing.channel_mode = 'all'.  The widening adds "
                           "every admitted phase attribute of every selected band, which "
-                          "contains card SID phase 6a's allow-listed band-1 set, so "
+                          "contains the second phase channel's allow-listed band-1 set, so "
                           "network.second_phase_signals is IGNORED and "
                           "network.second_phase_sigma_scale ({:.3f}) applies to every "
                           "NON-CANONICAL phase row instead.",
                           network_config_.second_phase_sigma_scale);
             } else if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf
                        || !network_phase_datum_held_basis_) {
-                log->error("Network (card SID phase 6a): network.second_phase_channel "
+                log->error("Network: network.second_phase_channel "
                            "requires network.ambiguity_vehicle = 'float_kf' with "
                            "network.phase_datum_held_basis — on the LEVELING vehicle a "
                            "second phase per band would create a zero-q level for every "
@@ -10961,7 +10961,7 @@ namespace GnssProcessor {
                            "before it runs).  DISARMED.");
                 network_config_.second_phase_channel = false;
             } else if (network_config_.second_phase_signals.size() < 2) {
-                log->error("Network (card SID phase 6a): network.second_phase_channel is "
+                log->error("Network: network.second_phase_channel is "
                            "armed but network.second_phase_signals holds {} admitted "
                            "entr(y/ies) — a second phase needs at least two band-1 phases "
                            "in the list to ever be one.  DISARMED.",
@@ -10970,7 +10970,7 @@ namespace GnssProcessor {
             } else {
                 if (!network_config_.slip_qc.gap_reentry_per_signal) {
                     network_config_.second_phase_warn_no_per_signal = true;
-                    log->warn("Network (card SID phase 6a): network.second_phase_channel is "
+                    log->warn("Network: network.second_phase_channel is "
                               "armed WITHOUT network.cycle_slip.gap_reentry_per_signal.  The "
                               "row-level gap re-entry tier keys on the tracker's ONE signal "
                               "per band, so a second-phase arc's re-entry is answered by the "
@@ -10983,7 +10983,7 @@ namespace GnssProcessor {
                     && network_config_.cycle_slip_if_phase_td_pairs
                            != NetworkIfPhaseTdPairs::All) {
                     network_config_.second_phase_warn_iftd_pairs = true;
-                    log->warn("Network (card SID phase 6a): network.second_phase_channel is "
+                    log->warn("Network: network.second_phase_channel is "
                               "armed with network.cycle_slip.if_phase_td on but "
                               "if_phase_td_pairs is NOT 'all'.  That detector forms ONE "
                               "ionosphere-free pair out of the first two phase signals, "
@@ -10993,7 +10993,7 @@ namespace GnssProcessor {
                               "to 'all' (the working bases do) or the IF-TD tier is silent "
                               "on this posture (standing invariant #4).");
                 }
-                log->info("Network (card SID phase 6a): SECOND PHASE CHANNEL armed — a "
+                log->info("Network: SECOND PHASE CHANNEL armed — a "
                           "station contributes every allow-listed band-1 phase it reports "
                           "[{}] besides the one its canonical latch selected, each as an "
                           "ordinary float ambiguity joining the EXISTING satellite "
@@ -11022,16 +11022,16 @@ namespace GnssProcessor {
             && processing_mode_ == ProcessingMode::PPP_RTK_Network) {
             if (network_config_.ambiguity_vehicle != NetworkAmbiguityVehicle::FloatKf
                 || !network_phase_datum_held_basis_) {
-                log->error("Network (card SID phase 6b): processing.channel_mode = 'all' "
+                log->error("Network: processing.channel_mode = 'all' "
                            "requires network.ambiguity_vehicle = 'float_kf' with "
                            "network.phase_datum_held_basis — on the LEVELING vehicle every "
                            "extra phase channel would create its own zero-q level with no "
-                           "wired event response (standing invariant #1), and card SID "
-                           "phase 6a's interlock says the same thing about one extra "
+                           "wired event response (standing invariant #1), and the second phase channel"
+                           "'s interlock says the same thing about one extra "
                            "channel.  CLAMPED to 'single'.");
                 channel_mode_ = ChannelMode::Single;
             } else {
-                log->info("Network (card SID phase 6b): ALL-CHANNEL widening armed — every "
+                log->info("Network: ALL-CHANNEL widening armed — every "
                           "ADMITTED code and phase attribute of every selected band is "
                           "modelled at every station.  Each extra PHASE is an ordinary "
                           "float ambiguity joining the existing satellite phase-bias family "
@@ -11051,22 +11051,22 @@ namespace GnssProcessor {
                           mw_channel_mode_ == MwChannelMode::Single ? "single"
                               : (mw_channel_mode_ == MwChannelMode::All ? "all" : "mirror"));
                 if (!network_config_.sat_isc_state)
-                    log->warn("Network (card SID phase 6b): channel_mode 'all' is armed with "
+                    log->warn("Network: channel_mode 'all' is armed with "
                               "network.sat_isc_state OFF.  A companion CODE on band 2 or "
                               "above then keeps the RF-0d geometry-free pin, which ASSERTS "
                               "an inter-signal correction of ZERO on that column and pushes "
-                              "the real difference into the satellite family — card B5D's "
+                              "the real difference into the satellite family — the band-5 code-datum "
                               "class, measured at metres on a third band.  Band-1 companions "
                               "are unaffected (no geometry-free combination exists against "
                               "the reference, so they are left estimable already).  Counted "
                               "at run end.");
                 if (!network_carry_rx_code_bias_)
-                    log->warn("Network (card SID phase 6b): channel_mode 'all' is armed "
+                    log->warn("Network: channel_mode 'all' is armed "
                               "WITHOUT network.carry_rx_code_bias.  The receiver "
                               "inter-signal code states the widening creates are receiver "
                               "code biases like any other and cold-start every epoch without "
                               "that carry, determining themselves from one epoch of code "
-                              "(standing invariant #1).  Card SCC refuses its own knob on "
+                              "(standing invariant #1).  The second code channel refuses its own knob on "
                               "this ground.");
             }
         }
@@ -11164,7 +11164,7 @@ namespace GnssProcessor {
                 network_carry_iono_in_block_ = false;
             } else if (network_carry_invariant_) {
                 log->warn("Network: network.carry_iono_in_block is on but "
-                          "network.carry_invariant is ON — the Card-4 invariant DD carry "
+                          "network.carry_invariant is ON — the invariant DD carry "
                           "is a different VEHICLE and makes F3 structurally inert (no "
                           "ambiguity carry, no local block), so the iono columns would "
                           "have nothing to join.  DISABLING carry_iono_in_block.");
@@ -11172,7 +11172,7 @@ namespace GnssProcessor {
             } else if (!network_phase_leveling_local_block_) {
                 log->warn("Network: network.carry_iono_in_block is on but "
                           "network.phase_leveling_local_block (F3) is OFF — there is no "
-                          "station block to put the iono columns into, and this card "
+                          "station block to put the iono columns into, and this carry "
                           "deliberately has NO diagonal fallback row (a diagonal iono "
                           "prior IS the falsified network.carry_iono vehicle).  DISABLING "
                           "carry_iono_in_block; arm network.phase_leveling_local_block too.");
@@ -11241,7 +11241,7 @@ namespace GnssProcessor {
                 network_carry_rx_clock_in_block_ = false;
             } else if (network_carry_invariant_) {
                 log->warn("Network: network.carry_rx_clock_in_block is on but "
-                          "network.carry_invariant is ON — the Card-4 invariant DD carry "
+                          "network.carry_invariant is ON — the invariant DD carry "
                           "is a different VEHICLE and makes F3 structurally inert (no "
                           "ambiguity carry, no local block), so the clock column would "
                           "have nothing to join.  DISABLING carry_rx_clock_in_block.");
@@ -11250,7 +11250,7 @@ namespace GnssProcessor {
                 log->warn("Network: network.carry_rx_clock_in_block is on but "
                           "network.phase_leveling_local_block (F3) is OFF — there is no "
                           "station block to put the receiver-clock column into, and this "
-                          "card deliberately has NO diagonal fallback row (a diagonal "
+                          "carry deliberately has NO diagonal fallback row (a diagonal "
                           "prior on the most station-COMMON direction there is would be "
                           "the n_LOS over-count that falsified the diagonal ZWD carry).  "
                           "DISABLING carry_rx_clock_in_block; arm "
@@ -11358,7 +11358,7 @@ namespace GnssProcessor {
             else if (network_carry_invariant_)
                 log->info("Network producer (IF-phase slip): between-satellite, between-epoch "
                           "ionosphere-free phase triple-difference slip DETECTION enabled — a "
-                          "flagged IF pair feeds the Card-4 DD invariant-carry C3c slip funnel "
+                          "flagged IF pair feeds the DD invariant-carry C3c slip funnel "
                           "(carry_slipped_ambs), so BOTH of its band ambiguities are "
                           "membership-excluded and re-tapped fresh next epoch (the same path the "
                           "MW/LLI coarse detectors take).  Threshold elevation-normalized "
@@ -11379,7 +11379,7 @@ namespace GnssProcessor {
         if (network_raim_carry_invariant_ && !network_carry_invariant_) {
             log->warn("Network (RAIM pool re-host): network.raim_carry_invariant is on but "
                       "network.carry_invariant is OFF — the re-host exists to give post-fit "
-                      "RAIM a pool on the Card-4 lineage, and off that lineage `pl_amb` is "
+                      "RAIM a pool on the invariant-carry lineage, and off that lineage `pl_amb` is "
                       "already the right pool.  DISABLED (no behaviour change).");
             network_raim_carry_invariant_ = false;
         }
@@ -11392,12 +11392,12 @@ namespace GnssProcessor {
         // network.raim (after its auto-couplings and the service profile, both above) it
         // has nothing to act on.  Disabled rather than left to read as armed (invariant #4).
         if (network_raim_pool_data_rows_only_ && !network_raim_) {
-            log->warn("Network (RAIM pool, card RPA): network.raim_pool_data_rows_only is on "
+            log->warn("Network (RAIM pool): network.raim_pool_data_rows_only is on "
                       "but network.raim is OFF: there is no RAIM pool to restrict.  DISABLED.");
             network_raim_pool_data_rows_only_ = false;
         }
         if (network_raim_pool_data_rows_only_)
-            log->info("Network (RAIM pool, card RPA): network.raim_pool_data_rows_only ON: the "
+            log->info("Network (RAIM pool): network.raim_pool_data_rows_only ON: the "
                       "post-fit and within-epoch RAIM pools admit the observation phase rows "
                       "only (data_phase, data_phase_second), each to the pool of the ambiguity "
                       "column its tag names; the carried-prior and SD-EWL rows are refused.  "
@@ -11434,7 +11434,7 @@ namespace GnssProcessor {
                           network_raim_k_sigma_, network_raim_min_stations_);
             else if (network_raim_carry_invariant_)
                 log->info("Network producer (RAIM POOL RE-HOST): post-fit RAIM re-hosted onto the "
-                          "carry-neutral `qc_amb` census — it now RUNS on the Card-4 "
+                          "carry-neutral `qc_amb` census — it now RUNS on the "
                           "invariant-carry lineage (phase_leveling={}), where it was previously "
                           "inert twice over (seam not called; `pl_amb` pool never filled).  "
                           "Refloat actuator is OFF (measure-only) — flags are counted and "
@@ -11445,7 +11445,7 @@ namespace GnssProcessor {
                           "={}) but WITHOUT network.raim_carry_invariant — post-fit RAIM is INERT: "
                           "its residual pool `pl_amb` is never filled under carry_invariant "
                           "(NetworkStationCarry's `do_amb_carry` requires !carry_invariant, "
-                          "because Card 4's DD carry supersedes the phase-leveling ambiguity "
+                          "because the invariant DD carry supersedes the phase-leveling ambiguity "
                           "carry), so `ambPool()` hands the seam an EMPTY pool and every station is "
                           "skipped.  ⚠ phase_leveling does NOT rescue this — it satisfies the "
                           "carry_warm CALL-SITE gate only, which is why such a run reports ARMED "
@@ -11659,7 +11659,7 @@ namespace GnssProcessor {
                 std::transform(cm.begin(), cm.end(), cm.begin(),
                                [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 if (cm != "single" && cm != "all") {
-                    log->warn("Network (card SID phase 6b): network.closed_loop.channel_mode "
+                    log->warn("Network: network.closed_loop.channel_mode "
                               "'{}' is not 'single' or 'all'; using 'single'.", cm);
                     cm = "single";
                 }

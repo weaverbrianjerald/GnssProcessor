@@ -456,7 +456,7 @@ int networkAnchorHygieneRunEnd(const NetworkRunEndView& v) {
         log->info("Network (COLD ANCHOR-FALLBACK): the usable-first candidacy pass ran on "
                   "{} handover election(s) — {} elected a candidate whose carry is USABLE "
                   "(of which {} were NOT the station today's sweep would have taken: the "
-                  "cold re-realizations this card removed) and {} found NO usable "
+                  "cold re-realizations this fallback removed) and {} found NO usable "
                   "candidate and fell through to today's sweeps (the honest cold path).  "
                   "{} (candidate, family) pair(s) were skipped: {} no ledger entry, {} "
                   "refused by the variance/ratio ceiling, {} freed this epoch, {} younger "

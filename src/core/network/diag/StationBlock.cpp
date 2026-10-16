@@ -406,7 +406,7 @@ int networkStationBlockRunEnd(const NetworkRunEndView& v) {
         // (invariant #4).  The two refusal counts distinguish the two ways the sweep finds
         // nothing: no station reached the audit, or the block could not be decomposed.
         log->log(ctx.counters.sb_rows_written > 0 ? spdlog::level::info : spdlog::level::warn,
-                 "Network (§24.10 card ZP station block): {} station-epoch row(s) written to "
+                 "Network (§24.10 station block summary): {} station-epoch row(s) written to "
                  "network_station_block.csv over {} traced emission(s) (the first 20 EMITTED "
                  "epochs, then every 60th); {} station-epoch(s) skipped (not in the solve / no "
                  "usable assembly) and {} undecomposable (N_rr unavailable or its eigen-"

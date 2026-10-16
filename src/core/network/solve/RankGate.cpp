@@ -366,7 +366,7 @@ int networkRankGateRunEnd(const NetworkRunEndView& v) {
     // the control arm still gets them.  An armed calibration whose counters never move is
     // a miswire, not a quiet run (invariant #4).
     if (config_.networkRankGateTol() != NetworkEstimator::kNullSpaceTol)
-        log->info("Network (Card DG): rank gate evaluated on {} epoch(s) at tol={:g} — {} "
+        log->info("Network (datum graph gate): rank gate evaluated on {} epoch(s) at tol={:g} — {} "
                   "emitted, {} withheld UNDER-specified (observed > declared: a missing "
                   "datum constraint), {} withheld OVER-specified (observed < declared: a "
                   "declared gauge stopped being counted).  Observed near-null count over "
@@ -386,7 +386,7 @@ int networkRankGateRunEnd(const NetworkRunEndView& v) {
     // two cases, so the advice below branches on it.
     if (ctx.counters.n_gate_withheld_over > 0) {
         if (ctx.counters.ddi_over_breach > 0)
-            log->warn("Network (Card DG): {} of the {} OVER-specified withhold(s) landed on an "
+            log->warn("Network (datum graph gate): {} of the {} OVER-specified withhold(s) landed on an "
                       "epoch where a DECLARED datum direction was already carrying information "
                       "(invariant-#7 ratio >= 1; run max R={:.3e} on {} at TOW {:.1f}).  Those "
                       "are NOT a mis-calibrated tolerance and re-calibrating cannot fix them: "
@@ -394,12 +394,12 @@ int networkRankGateRunEnd(const NetworkRunEndView& v) {
                       "cutoff below it still fails to count it as gauge and every cutoff above "
                       "it starts counting real directions as gauge.  ATTRIBUTE THE FOLD "
                       "instead.  ⚠ The ratio is measured on the reduced normals AS THE GATE "
-                      "SEES THEM, i.e. AFTER the station blocks (which carry the Card-1 "
+                      "SEES THEM, i.e. AFTER the station blocks (which carry the "
                       "coupling rows), the clock-constraint rows, the SH prior, "
                       "the pin bridge and any SBC rows — but BEFORE the D2/C1 dense carry fold "
                       "and the clock-osc prior, which are applied later and are therefore NOT "
                       "observable in this number.  So the candidates it CAN indict are the "
-                      "Card-1 coupling rows (a truncated family sum — arm "
+                      "coupling rows (a truncated family sum — arm "
                       "network.carry_coupling_gauge_project) and the pre-gate datum/constraint "
                       "rows.  The ddi_breach events in network_events.csv name the direction and "
                       "the epoch.",
@@ -407,7 +407,7 @@ int networkRankGateRunEnd(const NetworkRunEndView& v) {
                       ctx.counters.ddi_ratio_max, ctx.counters.ddi_ratio_max_dir,
                       ctx.counters.ddi_ratio_max_tow);
         if (ctx.counters.n_gate_withheld_over > ctx.counters.ddi_over_breach)
-            log->info("Network (Card DG): {} OVER-specified withhold(s) occurred with every "
+            log->info("Network (datum graph gate): {} OVER-specified withhold(s) occurred with every "
                       "declared datum direction still free (invariant-#7 ratio < 1).  THOSE are "
                       "the calibration case — the tolerance sits below this config's own gauge "
                       "depth, so RE-CALIBRATE rather than chasing the datum.  [Placement rule: "

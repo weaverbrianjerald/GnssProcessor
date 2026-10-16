@@ -924,7 +924,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                   "{} currently gross (run-max standardized code residual so far {:.1f} sigma)",
                   se.time.tow, n_declared_ep, n_cleared_ep, now_gross, tal.r_max);
     if (n_cold_edges_ep > 0)
-        log->info("Network (gross-LOS, card ICF cold bound {:g} m) TOW {:.1f}: {} cold edge(s) "
+        log->info("Network (gross-LOS, cold bound {:g} m) TOW {:.1f}: {} cold edge(s) "
                   "or re-erase(s) this epoch; run totals {} declared, {} re-erased, {} released, "
                   "{} expired.",
                   cold_bound, se.time.tow, n_cold_edges_ep, tal.cold_declared,
@@ -1127,7 +1127,7 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
     const NetworkConfig& nc = config_.getNetworkConfig();
     const double bound = ctx.knobs.gl_cold_bound_m;
     if (!(bound > 0.0)) {
-        log->warn("Network (gross-LOS, card ICF cold bound): INERT.  "
+        log->warn("Network (gross-LOS, cold bound): INERT.  "
                   "network.gross_los_cold_bound_m = {:g} m was set but resolved off "
                   "(network.gross_los_screen {}, network.gross_los_bound {}); the run is the "
                   "unarmed run.",
@@ -1141,14 +1141,14 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
         if (gs.gross && gs.cold) ++standing;
     });
 
-    log->info("Network (gross-LOS, card ICF cold bound {:g} m): {} LOS-epoch(s) screened inside "
+    log->info("Network (gross-LOS, cold bound {:g} m): {} LOS-epoch(s) screened inside "
               "the maturity horizon ({} emitted epochs), {} over the bound.  Largest post-fit "
               "code |v| over the bound {:.2f} m; largest under it on a line of sight not "
               "declared {:.2f} m, the bound's margin on this run (x{:.2f}).",
               bound, g.cold_los_screened, nc.gross_los_warmup_epochs, g.cold_los_over,
               g.cold_v_over_max_m, g.cold_v_under_max_m,
               g.cold_v_under_max_m > 0.0 ? bound / g.cold_v_under_max_m : 0.0);
-    log->info("Network (gross-LOS, card ICF cold bound): {} declaration(s) (decoupling edges), "
+    log->info("Network (gross-LOS, cold bound): {} declaration(s) (decoupling edges), "
               "{} release(s) and {} expiry(ies) (re-coupling edges, each re-seeding the "
               "carried ambiguity), {} still declared at run end; {} re-erase(s) of a standing "
               "declaration whose bound was exceeded again ({} after the horizon opened); {} "
@@ -1166,13 +1166,13 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
                 ? "ZERO OPPORTUNITY: no line of sight reached the bound inside the horizon; a "
                   "clean window, not a demonstration"
                 : "every line of sight over the bound was held by the cold station guard";
-        log->info("Network (gross-LOS, card ICF cold bound): INERT on this run: {}.", why);
+        log->info("Network (gross-LOS, cold bound): INERT on this run: {}.", why);
     }
     if (!g.cold_declared_by_los.empty()) {
         std::string line;
         for (const auto& [los, n] : g.cold_declared_by_los)
             line += fmt::format("{}{}={}", line.empty() ? "" : " ", los, n);
-        log->info("Network (gross-LOS, card ICF cold bound): declarations by line of sight: {}",
+        log->info("Network (gross-LOS, cold bound): declarations by line of sight: {}",
                   line);
     }
 }
@@ -1267,7 +1267,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
         if (ctx.knobs.amb_float_kf)
             log->info("Network (gross-LOS screen): on the float vehicle the T4 attribution "
                       "drops a carried arc instead of erasing it, so the gross screen's erase is "
-                      "the stronger response of the two (card PRM phase 3a).");
+                      "the stronger response of the two.");
         // --- Per-rule readout (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
         //     requirement F6; RF-3b).  Every line prints in both states of the sub-knob
         //     it reports on.  The populations a rule targets (B1's short-row count over
@@ -1406,7 +1406,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
                     log->warn("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "
                               "hour — above the 2/hour line §24.19 froze.  Satellite-level "
                               "faults are COMMON on this bed, and the wire's per-satellite "
-                              "EMISSION POLICY (not this screen) is the next card; report "
+                              "EMISSION POLICY (not this screen) is the next step; report "
                               "the satellites and the hours.", per_hour);
                 else
                     log->info("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "

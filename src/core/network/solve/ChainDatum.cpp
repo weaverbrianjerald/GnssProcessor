@@ -1080,7 +1080,7 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
     const auto& eq34_mismatch_epochs = v.ctx.counters.eq34_mismatch_epochs;
 
     if (config_.networkPhaseDatumEq34())
-        log->info("Network (Card 3/eq34): {} (sat,σ) re-reference(s), {} local carry "
+        log->info("Network (eq34): {} (sat,σ) re-reference(s), {} local carry "
                   "value(s) erased, {} carry value(s) S-transformed (v2-shift), "
                   "{} coupling s_prev reference(s) re-based with them (§14 — on an "
                   "eq34+coupling lineage 0 here with nonzero shifts is the "
@@ -1202,7 +1202,7 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
     if (config_.networkPhaseDatumEq34SlipAwareElection()) {
         const long long ds = ctx.counters.eq34_slip_deseeded;
         const long long ra = ctx.counters.eq34_slip_readmitted;
-        log->info("Network (Card 3/4 slip-aware election): {} slipped incumbent(s) DE-SEEDED "
+        log->info("Network (slip-aware election): {} slipped incumbent(s) DE-SEEDED "
                   "from the sticky tree, {} arcLife demotion(s) (slipped arcs ranked last, "
                   "each counted once per epoch; inert without the longevity election), "
                   "and {} slipped arc(s) became a tree edge "
@@ -1213,13 +1213,13 @@ int networkChainDatumRunEnd(const NetworkRunEndView& v) {
                   "graph topology, not the policy, still forces.",
                   ds, ctx.counters.eq34_slip_demoted, ra);
         if (ds == 0)
-            log->warn("Network (Card 3/4): the slip-aware election is ARMED but DE-SEEDED "
+            log->warn("Network: the slip-aware election is ARMED but DE-SEEDED "
                       "NOTHING — no slipped arc was ever an incumbent tree edge this run.  "
                       "Standing invariant #4: that is INERT, not proof the policy works.  "
                       "Check that slips reached the funnel at all (the slip-QC lines above); "
                       "with few slips and a dense graph a zero here is genuinely expected.");
         else if (ra >= ds)
-            log->warn("Network (Card 3/4): the slip-aware election de-seeded {} arc(s) but {} "
+            log->warn("Network: the slip-aware election de-seeded {} arc(s) but {} "
                       "slipped arc(s) still ended up in the tree — the graph, not the "
                       "election, is the binding constraint here and this knob is buying "
                       "little.  A denser observation graph (or a per-component redundancy "
