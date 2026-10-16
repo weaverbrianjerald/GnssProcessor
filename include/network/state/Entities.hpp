@@ -1790,15 +1790,22 @@ extern const std::vector<const char*> kRestoreOrder;
 /**
  * @brief One function that binds entity tables for writing: a row of @ref kEntityWriters.
  *
- * A function writes an entity table through a non-const binding in its opening block
- * (`net::LosTable& los_rows = ctx.entities.los;`, or `NetworkEntities& e = ctx.entities;`
- * for every table).  A read binds the table const.  scripts/nom_epoch_lint.py (check V12)
- * fails a non-const binding missing from its row and a row no binding supports.
+ * A function writes an entity table through a non-const binding in its opening block, and
+ * every write goes through that binding: `net::LosTable& los_rows = ctx.entities.los;` for
+ * the helpers that take a table (`drop*`, `put`, `eraseIf`, ...), or
+ * `NetworkEntities& entities = ctx.entities;   // written: sats los` for the helpers that
+ * take the whole set (`putSat`, `markSat`, `assign*`, ...: they resolve a name through the
+ * roster) and for a callee that is handed the set.  The `// written:` list names the tables
+ * written through the whole-set binding; a whole-set binding without a list stands for every
+ * table.  A read binds the table const or reads `ctx.entities` in place.
+ * scripts/nom_epoch_lint.py (check V12) fails a write with no binding in its function, a
+ * write to a table the whole-set binding does not list, a non-const binding missing from its
+ * row and a row no binding supports.
  */
 struct EntityWriterRow {
     const char* seam;     ///< The function's name.
     const char* home;     ///< Its file under src/core/.
-    const char* tables;   ///< The tables it binds non-const, space-separated in name order; "all" for the whole set.
+    const char* tables;   ///< The tables it binds non-const (or lists after `// written:`), space-separated in name order; "all" for an unlisted whole-set binding.
 };
 
 /// Every function that binds an entity table for writing (defined in Entities.cpp).

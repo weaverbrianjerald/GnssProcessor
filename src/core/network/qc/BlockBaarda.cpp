@@ -263,6 +263,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<BlockBaardaHit>& bb_hits = ep.events.census.bb_hits;
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
     if (!ctx.knobs.bb_on) return;   // the driver's gate
     (void)config_;
     (void)log;
@@ -327,7 +328,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
                                     : nullptr;
         if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        if (hid) net::put(ctx.entities.los, *hid, &net::LosState::bb_event_last) = now_ep;
+        if (hid) net::put(los_rows, *hid, &net::LosState::bb_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column: emitEvent
         // formats statistic and threshold with a fixed 6 decimals, which prints a
         // small t_B from a well-conditioned block as 0.000000.

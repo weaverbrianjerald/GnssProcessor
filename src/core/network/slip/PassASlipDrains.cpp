@@ -30,6 +30,7 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
                                                          const CommonBandEpoch* common_band_ptr) {
     const SyncedEpoch& se = v.se;
     NetworkRunContext& ctx = v.ctx;
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     NetworkRunTraces& traces = v.traces;
     const GnssConfig& config_ = v.config_;
     auto log = v.log;
@@ -74,8 +75,8 @@ std::map<net::ArcTuple, RelevelPend> passAMwRefloatStage(const PassAView& v, boo
                               ctx.carry.slip_oracle.get(),
                               common_band_ptr);
     if (datum_detect_on) {
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, datum_reref_pb_sats);
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_amb, datum_reref_amb_sats);
+        net::assignSatFlags(entities, &net::SatelliteState::datum_reref_pb, datum_reref_pb_sats);
+        net::assignSatFlags(entities, &net::SatelliteState::datum_reref_amb, datum_reref_amb_sats);
     }
     prmRespond(ctx.counters.prm_resp, ResponseSite::AmbDatumSlipErase,
                qc.counters.datum_slip_carry_erases - dse0);

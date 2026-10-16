@@ -185,6 +185,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     const SyncedEpoch& se = ep.se;
     const EpochEvents::Census& census_ev = ep.events.census;
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
     if (!ctx.knobs.mdb_on) return;   // the driver's gate
     // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
@@ -294,7 +295,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
                 continue;
             }
             if (hid)
-                net::put(ctx.entities.los, *hid, &net::LosState::events, std::string(cls),
+                net::put(los_rows, *hid, &net::LosState::events, std::string(cls),
                          &net::LosEventState::mdb_event_last) = seq;
             ++q.events;
             traces.emitEvent(se.time, "MDB", "mdb_exceedance", cd.sat, cd.station,

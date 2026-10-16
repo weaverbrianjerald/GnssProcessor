@@ -59,6 +59,7 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<int>& est_index_of = ep.assembly.est_index_of;
     const std::vector<std::vector<PppObservation>>& modeled = ep.pass_a.modeled;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     // --- Alias preamble: mechanically-derived run-TU aliases (+ reconstructions). --
     const bool sh_dev_on = ctx.knobs.sh_dev_on;   // was a parameter
     auto& sh_model = setup.sh_model;
@@ -168,7 +169,7 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
                     } catch (...) { continue; }
                     if (reg.row.size() == vrow.size()) vrow += reg.row;
                     const double v_hat = reg.cond_var + vrow.dot(Sfree * vrow);
-                    ShDevCarry& dc = net::putLos(ctx.entities, static_cast<int>(i), o.satellite,
+                    ShDevCarry& dc = net::putLos(entities, static_cast<int>(i), o.satellite,
                                                  &net::LosState::sh_dev);
                     dc.var_ss = shc.representation_sigma_tecu
                                 * shc.representation_sigma_tecu;

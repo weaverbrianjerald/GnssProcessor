@@ -246,11 +246,12 @@ namespace {
 void readmitNoteSeed(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& t,
                      const CarryPrior& cp, double seed_gap, double horizon_s,
                      double var_eff, bool anchored, EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     const bool clk = cp.kind == SharedParamKind::Clock;
     if (clk) {
         ++ctx.counters.n_readmit_seeded_clk;
         if (anchored) ++ctx.counters.n_readmit_seeded_anch;
-        net::putSat(ctx.entities, cp.sat, &net::SatelliteState::readmit_seeded_s) = ctx.carry.readmit_now_s;
+        net::putSat(entities, cp.sat, &net::SatelliteState::readmit_seeded_s) = ctx.carry.readmit_now_s;
     } else {
         ++ctx.counters.n_readmit_seeded_cb;
     }

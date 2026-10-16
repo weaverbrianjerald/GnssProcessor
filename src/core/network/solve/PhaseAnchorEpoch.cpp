@@ -73,6 +73,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     std::set<std::string>& shared_phase_keys = pass_a.shared_phase_keys;  // written
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs sat_signals sats
     // The event-row forwarder the driver held: adds the epoch time.
     auto emitEvent = [&](const char* tier, const char* event,
                          const std::string& sat, const std::string& station,
@@ -267,9 +268,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                      // the election tests `observe` on its first
                                      // line.
                                      &pd_reentry);
-            net::assignSig(ctx.entities, &SG::anchor_incumbent, anchor_incumbent);
-            net::assignSig(ctx.entities, &SG::anchor_pin_target, pin_target);
-            if (held_basis.on) net::assignSig(ctx.entities, &SG::phase_basis, basis_view);
+            net::assignSig(entities, &SG::anchor_incumbent, anchor_incumbent);
+            net::assignSig(entities, &SG::anchor_pin_target, pin_target);
+            if (held_basis.on) net::assignSig(entities, &SG::phase_basis, basis_view);
             // Both edges of the gate are events.  One row per drop
             // edge, with the identities on either side (what left, which station was
             // anchoring it, which stations still carry it) and `handled` saying
@@ -508,7 +509,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        net::markSat(ctx.entities, pk->satellite, net::Disc::UraRetro);
+                        net::markSat(entities, pk->satellite, net::Disc::UraRetro);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }
@@ -567,7 +568,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                 // network.trace_amb_state off; the row writer itself stays
                 // knob-gated and does nothing there.
                 const int n_erased = networkApplyPhaseAnchorCarryReref(
-                        pa_reref, ctx.entities.arcs,
+                        pa_reref, entities.arcs,
                         (ctx.knobs.trace_amb_state || !gate_drop_fams.empty())
                             ? &pa_reref_erased : nullptr);
                 for (const auto& [k, lc] : pa_reref_erased) {

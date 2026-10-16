@@ -533,6 +533,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
     const std::shared_ptr<PlHarvestBlock>& hblk = sb.blk;
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs
     for (size_t a = 0; a < R.pl_amb.size(); ++a) {
         const PlAmb& pa = R.pl_amb[a];
         if (pa.col < 0 || pa.col >= xr.size()) continue;
@@ -745,7 +746,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                     ctx.carry.amb_state_rows.push_back(std::move(row));
             }
             nlc.n_folds = nlc_n_folds;
-            net::putArc(ctx.entities, lkey, &net::ArcState::amb) = std::move(nlc);
+            net::putArc(entities, lkey, &net::ArcState::amb) = std::move(nlc);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pa.col, SharedHistoryMap::Amb,
                                           static_cast<int>(i), pa.sat, pa.signal);   // no-op off
         }
@@ -756,7 +757,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // inject can pair it with any sibling stashed at this harvest, and
             // with nothing else.
             hblk->C.row(static_cast<Eigen::Index>(a)) = cross.transpose();
-            auto& ent = net::putArc(ctx.entities, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
+            auto& ent = net::putArc(entities, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
             ent.blk = hblk;
             ent.blk_idx = static_cast<int>(a);
         }
@@ -921,6 +922,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
     // unreachable (byte-identical).
     const bool amb_state_on = ctx.knobs.trace_amb_state;
     // ---- End of the bindings ----
+    net::ArcTable& arc_rows = ctx.entities.arcs;   // written
     // Carry-retirement census.  This prune is the mechanism behind the fleet-scale
     // carry loss that §1.3 calls the "cliff".  It reads only last_seen_s (it selects
     // on elapsed time and nothing else), so any claim that it improves quality has
@@ -930,7 +932,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
     // as pl_max_gap_s).
     const long long fleet_before = static_cast<long long>(net::present(ctx.entities.arcs, &net::ArcState::amb));
     const long long n_pruned = carryGapPrune(
-        ctx.entities.arcs, &net::ArcState::amb, pl_now_s,
+        arc_rows, &net::ArcState::amb, pl_now_s,
         ctx.params.spec(NetworkParamKind::Ambiguity).gap_horizon_s,
         [&](const ArcId& id, const LocalCarry& lc) {
             // Capture before the erase (RF-1 §7.4, D3).  This is the one

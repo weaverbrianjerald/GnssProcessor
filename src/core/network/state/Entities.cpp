@@ -154,10 +154,12 @@ void lastPivotToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& sna
     snap.last_pivot = letterMap(ctx.entities.constellations, &C::last_pivot);
 }
 void prevPivotFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignLetterMap(ctx.entities, &C::prev_pivot, snap.prev_pivot);
+    NetworkEntities& e = ctx.entities;   // written: constellations
+    assignLetterMap(e, &C::prev_pivot, snap.prev_pivot);
 }
 void lastPivotFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignLetterMap(ctx.entities, &C::last_pivot, snap.last_pivot);
+    NetworkEntities& e = ctx.entities;   // written: constellations
+    assignLetterMap(e, &C::last_pivot, snap.last_pivot);
 }
 
 // Record GG: (letter, signal, group id), filled in (letter, signal) order (O6).
@@ -170,7 +172,7 @@ void ggToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
             });
 }
 void ggFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: constellations
     dropAll(e.constellations, &C::channels, &Ch::group_id);
     for (const auto& gg : snap.carry_group_id)
         if (const std::optional<System> sys = constellationOfLetter(e, std::get<0>(gg)))
@@ -188,7 +190,7 @@ void cbpToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
             });
 }
 void cbpFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: constellations
     dropAll(e.constellations, &C::channels, &Ch::code_bias_prev);
     for (const auto& [fam, per_sat] : snap.code_bias_prev)
         if (const auto ch = channelOfKey(e, fam))
@@ -203,7 +205,7 @@ void eqdToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
             });
 }
 void eqdFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: constellations
     dropAll(e.constellations, &C::channels, &Ch::datum_rx);
     for (const auto& [key, rx] : snap.eq34_datum_rx)
         if (const auto ch = channelOfKey(e, key))
@@ -344,7 +346,7 @@ void kToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     });
 }
 void kFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: sats
     dropAll(e.sats, &A::clock_osc);
     for (const auto& [sat, o] : snap.clock_osc) {
         ClockOsc c;
@@ -360,13 +362,15 @@ void jToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.prev_clk = satMap(ctx.entities.sats, &A::prev_clk);
 }
 void jFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSat(ctx.entities, &A::prev_clk, snap.prev_clk);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::prev_clk, snap.prev_clk);
 }
 void yToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.ura_refloat_horizon = satMap(ctx.entities.sats, &A::ura_refloat_horizon);
 }
 void yFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSat(ctx.entities, &A::ura_refloat_horizon, snap.ura_refloat_horizon);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::ura_refloat_horizon, snap.ura_refloat_horizon);
 }
 
 // Records C, R and A: satellite sets as flags, written and restored wholesale.
@@ -374,19 +378,22 @@ void cToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.c1_zoh_active = satSet(ctx.entities.sats, &A::c1_zoh_active);
 }
 void cFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::c1_zoh_active, snap.c1_zoh_active);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, &A::c1_zoh_active, snap.c1_zoh_active);
 }
 void rToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.ura_retro_sats = satSet(ctx.entities.sats, Disc::UraRetro);
 }
 void rFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, Disc::UraRetro, snap.ura_retro_sats);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, Disc::UraRetro, snap.ura_retro_sats);
 }
 void aToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.retro_active = satSet(ctx.entities.sats, &A::retro_active);
 }
 void aFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::retro_active, snap.retro_active);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, &A::retro_active, snap.retro_active);
 }
 
 // Record LB (two rows): satellite -> {contrast-frame level information, epochs}.  The
@@ -404,10 +411,12 @@ void lbNToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     }
 }
 void lbInfoFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_info_c) = in.first;
+    NetworkEntities& e = ctx.entities;   // written: sats
+    for (const auto& [sat, in] : snap.level_info) putSat(e, sat, &A::clm_info_c) = in.first;
 }
 void lbNFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    for (const auto& [sat, in] : snap.level_info) putSat(ctx.entities, sat, &A::clm_n) = in.second;
+    NetworkEntities& e = ctx.entities;   // written: sats
+    for (const auto& [sat, in] : snap.level_info) putSat(e, sat, &A::clm_n) = in.second;
 }
 
 // Records I, CBI and SV (step N4e2): satellite-keyed maps, written and restored wholesale.
@@ -415,19 +424,22 @@ void iToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.relevel_iode = satMap(ctx.entities.sats, &A::relevel_iode);
 }
 void iFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSat(ctx.entities, &A::relevel_iode, snap.relevel_iode);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::relevel_iode, snap.relevel_iode);
 }
 void cbiToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.code_bias_ifpin_pair = satMap(ctx.entities.sats, &A::code_bias_ifpin_pair);
 }
 void cbiFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSat(ctx.entities, &A::code_bias_ifpin_pair, snap.code_bias_ifpin_pair);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::code_bias_ifpin_pair, snap.code_bias_ifpin_pair);
 }
 void svToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.carry_sat_vertex = satMap(ctx.entities.sats, &A::carry_vertex);
 }
 void svFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSat(ctx.entities, &A::carry_vertex, snap.carry_sat_vertex);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSat(e, &A::carry_vertex, snap.carry_sat_vertex);
 }
 
 // Records X, QR and CBS (step N4e2): satellite sets as a bit or a flag, wholesale.
@@ -435,19 +447,22 @@ void xToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.eph_cutover_disc_pending = satSet(ctx.entities.sats, Disc::EphCutover);
 }
 void xFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, Disc::EphCutover, snap.eph_cutover_disc_pending);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, Disc::EphCutover, snap.eph_cutover_disc_pending);
 }
 void qrToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.clock_refloat_sats = satSet(ctx.entities.sats, &A::prev_clock_refloat);
 }
 void qrFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::prev_clock_refloat, snap.clock_refloat_sats);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, &A::prev_clock_refloat, snap.clock_refloat_sats);
 }
 void cbsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.code_bias_sat_seen = satSet(ctx.entities.sats, &A::code_bias_seen);
 }
 void cbsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSatFlags(ctx.entities, &A::code_bias_seen, snap.code_bias_sat_seen);
+    NetworkEntities& e = ctx.entities;   // written: sats
+    assignSatFlags(e, &A::code_bias_seen, snap.code_bias_sat_seen);
 }
 
 }  // namespace
@@ -575,13 +590,15 @@ void paToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.anchor_incumbent = sigMap(ctx.entities.sat_signals, &G::anchor_incumbent, '_');
 }
 void paFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSig(ctx.entities, &G::anchor_incumbent, snap.anchor_incumbent);
+    NetworkEntities& e = ctx.entities;   // written: sat_signals
+    assignSig(e, &G::anchor_incumbent, snap.anchor_incumbent);
 }
 void ptToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.anchor_pin_target = sigMap(ctx.entities.sat_signals, &G::anchor_pin_target, '_');
 }
 void ptFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSig(ctx.entities, &G::anchor_pin_target, snap.anchor_pin_target);
+    NetworkEntities& e = ctx.entities;   // written: sat_signals
+    assignSig(e, &G::anchor_pin_target, snap.anchor_pin_target);
 }
 
 // Record EQS (step N4e2): "<sat>_<signal>" -> the component datum receiver, wholesale.
@@ -589,7 +606,8 @@ void eqsToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     snap.eq34_sat_root = sigMap(ctx.entities.sat_signals, &G::eq34_sat_root, '_');
 }
 void eqsFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignSig(ctx.entities, &G::eq34_sat_root, snap.eq34_sat_root);
+    NetworkEntities& e = ctx.entities;   // written: sat_signals
+    assignSig(e, &G::eq34_sat_root, snap.eq34_sat_root);
 }
 
 }  // namespace
@@ -678,7 +696,7 @@ void eqpToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
 }
 
 void eqpFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: stations
     dropAll(e.stations, &S::signals, &SS::eq34_rx_parent);
     for (const auto& [rxkey, sat] : snap.eq34_rx_parent) {
         // "<name>|<c>|<sigma>": the name is what precedes the last two separators, the
@@ -821,7 +839,7 @@ void eqeToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     });
 }
 void eqeFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: los
     dropAll(e.los, &L::eq34_prev_el);
     for (const auto& [key, el] : snap.eq34_prev_el) putLos(e, key.first, key.second, &L::eq34_prev_el) = el;
 }
@@ -840,7 +858,7 @@ void sdToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     });
 }
 void sdFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    NetworkEntities& e = ctx.entities;
+    NetworkEntities& e = ctx.entities;   // written: los
     dropAll(e.los, &L::sh_dev);
     for (const auto& [key, d] : snap.sh_dev_carry) {
         const auto bar = key.find('|');
@@ -1023,7 +1041,8 @@ void lToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     });
 }
 void lFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    dropAll(ctx.entities.arcs, &R::amb);
+    NetworkEntities& e = ctx.entities;   // written: arcs
+    dropAll(e.arcs, &R::amb);
     for (const auto& [key, l] : snap.local_carry) {
         // Restored-arc age (SPEC_event_harness section 15.4): the birth stamps are not
         // snapshotted, so the entry is stamped with the restored-arc sentinel rather than
@@ -1031,7 +1050,7 @@ void lFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
         // which would re-stamp every restored arc as born at the resume.  var_first stays 0
         // on a file without the ratio field; the ratio ceiling then refuses the arc until
         // it re-converges.
-        putArc(ctx.entities, key, &R::amb) =
+        putArc(e, key, &R::amb) =
             makeRestoredLocalCarry(l.value_abs, l.var, l.last_seen_s, l.var_first);
     }
 }
@@ -1043,14 +1062,16 @@ void eqtToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
         snap.eq34_prev_target[key] = tgt;
 }
 void eqtFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignArcAmb(ctx.entities, &R::eq34_prev_target, snap.eq34_prev_target);
+    NetworkEntities& e = ctx.entities;   // written: arcs
+    assignArcAmb(e, &R::eq34_prev_target, snap.eq34_prev_target);
 }
 void eqrToSnapshot(const NetworkRunContext& ctx, NetworkStateSnapshot& snap) {
     for (const auto& key : arcAmbSet(ctx.entities.arcs, &R::eq34_retained_edge))
         snap.eq34_retained_edges.insert(key);
 }
 void eqrFromSnapshot(const NetworkStateSnapshot& snap, NetworkRunContext& ctx) {
-    assignArcAmbFlags(ctx.entities, &R::eq34_retained_edge, snap.eq34_retained_edges);
+    NetworkEntities& e = ctx.entities;   // written: arcs
+    assignArcAmbFlags(e, &R::eq34_retained_edge, snap.eq34_retained_edges);
 }
 
 std::size_t retainedRows(const NetworkEntities& e) { return present(e.arcs, &R::eq34_retained_edge); }
@@ -1181,46 +1202,103 @@ int networkEntitiesRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-// The functions that bind an entity table for writing, one row each (the lint's check V12
-// keeps this table equal to the bindings in src/core).
+// The functions that bind an entity table for writing, one row each: the table names are the
+// tables the function binds non-const, or lists after `// written:` on a whole-set binding, and
+// "all" when a whole-set binding lists none (the lint's check V12 keeps this table equal to
+// the bindings in src/core and requires every write site to take one of them).
 const std::vector<EntityWriterRow> kEntityWriters = {
-    {"networkPassASlipScan_", "network/driver/ApplicationNetworkAssembly.cpp", "arcs"},
-    {"networkInjectPinBridgePrior", "network/state/BorderPrior.cpp", "sat_signals"},
-    {"networkStashCarry", "network/state/BorderStash.cpp", "constellations"},
-    {"cbpFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"eqdFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"eqeFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"eqpFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"ggFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"kFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"rxcbFromSnapshot", "network/state/Entities.cpp", "stations"},
-    {"sdFromSnapshot", "network/state/Entities.cpp", "all"},
-    {"zwdFromSnapshot", "network/state/Entities.cpp", "stations"},
-    {"networkApplyRxCbLinRestore", "network/state/WarmResume.cpp", "stations"},
-    {"networkRestoreCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
-    {"networkTryWarmResume", "network/state/WarmResume.cpp", "stations"},
-    {"networkAnchorHygiene", "network/solve/AnchorHygiene.cpp", "sat_signals"},
-    {"networkElectChainDatum", "network/solve/ChainDatum.cpp", "all stations"},
-    {"networkHarvestRxPhaseBias", "network/solve/ChainDatum.cpp", "stations"},
-    {"networkCouplingReinitHistory", "network/carry/Coupling.cpp", "all"},
-    {"networkDdFrac", "network/diag/DdFrac.cpp", "constellations"},
-    {"networkBuildCarryDdPriors", "network/carry/DdPriorBuild.cpp", "constellations"},
-    {"networkGrossLosAct", "network/qc/GrossLos.cpp", "arcs los"},
-    {"networkGrossLosScreen", "network/qc/GrossLos.cpp", "los"},
+    {"networkAmbFloatApplyDrops", "network/ar/AmbFloat.cpp", "stations"},
+    {"networkAmbFloatDeclaredHandover", "network/ar/AmbFloat.cpp", "all"},
+    {"networkProducerAr", "network/ar/ProducerAr.cpp", "constellations"},
+    {"networkSdEwlAr", "network/ar/SdEwlAr.cpp", "constellations los stations"},
     {"networkMeasurementAdmission", "network/assembly/MeasurementAdmission.cpp", "stations"},
-    {"networkPbHold", "network/emit/PbHold.cpp", "sat_signals"},
-    {"networkPbHoldCloneHarvest", "network/emit/PbHoldClone.cpp", "sat_signals"},
-    {"networkPbHoldCloneUpdate", "network/emit/PbHoldClone.cpp", "sat_signals"},
-    {"networkPostFitRaim", "network/qc/Raim.cpp", "stations"},
+    {"networkSignalIntegrity", "network/assembly/SignalIntegrity.cpp", "los"},
+    {"networkCouplingReinitHistory", "network/carry/Coupling.cpp", "sat_signals"},
+    {"networkBuildCarryDdPriors", "network/carry/DdPriorBuild.cpp", "constellations sats"},
+    {"networkHarvestAmbiguityStation", "network/carry/LevelingCarry.cpp", "arcs"},
+    {"networkPruneAmbiguities", "network/carry/LevelingCarry.cpp", "arcs"},
+    {"networkHarvestPhaseColourStation", "network/carry/PhaseColourCarry.cpp", "los"},
+    {"networkPrunePhaseColour", "network/carry/PhaseColourCarry.cpp", "los"},
     {"networkHarvestRxClock", "network/carry/RxClockCarry.cpp", "stations"},
     {"networkHarvestRxCbBlock", "network/carry/RxCodeBiasCarry.cpp", "stations"},
     {"networkHarvestRxCbCarry", "network/carry/RxCodeBiasCarry.cpp", "stations"},
-    {"networkSdEwlAr", "network/ar/SdEwlAr.cpp", "constellations los stations"},
-    {"networkShDevCarryAge", "network/diag/ShDevVtec.cpp", "los"},
-    {"networkSignalIntegrity", "network/assembly/SignalIntegrity.cpp", "los"},
     {"networkHarvestSlantIonoBlock", "network/carry/SlantIonoCarry.cpp", "los"},
-    {"networkSolPrep", "network/emit/SolPrep.cpp", "constellations"},
     {"networkHarvestZwd", "network/carry/ZwdCarry.cpp", "stations"},
+    {"networkDdFrac", "network/diag/DdFrac.cpp", "constellations"},
+    {"networkShDevCarryAge", "network/diag/ShDevVtec.cpp", "los"},
+    {"networkShDevVtec", "network/diag/ShDevVtec.cpp", "los"},
+    {"runNetwork", "network/driver/ApplicationNetwork.cpp", "names"},
+    {"networkPassASlipScan_", "network/driver/ApplicationNetworkAssembly.cpp", "arcs los"},
+    {"networkBrdcWire", "network/emit/BrdcWire.cpp", "sats"},
+    {"networkPbHold", "network/emit/PbHold.cpp", "constellations sat_signals sats"},
+    {"networkPbHoldCloneHarvest", "network/emit/PbHoldClone.cpp", "sat_signals"},
+    {"networkPbHoldCloneUpdate", "network/emit/PbHoldClone.cpp", "sat_signals"},
+    {"queueBlockBirth", "network/emit/PbHoldClone.cpp", "sat_signals"},
+    {"networkSolPrep", "network/emit/SolPrep.cpp", "constellations sat_signals sats"},
+    {"networkBlockBaardaEmit", "network/qc/BlockBaarda.cpp", "los"},
+    {"networkClockQc", "network/qc/ClockQc.cpp", "sats"},
+    {"networkCongruenceEmit", "network/qc/Congruence.cpp", "stations"},
+    {"networkGrossLosAct", "network/qc/GrossLos.cpp", "arcs los"},
+    {"networkGrossLosScreen", "network/qc/GrossLos.cpp", "los sats stations"},
+    {"networkMdbFlush", "network/qc/Mdb.cpp", "los"},
+    {"holdoffAllows", "network/qc/PrefitCensus.cpp", "los"},
+    {"networkPrefitCensus", "network/qc/PrefitCensus.cpp", "los stations"},
+    {"networkPriorResidualEmit", "network/qc/PriorResidual.cpp", "los"},
+    {"networkPostFitRaim", "network/qc/Raim.cpp", "arcs los stations"},
+    {"networkSigma0WithholdTail", "network/qc/RaimWithinEpoch.cpp", "arcs"},
+    {"networkRedundancyCensus", "network/qc/RedundancyCensus.cpp", "los stations"},
+    {"networkEphCutoverRelevel", "network/qc/Relevel.cpp", "all"},
+    {"passAMwRefloatStage", "network/slip/PassASlipDrains.cpp", "sats"},
+    {"passAIonoCsAdvance", "network/slip/PassASlipScan.cpp", "los"},
+    {"networkAnchorHygiene", "network/solve/AnchorHygiene.cpp", "arcs sat_signals"},
+    {"networkElectChainDatum", "network/solve/ChainDatum.cpp", "all stations"},
+    {"networkEq34PinAudit", "network/solve/ChainDatum.cpp", "arcs"},
+    {"networkHarvestRxPhaseBias", "network/solve/ChainDatum.cpp", "stations"},
+    {"decouple", "network/solve/ClockAnchor.cpp", "sats"},
+    {"clockLevelInnovation", "network/solve/ClockLevel.cpp", "sats"},
+    {"networkClockLevelMonitor", "network/solve/ClockLevel.cpp", "sats"},
+    {"networkHandoverStransform", "network/solve/HandoverStransform.cpp", "all"},
+    {"networkHandoverStransformBeforeRows", "network/solve/HandoverStransform.cpp", "all"},
+    {"networkPhaseAnchorEpoch", "network/solve/PhaseAnchorEpoch.cpp", "arcs sat_signals sats"},
+    {"networkCodeDatumFamilyKeptEpoch", "network/solve/Sbasis.cpp", "constellations sats"},
+    {"networkSbasisCompletion", "network/solve/SbasisCompletion.cpp", "sats"},
+    {"networkInjectPinBridgePrior", "network/state/BorderPrior.cpp", "sat_signals"},
+    {"readmitNoteSeed", "network/state/BorderPrior.cpp", "sats"},
+    {"networkRetroUraBookkeeping", "network/state/BorderStash.cpp", "sats"},
+    {"networkStashCarry", "network/state/BorderStash.cpp", "constellations sat_signals sats"},
+    {"aFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"cFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"cbiFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"cbpFromSnapshot", "network/state/Entities.cpp", "constellations"},
+    {"cbsFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"eqdFromSnapshot", "network/state/Entities.cpp", "constellations"},
+    {"eqeFromSnapshot", "network/state/Entities.cpp", "los"},
+    {"eqpFromSnapshot", "network/state/Entities.cpp", "stations"},
+    {"eqrFromSnapshot", "network/state/Entities.cpp", "arcs"},
+    {"eqsFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
+    {"eqtFromSnapshot", "network/state/Entities.cpp", "arcs"},
+    {"ggFromSnapshot", "network/state/Entities.cpp", "constellations"},
+    {"iFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"jFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"kFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"lFromSnapshot", "network/state/Entities.cpp", "arcs"},
+    {"lastPivotFromSnapshot", "network/state/Entities.cpp", "constellations"},
+    {"lbInfoFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"lbNFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"paFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
+    {"prevPivotFromSnapshot", "network/state/Entities.cpp", "constellations"},
+    {"ptFromSnapshot", "network/state/Entities.cpp", "sat_signals"},
+    {"qrFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"rFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"rxcbFromSnapshot", "network/state/Entities.cpp", "stations"},
+    {"sdFromSnapshot", "network/state/Entities.cpp", "los"},
+    {"svFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"xFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"yFromSnapshot", "network/state/Entities.cpp", "sats"},
+    {"zwdFromSnapshot", "network/state/Entities.cpp", "stations"},
+    {"networkApplyRxCbLinRestore", "network/state/WarmResume.cpp", "stations"},
+    {"networkRestoreCanonicalSignals", "network/state/WarmResume.cpp", "stations"},
+    {"networkTryWarmResume", "network/state/WarmResume.cpp", "constellations sat_signals sats stations"},
 };
 
 }  // namespace GnssProcessor::net

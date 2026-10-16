@@ -2043,6 +2043,7 @@ void networkCodeDatumFamilyKeptEpoch(
                              const std::string&, std::optional<double>,
                              std::optional<double>, const char*,
                              const std::string&)>& emitEvent, const EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sats
     using Outcome = NetworkSbasis::PinPairOutcome;
     // The pin pair holds of this kept epoch (network.code_datum_pair_continuity): each
     // held satellite-epoch is counted, and a hold is declared at both edges against the
@@ -2106,7 +2107,7 @@ void networkCodeDatumFamilyKeptEpoch(
         emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_end",
                   holdText(hold) + ending);
     }
-    net::assignSat(ctx.entities, &net::SatelliteState::last_if_pin_hold, holds);
+    net::assignSat(entities, &net::SatelliteState::last_if_pin_hold, holds);
     // The pin pair changes of this kept epoch (network.code_datum_pair_continuity).
     for (const auto& [sat, change] : events.code_datum.this_epoch_if_pin_changes) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
@@ -2150,7 +2151,7 @@ void networkCodeDatumFamilyKeptEpoch(
                           + NetworkSbasis::familyRowOutcomeName(r.outcome) + ")");
         }
         if (ch)
-            net::put(ctx.entities.constellations, ch->first, &net::ConstellationState::channels,
+            net::put(entities.constellations, ch->first, &net::ConstellationState::channels,
                      ch->second, &net::ChannelState::last_cb_family_partner) = partner;
     }
     // The first-sighting family prior of this kept epoch (

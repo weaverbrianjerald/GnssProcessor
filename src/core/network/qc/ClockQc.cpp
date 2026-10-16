@@ -63,6 +63,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
     bool retro_feed = ep.solve.retro_feed;
     EpochEvents::Qc& qc_ev = events.qc;   // written
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     // --- Alias preamble: copies of the former Application::runNetwork alias block
     //     and the reconstructed emitEvent / handover_affects lambdas, so the
     //     relocated SB_CLOCKUPD body below reads the original names. ------------
@@ -121,7 +122,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // The entries the wipe removes.
             prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe,
                        static_cast<long long>(net::present(ctx.entities.sats, &net::SatelliteState::clock_osc)));
-            net::dropAll(ctx.entities.sats, &net::SatelliteState::clock_osc);   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
+            net::dropAll(entities.sats, &net::SatelliteState::clock_osc);   // datum moved: every carried offset is in the retired frame (t_last dropped with it)
             // Record the datum-change oscillator wipe as an event; nothing else reports it (T5, V2).
             emitEvent("T5_clock_model", "datum_osc_wipe", "", "", std::nullopt, std::nullopt,
                       "clear_osc", "datum re-reference");
@@ -135,7 +136,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // That is one epoch earlier than the global wipe, which skips the whole
             // update block.
             if (datum_changed) {
-                net::eraseIf(ctx.entities.sats, &net::SatelliteState::clock_osc, [&](const SatId& id, const ClockOsc&) {
+                net::eraseIf(entities.sats, &net::SatelliteState::clock_osc, [&](const SatId& id, const ClockOsc&) {
                     if (!datumChangeAffectsKey(net::satKey(id), changed_consts, /*scoped=*/true))
                         return false;
                     prmRespond(ctx.counters.prm_resp, ResponseSite::ClkOscWipe);
@@ -190,7 +191,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 auto zit = z_of.find(sat);
                 if (zit == z_of.end()) continue;
                 const double z   = zit->second;
-                ClockOsc&    osc = net::putSat(ctx.entities, sat, &net::SatelliteState::clock_osc);
+                ClockOsc&    osc = net::putSat(entities, sat, &net::SatelliteState::clock_osc);
                 auto pit = clk_pred.find(sat);
                 if (pit == clk_pred.end() || !osc.init) {
                     // Seed (first warm epoch of this satellite, or its carried state was
@@ -397,8 +398,8 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
             // reinitialized, so drop its history (next epoch's recovery must not read as a
             // fresh jump); otherwise record this epoch's jump reference (jref) + time as the
             // next adjacent baseline (raw v in pin mode; de-meaned dev in sum-to-zero mode).
-            if (refloated) net::dropSat(ctx.entities.sats, sat, &net::SatelliteState::prev_clk);
-            else           net::putSat(ctx.entities, sat, &net::SatelliteState::prev_clk) = {jref, pl_now_s};
+            if (refloated) net::dropSat(entities.sats, sat, &net::SatelliteState::prev_clk);
+            else           net::putSat(entities, sat, &net::SatelliteState::prev_clk) = {jref, pl_now_s};
         }
         if (n_new > 0)
             log->warn("Network[clock-monitor]: TOW {:.1f} reinitialized {} satellite clock(s) [{}] "
@@ -500,7 +501,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                 // rule).  The reinit lands in the next epoch's fold, so the bump is
                 // queued for the next emit (consumed in NetworkSolPrep).
                 for (const std::string& s2 : mark)
-                    net::markSat(ctx.entities, s2, net::Disc::CbExcursion);
+                    net::markSat(entities, s2, net::Disc::CbExcursion);
 
                 std::string marked;
                 for (const std::string& s2 : mark) marked += (marked.empty() ? "" : ";") + s2;
@@ -521,7 +522,7 @@ void networkClockQc(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitHando
                                       med > 0.0 ? mx / med : 0.0, jumpers.size()));
             }
         }
-        net::assignSat(ctx.entities, &net::SatelliteState::cb_exc_prev_clk, now);
+        net::assignSat(entities, &net::SatelliteState::cb_exc_prev_clk, now);
     }
 }
 

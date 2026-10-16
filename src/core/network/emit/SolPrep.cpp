@@ -92,6 +92,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     auto& contract_pending = setup.contract_pending;
     auto& events_trace         = traces.events_trace;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the pivots, datum_rx (N4b)
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sat_signals sats
     const auto& this_epoch_if_pin_sel = code_datum_ev.this_epoch_if_pin_sel;
     const auto& this_epoch_if_pin_real = code_datum_ev.this_epoch_if_pin_real;
 
@@ -251,12 +252,12 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                                                              : 0.0;
             if (sat_dt >= 0.0 && sat_dt <= clk_model_max_gap) {
                 s.clock_c1_m_s = oit->x1;
-                net::unmarkSat(ctx.entities.sats, s.sat, &net::SatelliteState::c1_zoh_active);
+                net::unmarkSat(entities.sats, s.sat, &net::SatelliteState::c1_zoh_active);
             } else {
                 // A return past the gap ships c1 = 0 (ZOH) for one epoch instead of an
                 // hours-old rate (T5/R6, V2 blind spot).  The event is edge-triggered on
                 // c1_zoh_active, so a satellite that stays stale logs once, not every emit.
-                if (events_trace.is_open() && net::markSat(ctx.entities, s.sat, &net::SatelliteState::c1_zoh_active))
+                if (events_trace.is_open() && net::markSat(entities, s.sat, &net::SatelliteState::c1_zoh_active))
                     emitEvent("T5_clock_model", "c1_zoh_suppress", s.sat, "", sat_dt,
                               clk_model_max_gap, "c1_zero", "vanish_return");
             }
@@ -462,7 +463,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // output is byte-identical.
     if (!gross_ev.gl_emit_disc.empty()) {
         for (const auto& gsat : gross_ev.gl_emit_disc)
-            net::markSat(ctx.entities, gsat, net::Disc::UraRetro);
+            net::markSat(entities, gsat, net::Disc::UraRetro);
         ctx.counters.gross_los.emit_disc_marked +=
             static_cast<long long>(gross_ev.gl_emit_disc.size());
     }
@@ -691,7 +692,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // both tiers flag it in one epoch.
     if (!ctx.carry.refsat_mark_sats.empty()) {
         for (const std::string& sat : ctx.carry.refsat_mark_sats)
-            net::markSat(ctx.entities, sat, net::Disc::UraRetro);
+            net::markSat(entities, sat, net::Disc::UraRetro);
         ctx.carry.refsat_mark_sats.clear();
     }
     // The drain must be armed whenever a source queues into ura_retro_sats, not only
@@ -727,7 +728,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         std::set<std::string> retro_pending;
         for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::UraRetro))
             (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, net::Disc::UraRetro, retro_pending);   // absent sats wait for their next emit
+        net::assignSatFlags(entities, net::Disc::UraRetro, retro_pending);   // absent sats wait for their next emit
         if (!retro_emit_sats.empty())
             // The union drain: every source of ura_retro_sats arrives here
             // (URA-retro QC contamination, the reference-satellite mark, the
@@ -761,7 +762,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         for (const auto& s : sol.sats) present.insert(s.sat);
         for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::EphCutover))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, net::Disc::EphCutover, still_pending);
+        net::assignSatFlags(entities, net::Disc::EphCutover, still_pending);
         if (!mark.empty()) {
             // One event, one step: a satellite the B1 retro drain above already marked
             // this epoch does not have its counters bumped twice.  Every landed mark is
@@ -799,7 +800,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         for (const auto& s : sol.sats) present.insert(s.sat);
         for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::CbExcursion))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, net::Disc::CbExcursion, still_pending);
+        net::assignSatFlags(entities, net::Disc::CbExcursion, still_pending);
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
             // landed mark, since the counter-only path is invisible to replay (see the
@@ -833,7 +834,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         for (const auto& s : sol.sats) present.insert(s.sat);
         for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::ClockAnchor))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, net::Disc::ClockAnchor, still_pending);
+        net::assignSatFlags(entities, net::Disc::ClockAnchor, still_pending);
         if (!mark.empty()) {
             // A satellite a block above (the B1 retro drain, an eph-cutover or a
             // CB-excursion landing) already marked this epoch must not have its
@@ -922,7 +923,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                               prev->first + "+" + prev->second +
                                   "->" + sel.first + "+" + sel.second);
             }
-            net::putSat(ctx.entities, sat, &net::SatelliteState::last_if_pin_sel) = sel;   // advance the emit baseline (emitted sats only)
+            net::putSat(entities, sat, &net::SatelliteState::last_if_pin_sel) = sel;   // advance the emit baseline (emitted sats only)
         }
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
@@ -957,13 +958,13 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // trap-1) so the R record carries it to a replay.  Both sets are filled only under
     // code_datum_time_linked, so otherwise the block does nothing and the output is
     // byte-identical.
-    for (const auto& sat : this_epoch_cb_reseed) net::markSat(ctx.entities, sat, net::Disc::CbReseed);
+    for (const auto& sat : this_epoch_cb_reseed) net::markSat(entities, sat, net::Disc::CbReseed);
     if (net::present(ctx.entities.sats, net::Disc::CbReseed) > 0) {
         std::set<std::string> present, mark, still_pending;
         for (const auto& s : sol.sats) present.insert(s.sat);
         for (const auto& sat : net::satSet(ctx.entities.sats, net::Disc::CbReseed))
             (present.count(sat) ? mark : still_pending).insert(sat);
-        net::assignSatFlags(ctx.entities, net::Disc::CbReseed, still_pending);
+        net::assignSatFlags(entities, net::Disc::CbReseed, still_pending);
         if (!mark.empty()) {
             // Dedupe against the blocks above (one event, one step) and serialize every
             // landed mark, since the counter-only path is invisible to replay (see the
@@ -1007,10 +1008,10 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // returns on its first line unless a constellation other than GPS is active.
     networkMultiGnssNotePivots(ctx, config_, plan.clock_pivot,
                                net::letterMap(cons_rows, &net::ConstellationState::last_pivot));
-    net::assignLetterMap(ctx.entities, &net::ConstellationState::prev_pivot, plan.clock_pivot);
+    net::assignLetterMap(entities, &net::ConstellationState::prev_pivot, plan.clock_pivot);
     // Merge-update the persistent last-ever pivot map without erasing any
     // constellation, so a later vanish-return with a different pivot is caught (A1).
-    net::mergeLetterMap(ctx.entities, &net::ConstellationState::last_pivot, plan.clock_pivot);
+    net::mergeLetterMap(entities, &net::ConstellationState::last_pivot, plan.clock_pivot);
     // Prioritized phase-bias anchor: record per-(sat, signal) anchor handovers for
     // observability and advance the emit baseline (emitted_anchor).  The
     // consumer-facing discontinuity is already handled, replay-safely, by the
@@ -1052,14 +1053,14 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                           *prev + "->" + sta);
                 ++n_handover;
             }
-            net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor) = sta;
+            net::putSig(entities, amb, &net::SatSignalState::emitted_anchor) = sta;
             // eq34 reattach hygiene, warm conditioning: stamp the time this key's datum
             // was last realized and emitted.  The eligibility block applies only while
             // that memory is fresh (see network/solve/AnchorHygiene.hpp).  The stamp
             // follows the emit-only discipline of the baseline above: a withheld epoch
             // must not refresh it, or a long withhold would look warm indefinitely.
             if (anchor_hygiene_on)
-                net::putSig(ctx.entities, amb, &net::SatSignalState::emitted_anchor_s) =
+                net::putSig(entities, amb, &net::SatSignalState::emitted_anchor_s) =
                     TimeUtils::continuousGpsSeconds(se.time);
         }
         if (n_handover > 0)

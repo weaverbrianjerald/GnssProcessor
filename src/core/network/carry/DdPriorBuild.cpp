@@ -62,6 +62,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
     const bool carry_innov_gate = ctx.knobs.carry_innov_gate;
     auto& carry_glonass_warned = ctx.counters.carry_glonass_warned;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // the carry group ids (N4b)
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     const bool carry_invariant = ctx.knobs.carry_invariant;
     // Keep a funnel entry made only by D5 out of the carry-membership exclusion (see
     // ambSlipped below; M1, D5 v4).  The loader already forces the knob false
@@ -170,7 +171,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                 if (funnel_spared) ++ctx.counters.carry_innov_kill_suppressed;
                 return false;
             };
-            int& sv = net::putSat(ctx.entities, parts->satellite, &net::SatelliteState::carry_vertex);
+            int& sv = net::putSat(entities, parts->satellite, &net::SatelliteState::carry_vertex);
             if (sv == 0)
                 sv = kSatBase + static_cast<int>(net::present(ctx.entities.sats,
                                                               &net::SatelliteState::carry_vertex));

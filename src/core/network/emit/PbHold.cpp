@@ -92,13 +92,14 @@ void networkPbHold(NetworkRunContext& ctx,
                    const NetworkProductEmitter& emitter,
                    const SyncedEpoch& se,
                    NetworkSolutionEpoch& sol) {
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sat_signals sats
     (void)config_;   // the live values are the ctx.knobs snapshot (seam contract)
     if (!ctx.knobs.emit_pb_hold) return;
     if (sol.sats.empty()) {
         // An emitted epoch with no satellite (every one pruned) is still an emission, so
         // the phase-clock mode's next step is taken against it: nothing.
         if (ctx.knobs.emit_pb_hold_phase_clock || ctx.knobs.emit_pb_hold_smoothed)
-            net::dropAll(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
+            net::dropAll(entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         return;
     }
 
@@ -148,17 +149,17 @@ void networkPbHold(NetworkRunContext& ctx,
         for (char cc : ccs) {
             double med = 0.0;
             if (pbHoldCommonClockStep(sol, frz_prev, cc, med)) {
-                net::put(ctx.entities.constellations, systemFromLetter(cc),
+                net::put(entities.constellations, systemFromLetter(cc),
                          &net::ConstellationState::pb_hold_frz_M) += med;
                 advanced = true;
             }
         }
         if (advanced) ++ctx.counters.n_pbh_frz_epochs;
-        net::dropAll(ctx.entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
+        net::dropAll(entities.sats, &net::SatelliteState::pb_hold_frz_prev_clk);
         for (const auto& s : sol.sats) {
             if (!s.has_clock || s.sat.empty() || !std::isfinite(s.clock_c0_m)) continue;
-            net::putSat(ctx.entities, s.sat, &net::SatelliteState::pb_hold_frz_prev_clk) = s.clock_c0_m;
-            frz_c[s.sat] = s.clock_c0_m - net::put(ctx.entities.constellations, systemOfSat(s.sat),
+            net::putSat(entities, s.sat, &net::SatelliteState::pb_hold_frz_prev_clk) = s.clock_c0_m;
+            frz_c[s.sat] = s.clock_c0_m - net::put(entities.constellations, systemOfSat(s.sat),
                                                    &net::ConstellationState::pb_hold_frz_M);
         }
     }
@@ -202,14 +203,14 @@ void networkPbHold(NetworkRunContext& ctx,
                     pc.signal     = signal;
                     pc.generation = st.generation;
                     pc.queued_ep  = loop_ep;
-                    net::putSig(ctx.entities, key, &SG::smh_pending) = pc;
+                    net::putSig(entities, key, &SG::smh_pending) = pc;
                     // The generation's block clone, under the same rule.
                     net::dropSig(sigs, key, &SG::smh_block);
                     pc.block = true;
-                    net::putSig(ctx.entities, key, &SG::smh_block_pending) = pc;
+                    net::putSig(entities, key, &SG::smh_block_pending) = pc;
                 }
                 if (first) {
-                    net::putSig(ctx.entities, key, &SG::pb_hold) = st;
+                    net::putSig(entities, key, &SG::pb_hold) = st;
                     ++ctx.counters.n_pbh_keys;
                     ++ctx.counters.n_pbh_gen_first;
                 } else {
@@ -451,7 +452,7 @@ void networkPbHold(NetworkRunContext& ctx,
     // for satellites that carry a clock this epoch.
     for (const auto& s : sol.sats)
         if (s.has_clock && !s.sat.empty())
-            net::putSat(ctx.entities, s.sat, &net::SatelliteState::pb_hold_prev_clock_m) = s.clock_c0_m;
+            net::putSat(entities, s.sat, &net::SatelliteState::pb_hold_prev_clock_m) = s.clock_c0_m;
 
     if (!logged_arm && log && ctx.counters.n_pbh_gen_first > 0) {
         logged_arm = true;

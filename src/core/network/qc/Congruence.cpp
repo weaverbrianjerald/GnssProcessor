@@ -253,6 +253,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<CongruenceHit>& cg_hits = ep.events.census.cg_hits;
     // ---- End of the bindings ----
+    net::StationTable& sta_rows = ctx.entities.stations;   // written
     if (!ctx.knobs.cg_on) return;   // the driver's gate
     (void)config_;
     (void)log;
@@ -314,7 +315,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
             sid ? net::get(ctx.entities.stations, *sid, &net::StationState::cg_event_last) : nullptr;
         if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        if (sid) net::put(ctx.entities.stations, *sid, &net::StationState::cg_event_last) = now_ep;
+        if (sid) net::put(sta_rows, *sid, &net::StationState::cg_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column, because
         // emitEvent formats statistic and threshold with a fixed 6 decimals, which
         // prints a small t_i as 0.000000.

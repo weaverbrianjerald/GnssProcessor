@@ -134,6 +134,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
     const bool& datum_changed = datum.datum_changed;
     NetworkSbasis sb;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     // --- S-basis completion, SBC (network.sbasis_complete) -------------------
     // The declared dimension counts only the structural gauges (the per-constellation
     // clock in pin mode); a realized epoch can carry more.  Measured on GPS+Galileo:
@@ -227,7 +228,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
                     emitEvent("GATE", "sbc_release", s, "", std::nullopt, std::nullopt,
                               "reobserved", "held combination re-determined by data");
                 }
-            net::assignSatFlags(ctx.entities, &net::SatelliteState::sbc_active, now_active);
+            net::assignSatFlags(entities, &net::SatelliteState::sbc_active, now_active);
             if (ctx.counters.n_sbc_epochs == 1)
                 log->info("Network (SBC): first completion at TOW {:.1f} — realized "
                           "S-basis dimension {} vs declared {}; {} extra direction(s) "
@@ -248,7 +249,7 @@ void networkSbasisCompletion(NetworkRun& run, const NetworkEpoch& ep, const Solv
                 emitEvent("GATE", "sbc_release", s, "", std::nullopt, std::nullopt,
                           "reobserved", "held combination re-determined by data");
             }
-            net::assignSatFlags(ctx.entities, &net::SatelliteState::sbc_active, {});
+            net::assignSatFlags(entities, &net::SatelliteState::sbc_active, {});
         }
     }
 }

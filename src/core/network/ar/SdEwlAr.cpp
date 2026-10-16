@@ -278,6 +278,7 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     auto& C = ctx.counters;
     net::LosTable& los_rows = ctx.entities.los;   // the flip memory
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // sd_ewl_r0 (N4b)
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     ++C.sdewl_epochs;
     (void)now_s;   // arc continuity is judged by the detector's own sample count
 
@@ -505,7 +506,7 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                 if (v == SdEwlFlipVerdict::Restart) ++C.sdewl_dd_restart;
                 if (v == SdEwlFlipVerdict::Flip)    ++C.sdewl_dd_flip;
                 const bool vetoed = (v == SdEwlFlipVerdict::Flip);
-                net::putLos(ctx.entities, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev) =
+                net::putLos(entities, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev) =
                     { d.n_cyc, stat.count };
                 SdEwlFix f;
                 f.n_cyc = d.n_cyc;

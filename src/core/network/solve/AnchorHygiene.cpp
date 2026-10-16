@@ -56,6 +56,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     if (!on) return;   // off: no map, no bridge, no counter (structurally inert)
 
     net::SatSignalTable& sigs = ctx.entities.sat_signals;   // pin_bridge, pb_level_prev, anchor_incumbent (N4d)
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs sat_signals
     using SG = net::SatSignalState;
     auto& ctr      = ctx.counters;
     ++ctr.hyg.epochs;
@@ -142,7 +143,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
         }
     }
     ctr.hyg.arcs_tracked += static_cast<long long>(new_age.size());
-    net::assignArcAmb(ctx.entities, &net::ArcState::anchor_arc_age, new_age);   // rebuilt wholesale
+    net::assignArcAmb(entities, &net::ArcState::anchor_arc_age, new_age);   // rebuilt wholesale
     hyg.age = &ctx.entities.arcs;
     if (resume_seed)
         log->info("Network (eq34 hygiene): warm resume — seeded {} arc age(s) at {} "
@@ -280,7 +281,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 nb.value      = *lv;
                 nb.folds      = 0;
                 nb.opened_tow = t.tow;
-                net::emplaceSig(ctx.entities, amb, &SG::pin_bridge, nb);
+                net::emplaceSig(entities, amb, &SG::pin_bridge, nb);
                 hyg.bridged.insert(amb);
                 ctx.carry.anchor_blocked.erase(amb);   // a bridge supersedes a hold-out
                 ++ctr.hyg.bridges_opened;

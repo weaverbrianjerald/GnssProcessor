@@ -387,6 +387,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
               const std::string& sat, const char* reason,
               std::optional<double> statistic, std::optional<double> threshold,
               const std::string& detail) {
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     ClockAnchorSat& st = ctx.carry.clk_anchor.sat[sat];
     const bool was_anchored = st.anchored;
     st.anchored = false;
@@ -411,7 +412,7 @@ bool decouple(NetworkRunContext& ctx, NetworkRunTraces& traces, const GnssTime& 
     traces.emitEvent(t, "CLK_ANCHOR", "cta_decouple", sat, "", statistic, threshold,
                      "refloat", fmt::format("reason={};{}{}", reason, detail, seed_tag));
     if (ctx.knobs.cta_mark) {
-        net::markSat(ctx.entities, sat, net::Disc::ClockAnchor);
+        net::markSat(entities, sat, net::Disc::ClockAnchor);
         ++ctx.counters.cta_marks;
     }
     return true;

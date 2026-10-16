@@ -80,6 +80,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     int& n_arc_refloat_epoch = handoff.n_arc_refloat_epoch;  // written
     NetworkPriorResidual& prires = run.engines.prires;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs los stations
     // --- Alias preamble: byte-copies of the former Application::runNetwork alias
     //     block, so the relocated SB_RAIM body below reads the original names. ---
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
@@ -737,7 +738,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     next_arc_streak[akey] = streak;    // still building → carry forward
             }
             if (raim_arc_persist > 1)
-                net::assignLos(ctx.entities, &net::LosState::arc_spike_streak, next_arc_streak);
+                net::assignLos(entities, &net::LosState::arc_spike_streak, next_arc_streak);
             n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
         }
 
@@ -860,7 +861,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             // 4).  The stamp is set here, at the flag, not at the
                             // response: the two are different edges.
                             if (ctx.knobs.pd_held_basis)
-                                net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
+                                net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
                                     static_cast<long long>(ctx.counters.n_loop_epochs);
                             // The producer AR search's suspect-corner mask: a
                             // T4 drop or erase stamps the corner.  This site runs after the
@@ -928,7 +929,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                 ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                                   stations[i].name, pa.sat, pa.signal,
                                                   (*lane_lit), "t4_attrib");
-                                net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                                net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
                                 prmRespond(ctx.counters.prm_resp,
                                            ResponseSite::AmbRaimErase);
                                 }
@@ -944,7 +945,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // with it.  Erasing here makes the LOS re-draw both from data (its
                         // next harvest re-creates the entry with a fresh birth_s).
                         if (ctx.knobs.iono_blk &&
-                            net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::iono_blk)) {
+                            net::dropLos(entities.los, i, pa.sat, &net::LosState::iono_blk)) {
                             ++ctx.counters.n_iono_blk_erased_t4;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::IonoRaimErase);
@@ -954,7 +955,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // no longer trusted cannot vouch for it either; it re-starts from
                         // its birth prior next epoch.
                         if (ctx.knobs.pc_on
-                            && net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::pc)) {
+                            && net::dropLos(entities.los, i, pa.sat, &net::LosState::pc)) {
                             ++ctx.counters.n_pc_erase_raim;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::PcRaimErase);
@@ -1088,7 +1089,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     {
                         // Flag stamp (RF-2 items 3 and 4); see the attribution site.
                         if (ctx.knobs.pd_held_basis)
-                            net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
+                            net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
                                 static_cast<long long>(ctx.counters.n_loop_epochs);
                         // Suspect-corner stamp, the next epoch's; see the
                         // attribution site.
@@ -1137,7 +1138,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                               stations[i].name, pa.sat, pa.signal,
                                               (*lane_lit), "t3_consensus");
-                            net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                            net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::AmbRaimErase);
                             }
