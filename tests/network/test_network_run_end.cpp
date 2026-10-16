@@ -1,8 +1,8 @@
 /**
  * @file test_network_run_end.cpp
- * @brief The run-end table (card NOM step TD1b): every row is filled and appears once, and
+ * @brief The run-end table: every row is filled and appears once, and
  *        the order constraints network/runend/RunEnd.hpp states hold; one row per subsystem
- *        and the heading line of the walk (card NOM2 step TD2).
+ *        and the heading line of the walk.
  *
  * The table is the run end's order, so these are the constraints a reordered or added row
  * could break without any data run noticing: the trace close first, every manifest record
@@ -77,7 +77,7 @@ TEST(NetworkRunEndTable, TheTraceCloseIsFirst) {
 TEST(NetworkRunEndTable, EveryManifestRecordPrecedesTheCompleteRecord) {
     const std::size_t complete = rowOf(networkRunManifestCompleteRunEnd);
     ASSERT_LT(complete, kNetworkRunEndReports.size());
-    // The subsystem reports whose sections write the records (card NOM2 step TD2): the
+    // The subsystem reports whose sections write the records: the
     // parameter inventory, the contributions, the signal roster's plan, the carried border's
     // dispositions, the carried sites and the responses.
     const NetworkRunEndReport records[] = {
@@ -87,7 +87,7 @@ TEST(NetworkRunEndTable, EveryManifestRecordPrecedesTheCompleteRecord) {
 }
 
 TEST(NetworkRunEndTable, TheContractRoundTripPrecedesTheClosedLoopSummary) {
-    // The emit store's report holds the product contract round trip (card NOM2 step TD2).
+    // The emit store's report holds the product contract round trip.
     const std::size_t contract = rowOf(networkEmitStoreRunEnd);
     ASSERT_LT(contract, kNetworkRunEndReports.size());
     EXPECT_LT(contract, rowOf(networkClosedLoopRunEnd));
@@ -115,7 +115,7 @@ TEST(NetworkRunEndTable, EachSubsystemHasOneRow) {
     std::map<std::string, int> rows;
     for (const NetworkRunEndRow& row : kNetworkRunEndReports) ++rows[row.home];
     for (const auto& [home, n] : rows)
-        EXPECT_EQ(n, home == "app/RunArtifactsRunEnd.cpp" ? 3 : 1) << home;
+        EXPECT_EQ(n, home == "network/runend/RunArtifactsRunEnd.cpp" ? 3 : 1) << home;
 }
 
 /// The captured text without spdlog's platform end-of-line carriage returns.
