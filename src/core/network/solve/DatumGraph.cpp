@@ -19,6 +19,7 @@
  */
 
 #include "network/solve/DatumGraph.hpp"
+#include "network/solve/Sbasis.hpp"   // channelFamilyOf: "X against the rest"
 
 #include <algorithm>
 #include <cctype>
@@ -217,10 +218,20 @@ std::string netDatumGraphFamily(std::string_view signal) {
     return std::string(1, signal[2]);
 }
 
+std::string netDatumGraphFamilyOf(std::string_view sat, std::string_view signal, bool x_rule) {
+    const std::string letter = netDatumGraphFamily(signal);
+    if (!x_rule || letter == kDatumGraphNoFamily) return letter;
+    const bool secondary =
+        NetworkSbasis::channelFamilyOf(constellationKey(systemOfSat(sat)), std::string(signal))
+        == NetworkSbasis::ChannelFamily::Secondary;
+    return secondary ? kDatumGraphFamilyX : kDatumGraphFamilyRest;
+}
+
 std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     const std::set<std::string>& shared_phase_keys,
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
-    const std::map<std::string, int>& code_support) {
+    const std::map<std::string, int>& code_support,
+    bool x_rule) {
     // Accumulate every (sat, family) cell touched by either registration set.
     // Cells with no phase bias cannot host a b<->I trade and are dropped at the
     // end, but they are accumulated first because a cell's code count and its
@@ -244,11 +255,12 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts || parts->satellite.empty()) continue;   // never guess a key
-        ++touch(parts->satellite, netDatumGraphFamily(parts->signal)).n_pb;
+        ++touch(parts->satellite,
+                netDatumGraphFamilyOf(parts->satellite, parts->signal, x_rule)).n_pb;
     }
     for (const auto& [sat, sig] : registered_code_keys) {
         if (sat.empty()) continue;
-        ++touch(sat, netDatumGraphFamily(sig)).n_cb;
+        ++touch(sat, netDatumGraphFamilyOf(sat, sig, x_rule)).n_cb;
         ++cb_by_cons[systemOfSat(sat)];
     }
 
@@ -277,7 +289,7 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
 //  The spectral side
 // ===========================================================================
 
-std::vector<std::string> netDatumGraphDetailIds(std::string_view detail) {
+std::vector<std::string> netDatumGraphDetailIds(std::string_view detail, bool x_rule) {
     std::set<std::string> ids;
     std::size_t pos = 0;
     while (pos <= detail.size()) {
@@ -301,7 +313,7 @@ std::vector<std::string> netDatumGraphDetailIds(std::string_view detail) {
         const std::string_view sat = label.substr(p1 + 1, p2 - p1 - 1);
         const std::string_view sig = label.substr(p2 + 1);
         if (sat.empty()) continue;
-        ids.insert(std::string(sat) + "/" + netDatumGraphFamily(sig));
+        ids.insert(std::string(sat) + "/" + netDatumGraphFamilyOf(sat, sig, x_rule));
     }
     return std::vector<std::string>(ids.begin(), ids.end());
 }
@@ -394,6 +406,7 @@ void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep) {
     //  support, in one pass over `modeled`.  The header banner explains why this
     //  source is used and not the assembled row stacks.
     // ------------------------------------------------------------------------
+    const bool x_rule = ctx.knobs.dg_x_family;   // network.n3c_channel_family
     std::set<std::string> reg_cb;
     for (const auto& [sat, sig] : registered_code_keys)
         reg_cb.insert(netDatumGraphSupportKey(sat, sig));
@@ -420,8 +433,8 @@ void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 // support; that restriction makes zero_keys imply zero_support
                 // exactly (DatumGraph.hpp).
                 if (!reg_cb.count(netDatumGraphSupportKey(ob.satellite, code))) continue;
-                ++code_support[netDatumGraphSupportKey(ob.satellite,
-                                                       netDatumGraphFamily(code))];
+                ++code_support[netDatumGraphSupportKey(
+                    ob.satellite, netDatumGraphFamilyOf(ob.satellite, code, x_rule))];
             }
             if (supported) edges.push_back(NetDatumGraphEdge{static_cast<int>(i),
                                                              ob.satellite});
@@ -475,7 +488,8 @@ void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep) {
     //  Tier 2: channel-family code support
     // ------------------------------------------------------------------------
     const std::vector<NetDatumGraphPrediction> cells =
-        netDatumGraphChannelFamilies(shared_phase_keys, registered_code_keys, code_support);
+        netDatumGraphChannelFamilies(shared_phase_keys, registered_code_keys, code_support,
+                                     ctx.knobs.dg_x_family);
     ctr.cells_tier2 += static_cast<long long>(cells.size());
 
     std::vector<std::string> pred_ids, support_ids;
@@ -745,14 +759,14 @@ void networkDatumGraphSpectralHandoff(NetworkRunContext& ctx, const NetworkSbasi
         // this body, the census must see this evaluation's directions, not the
         // union of every attempt.
         dgs.dirs.clear();
-        const auto push = [&dgs](const NetworkSbasis::GaugeCompletion::Dir& d,
+        const auto push = [&dgs, &ctx](const NetworkSbasis::GaugeCompletion::Dir& d,
                                  bool skipped) {
             NetDatumGraphDir g;
             g.ev        = d.ev;
             g.skipped   = skipped;
             g.top_label = d.top_label;
             g.detail    = d.detail;
-            g.ids       = netDatumGraphDetailIds(d.detail);
+            g.ids       = netDatumGraphDetailIds(d.detail, ctx.knobs.dg_x_family);
             dgs.dirs.push_back(std::move(g));
         };
         for (const auto& d : sbc.dirs)    push(d, false);

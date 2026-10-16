@@ -553,6 +553,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // records it (`obs_src=count`).  Disarming the census there would hide the tier-1
     // fragmentation reading, which needs no spectrum.
     k.dg_on            = nc.datum_graph_census;
+    k.dg_x_family      = config_.networkN3cChannelFamily();
     k.dg_event_holdoff = static_cast<long long>(std::max(0, nc.datum_graph_event_holdoff_ep));
     // Product-referenced measurement admission.  Nothing to resolve against the
     // estimation configuration either: the screen reads `observed` / `modeled` and removes

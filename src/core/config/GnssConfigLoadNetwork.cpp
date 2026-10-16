@@ -6145,6 +6145,12 @@ namespace GnssProcessor {
         // behavior change and is fingerprinted.
         network_n3c_bia_pin_pair_ =
             jval<bool>(json, "network.n3c_bia_pin_pair", "network_n3c_bia_pin_pair", false);
+        // One channel-family definition: the datum graph census groups by "X against the
+        // rest", the definition the code-bias datum uses, instead of by the attribute
+        // letter.  Default off; the census is measure-only, so armed it changes no byte of
+        // the solve or the wire.
+        network_n3c_channel_family_ =
+            jval<bool>(json, "network.n3c_channel_family", "network_n3c_channel_family", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest

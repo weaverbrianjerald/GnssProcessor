@@ -6157,6 +6157,22 @@ namespace GnssProcessor {
         bool networkN3cBiaPinPair() const { return network_n3c_bia_pin_pair_; }
 
         /**
+         * @brief One channel-family definition, "X against the rest"
+         *        (@c network.n3c_channel_family).
+         *
+         * Armed, the datum graph census groups a satellite's bias keys by the
+         * receiver channel family of @c NetworkSbasis::channelFamilyOf (the combined
+         * I+Q signals, attribute X, against every other signal) instead of by the
+         * tracking attribute letter. The attribute letter splits natural receiver
+         * pairs (C1C with C2W, C1C with C5Q) into two families on every
+         * constellation; the code-bias datum already uses the other definition.
+         *
+         * Reaches the datum graph census only, which is measure-only: the solve and
+         * the wire are unchanged armed. Not fingerprinted. Network mode only.
+         */
+        bool networkN3cChannelFamily() const { return network_n3c_channel_family_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8369,6 +8385,7 @@ namespace GnssProcessor {
         bool   consumer_roster_latch_{false};                      ///< Consumer side (network.closed_loop.roster_latch): the consumer's per-band canonical latch follows the producer's declared roster where it tracks a declared signal, and a freshness flip on a signal the declaration does not name is not a staleness event. Inert (logged once) on a wire with no declaration. Derived onto the closed-loop consumer config only.
         bool   network_ledger_anchor_{false};                      ///< A family the coverage gate's drop edge erased and that returns with arcs of the same generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting (network.ledger_anchor); a new-generation return is elected as without the knob. anchor_arc_age becomes a reader of the ledger's admitted age. Solve-affecting when armed. Refused (error + disarm) without network.ledger_screens. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_bia_pin_pair_{false};                   ///< The code-bias datum pins the BIA clock-reference signal pair (GPS C1W with C2W) on a satellite that registers both, instead of the lexically first pair (network.n3c_bia_pin_pair). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_channel_family_{false};                 ///< The datum graph census groups bias keys by "X against the rest" (NetworkSbasis::channelFamilyOf) instead of the attribute letter (network.n3c_channel_family). Measure-only: nothing in the solve reads the census. Not fingerprinted. Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.
