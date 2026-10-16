@@ -1,10 +1,10 @@
 /**
  * @file test_pb_hold_smoothed.cpp
- * @brief Unit gates of card SMH, the smoothed phase-bias hold on a carried clock clone
+ * @brief Unit gates of the smoothed phase-bias hold on a carried clock clone
  *        (@c network.emit_pb_hold_smoothed).
  *
  * 1. The clone row, advanced by @ref pbHoldCloneAdvance and re-harvested by
- *    @ref pbHoldCloneRebase over card CTU's exact epoch inputs, equals the fixed-point
+ *    @ref pbHoldCloneRebase over the exact update's epoch inputs, equals the fixed-point
  *    smoother of a small dense random-walk model (an augmented Kalman filter carrying
  *    c(t0) as a zero-noise state) at every epoch, with a reinit of a column the clone
  *    has spread onto and of the clone's own clock.

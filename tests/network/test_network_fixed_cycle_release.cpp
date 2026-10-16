@@ -3,7 +3,7 @@
  * @brief Unit gates of the fixed-cycle hold's one release seam (step FCF-3;
  *        network/ar/ArLattice.hpp and network/ar/FixedCycles.hpp).
  *
- * Suite @c NetworkFixedCycleRelease (the gates of card FCF section 6, FCF-3):
+ * Suite @c NetworkFixedCycleRelease (the gates of the fixed-cycle release):
  *  - each evidence cause releases exactly its arcs, with its detail bits (vanished, first seen,
  *    freed with the free-epoch causes, a stamp change with its fields, the landed replay's
  *    culprits, the gross-LOS Decide), in ascending ArcId order, one release per arc;
@@ -15,8 +15,8 @@
  *  - localization: two failing units sharing an arc eliminate that arc; an isolated failing
  *    unit releases the arcs of its own cycles; a passing unit keeps its rows;
  *  - a failure released by its arcs leaves no row that keeps an arc's old integer, so later
- *    unrelated fixes cannot make the ledger imply the released cycle again (card FCFC section
- *    8, the review's finding 1; the test fails on the rows-behind-the-cycle release);
+ *    unrelated fixes cannot make the ledger imply the released cycle again
+ *    (the review's finding 1; the test fails on the rows-behind-the-cycle release);
  *  - a new life on an arc of a waiting fix restarts its streak; a fix is offered after
  *    @c persist_ep epochs; a missed epoch or another integer restarts it;
  *  - a contradiction releases the arcs of its cycle, and a row through none of them stays;
@@ -29,7 +29,7 @@
  *    its rows;
  *  - a planted wrong integer on a converging synthetic float trips at the epoch where the
  *    analytic statistic crosses the bar, and the null trips at most 2 times in 10 000 epochs;
- *  - the cause table (the PRM row order test's counterpart: card FCFC section 2) is in enum
+ *  - the cause table (the registry row order test's counterpart) is in enum
  *    order, with unique names and the trace's columns.
  *
  * Suite name owned by this file alone (suite-hygiene rule in CLAUDE.md).

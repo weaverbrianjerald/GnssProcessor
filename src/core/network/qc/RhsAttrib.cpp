@@ -15,7 +15,7 @@
  *
  * Card NOM step N2b: the decomposition iterates exactly the channels the kernel folds
  * (@ref networkRhsAttribDecompose): a station's rows, its pre-PD prior (folded with the
- * block, the channel the attribution had missed: card NOM section 16, suspect 2) and its
+ * block, the channel the attribution had missed) and its
  * post-PD diagonal prior when the consume folded it, then every captured shared fold
  * and the DD folds.  Rows are classed by their tags, station priors and shared folds by
  * their kinds' names, so the classes sum to the kernel's reduced RHS by construction.
@@ -1842,7 +1842,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
     // w, y and h_c00 are written separately so a weight change and an
     // innovation change can be told apart; the class/station sums cannot
     // separate them.  About 3–4k rows per armed epoch; diagnostics-only.
-    // The last column is the row's contribution kind (card ICF instrument A'): the
+    // The last column is the row's contribution kind: the
     // class lumps kinds (cpl_row holds the coupling rows and all six carried-prior
     // block kinds), the kind names the one the row's builder declared.  It is
     // appended last so the columns before it keep their positions.
@@ -1933,7 +1933,7 @@ void networkRhsAttribDump(const NetworkAttribFrame& f,
               pin_rows.size(), (dir / ("attrib_" + tow_tag + ".csv")).string(),
               closure_rel, c00_l1, c00_l2);
 
-    // ---- the named columns: shared (cols_, card ICF A') and station-local (loc_, L5B) --
+    // ---- the named columns: shared (cols_) and station-local (loc_) --
     std::vector<std::string> shared_labels, local_labels;
     for (const auto& c : columns)
         (isRhsAttribLocalLabel(c) ? local_labels : shared_labels).push_back(c);

@@ -16,7 +16,7 @@
  *    once per epoch well downstream of the response;
  *  - the verdict lookup and the response it drives: an arc whose satellite has a
  *    row-level `shifted` resumption is freed, and the response is keyed by the
- *    same (station, satellite, signal) as the population, so card GRK's
+ *    same (station, satellite, signal) as the population, so the modeled-first tracker's
  *    `gap_reentry_unreachable` cannot be incremented from this path;
  *  - the no-verdict policy: an arc that no raw tier saw is bridged and counted
  *    under `bridge`, and freed under `refloat` when the existing unmeasurable

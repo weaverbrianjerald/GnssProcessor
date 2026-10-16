@@ -34,7 +34,7 @@
  *   2. Per station: the block layout, the ambiguity rows, the ionosphere-free trace (it reads
  *      the rows just written), then phase colour.  The shared-history notes therefore run
  *      ambiguities then phase colour per station, then kind by kind (every station's
- *      ionosphere, then receiver clock, receiver code bias and ZWD); card SCL2's compression
+ *      ionosphere, then receiver clock, receiver code bias and ZWD); the shared history's compression
  *      is sensitive to that order.
  *   3. The ambiguity rows read the pending-reseed mark before they clear it; RAIM and the
  *      gross line-of-sight screen run after the harvest because they set new marks.
@@ -80,7 +80,7 @@ struct HarvestBorder {
 
 /// The segments of a station's F3 harvest block, in the order their columns are appended.
 /// The ZWD is last, so its row is the block's last (the B9-in-block invariant).  PASS B's
-/// block build (the carry steps of network/assembly/StationBuild.hpp, card NOM3 step PB1b) must
+/// block build (the carry steps of network/assembly/StationBuild.hpp) must
 /// open a block on the same station-epochs; it pairs entries by block identity and row
 /// index, not by this order.
 enum class BlockSegment : int { Amb, Iono, RxClock, RxCodeBias, PhaseColour, Zwd };

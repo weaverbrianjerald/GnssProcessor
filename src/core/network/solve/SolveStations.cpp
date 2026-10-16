@@ -275,7 +275,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             try {
                 est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                     R.carry_cols, R.carry_dNrr, R.carry_dur);
-                R.carry_prior_folded = true;   // its entries count as folded (card NOM N2a)
+                R.carry_prior_folded = true;   // its entries count as folded
             } catch (const std::exception& ex) {
                 log->warn("Network[phase-leveling]: station '{}' carry inject rejected "
                           "({}); proceeding without its carry this epoch", st.name, ex.what());

@@ -121,7 +121,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * @param lc      The entry as it stands immediately before deletion.
      * @param cause   Short cause tag: @c t4_attrib, @c t3_consensus, @c gap_prune,
      *                @c anchor_reref, or @c gate_drop (the anchor re-reference site,
-     *                for an arc of a family dropped by the PD gate, card EV7).
+     *                for an arc of a family dropped by the PD gate).
      *                Written as @c "erase:<cause>".
      */
     void ambStateNoteErase(NetworkRunContext& ctx, long long week, double tow,

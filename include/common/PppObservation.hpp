@@ -81,7 +81,7 @@ namespace GnssProcessor {
         std::set<std::string> companion_codes;
         /**
          * @brief The band-1 phase keys this observation carries besides the one the
-         *        station's canonical latch selected (card SID phase 6a, R1).
+         *        station's canonical latch selected.
          *
          * Empty unless `network.second_phase_channel` is armed on the network path, so
          * every other posture allocates nothing and is unchanged.  The keys are also in

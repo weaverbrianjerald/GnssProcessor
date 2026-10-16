@@ -21,7 +21,7 @@
  */
 
 #include "rtcm/RtcmTypes.hpp"
-#include "products/SignalDeclaration.hpp"   // declared signal roster (card SID phase 5)
+#include "products/SignalDeclaration.hpp"   // declared signal roster
 #include <Eigen/Dense>
 #include <cstdint>
 #include <map>
@@ -419,7 +419,7 @@ public:
     std::optional<NetworkProducerStatus> getProducerStatus() const;
 
     /**
-     * @brief Record the producer's declared signal roster (card SID phase 5, E2).
+     * @brief Record the producer's declared signal roster.
      *
      * Store-wide (not per-satellite), pushed by the in-process producer at each
      * emit and by the file reader's @c replay for every @c N declaration block
@@ -433,9 +433,9 @@ public:
     void setDeclaredRoster(const NetworkSignalDeclaration& decl);
 
     /**
-     * @brief The declared signal roster, if one was seen (card SID phase 5, E2).
+     * @brief The declared signal roster, if one was seen.
      *
-     * @c present is false (the default) on every wire written before card SID, on
+     * @c present is false (the default) on every wire written before the declaration existed, on
      * every live RTCM stream and for every producer that did not arm
      * @c network.ledger_emit, so a consumer gating on presence infers nothing from
      * a legacy stream.  Returned by value: the store is shared and mutex-guarded,
@@ -793,7 +793,7 @@ private:
     std::map<std::string, DeclaredLevelSteps> declared_level_steps_;  ///< Card CLV2: per satellite, the declared code-level step totals.
     std::optional<NetworkProducerStatus>     producer_status_;   ///< Latest producer epoch-status heartbeat; nullopt = never seen.  (RTA-10)
     /// The producer's declared signal roster (see @ref setDeclaredRoster).
-    /// Configuration-like: survives clear().  (card SID phase 5)
+    /// Configuration-like: survives clear().
     NetworkSignalDeclaration                 declared_roster_;
 
     /// Code-domain band-wise bias fallback (see setCodeBiasBandFallback).

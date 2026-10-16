@@ -33,7 +33,7 @@
 #include "products/ProductCache.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include "network/assembly/SecondCodeScope.hpp"   // secondCodeCompanions
-#include "network/assembly/SecondPhaseScope.hpp"  // secondPhaseCompanions (card SID phase 6a, R1)
+#include "network/assembly/SecondPhaseScope.hpp"  // secondPhaseCompanions
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -610,8 +610,8 @@ std::vector<std::string> activeFrequencyBands(
             for (const auto& [key, pick] : picks)
                 best[key] = Candidate{ pick.signal, pick.count };
 
-            // Compare the picks with the producer's declared roster (card SID
-            // phase 5, E3 / C1).  The comparison runs whenever a declaration reached
+            // Compare the picks with the producer's declared roster.
+            // The comparison runs whenever a declaration reached
             // this model, except in the audit pass; the latch moves only under
             // network.closed_loop.roster_latch, so with the knob off the comparison
             // only counts and the output is byte-identical.  It runs before the
@@ -685,9 +685,9 @@ std::vector<std::string> activeFrequencyBands(
             constellation_canonical_decided_.insert(cons);
             // Retain the candidate list so the signal roster's census can evaluate a
             // second rule over the same first-epoch counts, such as what the count
-            // rule would have latched here (card SID phase 1).  A pure store, kept on
-            // every network run since the roster is built on every one (card NOM step
-            // N3a), and on no other: the roster is the only reader.  Nothing on the
+            // rule would have latched here.  A pure store, kept on
+            // every network run since the roster is built on every one,
+            // and on no other: the roster is the only reader.  Nothing on the
             // latch path reads it, so no branch changes.
             if (config_.isNetworkMode()) canonical_candidates_[cons] = candidates;
 
@@ -704,7 +704,7 @@ std::vector<std::string> activeFrequencyBands(
             // A latch that the declaration moved is logged on the same logger as the
             // decision, so an armed run can be read from the trace as well as from
             // the counters.  Silent when the declaration changed nothing, so an
-            // inert arm adds no bytes (card SID phase 5b).
+            // inert arm adds no bytes.
             if (!declared_note.empty())
                 log_manager_.getLogger("main_log")->info(
                     "Canonical latch FOLLOWS the producer's declared roster for {} station "
@@ -791,7 +791,7 @@ std::vector<std::string> activeFrequencyBands(
                     (type == 'L') ? row.phase : row.code;
                 if (decl_list.empty()) continue;
                 // The declaration's own order is the priority list here: the first
-                // declared signal this station tracks wins.  This is the card CSL
+                // declared signal this station tracks wins.  This is the signal-latch
                 // rule keyed to the producer's declaration instead of the config list.
                 std::string pick;
                 for (const std::string& sig : decl_list)
@@ -807,7 +807,7 @@ std::vector<std::string> activeFrequencyBands(
                 ++declared_latch_.compared;
                 // This station latched a signal for which the network declares no
                 // family, so the correction it needs is absent from the wire, not
-                // late (the dropouts of card MSC).  The count does not depend on
+                // late (the observed dropouts).  The count does not depend on
                 // what the latch then does.  It is taken before the branch below
                 // because a station that tracks none of the declared signals is
                 // the worst case of this class.
@@ -982,8 +982,8 @@ std::vector<std::string> activeFrequencyBands(
             std::vector<std::pair<std::string, std::string>> selected_signals;
             bool is_iono_free;
             std::string comb_type;
-            // The companion codes and second phases (card SID phase
-            // 6a, R1) this call adds, if any, are recorded on the observation so
+            // The companion codes and second phases
+            // this call adds, if any, are recorded on the observation so
             // downstream consumers can tell those rows from canonical ones (the
             // Melbourne-Wubbena guard, R4; the sigma scale, R5; the cell telemetry,
             // R7).  The sets stay empty unless network.second_code_channel,
@@ -1396,13 +1396,13 @@ std::vector<std::string> activeFrequencyBands(
         // canonical priority-best selection.
         const bool channel_all = (config_.getChannelMode() == ChannelMode::All);
         // On the network path the widening is the single entry for extra channels
-        // and subsumes cards SCC and SID phase 6a (card SID phase 6b, R1).  Each
-        // extra channel it adds is reported through the same two sets those cards
+        // and subsumes the second code and second phase channels.  Each
+        // extra channel it adds is reported through the same two sets those channels
         // fill, so every downstream reader (the receiver inter-signal code state, the
         // two sigma scales, the Melbourne-Wubbena guard, the cell telemetry and both
         // edges of invariant #7) works unchanged and one predicate serves both
         // mechanisms.  A channel is non-canonical when the band map did not select it
-        // for its band, the same test card SCC's receiver side applies.
+        // for its band, the same test the second code channel's receiver side applies.
         const bool subsume =
             channel_all && config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         if (channel_all) {
@@ -1465,7 +1465,7 @@ std::vector<std::string> activeFrequencyBands(
         //
         // Why not the channel_mode=All widening above: it also adds the phase
         // channels (each with its own ambiguity and phase-bias column) and every
-        // admitted tracking attribute, not only the allow-listed ones, while card SCC
+        // admitted tracking attribute, not only the allow-listed ones, while the second code channel
         // adds one extra code row and nothing else.  With channel_mode all the
         // loader keeps this knob armed and the widening subsumes it (last paragraph).
         //
@@ -1485,7 +1485,7 @@ std::vector<std::string> activeFrequencyBands(
         // Runs only on the network path with network.second_code_channel armed;
         // otherwise the block is skipped whole and the selection is byte-identical.
         //
-        // Subsumed under `channel_mode: all` (card SID phase 6b, R1): the widening
+        // Subsumed under `channel_mode: all`: the widening
         // above has already added every admitted code of every selected band and
         // reported it through @p companion_out, so running this block as well would
         // append a duplicate row for each allow-listed code.  There the allow-list
@@ -1530,11 +1530,11 @@ std::vector<std::string> activeFrequencyBands(
             }
         }
 
-        // --- Second phase channel (card SID phase 6a) --------------------------
+        // --- Second phase channel --------------------------
         // The phase counterpart of the block above.  One carrier phase per station
         // and band means a satellite's L1W phase bias rests only on the stations that
         // latched L1W, which leaves it thinly supported (the coverage figures,
-        // including card EV7's coverage-gate drop edges, are in the card).  Add, as
+        // including the coverage-gate drop edges, are in docs/refound/SID_signal_identity_2026-09-22.md).  Add, as
         // ordinary phase rows, every allow-listed band-1 phase this station reports
         // for this satellite besides the one the latch already selected.  See
         // docs/refound/SID_signal_identity_2026-09-22.md section 4 (R1).
@@ -1547,7 +1547,7 @@ std::vector<std::string> activeFrequencyBands(
         // inter-signal phase state, and none may be added: a float ambiguity already
         // absorbs an arbitrary constant per arc, so such a state would sit in the
         // null space of the normal equations (the audit's risk 5).  This is the one
-        // structural difference from card SCC, whose code rows have no such absorber.
+        // structural difference from the second code channel, whose code rows have no such absorber.
         //
         // Why not the channel_mode=All widening above: it widens every selected band
         // to every admitted tracking attribute, code side included, while phase 6a
@@ -1568,7 +1568,7 @@ std::vector<std::string> activeFrequencyBands(
         // Runs only on the network path with network.second_phase_channel armed;
         // otherwise the block is skipped whole and the selection is byte-identical.
         //
-        // Subsumed under `channel_mode: all` (card SID phase 6b, R1) for the same
+        // Subsumed under `channel_mode: all` for the same
         // reason as the block above: the widening has already added every admitted
         // phase of every selected band and reported it through @p second_phase_out.
         if (config_.networkSecondPhaseChannel() && !subsume
@@ -1810,7 +1810,7 @@ std::vector<std::string> activeFrequencyBands(
      * @param companion_out Optional; receives the companion codes the uncombined
      *        selection adds.  See selectUncombinedSignals.
      * @param second_phase_out Optional; receives the second phases the uncombined
-     *        selection adds (card SID phase 6a).  See selectUncombinedSignals.
+     *        selection adds.  See selectUncombinedSignals.
      * @return true if useful signals were selected.
      */
     bool PppModel::selectSignals(const RinexObservation& obs, const std::string& system_str,

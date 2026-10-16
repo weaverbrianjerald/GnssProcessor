@@ -1,6 +1,6 @@
 /**
  * @file test_network_engine_spec.cpp
- * @brief The engines' constructor arguments (networkEngineSpec, card NOM3 step EP1) equal
+ * @brief The engines' constructor arguments (networkEngineSpec) equal
  *        the setup expressions runNetwork evaluated before they moved.
  *
  * Card NOM3 step EP1 builds the run's engines inside NetworkRun from a NetworkEngineSpec,
@@ -80,7 +80,7 @@ bool loadGolden(const char* name, GnssConfig& cfg) {
     return cfg.loadFromJson(fs::path(GNSS_PROJECT_ROOT) / "config" / "golden" / name, log);
 }
 
-/// The setup locals runNetwork built the engines from, before card NOM3 step EP1, and the
+/// The setup locals runNetwork built the engines from, before the per-epoch seam refactor, and the
 /// constructor arguments it computed inline.
 struct FrozenSetup {
     std::vector<std::string>            vce_families;

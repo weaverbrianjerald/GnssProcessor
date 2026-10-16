@@ -183,8 +183,8 @@ struct AnchorHygiene {
     double fresh_pin_scale = 1.0;
     /// Ramp length in epochs; 0 = off (INC-3).
     int fresh_pin_ramp_ep = 0;
-    /// The arc table, whose @c ArcState::anchor_arc_age the ages are read from (card NOM step
-    /// N4f1); null when inactive.
+    /// The arc table, whose @c ArcState::anchor_arc_age the ages are read from;
+    /// null when inactive.
     const net::ArcTable* age = nullptr;
     /// "sat_signal" keys realized by an open INC-2 bridge this epoch.  The election
     /// does not pin these (the bridge row is their datum) but keeps them in the
@@ -233,7 +233,7 @@ struct AnchorHygiene {
  *
  * @param ctx                 [in/out] arc-age map, open bridges, counters, knobs.
  * @param config_             read only for the arc-ledger switches
- *                            (networkLedgerScreens / networkLedgerAnchor, card SID);
+ *                            (networkLedgerScreens / networkLedgerAnchor);
  *                            the datum-mode predicates come from ctx.knobs.
  * @param log                 producer logger (info/debug).
  * @param traces              PHASE_DATUM `trace_events` rows.

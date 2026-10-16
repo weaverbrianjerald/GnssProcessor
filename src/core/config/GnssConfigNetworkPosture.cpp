@@ -278,9 +278,9 @@ namespace GnssProcessor {
               "cyc, 1.5e4x weight lie)" },
             // --- The exact coupling update and its companions (promoted by card
             //     EXL).  Card 1d's scalar update ages each row's satellite clock term at the
-            //     legacy sat_clock_q while card Q3's anchor folds the same clock at its own q,
+            //     legacy sat_clock_q while the clock anchor folds the same clock at its own q,
             //     so a young arc's ambiguity information is discarded every epoch
-            //     and the clock level freezes (card CTU's root); the exact update re-expresses
+            //     and the clock level freezes (the root cause); the exact update re-expresses
             //     each row on the moved border with the fold's own Q.  Its companions are each
             //     measured necessary on this posture; the
             //     guard space (phase) and rank_gate_tol 1e-11 are value companions of the same
@@ -599,7 +599,7 @@ namespace GnssProcessor {
               "10 m at full weight 100 -> 32, census 13 of 16 sites better on hours 4 to 6 with "
               "none worse, WTZZ00DEU within 0.003 m, clock wire 0.0045 -> 0.0041 m; the hold "
               "(gross_los_bound) FALSIFIED, the station tier OFF" },
-            // (card ICF response 1, armed 2026-10-09 at the author's ruling) The screen's
+            // (armed 2026-10-09 at the author's ruling) The screen's
             // cold-start bound: inside the maturity horizon a line of sight whose post-fit
             // code residual exceeds the bound is declared at once and reconnects on a fresh
             // ambiguity.  Regime: the screen itself.
@@ -644,7 +644,7 @@ namespace GnssProcessor {
               "a float consumer: 0.0467 m of within-arc RMS on the field against the clock's "
               "0.0274 m, first differences uncorrelated with the clock's): adopted 2026-09-20, "
               "all five PBH-1 bars pass; the solve is untouched" },
-            // --- The phase-clock hold (promoted by card EXL with the exact update).
+            // --- The phase-clock hold (promoted with the exact update).
             //     The plain hold freezes each emitted phase bias while the exact update moves
             //     the clock and the phase biases together as the level converges, so the
             //     convergence lands on the consumer's phase rows; this hold transfers each
@@ -850,7 +850,7 @@ namespace GnssProcessor {
               "legacy leg when eq34 is off: cures the single-pivot gauge re-reference (G29 -44 m "
               "step, JPLM masked)" },
             // --- The ambiguity vehicle (ledger row added with
-            //     the golden re-base, card GRB).  float_kf carries each (station, satellite,
+            //     the golden re-base).  float_kf carries each (station, satellite,
             //     signal) ambiguity as a float state with covariance in the station block
             //     instead of a zero-q scalar level, and the held S-basis freezes the phase
             //     datum's basis value with every handover declared.  The pair is the

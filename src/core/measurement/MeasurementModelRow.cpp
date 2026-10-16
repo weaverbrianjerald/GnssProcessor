@@ -500,8 +500,8 @@ namespace GnssProcessor {
                 jacobian(amb_idx) = 1.0;
                 amb_term = x(amb_idx);
                 predicted += amb_term;
-                // The line of sight's phase-colour state (network.phase_colour_state,
-                // card LGM): +1 on every phase row of the satellite, both bands, and on
+                // The line of sight's phase-colour state (network.phase_colour_state):
+                // +1 on every phase row of the satellite, both bands, and on
                 // no code row.  Its linearization point is 0 (never written back).
                 if (config_.getNetworkConfig().phase_colour_state) {
                     const int pc_idx = state_manager_.getPhaseColourIndex(obs.satellite);

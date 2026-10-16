@@ -1,7 +1,7 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
-#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states, card NOM N1b)
+#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -98,8 +98,8 @@ namespace GnssProcessor {
             const std::set<std::string>& excluded_measurements = {});
 
         // -------------------------------------------------------------------
-        // Network-only surface (the PPP-RTK network producer), owned with
-        // card NOM: from ensureNetworkSharedStates to carrierFrequency below,
+        // Network-only surface (the PPP-RTK network producer):
+        // from ensureNetworkSharedStates to carrierFrequency below,
         // and the private members marked "network only".  The out-of-line
         // definitions are in MeasurementModelNetwork.cpp, except
         // setGlonassSlots (MeasurementModel.cpp).
@@ -131,7 +131,7 @@ namespace GnssProcessor {
          * Every shared state a gate here withholds from the station (GLONASS
          * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
          * noted in @ref absorbedSharedStates, which this call clears first: the
-         * parameter inventory counts each as an absorbed instance (card NOM N1b; the
+         * parameter inventory counts each as an absorbed instance (the
          * record is measurement/AbsorbedSharedStates.hpp, the inventory
          * network/assembly/ParamInventory.hpp).
          *
@@ -153,7 +153,7 @@ namespace GnssProcessor {
 
         /**
          * @brief The shared satellite states withheld from this station this epoch
-         *        (network producer only; card NOM N1b).
+         *        (network producer only).
          *
          * Cleared and refilled by @ref ensureNetworkSharedStates in PASS A, then
          * extended by the serial gates that prune a state the station had allocated

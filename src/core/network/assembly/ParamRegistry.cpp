@@ -1,12 +1,12 @@
 /**
  * @file ParamRegistry.cpp
- * @brief The network parameter registry (see ParamRegistry.hpp; card PRM).
+ * @brief The network parameter registry (see ParamRegistry.hpp).
  */
 #include "network/assembly/ParamRegistry.hpp"
 
 #include "network/state/RunContext.hpp"     // NetworkKnobs
 #include "config/GnssConfig.hpp"
-#include "network/assembly/Responses.hpp"   // the declared response sites (card PRM phase 3a)
+#include "network/assembly/Responses.hpp"   // the declared response sites
 #include "network/driver/RunTypes.hpp"    // kRxCbMaxGapS
 
 #include <fmt/format.h>
@@ -315,10 +315,10 @@ NetworkParamRegistry NetworkParamRegistry::build(const NetworkKnobs& k, const Gn
 
     // Card PRM phase 3a: the responses armed per kind and event.  A declared response site
     // (network/assembly/Responses.hpp) whose own gate holds on this snapshot contributes its
-    // policy to its kind's event; an armed datum mechanism of card PRM phase 2 contributes
+    // policy to its kind's event; an armed datum mechanism contributes
     // Stransform to the handover of every kind whose carried value it moves (a border kind
     // through prev_carry, a station-local kind through its value site, the owed value sites
-    // included under network.carry_rebase_complete: card PRM phase 3b).
+    // included under network.carry_rebase_complete).
     for (int i = 0; i < kResponseSites; ++i) {
         const auto site = static_cast<ResponseSite>(i);
         if (!responseSiteArmed(site, k, config)) continue;
@@ -440,7 +440,7 @@ int networkParamModelRunEnd(const NetworkRunEndView& v) {
     const NetworkRunContext& ctx = v.ctx;
     const std::shared_ptr<spdlog::logger>& log = v.log;
 
-    // The parameter model as armed, run-end tail (card PRM phase 1, section 6): the
+    // The parameter model as armed, run-end tail: the
     // registry's table again, then the carried instances of each kind at the run's end,
     // counted from the carry maps that hold them.
     std::map<SharedParamKind, long long> nb;

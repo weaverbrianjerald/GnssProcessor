@@ -39,7 +39,7 @@ bool couplingExactFactor(CouplingExactEpoch& ep) {
         }
         A(a, a) += ep.q_s(a);
     }
-    for (const auto& [a, b, v] : ep.q_off)   // card CTU G5: the seam's level noise
+    for (const auto& [a, b, v] : ep.q_off)   // the seam's level noise
         if (a >= 0 && b >= 0 && a < n && b < n) A(a, b) += v;
     if (!A.allFinite()) return false;
     // Correlation scaling, as the dense fold inverts its block: the matrix mixes
@@ -153,7 +153,7 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
     if (!ctx.knobs.carry_cpl_exact) return 0;
     // Card CTU run-end telemetry (invariant 4).  `rows exact = 0` means the rule never
     // ran and every row took card 1d's kappa, however clean the rest reads.  The rows
-    // and the fold read one decision per key (card PRM phase 1b); the fold line counts
+    // and the fold read one decision per key; the fold line counts
     // what a clock-pivot handover changed after the rows were built.
     const auto& c  = ctx.counters;
     const auto& X  = c.cxu;
@@ -207,8 +207,8 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
                       "pair took the term (no whitened local block, or no two exact rows in "
                       "one): the knob is INERT for this run.");
     }
-    networkClockCloneRunEnd(ctx, log);   // card SCL: its run-end line and INERT warning; no-op off
-    networkSharedHistoryRunEnd(ctx, log);   // card SCL2 X2: its run-end line and INERT warning; no-op off
+    networkClockCloneRunEnd(ctx, log);   // the clock clone's run-end line and INERT warning; no-op off
+    networkSharedHistoryRunEnd(ctx, log);   // the shared history's run-end line and INERT warning; no-op off
     if (c.cxu_fold_reexpressed_in_s > 0 || c.cxu_fold_retired_in_s > 0)
         log->warn("Network: at a clock-pivot handover the fold folded {} key(s) "
                   "of S on a re-expressed variance and retired {}, after the coupling rows "

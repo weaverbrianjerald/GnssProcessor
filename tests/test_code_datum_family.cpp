@@ -101,7 +101,7 @@ namespace fs = std::filesystem;
 namespace {
 
 /// The value behind an entity-table lookup, throwing like std::map::at when it is absent
-/// (card NOM step N4b moved the map the test read into the constellation table).
+/// (the map the test read moved into the constellation table).
 template <class V>
 const V& netAt(const V* p) {
     if (p == nullptr) throw std::out_of_range("netAt: absent");
@@ -229,7 +229,7 @@ Eigen::Index levelRowOn(const NetworkSbasis::CodeBiasDatumRows& rows, Eigen::Ind
 }
 
 /// Whether two builds produced the same rows, targets, kinds and side channels, the
-/// second with no card GFC record.
+/// second with no code-datum family record.
 void expectSameOutput(const NetworkSbasis::CodeBiasDatumRows& a, const Harness& ha,
                       const NetworkSbasis::CodeBiasDatumRows& b, const Harness& hb) {
     ASSERT_EQ(a.H.rows(), b.H.rows());

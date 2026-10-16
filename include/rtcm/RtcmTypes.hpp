@@ -241,7 +241,7 @@ struct SsrPhaseBiasEntry {
     /// satellite is not deweighted out of the solution.  (M4, contract v2)
     double combined_sigma_m{0.0};
     /// The producer's hold generation for this (sat, signal)
-    /// (@c network.emit_pb_hold, card PBH).  0 = not held: @ref bias_m is a
+    /// (@c network.emit_pb_hold).  0 = not held: @ref bias_m is a
     /// per-epoch estimate and the consumer reacts as it does without the knob, so
     /// every RTCM/IGS-SSR-decoded bias and every product from a producer without
     /// the knob reads 0 and behaves unchanged.  Nonzero = @ref bias_m is constant

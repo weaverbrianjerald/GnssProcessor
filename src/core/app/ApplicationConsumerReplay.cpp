@@ -45,7 +45,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
-#include "products/BrdcClockApriori.hpp"     // card NBP: the native wire's broadcast feed
+#include "products/BrdcClockApriori.hpp"     // the native wire's broadcast feed
 #include "products/LiveEphemerisStore.hpp"
 #include "products/ProductCache.hpp"
 #include "products/ProductParser.hpp"
@@ -228,7 +228,7 @@ int Application::runConsumerReplay() {
         // contract the replay emitter falls back to the defaults, which include no
         // clock-discontinuity channel, so the replay cannot reproduce the producer's
         // declarations and diverges from the in-process consumer (seen at every site of
-        // the card GAL census).  A legacy leg can still be graded, with a warning.
+        // the Galileo census).  A legacy leg can still be graded, with a warning.
         std::string why;
         if (!NetworkProductReader::admitsWire(file_contract, nc.replay_allow_undeclared_wire,
                                               &why)) {
@@ -390,7 +390,7 @@ int Application::runConsumerReplay() {
     }
     cl_trace << "week,tow,n_sats,ar_ran,ar_success,num_fixed,num_candidates,"
                 "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
-    // Per-satellite companion (network.trace_consumer_sat, card CST): the header and the
+    // Per-satellite companion (network.trace_consumer_sat): the header and the
     // row formatter are the in-process stream's (ConsumerSatTrace.hpp), and the stamp is
     // the (week, tow) of the closed_loop_trace.csv row, so the two files join exactly.
     // Unarmed, nothing is opened.
@@ -639,7 +639,7 @@ int Application::runConsumerReplay() {
               recent_err3d.size(), recent_rms);
 
     // The consumer's declared-roster census: the latch against the declaration and
-    // the attributed freshness flips (card SID phase 5).  Printed here because this
+    // the attributed freshness flips.  Printed here because this
     // driver never calls RealTimeEngine::flush().  Silent on a wire that carries no
     // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");

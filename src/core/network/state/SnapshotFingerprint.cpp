@@ -16,8 +16,8 @@
  * The body opens with an alias block (decomposition INC-4) that binds the driver's former
  * local names to members of the context, so the relocated code keeps those names.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -198,7 +198,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // fingerprint.  The allow-list and the sigma scale are included: the list decides
         // which columns exist, and the scale sets the weight at which their rows were
         // accumulated.
-        // All-channel mode (card SID phase 6b, R8) decides which columns exist: a receiver
+        // All-channel mode decides which columns exist: a receiver
         // inter-signal code state per extra code and per band, a float ambiguity per extra
         // phase, and the shared satellite families those rows feed.  A resume across the
         // flip would restore a carry whose column set the other side does not have, the
@@ -210,7 +210,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondCodeSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondCodeSigmaScale()));
         }
-        // Second phase channel (card SID phase 6a, R6): adds a float ambiguity per extra
+        // Second phase channel: adds a float ambiguity per extra
         // arc and feeds an existing satellite phase-bias family from stations that did not
         // support it before, so the carried levels and the shared border in a snapshot
         // mean different things across the flip.  Appended only when armed, as for SCC,
@@ -222,7 +222,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             for (const auto& sig : config_.networkSecondPhaseSignals()) add(sig);
             add(fmt::format("{}", config_.networkSecondPhaseSigmaScale()));
         }
-        // Ledger re-entry response (card SID phase 3, R6): the gap re-entry response keys
+        // Ledger re-entry response: the gap re-entry response keys
         // on the arc ledger's admitted lifecycle, which decides which carried levels
         // survive a break.  A resume across the flip would restore levels that the other
         // side would have refloated, and the ledger is not snapshotted (by design), so the
@@ -235,7 +235,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
             add(config_.networkLedgerReentryNoVerdict()
                     == LedgerReentryNoVerdict::Refloat ? "refloat" : "bridge");
         }
-        // Election memory across a gap (card SID phase 4b, B3).  When armed, a family that
+        // Election memory across a gap.  When armed, a family that
         // the coverage gate erased and that returns at the same generation is re-pinned on
         // its previous incumbent rather than on the station the coverage rank picks, so
         // the carried ambiguities a resumed run restores were accumulated against a
@@ -600,7 +600,7 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // switch-on seam the card's G5 grades).  The reverse direction is not accepted:
         // a snapshot written with them holds the card's state, which a run without them
         // would read under the old rules.  Only under network.ctu_switch_on_resume: the
-        // seam failed G5, and card EXL's ledger rows (the knobs armed on the goldens) are
+        // seam failed G5, and the ledger rows (the knobs armed on the goldens) are
         // fresh convergence only.  Off, the twin is 0 and the resume gate compares the
         // live fingerprint alone.
         ctx.carry.live_fingerprint_ctu_off = 0;

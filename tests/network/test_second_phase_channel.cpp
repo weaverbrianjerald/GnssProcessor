@@ -1,6 +1,6 @@
 /**
  * @file test_second_phase_channel.cpp
- * @brief Contract tests for the second phase channel (card SID phase 6a,
+ * @brief Contract tests for the second phase channel (see
  *        docs/refound/SID_signal_identity_2026-09-22.md section 4).
  *
  * With `network.second_phase_channel` a network station contributes, as ordinary
@@ -12,7 +12,7 @@
  * that can be tested without a network solve:
  *
  *   (a) the allow-list grammar: a 3-character phase type on band 1 and nothing
- *       else.  A code type belongs to card SCC and a band-2 entry to phase 6b;
+ *       else.  A code type belongs to the second code channel and a band-2 entry to the all-channel widening;
  *   (b) second-phase selection: allow-list order, no duplicates, never the latched
  *       phase itself, never a phase the station does not report, and empty when the
  *       band has no latched phase (the fallback case, which adds nothing);
@@ -389,8 +389,8 @@ TEST(SecondPhaseChannelTest, IsDisarmedOnTheFloatVehicleWithoutTheHeldBasis) {
 }
 
 TEST(SecondPhaseChannelTest, IsSubsumedByChannelModeAllRatherThanRefused) {
-    // channel_mode `all` subsumes this knob instead of disarming it (card SID phase
-    // 6b): the widening adds every admitted phase attribute of every selected band,
+    // channel_mode `all` subsumes this knob instead of disarming it:
+    // the widening adds every admitted phase attribute of every selected band,
     // which contains the allow-listed band-1 set, so the knob stays armed, its
     // allow-list is ignored and only its sigma scale is read.  Downstream sites test
     // the resolved row predicate.

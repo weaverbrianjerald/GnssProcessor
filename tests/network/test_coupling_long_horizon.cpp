@@ -1,6 +1,6 @@
 /**
  * @file test_coupling_long_horizon.cpp
- * @brief Gate U1 of card SCL2 (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
+ * @brief Gate U1 of the level-residue study (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
  *        sections 3.6, 4, 5 and 6): the satellite clock level of the coupling recursions at
  *        long horizons, in the unit network of test_coupling_exact_update.cpp at runtime size.
  *
@@ -8,14 +8,14 @@
  * per line of sight, a receiver clock and a slant ionosphere per station and epoch (eliminated
  * per station, exactly), two phase-bias columns per satellite, float ambiguities carried at
  * every station except the satellite's phase-datum anchor (satellite s anchored at station
- * s mod R, the rotated layout of card SCL2 section 3.6), and the non-pivot clocks a random
+ * s mod R, the rotated layout of section 3.6 of that document), and the non-pivot clocks a random
  * walk at q.  The batch is an exact Kalman filter over [border, every carried ambiguity].
  *
- * The recursions (the fixture's algebra, card SCL2 section 3.6):
+ * The recursions (the fixture's algebra):
  *   - mode 3: the shipped per-row form (production couplingExactRow, one harvest block per
  *     station);
  *   - mode 4: the one-epoch clock clone with the joint harvest (exact by construction; X1);
- *   - mode 5: the clone with the per-station harvest (card SCL's B1 as shipped);
+ *   - mode 5: the clone with the per-station harvest (the clock clone's B1 as shipped);
  *   - mode 6: X2, the shared history.  After the solve, with Y = [clones; history columns],
  *     F_full = Cov(N, Y | s) Sigma_Y|s^(-1/2) holds the rows' shared conditional term and
  *     D0 = Cov(N | s, Y) is block diagonal by station.  The leading right singular directions
@@ -36,7 +36,7 @@
  * geometry; and the static geometry's rank property, so that a pass on the static fixture is
  * never read as evidence for the cap.
  *
- * Gate U4 (amendment A1, build X2b): card SMH's hold row, the fixed-point
+ * Gate U4 (amendment A1, build X2b): the smoothed hold's row, the fixed-point
  * target c_s(k0) carried with no observations, at R 8 and S 6.  Under mode 6 at the selected
  * cap, the row projected onto the carried rows' kept history directions ("form p") gives the
  * walk share Phi = c(t|t) - c(k0|t) of the batch's fixed-point smoother; the per-row form (its
@@ -637,9 +637,9 @@ std::pair<double, double> diffToBatch(const LevelTrace& e, const LevelTrace& b, 
 }
 
 // ---------------------------------------------------------------------------------------------
-// Gate U4 (amendment A1): card SMH's hold row against the shared history.
+// Gate U4 (amendment A1): the smoothed hold's row against the shared history.
 // The target is c_s(k0) for every non-pivot satellite, born at the stash of epoch k0 as one row
-// on the border (T = c_s, residual 0) and carried with no observations, as card SMH's row; its
+// on the border (T = c_s, residual 0) and carried with no observations, as the smoothed hold's row; its
 // walk share is Phi = c(t|t) - c(k0|t).
 // ---------------------------------------------------------------------------------------------
 
@@ -1018,7 +1018,7 @@ TEST(CouplingLongHorizonTest, StaticGeometryLimitsTheSharedTermToOneColumnPerClo
     EXPECT_GT(kt_tv, 2);
 }
 
-// U4 (amendment A1): card SMH's hold row in X2's shared history.  At gate
+// U4 (amendment A1): the smoothed hold's row in X2's shared history.  At gate
 // U2's selected cap (k = 1), R 8, S 6, q 5e-6, K 240, static and swept weights, the hold row
 // projected onto the carried rows' kept directions (form p) gives the walk share within 2 % of
 // the batch's fixed-point smoother, while the per-row form (the row's Y residual marginalized

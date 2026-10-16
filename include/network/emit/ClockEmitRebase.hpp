@@ -193,7 +193,7 @@ public:
      * @param reanchored    OUT: constellation letters that re-anchored this
      *                      epoch (leash).  The caller must mark each
      *                      (markDatumChange); an unmarked re-anchor is the
-     *                      unmediated re-coupling edge that card CLK-R closes.
+     *                      unmediated re-coupling edge that the clock emission frame hold closes.
      */
     void rebaseEpoch(std::vector<Entry>& entries, double epoch_time_s,
                      std::set<char>& reanchored);

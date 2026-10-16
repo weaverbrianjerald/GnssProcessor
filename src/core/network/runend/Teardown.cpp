@@ -3,7 +3,7 @@
  * @brief Implementation of @ref networkTeardown, the network producer's run end: the walk of
  *        the declared run-end reports (network/runend/RunEnd.hpp) and the exit code.
  *
- * Until card NOM step TD1b this file held the whole run end, one function of 7 189 lines;
+ * This file once held the whole run end, one function of 7 189 lines;
  * its sections now live beside the subsystems they report, and this function only orders
  * them.  The function below is written by scripts/nom_td_cut.py, and
  * scripts/nom_td_verify.py proves its zero-emit guard against the frozen function.

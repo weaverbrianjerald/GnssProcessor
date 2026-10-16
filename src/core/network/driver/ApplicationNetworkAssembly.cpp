@@ -31,14 +31,14 @@
 #include "network/solve/Sbasis.hpp"
 #include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates
 #include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges
-#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
 #include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
 #include "network/assembly/StationBuild.hpp"  // networkAssemblyTally
@@ -147,7 +147,7 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
             return EpochAction::SkipEpoch;
         }
         piv.pstate.epoch_time = se.time;
-        // The pivot's own elevation-mask / no-model writer (card SID phase 4a, S1).
+        // The pivot's own elevation-mask / no-model writer.
         // Reached only on the legacy (non-prioritized) datum, where station 0 is
         // modelled here instead of in the parallel tail; both working bases run the
         // prioritized datum, so this block is inert there and the tail below covers
@@ -236,7 +236,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     auto& sta_repairs    = pa.sta_repairs;
     auto& sta_if_resets  = pa.sta_if_resets;
     auto& sta_mw_refloat = pa.sta_mw_refloat;
-    // The elevation-mask and no-model writers (card SID phase 4a, S1).  The refusal
+    // The elevation-mask and no-model writers.  The refusal
     // is taken inside computeSatelliteGeometry, which carries no station identity,
     // so it is captured through the model's own per-satellite drop-reason map and
     // folded here, where the station index is known.  One map per station index:
@@ -436,7 +436,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                       "skipping it this epoch", stations[i].name, a_err[i]);
     }
 
-    // Fold the drop reasons serially, in station order (card SID phase 4a, S1).  The
+    // Fold the drop reasons serially, in station order.  The
     // refusal is per satellite, so it expands to that station's arcs of that
     // satellite that the admitted lifecycle still calls alive (the brief's rule for a
     // screen whose identity is coarser than an arc).  A station that threw is left
@@ -525,7 +525,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
             // The receiver inter-signal state census, and its reseed test: a state
             // this station has held before, did not hold last epoch and holds now was
             // cold-started instead of restored by the receiver code-bias carry.  That
-            // is the one way card SCC can determine a receiver bias from a single
+            // is the one way the second code channel can determine a receiver bias from a single
             // epoch of code (standing invariant #1's re-coupling edge).
             std::set<std::string> isc_now;
             if (st.sm) {
@@ -548,7 +548,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         }
     }
 
-    // --- Second phase channel, per-epoch bookkeeping (card SID phase 6a) --------
+    // --- Second phase channel, per-epoch bookkeeping --------
     // (docs/refound/SID_signal_identity_2026-09-22.md section 4, R7 + R8.)  Same
     // placement and the same reasons as the block above: serial, in station order,
     // after present[] is final (an absent station's cells close, which is the
@@ -557,7 +557,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     //
     // Four tasks.  (1) Republish each station's second-phase cell set for PASS B: the
     // row-weight seam has the signal and the satellite of every row and no other way
-    // to tell a second phase from the latched one, because card SID builds no
+    // to tell a second phase from the latched one, because the signal-identity layer builds no
     // receiver state to key on.  (2) Count the cells, both cell edges, the arcs born,
     // the live peak, the contributing stations, and the (satellite, signal) columns
     // that reached the two-station registration bar only through second phases (the
@@ -599,7 +599,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                     // the untouched raw key set, which is what the selection screened.
                     const System sys = systemOfSat(ob.satellite);
                     const std::string cons = systemName(sys);
-                    // Band scope (card SID phase 6b).  Under the phase-6a knob the
+                    // Band scope.  Under the phase-6a knob the
                     // card's own allow-list is band 1 by construction.  Under the
                     // all-channel widening there is no allow-list, and every selected
                     // band has a latched phase and possibly several others, so both the
@@ -686,7 +686,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                         }
                         st.spc_witness[wkey] = { d, now_ep };
                     }
-                    }   // band digit (card SID phase 6b)
+                    }   // band digit
                 }
             }
             // The two edges (standing invariant #7).  A cell opens when a station
@@ -755,7 +755,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                                               sta, system, band, 'L', &ctx.counters.sid.n3b,
                                               RosterN3bSite::LatchReadTracker);
             };
-        // The tracker's read of the phase-1 roster (card SID phase 2,
+        // The tracker's read of the phase-1 roster (key
         // network.roster_tracker).  Same lookup shape, bound to the roster's
         // modelled_phase instead of the station's latch, so the selection rule below
         // is untouched and only the source of the answer changes.  When armed, this
@@ -764,9 +764,9 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         // One fallback, which is not a bypass.  The roster is built at the top of the
         // epoch body, upstream of computeModels, and the canonical latch is decided
         // inside computeModels, so on the first epoch of a constellation the roster's
-        // cells carry no modelled role (card SID section 6 states this as a property
+        // cells carry no modelled role (the signal-identity design states this as a property
         // of the build site).  Answering "nothing" there would put that epoch's
-        // tracker back on the lexical rule while card GRK's lookup names the latch,
+        // tracker back on the lexical rule while the modeled-first lookup names the latch,
         // and the two would then differ at epoch 0 at every station whose priority
         // latch is not the lexically lowest channel.  That epoch matters: it seeds
         // `RawSlipHistory::prev`, so epoch 1's MW/GF step would be formed across a
@@ -1107,7 +1107,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                                   ctx.roster.active ? &ctx.arc_ledger : nullptr,
                                   &ctx.counters.sid.n3b);
 
-    // ---- Gap re-entry refloat (card G response) ------------------------------
+    // ---- Gap re-entry refloat (gap response) ------------------------------
     // (docs/SPEC_slip_qc_hardening.md §G3/W1.)  An arc that re-appears within
     // network.phase_leveling_max_gap_s has no detector covering its return epoch
     // (MW needs an adjacent predecessor and IF-TD three consecutive epochs), so its
@@ -1130,7 +1130,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // instead would find no re-entering arc and do nothing.
     // No-op unless network.cycle_slip.gap_reentry_relevel.
     //
-    // Ledger re-entry population (card SID phase 3, network.ledger_reentry): the
+    // Ledger re-entry population (network.ledger_reentry): the
     // population of both drains below becomes the arc ledger's admitted
     // Gap-to-Reentered set.  It is built here because this is the first point at
     // which the epoch's modelled rows exist (computeModels ran in PASS A above) and
@@ -1152,7 +1152,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     }
     // The per-arc outcome sink of the unified "answered" census (R4) is written
     // in both states of network.ledger_reentry on every run (the roster is built
-    // on every run since card NOM step N3a), so the four-way split is comparable
+    // on every run), so the four-way split is comparable
     // across the flip.  A record only: nothing in the solve reads it.
     ArcReentryOutcomeMap* sid_out =
         ctx.roster.active ? &slip_ev.sid_reentry_outcome : nullptr;
@@ -1368,7 +1368,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     // re-registers as soon as >= 2 stations return.  cbadm_reg_code_keys holds the
     // (sat,signal) code columns registered this epoch.
     //
-    // The phase co-gate is not applied here (Card H1).  It sits upstream, at
+    // The phase co-gate is not applied here.  It sits upstream, at
     // phase-bias state allocation in MeasurementModel::ensureNetworkSharedStates,
     // and it keys off the run-latched census-admitted set, not off
     // cbadm_reg_code_keys, the narrower per-epoch registered subset.  Two separate
@@ -1416,7 +1416,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
         // Gating here instead would break the "every shared_phase_key is a
         // registered column" invariant that eq34/carry/snapshot rely on (crash).
         est.registerPhaseBias(parts->satellite, parts->signal);
-        // Measure the granularity seam's orphan window (Card H2).  This loop is the
+        // Measure the granularity seam's orphan window.  This loop is the
         // only place that sees all three sets at once: the census-admitted set
         // (ctx.admission), this epoch's registered code keys (cbadm_reg_code_keys)
         // and the shared phase set (shared_phase_keys).  An admitted code key that
@@ -1599,9 +1599,9 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
                         fmt::format("{}|{}|{}|{}", lay.layer > 0 ? "SH2" : "SH",
                                     c.n, c.m, c.trig);
         }
-        for (const auto& [sat, col] : ctx.carry.ccl.col)   // card SCL clones; empty off
+        for (const auto& [sat, col] : ctx.carry.ccl.col)   // clock clones; empty off
             col_desc[static_cast<size_t>(col)] = "CLKC|" + sat;
-        for (std::size_t j = 0; j < ctx.carry.shx.col.size(); ++j)   // card SCL2 X2 history; empty off
+        for (std::size_t j = 0; j < ctx.carry.shx.col.size(); ++j)   // shared history; empty off
             if (ctx.carry.shx.col[j] >= 0)
                 col_desc[static_cast<size_t>(ctx.carry.shx.col[j])] = "HIST|" + std::to_string(j);
     }
@@ -1668,7 +1668,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& ep, 
     networkCouplingReinitHistory(run, ep);
 
     // The parallel produce: one station's block per OpenMP iteration, the station steps of
-    // kStationBuildSteps (network/assembly/StationBuild.hpp, card NOM3 step PB1b).
+    // kStationBuildSteps (network/assembly/StationBuild.hpp).
     networkAssemblyProduce(run, ep, gim_, assembly);
 
     // The serial stages after the parallel produce.

@@ -7,8 +7,8 @@
  * (include/network/state/RunContext.hpp) and directly by unit tests.  Many assignments
  * combine knobs assigned above them, so the order of the lines matters.
  *
- * One of the seven files that define the network run context's functions: card NOM3 step
- * HV0 split them out of the former app/NetworkRunContext.cpp by concern, each body
+ * One of the seven files that define the network run context's functions, split
+ * out of the former app/NetworkRunContext.cpp by concern, each body
  * unchanged.  The declarations, each naming its file, and the map of the seven files are
  * in include/network/state/RunContext.hpp.
  */
@@ -58,7 +58,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // Variance floor applied at the drop only (RF-3a).  It is gated on the vehicle here, so
     // every downstream site reads one number and a floor configured without float_kf
     // resolves to 0 instead of acting at some sites and not at others.
-    k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();   // card CTU section 14
+    k.amb_drop_decouple_always = k.amb_float_kf && config_.networkAmbFloatDropDecoupleAlways();
     // Card LGM: the loader has validated the posture, so the knob is read as is.
     k.pc_on        = nc.phase_colour_state;
     k.pc_sigma_zen = nc.phase_colour_sigma_zen_m;
@@ -66,7 +66,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.pc_floor_deg = nc.phase_colour_elev_floor_deg;
     k.pc_max_gap_s = nc.phase_colour_max_gap_s;
     k.pc_trace     = nc.phase_colour_state && nc.trace_phase_colour;
-    k.amb_if_trace = nc.trace_amb_if;   // card AIL
+    k.amb_if_trace = nc.trace_amb_if;
     k.amb_drop_var_floor  = k.amb_float_kf
                                 ? config_.getNetworkConfig().amb_float_drop_var_m2 : 0.0;
     // The drop floor's warm-up gate (RF-3c) has no meaning without the floor, so it
@@ -93,22 +93,22 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.fullcov_on = config_.networkSharedCarryFullCov();
     k.carry_cpl_cond = config_.networkCarryConditionalCoupling();
     k.carry_cpl_tu = config_.networkCarryCouplingTimeUpdate();
-    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // card CTU; loader guarantees tu + fullcov
-    k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // card WSX; loader guarantees exact
-    k.pfq_on = config_.networkClockPivotFrameQ();   // card PFQ; loader guarantees fullcov + the pin datum
-    k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // card SCL; loader guarantees exact + fullcov
-    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // card SCL2 X2; loader guarantees B1
-    k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // card SCL2 X2; loader guarantees [1, 8]
-    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // card BCL-a; loader guarantees B1
-    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // card BCL-d; loader guarantees B1
-    k.clm_on    = config_.networkClockLevelMonitor();      // card CTU monitor (trace class)
-    k.clm_raise = config_.networkClockLevelBoundRaise();   // card CTU raise; loader guarantees clm_on
-    k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();   // card CTU section 14 instrument window
-    k.pv_on        = config_.networkPhaseVisibleMonitor();     // card PVN (trace class)
-    k.nbp_on       = config_.networkAprioriBrdcClock();        // card NBP (fingerprinted in SnapshotFingerprint.cpp)
+    k.carry_cpl_exact = config_.networkCarryCouplingExactUpdate();   // loader guarantees tu + fullcov
+    k.carry_cpl_exact_cross = config_.networkCarryCouplingExactCross();   // loader guarantees exact
+    k.pfq_on = config_.networkClockPivotFrameQ();   // loader guarantees fullcov + the pin datum
+    k.carry_cpl_clone = config_.networkCarryCouplingClockClone();   // loader guarantees exact + fullcov
+    k.carry_cpl_shx   = config_.networkCarryCouplingSharedHistory();       // loader guarantees B1
+    k.shx_rank        = config_.networkCarryCouplingSharedHistoryRank();   // loader guarantees [1, 8]
+    k.carry_cpl_bclone = config_.networkCarryCouplingBiasClone();       // loader guarantees B1
+    k.carry_cpl_dclone = config_.networkCarryCouplingDepartedClone();   // loader guarantees B1
+    k.clm_on    = config_.networkClockLevelMonitor();      // clock-level monitor (trace class)
+    k.clm_raise = config_.networkClockLevelBoundRaise();   // clock-level raise; loader guarantees clm_on
+    k.clm_innov_window_ep = config_.networkClockLevelInnovWindowEp();
+    k.pv_on        = config_.networkPhaseVisibleMonitor();     // phase-visible monitor (trace class)
+    k.nbp_on       = config_.networkAprioriBrdcClock();        // broadcast clock a priori (fingerprinted in SnapshotFingerprint.cpp)
     k.pv_window_ep = config_.networkPhaseVisibleWindowEp();
-    k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();   // card CTU G5
-    k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // card CTU G5; loader guarantees clm_on
+    k.clm_restore_credit_ep = config_.networkClockLevelRestoreCreditEp();
+    k.clm_restore_raise = config_.networkClockLevelRestoreRaise();       // loader guarantees clm_on
     k.carry_cpl_gauge  = config_.networkCarryCouplingGaugeProject();
     k.carry_cpl_reinit = config_.networkCarryCouplingReinitSources();
     k.zwd_on = config_.networkCarryZwd();
@@ -153,8 +153,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.rxclk_isb        = config_.networkCarryRxClockIsb();
     k.rx_cb_on = config_.networkCarryRxCodeBias();   // loader guarantees code_datum_time_linked
     k.rxcb_blk = config_.networkCarryRxCodeBiasInBlock();   // RXCB-IN-BLOCK; loader guarantees rx_cb_on + coupling + a local block
-    // The live block predicates and the free-epoch consult, resolved once here (card NOM3
-    // step PB1a): networkPassB_ derived them per epoch and the harvest a second time.
+    // The live block predicates and the free-epoch consult, resolved once here:
+    // networkPassB_ derived them per epoch and the harvest a second time.
     k.pl_blk_on       = k.pl_local_block && k.carry_cpl_cond;
     k.zwd_blk_on      = k.zwd_in_block && k.pl_blk_on;
     k.iono_blk_on     = k.iono_blk && k.pl_blk_on;
@@ -208,8 +208,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.scoped_handover = config_.networkScopedHandoverResponse();
     k.handover_stransform = config_.networkHandoverStransform();
     k.handover_stransform_before_rows = config_.networkHandoverStransformBeforeRows();
-    k.handover_stransform_dense = config_.networkHandoverStransformDense();   // card SCL B2
-    k.rebase_complete = config_.networkCarryRebaseComplete();   // card PRM phase 3b step 2
+    k.handover_stransform_dense = config_.networkHandoverStransformDense();
+    k.rebase_complete = config_.networkCarryRebaseComplete();
     k.emit_gen_time = config_.networkEmitGenerationTime();
     k.emit_gen_id = config_.networkEmitGenerationId();
     k.ser_disc_ctrs = config_.networkSerializeDiscCounters();
@@ -230,22 +230,22 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // NetworkPbHold seam reads.
     k.emit_pb_hold           = config_.getNetworkConfig().emit_pb_hold;
     k.emit_pb_hold_max_gap_s = config_.getNetworkConfig().emit_pb_hold_max_gap_s;
-    k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;   // card LAH
-    k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;      // card SMH
+    k.emit_pb_hold_phase_clock = config_.getNetworkConfig().emit_pb_hold_phase_clock;
+    k.emit_pb_hold_smoothed    = config_.getNetworkConfig().emit_pb_hold_smoothed;
     // Guarded temporal clock anchor.  `cta_on` is resolved against the clock_model
     // interlock here, so every downstream site reads one predicate.  Under the two-state
     // oscillator the clock is never stashed to the D2 carry, so the anchor has nothing to
     // fold and reads as off (the loader reports an error on the combination).
     k.clk_model_on = config_.networkClockModel();
     k.cta_on             = config_.networkClockTemporalAnchor() && !k.clk_model_on;
-    k.cta_datum_keep     = config_.networkClockAnchorDatumKeep() && k.cta_on;   // card SCL B2
+    k.cta_datum_keep     = config_.networkClockAnchorDatumKeep() && k.cta_on;
     k.cta_q              = config_.networkClockAnchorQ();
     k.cta_var_floor      = config_.networkClockAnchorVarFloorM2();
     k.cta_max_gap_s      = config_.networkClockAnchorMaxGapS();
     k.cta_k              = config_.networkClockAnchorK();
     k.cta_abs_m          = config_.networkClockAnchorAbsM();
     k.cta_sigma_floor_m  = config_.networkClockAnchorSigmaFloorM();
-    k.cta_space          = config_.networkClockAnchorGuardSpace();          // card CTU section 14
+    k.cta_space          = config_.networkClockAnchorGuardSpace();
     k.cta_phi_floor_m    = config_.networkClockAnchorPhaseSigmaFloorM();
     k.cta_recouple_ep    = config_.networkClockAnchorRecoupleEpochs();
     k.cta_mark           = config_.networkClockAnchorMark();
@@ -264,8 +264,8 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     // constrained solve either throws on its pivot guard (the epoch is skipped, every
     // epoch) or factorizes a saddle and returns a wrong x_s without an error.
     k.carry_gauge_free   = k.cta_on && k.cta_gauge_free;
-    // The denominator of the anchor guard and its census is resolved here, once (card Q3
-    // §2.1), for the same reason `cta_on` resolves its interlock here: the guard and the
+    // The denominator of the anchor guard and its census is resolved here, once,
+    // for the same reason `cta_on` resolves its interlock here: the guard and the
     // census have to standardize identically, or the census stops being a cross-check on
     // the guard, and a mapping derived separately at two call sites can drift apart.
     // `auto` follows the fold, which is the behavior before this knob existed, so `auto`

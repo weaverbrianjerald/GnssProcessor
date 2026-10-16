@@ -8,7 +8,7 @@
  * is a (kind, satellite, signal) tuple whose process noise, variance floor and carry
  * route were re-derived at every site that needed them, and a site that needed a
  * property it did not decide read a different answer from the one another site applied
- * (card CTU's root: the coupling rows shrank a clock term at one q while the fold
+ * (for example, the coupling rows shrank a clock term at one q while the fold
  * anchored the same clock at another).
  *
  * This header declares the kinds (@ref NetworkParamKind) and one descriptor per kind
@@ -60,9 +60,9 @@ enum class NetworkParamKind : int {
     RxClock,          ///< Receiver clock and ISB per station (local).
     RxPhaseBias,      ///< Receiver phase bias of the eq34 chain datum (local).
     RxCodeBias,       ///< Receiver code bias per (station, signal) (local).
-    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local; card LGM).
+    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local).
     /// Receiver position per station: three columns of the station's state manager that
-    /// the network holds at the roster coordinate and never estimates (card NOM N1: the
+    /// the network holds at the roster coordinate and never estimates (the
     /// parameter inventory's coordinate instances, treatment Pinned).
     RxPosition,
 };
@@ -126,7 +126,7 @@ enum class ResponsePolicy : int {
     Park,              ///< Kept past the column's departure, not folded, until it returns or the horizon expires.
     SeedAtVarPlusQGap, ///< A parked entry seeds its returned column at var + q times the gap.
     Discard,           ///< A parked or held entry dropped without a fold (a datum change, a return it was not consumed by).
-    Loosen,            ///< Folded at the loose rate until a guard re-validates it (card Q3's anchor).
+    Loosen,            ///< Folded at the loose rate until a guard re-validates it (the clock anchor).
     Recouple,          ///< The guard re-validated a loosened instance: it folds at its anchored rate again.
     Reinit,            ///< Folded at the re-initialization variance (the clock monitor's flag).
     Hold,              ///< Frozen and re-applied while a guard holds it.
@@ -162,7 +162,7 @@ struct ParamSpec {
     double       q{0.0};            ///< The process-noise rate (units in @ref q_units).
     const char*  q_units{"m^2/s"};  ///< Units of @ref q.
     ParamQRule   q_rule{ParamQRule::None};
-    /// The anchored rate under @c ParamQRule::AnchorElapsed (card Q3's
+    /// The anchored rate under @c ParamQRule::AnchorElapsed (the clock anchor's
     /// network.clock_anchor_q, m²/s): the rate a held satellite clock is folded at, while
     /// @ref q is the loose rate it takes until the guard re-validates it.  NaN otherwise.
     double       q_anchored{std::numeric_limits<double>::quiet_NaN()};
@@ -171,7 +171,7 @@ struct ParamSpec {
     double       var_floor_m2{0.0}; ///< Variance floor of the carried instance (m²; 0 = none).
     double       birth_var_m2{std::numeric_limits<double>::quiet_NaN()};  ///< Variance floor at an instance's birth (m²; 0 = none, NaN = the kind has no birth rule).
     /// The gap horizon of a carried instance of the kind (s): the time unseen past which
-    /// it is no longer folded and is pruned (card PRM phase 3b; the test is
+    /// it is no longer folded and is pruned (the test is
     /// @c carryPastHorizon, the prune @c carryGapPrune, both in
     /// @c network/assembly/Responses.hpp).  The double the kind's gap sites read, set from
     /// the same knob whether or not the kind is carried on this run (as @ref q is), so a
@@ -190,9 +190,9 @@ struct ParamSpec {
     /// The response policies armed for this kind on this run, per @ref ParamEvent (a mask of
     /// @ref responsePolicyBit): the union of the policies of this kind's response sites whose
     /// arming condition holds on the knob snapshot, and Stransform where an armed datum
-    /// mechanism moves a carried value of the kind (card PRM phase 3a,
+    /// mechanism moves a carried value of the kind (see
     /// @c network/assembly/Responses.hpp; with @c network.carry_rebase_complete its owed value
-    /// sites count too, card PRM phase 3b).  Zero for an event the kind does not respond to.
+    /// sites count too).  Zero for an event the kind does not respond to.
     std::array<std::uint32_t, kParamEvents> on{};
 };
 
@@ -230,7 +230,7 @@ public:
      * @brief The single process-noise source for the border kinds.
      *
      * The random-walk rate a carried border instance of @p kind is inflated at (m²/s):
-     * the satellite clock's legacy rate (which card Q3's anchor replaces per satellite
+     * the satellite clock's legacy rate (which the clock anchor replaces per satellite
      * while it holds the clock), the phase bias's and the code bias's.  For @c VtecSh it
      * is the degree-0 rate of the legacy shell (TECU²/s); the per-degree ladder stays in
      * @c CouplingRowBuilder::couplingQ and the SH prior inject until an SH card re-arms
@@ -242,7 +242,7 @@ public:
     double q(SharedParamKind kind) const;
 
     /**
-     * @brief The "model as armed" table: a header line and one line per kind (card PRM
+     * @brief The "model as armed" table: a header line and one line per kind (docs/refound/PRM_parameter_registry_2026-09-29.md
      *        section 6).
      *
      * Columns: kind, estimated, carried, q with its units and rule, the anchored rate,
@@ -257,7 +257,7 @@ public:
 
     /**
      * @brief The response policies armed per kind, one line per kind: the kind, then each
-     *        event it responds to with its policies (card PRM phase 3a, @ref ParamSpec::on).
+     *        event it responds to with its policies (@ref ParamSpec::on).
      *
      * Trace class: written at run start beside @ref modelTable.
      *
@@ -296,7 +296,7 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the parameter model as armed.
  *
- * The parameter model as armed at run end (card PRM phase 1): the registry's table and
+ * The parameter model as armed at run end: the registry's table and
  * the carried instances per kind.
  *
  * Gate: prints always.

@@ -1,7 +1,7 @@
 /**
  * @file PbHold.cpp
  * @brief Implementation of @ref networkPbHold, the emit-side phase-bias hold
- *        (@c network.emit_pb_hold, card PBH).
+ *        (@c network.emit_pb_hold).
  *
  * Written as a seam, not relocated from the driver.  Seam contract: a free function
  * over @c (NetworkRunContext&, const GnssConfig&, log, NetworkRunTraces&, …) that
@@ -193,8 +193,8 @@ void networkPbHold(NetworkRunContext& ctx,
                     st.frz_ok  = true;
                 }
                 if (smh_on) {
-                    // Card SMH: the generation's clock clone is born at this epoch's
-                    // stash, or at the first later one at which card Q3's anchor holds
+                    // The generation's clock clone is born at this epoch's
+                    // stash, or at the first later one at which the clock anchor holds
                     // the clock (section 9); the previous generation's clone retires here.
                     net::dropSig(sigs, key, &SG::smh_clone);
                     PbHoldClone pc;
@@ -257,7 +257,7 @@ void networkPbHold(NetworkRunContext& ctx,
                     ctx, key, st.generation,
                     (marked & NetworkProductEmitter::kDiscChanPhaseBias) != 0u, epoch_s,
                     [&emitter, &s](const std::string& sg) { return emitter.discThresholdM(s.sat, sg); });
-                // The member that writes: card SMH's clock clone.  Card SMD's block clone
+                // The member that writes: the smoothed hold's clock clone.  The block clone
                 // is an instrument only (above, and the trace columns below).
                 const PbHoldClone* cit = net::getSig(sigs, key, &SG::smh_clone);
                 const bool mine = cit && cit->generation == st.generation;
