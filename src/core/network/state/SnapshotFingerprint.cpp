@@ -261,6 +261,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // consumer resumed across the flip would hold a different bias set.  Appended only
         // when armed.
         if (config_.networkN3cWirePerSignal()) add("n3c:wire_per_signal");
+        // The coverage gate's count of gapped arcs decides which families are dropped and
+        // so which carries are erased; the election's restore is fingerprinted above.
+        // Appended only when armed.
+        if (config_.networkN3cLedgerLifecycle()) add("n3c:ledger_lifecycle");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

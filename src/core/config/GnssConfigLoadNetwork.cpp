@@ -6170,6 +6170,16 @@ namespace GnssProcessor {
         // graded as a behavior change and is fingerprinted.
         network_n3c_wire_per_signal_ =
             jval<bool>(json, "network.n3c_wire_per_signal", "network_n3c_wire_per_signal", false);
+        // The arc ledger as the arc-lifecycle owner at the anchor election and the coverage
+        // gate.  Default off.  Armed, it arms the election's ledger read and restore
+        // (network.ledger_screens and network.ledger_anchor, which the interlocks below
+        // would otherwise refuse alone) and the coverage gate's count of gapped arcs.
+        network_n3c_ledger_lifecycle_ =
+            jval<bool>(json, "network.n3c_ledger_lifecycle", "network_n3c_ledger_lifecycle", false);
+        if (network_n3c_ledger_lifecycle_) {
+            network_ledger_screens_ = true;
+            network_ledger_anchor_  = true;
+        }
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest
@@ -10205,6 +10215,25 @@ namespace GnssProcessor {
             log->warn("Network producer: network.ledger_anchor is armed with "
                       "network.phase_datum_min_stations at 1, so the coverage gate never drops a "
                       "family and the restore has no population.  The knob is INERT here.");
+        if (network_n3c_ledger_lifecycle_) {
+            log->info("Network producer: network.n3c_ledger_lifecycle is ON: the arc ledger owns "
+                      "the arc lifecycle at the anchor election (network.ledger_screens and "
+                      "network.ledger_anchor are armed by it) and at the coverage gate, which "
+                      "counts a station whose admitted arc of a family is in Gap as still "
+                      "tracking it, so the family does not drop while an arc of it can return.  "
+                      "SOLVE-AFFECTING: graded as a behaviour change and FINGERPRINTED (fresh "
+                      "convergence only).");
+            if (network_phase_datum_min_stations_ <= 1)
+                log->warn("Network producer: network.n3c_ledger_lifecycle is armed with "
+                          "network.phase_datum_min_stations at 1, so the coverage gate never "
+                          "drops a family: the gate half of the switch is INERT here.");
+            if (!network_ledger_reentry_)
+                log->warn("Network producer: network.n3c_ledger_lifecycle is armed without "
+                          "network.ledger_reentry, so the gap re-entry response still takes its "
+                          "population from the raw tiers; arm network.ledger_reentry (with "
+                          "network.roster_tracker and network.cycle_slip.gap_reentry_relevel) "
+                          "for the third site.");
+        }
         // SID phase 5a (the emitter read and the declared roster) needs no other knob:
         // its two inputs, the arc ledger and the roster the declaration is built from,
         // exist on every run.  An epoch whose roster has no modelled

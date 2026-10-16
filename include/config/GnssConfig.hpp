@@ -6229,6 +6229,29 @@ namespace GnssProcessor {
         bool networkN3cWirePerSignal() const { return network_n3c_wire_per_signal_; }
 
         /**
+         * @brief The arc ledger owns the arc lifecycle at the anchor election and the
+         *        coverage gate (@c network.n3c_ledger_lifecycle).
+         *
+         * Armed, a returning arc is never a first sighting and a gapped arc is not a
+         * departed one:
+         *  - the anchor election reads the ledger and restores a returning family's
+         *    previous incumbent (the loader arms @c network.ledger_screens and
+         *    @c network.ledger_anchor with it, and logs that it did);
+         *  - the coverage gate counts a station whose admitted arc of a family is in
+         *    Gap as still tracking it, so a family does not drop (and its carried
+         *    ambiguities are not erased) while an arc of it can still return. The
+         *    gap ends in a return or in death, and the family is gated as usual after.
+         *
+         * The gap re-entry response keeps its own key, @c network.ledger_reentry, which
+         * needs @c network.roster_tracker and @c network.cycle_slip.gap_reentry_relevel.
+         * Inert at the gate unless @c network.phase_datum_min_stations is above 1.
+         *
+         * Solve-affecting when armed, so it is graded as a behaviour change and it is
+         * fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cLedgerLifecycle() const { return network_n3c_ledger_lifecycle_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8445,6 +8468,7 @@ namespace GnssProcessor {
         bool   network_n3c_canonical_pair_traits_{false};          ///< The canonical-pair admission reads each constellation's pair as the first two bands of its traits (GPS 1 and 2, Galileo 1 and 5) instead of the digits 1 and 2 (network.n3c_canonical_pair_traits). Inert without network.canonical_pair_admission. Solve-affecting when armed with it. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_band_signal_{false};                    ///< The slip tracker names a band by the roster's Modelled signal only: a band whose Modelled phase is not reported with its code this epoch is left out of the tracker pair, never replaced by the lexical pick (network.n3c_band_signal). Acts only under tracker_modeled_first or roster_tracker. Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_wire_per_signal_{false};                ///< The wire carries a phase-bias and a code-bias record for every signal the network models on a satellite's constellation; a signal without an estimated column takes the value of the same-band signal of its channel family (network.n3c_wire_per_signal). Changes the wire. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_ledger_lifecycle_{false};               ///< The arc ledger owns the arc lifecycle at the anchor election (arms network.ledger_screens and network.ledger_anchor) and at the coverage gate (a station with an admitted arc in Gap still counts as tracking) (network.n3c_ledger_lifecycle). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.

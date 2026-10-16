@@ -155,6 +155,11 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  *                            caller storage may be reused.
  * @param n_gated_epochs      [in/out] ctx.counters run-end telemetry.
  * @param n_gated_key_epochs  [in/out] ctx.counters run-end telemetry.
+ * @param gap_ledger          The arc ledger, only under @c network.n3c_ledger_lifecycle:
+ *                            a station whose admitted arc of a key is in Gap counts as
+ *                            tracking it (@ref networkPhaseGateCountGapTrackers).  Null
+ *                            (the default): the gate counts present stations only,
+ *                            byte-identical.
  */
 void networkBuildPhaseDatumCandidates(
         const GnssConfig& config_,
@@ -163,7 +168,29 @@ void networkBuildPhaseDatumCandidates(
         const std::vector<std::vector<PppObservation>>& modeled,
         PhaseDatumCandidates& cnd,
         std::size_t& n_gated_epochs,
-        std::size_t& n_gated_key_epochs);
+        std::size_t& n_gated_key_epochs,
+        const ArcLedger* gap_ledger = nullptr);
+
+/**
+ * @brief Add, to the tracker count of each candidate key, the stations whose admitted
+ *        arc of it is in Gap (the coverage gate under @c network.n3c_ledger_lifecycle).
+ *
+ * A gapped arc is an arc that left and can return before the ledger declares it dead,
+ * so the family it belongs to is not yet short of trackers. A station that tracks the
+ * key this epoch is already counted from its phase-bias state and is skipped; a key
+ * outside @p union_keys is not a candidate and is skipped.
+ *
+ * @param led         The arc ledger (read-only).
+ * @param usable_keys Per station: "sat_signal" -> "sat|signal|PB" it allocated this epoch.
+ * @param union_keys  The candidate keys, "sat_signal" -> "sat|signal|PB".
+ * @param n_trk       [in/out] "sat_signal" -> tracker count.
+ * @return The number of gapped arcs counted.
+ */
+std::size_t networkPhaseGateCountGapTrackers(
+        const ArcLedger& led,
+        const std::vector<std::map<std::string, std::string>>& usable_keys,
+        const std::map<std::string, std::string>& union_keys,
+        std::map<std::string, int>& n_trk);
 
 /// Held S-basis bundle for the anchor election, and the counters the election writes
 /// back (RF-2).
@@ -688,6 +715,9 @@ bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_da
         // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
         // which >=1 thin column was excluded, and the cumulative column-epoch count.
         size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
+        // Column-epochs the gate kept because the ledger held an admitted arc of the key in
+        // Gap (network.n3c_ledger_lifecycle): keys below the bar on present stations alone.
+        size_t n_gated_gap_kept = 0;
     };
 
 } // namespace GnssProcessor

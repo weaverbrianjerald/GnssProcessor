@@ -12,6 +12,9 @@
 #include "common/PppUtils.hpp"
 #include "logging/LogManager.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp"
+#include "network/solve/PhaseDatum.hpp"
+#include "network/state/ArcLedger.hpp"
+#include "network/state/Entities.hpp"
 #include "network/assembly/SignalRoster.hpp"
 #include "network/emit/SolPrep.hpp"
 #include "network/slip/RawObservables.hpp"
@@ -21,6 +24,7 @@
 #include <cmath>
 #include <map>
 #include <set>
+#include <tuple>
 #include <string>
 #include <utility>
 #include <vector>
@@ -241,6 +245,51 @@ TEST(N3cSwitchesTest, WireFillNeverCrossesFamiliesBandsOrConstellations) {
     EXPECT_EQ(sol.sats[0].code_bias_m.count("C1X"), 0u);
     EXPECT_EQ(sol.sats[1].phase_bias.size(), 1u);
     EXPECT_EQ(sol.sats[2].phase_bias.size(), 1u);
+}
+
+// ---- D7: the arc ledger owns the arc lifecycle at the coverage gate ----
+
+TEST(N3cSwitchesTest, CoverageGateCountsAStationWhoseArcIsInGapAsTracking) {
+    net::NetworkEntities ents;
+    ArcLedger led{ ents };
+    led.configure(3900.0, kArcLedgerForgetEp);
+    const auto key = [](int sta) {
+        return ArcLedger::Key{ sta, std::string("G30"), std::string("L1W") };
+    };
+    // Every station keeps one arc of a satellite nobody queries, so a station's outage
+    // opens a gap on its arc instead of freezing the station.
+    const auto admit = [&](long long ep, const std::vector<ArcLedger::Key>& arcs) {
+        std::vector<ArcLedger::Key> all = arcs;
+        for (int sta = 0; sta < 3; ++sta)
+            all.push_back(ArcLedger::Key{ sta, std::string("G99"), std::string("L9X") });
+        led.beginEpoch(ep, static_cast<double>(ep) * 30.0);
+        for (const auto& k : all) led.observe(k, true);
+        std::set<int> present;
+        for (const auto& k : all) present.insert(std::get<0>(k));
+        std::vector<std::pair<ArcLedger::Key, ArcStep>> raw_edges, adm_edges;
+        led.endEpoch(present, raw_edges);
+        led.admitEpoch(std::set<ArcLedger::Key>(all.begin(), all.end()), adm_edges);
+    };
+    for (long long ep = 0; ep <= 3; ++ep) admit(ep, { key(0), key(1) });
+    for (long long ep = 4; ep <= 6; ++ep) admit(ep, { key(1) });   // station 0 leaves
+    ASSERT_NE(led.find(key(0)), nullptr);
+    ASSERT_EQ(led.find(key(0))->adm_state, ArcState::Gap);
+    // Present stations: only station 1 allocates the column this epoch.
+    std::vector<std::map<std::string, std::string>> usable(3);
+    usable[1]["G30_L1W"] = "G30|L1W|PB";
+    const std::map<std::string, std::string> union_keys{ { "G30_L1W", "G30|L1W|PB" } };
+    std::map<std::string, int> n_trk{ { "G30_L1W", 1 } };
+    // The column has one tracker on present stations; the gapped station makes two.
+    EXPECT_EQ(networkPhaseGateCountGapTrackers(led, usable, union_keys, n_trk), 1u);
+    EXPECT_EQ(n_trk.at("G30_L1W"), 2);
+    // A station that tracks the key now is not counted twice, and a key outside the union
+    // is not a candidate.
+    usable[0]["G30_L1W"] = "G30|L1W|PB";
+    std::map<std::string, int> again{ { "G30_L1W", 2 } };
+    EXPECT_EQ(networkPhaseGateCountGapTrackers(led, usable, union_keys, again), 0u);
+    EXPECT_EQ(again.at("G30_L1W"), 2);
+    std::map<std::string, int> none;
+    EXPECT_EQ(networkPhaseGateCountGapTrackers(led, usable, {}, none), 0u);
 }
 
 }  // namespace

@@ -106,7 +106,12 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
         PhaseDatumCandidates cnd;
         AnchorHygiene hyg;   // eq34 reattach hygiene verdicts (inactive when off)
         networkBuildPhaseDatumCandidates(config_, stations, present, modeled,
-                                         cnd, n_gated_epochs, n_gated_key_epochs);
+                                         cnd, n_gated_epochs, n_gated_key_epochs,
+                                         // network.n3c_ledger_lifecycle: gapped arcs count
+                                         // as trackers at the coverage gate.
+                                         config_.networkN3cLedgerLifecycle()
+                                             ? &ctx.arc_ledger : nullptr);
+        ctx.counters.n_gated_gap_kept += cnd.gap_kept_keys;
 
         // eq34 reattach hygiene.  Ages this epoch's anchorable arcs, decides which
         // keys may be re-hosted and on what, runs the INC-2 bridge lifecycle, and

@@ -2117,6 +2117,9 @@ struct PhaseDatumCandidates {
     /// election does.  The hygiene pass's own erasures from @ref union_keys are not in
     /// it, by design (a different mechanism with its own bridge lifecycle).
     std::set<std::string>                           gated_keys;
+    /// Keys that were below the coverage bar on present stations alone and passed it by
+    /// counting gapped arcs (network.n3c_ledger_lifecycle); 0 otherwise.
+    std::size_t                                     gap_kept_keys{0};
 };
 
 } // namespace GnssProcessor
