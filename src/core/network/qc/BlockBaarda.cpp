@@ -263,6 +263,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<BlockBaardaHit>& bb_hits = ep.events.census.bb_hits;
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
     if (!ctx.knobs.bb_on) return;   // the driver's gate
     (void)config_;
     (void)log;
@@ -327,7 +328,7 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
                                     : nullptr;
         if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        if (hid) net::put(ctx.entities.los, *hid, &net::LosState::bb_event_last) = now_ep;
+        if (hid) net::put(los_rows, *hid, &net::LosState::bb_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column: emitEvent
         // formats statistic and threshold with a fixed 6 decimals, which prints a
         // small t_B from a well-conditioned block as 0.000000.
@@ -482,7 +483,7 @@ void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
                   "{} / {} = {:.1f}%.  This is the population invisible to EVERY existing "
                   "tier: loud as a block, and every one of its rows individually below "
                   "the same threshold.  SPEC 8.4 — if this is ~0 the block tier adds "
-                  "nothing here and that closes the card honestly.",
+                  "nothing here and that closes the question honestly.",
                   tot_block_only, tot_reported,
                   100.0 * static_cast<double>(tot_block_only)
                         / static_cast<double>(tot_reported));

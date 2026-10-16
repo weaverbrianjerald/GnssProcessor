@@ -6,6 +6,7 @@
 
 #include "network/qc/RaimWithinEpoch.hpp"
 #include "network/solve/SolveGlue.hpp"   // SolveDatum and the other typed values of the solve
+#include "network/solve/SolveStations.hpp"   // networkCarriedPriorsInstalled
 #include "network/runend/RunEnd.hpp"     // NetworkRunEndView (the run-end report)
 
 #include "network/state/RunContext.hpp"
@@ -451,21 +452,14 @@ static void weReaddStation(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspa
     // network.carry_zwd), so the within-epoch re-solve matches the primary
     // solve (B9).  refloat_cols names only ambiguity columns, so a pivot's lone
     // ZWD column is never in it, and the pivot takes the fast path.
-    // The gate follows the primary solve's install site in
-    // ApplicationNetworkAssembly, `(carry_warm || rx_cb_on || rx_cb_datum ||
-    // R.opin_rows > 0) && !R.carry_cols.empty()`, so the re-solve folds the
-    // priors the primary one did; this copy lacks the oracle-pin disjunct
-    // `R.opin_rows > 0`.  Today both reduce to `!R.carry_cols.empty()`: this
-    // lambda runs inside `if (within_epoch_armed && carry_warm)`, so carry_warm
-    // is true here and the other disjuncts cannot change the predicate.  They
-    // are written out because decoupling the within-epoch tier from carry_warm
-    // is a sanctioned open fix (CLAUDE.md, standard armed set); once that
-    // lands, a bare `carry_warm` here would drop the rx-CB carry and
-    // RXCB-DATUM rows that the primary solve folded (and, without its
-    // disjunct, the oracle-pin rows), and the replay would disagree with the
-    // solve it replays.
-    if ((carry_warm || ctx.knobs.rx_cb_on || ctx.knobs.rx_cb_datum)
-        && !R.carry_cols.empty()) {
+    // The gate is the primary solve's install gate (networkCarriedPriorsInstalled), so
+    // the re-solve folds the priors the primary one did.  Today it reduces to
+    // `!R.carry_cols.empty()`: this runs inside `if (within_epoch_armed && carry_warm)`,
+    // so carry_warm is true here and the other disjuncts cannot change the predicate.
+    // Decoupling the within-epoch tier from carry_warm is a sanctioned open fix
+    // (CLAUDE.md, standard armed set); sharing the gate keeps the replay in step with
+    // the solve it replays, rx-CB carry, RXCB-DATUM and oracle-pin rows included.
+    if (networkCarriedPriorsInstalled(carry_warm, ctx.knobs.rx_cb_on, ctx.knobs.rx_cb_datum, R)) {
         if (refloat_cols.empty()) {
             est.addStationPrior(static_cast<std::size_t>(est_index_of[i]),
                                 R.carry_cols, R.carry_dNrr, R.carry_dur);
@@ -1552,6 +1546,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
     const std::vector<int>& est_index_of = *f.est_index_of;
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::ArcTable& arc_rows = ctx.entities.arcs;   // written
     // This epoch returns SkipEpoch (the driver's `continue`), so it never reaches the
     // SB_FRAMEDIAG consumer.  The recorder has to fire here, or the A4 trigger would
     // never dump the epoch that tripped it (only the next one, which is a different
@@ -1573,7 +1568,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
         for (const auto& fa : relevel_ev.free_ambs) {
             const auto parts = StateKeys::parseAmbiguityKey(fa.second);
             if (!parts) continue;
-            if (net::dropArc(ctx.entities.arcs, std::make_tuple(fa.first, parts->satellite, parts->signal), &net::ArcState::amb)) {
+            if (net::dropArc(arc_rows, std::make_tuple(fa.first, parts->satellite, parts->signal), &net::ArcState::amb)) {
                 ++ctx.counters.n_wh_free_erases;
                 prmRespond(ctx.counters.prm_resp,
                            ResponseSite::AmbWithholdErase);

@@ -118,6 +118,35 @@ int networkSecondCodeScopeRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of SecondCodeScope, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SecondCodeScopeCounters {
+    /// Run-end telemetry of the second code channel, including both edges of standing
+    /// invariant #7 (docs/refound/SCC_second_code_channel_2026-09-21.md, R7).
+    /// Everything except @c rows / @c fallback_rows is reduced in the serial post-PASS-A
+    /// sweep; those two are summed from the per-station NetStation counters at
+    /// teardown, as the L5P row counter is.
+    ///
+    /// Standing invariant #4: @c rows == 0 with the knob armed means the run exercised
+    /// nothing (no station reported a second allow-listed band-1 code), and the teardown
+    /// warns instead of reporting a clean run.
+    struct SecondCode {
+        long long cells = 0;          ///< Companion (station, satellite, signal) cells open, summed over epochs.
+        long long cell_open = 0;      ///< Cell openings (the re-coupling edge): a cell that was not open last epoch.
+        long long cell_close = 0;     ///< Cell closings (the decoupling edge): a cell that was open last epoch and is gone.
+        long long rows = 0;           ///< Companion code rows folded into the solve, over the run.
+        long long fallback_rows = 0;  ///< Rows routed through the inter-signal state that were not companions (R2's fallback case).
+        long long isc_states_max = 0; ///< Receiver inter-signal states alive network-wide, maximum over epochs.
+        long long isc_reseeds = 0;    ///< States created at a station that had held that state before and was not restored by the receiver code-bias carry.
+        /// (satellite, signal) columns that reached the >= 2-station registration bar
+        /// only through companions, i.e. that would have had fewer than two supporting
+        /// stations without the second code channel.  Per epoch, summed.  It measures
+        /// the premise directly: zero of these means the second code channel
+        /// added rows without ever adding a column the wire did not already carry.
+        long long cols_via_companion = 0;
+    };
+    SecondCode second_code;
+};
+
 }  // namespace GnssProcessor
 
 #endif  // GNSS_PROCESSOR_NETWORK_SECOND_CODE_SCOPE_HPP

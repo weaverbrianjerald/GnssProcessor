@@ -30,10 +30,9 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 
 /**
- * @brief The ambiguity carry's `pl_emit_row`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Emits one carried ambiguity as a diagonal prior or, under conditional coupling, as a
+ *        coupling row, as a function of the station's carry frame.  Called directly by the
+ *        ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_idx,
@@ -41,20 +40,17 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
                             const std::string& sat = {}, const std::string& signal = {});
 
 /**
- * @brief The ambiguity carry's `amb_state_note`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Records the variance and the route a folded ambiguity took, as a function of the
+ *        station's carry frame.  Called directly by the ambiguity and local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 void networkAmbStateNote(StationCarryFrame& carry, const std::string& sat,
                          const std::string& signal, double var_eff, AmbFoldRoute route);
 
 /**
- * @brief The ambiguity carry's `pl_finish_var`: the frozen
- *        lambda's body as a function of the station's carry frame.  The ambiguity and
- *        local-block steps bind the frozen name to a forwarder with the frozen parameter
- *        list.
+ * @brief Finishes a carried ambiguity's variance (the floor and the carry variance factor), as a
+ *        function of the station's carry frame.  Called directly by the ambiguity and
+ *        local-block steps.
  * @param carry The station's carry frame (network/assembly/StationBuild.hpp).
  */
 double networkAmbCarryFinishVar(const StationCarryFrame& carry, double var_eff,
@@ -142,5 +138,81 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, std::
 void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
 // ---- End of the harvest half, declarations ----
+
+/// @brief Run-scope counters of LevelingCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct LevelingCarryCounters {
+
+    // --- Leveling-carry retirement census ---
+    // Every path that removes a phase-leveling carry entry is counted at its own site,
+    // so a run can attribute a fleet-scale carry loss instead of inferring it.  The gap
+    // prune reads only `last_seen_s`, i.e. it selects on elapsed time and nothing else;
+    // these counters separate it from the four quality-driven retirement paths that run
+    // beside it.  §7's promotion refusal assumes that the invariant-#1 gap cliff
+    // usefully retires stressed carries, and these counters measure that.  Pure
+    // telemetry (no solve effect, no CSV row), always on.
+    // (A) Departures: entries physically removed and not replaced this epoch.  The gap
+    //     prune runs immediately after the harvest has refreshed last_seen_s for every
+    //     arc it stashed, so its candidate set is disjoint from the arcs observed this
+    //     epoch: it can only retire arcs that were not harvested (set satellites, absent
+    //     stations, harvest failures).  It is therefore a departure counter and not the
+    //     cliff; (B) is the cliff.
+    long long n_cr_gap_prune          = 0;  ///< amb-carry entries dropped by the pl_max_gap_s prune (departures; selected by time)
+    long long n_cr_gap_prune_epochs   = 0;  ///< epochs on which that prune removed at least one entry
+    long long n_cr_gap_prune_max      = 0;  ///< largest single-epoch prune removal
+    long long n_cr_gap_prune_max_week = 0;  ///< GPS week of that epoch (attribution handle)
+    double    cr_gap_prune_max_tow    = 0.0;///< TOW (s) of that epoch; joins directly to the `tow` column of every trace CSV
+    long long n_cr_gap_prune_max_fleet= 0;  ///< carry size immediately before that removal
+    long long n_amb_birth_floored     = 0;  ///< birth stashes whose var_birth was raised by network.amb_float_birth_var_m2 above the arc's own first-stash variance: the on-path telemetry of the floor (invariant #4: 0 under an armed floor means every arc was already born looser than it).
+    /// |value change| (m) absorbed by the first fold after a drop, one entry per drop
+    /// that restarted the age clock (RF-3a A2).  Measured at the harvest from the
+    /// carry's value before and after that fold, so it is the size of the correction
+    /// the drop's restored prior let through in one epoch.  With a stiff restored prior
+    /// the first fold absorbs little and the value then walks for tens of epochs; with
+    /// a stated floor the correction lands at once.  Read at run end as max and median.
+    std::vector<double> amb_walk_fold1_m;
+    /// The same at the second fold after the drop, i.e. the residual walk itself
+    /// (RF-3a A2).  A stiff restored prior is still moving here; a floored one has
+    /// settled.
+    std::vector<double> amb_walk_fold2_m;
+    // Observability of the coupling carry: run-total volume, as harvest-side
+    // stash counts (non-empty regression, empty regression degraded to a plain
+    // diagonal row, outright harvest failure) and inject-side term counts (present,
+    // departed, κ-shrunk).  Without these, a run whose coupling carry degrades to
+    // diagonal rows without a signal (or never runs) cannot be told apart from a
+    // working one, and a byte-identical A/B would hide it (the coupling-rows trap).
+    // Logged once at run end when the mechanism is armed.
+    size_t n_cpl_stash = 0, n_cpl_stash_empty = 0, n_cpl_harvest_fail = 0;
+    long long prm_pruned_after_drop = 0;
+};
+
+struct NetworkRunContext;   // network/state/RunContext.hpp
+struct SyncedEpoch;         // rinex/MultiRinexSync.hpp
+
+/**
+ * @brief Folds the stations' free-epoch skip counts (slip re-leveling) into the run counter.
+ *
+ * Serial, after the parallel produce: each station counted its own skips in its slot. Does
+ * nothing unless the free-epoch latch is armed.
+ *
+ * @param ctx     The run context: the counter is written.
+ * @param asm_res The stations' assembled blocks, read.
+ */
+void networkAmbiguityFreeEpochTally(NetworkRunContext& ctx,
+                                    const std::vector<StationAssembly>& asm_res);
+
+/**
+ * @brief Folds the stations' inject-side stale skips into the run counters and records the
+ *        worst epoch.
+ *
+ * Serial, after the parallel produce. Keeps the epoch's week, time of week and station count
+ * with the largest skip total, as a handle a trace filter can use to find the epoch.
+ *
+ * @param ctx     The run context: the stale-skip counters are written.
+ * @param asm_res The stations' assembled blocks, read.
+ * @param se      The epoch (its time stamps the worst epoch).
+ */
+void networkAmbiguityStaleSkipTally(NetworkRunContext& ctx,
+                                    const std::vector<StationAssembly>& asm_res,
+                                    const SyncedEpoch& se);
 
 } // namespace GnssProcessor

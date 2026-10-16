@@ -77,6 +77,7 @@
 #include "config/GnssConfigTypes.hpp"   // NetworkSatGfDatum, the GF datum mode (RF-0c)
 #include "network/solve/Estimator.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"   // the group-delay latch's records
+#include <cstddef>
 
 namespace spdlog { class logger; }
 
@@ -1804,5 +1805,60 @@ void networkCodeDatumFamilyRunEnd(const NetworkRunContext& ctx, const GnssConfig
                                   const std::shared_ptr<spdlog::logger>& log);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of Sbasis, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SbasisCounters {
+    // Epochs on which the hard per-satellite geometry-free datum folded (RF-0c,
+    // network.sat_gf_datum), the cumulative row count, and, under broadcast_tgd, how
+    // those rows were targeted: `tgd` a non-zero c*T_GD from the navigation message,
+    // `tgd0` a satellite the constellation broadcasts at T_GD = 0 exactly (physical,
+    // just numerically zero), `fallback` a satellite with no navigation record or
+    // whose pinned pair is not (L1, L2).  The split matters because all three look
+    // identical on the wire: only the fallback count says the run pinned a value the
+    // navigation message never asserted.
+    size_t n_sat_gf_epochs = 0, n_sat_gf_rows = 0;
+    // e2's split of geometry-free rows into carried (a change pin on the previous
+    // solved value) and anchored (first sighting, the absolute broadcast target),
+    // RF-0e.  The anchored count is the only place the broadcast frame is re-asserted
+    // under e2, so a run with 0 of them has carried its frame from epoch 1 and never
+    // re-checked it.
+    size_t n_sat_gf_carried = 0, n_sat_gf_anchored = 0;
+    // Band-2 companion columns left free because a station bridged the two signals,
+    // and those pinned at 0 because none did (RF-0f).  The pinned ones are the part of a
+    // C2X product that is asserted rather than estimated, and they are not emitted.
+    size_t n_isc_observed = 0, n_isc_pinned = 0;
+    // The three dispositions of an extra-band code-bias column under
+    // `network.sat_gf_extra_band_free`: freed, because some station's cell
+    // carried the pin pair's two bands and the signal; carried at its own previous
+    // solved geometry-free combination, because none did this epoch; or held by a
+    // level row in the channel's own frame at a first sighting with nothing to carry
+    // (and then withheld from the wire).  Standing invariant #4: 0 freed with the knob
+    // armed means the run exercised nothing.  `n_s2z_reseed_*` is the decoupling edge
+    // (invariant #7) on the level the freed channels now stand on: the re-seeds of the
+    // veteran-linked sum-to-zero row, and the satellites they marked for the
+    // consumer's discontinuity channel.
+    size_t n_extra_band_free = 0, n_extra_band_carried = 0, n_extra_band_held = 0;
+    size_t n_s2z_reseed_rows = 0, n_s2z_reseed_sats = 0;
+    /// Family clock datum (docs/refound/GFC_galileo_family_clock_datum_2026-10-10.md): the pin
+    /// pair holds and changes per constellation
+    /// (@c network.code_datum_pair_continuity) and the
+    /// secondary-family level realizations per (constellation, band digit)
+    /// (@c network.code_datum_family_difference), counted once per kept epoch by
+    /// @c networkCodeDatumFamilyKeptEpoch.  Read only by
+    /// @c networkCodeDatumFamilyRunEnd; empty unless an arm is effective.
+    std::map<System, NetworkSbasis::CodeDatumPairCounts> cb_pair_by_const;
+    std::map<std::pair<System, char>, NetworkSbasis::CodeDatumFamilyCounts> cb_family_by_band;
+    /// The first-sighting family prior rows, and the satellites given no row, per
+    /// (constellation, band digit) (
+    /// @c network.code_family_birth_prior_sigma_m), counted once per kept epoch
+    /// by @c networkCodeDatumFamilyKeptEpoch and read only by
+    /// @c networkCodeDatumFamilyRunEnd; empty unless the prior is effective.
+    std::map<std::pair<System, char>, NetworkSbasis::CodeFamilyBirthCounts> cb_family_birth_by_band;
+    /// Kept epochs with at least one secondary-family channel realized, the
+    /// denominator of the family-difference run-end line, and the switches of a
+    /// channel between the family-difference row and the sum-to-zero row (or between
+    /// partners) declared as "CB_DATUM"/"family_row" events.
+    size_t n_cb_family_epochs = 0, n_cb_family_switches = 0;
+};
 
 } // namespace GnssProcessor

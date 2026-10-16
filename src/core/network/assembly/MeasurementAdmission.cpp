@@ -299,7 +299,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
         // on which its restored arcs appear as first sightings.
         const bool sta_resume_pass =
             resume_run
-            && net::mark(ctx.entities.stations, StationId{static_cast<int>(si)},
+            && net::mark(sta_rows, StationId{static_cast<int>(si)},
                          &net::StationState::adm_resume_seen);
 
         // ---- (2) centre, and reduce to one verdict per (satellite, band) --
@@ -983,12 +983,12 @@ int networkMeasurementAdmissionRunEnd(const NetworkRunEndView& v) {
     if (a.epochs == 0)
         log->warn("Network (measurement admission): ARMED but the screen ran on ZERO "
                   "epochs — the wiring never executed (invariant #4).  Nothing in "
-                  "this run is evidence about the card.");
+                  "this run is evidence about the screen.");
     else if (a.channels == 0)
         log->warn("Network (measurement admission): ARMED and the screen ran, but it "
                   "screened ZERO code channels — every station fell under the median "
                   "floor, or no observation carried a `modeled` counterpart.  The "
-                  "card is INERT despite looking live (invariant #4); check that the "
+                  "screen is INERT despite looking live (invariant #4); check that the "
                   "producer is on the UNCOMBINED path, where `observed` and "
                   "`modeled` are keyed by raw RINEX-3 codes.");
     else if (a.station_epochs == 0)
@@ -1022,7 +1022,7 @@ int networkMeasurementAdmissionRunEnd(const NetworkRunEndView& v) {
                   "A 63-station day carries ~4650 of them, so on anything longer "
                   "than a short leg this means the gap test never fires — check "
                   "network.adm_revet_gap_ep ({}) and that arcs are actually leaving "
-                  "the screened set.  The card is INERT despite looking live.",
+                  "the screened set.  The re-entry vet is INERT despite looking live.",
                   a.channels, ctx.knobs.adm_revet_gap_ep);
     if (ctx.knobs.adm_revet && ctx.knobs.adm_revet_census
         && a.revet_census_reads > 0

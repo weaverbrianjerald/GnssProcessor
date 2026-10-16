@@ -642,7 +642,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "   (B6 S-basis contract)\n"
             "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
             "[,comp=<sig>[+<sig>...]][,dph=<sig>][,dco=<sig>]"
-            "   (card SID phase 5 declared signal roster; a contiguous N block"
+            "   (declared signal roster; a contiguous N block"
             " REPLACES the previous declaration wholesale)\n";
 }
 
@@ -1089,8 +1089,8 @@ bool NetworkProductReader::admitsWire(const SbasisContract& file, bool allow_und
     }
     if (why) {
         const std::string cause =
-            "the wire carries no S-basis contract line: it was written before card OWD made "
-            "the line part of every wire (network.serialize_sbasis_contract was off).  Without "
+            "the wire carries no S-basis contract line: it was written before the line was mad"
+            "e part of every wire (network.serialize_sbasis_contract was off).  Without "
             "it the replay builds the DEFAULT emitter (the flat default phase-bias threshold, "
             "no clock-discontinuity channel, no staleness horizon, no code-jump or set-change "
             "channel), so every clock re-reference the producer declared is silent to the "

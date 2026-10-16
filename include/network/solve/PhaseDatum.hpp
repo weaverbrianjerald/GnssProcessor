@@ -683,4 +683,11 @@ bool networkIsGaugePinned(const std::vector<NetStation>& stations, bool phase_da
 
 // ---- End of the PASS B station steps, declarations ----
 
+    /// @brief Run-scope counters of PhaseDatum, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct PhaseDatumCounters {
+        // Coverage-threshold union gate (network.phase_datum_min_stations): epochs on
+        // which >=1 thin column was excluded, and the cumulative column-epoch count.
+        size_t n_gated_epochs = 0, n_gated_key_epochs = 0;
+    };
+
 } // namespace GnssProcessor

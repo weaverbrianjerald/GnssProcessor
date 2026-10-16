@@ -140,4 +140,40 @@ int networkEmitStoreRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of EmitStore, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct EmitStoreCounters {
+    long long n_pb_seam_keys_tested = 0; ///< phase-bias keys the first post-resume emit compared with a restored baseline, the jump test's own population (RS-4)
+    long long n_pb_seam_keys_over   = 0; ///< of those, keys beyond discThresholdM (RS-4)
+    long long n_pb_seam_marks       = 0; ///< constellations markDatumChange'd by the seam rule; 0 with the knob off, and 0 on a cold start (RS-4)
+    // Invariant #4 counters for the per-satellite consumer readout (
+    // network.trace_consumer_sat).  0 epochs on an armed run means the consumer
+    // deferred every epoch (admission gates) and the file is a bare header; 0 rows
+    // with non-zero epochs is impossible by construction.
+    long long n_cst_epochs = 0;  ///< consumer epochs that contributed >= 1 row
+    long long n_cst_rows   = 0;  ///< (satellite, raw phase signal) rows written
+    // The edges of invariant #7 for the consumer's ambiguity level re-validation,
+    // counted (network.closed_loop.amb_level_check).  All four stay 0 on an
+    // off run.  n_amb_level_checks == 0 on an armed run means no satellite ever filled
+    // a window (the instrument never fired) however clean the run reads; trips == 0
+    // with checks > 0 is the real null.  In `act` mode n_amb_level_refloats ==
+    // trips_wl + trips_if by construction, and in `observe` mode it is 0, which is how
+    // the mode is read back off the run.
+    long long n_amb_level_checks   = 0;  ///< full-window (satellite, epoch) evaluations
+    long long n_amb_level_trips_wl = 0;  ///< wide-lane test trips
+    long long n_amb_level_trips_if = 0;  ///< iono-free test trips
+    long long n_amb_level_refloats = 0;  ///< satellites refloated (two ambiguities each)
+    // --- Per-channel discontinuity marks (network.disc_mark_scope) ---
+    // The decoupling identity of invariant #7 for a per-satellite mark: which channel
+    // generations it stepped, and which it was withheld from.  All zero under the
+    // default `sat` scope (nothing is counted there), so a run that reports 0/0/0 with
+    // the scope armed has inert wiring however clean it reads.
+    long long n_mark_clk = 0;  ///< satellite-epochs whose clock generation a mark bumped
+    long long n_mark_cb  = 0;  ///< (sat, signal) code-bias cells a mark bumped
+    long long n_mark_pb  = 0;  ///< (sat, signal) phase-bias cells a mark bumped
+    long long n_mark_suppressed_by_scope     = 0;  ///< (sat, channel) marks the scope withheld, in total
+    long long n_mark_suppressed_by_scope_clk = 0;  ///< …of which the clock channel
+    long long n_mark_suppressed_by_scope_cb  = 0;  ///< …of which the code-bias channel
+    long long n_mark_suppressed_by_scope_pb  = 0;  ///< …of which the phase-bias channel
+};
+
 } // namespace GnssProcessor

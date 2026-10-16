@@ -201,4 +201,14 @@ namespace GnssProcessor {
 
     // ---- End of the run-end reports ----
 
+    /// @brief Run-scope counters of MultiGnss, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct MultiGnssCounters {
+        /// The second-constellation telemetry (
+        /// docs/refound/GAL_gps_galileo_dual_2026-09-22.md): inter-system bias, clock
+        /// S-basis per constellation, the station-epochs that are not GPS-only, and the
+        /// anchor per constellation.  Measure-only; stays empty unless a constellation
+        /// other than GPS is active on the network path.
+        NetworkMultiGnssCounters mgnss;
+    };
+
 }  // namespace GnssProcessor

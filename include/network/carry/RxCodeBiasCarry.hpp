@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <map>
+#include <string>
+#include <utility>
 
 namespace GnssProcessor {
 
@@ -106,5 +109,35 @@ void networkRxCbDatumGaugeCensus(NetworkRun& run, const NetworkEpoch& ep);
 void networkHarvestRxCbCarry(NetworkRun& run, const NetworkEpoch& ep);
 
 // ---- End of the harvest half, declarations ----
+
+/// @brief Run-scope counters of RxCodeBiasCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RxCodeBiasCarryCounters {
+    long long n_rxcb_blk_harvested = 0;              ///< receiver code-bias entries stashed with a border regression and a harvest-block row
+    long long n_rxcb_blk_harvest_fail = 0;           ///< receiver code-bias columns whose coupling harvest failed (not stashed; the column is cold next epoch)
+    long long n_rxcb_blk_step_reset = 0;             ///< receiver code-bias entries erased at the harvest by the frame-invariant step test (10 sigma of the two harvested variances, the walk and a 0.5 m guard): the event response of invariant #1
+    long long n_rxcb_blk_no_block = 0;               ///< receiver code-bias entries stashed without a harvest-block row (cross terms to the station's other columns missing next epoch)
+    // rx-CB carry run counters (armed-only run-end line).
+    long long rx_cb_injected_total = 0, rx_cb_innov_skips_total = 0,
+              rx_cb_harvested_total = 0;
+    /// Per-station fold/withhold tally of the rx-CB carry (RS-9 rider, §21.18), kept on
+    /// every run where the carry is armed; trace-class, with byte-identical products.
+    /// It shows what the pooled "N folded, M withheld" line hides.  Keyed by station
+    /// name (the teardown has no station roster); value = {station-epochs with at least
+    /// one rx-CB carry decision, station-epochs in which every decision was a
+    /// withhold}.  A station whose second number is > 90 % of its first carried nothing
+    /// for the run, while the run-end line still counted it among the "N carried" (a
+    /// blind spot of the kind standing invariant #4 names, measured by the RS-7b
+    /// census).  §21.18(b) gives the cause:
+    /// the harvest overwrites a withheld entry unconditionally and the prune drops only
+    /// entries older than 900 s, so a refused station is refreshed and refused for the
+    /// whole run.  Written serially at the post-solve harvest from the produce phase's
+    /// per-station StationAssembly tallies, so it is race-free like the counters beside
+    /// it.
+    std::map<std::string, std::pair<long long, long long>> rx_cb_sta_tally;
+    // Zero-mean receiver code-bias prior rows folded over the run, one per
+    // station-epoch per constellation.  0 with the toggle armed is
+    // the standing invariant #4 reading: no receiver DCB column ever existed.
+    size_t n_rxcb_gauges = 0;
+};
 
 } // namespace GnssProcessor

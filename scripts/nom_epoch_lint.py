@@ -1543,26 +1543,54 @@ class Lint:
 # V12: the entity-table writers
 # ---------------------------------------------------------------------------------------------
 ENTITIES_CPP = "src/core/network/state/Entities.cpp"
-TABLE_OF_TYPE = {"ConstellationTable": "constellations", "SatelliteTable": "sats",
+ENTITIES_HPP = "include/network/state/Entities.hpp"
+TABLE_OF_TYPE = {"ConstellationTable": "constellations", "SatelliteTable": "sats", "SatTable": "sats",
                  "SatSignalTable": "sat_signals", "StationTable": "stations", "LosTable": "los",
-                 "ArcTable": "arcs", "NetworkEntities": "all"}
-TABLE_BIND = re.compile(r"(?m)^[ \t]*(?!const\b)(?:net::)?(\w+)[ \t]*&[ \t]*\w+[ \t]*=[ \t]*"
-                        r"(?:n?run\.)?ctx\.entities(?:\.(\w+))?[ \t]*;")
+                 "ArcTable": "arcs", "StationNames": "names", "NetworkEntities": "all"}
+TABLE_NAMES = ("constellations", "sats", "sat_signals", "stations", "los", "arcs", "names")
+TABLE_BIND = re.compile(r"(?m)^[ \t]*(?!const\b)(?:net::)?(\w+)[ \t]*&[ \t]*(\w+)[ \t]*=[ \t]*"
+                        r"(?:\w+\.)*ctx\.entities(?:\.(\w+))?[ \t]*;")
+WRITTEN_LIST = re.compile(r"//[ \t]*written:[ \t]*((?:(?:" + "|".join(TABLE_NAMES) + r")\b[ \t]*)+)")
+# The helpers of Entities.hpp that write a table.  The first group takes the whole set (it
+# resolves a name to an identity, which needs the roster) or a typed table, and writes the
+# table its name says; the second takes any table and writes the one its first argument names.
+WRITE_BY_NAME = {
+    "assignArc": "arcs", "assignArcAmb": "arcs", "assignArcAmbFlags": "arcs", "dropArc": "arcs",
+    "markArcAmb": "arcs", "putArc": "arcs", "putArcAmb": "arcs", "putArcIn": "arcs",
+    "assignLetterMap": "constellations", "mergeLetterMap": "constellations",
+    "assignLos": "los", "assignLosFlags": "los", "assignRelevelPend": "los", "dropLos": "los",
+    "putLos": "los",
+    "assignSat": "sats", "assignSatFlags": "sats", "dropSat": "sats", "markSat": "sats",
+    "putSat": "sats", "unmarkSat": "sats",
+    "assignSig": "sat_signals", "dropSig": "sat_signals", "emplaceSig": "sat_signals",
+    "putSig": "sat_signals",
+    "putAmbFlagEp": "stations",
+}
+WRITE_BY_ARG = ("put", "drop", "dropAll", "eraseIf", "mark", "unmark")
+# The other helpers that take a table or the whole set by non-const reference: they return a
+# pointer or walk the rows, and a write through what they return is not visible to the scan.
+READ_HELPERS = ("arcsFrom", "arcsOfStation", "byStationName", "first", "forEach", "forEachRow",
+                "get", "getArc", "getArcAmb", "getLos", "getSat", "getSig")
+WRITE_CALL = re.compile(r"(?<![\w:])(?P<ns>net::)?(?P<fn>" + "|".join(sorted(
+    list(WRITE_BY_NAME) + list(WRITE_BY_ARG), key=len, reverse=True)) +
+    r")\s*\(\s*(?P<arg>[A-Za-z_]\w*(?:(?:\.|->)\w+)*)")
+WRITE_DIRECT = re.compile(r"(?P<arg>(?:\w+\.)*ctx\.entities\.(?P<tbl>\w+))\s*"
+                          r"(?:\.(?:erase|clear|emplace|insert|try_emplace|emplace_hint|swap|merge|extract)\s*\(|\[)")
+UNBOUND_ARG = re.compile(r"(?:\w+\.)*ctx\.entities(?:\.(\w+))?$")
 
 
-def enclosing_function(text, pos):
-    """The name of the function whose body holds @p pos (namespace braces are transparent)."""
-    stack = []   # (open position, is_function, name)
-    i = 0
-    while i < pos:
-        c = text[i]
-        if c == "{":
+def function_spans(text):
+    """[(start, end, name)] of the outermost named function bodies of @p text (the function
+    enclosing_function would name), by one scan; namespace braces are transparent."""
+    spans, stack = [], []
+    for m in re.finditer(r"[{}]", text):
+        i = m.start()
+        if m.group() == "{":
             head = text[max(0, i - 4000):i]
-            m = re.search(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>]+\s*)?$", head)
             name = None
-            if m and not re.search(r"\b(if|for|while|switch|catch)\s*\([^;{}]*\)\s*$", head):
-                j = m.start()   # the closing parenthesis of the parameter list
-                d, k = 0, j
+            hm = re.search(r"\)\s*(?:const\s*)?(?:noexcept\s*)?(?:->\s*[\w:<>]+\s*)?$", head)
+            if hm and not re.search(r"\b(if|for|while|switch|catch)\s*\([^;{}]*\)\s*$", head):
+                k, d = hm.start(), 0
                 while k >= 0:
                     if head[k] == ")":
                         d += 1
@@ -1575,31 +1603,151 @@ def enclosing_function(text, pos):
                 if nm and nm.group(1) not in ("if", "for", "while", "switch", "catch", "return"):
                     name = nm.group(1)
             stack.append((i, name))
-        elif c == "}" and stack:
-            stack.pop()
-        i += 1
-    for _, name in stack:
-        if name is not None:
+        elif stack:
+            start, name = stack.pop()
+            if name is not None and not any(n is not None for _, n in stack):
+                spans.append((start, i, name))
+    spans.sort()
+    return spans
+
+
+def function_at(spans, pos):
+    """The name of the function whose body holds @p pos, or None."""
+    for start, end, name in spans:
+        if start <= pos <= end:
             return name
+        if start > pos:
+            break
     return None
 
 
-def entity_writer_bindings(tree):
-    """{(function, home): set of tables} over src/core: every non-const entity-table binding."""
-    got = collections.defaultdict(set)
+# Function templates (no table type to read off) that erase rows of the table they are given.
+TEMPLATE_TABLE_WRITERS = ("carryGapPrune",)
+
+
+def handoff_callees(tree):
+    """Names of the functions of src/core and include that take the whole entity set or a
+    table by non-const reference: a call passing it hands them write access.  Entities itself (its
+    lookups take the set to count failures) and the arc ledger (which holds the set it was
+    built over) are left out."""
+    names = set()
+    for path in list(tree.files("src/core")) + list(tree.files("include")):
+        if not path.endswith((".cpp", ".hpp")) or path in (ENTITIES_CPP, ENTITIES_HPP) or "ArcLedger" in path:
+            continue
+        raw = tree.read(path)
+        if raw is None or not any(typ in raw for typ in TABLE_OF_TYPE):
+            continue
+        text = strip_comments(raw)
+        for m in re.finditer(r"(?:net::)?(?:" + "|".join(TABLE_OF_TYPE) + r")\s*&\s*\w+", text):
+            if re.search(r"\bconst\s*$", text[max(0, m.start() - 8):m.start()]):
+                continue
+            depth, k = 0, m.start() - 1
+            while k >= 0 and depth >= 0 and text[k] not in ";{}":
+                depth += (text[k] == ")") - (text[k] == "(")
+                if depth < 0:
+                    break
+                k -= 1
+            if k >= 0 and depth < 0:
+                nm = re.search(r"([A-Za-z_]\w*)\s*$", text[:k])
+                if nm:
+                    names.add(nm.group(1))
+    return (names | set(TEMPLATE_TABLE_WRITERS)) - set(WRITE_BY_NAME) - set(WRITE_BY_ARG) - set(READ_HELPERS)
+
+
+def handoff_args(text, callees):
+    """[(callee, arg, start, end)] of every top-level argument of a call of a @p callees
+    function whose text is a single path (`ctx.entities`, `entities`, `run.ctx.entities`)."""
+    out = []
+    if not callees:
+        return out
+    for m in re.finditer(r"(?<![\w:.>])(?:net::)?(" + "|".join(sorted(callees)) + r")\s*\(", text):
+        depth, i, s = 1, m.end(), m.end()
+        while i < len(text) and depth > 0:
+            c = text[i]
+            if c in "([{":
+                depth += 1
+            elif c in ")]}":
+                depth -= 1
+            if (c == "," and depth == 1) or depth == 0:
+                seg = text[s:i]
+                a = seg.strip()
+                if re.fullmatch(r"[A-Za-z_]\w*(?:(?:\.|->)\w+)*", a):
+                    out.append((m.group(1), a, s + seg.index(a), s + seg.index(a) + len(a)))
+                s = i + 1
+            i += 1
+    return out
+
+
+def entity_file_scan(path, raw, callees=frozenset()):
+    """(bindings, sites) of one source file.  A binding is (function, var, kind, tables, line)
+    with kind "table" (one typed table) or "all" (the whole set; @c tables is the
+    `// written: <tables>` list on its line, or None); a site is (function, helper, arg, line)."""
+    text = strip_comments(raw)
+    spans = function_spans(text)
+    raw_lines = raw.split("\n")
+    line_of = lambda pos: text.count("\n", 0, pos)   # noqa: E731
+    bindings, sites = [], []
+    for m in TABLE_BIND.finditer(text):
+        typ, var, member = m.group(1), m.group(2), m.group(3)
+        table = member if member else TABLE_OF_TYPE.get(typ, "all" if typ == "auto" else "?")
+        ln = line_of(m.start())
+        wl = WRITTEN_LIST.search(raw_lines[ln]) if ln < len(raw_lines) else None
+        if table == "all":
+            tables = set(wl.group(1).split()) if wl else None
+            bindings.append((function_at(spans, m.start()), var, "all", tables, ln + 1))
+        else:
+            bindings.append((function_at(spans, m.start()), var, "table", {table}, ln + 1))
+    in_entities = path.endswith("state/Entities.cpp")
+    for m in WRITE_CALL.finditer(text):
+        if not m.group("ns") and not in_entities:
+            continue
+        sites.append((function_at(spans, m.start()), m.group("fn"), m.group("arg"), line_of(m.start()) + 1))
+    for m in WRITE_DIRECT.finditer(text):
+        sites.append((function_at(spans, m.start()), "direct:" + m.group("tbl"), m.group("arg"),
+                      line_of(m.start()) + 1))
+    for m in re.finditer(r"((?:\w+\.)*ctx\.entities\.names|\b\w+)\.assign\s*\(", text):
+        if m.group(1).endswith("ctx.entities.names") or any(b[1] == m.group(1) for b in bindings):
+            sites.append((function_at(spans, m.start()), "assignNames", m.group(1), line_of(m.start()) + 1))
+    for callee, arg, a, b in handoff_args(text, callees):
+        fn = function_at(spans, a)
+        if fn is not None and (UNBOUND_ARG.match(arg) or any(x[1] == arg for x in bindings)):
+            sites.append((fn, callee, arg, line_of(a) + 1))
+    return bindings, sites
+
+
+def entity_writer_scan(tree):
+    """({(function, home): set of tables}, [problems], [(home, function, helper, bound)]) over
+    src/core: the non-const bindings, the unbound write sites, and every bound write site."""
+    got, problems, written = collections.defaultdict(set), [], []
+    callees = handoff_callees(tree)
     for path in tree.files("src/core"):
         if not path.endswith(".cpp"):
             continue
         raw = tree.read(path)
-        if raw is None or "ctx.entities" not in raw:
+        if raw is None or "entities" not in raw:
             continue
-        text = strip_comments(raw)
-        for m in TABLE_BIND.finditer(text):
-            typ, member = m.group(1), m.group(2)
-            table = member if member else TABLE_OF_TYPE.get(typ, "all" if typ == "auto" else "?")
-            fn = enclosing_function(text, m.start())
-            got[(fn, path[len("src/core/"):])].add(table)
-    return got
+        home = path[len("src/core/"):]
+        bindings, sites = entity_file_scan(path, raw, callees)
+        by_fn = collections.defaultdict(dict)
+        for fn, var, kind, tables, ln in bindings:
+            got[(fn, home)] |= (tables if tables else {"all"})
+            by_fn[fn][var] = (kind, tables)
+        for fn, helper, arg, ln in sites:
+            if UNBOUND_ARG.match(arg):
+                problems.append(f"src/core/{home}:{ln}: {fn}: {helper}({arg}, ...) writes an entity table "
+                                "with no binding in the function (bind the table, non-const, in its opening block)")
+                written.append((home, fn, helper, "unbound"))
+                continue
+            parts = re.split(r"\.|->", arg)
+            bound = by_fn.get(fn, {}).get(parts[0])
+            if bound is not None and bound[0] == "all" and bound[1] is not None:
+                table = ("names" if helper == "assignNames" else WRITE_BY_NAME.get(helper)
+                         or (parts[1] if len(parts) > 1 else "?"))
+                if table not in bound[1]:
+                    problems.append(f"src/core/{home}:{ln}: {fn}: {helper}({arg}, ...) writes {table}, "
+                                    f"which the binding `{parts[0]}` does not list after `// written:`")
+            written.append((home, fn, helper, "binding" if bound is not None else "parameter"))
+    return got, problems, written
 
 
 def entity_writer_rows(tree):
@@ -1612,17 +1760,35 @@ def entity_writer_rows(tree):
     return {(s, h): set(t.split()) for s, h, t in re.findall(r'\{"(\w+)",\s*"([^"]+)",\s*"([^"]*)"\}', body)}
 
 
+def helper_class_problems(tree):
+    """Every Entities.hpp function that takes the whole set or a table by non-const reference
+    is classified above as a writer or a read helper, so a new writer cannot escape the scan."""
+    hpp = tree.read(ENTITIES_HPP)
+    if hpp is None:
+        return []
+    known = set(WRITE_BY_NAME) | set(WRITE_BY_ARG) | set(READ_HELPERS)
+    found = {m.group(1) for m in re.finditer(
+        r"(?m)^[A-Za-z_][^\n;{]*?\b(\w+)\(\s*(?:NetworkEntities|\w+Table|T)\s*&\s*\w+", strip_comments(hpp))}
+    return [f"{ENTITIES_HPP}: {n} takes a table by non-const reference and is not classified in the "
+            "lint's WRITE_BY_NAME / WRITE_BY_ARG / READ_HELPERS" for n in sorted(found - known)]
+
+
 def check_v12(tree):
-    """(problems, info): every non-const entity-table binding has its kEntityWriters row, and
-    every row is supported by such a binding."""
+    """(problems, info): every non-const entity-table binding has its kEntityWriters row, every
+    row is supported by such a binding, and every write site (a call of a writer helper of
+    Entities.hpp, a direct mutation of a table, the roster's assign) takes a binding of its own
+    function.  A whole-set binding may list the tables it writes (`// written: sats los`); the
+    row then names those tables, and a site writing another table fails.  Not visible: a write
+    through the pointer a read helper (get, forEach) returns, and a write through a table
+    passed in as a parameter (the caller's binding is the declaration)."""
     rows = entity_writer_rows(tree)
     if rows is None:
         return [f"{ENTITIES_CPP}: kEntityWriters is not defined"], ""
-    got = entity_writer_bindings(tree)
+    got, site_problems, written = entity_writer_scan(tree)
+    problems = helper_class_problems(tree) + site_problems
     # A row's home still names its file by the directory it had before the network files
     # moved under network/<concern>/; the function name and the file's basename are the identity.
     rows = {(k[0], k[1].rsplit("/", 1)[-1]): v for k, v in rows.items()}
-    problems = []
     for key, tables in sorted(got.items(), key=lambda kv: (kv[0][1], kv[0][0] or "")):
         want = rows.get((key[0], key[1].rsplit("/", 1)[-1]))
         if want is None:
@@ -1634,7 +1800,10 @@ def check_v12(tree):
     got_ids = {(k[0], k[1].rsplit("/", 1)[-1]) for k in got}
     for key in sorted(set(rows) - got_ids):
         problems.append(f"kEntityWriters row {key[0]} ({key[1]}): no non-const binding supports it")
-    return problems, f"{len(got)} functions bind entity tables for writing, {len(rows)} kEntityWriters rows"
+    n = collections.Counter(w[3] for w in written)
+    return problems, (f"{len(got)} functions bind entity tables for writing, {len(rows)} kEntityWriters rows; "
+                      f"{len(written)} write sites ({n['binding']} through a binding, "
+                      f"{n['parameter']} through a parameter, {n['unbound']} unbound)")
 
 
 def run(tree, out=print, partial=False, presolve_writer="outputs"):

@@ -663,12 +663,7 @@ void CouplingRowBuilder::appendCouplingRows() {
     const Eigen::Index add = static_cast<Eigen::Index>(crows.size());
     if (add > 0) {
         const Eigen::Index m0 = R.A_s.rows();
-        R.A_s.conservativeResize(m0 + add, Eigen::NoChange);
-        R.A_s.bottomRows(add).setZero();
-        R.A_r.conservativeResize(m0 + add, Eigen::NoChange);
-        R.A_r.bottomRows(add).setZero();
-        R.w.conservativeResize(m0 + add);
-        R.y.conservativeResize(m0 + add);
+        networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, add);
         R.cpl_row_start = m0;                       // within-epoch-RAIM refloat handle
         R.cpl_row_local_cols.resize(static_cast<size_t>(add));
         for (Eigen::Index k = 0; k < add; ++k) {
@@ -743,7 +738,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                     t.second += o.second;
                 }
             }
-            log->info("Network (Card 1f orphan attribution) tow {:.0f}: {} family-sum "
+            log->info("Network (coupling orphan attribution) tow {:.0f}: {} family-sum "
                       "orphan(s) this epoch — {} — truncated mass with no present "
                       "same-constellation recipient; the row stays gauge-dirty for that "
                       "family (no cross-constellation fallback by design).",
@@ -805,7 +800,7 @@ void foldAndDumpCouplingRows(bool carry_cpl_cond,
                         gsum[letterOfSat(d.sat)] += Rc.A_s(row, col);
                 std::string gs;
                 for (const auto& [cch, v] : gsum) gs += fmt::format("{}:{:+.3e} ", cch, v);
-                log->info("Network (Card 1d dbg): TOW {:.1f} sta {} cplrow {} local_col {}: "
+                log->info("Network (coupling-carry debug): TOW {:.1f} sta {} cplrow {} local_col {}: "
                           "w={:.9e} y={:.9e} A_s nnz={} max|A_s|={:.9e} data_rows_on_local={} "
                           "gauge_sums[{}]",
                           tow, i, r, lc, Rc.w(row), Rc.y(row), nnz,
@@ -846,7 +841,7 @@ static int networkCouplingCarryRunEnd(const NetworkRunEndView& v) {
     const auto& n_cpl_terms_shrunk = v.ctx.counters.n_cpl_terms_shrunk;
 
     if (carry_cpl_cond)
-        log->info("Network (Card 1/1d): coupling-carry volume — stashes: {} with a regression, "
+        log->info("Network: coupling-carry volume — stashes: {} with a regression, "
                   "{} EMPTY-regression (diagonal degrade), {} harvest failures; injected terms: "
                   "{} present, {} departed, {} kappa-shrunk (time-update {}).",
                   n_cpl_stash, n_cpl_stash_empty, n_cpl_harvest_fail,
@@ -877,14 +872,14 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
     // departed count moves for many reasons and cannot tell armed-and-working from
     // armed-and-inert.
     if (carry_cpl_cond && ctx.knobs.carry_cpl_reinit) {
-        log->info("Network (Card 1g): realization-step reinit sources — {} coupling term(s) "
+        log->info("Network: realization-step reinit sources — {} coupling term(s) "
                   "diverted to the departed route by the WIDENED (kind,sat,signal) probe "
                   "(terms the legacy sat-wide probe would have folded as PRESENT, in a "
                   "retired frame).", ctx.counters.n_cpl_reinit_diverted);
         if (ctx.counters.n_cpl_reinit_diverted == 0)
-            log->warn("Network (Card 1g): armed but diverted ZERO terms — no realization-step "
+            log->warn("Network: armed but diverted ZERO terms — no realization-step "
                       "mark ever coincided with a live coupling term on the same "
-                      "(kind,sat,signal).  The card is INERT for this run: either no "
+                      "(kind,sat,signal).  The diversion is INERT for this run: either no "
                       "re-reference occurred, or the feeds are miswired.  Check the "
                       "PBGAUGE / eq34 / datum-slip event counts before reading an A/B as "
                       "'no effect'.");
@@ -893,15 +888,15 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
     // truncated rows, so "0 held / 0 orphan" with departed terms > 0 is a miswire, not a
     // quiet run; the line distinguishes the two (invariant #4).
     if (carry_cpl_cond && ctx.knobs.carry_cpl_gauge) {
-        log->info("Network (Card 1f): coupling-row datum-gauge projection — {} "
+        log->info("Network (coupling gauge): coupling-row datum-gauge projection — {} "
                   "(constellation,kind) family sum(s) HELD at their harvest value against a "
                   "truncated column, {} ORPHANED (truncated mass with no present recipient — "
                   "those rows stayed gauge-dirty).",
                   ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan);
         if (ctx.counters.n_cpl_gauge_held == 0 && ctx.counters.n_cpl_gauge_orphan == 0
             && n_cpl_terms_departed > 0)
-            log->warn("Network (Card 1f): {} departed coupling term(s) were injected but the "
-                      "gauge projection held NOTHING — the card is armed and inert.  Expected "
+            log->warn("Network (coupling gauge): {} departed coupling term(s) were injected but the "
+                      "gauge projection held NOTHING — the gauge projection is armed and inert.  Expected "
                       "causes: every departed term was VtecSh or had an empty satellite id "
                       "(both excluded by design), or the rows never reached the restore.  "
                       "Investigate before reading an A/B as 'no effect'.",
@@ -921,10 +916,10 @@ static int networkCouplingProjectionRunEnd(const NetworkRunEndView& v) {
                                           fam_detail.empty() ? "" : ", ",
                                           fam.first, kind_s, o.first, o.second);
             }
-            log->warn("Network (Card 1f): {} family(ies) had truncated coefficient mass with NO "
+            log->warn("Network (coupling gauge): {} family(ies) had truncated coefficient mass with NO "
                       "present column to carry it — the whole family departed at once, so the "
                       "row cannot be made gauge-invariant this epoch and still observes the "
-                      "datum gauge.  This is the residue the card cannot remove; if it is a "
+                      "datum gauge.  This is the residue the gauge projection cannot remove; if it is a "
                       "large fraction of `held`, the carry is outliving its border.  "
                       "Attribution: [{}].",
                       ctx.counters.n_cpl_gauge_orphan, fam_detail);
@@ -959,9 +954,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // widen the reinit feed to the realization-step sources and honour it with κ off; requires carry_cpl_cond (enforced at load)
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     auto& prev_carry = ctx.carry.prev_carry;
-    const std::set<std::string> prev_clock_refloat_sats =
-        net::satSet(ctx.entities.sats, &net::SatelliteState::prev_clock_refloat);
-    net::NetworkEntities& entities = ctx.entities;   // tu_reinit: the satellite signals (N4d)
+    net::NetworkEntities& entities = ctx.entities;   // written: sat_signals (tu_reinit)
 
     // Coupling-row time update (network.carry_coupling_time_update): record
     // the (kind, sat) shared keys whose carried state folds this epoch with the loose
@@ -998,7 +991,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         for (const CarryPrior& cp : prev_carry)
             if (cp.inflate_q)
                 net::putSig(entities, cp.sat, "", &net::SatSignalState::tu_reinit)[cp.kind] = pl_now_s;
-        for (const std::string& sat : prev_clock_refloat_sats) {
+        for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::prev_clock_refloat)) {
             net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::Clock] = pl_now_s;
             if (!(clk_mon_reinit_sig > 0.0)) {
                 net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
@@ -1019,6 +1012,88 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         // wildcard.
         for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::datum_reref_pb))
             net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;
+    }
+}
+
+void networkLocalBlockTally(NetworkRunContext& ctx,
+                           const std::vector<StationAssembly>& asm_res) {
+    const bool   pl_local_block = ctx.knobs.pl_local_block; // station-wide jointly whitened local block at inject (F3); off = byte-identical
+    // Block telemetry (F3, network.phase_leveling_local_block): keyed on the knob, not the
+    // live predicate, so an armed but inert posture still prints its zeros at run end
+    // (invariant #4).
+    if (pl_local_block)
+        for (const StationAssembly& Rc : asm_res) {
+            ctx.counters.n_pl_blk_blocks       += Rc.pl_blk_blocks;
+            ctx.counters.n_pl_blk_rows         += Rc.pl_blk_rows;
+            ctx.counters.n_pl_blk_marg_cols    += Rc.pl_blk_marg_cols;
+            ctx.counters.n_pl_blk_pair_missing += Rc.pl_blk_pair_missing;
+            ctx.counters.n_pl_blk_col_refused  += Rc.pl_blk_col_refused;
+            ctx.counters.n_pl_blk_fallback     += Rc.pl_blk_fallback;
+            // B9-in-block: same discipline (counted in the parallel produce, reduced here).
+            ctx.counters.n_pl_blk_zwd_cols          += Rc.pl_blk_zwd_cols;
+            ctx.counters.n_pl_blk_zwd_fallback_diag += Rc.pl_blk_zwd_fallback_diag;
+            ctx.counters.n_pl_blk_zwd_missing_cross += Rc.pl_blk_zwd_missing_cross;
+            // I-in-block: same discipline (counted in the parallel produce, reduced here).
+            ctx.counters.n_pl_blk_iono_cols          += Rc.pl_blk_iono_cols;
+            ctx.counters.n_pl_blk_iono_not_folded    += Rc.pl_blk_iono_not_folded;
+            ctx.counters.n_pl_blk_iono_missing_cross += Rc.pl_blk_iono_missing_cross;
+            ctx.counters.n_iono_blk_gap_drop         += Rc.pl_blk_iono_gap_drop;
+            // RX-CLK-in-block: same discipline (counted in the parallel produce,
+            // reduced here).  n_rxclk_carry_refused is not folded here: the jump
+            // response fires at the serial harvest, where the one-step prediction
+            // innovation exists.
+            ctx.counters.n_pl_blk_rxclk_cols          += Rc.pl_blk_rxclk_cols;
+            ctx.counters.n_pl_blk_rxclk_isb_cols      += Rc.pl_blk_rxclk_isb_cols;
+            ctx.counters.n_pl_blk_rxclk_not_folded    += Rc.pl_blk_rxclk_not_folded;
+            ctx.counters.n_pl_blk_rxclk_missing_cross += Rc.pl_blk_rxclk_missing_cross;
+            ctx.counters.n_pl_blk_rxcb_cols           += Rc.pl_blk_rxcb_cols;
+            ctx.counters.n_pl_blk_rxcb_not_folded     += Rc.pl_blk_rxcb_not_folded;
+            ctx.counters.n_pl_blk_rxcb_missing_cross  += Rc.pl_blk_rxcb_missing_cross;
+            ctx.counters.n_rxcb_blk_restored_skip     += Rc.pl_rxcb_restored_skip;
+            ctx.counters.n_rxclk_carry_gap_drop       += Rc.pl_blk_rxclk_gap_drop;
+            for (int b = 0; b < 5; ++b)
+                ctx.counters.n_pl_blk_hist[b] += Rc.pl_blk_hist[b];
+            if (Rc.pl_blk_max_dim > ctx.counters.n_pl_blk_max_dim)
+                ctx.counters.n_pl_blk_max_dim = Rc.pl_blk_max_dim;
+        }
+}
+
+void networkCouplingTermTally(NetworkRunContext& ctx, const NetworkEstimator& est,
+                              const std::vector<StationAssembly>& asm_res,
+                              const std::vector<std::string>& registered_clock_sats,
+                              const std::set<std::string>& shared_phase_keys,
+                              const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
+                              const SyncedEpoch& se,
+                              const std::shared_ptr<spdlog::logger>& log) {
+    const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
+    auto& n_cpl_terms_present = ctx.counters.n_cpl_terms_present;
+    auto& n_cpl_terms_departed = ctx.counters.n_cpl_terms_departed;
+    auto& n_cpl_terms_shrunk = ctx.counters.n_cpl_terms_shrunk;
+    auto& n_cpl_row_dump = ctx.counters.n_cpl_row_dump;
+
+    // Coupling observability, serial and post-produce: fold the per-station coupling-term
+    // counts into the run totals, plus the one-shot debug dump of the first few assembled
+    // coupling rows (see network/carry/Coupling.hpp).
+    // Latch the first warm epoch's present/departed split across this fold (§18.12).
+    // A restore that reads its rows and then marginalizes most of their terms has
+    // softened the rows (σ² += Sum M²·P_prev), rung 3's mechanism by another route,
+    // and must be read as a failure even though every "restored" counter looks
+    // normal.  Both names are run-total aliases into ctx.counters (see the alias block
+    // at the top of this function), so the seam value is a difference bracketing this
+    // one call, not anything the call returns.
+    const long long cpl_p0 = n_cpl_terms_present, cpl_d0 = n_cpl_terms_departed;
+    foldAndDumpCouplingRows(carry_cpl_cond, asm_res, est,
+                            registered_clock_sats, shared_phase_keys, registered_code_keys,
+                            se.time.tow, log,
+                            n_cpl_terms_present, n_cpl_terms_departed, n_cpl_terms_shrunk,
+                            ctx.counters.n_cpl_gauge_held, ctx.counters.n_cpl_gauge_orphan,
+                            ctx.counters.n_cpl_reinit_diverted,
+                            ctx.counters.n_cpl_readmit_diverted,
+                            n_cpl_row_dump,
+                            &ctx.counters.cpl_orphan_fam_total);
+    if (ctx.carry.resume.cpl_census && carry_cpl_cond) {
+        ctx.counters.n_resume_cpl_seam_present  = n_cpl_terms_present  - cpl_p0;
+        ctx.counters.n_resume_cpl_seam_departed = n_cpl_terms_departed - cpl_d0;
     }
 }
 
@@ -1046,21 +1121,6 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
     std::vector<LocalBlockCol>& rxcb_bc = carry.rxcb_bc;
     std::vector<char>& rxcb_ifb = carry.rxcb_ifb;
     std::vector<LocalBlockCol>& pc_bc = carry.pc_bc;
-    const auto pl_finish_var = [&](double var_eff, const std::string& sat) {
-        return networkAmbCarryFinishVar(carry, var_eff, sat);
-    };
-    const auto amb_state_note = [&](const std::string& sat,
-                                    const std::string& signal,
-                                    double var_eff, AmbFoldRoute route) {
-        networkAmbStateNote(carry, sat, signal, var_eff, route);
-    };
-    const auto pl_emit_row = [&](Eigen::Index col, int amb_idx,
-                                 const LocalCarry& lc, double var_eff,
-                                 double gap_clamped,
-                                 const std::string& sat = {},
-                                 const std::string& signal = {}) {
-        networkAmbCarryEmitRow(carry, col, amb_idx, lc, var_eff, gap_clamped, sat, signal);
-    };
     // The alias lines of networkPassB_ this function reads, verbatim.
     const double pl_max_gap_s  = ctx.knobs.pl_max_gap_s;
     // Record, per folded ambiguity column, the variance the fold actually used and the
@@ -1131,7 +1191,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             for (const PlPend& p : pl_pend) {
                 bc.push_back(LocalBlockCol{
                     p.col, x_lin(p.amb_idx), p.lc,
-                    pl_finish_var(p.var_eff, p.sat), p.gap,
+                    networkAmbCarryFinishVar(carry, p.var_eff, p.sat), p.gap,
                     vce_apply.factor(NetworkCarryVceApply::kPl, p.sat),
                     /*is_zwd=*/false, /*is_iono=*/false});
                 // The column's identity, for its block row's tag.
@@ -1163,7 +1223,7 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             // behaviour is not duplicated: the diagonal route below is skipped
             // for exactly the station-epochs this pushes).  Two deliberate
             // differences from an ambiguity column:
-            //   * No pl_finish_var tail: the var floor and the M2 VCE factor
+            //   * No networkAmbCarryFinishVar tail: the var floor and the M2 VCE factor
             //     are keyed to the phase-leveling ambiguity family (α² is a
             //     per-satellite lookup), so the block's ZWD diagonal is the
             //     same zvar_eff the B9 row would have used; vce_fac 1.0 leaves
@@ -1214,29 +1274,18 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             // every local-local overlap is subtracted by the harvested cross
             // terms rather than asserted twice.  Push order does not matter to
             // the algebra (Σ is symmetric and the pairing is by harvest-block
-            // pointer, not by position); it is fixed only so pl_iono_blk_cols
-            // is deterministic for the RAIM census.
-            for (const LocalBlockCol& ic : iono_bc) {
-                bc.push_back(ic);
-                R.pl_iono_blk_cols.push_back(ic.col);
-            }
+            // pointer, not by position).
+            for (const LocalBlockCol& ic : iono_bc) bc.push_back(ic);
             // RX-CLK-in-block: the station's receiver-clock family as the last
             // columns of this same block, so the whole station (ambiguities,
             // ZWD, iono, clock) folds through one Cholesky and every
             // local-local overlap is subtracted by the harvested cross terms
             // rather than asserted twice.  Push order does not matter to the
             // algebra (Σ is symmetric and the pairing is by harvest-block
-            // pointer, not by position); it is fixed only so
-            // pl_rxclk_blk_cols is deterministic for the RAIM census.
-            for (const LocalBlockCol& rc : rxclk_bc) {
-                bc.push_back(rc);
-                R.pl_rxclk_blk_cols.push_back(rc.col);
-            }
+            // pointer, not by position).
+            for (const LocalBlockCol& rc : rxclk_bc) bc.push_back(rc);
             // RXCB-IN-BLOCK: the receiver code-bias columns last.
-            for (const LocalBlockCol& cc : rxcb_bc) {
-                bc.push_back(cc);
-                R.pl_rxcb_blk_cols.push_back(cc.col);
-            }
+            for (const LocalBlockCol& cc : rxcb_bc) bc.push_back(cc);
             // The phase-colour columns last.
             for (const LocalBlockCol& pc : pc_bc) bc.push_back(pc);
             blk_done = bc.empty() ? true : cb.buildLocalBlock(bc);
@@ -1251,37 +1300,32 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
                     static_cast<long long>(bc.size());
             }
             // The block route's fold record (RF-1 §7.4), only on success: a
-            // fallback re-emits every pending column through pl_emit_row
+            // fallback re-emits every pending column through networkAmbCarryEmitRow
             // below, which records the route it actually took.  That
             // distinction is design risk #3 (a non-SPD factor changing the
             // vehicle on one station-epoch without notice), made visible per
             // arc instead of only as a run total.
             if (amb_state_tr && blk_done)
                 for (const PlPend& p : pl_pend)
-                    amb_state_note(p.sat, p.signal,
-                                   pl_finish_var(p.var_eff, p.sat),
-                                   AmbFoldRoute::Block);
+                    networkAmbStateNote(carry, p.sat, p.signal,
+                                        networkAmbCarryFinishVar(carry, p.var_eff, p.sat),
+                                        AmbFoldRoute::Block);
             // I-in-block degrade edge (invariant #4/#7): a non-SPD block means
             // the iono carries did not act this station-epoch.  Unlike the ZWD
             // there is no diagonal row to fall back to, by design, so this is a
             // real "carried nothing", not "carried it the old way" (the counter
-            // name says so), and pl_iono_blk_cols is cleared because no
-            // whitened iono row exists for the RAIM census to recognise.
+            // name says so).
             if (!blk_done && !iono_bc.empty()) {
                 R.pl_blk_iono_not_folded +=
                     static_cast<long long>(iono_bc.size());
-                R.pl_iono_blk_cols.clear();
             }
             // RX-CLK-in-block degrade edge (invariant #4/#7), read the same
             // way: a non-SPD block means the clock carries did not act this
             // station-epoch.  There is no diagonal row to fall back to, by
-            // design, so this is a real "carried nothing", and
-            // pl_rxclk_blk_cols is cleared because no whitened clock row
-            // exists for the RAIM census to recognise.
+            // design, so this is a real "carried nothing".
             if (!blk_done && !rxclk_bc.empty()) {
                 R.pl_blk_rxclk_not_folded +=
                     static_cast<long long>(rxclk_bc.size());
-                R.pl_rxclk_blk_cols.clear();
             }
             // RXCB-IN-BLOCK degrade edge (invariant #4/#7): no diagonal row to
             // fall back to, by design, so a non-SPD block means the receiver
@@ -1289,7 +1333,6 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             if (!blk_done && !rxcb_bc.empty()) {
                 R.pl_blk_rxcb_not_folded +=
                     static_cast<long long>(rxcb_bc.size());
-                R.pl_rxcb_blk_cols.clear();
             } else if (blk_done) {
                 R.pl_cb_injected += static_cast<int>(rxcb_bc.size());
                 // The receiver IFB columns that became rows of this
@@ -1340,9 +1383,9 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             // The F3 fallback: the plain per-column route, tail and build in
             // the original visiting order.
             for (const PlPend& p : pl_pend) {
-                const double var_eff = pl_finish_var(p.var_eff, p.sat);
-                pl_emit_row(p.col, p.amb_idx, *p.lc, var_eff, p.gap,
-                            p.sat, p.signal);
+                const double var_eff = networkAmbCarryFinishVar(carry, p.var_eff, p.sat);
+                networkAmbCarryEmitRow(carry, p.col, p.amb_idx, *p.lc, var_eff, p.gap,
+                                       p.sat, p.signal);
             }
         }
     }

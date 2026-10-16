@@ -79,4 +79,21 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
  */
 int networkRxClockCarryRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of RxClockCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RxClockCarryCounters {
+    long long n_rxclk_carry_refused = 0;             ///< clock carries erased by the jump gate (network.carry_rx_clock_jump_k) at harvest: |one-step prediction innovation| > k*sigma means the receiver (or the solve) stepped, so both the bias and the drift are dropped and re-born cold.  The wired response of invariant #1 for a quantity that has no other jump detector on the network path.
+    long long n_rxclk_carry_gap_drop = 0;            ///< clock-family carries dropped at the harvest prune for exceeding carry_rx_clock_max_gap_s without a sighting (the absent-station edge)
+    // --- The jump gate's own scale, so a leg can say what it would have caught ---
+    // The gate is |innovation| > k*sqrt(var_pred), and var_pred is per station-epoch
+    // (harvested variance + drift extrapolation + q), so "the gate" is a distribution,
+    // not a constant.  Without this census a report can quote only k; with it, it can
+    // quote the metres an event has to exceed.  Armed-only (the whole rx-clock harvest
+    // block is inside `if (rxclk_blk_on)`), so an off run moves none of it.
+    long long n_rxclk_gate_tests = 0;                ///< station-epochs the jump gate tested (primary clock only; an ISB has no rate)
+    double    sum_rxclk_gate_m = 0.0;                ///< Σ k*sqrt(var_pred) over those tests, metres
+    double    min_rxclk_gate_m = 0.0;                ///< smallest k*sqrt(var_pred) seen (0 = never tested)
+    double    max_rxclk_gate_m = 0.0;                ///< largest  k*sqrt(var_pred) seen (0 = never tested)
+    double    max_rxclk_innov_m = 0.0;               ///< largest |innovation| seen, metres: the largest step the gate saw
+};
+
 } // namespace GnssProcessor

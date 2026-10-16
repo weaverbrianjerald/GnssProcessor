@@ -328,4 +328,11 @@ int networkCarrySitesRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of CarrySites, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CarrySitesCounters {
+    // The carried references each mechanism moved, per site, through
+    // forEachCarriedReference (filter/NetworkCarrySites), and the mechanism's calls.
+    CarryMovedTally prm_ref_moved{};
+};
+
 }  // namespace GnssProcessor

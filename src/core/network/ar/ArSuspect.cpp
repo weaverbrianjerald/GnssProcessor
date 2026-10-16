@@ -308,7 +308,7 @@ int networkArSuspectRunEnd(const NetworkRunEndView& v) {
     long long n_stamps = 0;
     for (long long n : C.stamps) n_stamps += n;
 
-    v.log->info("Network (producer AR suspect-corner mask, card ARL): window {} search(es).  "
+    v.log->info("Network (producer AR suspect-corner mask): window {} search(es).  "
                 "Decoupling edge: {} suspect event(s) (distinct corner and stamp), {} of them "
                 "met a search while suspect; {} stamp(s) by cause [{}] (one event can carry "
                 "several causes).  {} search epoch(s), {} of them masked something; {} of {} "
@@ -322,7 +322,7 @@ int networkArSuspectRunEnd(const NetworkRunEndView& v) {
                                : 0.0,
                 arSuspectCauseSummary(C.dd_masked_by), C.max_dd_masked, C.max_dd_masked_tow,
                 C.corners, arSuspectCauseSummary(C.corners_by));
-    v.log->info("Network (producer AR suspect-corner mask, card ARL): release edge "
+    v.log->info("Network (producer AR suspect-corner mask): release edge "
                 "(time-only, nothing re-validated): {} corner(s) released on {} search "
                 "epoch(s); {} DD(s) back in the search, {} of them given an integer at that "
                 "first search; {} L1/L2 pair(s) back, {} with both singles fixed and {} with "
@@ -332,20 +332,20 @@ int networkArSuspectRunEnd(const NetworkRunEndView& v) {
                 C.pairs_reentered, C.pairs_reentered_singles, C.pairs_reentered_wl_only,
                 v.ctx.carry.ar_suspect.masking.size());
     if (C.epochs == 0)
-        v.log->warn("Network (producer AR suspect-corner mask, card ARL): ARMED, but the "
+        v.log->warn("Network (producer AR suspect-corner mask): ARMED, but the "
                     "search ran on ZERO epochs, so the mask never met a search (standing "
                     "invariant 4).");
     else if (n_stamps == 0)
-        v.log->info("Network (producer AR suspect-corner mask, card ARL): no corner was "
+        v.log->info("Network (producer AR suspect-corner mask): no corner was "
                     "stamped all run: either a clean run or no slip source wrote to the "
                     "ledger (the free-epoch latch needs cycle_slip.relevel_free_epoch).");
     if (C.stamps[static_cast<std::size_t>(causeIndex(kArSuspectRelevel))] > 0)
-        v.log->warn("Network (producer AR suspect-corner mask, card ARL): {} re-level "
+        v.log->warn("Network (producer AR suspect-corner mask): {} re-level "
                     "stamp(s) that no drop and no free-epoch latch explains: a writer of "
                     "LocalCarry::relevel_s the ledger does not know (filter/ArSuspect.hpp).",
                     C.stamps[static_cast<std::size_t>(causeIndex(kArSuspectRelevel))]);
     if (C.dd_reentered_fixed > 0 || C.pairs_reentered_wl_only > 0)
-        v.log->info("Network (producer AR suspect-corner mask, card ARL): the release is "
+        v.log->info("Network (producer AR suspect-corner mask): the release is "
                     "time-only, so the {} integer(s) and {} wide lane(s) given at re-entry "
                     "were not re-validated; the mask is field-blocking as the guard of a "
                     "solve-affecting search.",

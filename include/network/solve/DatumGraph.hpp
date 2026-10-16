@@ -527,4 +527,15 @@ int networkDatumGraphRunEnd(const NetworkRunEndView& v);
 void networkDatumGraphSpectralHandoff(NetworkRunContext& ctx, const NetworkSbasis::GaugeCompletion& sbc,
                                       const NetworkSbasis::Plan& plan);
 
+/// @brief Run-scope counters of DatumGraph, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct DatumGraphCounters {
+
+    /// Run tallies of the datum graph census.  Standing invariant #4, with a twist
+    /// specific to this census: the expected reading of tier 1 on a sound global roster
+    /// is k = 1 everywhere with zero predictions, which is byte for byte what a seam
+    /// that never ran produces; only `epochs` against `epochs_quiet` tells the two
+    /// apart, and the teardown line prints both.
+    NetworkDatumGraphTallies dg;
+};
+
 } // namespace GnssProcessor

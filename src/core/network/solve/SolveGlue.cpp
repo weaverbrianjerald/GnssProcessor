@@ -244,7 +244,7 @@ EpochAction networkPrimarySolve(NetworkRun& run, const NetworkEpoch& ep, const S
         // precision loss.  Budgeted by n_cpl_solve_dump; log only.
         if (carry_cpl_cond && n_cpl_solve_dump > 0) {
             --n_cpl_solve_dump;
-            log->info("Network (Card 1d dbg): solve checksum TOW {:.1f}: sum={:.17e} "
+            log->info("Network (coupling-carry debug): solve checksum TOW {:.1f}: sum={:.17e} "
                       "norm={:.17e} n={}", se.time.tow, x_s.sum(), x_s.norm(), x_s.size());
         }
     } catch (const std::exception& ex) {

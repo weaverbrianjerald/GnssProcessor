@@ -9,6 +9,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 RUNS = ROOT + '/runs'
 
 
+# run-end lines of the coupling time update: tagged "card CTU" before the declared text move, plain names after
+CTU_LINE = re.compile(r'Network \((?:card CTU[^)]*|level monitor|level innovation|exact coupling time update'
+                      r'|drop decouple|clock level restore)\)')
+
+
 def grade(d):
     if not os.path.isdir(d):
         d = os.path.join(RUNS, d if d.startswith('_') else '_rap_' + d)
@@ -16,7 +21,7 @@ def grade(d):
     raim_ep = raim_amb = 0
     ctu = []
     for ln in open(os.path.join(d, 'stdout.txt'), encoding='utf-8', errors='replace'):
-        m = re.search(r'Card Q3 / guarded temporal clock anchor\): (\d+) epoch\(s\); (\d+) clock carry '
+        m = re.search(r'(?:Card Q3 / )?guarded temporal clock anchor\): (\d+) epoch\(s\); (\d+) clock carry '
                       r'fold\(s\) . (\d+) ANCHORED.*?, (\d+) LOOSE, (\d+) at the variance floor\.\s+Trips (\d+)', ln)
         if m:
             ep, folds, anch, loose, floor, trips = map(int, m.groups())
@@ -29,8 +34,9 @@ def grade(d):
                       r'the observability gate, (\d+) by the A4', ln)
         if m:
             out.update(emitted=int(m.group(1)), skipped=int(m.group(2)), gate_wh=int(m.group(3)))
-        if 'card CTU' in ln and 'main_log' in ln:
-            ctu.append(ln[ln.index('Network (card CTU'):].strip())
+        m = CTU_LINE.search(ln)
+        if m and 'main_log' in ln:
+            ctu.append(ln[m.start():].strip())
     out.update(raim_ep=raim_ep, raim_amb=raim_amb)
     return out, ctu
 

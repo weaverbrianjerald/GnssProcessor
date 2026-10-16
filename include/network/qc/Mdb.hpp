@@ -480,4 +480,18 @@ int networkMdbRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of Mdb, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct MdbCounters {
+
+    /// Baarda reliability / MDB tallies.  Every field is documented on the struct;
+    /// reported by @c networkMdbRunEnd, which lives next to the aggregation that
+    /// produced the numbers so the counters and the sentences interpreting them cannot
+    /// drift apart.
+    NetworkMdbTallies mdb;
+
+    // Baarda MDB: the event-holdoff clock and the join warn latch.
+    long long mdb_seq = 0;                 ///< flush passes: the per-cell event-holdoff clock.
+    bool      mdb_join_warned = false;     ///< one-shot: the uncheckable join disagreed with the census.
+};
+
 }  // namespace GnssProcessor

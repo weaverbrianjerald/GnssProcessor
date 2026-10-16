@@ -385,7 +385,7 @@ Eigen::VectorXd NetworkEstimator::solve(const Datum& datum) {
     if (!dd_priors_.empty()) {
         if (!phase_sumzero_gauges_.empty()) {
             throw std::logic_error(
-                "NetworkEstimator::solve: the Card-4 DD priors and the sum-to-zero "
+                "NetworkEstimator::solve: the invariant-carry DD priors and the sum-to-zero "
                 "phase-bias ensemble gauge are mutually exclusive (both are post-reduce "
                 "Woodbury folds on the same local block; composing them is inexact). Under "
                 "carry_invariant the ensemble datum is superseded — realize the phase datum "
@@ -488,7 +488,7 @@ NetworkEstimator::HeldSolve NetworkEstimator::solveHeldDetached(
     }
     if (neq_.numDdPriorBlocks() > 0 || neq_.numSumZeroGauges() > 0) {
         throw std::logic_error(
-            "NetworkEstimator::solveHeldDetached: the float solve folded Card-4 DD priors or "
+            "NetworkEstimator::solveHeldDetached: the float solve folded invariant-carry DD priors or "
             "sum-to-zero phase gauges; the detached fold reads the unfolded station factors "
             "and composing the two is inexact (the fixed-cycle loader refuses both)");
     }
@@ -1689,7 +1689,7 @@ int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v) {
             log->warn("Network (carry-aware covariance): ARMED but ZERO readback calls "
                       "reached the correction — no consumer asked, or every epoch was "
                       "chordless.  The wiring never executed (invariant #4); nothing "
-                      "in this run is evidence about the card.");
+                      "in this run is evidence about the carry-aware covariance.");
         else if (cc.ratio_n > 0 && cc.ratio_min >= 1.0)
             log->warn("Network (carry-aware covariance): ARMED and the correction moved "
                       "NOTHING (min ratio {:.6g} >= 1).  The carry can only ADD "
@@ -1704,7 +1704,7 @@ int networkCarryAwareCovarianceRunEnd(const NetworkRunEndView& v) {
                       "is touched by two blocks — and a block is one connected "
                       "component of ONE (const,signal) group.  This counter is the "
                       "first measurement anywhere of that cross-block approximation "
-                      "error.  It is a result about the SOLVE; open it its own card.",
+                      "error.  It is a result about the SOLVE; open it its own change.",
                       cc.nonpos_rows);
     } else {
         log->info("Network (carry-aware covariance): OFF — dd_sigma_cyc and the AR "

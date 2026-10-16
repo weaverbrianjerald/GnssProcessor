@@ -23,6 +23,12 @@ Each check runs its negative control first; a control that passes is itself a fa
   E4b The entity-table writers: the lint's check V12 finds every non-const entity-table
       binding under src/core in net::kEntityWriters and every row backed by a binding; its
       control adds an unlisted binding.
+  E4c Every write site has its binding (V12 is strict): no call of a writer helper of
+      Entities.hpp, direct mutation of a table, roster assign or hand-over of the set or a
+      table to a writing callee names `ctx.entities` instead of a binding of its function,
+      and no write goes to a table that a whole-set binding leaves out of its `// written:`
+      list.  The controls add an unbound write, an unbound hand-over and a write outside a
+      list, and a new writer helper that the lint does not classify.
   E5  scripts/nom_n4_verify.py --whole passes (G1 for the whole struct).
 """
 import argparse
@@ -317,7 +323,29 @@ def main():
         '    // ---- End of the bindings ----\n',
         '    net::LosTable& los_extra = ctx.entities.los;\n    // ---- End of the bindings ----\n', 1))))
     f12, i12 = lint.check_v12(LintTree(tree))
-    report('E4b entity-table writers (V12, the kEntityWriters table)', f12, c12, i12)
+    site_msgs = ('no binding in the function', 'does not list', 'not classified')
+    is_site = lambda p: any(m in p for m in site_msgs)   # noqa: E731
+    report('E4b entity-table writers (V12, the kEntityWriters table)',
+           [p for p in f12 if not is_site(p)], c12, i12)
+    marker = '    // ---- End of the bindings ----\n'
+
+    def v12_of(path, fn):
+        return [p for p in lint.check_v12(LintTree(mutated(tree, path, fn)))[0] if is_site(p)]
+
+    controls = [
+        ('unbound write', v12_of(sp, lambda s: s.replace(
+            marker, marker + '    net::dropAll(ctx.entities.sats, &net::SatelliteState::gl2_since);\n', 1))),
+        ('unbound hand-over of the set', v12_of(sp, lambda s: s.replace(
+            marker, marker + '    eq34ShiftCarry(ctx.carry, ctx.entities);\n', 1))),
+        ('write outside a written list', v12_of('src/core/network/qc/ClockQc.cpp', lambda s: s.replace(
+            '// written: sats', '// written: los', 1))),
+        ('writer helper the lint does not classify', v12_of('include/network/state/Entities.hpp', lambda s: s.replace(
+            'extern const std::vector<EntityWriterRow> kEntityWriters;',
+            'extern const std::vector<EntityWriterRow> kEntityWriters;\nvoid putNewThing(NetworkEntities& e, int x);', 1))),
+    ]
+    for name, ctl in controls:
+        report('E4c every write has its binding, control: ' + name,
+               [p for p in f12 if is_site(p)], ctl, i12.split('; ')[-1] if name == controls[0][0] else '')
     r = subprocess.run([sys.executable, os.path.join(HERE, 'nom_n4_verify.py'), '--whole'],
                        capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT)
     whole = r.returncode == 0 and 'control G1: FAILS as it must' in r.stdout

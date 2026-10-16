@@ -80,6 +80,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
     int& n_arc_refloat_epoch = handoff.n_arc_refloat_epoch;  // written
     NetworkPriorResidual& prires = run.engines.prires;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs los stations
     // --- Alias preamble: byte-copies of the former Application::runNetwork alias
     //     block, so the relocated SB_RAIM body below reads the original names. ---
     const bool   raim_on       = ctx.knobs.raim_on;            // post-fit network RAIM (Increment 3, T2)
@@ -737,7 +738,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     next_arc_streak[akey] = streak;    // still building → carry forward
             }
             if (raim_arc_persist > 1)
-                net::assignLos(ctx.entities, &net::LosState::arc_spike_streak, next_arc_streak);
+                net::assignLos(entities, &net::LosState::arc_spike_streak, next_arc_streak);
             n_arc_refloat_epoch += static_cast<int>(bad_arcs.size());  // heartbeat churn metric (T2d)
         }
 
@@ -860,7 +861,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             // 4).  The stamp is set here, at the flag, not at the
                             // response: the two are different edges.
                             if (ctx.knobs.pd_held_basis)
-                                net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
+                                net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
                                     static_cast<long long>(ctx.counters.n_loop_epochs);
                             // The producer AR search's suspect-corner mask: a
                             // T4 drop or erase stamps the corner.  This site runs after the
@@ -928,7 +929,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                                 ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                                   stations[i].name, pa.sat, pa.signal,
                                                   (*lane_lit), "t4_attrib");
-                                net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                                net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
                                 prmRespond(ctx.counters.prm_resp,
                                            ResponseSite::AmbRaimErase);
                                 }
@@ -944,7 +945,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // with it.  Erasing here makes the LOS re-draw both from data (its
                         // next harvest re-creates the entry with a fresh birth_s).
                         if (ctx.knobs.iono_blk &&
-                            net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::iono_blk)) {
+                            net::dropLos(entities.los, i, pa.sat, &net::LosState::iono_blk)) {
                             ++ctx.counters.n_iono_blk_erased_t4;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::IonoRaimErase);
@@ -954,7 +955,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // no longer trusted cannot vouch for it either; it re-starts from
                         // its birth prior next epoch.
                         if (ctx.knobs.pc_on
-                            && net::dropLos(ctx.entities.los, i, pa.sat, &net::LosState::pc)) {
+                            && net::dropLos(entities.los, i, pa.sat, &net::LosState::pc)) {
                             ++ctx.counters.n_pc_erase_raim;
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::PcRaimErase);
@@ -1088,7 +1089,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                     {
                         // Flag stamp (RF-2 items 3 and 4); see the attribution site.
                         if (ctx.knobs.pd_held_basis)
-                            net::putAmbFlagEp(ctx.entities, static_cast<int>(i), pa.amb_key) =
+                            net::putAmbFlagEp(entities, static_cast<int>(i), pa.amb_key) =
                                 static_cast<long long>(ctx.counters.n_loop_epochs);
                         // Suspect-corner stamp, the next epoch's; see the
                         // attribution site.
@@ -1137,7 +1138,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                             ambStateNoteErase(ctx, se.time.week, se.time.tow,
                                               stations[i].name, pa.sat, pa.signal,
                                               (*lane_lit), "t3_consensus");
-                            net::dropArc(ctx.entities.arcs, lane_lk, &net::ArcState::amb);
+                            net::dropArc(entities.arcs, lane_lk, &net::ArcState::amb);
                             prmRespond(ctx.counters.prm_resp,
                                        ResponseSite::AmbRaimErase);
                             }
@@ -1255,7 +1256,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
             if (data_rows_only) {
                 const bool disagree = t.own_col_cleared_other > 0 || t.own_col_not_cleared > 0;
                 log->log(disagree ? spdlog::level::warn : spdlog::level::info,
-                         "Network (RAIM pool admission, {}, data rows only, card RPA): {}; {}",
+                         "Network (RAIM pool admission, {}, data rows only): {}; {}",
                          which, t.text(), t.ownColumnText());
                 return;
             }
@@ -1286,7 +1287,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
         if (rc.epochs > 0 && rc.pool_cells == 0)
             log->warn("Network (RAIM pool re-host): DEAD WIRING — the seam ran {} time(s) and "
                       "the qc_amb census was EMPTY every time, so the screen still saw "
-                      "nothing.  This is the defect the card exists to fix presenting itself "
+                      "nothing.  This is the defect the re-host exists to fix presenting itself "
                       "again: the census walk found no station with an unpinned ambiguity "
                       "column present in A_r, so check the gauge-pin partition and the "
                       "station/signal admission before trusting any RAIM verdict here.",
@@ -1304,7 +1305,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
         if (rc.pool_cells > 0 && rc.sats_flagged == 0 && rc.arcs_flagged == 0)
             log->info("Network (RAIM pool re-host): ZERO OPPORTUNITY — the screen ran on a "
                       "live census and nothing exceeded the gate.  That is a clean window, "
-                      "NOT evidence the screen works: its POWER under Card 4 is unproven "
+                      "NOT evidence the screen works: its POWER under the invariant carry is unproven "
                       "(the local ambiguity column is free each epoch and the time-link "
                       "lives in the DD chord's prior, so a slipped arc's tension may be "
                       "absorbed locally and never reach this residual).  Grade against a "
@@ -1313,7 +1314,7 @@ static int networkRaimPoolRunEnd(const NetworkRunEndView& v) {
             log->warn("Network (RAIM pool re-host): the screen flagged {} sat-epoch(s) / {} "
                       "arc-epoch(s), and the re-host is measure-only — those flags reached NO "
                       "carry consumer (the seam's local_carry erase and pending-reseed mark "
-                      "cannot move the Card-4 solve).  This line exists so the run is never "
+                      "cannot move the invariant-carry solve).  This line exists so the run is never "
                       "mistaken for a protected one.",
                       rc.sats_flagged, rc.arcs_flagged);
     }
@@ -1439,11 +1440,12 @@ StationStep networkRaimColumnCensus(StationBuild& build) {
     //
     // It is a separate block rather than a relaxation of the two existing
     // gates, so `pl_amb` keeps its current contents and every reader of it
-    // stays byte-identical (standing invariant #6).  The one cost is a second
-    // `getStateVector()` when both are live, a per-station vector copy already
-    // paid once below; it is not paid at all on the off path.
+    // stays byte-identical (standing invariant #6).  The state vector is the
+    // station's shared post-update copy (StationBuild::postUpdateState), made
+    // once per station by the first step that reads it, and not made here on
+    // the off path.
     if (!(raim_ci_on || pd_handover_continuous)) return StationStep::Next;
-    const Eigen::VectorXd x_lin_qc = st.sm->getStateVector();
+    const Eigen::VectorXd& x_lin_qc = build.postUpdateState();
     for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
         const auto parts = StateKeys::parseAmbiguityKey(key);
         if (!parts) continue;

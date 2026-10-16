@@ -145,7 +145,7 @@ int networkPhaseVisibleRunEnd(const NetworkRunEndView& v) {
         wn += fmt::format("{}{:.2f}", sep, c.pv_win_nis[w]);
         wr += fmt::format("{}{:.2f}", sep, c.pv_win_ratio[w]);
     }
-    log->info("Network (card PVN / phase-visible consistency): {} epoch(s) ({} without a "
+    log->info("Network (phase-visible consistency): {} epoch(s) ({} without a "
               "capture), {} satellite-epoch row(s) ({} with S- - S+ not positive); NIS mean "
               "{:.3f} over {} after epoch 15, {:.1f} % above 6.63; |update| p50 {:.4f} m, "
               "predicted update sd p50 {:.4f} m, stated posterior sd p50 {:.4f} m; per "

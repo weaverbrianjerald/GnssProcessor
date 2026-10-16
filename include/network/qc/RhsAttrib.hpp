@@ -872,4 +872,11 @@ void networkRhsAttribTrip(NetworkRun& run, const NetworkEpoch& ep);
  */
 bool networkRhsTripEdge(NetworkRunContext& ctx, std::string& trip, const char* kind, bool active);
 
+/// @brief Run-scope counters of RhsAttrib, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RhsAttribCounters {
+
+    // Reduced-RHS attribution: the retention warn latch.
+    bool rhs_prev_oversize_logged = false; ///< one-shot: retention disabled for network size.
+};
+
 } // namespace GnssProcessor

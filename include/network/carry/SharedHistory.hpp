@@ -327,4 +327,9 @@ void networkSharedHistoryFinalizeHoldRows(NetworkRunContext& ctx, long long ep);
 void networkSharedHistoryRunEnd(const NetworkRunContext& ctx,
                                   const std::shared_ptr<spdlog::logger>& log);
 
+/// @brief Run-scope counters of SharedHistory, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SharedHistoryRunCounters {
+    SharedHistoryCounters shx{};           ///< shared-history run totals (filter/NetworkSharedHistory)
+};
+
 }  // namespace GnssProcessor

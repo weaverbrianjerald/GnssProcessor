@@ -406,4 +406,22 @@ void networkPrefitFuseEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochAssemb
 
 // ---- End of the PASS B serial stages, declarations ----
 
+/// @brief Run-scope counters of PrefitCensus, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PrefitCensusCounters {
+
+    /// Tallies of the prefit census, structural fuse, seed-birth tripwire, topology
+    /// ledger and flight recorder.  Every field is documented on the struct; reported by
+    /// networkPrefitCensusRunEnd (network/qc/PrefitCensus.cpp).  Standing invariant #4 applies
+    /// directly: the census is a tripwire, and a tripwire that never fires looks like a
+    /// tripwire that was never connected; only `epochs` / `rows` / `rec_consults`
+    /// separate them.
+    NetworkPrefitCensusTallies pc;
+
+    // H-rider census counter (networkPrefitSigma0).
+    long long h_sig0_census_nonzero = 0;   ///< run counter: epochs with a usable census σ̂₀ on the H wire (invariant #4)
+
+    // Prefit census warn latch.
+    bool prefit_empty_logged = false;  ///< one-shot "armed but classified zero data rows" warn latch.
+};
+
 } // namespace GnssProcessor

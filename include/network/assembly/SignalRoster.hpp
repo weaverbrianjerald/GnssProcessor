@@ -1312,4 +1312,15 @@ namespace GnssProcessor {
                                        char obs_type, RosterN3bCensus* c,
                                        RosterN3bSite site);
 
+    /// @brief Run-scope counters of SignalRoster, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct SignalRosterCounters {
+
+        /// --- The signal roster / arc ledger observatory.
+        /// Every disagreement class is a named counter with its own denominator (standing
+        /// invariant 4), and the run-end table prints all of them.  Counted on every
+        /// network run (network.signal_roster switches the
+        /// ledger's trace only).
+        NetworkSignalRosterCounters sid;
+    };
+
 } // namespace GnssProcessor

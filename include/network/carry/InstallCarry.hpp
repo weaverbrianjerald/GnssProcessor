@@ -84,4 +84,31 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  */
 void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& events);
 
+/// @brief Run-scope counters of InstallCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct InstallCarryCounters {
+    long long n_resume_d5_warmup_epochs = 0;   ///< epochs the D5 innovation gate ran diagnostic-only post-resume (RS-2b)
+
+    // --- Run tallies of the PD-safe invariant-DD fold.
+    // Always on (INC-0) and solve-neutral: the counters are pure reads of a
+    // factorization the fold already computed.  Without them, the branch they observe
+    // (`M := 0` on a non-PD Pᶻ+B) has no counter, no log and no event, so a block that
+    // goes indefinite can freeze most of the carried state for the rest of the run
+    // while every downstream reading stays blind to the carry.
+    //
+    // Reported by networkCarryDdFoldRunEnd (network/carry/InvariantCarryDriver.cpp).  The per-epoch
+    // halves are not parked here: both epoch-status writers read them directly from
+    // @ref NetworkEstimator::ddFoldStats (see NetworkCarryState).
+    long long ddfold_epochs        = 0;  ///< accepted installs whose fold reached a factorization (the denominator).
+    long long ddfold_folds         = 0;  ///< Σ blocks factored over those epochs.
+    long long ddfold_fold_rows     = 0;  ///< Σ K over those blocks: the carried dimension offered to the data.
+    long long ddfold_degen_epochs  = 0;  ///< epochs with at least one degenerate block.
+    long long ddfold_repairs       = 0;  ///< eigen-clamp repairs applied, INC-1c (0 unless pd_safe).
+    long long ddfold_repair_rows   = 0;  ///< Σ K over repaired blocks.
+    long long ddfold_transitions   = 0;  ///< edges into the degenerate state observed (the decoupling edge of invariant #7).
+    long long ddfold_recoveries    = 0;  ///< edges out of the degenerate state observed: the block's key left the degenerate set, because the block factors again or its component was re-formed (the key cannot tell which).
+    double    ddfold_min_pivot_rel = 1.0;///< worst relative pivot d_min/d_max seen all run (≤ 0 means indefinite).
+    double    ddfold_repair_worst  = 0.0;///< worst clamped |λ| / λ_max seen all run.  Values ≤ 1e-12 are numerical dust; > 1e-6 indicates a new bug and is logged as a warning.
+    long long ddfold_repair_loud   = 0;  ///< folds whose worst clamp exceeded 1e-6·λ_max: the population that is not dust.  A large clamp indicates a new bug and must be reported, not absorbed.
+};
+
 } // namespace GnssProcessor

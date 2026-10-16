@@ -232,7 +232,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "NetworkSbasis::buildCodeBiasDatumRows via codeFamilyBirthPriors (Sbasis.cpp), "
      "folded by NetworkSbasis::foldFamilyBirthRows from networkSolveGlue",
      false,
-     "card GFC step 2: one row d_X - d_P = mu per (satellite, birth) on Galileo band 1, "
+     "family birth prior: one row d_X - d_P = mu per (satellite, birth) on Galileo band 1, "
      "folded once"},
     {CK::ClockConstraintRows, "clock_constraint_rows", CC::SharedRows, CG::BeforeGate, CS::None,
      CU::Rows, bit(PK::SatClock),
@@ -258,7 +258,7 @@ constexpr std::array<ContributionSpec, kContributionKinds> kSpecs = {{
      "networkInjectPinBridgePrior (BorderPrior.cpp)", false, nullptr},
     {CK::BorderCarryDiagonal, "border_carry_diagonal", CC::SharedPrior, CG::AfterGate,
      CS::SatelliteSignal, CU::Keys, kBorder,
-     "1/(var + q*dt) per key (the registry's q; card Q3's anchored q on the clocks)", kD2, false,
+     "1/(var + q*dt) per key (the registry's q; the clock anchor's anchored q on the clocks)", kD2, false,
      nullptr},
     {CK::BorderCarryGaugeFree, "border_carry_gauge_free", CC::SharedPrior, CG::AfterGate,
      CS::SatelliteSignal, CU::Keys, kBorder,

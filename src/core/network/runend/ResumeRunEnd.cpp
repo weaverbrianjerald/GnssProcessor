@@ -432,7 +432,7 @@ static int networkResumeSnapshotRunEnd(const NetworkRunEndView& v) {
                         "or no warm resume happened; check the resume log for the RS-8 "
                         "line."
                       : (disagree > 0
-                             ? "  Those are the flips the card prevents: without the "
+                             ? "  Those are the flips the restore prevents: without the "
                                "restore each of them re-decides the station's canonical "
                                "per-band channel at the seam."
                              : ""));

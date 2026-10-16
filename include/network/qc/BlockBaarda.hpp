@@ -757,4 +757,16 @@ struct NetworkRun;
  */
 void networkBlockBaardaArm(NetworkRun& run);
 
+/// @brief Run-scope counters of BlockBaarda, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct BlockBaardaCounters {
+
+    /// BlockFormal LOS block census tallies.  Named `bb`, not `block`:
+    /// `ctx.counters.bb` is the run-total POD and `ctx.carry.bb` is the accumulator that
+    /// produced it, two different objects spelled the same on purpose so a reader does
+    /// not have to remember which mechanism owns which prefix.  It is not the redundancy
+    /// census's `redun_*` block: that one counts rows, this one counts blocks, and their
+    /// denominators are not interchangeable.
+    NetworkBlockBaardaTallies bb;
+};
+
 }  // namespace GnssProcessor

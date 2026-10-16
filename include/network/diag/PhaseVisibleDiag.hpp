@@ -25,6 +25,7 @@
 #define GNSSPROCESSOR_NETWORK_PHASE_VISIBLE_DIAG_HPP
 
 #include <Eigen/Dense>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -94,6 +95,29 @@ struct NetworkRunEndView;
 int networkPhaseVisibleRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of PhaseVisibleDiag, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PhaseVisibleDiagCounters {
+    // Phase-visible consistency instrument.  `rows 0` means inert.
+    long long pv_epochs{0};                ///< epochs the instrument ran
+    long long pv_epochs_nocap{0};          ///< …of which without a dense fold capture (no rows)
+    long long pv_rows{0};                  ///< satellite-epoch rows formed
+    long long pv_su_nonpos{0};             ///< rows whose S- - S+ was not positive (no NIS)
+    double    pv_nis_sum{0.0};             ///< summed NIS after epoch 15
+    long long pv_nis_n{0};                 ///< NIS values summed
+    long long pv_nis_gt{0};                ///< NIS values above 6.63 (chi2(1), 1 %)
+    std::vector<double> pv_abs_e;          ///< |contrast update| after epoch 15 (m), the run-end median
+    std::vector<double> pv_sqrt_sp;        ///< stated posterior sd sqrt(S+) after epoch 15 (m)
+    std::vector<double> pv_sqrt_su;        ///< predicted update sd sqrt(S- - S+) after epoch 15 (m)
+    std::vector<double> pv_win_nis;        ///< per window: mean NIS
+    std::vector<double> pv_win_ratio;      ///< per window: rms update over rms predicted update sd
+    // Phase-visible consistency instrument, measure-only: the open window's sums.
+    int       pv_win_ep{0};           ///< epochs in the current window
+    double    pv_win_nis_sum{0.0};    ///< summed NIS in the window
+    long long pv_win_nis_n{0};        ///< NIS values in the window
+    double    pv_win_e2_sum{0.0};     ///< summed squared contrast update (m^2)
+    double    pv_win_su_sum{0.0};     ///< summed predicted update variance S- - S+ (m^2)
+};
 
 }  // namespace GnssProcessor
 

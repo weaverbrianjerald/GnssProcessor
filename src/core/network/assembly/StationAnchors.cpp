@@ -148,12 +148,7 @@ StationStep networkGlonassAnchorRows(StationBuild& build) {
     if (ni > 0) {
         constexpr double kGloAnchorWeight = 1.0;  // 1/(1 m)^2
         const Eigen::Index m0 = R.A_s.rows();
-        R.A_s.conservativeResize(m0 + ni, Eigen::NoChange);
-        R.A_s.bottomRows(ni).setZero();
-        R.A_r.conservativeResize(m0 + ni, Eigen::NoChange);
-        R.A_r.bottomRows(ni).setZero();
-        R.w.conservativeResize(m0 + ni);
-        R.y.conservativeResize(m0 + ni);
+        networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, ni);
         for (int k = 0; k < ni; ++k) {
             R.A_r(m0 + k, anchor_cols[k]) = 1.0;
             R.w(m0 + k) = kGloAnchorWeight;
@@ -180,7 +175,7 @@ StationStep networkSimZeroIonoRows(StationBuild& build) {
     // value, so the row's target is minus that value.  Off (0) adds nothing.
     if (!(config_.getNetworkConfig().sim_zero_iono_sigma_m > 0.0)) return StationStep::Next;
     const double zi_sig = config_.getNetworkConfig().sim_zero_iono_sigma_m;
-    const Eigen::VectorXd zi_xlin = st.sm->getStateVector();
+    const Eigen::VectorXd& zi_xlin = build.postUpdateState();
     std::vector<int> zi_cols;
     std::vector<double> zi_y;
     std::vector<RowTag> zi_tag;
@@ -196,12 +191,7 @@ StationStep networkSimZeroIonoRows(StationBuild& build) {
     const int nz = static_cast<int>(zi_cols.size());
     if (nz > 0) {
         const Eigen::Index m0 = R.A_s.rows();
-        R.A_s.conservativeResize(m0 + nz, Eigen::NoChange);
-        R.A_s.bottomRows(nz).setZero();
-        R.A_r.conservativeResize(m0 + nz, Eigen::NoChange);
-        R.A_r.bottomRows(nz).setZero();
-        R.w.conservativeResize(m0 + nz);
-        R.y.conservativeResize(m0 + nz);
+        networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, nz);
         for (int k = 0; k < nz; ++k) {
             R.A_r(m0 + k, zi_cols[k]) = 1.0;
             R.w(m0 + k) = 1.0 / (zi_sig * zi_sig);

@@ -1319,7 +1319,7 @@ static int networkDropHealRunEnd(const NetworkRunEndView& v) {
         // Printing it when attempts == recoveries (every firing recovered, the PA4 emit
         // case) would read as a warning on a clean run.
         const bool insufficient = ctx.counters.n_heal_attempt_epochs > n_healed_epochs;
-        log->info("Network (Card PA): drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
+        log->info("Network: drop-and-heal FIRED on {} epoch(s), soft-anchoring {} "
                   "near-null phase-bias column(s); {} epoch(s) were RECOVERED by it ({} "
                   "column(s)).{}  Per-column attribution (sat/signal/eigenvalue/span) is in "
                   "network_events.csv under tier GATE, event phase_heal, when "
@@ -1431,7 +1431,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         ? (!st.pinned_amb_targets.empty() || !st.pinned_rpb_keys.empty())
         : st.is_pivot;
     if (do_fold) {
-        const Eigen::VectorXd piv_x = st.sm->getStateVector();
+        const Eigen::VectorXd& piv_x = build.postUpdateState();
         std::vector<int> pin_col;       // A_r column of each pin
         std::vector<double> pin_y;       // innovation = target - current absolute value
         std::vector<double> pin_w;       // row information weight: 1e10 hard pins, 1/σ² RPB priors
@@ -1605,12 +1605,7 @@ StationStep networkPhaseDatumPinRows(StationBuild& build) {
         const int np = static_cast<int>(pin_col.size());
         if (np > 0) {
             const Eigen::Index m0 = R.A_s.rows();
-            R.A_s.conservativeResize(m0 + np, Eigen::NoChange);
-            R.A_s.bottomRows(np).setZero();
-            R.A_r.conservativeResize(m0 + np, Eigen::NoChange);
-            R.A_r.bottomRows(np).setZero();
-            R.w.conservativeResize(m0 + np);
-            R.y.conservativeResize(m0 + np);
+            networkGrowBlockRows(R.A_s, R.A_r, R.w, R.y, np);
             for (int k = 0; k < np; ++k) {
                 R.A_r(m0 + k, pin_col[k]) = 1.0;
                 R.w(m0 + k) = pin_w[k];   // 1e10 pins / 1/σ² RPB priors

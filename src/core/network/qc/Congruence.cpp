@@ -253,6 +253,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
     const std::vector<NetStation>& stations = run.setup.stations;
     const std::vector<CongruenceHit>& cg_hits = ep.events.census.cg_hits;
     // ---- End of the bindings ----
+    net::StationTable& sta_rows = ctx.entities.stations;   // written
     if (!ctx.knobs.cg_on) return;   // the driver's gate
     (void)config_;
     (void)log;
@@ -314,7 +315,7 @@ void networkCongruenceEmit(NetworkRun& run, const NetworkEpoch& ep) {
             sid ? net::get(ctx.entities.stations, *sid, &net::StationState::cg_event_last) : nullptr;
         if (last != nullptr && now_ep - *last < holdoff)
             continue;
-        if (sid) net::put(ctx.entities.stations, *sid, &net::StationState::cg_event_last) = now_ep;
+        if (sid) net::put(sta_rows, *sid, &net::StationState::cg_event_last) = now_ep;
         // The statistic goes in `detail` as well as in the typed column, because
         // emitEvent formats statistic and threshold with a fixed 6 decimals, which
         // prints a small t_i as 0.000000.
@@ -463,9 +464,9 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
         log->info("Network (station congruence): INC-3 separability over {} joined "
                   "station-epoch(s) — congruence LOUD x [block quiet {}, block flagged "
                   "{}] | congruence quiet x [{}, {}].  The a-cell (loud here, quiet "
-                  "there) is the population ONLY this card can see: a coherent "
+                  "there) is the population ONLY this screen can see: a coherent "
                   "all-LOS coordinate offset.  A large b-cell instead means the two "
-                  "tiers are firing on the same events and this card is not adding a "
+                  "tiers are firing on the same events and this screen is not adding a "
                   "fault class.",
                   n, c[0][0], c[0][1], c[1][0], c[1][1]);
     }
@@ -486,7 +487,7 @@ void networkCongruenceRunEnd(const NetworkRunContext& ctx,
     log->info("Network (station congruence): MEASURE-ONLY — no coordinate was moved, "
               "deweighted or re-estimated, and no downstream consumer read any number "
               "above.  Re-coordinating a station is a DATUM act (invariant #7, both "
-              "edges) and belongs to its own card.");
+              "edges) and belongs to its own change.");
 }
 
 // ---- The predict half (frozen text of Application::networkProcessEpoch_,

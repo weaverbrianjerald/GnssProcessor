@@ -106,7 +106,7 @@ for _kind, _pat in BSCOPE_CLAUSES:
         break
 m = re.search(r"attribution ARC \(T4\)\s*:\s*([0-9]+) opp,\s*([0-9]+) flag", so); R["t4_flag_of_opp"] = (int(m.group(2)), int(m.group(1))) if m else None
 m = re.search(r"RAIM consensus \(T3\)\s*:\s*([0-9]+) opp,\s*([0-9]+) flag", so); R["t3_flag_of_opp"] = (int(m.group(2)), int(m.group(1))) if m else None
-m = re.search(r"Card CLK-R.*?Σ\|μ\| drained ([0-9.]+) m, max \|A_c\| ([0-9.]+) m", so); R["clk_drained_maxAc"] = (float(m.group(1)), float(m.group(2))) if m else None
+m = re.search(r"(?:Card CLK-R|clock emission re-base).*?Σ\|μ\| drained ([0-9.]+) m, max \|A_c\| ([0-9.]+) m", so); R["clk_drained_maxAc"] = (float(m.group(1)), float(m.group(2))) if m else None
 if os.path.exists(run + "/exitcode.txt"):
     ec = open(run + "/exitcode.txt").read().split(); R["t4_secs"] = float(ec[1]); R["exit"] = int(ec[0])
 else:

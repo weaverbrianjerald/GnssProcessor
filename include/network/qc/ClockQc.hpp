@@ -138,4 +138,15 @@ int networkCbExcursionRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of ClockQc, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ClockQcCounters {
+
+    // CB-carry event response telemetry (SPEC_day129_frame_guards Phase 2.1).
+    long long cb_exc_trips           = 0;   ///< epochs the detector tripped
+    long long cb_exc_reinits         = 0;   ///< (sat,epoch) CB carries marked for reinit
+    long long cb_exc_nonpivot_would  = 0;   ///< (sat,epoch) non-pivot sats a per-satellite rule would have tripped (the D1 counter)
+    double    cb_exc_max_median      = 0.0; ///< largest median |Δclock| observed (m): the trip statistic's run maximum
+    double    cb_exc_max_median_tow  = -1.0;///< its epoch
+};
+
 } // namespace GnssProcessor

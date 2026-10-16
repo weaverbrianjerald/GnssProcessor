@@ -88,9 +88,9 @@ void networkLedgerEmitArm(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& le = ctx.ledger_emit;
     le.armed = config_.networkLedgerEmit();
     if (!le.armed || !log) return;
-    log->info("Network (card SID phase 5a / LEDGER EMIT): ARMED (network.ledger_emit).  "
+    log->info("Network (LEDGER EMIT): ARMED (network.ledger_emit).  "
               "OBSERVATORY: the emitter's per-family bookkeeping is READ against the arc "
-              "ledger (the card PBH hold generation against the ledger's admitted arc "
+              "ledger (the phase-bias hold generation against the ledger's admitted arc "
               "births, and the emitter's first-sighting test against the ledger's memory "
               "of the family), and the producer DECLARES its signal roster on the wire as "
               "a block of N records.  Nothing on the producer reads either back, so the "

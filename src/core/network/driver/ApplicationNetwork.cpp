@@ -252,9 +252,10 @@ int Application::runNetwork() {
     NetworkRunContext ctx(config_, nc);
     // The station names the entity tables convert name keys through.
     {
+        net::StationNames& roster = ctx.entities.names;   // written
         std::vector<std::string> names;
         for (const auto& st : setup.stations) names.push_back(st.name);
-        ctx.entities.names.assign(std::move(names));
+        roster.assign(std::move(names));
     }
     // The marker -> ARP census of networkSetup_, into the counters the run end reads.
     networkMarkerArpCensusCopy(ctx, config_, setup);

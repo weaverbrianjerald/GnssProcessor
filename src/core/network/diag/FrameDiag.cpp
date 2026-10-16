@@ -544,9 +544,9 @@ static int networkPostfitRunEnd(const NetworkRunEndView& v) {
                  "to network_pf_rows.csv ({} code + {} phase; {} written with an empty "
                  "elev_deg); {} row(s) the pass visited were attributed to neither "
                  "family and NOT written (rows whose tag is not an observation: pivot pins, "
-                 "local prior and anchor rows, and unclassified rows; card NOM N2b classes "
+                 "local prior and anchor rows, and unclassified rows; the pass classes "
                  "every row by its contribution tag).  0 written under an ARMED trace "
-                 "means the pass never pooled a station: read the P1-4 line.  Card OWD: {} "
+                 "means the pass never pooled a station: read the P1-4 line.  {} "
                  "written with an empty signal (pf_rows_no_signal, the row tag named no "
                  "signal); 0 expected.",
                  ctx.counters.pf_rows_written, ctx.counters.pf_rows_code, ctx.counters.pf_rows_phase,

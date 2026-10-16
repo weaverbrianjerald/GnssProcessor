@@ -308,6 +308,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
     const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
     EpochEvents::Handover& handover_ev = events.handover;   // written
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written
     (void)log;   // seam signature is uniform across the run loop
     const double clk_anchor_sigma = ctx.knobs.clk_anchor_sigma;   // was a parameter
     // The record is an epoch event: empty with the knob off, and never an earlier epoch's.
@@ -352,7 +353,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
             continue;
         }
         CarrySiteCounts undo_cc;
-        const long long n = undoClockStransform(ctx.carry, ctx.entities, it->first, it->second.c0,
+        const long long n = undoClockStransform(ctx.carry, entities, it->first, it->second.c0,
                                                 it->second.var_q, &undo_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, undo_cc);
@@ -388,7 +389,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
         // the stash's pivot value.
         CarrySiteCounts prm_cc;
         const ClockStransformResult r = applyClockStransform(
-            ctx.carry, ctx.entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
+            ctx.carry, entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, prm_cc);
         pre.applied      = r.applied;
@@ -414,6 +415,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const std::set<char>& changed_consts,
                                const std::vector<std::string>& registered_clock_sats,
                                EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written
     (void)config_;   // seam signature is uniform across the run loop
 
     // The release set is an epoch event: a handover epoch's release cannot reach the next
@@ -473,7 +475,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                 before_rows = true;
             } else {
                 ++ctx.counters.sts_pre_mismatch;
-                log->warn("Network (card PRM phase 2): the handover of {} to {} was not seen by "
+                log->warn("Network (handover S-transform): the handover of {} to {} was not seen by "
                           "the preview before PASS B; it is transformed after the rows.",
                           key, q);
             }
@@ -503,7 +505,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     && cp.fold.disposition != CarryDisposition::Undecided
                     && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
                     clean.insert(cp.sat);
-            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, ctx.entities, c, q, p_out);
+            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, entities, c, q, p_out);
             if (d.applied) {
                 ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
                 carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, d.counts);
@@ -538,7 +540,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     std::max(ctx.counters.sts_dense_contrast_maxdev, d.contrast_maxdev);
                 if (!d.selfcheck_ok) {
                     ++ctx.counters.sts_dense_selfcheck_fail;
-                    log->warn("Network (card SCL B2): the dense S-transform's self-check FAILED for "
+                    log->warn("Network: the dense S-transform's self-check FAILED for "
                               "{} (incoming pivot {}): |x_q| {:.3e} m, contrast change {:.3e} m^2.  "
                               "The block is re-expressed but the clone fold and the anchor keep "
                               "will not use it.",
@@ -561,7 +563,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         if (!before_rows && !dense_done) {
             // Every carried clock of the constellation through the one traversal.
             CarrySiteCounts prm_cc;
-            r = applyClockStransform(ctx.carry, ctx.entities, v_c, q, CarryMechanism::Handover, &prm_cc);
+            r = applyClockStransform(ctx.carry, entities, v_c, q, CarryMechanism::Handover, &prm_cc);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
         }
@@ -692,7 +694,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
                   "over the run [{}]; {} edge(s) TRANSFORMED, {} carried row(s) "
                   "re-expressed along the structural clock null direction, {} row(s) "
                   "RETAINED (folded that the baseline skip would have dropped — this is "
-                  "the card's ON-path counter), {} edge(s) no-op (the incoming pivot had "
+                  "the transform's ON-path counter), {} edge(s) no-op (the incoming pivot had "
                   "no carried level), {} self-check failure(s).  |c0| max {:.6f} m, last "
                   "{:.6f} m.{}",
                   total, per_const, sc.sts_edges, sc.sts_applied, sc.sts_rows_retained,
@@ -703,7 +705,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
                         "— the INC-1 skip release is not reaching the fold sites."
                       : "");
         if (ctx.knobs.handover_stransform_before_rows) {
-            log->info("Network (card PRM phase 2): the handover S-transform ran BEFORE THE "
+            log->info("Network (handover S-transform): the handover S-transform ran BEFORE THE "
                       "ROWS: {} edge(s) re-expressed before the fold decision and PASS B "
                       "(the rows of those epochs read the re-expressed carry), {} "
                       "re-detection(s) after a skipped epoch released without a second "
@@ -713,7 +715,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
                       sc.sts_pre_edges, sc.sts_pre_redetected, sc.sts_pre_undone,
                       sc.sts_pre_mismatch);
             if (sc.sts_pre_mismatch > 0)
-                log->warn("Network (card PRM phase 2): {} handover edge(s) were elected "
+                log->warn("Network (handover S-transform): {} handover edge(s) were elected "
                           "differently by the preview before PASS B and by the solve glue; "
                           "the preview's declaration or inputs diverged.",
                           sc.sts_pre_mismatch);
@@ -721,7 +723,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
         // The dense kernel's on-path counters (invariant #4: handovers with 0
         // dense edges mean the kernel never ran).
         if (ctx.knobs.handover_stransform_dense) {
-            log->info("Network (card SCL B2, dense handover S-transform): {} edge(s) "
+            log->info("Network (dense handover S-transform): {} edge(s) "
                       "re-expressed by S P S^T ({} carried clock(s) with a block row, {} "
                       "parked clock(s) by the diagonal rule, {} outgoing pivot(s) appended), "
                       "{} fallback(s) to the diagonal kernel, {} self-check failure(s); "
@@ -736,7 +738,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
                             "applied to none."
                           : "");
             if (ctx.knobs.cta_datum_keep)
-                log->info("Network (card SCL B2, anchor kept across the handover): {} "
+                log->info("Network (anchor kept across the handover): {} "
                           "anchored clock(s) kept engaged at a dense-transformed handover "
                           "(no datum decouple, no disc mark), {} datum decouple(s) the keep "
                           "rule refused (no dense edge, no block row, or a loose fold), {} "

@@ -17,6 +17,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <cstddef>
 
 namespace GnssProcessor {
 
@@ -127,5 +128,56 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
  * @return 0 (this report does not set the exit code).
  */
 int networkWithinEpochRaimRunEnd(const NetworkRunEndView& v);
+
+/// @brief Run-scope counters of RaimWithinEpoch, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RaimWithinEpochCounters {
+    // Withhold-era release policy: era telemetry for both edges, per invariant #7.  All
+    // zero unless one of the two knobs is armed (the era bookkeeping itself is
+    // knob-gated to keep the events CSV byte-identical on off paths).
+    long long n_wh_era_entries        = 0;  ///< SIGMA0/era_enter events
+    long long n_wh_era_exits          = 0;  ///< SIGMA0/era_exit events (a run ending mid-era exits nowhere; max_len covers it)
+    long long n_wh_era_max_len        = 0;  ///< longest era (withheld decides)
+    long long n_wh_escalated_epochs   = 0;  ///< era epochs run at the escalated budget
+    long long n_wh_escalate_landed    = 0;  ///< escalated epochs that landed σ̂₀ ≤ ceiling (took the accepted path)
+    long long n_wh_escalate_exhausted = 0;  ///< escalated epochs that still withheld
+    long long n_wh_free_erases        = 0;  ///< carry entries erased at the withhold branch (§3b)
+    long long n_wh_perconst_exits     = 0;  ///< declared limitation: eras ended by the RTA-10 carve-out publishing (no escalation ran)
+    long long n_pl_blk_refloat_rewhiten = 0;         ///< within-epoch RAIM refloats that re-whitened a block over its survivors (the re-coupling edge of invariant #7, counted)
+    long long n_pl_blk_refloat_fail = 0;             ///< … whose re-whiten was non-SPD: the block's rows were dropped for that re-solve (a safe degradation: the refloated arcs re-float from data)
+
+    // Run-end telemetry of WE-CI (network.raim_we_code_iono).  Standing invariant #4: an
+    // armed screening whose counters never move on an eventful window is a miswire, not
+    // a quiet run.
+    std::size_t we_ci_code_trips = 0;   ///< epochs whose first-assess code-pool σ̂0 exceeded the code trigger
+    std::size_t we_ci_iono_trips = 0;   ///< epochs whose first-assess iono-pool σ̂0 exceeded the iono trigger
+    std::size_t we_ci_sta_excl   = 0;   ///< epoch-scoped station exclusions chosen from the code/iono pools
+    std::size_t we_ci_sat_dw     = 0;   ///< network-wide satellite code-row de-weights chosen from the code pool
+    double we_ci_s0_code_max = 0.0;     ///< max code-pool σ̂0 observed (trigger-calibration telemetry)
+    double we_ci_s0_iono_max = 0.0;     ///< max iono-pool σ̂0 observed (trigger-calibration telemetry)
+
+    // Run-end counters for the three response classes of the within-epoch tier (R0).
+    // The withhold has its own run counter (n_sigma0_withheld); without these, the
+    // refloats and exclusions would exist only as per-epoch T2 event rows, and a run
+    // summary could not say how often the tier acted.  The clock move is the
+    // impulse-channel meter of §5.07.2: how far the within-epoch re-solves moved a
+    // satellite clock from the primary solve's value, with counters and identity per
+    // invariant #7.
+    long long we_refloat_sat_total = 0; ///< whole-sat within-epoch refloats settled over the run
+    long long we_refloat_arc_total = 0; ///< isolated-arc within-epoch refloats settled over the run
+    long long we_exclude_sta_total = 0; ///< epoch-scoped station exclusions settled over the run
+    double      we_clk_move_max_m   = 0.0; ///< largest |final − primary| clock move (m)
+    double      we_clk_move_max_tow = 0.0; ///< TOW of that move
+    std::string we_clk_move_max_sat;       ///< satellite of that move
+    // Failed within-epoch re-solves.  n_adapt counts landed
+    // re-solves only, so a failed one appeared in no counter before this counter.  A
+    // failure is undone to the last landed state; the undo drops, for the epoch, a
+    // station it cannot re-add, and an undo that still cannot complete skips the
+    // epoch.  The first failure's identity is kept (invariant #7).
+    long long   we_resolve_failed   = 0;   ///< re-solves that failed and were undone to the last landed state
+    long long   we_undo_sta_dropped = 0;   ///< station-epochs the undo could not re-add and left out of the final solve
+    long long   we_restore_failed   = 0;   ///< undos that could not complete (epoch skipped)
+    double      we_resolve_fail_tow = 0.0; ///< TOW of the first failed re-solve
+    std::string we_resolve_fail_at;        ///< where it failed: a station name, or "shared system"
+};
 
 } // namespace GnssProcessor

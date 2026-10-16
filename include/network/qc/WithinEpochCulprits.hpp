@@ -219,4 +219,14 @@ std::string withinEpochCulpritQuietReason(bool pl_on, long long pool_walks, long
  */
 int networkWithinEpochCulpritWithholdRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of WithinEpochCulprits, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct WithinEpochCulpritsCounters {
+    /// The culprit withhold on the DD carry: the re-solves that ran with a
+    /// satellite or arc culprit (the writer's end), the DD-carry rebuilds that read one
+    /// and what they withheld (the reader's end), both counted only under
+    /// carry_invariant.  Reported by networkWithinEpochCulpritWithholdRunEnd
+    /// (filter/NetworkWithinEpochCulprits).
+    WithinEpochCulpritTally we_culprit_withhold;
+};
+
 } // namespace GnssProcessor

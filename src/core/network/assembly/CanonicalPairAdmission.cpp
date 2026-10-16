@@ -277,7 +277,7 @@ namespace GnssProcessor {
         const auto& st = ctx.carry.cpa;
         if (!st.armed) return;
         const auto& c = ctx.counters.cpa;
-        log->info("Network (card CPA / CANONICAL-PAIR ADMISSION, keep={} epoch(s)): {} "
+        log->info("Network (CANONICAL-PAIR ADMISSION, keep={} epoch(s)): {} "
                   "epoch(s) screened {} (station,satellite) record(s) against a decided "
                   "canonical pair ({} left alone: their constellation has no canonical "
                   "code+phase on band digits 1 and 2); WITHHELD {} record(s) = {} "

@@ -204,4 +204,22 @@ struct NetworkRun;
  */
 void networkCbAdmissionCensus(NetworkRun& run);
 
+/// @brief Run-scope counters of BiasAdmission, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct BiasAdmissionCounters {
+    // Epochs on which the admitted-OSB physical-bound prior was folded, and the
+    // cumulative column count.  Standing invariant #4: an armed KP run with
+    // n_kp_epochs == 0 means the prior never reached a solve (no registered code
+    // columns, or the W6 block never ran), which clean-looking log output would not
+    // reveal.
+    size_t n_kp_epochs = 0, n_kp_cols = 0;
+    bool   kp_margin_logged = false;   ///< one-shot latch for the K2 margin check
+
+    // Tallies of the W6 code-bias admission census (CB-ADM; run-end observability).
+    // Standing invariant #4: inert wiring is visible only through them, so a BDS-armed
+    // on run with n_cb_quarantined_census == 0 is a miswire.  n_cb_late_quarantined
+    // counts distinct (sat,signal) keys first seen at the registration site after the
+    // census window (implicitly quarantined).
+    std::size_t n_cb_admitted = 0, n_cb_quarantined_census = 0, n_cb_late_quarantined = 0;
+};
+
 } // namespace GnssProcessor

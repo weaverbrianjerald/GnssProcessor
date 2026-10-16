@@ -77,6 +77,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sat_signals sats
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
@@ -587,14 +588,14 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (ctx.knobs.clm_on && !snap.level_info.empty()) {
                         net::recordFromSnapshot("LB", snap, ctx);   // the satellites (N4e1)
                         ctx.carry.resume.clm_raise = ctx.knobs.clm_restore_raise;
-                        log->info("Network (card CTU G5): {} satellite(s) of contrast-frame level "
+                        log->info("Network (clock level restore): {} satellite(s) of contrast-frame level "
                                   "information restored from the snapshot's LB rows{}.",
                                   snap.level_info.size(),
                                   ctx.knobs.clm_restore_raise
                                       ? "; the level raise on restore is armed for the first "
                                         "leg epoch" : "");
                     } else if (ctx.knobs.clm_restore_raise) {
-                        log->warn("Network (card CTU G5): network.clock_level_restore_raise is "
+                        log->warn("Network (clock level restore): network.clock_level_restore_raise is "
                                   "armed but the snapshot carries no LB rows (the writer did not "
                                   "run network.clock_level_monitor): nothing to raise to, INERT.");
                     }
@@ -677,10 +678,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // then changes, the eq34 L2X component loses its datum receiver, and
                     // the L2X phase-bias families step at the seam (§21.16).
                     if (ctx.knobs.resume_signal_canon_restore) {
-                        net::dropAll(ctx.entities.stations, &net::StationState::resume_canon_rows);
+                        net::dropAll(sta_rows, &net::StationState::resume_canon_rows);
                         long long staged = 0;
                         for (const auto& [idx, rows] : snap.canonical_signals) {
-                            auto& dst = net::put(ctx.entities.stations, StationId{idx},
+                            auto& dst = net::put(sta_rows, StationId{idx},
                                                  &net::StationState::resume_canon_rows);
                             for (const auto& c : rows) {
                                 dst.push_back(PppModel::CanonicalSignal{
@@ -727,9 +728,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // armed knob here always sits under a restored carry.
                     if (ctx.knobs.resume_rxcb_lin_restore) {
                         if (!snap.rx_cb_lin.empty()) {
-                            net::dropAll(ctx.entities.stations, &net::StationState::rxcb_lin_restore);
+                            net::dropAll(sta_rows, &net::StationState::rxcb_lin_restore);
                             for (const auto& [key, xl] : snap.rx_cb_lin)
-                                net::put(ctx.entities.stations, StationId{key.first},
+                                net::put(sta_rows, StationId{key.first},
                                          &net::StationState::rxcb_lin_restore)[key.second] = xl;
                             ctx.counters.n_resume_rxcb_lin_stations =
                                 static_cast<long long>(
@@ -895,7 +896,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                          std::numeric_limits<double>::infinity());
                             long long n_seed = 0, n_loose = 0;
                             const auto seedClock = [&](const std::string& sat) {
-                                net::putSig(ctx.entities, sat, "", &net::SatSignalState::tu_reinit)
+                                net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)
                                     [SharedParamKind::Clock] = t_seed;   // the satellite-wide wildcard
                                 ++n_seed;
                             };
@@ -911,7 +912,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             ctx.counters.n_resume_cpl_seed_reinit = n_seed;
 
                             log->info("Network (resume coupling restore): ARMED at the resume "
-                                      "seam — {} L row(s) + {} Z row(s) rebuilt their Card-1 "
+                                      "seam — {} L row(s) + {} Z row(s) rebuilt their coupling "
                                       "regression from {} term(s) over a {}-column dictionary "
                                       "({} row(s) had no matching carry); {} clock reinit "
                                       "seed(s) planted ({} LOOSE anchor(s), {} pending eph "
@@ -995,21 +996,21 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 ctx.carry.cxu_stash_s =
                                     static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
                                 ctx.carry.cxu_stash_valid = ctx.carry.prev_carry_cov.P.rows() > 0;
-                                net::dropAll(ctx.entities.constellations,
+                                net::dropAll(entities.constellations,
                                              &net::ConstellationState::cxu_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty())
-                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                        net::put(entities.constellations, systemOfSat(sat),
                                                  &net::ConstellationState::cxu_pivot) = {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
                             }
                             // The restored block's frame is the snapshot's pivots.
                             if (ctx.knobs.pfq_on) {
-                                net::dropAll(ctx.entities.constellations,
+                                net::dropAll(entities.constellations,
                                              &net::ConstellationState::pfq_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty())
-                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                        net::put(entities.constellations, systemOfSat(sat),
                                                  &net::ConstellationState::pfq_pivot) = sat;
                             }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
@@ -1059,7 +1060,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // the install seam.
                     if (ctx.knobs.resume_d5_warmup_ep > 0) {
                         ctx.carry.resume_d5_warmup_left = ctx.knobs.resume_d5_warmup_ep;
-                        log->info("Network (RS-2b resume D5 warm-up): ARMED — the Card-4 D5 "
+                        log->info("Network (RS-2b resume D5 warm-up): ARMED — the invariant-carry D5 "
                                   "innovation gate acts diagnostic-only for the next {} "
                                   "processed epoch(s): trips are counted, never re-tapped and "
                                   "never marked slipped.  The σ̂₀ feed, the v3 corroboration "
@@ -1199,8 +1200,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "— the invariant carry COLD-STARTS (branch not "
                                       "reproduced; shared/emitter state stay warm).", cerr);
                             carry_driver.reset();
-                            net::dropAll(ctx.entities.sats, &net::SatelliteState::carry_vertex);
-                            net::dropAll(ctx.entities.constellations,
+                            net::dropAll(entities.sats, &net::SatelliteState::carry_vertex);
+                            net::dropAll(entities.constellations,
                                          &net::ConstellationState::channels,
                                          &net::ChannelState::group_id);
                             hb1(WarmResumeRefusal::Other,
@@ -1242,7 +1243,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                             // non-zero count when resuming from a pd_safe-armed run is a new
                             // defect, because the writing run's blocks were PD by construction.
                             if (carry_driver.resumeCarryRebirthBlocks() > 0)
-                                log->warn("Network (Card 4 PD-safe fold, INC-2c): {} restored "
+                                log->warn("Network (PD-safe fold, INC-2c): {} restored "
                                           "carry block(s) FAILED the equilibrated PD screen "
                                           "and were REBIRTHED — means kept, Pᶻ re-seeded to "
                                           "the diffuse fresh-chord prior.  Those blocks take "
@@ -1386,7 +1387,7 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
         log->warn("Network (RS-9 rx-CB frame restore): {} restored station index(es) did "
                   "not resolve to a live station model and were DROPPED — those stations "
                   "re-derive their code-bias linearization point from the resume epoch's "
-                  "code, which is the pre-card behaviour for them.", orphan);
+                  "code, which is the pre-restore behaviour for them.", orphan);
     log->info("Network (RS-9 rx-CB frame restore): installed on {} station(s), {} "
               "linearization point(s) — consumed at each station's first-epoch code-bias "
               "initialization (the one-shot isCodeBiasInitialized latch), so the rx-CB "

@@ -160,13 +160,13 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
     using Rt = CouplingExactDRoute;
     const auto d = [&](Rt r) { return X.terms_d[static_cast<int>(r)]; };
     const auto kd = [&](Rt r) { return c.cxu_keys_d[static_cast<int>(r)]; };
-    log->info("Network (card CTU / exact coupling time update): {} epoch(s), {} built, "
+    log->info("Network (exact coupling time update): {} epoch(s), {} built, "
               "{} unfactored, {} without a valid stash; keys {} in S, D {} departed / {} "
               "reinit / {} reref / {} skipped; {} negative inflation(s) clamped.",
               c.cxu_epochs, c.cxu_epochs_built, c.cxu_epochs_unfactored,
               c.cxu_epochs_nostash, c.cxu_keys_s, kd(Rt::Departed), kd(Rt::Reinit),
               kd(Rt::Reref), kd(Rt::Skipped), c.cxu_q_negative);
-    log->info("Network: rows {} exact, {} stale (card 1d route), {} on an "
+    log->info("Network: rows {} exact, {} stale (coupling-carry route), {} on an "
               "unbuilt epoch; terms {} updated in S, re-attributed {} departed / {} reinit "
               "/ {} reref / {} skipped, {} pinned, {} scalar outside the block, {} "
               "marginalized outside, {} SH; {} coefficient(s) written; clock-family "
@@ -177,8 +177,8 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
               X.terms_out_scalar, X.terms_out_departed, X.terms_out_sh, X.terms_emitted,
               X.gauge_held, X.gauge_spread, X.gauge_orphan, X.var_add_sum, X.var_negative,
               X.shrink_abs_sum, X.sprev_mismatch);
-    log->info("Network: the rows and the fold read one decision per key (card "
-              "PRM phase 1b); {} handover epoch(s), on which {} key(s) in S were folded on "
+    log->info("Network: the rows and the fold read one decision per key"
+              "; {} handover epoch(s), on which {} key(s) in S were folded on "
               "a variance the S-transform re-expressed after the rows were built and {} "
               "key(s) in S were retired; {} dense-fold diagonal fallback(s), {} epoch(s) "
               "with no recorded clock pivot.",
@@ -186,7 +186,7 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
               c.cxu_fold_retired_in_s, c.cxu_fold_diag_fallback, c.cxu_pivot_missing);
     if (X.rows_exact == 0)
         log->warn("Network: network.carry_coupling_exact_update is ARMED but no "
-                  "row took the exact route: the card is INERT for this run.");
+                  "row took the exact route: the exact update is INERT for this run.");
     if (ctx.knobs.carry_cpl_exact_cross) {
         // The within-station bracket, its reach and its size.
         const auto hist = [&X](int cls) {
@@ -195,7 +195,7 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
                 s += (b ? " " : "") + std::to_string(X.cross_rho_hist[cls][b]);
             return s;
         };
-        log->info("Network (card WSX / within-station bracket): {} block(s), {} pair(s) took "
+        log->info("Network (within-station bracket): {} block(s), {} pair(s) took "
                   "M_i'BM_k, {} pair(s) skipped (a row off the exact route); |M_i'BM_k| mass "
                   "{:.4e} m^2; |rho| against the pair's diagonal by bin (<0.01 <0.03 <0.1 <0.2 "
                   "<0.3 <0.5 <0.8 >=0.8): ambiguity pairs [{}] max {:.3f}, pairs with a "
@@ -214,11 +214,24 @@ int networkCouplingExactRunEnd(const NetworkRunEndView& v) {
                   "of S on a re-expressed variance and retired {}, after the coupling rows "
                   "were built on the decided ones; those rows were not conditioned on the "
                   "fold's Q at that epoch (the rows' re-expression at a handover is owed to "
-                  "card PRM phase 2).",
+                  "parameter-registry phase 2).",
                   c.cxu_fold_reexpressed_in_s, c.cxu_fold_retired_in_s);
     return 0;
 }
 
 // ---- End of the run-end reports ----
+
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkCouplingExactTally(NetworkRunContext& ctx,
+                               const std::vector<StationAssembly>& asm_res) {
+    // Fold each station's exact-update counts into the run totals (serial; the
+    // produce wrote only its own slot).
+    if (ctx.knobs.carry_cpl_exact)
+        for (const StationAssembly& Rc : asm_res) ctx.counters.cxu.add(Rc.cxu);
+
+}
+
+// ---- End of the PASS B serial tallies ----
 
 }  // namespace GnssProcessor

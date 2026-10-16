@@ -75,6 +75,7 @@ void killBlock(NetworkRunContext& ctx, PbHoldClone& c, PbHoldCloneDeath why, lon
 /// disengagement, a followed step or a lost pair).  A newer generation's entry wins.
 void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHoldClone& c,
                      long long ep) {
+    net::NetworkEntities& entities = ctx.entities;   // written: sat_signals
     PbHoldClone q;
     q.sat        = c.sat;
     q.signal     = c.signal;
@@ -82,7 +83,7 @@ void queueBlockBirth(NetworkRunContext& ctx, const std::string& key, const PbHol
     q.queued_ep  = ep;
     q.rebirth    = true;
     q.block      = true;
-    net::emplaceSig(ctx.entities, key, &SG::smh_block_pending, q);
+    net::emplaceSig(entities, key, &SG::smh_block_pending, q);
 }
 
 /// The engagement test (section 9 of the smoothed-hold design) for a clone of either map: @c Withdrawn when the
@@ -563,6 +564,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
     (void)log;
     if (!ctx.knobs.emit_pb_hold_smoothed) return;
     net::SatSignalTable& sigs = ctx.entities.sat_signals;   // the clones
+    net::NetworkEntities& entities = ctx.entities;   // written: sat_signals
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
     // Amendment A1: a row still pending from an earlier epoch never reached
     // its compression; it takes the per-row term before it advances (no-op off).
@@ -591,7 +593,7 @@ void networkPbHoldCloneUpdate(NetworkRun& run, const NetworkEpoch& nep) {
             q.generation = c.generation;
             q.queued_ep  = ep;
             q.rebirth    = true;
-            net::emplaceSig(ctx.entities, key, &SG::smh_pending, q);   // a newer generation's entry wins
+            net::emplaceSig(entities, key, &SG::smh_pending, q);   // a newer generation's entry wins
         });
         net::forEach(sigs, &SG::smh_block, [&](const SatSignalId& id, PbHoldClone& c) {
             const std::string key = net::holdKey(id);

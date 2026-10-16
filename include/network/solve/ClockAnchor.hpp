@@ -402,4 +402,65 @@ void networkClockAnchorGuardEpoch(NetworkRun& run, const NetworkEpoch& ep, const
                                   const NetworkPostFitHandoff& handoff, Eigen::VectorXd& x_s,
                                   EpochWorkspace& ws);
 
+/// @brief Run-scope counters of ClockAnchor, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ClockAnchorCounters {
+    // --- Guarded temporal clock anchor.
+    // Standing invariant #4: `cta_folded_anchored == 0` on an armed run means the
+    // mechanism is inert however clean the log reads, so every disposition is counted
+    // against a denominator.  Trips are split by reason because the reasons are not
+    // interchangeable evidence: a `gap` trip shows the staleness guard works, an `nis`
+    // trip shows the detector works, and a run that only ever shows `resume` has
+    // tested neither.
+    long long cta_epochs = 0;            ///< epochs the anchor seam ran (denominator)
+    long long cta_folded_anchored = 0;   ///< (sat,epoch) clock priors folded at the anchor variance
+    long long cta_folded_loose = 0;      ///< (sat,epoch) clock priors folded at the legacy variance (loose)
+    long long cta_floor_hits = 0;        ///< folds where the variance floor bound (the deviation-#1 cap binding)
+    long long cta_trip_nis = 0;          ///< decouples: |w| over network.clock_anchor_k
+    long long cta_trip_abs = 0;          ///< decouples: |ê| over network.clock_anchor_abs_m
+    long long cta_trip_gap = 0;          ///< decouples: per-sat elapsed time over network.clock_anchor_max_gap_s
+    long long cta_trip_datum = 0;        ///< decouples: a datum change retired this satellite's frame
+    long long cta_trip_ext = 0;          ///< decouples: an external tier (clock monitor / RAIM) already refloated this satellite
+    long long cta_resolves = 0;          ///< in-epoch re-solves executed (the adapt-and-emit half)
+    long long cta_resolve_failed = 0;    ///< in-epoch re-solves that threw and were reverted to the anchored solution
+    long long cta_datum_kept = 0;           ///< anchored clocks kept engaged at a dense-transformed handover (no datum decouple)
+    long long cta_datum_kept_refused = 0;   ///< armed datum decouples the keep rule refused (no dense edge, no row, a loose fold)
+    long long cta_recouples = 0;         ///< re-coupling edges: a loose satellite re-earned the anchor
+    long long cta_marks = 0;             ///< per-sat wire discontinuities queued at a decoupling edge
+    double    cta_max_w = 0.0;           ///< largest |w| seen (any disposition)
+    double    cta_max_w_tow = 0.0;       ///< …its epoch
+    std::string cta_max_w_sat;           ///< …its satellite
+    // --- The guard's own realized distribution (the k derivation).
+    // `k` is read off a measured |t| ladder, and the ladder moves with q: the
+    // denominator √(P⁻ − P⁺) shrinks as the anchor tightens, so a fixed k means a
+    // different number of metres at every rung.  Without these, re-deriving k per
+    // rung would need a second, disarmed run per rung.  Accumulated over anchored rows
+    // on the first guard pass only (a later pass re-tests survivors against a moved
+    // median and would count them twice).
+    //
+    // The population is truncated across epochs, not within one: a tripped satellite
+    // goes loose and stops contributing until it re-couples, so the guard's own action
+    // suppresses the upper tail.  For the untruncated null, run an arm with
+    // `clock_anchor_k` beyond the top rung and `clock_anchor_abs_m: 0`; that is what
+    // §3 means by "with the guard disarmed", and it is the only reading that
+    // calibrates k without the truncation.
+    long long cta_w_rows = 0;            ///< anchored rows contributing to the two ladders below (denominator)
+    std::array<long long, 8> cta_w_ge{}; ///< |w| ≥ @ref kCtaWLadder[i]: the dimensionless ladder k is read off
+    std::array<long long, 8> cta_e_ge{}; ///< |ê| ≥ @ref kCtaELadder[i] (m): the ladder the absolute backstop's rail is read off
+    double    cta_sum_sqrt_s = 0.0;      ///< Σ √S over those rows, so mean √S = the metres that one unit of k buys at this rung
+    double    cta_sum_abs_e = 0.0;       ///< Σ |ê| over those rows (m)
+    // The phase-space statistic (network.clock_anchor_guard_space).
+    long long cta_phi_rows = 0;          ///< anchored pass-0 rows with a phase statistic
+    long long cta_phi_unavail = 0;       ///< rows tested without one (no dense clock + two-band PB prior this epoch): abs only in phase mode
+    long long cta_phi_floor_rows = 0;    ///< rows whose phase sqrt(S) sat at its floor
+    std::array<long long, 8> cta_phi_w_ge{};   ///< |w_phi| >= kCtaWLadder[i]
+    std::array<long long, 8> cta_phi_e_ge{};   ///< |e_phi| >= kCtaELadder[i] (m)
+    double    cta_phi_sum_w2 = 0.0;      ///< sum w_phi^2 (the phase statistic's own sigma0)
+    long long cta_x_both = 0;            ///< anchored pass-0 rows over k on both statistics
+    long long cta_x_clk_only = 0;        ///< …on the clock statistic only (the level's motion)
+    long long cta_x_phi_only = 0;        ///< …on the phase statistic only
+    long long cta_trip_phi = 0;          ///< decouples decided by the phase statistic (phase mode)
+    double    cta_sum_w2 = 0.0;          ///< Σ w², so √(Σw²/n) is the guard's own σ̂₀, a same-statistic cross-check on the census's σ̂₀_clk
+    long long n_readmit_seed_moved    = 0;  ///< nis/abs trips of the Q3 guard within kReadmitVerifyWindowS of a clock seed: the data rejected the seed
+};
+
 }  // namespace GnssProcessor

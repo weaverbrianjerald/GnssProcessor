@@ -334,7 +334,6 @@ TEST(CarryRxClockInBlockTest, KnobOffLeavesKBlockRowsAndNoClockColumnAtAll) {
     EXPECT_EQ(f.R.pl_blk_rxclk_isb_cols, 0);
     EXPECT_EQ(f.R.pl_blk_rxclk_missing_cross, 0);
     EXPECT_EQ(f.R.pl_blk_rxclk_not_folded, 0);
-    EXPECT_TRUE(f.R.pl_rxclk_blk_cols.empty());
     EXPECT_TRUE(f.R.pl_rxclk.empty());
 }
 

@@ -1353,12 +1353,6 @@ struct StationAssembly {
     /// post-solve harvest's record of what to stash (RX-CLK-in-block).  Written for
     /// every present column whether or not its carry was folded.
     std::vector<PlRxClk>      pl_rxclk;
-    /// The A_r columns of the clock-family entries pushed into this station-epoch's
-    /// block (RX-CLK-in-block).  Read by the post-fit RAIM pool census to recognise the
-    /// whitened clock block rows (@c n_raim_pool_rxclk_rows).  Empty with the knob off,
-    /// on every station-epoch that pushed none, and on a non-SPD block (no whitened row
-    /// exists).
-    std::vector<Eigen::Index> pl_rxclk_blk_cols;
     // The station's receiver code-bias columns carried inside the same local block
     // (RXCB-IN-BLOCK, network.carry_rx_code_bias_in_block).  As for the receiver clock
     // there is no diagonal fallback row: the diagonal rx-CB fold at the conditional
@@ -1369,12 +1363,8 @@ struct StationAssembly {
     long long                 pl_blk_rxcb_not_folded{0};     ///< Receiver code-bias columns pushed but not folded: the block was non-SPD this station-epoch and there is no diagonal row to fall back to.
     long long                 pl_blk_rxcb_missing_cross{0};  ///< (receiver code-bias, other) pairs zeroed for a missing harvest cross term: a subset of @c pl_blk_pair_missing.
     long long                 pl_rxcb_restored_skip{0};      ///< carried receiver code-bias entries without a harvest-block row (restored from a diagonal-carry snapshot), left out of the block.
-    /// The A_r columns of the receiver code-bias entries pushed into this station-epoch's
-    /// block (RXCB-IN-BLOCK).  Empty with the knob off, on a station-epoch that pushed
-    /// none, and on a non-SPD block.
-    std::vector<Eigen::Index> pl_rxcb_blk_cols;
-    /// The receiver code-bias columns of @ref pl_rxcb_blk_cols that the block builder's
-    /// scalar screen refused (@c CouplingRowBuilder::buildLocalBlock; counted in
+    /// The receiver code-bias columns pushed into this station-epoch's block (RXCB-IN-BLOCK)
+    /// that the block builder's scalar screen refused (@c CouplingRowBuilder::buildLocalBlock; counted in
     /// @c pl_blk_col_refused): pushed, but never rows of the block.  Read only by the
     /// fold count of the band-5 receiver delay, which counts a column as folded only when it is absent here.
     std::vector<Eigen::Index> rxcb_refused;
@@ -1398,11 +1388,6 @@ struct StationAssembly {
     long long                 pl_blk_iono_not_folded{0};    ///< Iono columns pushed but not folded: the block was non-SPD (or never built) this station-epoch, and there is no diagonal row to fall back to, so their carry did not act.  The counterpart of the ZWD carry's @c pl_blk_zwd_fallback_diag.
     long long                 pl_blk_iono_missing_cross{0}; ///< (iono, other) pairs zeroed for a missing harvest cross term: a subset of @c pl_blk_pair_missing, split out so that the iono carry's own coupling can be read separately.
     long long                 pl_blk_iono_gap_drop{0};      ///< Carried LOS entries refused at inject because the sighting gap exceeded network.carry_iono_in_block_max_gap_s (invariant #1's absent-satellite edge; the harvest prune then erases them).
-    /// The A_r columns of the iono entries pushed into this station-epoch's block, in
-    /// push order (I-in-block).  Read by the post-fit RAIM pool census to recognise the
-    /// whitened iono block rows (@c n_raim_pool_iono_rows); empty with the knob off and
-    /// on every station-epoch that pushed none.
-    std::vector<Eigen::Index> pl_iono_blk_cols;
     std::vector<PlAmb>        pl_amb;       ///< Present non-pivot ambiguities, for the post-solve stash.  A carry-eligible subset: filled only when the phase-leveling ambiguity carry is the live vehicle (`carry_warm && !carry_invariant`), because it doubles as that carry's inject/harvest record.  QC tiers must not key on it; see `qc_amb`.
     /// Census of the ambiguity columns that are present and unpinned, and therefore
     /// checkable, this epoch, independent of the carry vehicle (RAIM pool re-host,

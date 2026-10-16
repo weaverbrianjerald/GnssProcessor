@@ -48,6 +48,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
                                 const std::set<std::string>& clock_refloat_sats,
                                 const std::set<std::string>& retro_flag_sats,
                                 bool retro_feed) {
+    net::NetworkEntities& entities = ctx.entities;   // written: sats
     // Alias block (INC-4): the relocated body reads the former runNetwork() locals under
     // their original names.
     const double ura_refloat_inflate = ctx.knobs.ura_refloat_inflate;
@@ -68,7 +69,7 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
             if (!sat.empty()) flagged_now.insert(sat);
 
         if (ura_refloat_inflate > 1.0 && pl_warmup > 0)
-            for (const std::string& sat : flagged_now) net::putSat(ctx.entities, sat, &net::SatelliteState::ura_refloat_horizon) = pl_warmup;
+            for (const std::string& sat : flagged_now) net::putSat(entities, sat, &net::SatelliteState::ura_refloat_horizon) = pl_warmup;
 
         // The retro-bump is edge-triggered (P1-3): queue only a satellite that just
         // became flagged (not already in retro_active), so a satellite that stays
@@ -77,13 +78,13 @@ void networkRetroUraBookkeeping(NetworkRunContext& ctx,
         // re-flag re-arms the bump.  ura_retro_sats is consumed at the next emit.
         if (ura_retro) {
             for (const std::string& sat : flagged_now)
-                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(ctx.entities, sat, net::Disc::UraRetro);
-            net::assignSatFlags(ctx.entities, &net::SatelliteState::retro_active, flagged_now);
+                if (!net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::retro_active)) net::markSat(entities, sat, net::Disc::UraRetro);
+            net::assignSatFlags(entities, &net::SatelliteState::retro_active, flagged_now);
         }
 
         // Age out the post-refloat inflation horizon one epoch at a time.
         if (ura_refloat_inflate > 1.0)
-            net::eraseIf(ctx.entities.sats, &net::SatelliteState::ura_refloat_horizon,
+            net::eraseIf(entities.sats, &net::SatelliteState::ura_refloat_horizon,
                          [](const SatId&, int& left) { return --left <= 0; });
     }
 }
@@ -109,6 +110,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& prev_carry = ctx.carry.prev_carry;
     auto& prev_carry_cov = ctx.carry.prev_carry_cov;
     net::ConstellationTable& cons_rows = ctx.entities.constellations;
+    net::NetworkEntities& entities = ctx.entities;   // written: sat_signals sats
     const auto& this_epoch_cb_ifpin = events.code_datum.this_epoch_cb_ifpin;
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;
     const bool   carry_cpl_tu = ctx.knobs.carry_cpl_tu;
@@ -166,7 +168,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // alone would leave the clock-QC half of the feed empty, and the widening would cover
     // only the reref sources without any indication.
     if (carry_cpl_tu || ctx.knobs.carry_cpl_reinit)
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::prev_clock_refloat, clock_refloat_sats);
+        net::assignSatFlags(entities, &net::SatelliteState::prev_clock_refloat, clock_refloat_sats);
     // The satellite clock is stashed to prev_carry only in scalar-carry mode.  Under
     // network.clock_model the clock is carried by clock_osc and is not stashed here; the
     // two-state model is its only cross-epoch memory.
@@ -189,7 +191,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // is armed.
     const bool harvest_pb_levels =
         ctx.knobs.pin_bridge_on || ctx.knobs.sbasis_complete_on;
-    if (harvest_pb_levels) net::dropAll(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev);
+    if (harvest_pb_levels) net::dropAll(entities.sat_signals, &net::SatSignalState::pb_level_prev);
     for (const auto& pk : shared_phase_keys) {
         const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
         if (!parts) continue;
@@ -212,7 +214,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
                 const double v =
                     x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
                 if (std::isfinite(v))
-                    net::putSig(ctx.entities, StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                    net::putSig(entities, StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
                                 &net::SatSignalState::pb_level_prev) = v;
             } catch (...) {}
         }
@@ -233,7 +235,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     // stashed to skip, and prev_carry is rebuilt from scratch above, so no stale carry is
     // left to guard against.
     if (net::present(ctx.entities.sats, &net::SatelliteState::datum_reref_pb) > 0)
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::datum_reref_pb, {});
+        net::assignSatFlags(entities, &net::SatelliteState::datum_reref_pb, {});
     // Refresh the time-linked previous-value map from this kept epoch's solved code
     // biases.  Cleared and rebuilt (a departed satellite drops out, so its return
     // re-seeds that satellite alone) in lock-step with the D2 carry, with the same
@@ -247,7 +249,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // Advance the IF-pin comparison baseline to this kept epoch's pairs (a pair
         // recorded on an epoch that was then withheld never reaches here, so the
         // baseline tracks emitted / kept datum realizations only).
-        net::assignSat(ctx.entities, &net::SatelliteState::code_bias_ifpin_pair, this_epoch_cb_ifpin);
+        net::assignSat(entities, &net::SatelliteState::code_bias_ifpin_pair, this_epoch_cb_ifpin);
     }
     for (const auto& kv : registered_code_keys) {  // satellite code bias, OSB (W6)
         const bool flagged = clock_refloat_sats.count(kv.first) > 0;
@@ -269,7 +271,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             if (std::isfinite(v)) {
                 net::put(cons_rows, systemOfSat(kv.first), &net::ConstellationState::channels,
                          kv.second, &net::ChannelState::code_bias_prev)[kv.first] = v;
-                net::markSat(ctx.entities, kv.first, &net::SatelliteState::code_bias_seen);
+                net::markSat(entities, kv.first, &net::SatelliteState::code_bias_seen);
             }
         }
     }
@@ -299,26 +301,26 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
     if (ctx.knobs.carry_cpl_exact) {
         ctx.carry.cxu_stash_s     = TimeUtils::continuousGpsSeconds(t);
         ctx.carry.cxu_stash_valid = prev_carry_cov.P.rows() > 0;
-        net::dropAll(ctx.entities.constellations, &net::ConstellationState::cxu_pivot);
+        net::dropAll(cons_rows, &net::ConstellationState::cxu_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (pinned_cols.count(col) && col >= 0 && col < x_s.size())
-                net::put(ctx.entities.constellations, systemOfSat(sat),
+                net::put(cons_rows, systemOfSat(sat),
                          &net::ConstellationState::cxu_pivot) = {sat, x_s(col)};
         }
     }
     // The clock pivot this stash was pinned on, the frame of the carried clocks
     // the next epoch's fold applies the pivot-frame process noise in.
     if (ctx.knobs.pfq_on) {
-        net::dropAll(ctx.entities.constellations, &net::ConstellationState::pfq_pivot);
+        net::dropAll(cons_rows, &net::ConstellationState::pfq_pivot);
         for (const std::string& sat : registered_clock_sats) {
             if (sat.empty()) continue;
             Eigen::Index col = -1;
             try { col = est.clockColumn(sat); } catch (...) { continue; }
             if (col >= 0 && pinned_cols.count(col))
-                net::put(ctx.entities.constellations, systemOfSat(sat),
+                net::put(cons_rows, systemOfSat(sat),
                          &net::ConstellationState::pfq_pivot) = sat;
         }
     }
@@ -357,7 +359,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         //     column is registered now but was last stashed >= kReadmitMinGapEp loop
         //     epochs ago.
         for (const std::string& sat : registered_clock_sats) {
-            long long& last = net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_last_seen_ep);   // 0 on first sight
+            long long& last = net::putSat(entities, sat, &net::SatelliteState::readmit_last_seen_ep);   // 0 on first sight
             const long long gap_ep = (last > 0) ? ep - last : 0;
             const bool readmitted = last > 0 && gap_ep >= kReadmitMinGapEp;
             last = ep;
@@ -365,7 +367,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
             ++ctx.counters.n_readmit_events;
             std::string marg;
             if (ctx.knobs.readmit_marg_ep > 0) {
-                net::putSat(ctx.entities, sat, &net::SatelliteState::readmit_marg) = ep + ctx.knobs.readmit_marg_ep;
+                net::putSat(entities, sat, &net::SatelliteState::readmit_marg) = ep + ctx.knobs.readmit_marg_ep;
                 ++ctx.counters.n_readmit_marg_windows;
                 marg = fmt::format(";marg_until_ep={}", ep + ctx.knobs.readmit_marg_ep);
             }
@@ -375,7 +377,7 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         }
         // Expired windows: the block's re-coupling edge (the returned satellite's
         // columns fold as present terms again), traced per satellite.
-        net::eraseIf(ctx.entities.sats, &net::SatelliteState::readmit_marg, [&](const SatId& id, long long until) {
+        net::eraseIf(entities.sats, &net::SatelliteState::readmit_marg, [&](const SatId& id, long long until) {
             if (ep < until) return false;
             traces.emitEvent(t, "READMIT", "marg_expired", net::satKey(id), "",
                              static_cast<double>(until), std::nullopt, "recouple",

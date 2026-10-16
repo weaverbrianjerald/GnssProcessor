@@ -114,11 +114,6 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
     const Eigen::VectorXd& x_lin = carry.x_lin;
     CouplingRowBuilder& cb = carry.cb;
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj = carry.inj;
-    const auto amb_state_note = [&](const std::string& sat,
-                                    const std::string& signal,
-                                    double var_eff, AmbFoldRoute route) {
-        networkAmbStateNote(carry, sat, signal, var_eff, route);
-    };
     // The alias lines of networkPassB_ this function reads, verbatim.
     const bool   carry_cpl_cond = ctx.knobs.carry_cpl_cond; // conditional local carry, coupling rows; requires fullcov_on (enforced at load)
     // ---- End of the bindings ----
@@ -130,14 +125,14 @@ void networkAmbCarryEmitRow(StationCarryFrame& carry, Eigen::Index col, int amb_
     if (carry_cpl_cond) {
         cb.buildCplRow(col, x_lin(amb_idx), lc, var_eff, gap_clamped,
                        amb_tag.sat, amb_tag.signal);
-        amb_state_note(sat, signal, var_eff, AmbFoldRoute::CouplingScalar);
+        networkAmbStateNote(carry, sat, signal, var_eff, AmbFoldRoute::CouplingScalar);
         return;
     }
     const double lambda = 1.0 / var_eff;
     const double eta = lambda * (lc.value_abs - x_lin(amb_idx));
     if (!std::isfinite(eta)) return;            // guard: a non-finite η must not reach u_r
     inj.emplace_back(col, lambda, eta, amb_tag);
-    amb_state_note(sat, signal, var_eff, AmbFoldRoute::Diag);
+    networkAmbStateNote(carry, sat, signal, var_eff, AmbFoldRoute::Diag);
 }
 
 // Record what this column's fold actually was, at the one site that
@@ -207,16 +202,6 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
     std::map<int, int>& h2local = R.h2local;
     const bool legacy_local_inject = carry.legacy_local_inject;
     const Eigen::VectorXd& x_lin = carry.x_lin;
-    const auto pl_finish_var = [&](double var_eff, const std::string& sat) {
-        return networkAmbCarryFinishVar(carry, var_eff, sat);
-    };
-    const auto pl_emit_row = [&](Eigen::Index col, int amb_idx,
-                                 const LocalCarry& lc, double var_eff,
-                                 double gap_clamped,
-                                 const std::string& sat = {},
-                                 const std::string& signal = {}) {
-        networkAmbCarryEmitRow(carry, col, amb_idx, lc, var_eff, gap_clamped, sat, signal);
-    };
     // The alias lines of networkPassB_ this function reads, verbatim.
     auto& stations = setup.stations;
     const bool phase_datum_prioritized = ctx.knobs.phase_datum_prioritized;
@@ -386,15 +371,15 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
             // predicate the inline route applies to the tail.  (F3 reads the
             // same finished tail as its Σ diagonal, and its scalar screen is
             // the row build's own.)
-            if (!(pl_finish_var(var_eff, parts->satellite) > 0.0)) continue;
+            if (!(networkAmbCarryFinishVar(carry, var_eff, parts->satellite) > 0.0)) continue;
             pl_pend.push_back(PlPend{col, amb_idx, cit, var_eff,
                                      std::max(0.0, gap), parts->satellite,
                                      parts->signal});
             continue;
         }
-        var_eff = pl_finish_var(var_eff, parts->satellite);
-        pl_emit_row(col, amb_idx, (*cit), var_eff, std::max(0.0, gap),
-                    parts->satellite, parts->signal);
+        var_eff = networkAmbCarryFinishVar(carry, var_eff, parts->satellite);
+        networkAmbCarryEmitRow(carry, col, amb_idx, (*cit), var_eff, std::max(0.0, gap),
+                               parts->satellite, parts->signal);
     }
     }
 }
@@ -533,6 +518,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
     const std::shared_ptr<PlHarvestBlock>& hblk = sb.blk;
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs
     for (size_t a = 0; a < R.pl_amb.size(); ++a) {
         const PlAmb& pa = R.pl_amb[a];
         if (pa.col < 0 || pa.col >= xr.size()) continue;
@@ -745,7 +731,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                     ctx.carry.amb_state_rows.push_back(std::move(row));
             }
             nlc.n_folds = nlc_n_folds;
-            net::putArc(ctx.entities, lkey, &net::ArcState::amb) = std::move(nlc);
+            net::putArc(entities, lkey, &net::ArcState::amb) = std::move(nlc);
             networkSharedHistoryNoteEntry(shx_h, est_idx, pa.col, SharedHistoryMap::Amb,
                                           static_cast<int>(i), pa.sat, pa.signal);   // no-op off
         }
@@ -756,7 +742,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
             // inject can pair it with any sibling stashed at this harvest, and
             // with nothing else.
             hblk->C.row(static_cast<Eigen::Index>(a)) = cross.transpose();
-            auto& ent = net::putArc(ctx.entities, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
+            auto& ent = net::putArc(entities, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
             ent.blk = hblk;
             ent.blk_idx = static_cast<int>(a);
         }
@@ -921,6 +907,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
     // unreachable (byte-identical).
     const bool amb_state_on = ctx.knobs.trace_amb_state;
     // ---- End of the bindings ----
+    net::ArcTable& arc_rows = ctx.entities.arcs;   // written
     // Carry-retirement census.  This prune is the mechanism behind the fleet-scale
     // carry loss that §1.3 calls the "cliff".  It reads only last_seen_s (it selects
     // on elapsed time and nothing else), so any claim that it improves quality has
@@ -930,7 +917,7 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
     // as pl_max_gap_s).
     const long long fleet_before = static_cast<long long>(net::present(ctx.entities.arcs, &net::ArcState::amb));
     const long long n_pruned = carryGapPrune(
-        ctx.entities.arcs, &net::ArcState::amb, pl_now_s,
+        arc_rows, &net::ArcState::amb, pl_now_s,
         ctx.params.spec(NetworkParamKind::Ambiguity).gap_horizon_s,
         [&](const ArcId& id, const LocalCarry& lc) {
             // Capture before the erase (RF-1 §7.4, D3).  This is the one
@@ -984,5 +971,41 @@ void networkPruneAmbiguities(NetworkRun& run, const NetworkEpoch& ep, EpochEvent
 }
 
 // ---- End of the harvest half ----
+
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkAmbiguityFreeEpochTally(NetworkRunContext& ctx,
+                                      const std::vector<StationAssembly>& asm_res) {
+    const bool   relevel_free_on = ctx.knobs.relevel_free_on;
+    // Free-epoch skips (slip re-leveling): fold the per-station counts (serial, post-produce,
+    // the same discipline as the coupling fold).
+    if (relevel_free_on)
+        for (const StationAssembly& Rc : asm_res)
+            ctx.counters.n_relevel_free_skips += Rc.relevel_free_skips;
+}
+
+void networkAmbiguityStaleSkipTally(NetworkRunContext& ctx,
+                                     const std::vector<StationAssembly>& asm_res,
+                                     const SyncedEpoch& se) {
+    // Fold the inject-side stale skips (the cliff mechanism, SPEC_withhold_era_release
+    // §8) and record the worst epoch with a handle a trace filter can use.
+    {
+        long long stale_ep = 0, stale_sta = 0;
+        for (const StationAssembly& Rc : asm_res)
+            if (Rc.inject_stale_skips > 0) { stale_ep += Rc.inject_stale_skips; ++stale_sta; }
+        if (stale_ep > 0) {
+            ctx.counters.n_cr_inject_stale += stale_ep;
+            ++ctx.counters.n_cr_inject_stale_epochs;
+            if (stale_ep > ctx.counters.n_cr_inject_stale_max) {
+                ctx.counters.n_cr_inject_stale_max      = stale_ep;
+                ctx.counters.n_cr_inject_stale_max_week = se.time.week;
+                ctx.counters.cr_inject_stale_max_tow    = se.time.tow;
+                ctx.counters.n_cr_inject_stale_max_sta  = stale_sta;
+            }
+        }
+    }
+}
+
+// ---- End of the PASS B serial tallies ----
 
 } // namespace GnssProcessor

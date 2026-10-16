@@ -2043,6 +2043,7 @@ void networkCodeDatumFamilyKeptEpoch(
                              const std::string&, std::optional<double>,
                              std::optional<double>, const char*,
                              const std::string&)>& emitEvent, const EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sats
     using Outcome = NetworkSbasis::PinPairOutcome;
     // The pin pair holds of this kept epoch (network.code_datum_pair_continuity): each
     // held satellite-epoch is counted, and a hold is declared at both edges against the
@@ -2106,7 +2107,7 @@ void networkCodeDatumFamilyKeptEpoch(
         emitEvent("CLK_BASIS", "held", sat, "", std::nullopt, std::nullopt, "hold_end",
                   holdText(hold) + ending);
     }
-    net::assignSat(ctx.entities, &net::SatelliteState::last_if_pin_hold, holds);
+    net::assignSat(entities, &net::SatelliteState::last_if_pin_hold, holds);
     // The pin pair changes of this kept epoch (network.code_datum_pair_continuity).
     for (const auto& [sat, change] : events.code_datum.this_epoch_if_pin_changes) {
         NetworkSbasis::CodeDatumPairCounts& c = ctx.counters.cb_pair_by_const[systemOfSat(sat)];
@@ -2150,7 +2151,7 @@ void networkCodeDatumFamilyKeptEpoch(
                           + NetworkSbasis::familyRowOutcomeName(r.outcome) + ")");
         }
         if (ch)
-            net::put(ctx.entities.constellations, ch->first, &net::ConstellationState::channels,
+            net::put(entities.constellations, ch->first, &net::ConstellationState::channels,
                      ch->second, &net::ChannelState::last_cb_family_partner) = partner;
     }
     // The first-sighting family prior of this kept epoch (
@@ -2396,7 +2397,8 @@ static int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       "because a value chosen to keep the rank is indistinguishable from "
                       "an estimate.  Every one of these would have been an ASSERTION of a "
                       "zero inter-signal correction under RF-0d alone (counted beside this "
-                      "as n_sat_gf_isc_zero = {}), which card TBI measured at metres across "
+                      "as n_sat_gf_isc_zero = {}), which the three-band ignition study measured at "
+                      "metres across "
                       "a band.  The freed channels' LEVEL now re-references whenever the "
                       "veteran link re-seeds: {} sum-to-zero row(s) re-seeded over the run, "
                       "marking {} satellite-epoch(s) for the consumer's discontinuity "
@@ -2423,7 +2425,7 @@ static int networkSbasisDatumRunEnd(const NetworkRunEndView& v) {
                       "over the run (one per station-epoch per constellation, sigma {:.1f} m, "
                       "realized common-mode information 1/sigma^2 = {:.3e} INDEPENDENT of station "
                       "count).  Folded PRE-reduce through the diagonal prior channel, so it "
-                      "composes with the Card-4 DD priors that refuse a post-reduce Woodbury "
+                      "composes with the invariant-carry DD priors that refuse a post-reduce Woodbury "
                       "gauge.  This is the IGS zero-mean-over-receivers DCB convention, replacing "
                       "the datum the satellite code-bias sum-to-zero silently also provided.",
                       ctx.counters.n_rxcb_gauges,

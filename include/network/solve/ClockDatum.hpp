@@ -45,4 +45,12 @@ SbasisDeclaration networkClockDatumDeclaration(const NetworkRunContext& ctx,
  */
 EpochAction networkClockDatum(NetworkRun& run, const NetworkEpoch& ep, SolveDatum& datum);
 
+/// @brief Run-scope counters of ClockDatum, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ClockDatumCounters {
+    // Broadcast health on the network path.  All zero unless network.sat_health.
+    long long hlt_unhealthy_registered = 0; ///< (sat,epoch) registered clock satellites the broadcast flags unhealthy (processed in "pivot" mode, absent in "exclude")
+    long long hlt_pivot_skips = 0;          ///< (constellation,epoch) pivot picks that passed over an unhealthy satellite
+    long long hlt_pivot_fallbacks = 0;      ///< (constellation,epoch) with no healthy registered satellite, where the lexical first stood
+};
+
 } // namespace GnssProcessor

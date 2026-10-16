@@ -309,7 +309,6 @@ TEST(CarryIonoInBlockTest, KnobOffLeavesKBlockRowsAndNoIonoColumnAtAll) {
     EXPECT_EQ(f.R.pl_blk_iono_cols, 0);
     EXPECT_EQ(f.R.pl_blk_iono_missing_cross, 0);
     EXPECT_EQ(f.R.pl_blk_iono_not_folded, 0);
-    EXPECT_TRUE(f.R.pl_iono_blk_cols.empty());
 }
 
 // =============================================================================

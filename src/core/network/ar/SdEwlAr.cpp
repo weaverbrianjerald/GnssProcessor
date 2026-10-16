@@ -278,6 +278,7 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     auto& C = ctx.counters;
     net::LosTable& los_rows = ctx.entities.los;   // the flip memory
     net::ConstellationTable& cons_rows = ctx.entities.constellations;   // sd_ewl_r0 (N4b)
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     ++C.sdewl_epochs;
     (void)now_s;   // arc continuity is judged by the detector's own sample count
 
@@ -505,7 +506,7 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
                 if (v == SdEwlFlipVerdict::Restart) ++C.sdewl_dd_restart;
                 if (v == SdEwlFlipVerdict::Flip)    ++C.sdewl_dd_flip;
                 const bool vetoed = (v == SdEwlFlipVerdict::Flip);
-                net::putLos(ctx.entities, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev) =
+                net::putLos(entities, static_cast<int>(sta), sat, &net::LosState::sd_ewl_prev) =
                     { d.n_cyc, stat.count };
                 SdEwlFix f;
                 f.n_cyc = d.n_cyc;
@@ -582,7 +583,7 @@ int networkSdEwlRunEnd(const NetworkRunEndView& v) {
               "arc absent), {} mixed BIA frame, {} no ambiguity-column pair, {} "
               "missing shared PB/CB column, {} arc without code channels, {} bad "
               "lambda, {} |z| over limit.  FLOAT rows only (increment 1); these fold "
-              "PRE-reduce so they compose exactly with the Card-4 post-reduce DD fold.",
+              "PRE-reduce so they compose exactly with the invariant-carry post-reduce DD fold.",
               t.rows_built, t.sat_seen, mean_var, std::sqrt(std::max(mean_var, 0.0)),
               t.rows_capped, t.skip_no_detector, t.skip_no_pivot, t.skip_no_arc,
               t.skip_immature, config_.getNetworkConfig().sd_ewl.min_arc_epochs,
@@ -822,5 +823,24 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 }
 
 // ---- End of the PASS B station steps ----
+
+// ---- PASS B serial tallies (the produce wrote each station's slot; these fold the slots into the run) ----
+
+void networkSdEwlTraceDrain(const GnssConfig& config_, NetworkRunTraces& traces,
+                          const std::vector<StationAssembly>& asm_res) {
+    // SD pre-reduce EWL trace drain (serial, post-produce; SPEC_sd_ewl_prereduce §6).
+    // The rows were formatted per station inside the parallel produce; writing them
+    // here in station index order makes the file independent of the thread count.
+    // Flushed per epoch: this stream exists to diagnose runs that are killed
+    // mid-flight, and an unflushed tail would lose exactly that evidence.
+    if (config_.getNetworkConfig().sd_ewl.trace && traces.sd_ewl_trace) {
+        for (size_t i = 0; i < asm_res.size(); ++i)
+            for (const std::string& row : asm_res[i].sd_ewl_trace)
+                traces.sd_ewl_trace << row;
+        traces.sd_ewl_trace.flush();
+    }
+}
+
+// ---- End of the PASS B serial tallies ----
 
 } // namespace GnssProcessor

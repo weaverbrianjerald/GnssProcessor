@@ -61,10 +61,10 @@ static int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v) {
     // run (the L3 defect).
     if (config_.networkCycleSlipMwDetect()) {
         const auto& qcc = slip_qc.counters;
-        log->info("Network (slip-QC card E / MW-detect): {} wide-lane slip detection(s) "
+        log->info("Network (slip-QC / MW-detect): {} wide-lane slip detection(s) "
                   "({} refloated) + {} LLI detection(s) ({} refloated) over the run.  "
                   "Detections are counted whether the carry was warm or COLD — a cold run "
-                  "still feeds the Card-4 C3c funnel, and reporting only refloats is what "
+                  "still feeds the invariant-carry C3c funnel, and reporting only refloats is what "
                   "made that wiring look dead.  [MW ↔ IF agreement is now readable from "
                   "network_events.csv alone: scripts/grade_slip_agreement.py]",
                   qcc.mw_detections, qcc.mw_refloats,
@@ -236,8 +236,7 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
                   "(carry died with the gap — no response owed), {} STALE refused "
                   "(ledger from an earlier epoch — never respond to history).  "
                   "CLOSURE {} vs events {} ({}).  0 arcs refloated on an accumulated "
-                  "run with in-horizon restarts = dead wiring (invariant #4; card "
-                  "WUP).",
+                  "run with in-horizon restarts = dead wiring (invariant #4).",
                   qcc.wu_restart_events, qcc.wu_restart_refloated,
                   qcc.wu_restart_arcs, qcc.wu_restart_carry_arcs,
                   qcc.wu_restart_no_arc, qcc.wu_restart_cold,
@@ -272,7 +271,7 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
             log->info("Network (anchor-slip handovers): ZERO staged this run — no slip "
                       "response freed an ANCHOR arc.  On a run whose detectors DID fire "
                       "that is the honest zero (the slips missed the gauge arcs); on one "
-                      "where they did not fire at all it says nothing about this card.");
+                      "where they did not fire at all it says nothing about this response.");
         else if (C.n_anc_slip_handed == 0)
             log->warn("Network (anchor-slip handovers): DEAD WIRING — {} directive(s) "
                       "staged and NOT ONE reached a family (staged {} / inert {} / no "
@@ -403,7 +402,7 @@ static int networkSlipDatumStationRunEnd(const NetworkRunEndView& v) {
     }
     if (nc.slip_qc.lli_corroborate) {
         const auto& qcc = slip_qc.counters;
-        log->info("Network (slip-QC card L / LLI corroboration): {} LLI assertion(s) seen — "
+        log->info("Network (slip-QC / LLI corroboration): {} LLI assertion(s) seen — "
                   "{} corroborated by an MW step, {} by a GF step, {} with no measurable step, "
                   "{} asserted OFF the primary dual-frequency pair (MW/GF structurally cannot "
                   "witness those — widen the primitive if this is large); {} SUPPRESSED as "
@@ -425,7 +424,7 @@ static int networkSlipDatumStationRunEnd(const NetworkRunEndView& v) {
                       return stations[a.second].name < stations[b.second].name;
                   });
         if (offenders.empty()) {
-            log->info("Network (slip-QC card L): no station's LLI was demoted this run "
+            log->info("Network (slip-QC): no station's LLI was demoted this run "
                       "(every assertion was corroborated or came from a credible station).");
         } else {
             std::string top;
@@ -439,7 +438,7 @@ static int networkSlipDatumStationRunEnd(const NetworkRunEndView& v) {
                                    h.lli_demotions, h.lli_promotions,
                                    h.lli_credible ? "credible" : "corroboration-required");
             }
-            log->info("Network (slip-QC card L) TOP LLI OFFENDERS ({} station(s) demoted): {}",
+            log->info("Network (slip-QC) TOP LLI OFFENDERS ({} station(s) demoted): {}",
                       offenders.size(), top);
         }
     }
@@ -517,7 +516,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
         // 2 independently bridgeable arcs, which is why the arc totals exceed the
         // resumption totals.  Both arc ledgers are closed (bridged + fresh) so no reader
         // has to infer a missing cell.
-        log->info("Network (slip-QC card G / gap instrumentation): {} RESUMPTION(s) "
+        log->info("Network (slip-QC / gap instrumentation): {} RESUMPTION(s) "
                   "[unit: (station,satellite) re-entry after ≥1 missed epoch] = {} SHIFTED "
                   "(raw MW/GF level moved across the break) + {} measured-and-unshifted + {} "
                   "UNMEASURABLE (no pre-gap dual-band level to compare).  Bridge "
@@ -533,7 +532,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
                   "reads.  [G3 decision "
                   "rule: shifted-AND-bridged ≈ 0 on a warm graded run ⇒ the mechanism is "
                   "DEFERRED WITH DATA — record this number, and read it together with the "
-                  "unmeasurable-bridged count; nonzero ⇒ spec the follow-up card that marks "
+                  "unmeasurable-bridged count; nonzero ⇒ spec the follow-up change that marks "
                   "such arcs slipped at re-entry.]{}",
                   qcc.gap_resumptions, qcc.gap_shifted,
                   qcc.gap_resumptions - qcc.gap_shifted - qcc.gap_unmeasurable,
@@ -556,7 +555,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
         // line says so, which makes the knob's effect readable from the run end alone.
         {
             const std::string grk_line = fmt::format(
-                "Network (slip-QC card GRK / tracker key): {} cell(s) [unit: (station, "
+                "Network (slip-QC / tracker key): {} cell(s) [unit: (station, "
                 "satellite, epoch, band)] where the arc-level tracker's band signal "
                 "DIFFERS from the phase this station LATCHED on that band, and {} "
                 "ROW-LEVEL re-entry arc(s) [unit: (station, satellite, signal) of a "
@@ -588,7 +587,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
                                  + qcc.ledger_reentry_no_carry
                                  + qcc.ledger_reentry_pivot_skipped;
             log->info(
-                "Network (card SID phase 3 / LEDGER-DRIVEN GAP RE-ENTRY): {} arc(s) "
+                "Network (LEDGER-DRIVEN GAP RE-ENTRY): {} arc(s) "
                 "[unit: (station, satellite, signal)] in the ledger's ADMITTED "
                 "Gap-to-Reentered population inside phase_leveling_max_gap_s; {} more "
                 "admitted return(s) were OUTSIDE that horizon, and {} admitted phase "
@@ -604,7 +603,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
                 "with no carry to protect, {} skipped at the gauge-pinned pivot.  {} "
                 "arc(s) returned to a RE-CREATED ambiguity column.  {} ARC arc_reentry "
                 "event(s) written for the no-verdict half (holdoff-throttled).  "
-                "NO-VERDICT POLICY: {}.  Card GRK's gap_reentry_unreachable reads {} — "
+                "NO-VERDICT POLICY: {}.  The tracker key's gap_reentry_unreachable reads {} — "
                 "it CANNOT be fed on this path, because the response key IS the ledger "
                 "arc's key.{}",
                 qcc.ledger_reentry_arcs, qcc.ledger_reentry_outside_horizon,
@@ -648,7 +647,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
                     sp += fmt::format("{} {}", arcReasonName(1u << b), n);
                 }
                 log->info(
-                    "Network (card SID phase 4a / THE NO-VERDICT POPULATION BY REASON, "
+                    "Network (THE NO-VERDICT POPULATION BY REASON, "
                     "S1): of the {} ledger re-entr(y|ies) that NO raw tier saw, the "
                     "ADMITTED GAP that preceded the return was opened by: {}.  {} "
                     "carried no reason mask at all.  A return may carry more than one "
@@ -668,7 +667,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
         // (invariant #4).
         if (nc.slip_qc.gap_reentry_per_signal) {
             const auto& sg = qcc.gap_sig;
-            log->info("Network (slip-QC card GRS / PER-SIGNAL gap re-entry): {} SIGNAL "
+            log->info("Network (slip-QC / PER-SIGNAL gap re-entry): {} SIGNAL "
                       "re-entry(ies) [unit: (station,satellite,signal) return after ≥1 missed "
                       "epoch while the satellite's raw ROW survived, the population the "
                       "row-level tier is blind to] = {} SHIFTED (geometry-free level against "
@@ -696,8 +695,8 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
                       !nc.slip_qc.gap_reentry
                           ? "  ⚠ INERT BY CONFIGURATION: the rider is armed without "
                             "cycle_slip.gap_reentry_relevel, so the RESPONSE cannot act, and "
-                            "with no row-level card armed at all nothing is even recorded (the "
-                            "de-duplication list is filled by that card)."
+                            "with no row-level response armed at all nothing is even recorded (the "
+                            "de-duplication list is filled by that response)."
                           : "",
                       (nc.slip_qc.gap_reentry && qcc.gap_sig_resumptions == 0)
                           ? "  ⚠ ARMED AND INERT: ZERO per-signal re-entries on a run with "
@@ -708,7 +707,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
             const long long closure = sg.freed_shifted + sg.freed_lli + sg.freed_unmeas
                                     + sg.cold_skipped + sg.no_relevel + sg.dd_only;
             if (closure != sg.arcs)
-                log->error("Network (slip-QC card GRS): per-signal arc closure BROKEN: {} "
+                log->error("Network (slip-QC): per-signal arc closure BROKEN: {} "
                            "reached vs {} bucketed (shifted {} + lli {} + unmeas {} + cold {} "
                            "+ no_relevel {} + dd_only {}).",
                            sg.arcs, closure, sg.freed_shifted, sg.freed_lli,
@@ -729,7 +728,7 @@ static int networkSlipGapRefGateRunEnd(const NetworkRunEndView& v) {
             rg.reselects              += c.reselects;
             rg.suppressed_warmup      += c.suppressed_warmup;
         }
-        log->info("Network (slip-QC card R / IF-TD reference gate): {} legacy candidate(s) "
+        log->info("Network (slip-QC / IF-TD reference gate): {} legacy candidate(s) "
                   "(|median| > {:.2f}·λ_IF with n≥2) → {} fired ({} of them as an incoherent "
                   "multi-satellite STATION EVENT — reference arc reset, median NOT rebased).  "
                   "Suppressed: {} by the empirical scale / coherence test, {} thin-family "
@@ -825,7 +824,7 @@ static int networkIfTdReseedRunEnd(const NetworkRunEndView& v) {
         post_eval    += t.post_flag_evaluated;
         post_flag    += t.post_flag_flagged;
     }
-    log->info("Network (IF-TD re-seed, card ARL): {} flag(s) kept their flag-epoch gradient, "
+    log->info("Network (IF-TD re-seed): {} flag(s) kept their flag-epoch gradient, "
               "{} had none to keep (acted as a reset); post-flag eval {} / post-flag flag {} "
               "(the evaluations a reset leaves out, and the slips repeated in them or a "
               "spike's return).", reseeded, nothing_kept, post_eval, post_flag);
@@ -833,7 +832,7 @@ static int networkIfTdReseedRunEnd(const NetworkRunEndView& v) {
     // otherwise (each re-seeded satellite would have had to leave its chain at the next
     // epoch).
     if (reseeded > 0 && post_eval == 0)
-        log->warn("Network (IF-TD re-seed, card ARL): {} flag(s) were re-seeded and no "
+        log->warn("Network (IF-TD re-seed): {} flag(s) were re-seeded and no "
                   "post-flag evaluation followed.  Either every re-seeded satellite left its "
                   "chain at the next epoch or the mark never reached the pool; check the "
                   "wiring before reading this arm as re-seeded.", reseeded);
@@ -888,7 +887,7 @@ static int networkSlipGapCoresumedShareRunEnd(const NetworkRunEndView& v) {
               sh.already_freed, sh.skipped, sh.no_carry, freed, sh.freed_shifted,
               sh.freed_lli, sh.freed_unmeas, sh.cold_skipped, sh.no_relevel, sh.dd_only,
               slip_qc.params.ledger_reentry
-                  ? fmt::format("  Ledger (card SID phase 3): {} ledger arc(s) took a "
+                  ? fmt::format("  Ledger: {} ledger arc(s) took a "
                                 "shared verdict instead of a clean one and were answered by "
                                 "the per-signal tier.",
                                 slip_qc.counters.ledger_reentry_v_shared)

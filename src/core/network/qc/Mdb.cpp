@@ -185,6 +185,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
     const SyncedEpoch& se = ep.se;
     const EpochEvents::Census& census_ev = ep.events.census;
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
     if (!ctx.knobs.mdb_on) return;   // the driver's gate
     // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
@@ -294,7 +295,7 @@ void networkMdbFlush(NetworkRun& run, const NetworkEpoch& ep) {
                 continue;
             }
             if (hid)
-                net::put(ctx.entities.los, *hid, &net::LosState::events, std::string(cls),
+                net::put(los_rows, *hid, &net::LosState::events, std::string(cls),
                          &net::LosEventState::mdb_event_last) = seq;
             ++q.events;
             traces.emitEvent(se.time, "MDB", "mdb_exceedance", cd.sat, cd.station,
@@ -432,7 +433,7 @@ void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
     // --- invariant #4: distinguish "ran and found nothing" from "never ran" --
     if (q.passes == 0)
         log->warn("Network (MDB): ARMED but the flush ran on ZERO epochs — the wiring "
-                  "never executed.  Nothing in this run is evidence about the card.");
+                  "never executed.  Nothing in this run is evidence about MDB.");
     else if (q.rows == 0)
         log->warn("Network (MDB): ARMED, the flush ran on {} epoch(s) and ZERO rows "
                   "were binned.  Both feed sites were inert: the RAIM pool needs "
@@ -457,7 +458,7 @@ void networkMdbRunEnd(const NetworkRunContext& ctx, const GnssConfig& config_,
                   "invariant carry SUPERSEDES the phase-leveling ambiguity carry as a "
                   "solve input — so with carry_invariant={} the post-fit RAIM pool is "
                   "empty and network.raim_redundancy_normalize is inert with it.  That "
-                  "is a property of the lineage, not of this card: on a "
+                  "is a property of the lineage, not of this feed: on a "
                   "carry_invariant run the redundancy census is the ONLY r_i source, "
                   "and every row above came from it.",
                   ctx.knobs.pl_on ? "on" : "off",

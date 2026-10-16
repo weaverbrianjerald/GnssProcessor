@@ -10,6 +10,7 @@
 #include "network/driver/RunTypes.hpp"   // EpochWorkspace
 
 #include <Eigen/Core>
+#include <cstddef>
 
 namespace GnssProcessor {
 
@@ -58,5 +59,25 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
  * @return 0 (this report does not set the exit code).
  */
 int networkSbasisCompletionRunEnd(const NetworkRunEndView& v);
+
+/// @brief Run-scope counters of SbasisCompletion, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SbasisCompletionCounters {
+    int nullspace_obs_min = -1;              ///< min observed near-null count over the run (-1 = never evaluated)
+    int nullspace_obs_max = -1;              ///< max observed near-null count over the run (-1 = never evaluated)
+
+    // Run-end telemetry of the S-basis completion (SBC, network.sbasis_complete).
+    // Standing invariant #4: an armed completion whose counters never move on a GPS+Gal
+    // run means the block never saw the deficiency it was built for (a miswire), not a
+    // clean run.  Every refusal path is counted separately because each needs a
+    // different fix (cap: a pathological epoch or tolerance; degenerate: an orphaned
+    // exact gauge, the territory of the soft anchors; weight: re-place rank_gate_tol).
+    std::size_t n_sbc_epochs = 0;        ///< epochs on which ≥1 completion row was folded
+    std::size_t n_sbc_dirs = 0;          ///< completion rows folded, cumulative
+    int         sbc_max_dirs = 0;        ///< max rows folded on one epoch
+    std::size_t n_sbc_release = 0;       ///< sbc_release events (satellite re-observed: the re-coupling edge of invariant #7)
+    std::size_t n_sbc_capped = 0;        ///< epochs refused: extras beyond sbasis_complete_max
+    std::size_t n_sbc_degenerate = 0;    ///< directions skipped as unseparated from the declared-gauge cluster (machine-zero orphans, left to the drop-and-heal; not epoch-fatal)
+    std::size_t n_sbc_weight_marginal = 0; ///< epochs refused: completion weight < 2 decades above the cutoff (K2)
+};
 
 } // namespace GnssProcessor

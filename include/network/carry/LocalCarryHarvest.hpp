@@ -104,6 +104,23 @@ std::array<BlockSpan, kBlockSegmentCount> harvestBlockSpans(
     Eigen::Index iono_row0, Eigen::Index rxclk_row0, Eigen::Index rxcb_row0,
     Eigen::Index pc_row0, Eigen::Index n_cols, bool zwd_in_cols);
 
+/**
+ * @brief The run's observed spacing between two carry stamps, in seconds, or 0 when it is not a
+ *        plausible epoch spacing.
+ *
+ * The carries' process noise is per epoch while their ages are in seconds, so each converts a
+ * gap with the run's own epoch length instead of a nominal rate. The spacing is implausible on
+ * the first epoch (no earlier stamp), when the stamps do not increase, and when it exceeds the
+ * carry's longest gap; the caller then counts a gap as one epoch.
+ *
+ * @param now_s     This epoch's stamp.
+ * @param prev_s    The earlier stamp the spacing is measured from.
+ * @param max_gap_s The carry's longest gap that still counts as an epoch spacing.
+ * @return @p now_s minus @p prev_s, or 0.0 when that is not finite, not positive, or above
+ *         @p max_gap_s.
+ */
+double networkEpochSpacingS(double now_s, double prev_s, double max_gap_s);
+
 /// One station's harvest layout for this epoch (replaces the eleven per-station hand-forward
 /// vectors).  Written by networkHarvestStationBlock, read by every kind that writes a row of
 /// the station's block.  A station the loop head skips keeps ok false and no block.

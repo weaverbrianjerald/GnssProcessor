@@ -258,7 +258,7 @@ void arCycleBasisRunEndClause(const ArCycleBasisCounters& c, bool sticky,
                              bands.empty() ? "" : "; ", label, upperMedian(dims), upperMedian(rows),
                              fund, fb_pct);
     }
-    log->info("Network (producer AR cycle basis, card AGT): {} search(es), {} family build(s) ({} with "
+    log->info("Network (producer AR cycle basis): {} search(es), {} family build(s) ({} with "
               "no stored basis).  Coverage per band: {}.  Rows plus fallbacks differ from the "
               "lattice dimension in {} band build(s).  DD rows: {} partner, {} borrowed ({} "
               "band-only); longest cycle {} arcs; {} component(s) over the builds (at most {}); "
@@ -266,7 +266,7 @@ void arCycleBasisRunEndClause(const ArCycleBasisCounters& c, bool sticky,
               c.epochs, c.families, c.first_builds, bands.empty() ? std::string("none") : bands,
               c.dim_mismatch, c.rows_partner, c.rows_borrowed, c.rows_band_only, c.max_len,
               c.components, c.max_components, c.arcs_band_only);
-    log->info("Network (producer AR cycle basis, card AGT): {} link(s) built, {} kept from the "
+    log->info("Network (producer AR cycle basis): {} link(s) built, {} kept from the "
               "incumbent ({:.2f} %, {}); re-seats: {} arc gone, {} slipped, {} parent gone, {} "
               "too few common; {} incumbent link(s) whose station left the family.  Map against "
               "the stored basis (search rows): {} same, {} mapped, {} fresh through an "
@@ -285,7 +285,7 @@ void arCycleBasisRunEndClause(const ArCycleBasisCounters& c, bool sticky,
         if (n == 0) continue;
         by_field += fmt::format("{}{} {}", by_field.empty() ? "" : ", ", arcLifeFieldName(k), n);
     }
-    log->info("Network (producer AR cycle basis, card AGT): {} band-arc life reading(s); new lives: "
+    log->info("Network (producer AR cycle basis): {} band-arc life reading(s); new lives: "
               "{} first seen, {} freed, {} stamp change(s) [{}]; {} echo(es) re-baselined.  Cost "
               "per search, p50 / max: stamps and rows {:.2f} / {:.2f} ms, graph, forest and basis "
               "{:.2f} / {:.2f} ms, map {:.2f} / {:.2f} ms.",
@@ -294,15 +294,15 @@ void arCycleBasisRunEndClause(const ArCycleBasisCounters& c, bool sticky,
               upperMedian(c.stamp_ms), maxOf(c.stamp_ms), upperMedian(c.build_ms), maxOf(c.build_ms),
               upperMedian(c.map_ms), maxOf(c.map_ms));
     if (c.epochs == 0 || c.rows_partner + c.rows_borrowed == 0)
-        log->warn("Network (producer AR cycle basis, card AGT): ARMED, but no search row was ever "
+        log->warn("Network (producer AR cycle basis): ARMED, but no search row was ever "
                   "built ({} search(es)); every cycle-basis number above is structurally empty "
                   "(standing invariant 4).", c.epochs);
     else if (sticky && c.links_kept == 0)
-        log->warn("Network (producer AR cycle basis, card AGT): ARMED and sticky, but no incumbent "
+        log->warn("Network (producer AR cycle basis): ARMED and sticky, but no incumbent "
                   "link was ever kept over {} search(es): the basis was rebuilt every search "
                   "(standing invariant 4).", c.epochs);
     if (c.dim_mismatch > 0)
-        log->warn("Network (producer AR cycle basis, card AGT): {} band build(s) whose DD rows plus "
+        log->warn("Network (producer AR cycle basis): {} band build(s) whose DD rows plus "
                   "fundamental fallbacks differ from the lattice dimension: the basis did not cover "
                   "the cycle lattice.", c.dim_mismatch);
 }

@@ -430,4 +430,14 @@ bool arLatticeArmed(const GnssConfig& config_);
  */
 int networkArLatticeRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of ArLattice, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ArLatticeRunCounters {
+    /// The ledger of fixed cycles (see
+    /// network/ar/ArLattice.hpp): fixes by verdict and waiting, releases by cause with the
+    /// rows they found and the dimensions lost, the units implied and failing, the lattice's
+    /// size and row lengths, the cost.  All zero unless the ledger runs
+    /// (network.ambiguity_resolution.trace_lattice, or the fold with source lattice).
+    ArLatticeCounters    netar_lattice;
+};
+
 }  // namespace GnssProcessor

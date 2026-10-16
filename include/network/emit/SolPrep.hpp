@@ -56,6 +56,8 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <cstddef>
+#include <cstdint>
 
 namespace spdlog { class logger; }
 
@@ -149,5 +151,30 @@ struct NetworkRunEndView;
 int networkSolPrepRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of SolPrep, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SolPrepCounters {
+    // Per-run solution-generation id, minted at the first emit from that epoch's GPS
+    // time: deterministic under replay (the id is serialized per epoch), and different
+    // across live restarts, which make their first emit later.  0 = unset.
+    uint32_t generation_id = 0;
+    // Product time (s) of the last written S contract line (the deferred v2 header
+    // counts as the first); -1 until the contract writer opens.
+    double last_contract_emit_s = -1.0;
+    long long n_resume_datum_first_reattach = 0; ///< PHASE_DATUM/eq34_reattach (tree-edge handovers) there
+    long long n_resume_datum_first_cb_disc  = 0; ///< CB_DATUM/reseed_disc_landed satellites there
+    /// Emit-site outcome of the continued pair changes (emit_clock_disc
+    /// only): re-selection discontinuities left undeclared for a continued satellite
+    /// (its last emitted pair was the pair the builder continued from, and no re-seed
+    /// was marked or pending); declared anyway (the last emitted pair differed, as for
+    /// a satellite pruned from an earlier kept epoch's emission, or a re-seed was
+    /// marked or pending); and continued satellites outside that epoch's emission,
+    /// compared when they next emit (the conservative direction).
+    size_t n_if_pin_continued_undeclared = 0, n_if_pin_continued_declared = 0,
+           n_if_pin_continued_unemitted = 0;
+    size_t n_perconst_partial_epochs = 0;     // epochs published partially: the σ̂0 carve-out pruned >=1 constellation (RTA-10)
+    size_t n_perconst_diffuse_published = 0;  // epochs published in full although the global σ̂0 tripped, every constellation being individually clean: the diffuse cross-constellation edge of the per-const approximation (RTA-10)
+    long long cb_exc_bumps           = 0;   ///< code-bias discontinuity bumps landed
+};
 
 } // namespace GnssProcessor

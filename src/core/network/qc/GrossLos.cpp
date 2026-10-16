@@ -285,6 +285,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
 
     auto& tal    = ctx.counters.gross_los;
     net::LosTable& los_rows = ctx.entities.los;   // the gross-LOS dispositions
+    net::NetworkEntities& entities = ctx.entities;   // written: los sats stations
     ++tal.epochs;
     ++ctx.counters.gl_seq;
     const long long seq = ctx.counters.gl_seq;
@@ -305,7 +306,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                                                    &net::LosState::gl_event_last)
                                      : nullptr;
             if (lp != nullptr && (seq - *lp) < holdoff) return;
-            if (hs) net::putLos(ctx.entities, hs->index, sat, &net::LosState::gl_event_last) = seq;
+            if (hs) net::putLos(entities, hs->index, sat, &net::LosState::gl_event_last) = seq;
         }
         traces.emitEvent(se.time, "GROSSLOS", event, sat, station, statistic,
                          threshold, action, detail);
@@ -464,7 +465,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         // screened epochs.  The release bar is the cap and not gross_los_clear_sigma:
         // the station-level statistic is the fraction, so its hysteresis is the streak.
         if (gl_sta_tier && mature) {
-            auto& sst = net::put(ctx.entities.stations, StationId{static_cast<int>(i)},
+            auto& sst = net::put(entities.stations, StationId{static_cast<int>(i)},
                                  &net::StationState::gross_los);
             sst.sats.clear();
             for (const auto& [sat, d] : verdicts) { (void)d; sst.sats.insert(sat); }
@@ -578,8 +579,8 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
     if (gl2_on) {
         // The decoupling edge: a satellite that was not stood down and now is.
         for (const auto& sat : sat_down_now) {
-            if (!net::markSat(ctx.entities, sat, &net::SatelliteState::gl2_down)) continue;
-            net::putSat(ctx.entities, sat, &net::SatelliteState::gl2_since) = se.time.tow;
+            if (!net::markSat(entities, sat, &net::SatelliteState::gl2_down)) continue;
+            net::putSat(entities, sat, &net::SatelliteState::gl2_since) = se.time.tow;
             ++tal.sat_standdowns;
             ++tal.sat_standdown_by_sat[sat];
             emitEvent("gross_los_sat_standdown", sat, "",
@@ -602,20 +603,20 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                       fmt::format("n_sta_over={};standdown_tow={:.1f}",
                                   sat_over_stations.count(sat) ? sat_over_stations[sat] : 0,
                                   since != nullptr ? *since : 0.0));
-            net::dropSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_since);
-            net::unmarkSat(ctx.entities.sats, sat, &net::SatelliteState::gl2_down);
+            net::dropSat(entities.sats, sat, &net::SatelliteState::gl2_since);
+            net::unmarkSat(entities.sats, sat, &net::SatelliteState::gl2_down);
         }
         // Route the currently stood-down set to the producer's consensus-fault
         // response.  The wire set is rebuilt every epoch, so a released satellite stops
         // being withheld in the same pass a newly faulted one starts.
-        net::assignSatFlags(ctx.entities, &net::SatelliteState::wire_prune_pending, {});
+        net::assignSatFlags(entities, &net::SatelliteState::wire_prune_pending, {});
         const std::size_t n_down = net::present(ctx.entities.sats, &net::SatelliteState::gl2_down);
         if (n_down > 0) {
             ++tal.sat_epochs;
             tal.sat_epoch_max = std::max<long long>(tal.sat_epoch_max, static_cast<long long>(n_down));
             for (const auto& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::gl2_down)) {
-                net::markSat(ctx.entities, sat, net::Disc::UraRetro);   // the consensus path's disc bump
-                if (gl2_wire) net::markSat(ctx.entities, sat, &net::SatelliteState::wire_prune_pending);
+                net::markSat(entities, sat, net::Disc::UraRetro);   // the consensus path's disc bump
+                if (gl2_wire) net::markSat(entities, sat, &net::SatelliteState::wire_prune_pending);
             }
         }
     }
@@ -627,7 +628,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
         for (const auto& [sat, d] : pass.verdicts) {
             const auto key = std::make_pair(static_cast<int>(i), sat);
             seen.insert(key);
-            GrossLosState& st = net::putLos(ctx.entities, key.first, key.second,
+            GrossLosState& st = net::putLos(entities, key.first, key.second,
                                             &net::LosState::gross_los);
             st.last_seen_s = now_s;
             // A stood-down satellite (GL-2) takes its lines of sight with it.  An
@@ -923,7 +924,7 @@ void networkGrossLosScreen(NetworkRun& run, const NetworkEpoch& ep, GrossLosPhas
                   "{} currently gross (run-max standardized code residual so far {:.1f} sigma)",
                   se.time.tow, n_declared_ep, n_cleared_ep, now_gross, tal.r_max);
     if (n_cold_edges_ep > 0)
-        log->info("Network (gross-LOS, card ICF cold bound {:g} m) TOW {:.1f}: {} cold edge(s) "
+        log->info("Network (gross-LOS, cold bound {:g} m) TOW {:.1f}: {} cold edge(s) "
                   "or re-erase(s) this epoch; run totals {} declared, {} re-erased, {} released, "
                   "{} expired.",
                   cold_bound, se.time.tow, n_cold_edges_ep, tal.cold_declared,
@@ -938,6 +939,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                         const std::shared_ptr<spdlog::logger>& log,
                         std::vector<NetStation>& stations,
                         const std::vector<StationAssembly>& asm_res, EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs los
     EpochEvents::Gross& gross_ev = events.gross;
     if (!ctx.knobs.gl_on) return;
     auto& tal      = ctx.counters.gross_los;
@@ -964,7 +966,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 const auto lit = net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb);
                 if (lit != nullptr) {
                     const LocalCarry h = glFreeze((*lit));
-                    net::putArc(ctx.entities, lk, &net::ArcState::gl_hold_amb) = h;
+                    net::putArc(entities, lk, &net::ArcState::gl_hold_amb) = h;
                     (*lit) = h;
                     ++tal.bound_amb_held;
                     prmRespond(ctx.counters.prm_resp,
@@ -974,7 +976,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 // refloated.  Marking it would give the next assembly a free column,
                 // which is what the hold exists to prevent.
             } else {
-                if (net::dropArc(ctx.entities.arcs, lk, &net::ArcState::amb)) {
+                if (net::dropArc(entities.arcs, lk, &net::ArcState::amb)) {
                     ++ctx.counters.n_cr_gross_los;
                     prmRespond(ctx.counters.prm_resp,
                                ResponseSite::AmbGrossErase);
@@ -1011,7 +1013,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
         if (gl_bound) {
             if (LocalCarry* it1 = net::getLos(los, si, sat, &net::LosState::iono)) {
                 const LocalCarry h = glFreeze(*it1);
-                net::putLos(ctx.entities, si, sat, &net::LosState::gl_hold_iono) = h;
+                net::putLos(entities, si, sat, &net::LosState::gl_hold_iono) = h;
                 *it1 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
@@ -1019,7 +1021,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
             }
             if (LocalCarry* it2 = net::getLos(los, si, sat, &net::LosState::iono_blk)) {
                 const LocalCarry h = glFreeze(*it2);
-                net::putLos(ctx.entities, si, sat, &net::LosState::gl_hold_iono_blk) = h;
+                net::putLos(entities, si, sat, &net::LosState::gl_hold_iono_blk) = h;
                 *it2 = h;
                 ++tal.bound_iono_held;
                 prmRespond(ctx.counters.prm_resp,
@@ -1077,8 +1079,8 @@ void networkGrossLosAct(NetworkRunContext& ctx,
     // --- The re-coupling edge: a release or an expiry drops the hold, and the states
     //     continue from the values they were held at.  Idempotent.
     for (const auto& [si, sat] : gross_ev.gl_act_release) {
-        net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono);
-        net::dropLos(ctx.entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
+        net::dropLos(entities.los, si, sat, &net::LosState::gl_hold_iono);
+        net::dropLos(entities.los, si, sat, &net::LosState::gl_hold_iono_blk);
         for (auto it = net::arcsFrom(ctx.entities.arcs, si, sat);   // the line of sight's arcs (O8)
              it != ctx.entities.arcs.end() && net::arcOfLos(it->first, si, sat); ++it)
             it->second.gl_hold_amb.reset();
@@ -1125,7 +1127,7 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
     const NetworkConfig& nc = config_.getNetworkConfig();
     const double bound = ctx.knobs.gl_cold_bound_m;
     if (!(bound > 0.0)) {
-        log->warn("Network (gross-LOS, card ICF cold bound): INERT.  "
+        log->warn("Network (gross-LOS, cold bound): INERT.  "
                   "network.gross_los_cold_bound_m = {:g} m was set but resolved off "
                   "(network.gross_los_screen {}, network.gross_los_bound {}); the run is the "
                   "unarmed run.",
@@ -1139,14 +1141,14 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
         if (gs.gross && gs.cold) ++standing;
     });
 
-    log->info("Network (gross-LOS, card ICF cold bound {:g} m): {} LOS-epoch(s) screened inside "
+    log->info("Network (gross-LOS, cold bound {:g} m): {} LOS-epoch(s) screened inside "
               "the maturity horizon ({} emitted epochs), {} over the bound.  Largest post-fit "
               "code |v| over the bound {:.2f} m; largest under it on a line of sight not "
               "declared {:.2f} m, the bound's margin on this run (x{:.2f}).",
               bound, g.cold_los_screened, nc.gross_los_warmup_epochs, g.cold_los_over,
               g.cold_v_over_max_m, g.cold_v_under_max_m,
               g.cold_v_under_max_m > 0.0 ? bound / g.cold_v_under_max_m : 0.0);
-    log->info("Network (gross-LOS, card ICF cold bound): {} declaration(s) (decoupling edges), "
+    log->info("Network (gross-LOS, cold bound): {} declaration(s) (decoupling edges), "
               "{} release(s) and {} expiry(ies) (re-coupling edges, each re-seeding the "
               "carried ambiguity), {} still declared at run end; {} re-erase(s) of a standing "
               "declaration whose bound was exceeded again ({} after the horizon opened); {} "
@@ -1164,13 +1166,13 @@ void networkGrossLosColdBoundRunEnd(const NetworkRunContext& ctx,
                 ? "ZERO OPPORTUNITY: no line of sight reached the bound inside the horizon; a "
                   "clean window, not a demonstration"
                 : "every line of sight over the bound was held by the cold station guard";
-        log->info("Network (gross-LOS, card ICF cold bound): INERT on this run: {}.", why);
+        log->info("Network (gross-LOS, cold bound): INERT on this run: {}.", why);
     }
     if (!g.cold_declared_by_los.empty()) {
         std::string line;
         for (const auto& [los, n] : g.cold_declared_by_los)
             line += fmt::format("{}{}={}", line.empty() ? "" : " ", los, n);
-        log->info("Network (gross-LOS, card ICF cold bound): declarations by line of sight: {}",
+        log->info("Network (gross-LOS, cold bound): declarations by line of sight: {}",
                   line);
     }
 }
@@ -1265,7 +1267,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
         if (ctx.knobs.amb_float_kf)
             log->info("Network (gross-LOS screen): on the float vehicle the T4 attribution "
                       "drops a carried arc instead of erasing it, so the gross screen's erase is "
-                      "the stronger response of the two (card PRM phase 3a).");
+                      "the stronger response of the two.");
         // --- Per-rule readout (docs/refound/RF-3_code_row_qc_2026-09-22.md §4 B5,
         //     requirement F6; RF-3b).  Every line prints in both states of the sub-knob
         //     it reports on.  The populations a rule targets (B1's short-row count over
@@ -1404,7 +1406,7 @@ static int networkGrossLosScreenRunEnd(const NetworkRunEndView& v) {
                     log->warn("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "
                               "hour — above the 2/hour line §24.19 froze.  Satellite-level "
                               "faults are COMMON on this bed, and the wire's per-satellite "
-                              "EMISSION POLICY (not this screen) is the next card; report "
+                              "EMISSION POLICY (not this screen) is the next step; report "
                               "the satellites and the hours.", per_hour);
                 else
                     log->info("Network (gross-LOS, GL-2): {:.2f} satellite stand-down(s) per "

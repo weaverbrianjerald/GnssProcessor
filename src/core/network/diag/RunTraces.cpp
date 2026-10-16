@@ -615,7 +615,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         station_block_trace.open(station_block_trace_path);
         if (station_block_trace)
             station_block_trace
-                << "# network_station_block.csv - SPEC_event_harness 24.10 card ZP "
+                << "# network_station_block.csv - SPEC_event_harness 24.10 "
                    "(network.trace_station_block). One row per station per TRACED epoch "
                    "(the first 20 EMITTED epochs, then every 60th). The audited object is "
                    "the station's LOCAL normal block N_rr = A_r^T W A_r + folded station "
@@ -712,7 +712,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         arc_ledger_trace.open(arc_ledger_trace_path);
         if (arc_ledger_trace)
             arc_ledger_trace
-                << "# network_arc_ledger.csv - card SID phase 1 (docs/refound/"
+                << "# network_arc_ledger.csv - signal identity phase 1 (docs/refound/"
                    "SID_signal_identity_2026-09-22.md, network.signal_roster). One row "
                    "per (station, satellite, signal) arc TRANSITION, never one per "
                    "record: Absent->Tracking is a birth, Tracking->Gap opens a gap, "
@@ -720,7 +720,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                    "Gap->Dead is a death past it, and Dead->Tracking is a birth whose "
                    "generation says the arc had been here before. An arc whose STATION "
                    "reported nothing at an epoch is frozen, never gapped. Not "
-                   "holdoff-throttled (the ARC tier of network_events.csv is). Card SID "
+                   "holdoff-throttled (the ARC tier of network_events.csv is). Signal identity "
                    "phase 2: `side` says which lifecycle from/to/generation/gap_ep "
                    "describe - raw (the receiver's record, upstream of the elevation "
                    "mask, the allow list and every admission screen) or adm (the "
@@ -929,7 +929,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             estimability_trace << "kind,week,tow,n_shared,declared_dim,ev_max,cutoff,"
                                   "n_below,ev,col1,col2,col3,col4,col5,col6,col7,col8\n";
         else
-            log->warn("Network (Card DG): failed to open estimability trace {}",
+            log->warn("Network (datum graph gate): failed to open estimability trace {}",
                       estimability_trace_path.string());
     }
     if (nc.trace_events) {

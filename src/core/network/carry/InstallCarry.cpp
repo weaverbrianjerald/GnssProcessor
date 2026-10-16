@@ -190,7 +190,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
         // matrix.  Warned once (the run-end summary carries the totals); the counter
         // holds the population (INC-1c).
         if (fs.repair_worst > 1e-6 && ++cnt.ddfold_repair_loud == 1)
-            log->warn("Network (Card 4 PD-safe fold, INC-1c): a DD-fold eigenvalue REPAIR "
+            log->warn("Network (PD-safe fold, INC-1c): a DD-fold eigenvalue REPAIR "
                       "clamped a magnitude of {:.3e}·λmax at TOW {:.1f} — far above the "
                       "1e-12 dust floor the repair exists for.  The block was not merely "
                       "rounding-damaged; treat this as a NEW defect and investigate rather "
@@ -222,7 +222,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             const double piv = est.ddPriorBlockMinPivotRel(b);
             const long long kk =
                 static_cast<long long>(carry_driver.blockChordsForTest(b).size());
-            log->warn("Network (Card 4 PD-safe fold, INC-0): DD-prior block {} (group {}, "
+            log->warn("Network (PD-safe fold, INC-0): DD-prior block {} (group {}, "
                       "{} chord(s), lead chord {}→{}{}) went DEGENERATE at TOW {:.1f} — its "
                       "Pᶻ+B failed the PD screen, so the fold is INERT (M=0) and the block's "
                       "posterior IS its prior: it takes NO data this epoch.  Without "
@@ -242,7 +242,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
         for (const std::string& key : ctx.carry.ddfold_degen_prev) {
             if (ddfold_degen_now.count(key)) continue;
             ++cnt.ddfold_recoveries;
-            log->warn("Network (Card 4 PD-safe fold, INC-0): DD-prior block {} RECOVERED at "
+            log->warn("Network (PD-safe fold, INC-0): DD-prior block {} RECOVERED at "
                       "TOW {:.1f} — it factors again (or its component was re-formed).  The "
                       "re-coupling edge is reported for the same reason the decoupling one "
                       "is: a block that silently rejoins the solve after an unbounded frozen "
@@ -263,7 +263,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             const std::string sta =
                 (rb.chord0.u >= 0 && rb.chord0.u < static_cast<int>(stations.size()))
                     ? stations[static_cast<std::size_t>(rb.chord0.u)].name : std::string{};
-            log->warn("Network (Card 4 PD-safe fold, INC-2a): DD-prior block {} (group {}, "
+            log->warn("Network (PD-safe fold, INC-2a): DD-prior block {} (group {}, "
                       "{} carried row(s), lead chord {}→{}{}) REBIRTHED at TOW {:.1f} — its "
                       "Pᶻ+B could not be factored even after the eigenvalue repair, so the "
                       "means were kept as the seed and Pᶻ was reset to the diffuse "
@@ -308,7 +308,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
               : (st.state == Infl::Capped)  ? "the RAW σ̂₀² exceeded the divergence cap and was bound DOWN — the gate is pinned, not calibrated"
                                             : "calibrated: σ̂₀ is the unclamped empirical estimate";
             const std::string line = fmt::format(
-                "Network (Card 4/M1 D5 v2 calibration): σ̂₀ state {} → {} at TOW {:.1f} — {}.  "
+                "Network (D5 v2 calibration): σ̂₀ state {} → {} at TOW {:.1f} — {}.  "
                 "raw σ̂₀² = {:.4g}, n_eff = {:.0f}, σ̂₀ in force = {:.2f}×.",
                 from, tag, se.time.tow, meaning, st.raw_sigma0_sq, st.n_eff, st.sigma0);
             if (degraded) log->warn("{}", line); else log->info("{}", line);

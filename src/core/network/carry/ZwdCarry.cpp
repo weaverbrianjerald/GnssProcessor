@@ -128,7 +128,7 @@ StationStep networkZwdRowCapture(StationBuild& build) {
     const size_t tropo_idx_sz = st.sm->getTropoIndex();
     if (tropo_idx_sz != std::numeric_limits<size_t>::max()) {
         const int tropo_idx = static_cast<int>(tropo_idx_sz);
-        const Eigen::VectorXd x_lin_z = st.sm->getStateVector();
+        const Eigen::VectorXd& x_lin_z = build.postUpdateState();
         if (tropo_idx >= 0 && tropo_idx < x_lin_z.size()
             && std::isfinite(x_lin_z(tropo_idx))) {
             const auto zhit = h2local.find(tropo_idx);

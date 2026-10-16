@@ -375,4 +375,18 @@ struct EpochEvents;   // network/driver/Epoch.hpp
 
     // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of AmbFloat, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct AmbFloatCounters {
+    long long n_amb_drop_epochs       = 0;  ///< epochs on which at least one drop happened.
+    long long n_amb_drop_relevel_free = 0;  ///< …of which from the detectors' latched free-epoch set (the level vehicle skips one inject instead).
+    long long n_amb_drop_stale_gap    = 0;  ///< …of which from the inject-site gap cliff (the level vehicle skips one inject instead).
+    long long n_amb_drop_idempotent   = 0;  ///< drop calls that found the arc already at or below birth strength: two detectors on one arc in one epoch, or an arc that never converged.  The age clock still restarts; the variance does not move.
+    long long n_amb_stransform        = 0;  ///< declared anchor S-transformations applied to the carry, one per (sat,signal) family per handover (RF-1 step 5).
+    long long n_amb_stransform_cols   = 0;  ///< …carried columns shifted by them.
+    long long n_amb_sts_identity      = 0;  ///< …families whose Δ was exactly 0 (already in the new basis: a station re-pinning itself): the transform is the identity, and the family is still owned (no erase).
+    long long n_amb_sts_refused_cold  = 0;  ///< handovers refused by the transform because the election was cold (no carried level for the successor, so no new basis to express the family in): the erase stands; this is the limit of step 5 and the subject of RF-2.
+    long long n_amb_sts_refused_no_level = 0; ///< …refused because the ledger said continuous but the incoming anchor held no live carry this epoch: a ledger/carry disagreement, counted apart from a cold election.
+    long long n_amb_sts_selfcheck_fail = 0; ///< transforms whose exactness self-check failed: the incoming anchor's carried level did not read 0 within kStsExactTolM afterwards.  A transform defect, never noise; logged as a warning with identities.
+};
+
 }  // namespace GnssProcessor

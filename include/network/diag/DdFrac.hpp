@@ -98,4 +98,15 @@ int networkDdFracReferenceRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of DdFrac, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct DdFracCounters {
+    // The DD trace's reference identity, made visible (§6.12.5).  Standing invariant #4:
+    // a reference policy that never changes the elected satellite is inert, and only a
+    // count shows it.  Both counters are written on every traced epoch regardless of
+    // policy, so the `lowest` default reports its own switch rate too.
+    long long n_ddfrac_ref_switch     = 0;  ///< (cons,signal) reference changes across traced epochs
+    long long n_ddfrac_ref_epochs     = 0;  ///< (cons,signal) reference elections performed (denominator)
+    long long n_ddfrac_ref_age_win    = 0;  ///< elections where `oldest` chose a different satellite than `lowest` would have (0 means the policy is inert on this run)
+};
+
 } // namespace GnssProcessor
