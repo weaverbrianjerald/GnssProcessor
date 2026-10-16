@@ -2907,7 +2907,7 @@ void networkSlipQcConfigure(NetworkRun& run) {
     sp.bridge_gf           = config_.networkCycleSlipRelevelBridgeGf();
     // The CS-GF authority has the same need.  The LV-6 census arms its advance:
     // the kernel is instrumentation (SPEC_level_authority_internal §3).  Arming
-    // iono_cs flips cardsArmed(), so census A/B pairs must pin
+    // iono_cs flips decisionInstrumentArmed(), so census A/B pairs must pin
     // cycle_slip.gap_instrument in both arms.
     sp.iono_cs             = config_.networkLevelAuthorityCsgf();
     // The arc-scoped GF jump trigger reads the raw rows and keeps its own

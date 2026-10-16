@@ -1925,7 +1925,7 @@ TEST(NetworkInvariantCarryDriverTest, D5NonPosVarRowsSurviveMidRunReset) {
     const long long nonpos = drv.counters().d5_nonpos_var_rows;
     ASSERT_GT(nonpos, 0)
         << "precondition: the inert fold must actually yield a non-positive Cov(v) row, "
-           "or this gate is asserting 0 == 0 — the exact failure the card exists to end";
+           "or this gate is asserting 0 == 0 — the exact failure this gate exists to end";
 
     drv.reset();
     EXPECT_EQ(drv.counters().d5_nonpos_var_rows, nonpos)

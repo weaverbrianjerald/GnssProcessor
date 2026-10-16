@@ -410,7 +410,7 @@ TEST(PbHoldSmoothedTest, ACloneDiesRatherThanTakeTheShrink) {
     st = pbHoldCloneAdvance(cloneInputs(outside, x, x), c);
     EXPECT_FALSE(st.ok);
     EXPECT_EQ(st.death, PbHoldCloneDeath::ParentOutside)
-        << "the clone's own clock outside the block is card 1d's route in all but name";
+        << "the clone's own clock outside the block is the departed-column route in all but name";
 }
 
 TEST(PbHoldSmoothedTest, TheRebaseTakesTheNewStashAndKeepsThePinnedPivot) {
@@ -488,7 +488,7 @@ TEST(PbHoldSmoothedTest, LoaderRequiresTheHoldAndTheExactUpdateAndExcludesThePha
     EXPECT_TRUE(smhLoads(true, true, false, true, "ok"));
     EXPECT_FALSE(smhLoads(false, true, false, true, "nohold")) << "a mode of the hold";
     EXPECT_FALSE(smhLoads(true, true, false, false, "noexact"))
-        << "card 1d's shrink would destroy the clone in one epoch";
+        << "the kappa shrink would destroy the clone in one epoch";
     EXPECT_FALSE(smhLoads(true, true, true, true, "both"))
         << "the phase-clock transfer is the smoothed hold's fallback, not a second mode";
     EXPECT_TRUE(smhLoads(true, false, false, false, "off"));
@@ -498,7 +498,7 @@ TEST(PbHoldSmoothedTest, LoaderRequiresTheHoldAndTheExactUpdateAndExcludesThePha
                          /*anchor=*/true, "    \"raim_withhold_sigma0\": 6.0,\n"))
         << "the refusal reads the resolved tier, which the withhold ceiling arms";
     EXPECT_FALSE(smhLoads(true, true, false, true, "noanchor", /*within=*/true, /*anchor=*/false))
-        << "without card Q3's anchor the clock's q is a datum device (section 9)";
+        << "without the Q3 clock anchor the clock's q is a datum device (section 9)";
 }
 
 /// One satellite of a test epoch.

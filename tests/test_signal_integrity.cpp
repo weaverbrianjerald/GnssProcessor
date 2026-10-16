@@ -416,7 +416,7 @@ TEST(NetworkSignalIntegrity, StandingSingleFrequencyArcsAreCountedSeparatelyAndS
         << "never dual ⇒ never a DEGRADED continuation";
     EXPECT_DOUBLE_EQ(1.0, r.scaleFor("G07"))
         << "a born-single arc stabilises on its own reference set — permanent demotion "
-           "is a deferred policy question, not this card's default";
+           "is a deferred policy question, not this module's default";
 }
 
 // ---------------------------------------------------------------------------

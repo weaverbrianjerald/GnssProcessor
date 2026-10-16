@@ -243,7 +243,7 @@ bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) 
 /// exact only against a dense border carry, so the loader requires
 /// @c shared_carry_full_cov for @c carry_conditional_coupling
 /// (GnssConfigLoadNetwork.cpp, network section loader).
-const char* kCard1 =
+const char* kConditionalCouplingKnobs =
     "    \"shared_carry_full_cov\": true,\n"
     "    \"carry_conditional_coupling\": true,\n"
     "    \"carry_coupling_gauge_project\": true,\n";
@@ -630,7 +630,7 @@ TEST(ResumeCouplingConfig, RestoreRequiresFrameRestore) {
     EXPECT_FALSE(loadInto("cpl_restore_nofr",
         networkConfig(std::string("    \"phase_leveling\": true,\n"
                                   "    \"state_snapshot_path\": \"state_snapshot.snap\",\n")
-                      + kCard1 +
+                      + kConditionalCouplingKnobs +
                       "    \"resume_coupling_restore\": true,\n"), cfg));
 }
 
@@ -669,7 +669,7 @@ TEST(ResumeCouplingConfig, ArmedPostureLoads) {
                                   "    \"state_snapshot_path\": \"state_snapshot.snap\",\n"
                                   "    \"state_snapshot_frame_capture\": true,\n"
                                   "    \"state_snapshot_coupling_capture\": true,\n")
-                      + kCard1 +
+                      + kConditionalCouplingKnobs +
                       "    \"carry_coupling_reinit_sources\": true,\n"
                       "    \"resume_frame_restore\": true,\n"
                       "    \"resume_coupling_restore\": true,\n"

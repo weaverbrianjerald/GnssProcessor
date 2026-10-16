@@ -7,11 +7,11 @@
  * @c InstallCarry.cpp) are built from @c slip_qc.epoch.verdict / @c .stepped.
  * The only writer of those is the slip-QC qualify pass, which
  * @c ApplicationNetworkAssembly.cpp runs only when a decision consumer is armed:
- * @c SlipQcState::cardsArmed() = @c lli_corroborate || @c gap_instrument ||
+ * @c SlipQcState::decisionInstrumentArmed() = @c lli_corroborate || @c gap_instrument ||
  * @c bridge_gf || @c iono_cs.
  *
  * @c network.trace_slip_raw satisfies @c SlipQcParams::anyConsumer but not
- * @c cardsArmed().  It arms the compute pass only, which sets @c epoch.computed = true
+ * @c decisionInstrumentArmed().  It arms the compute pass only, which sets @c epoch.computed = true
  * and sizes @c epoch.verdict to n_sta with empty maps.  The consumers gate on
  * @c epoch.computed, so with the trace alone they run, every per-satellite lookup
  * misses, and the suppression set is empty: the gate logs as armed and does nothing
@@ -98,9 +98,9 @@ bool loadInto(const std::string& tag, const std::string& network_extra, GnssConf
 // ============================================================================
 
 // Regression case: trace_slip_raw is not a sufficient evidence source.  If the loader
-// skipped the auto-arm here, cardsArmed() would stay false, the qualify pass would not
+// skipped the auto-arm here, decisionInstrumentArmed() would stay false, the qualify pass would not
 // run and the suppression set would be structurally empty.
-TEST(D5CorroborationAutoArm, TraceSlipRawAloneStillAutoArmsTheEvidenceCard) {
+TEST(D5CorroborationAutoArm, TraceSlipRawAloneStillAutoArmsTheEvidenceInstrument) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_trace_only",
         std::string(kCarryBase) +
@@ -111,10 +111,10 @@ TEST(D5CorroborationAutoArm, TraceSlipRawAloneStillAutoArmsTheEvidenceCard) {
         << "the gate must survive load — it is the population under test";
     EXPECT_TRUE(cfg.getNetworkConfig().slip_qc.gap_instrument)
         << "trace_slip_raw arms only the COMPUTE pass (anyConsumer), never the QUALIFY "
-           "pass (cardsArmed) that fills epoch.verdict — so the corroboration gate must "
-           "still auto-arm a DECISION card or it is silently inert";
+           "pass (decisionInstrumentArmed) that fills epoch.verdict — so the corroboration gate must "
+           "still auto-arm a DECISION instrument or it is silently inert";
     EXPECT_FALSE(cfg.getNetworkConfig().slip_qc.lli_corroborate)
-        << "a DECISION card that changes the measured population must never be auto-armed";
+        << "a DECISION instrument that changes the measured population must never be auto-armed";
 }
 
 // The v4 twin: re-tap-only reads the same verdicts through the same qualify pass.
@@ -132,7 +132,7 @@ TEST(D5CorroborationAutoArm, RetapOnlyWithTraceSlipRawAlsoAutoArms) {
 
 // With neither the trace nor any decision consumer, the auto-arm also fires.  This baseline case
 // guards against a future edit regressing it.
-TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceCard) {
+TEST(D5CorroborationAutoArm, BareCorroborateAutoArmsTheEvidenceInstrument) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_bare",
         std::string(kCarryBase) +
@@ -160,7 +160,7 @@ TEST(D5CorroborationAutoArm, ExplicitGapInstrumentIsLeftExactlyAsWritten) {
 }
 
 // The CS-GF authority (network.level_authority_csgf, the LV-6 census) arms iono_cs, the
-// fourth cardsArmed() term, so cardsArmed() is true on its own, the qualify pass
+// fourth decisionInstrumentArmed() term, so decisionInstrumentArmed() is true on its own, the qualify pass
 // already runs, and gap_instrument is not force-armed on top.  This keeps a census A/B
 // from acquiring a second variable.
 TEST(D5CorroborationAutoArm, CsGfAuthorityAlreadySatisfiesTheEvidenceRequirement) {
@@ -173,8 +173,8 @@ TEST(D5CorroborationAutoArm, CsGfAuthorityAlreadySatisfiesTheEvidenceRequirement
     EXPECT_TRUE(cfg.networkLevelAuthorityCsgf());
     EXPECT_TRUE(cfg.networkCarryInvariantInnovCorroborate());
     EXPECT_FALSE(cfg.getNetworkConfig().slip_qc.gap_instrument)
-        << "level_authority_csgf arms SlipQcParams::iono_cs, so cardsArmed() is already "
-           "true and the qualify pass already runs — auto-arming Card G on top would add "
+        << "level_authority_csgf arms SlipQcParams::iono_cs, so decisionInstrumentArmed() is already "
+           "true and the qualify pass already runs — auto-arming the gap instrument on top would add "
            "counters the A/B partner does not have";
 }
 
@@ -196,7 +196,7 @@ TEST(D5CorroborationAutoArm, UnarmedCarryInvariantNeverAutoArmsAnything) {
 
 // The knobs are force-disabled without the innovation gate (there are no re-taps to
 // corroborate), so the interlock must find nothing to do and leave the gap instrument alone.
-TEST(D5CorroborationAutoArm, CorroborateWithoutTheGateIsDisarmedAndArmsNoCard) {
+TEST(D5CorroborationAutoArm, CorroborateWithoutTheGateIsDisarmedAndArmsNoInstrument) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("v3_nogate",
         "    \"phase_datum_eq34\": true,\n"

@@ -434,7 +434,7 @@ TEST(NetworkClockCloneTest, SmoothedRowAdvancesOnTheClones) {
     EXPECT_EQ(st.terms[0].coeff, -1.0);
     EXPECT_NEAR(st.value, 0.13, 1e-15) << "x0 = the clone's posterior";
     EXPECT_EQ(st.var, 0.0);
-    EXPECT_EQ(st.dW, 1.5e-4) << "the walk share reads card CTU's Q";
+    EXPECT_EQ(st.dW, 1.5e-4) << "the walk share reads the clock time-update Q";
     in.xe_walk = nullptr;
     EXPECT_EQ(pbHoldCloneAdvanceRow(in, "G02", {PbHoldCloneOwn{}}, {t}, 0.10, 0.0, 0.0).dW, 0.0);
 }

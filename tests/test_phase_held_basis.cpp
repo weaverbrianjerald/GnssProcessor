@@ -131,7 +131,7 @@ bool basisEligible(const PhaseHeldBasis& h, int sta, const std::string& amb,
 // (1) The knob and its interlocks.
 // =============================================================================
 
-TEST(PhaseHeldBasisTest, DefaultsOffWithTheCardsGateValues) {
+TEST(PhaseHeldBasisTest, DefaultsOffWithTheSpecifiedGateValues) {
     GnssConfig cfg;
     ASSERT_TRUE(loadInto("default", networkConfig(kFloatKfPosture), cfg));
     EXPECT_FALSE(cfg.networkPhaseDatumHeldBasis());

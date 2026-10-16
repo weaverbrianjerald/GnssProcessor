@@ -1309,7 +1309,7 @@ TEST(CouplingExactUpdateTest, SmoothedRowOnTheCloneEpochIsTheFixedPointSmoother)
             const RecOut rc3 = runRecursion(n, 3, &fc);
             const auto [e5, r5] = grade(rc5.fp_smh_value, rc5.fp_smh_var);
             const auto [e3, r3] = grade(rc3.fp_smh_value, rc3.fp_smh_var);
-            std::printf("[SCL SMH] q %.1e sat %d  row on card CTU's epoch: clone solve (mode 5) err "
+            std::printf("[SCL SMH] q %.1e sat %d  row on the clock time-update epoch: clone solve (mode 5) err "
                         "%+.3f batch sigma, variance ratio %.4f; its own solve (mode 3) err %+.3f, "
                         "ratio %.4f\n", q, sat, e5, r5, e3, r3);
             worst_ctu_clone_solve = std::max(worst_ctu_clone_solve, std::abs(e5));
@@ -1319,7 +1319,7 @@ TEST(CouplingExactUpdateTest, SmoothedRowOnTheCloneEpochIsTheFixedPointSmoother)
         }
         if (q > 1e-6)
             EXPECT_GT(worst_ctu_clone_solve, 0.5)
-                << "the row on card CTU's epoch should miss the batch under the clone solve";
+                << "the row on the clock time-update epoch should miss the batch under the clone solve";
     }
 }
 

@@ -114,7 +114,7 @@ TEST(BorderCloneTest, BiasCloneRegistersLastWithItsKeyAndLabel) {
     EXPECT_EQ(kb, 4);
     EXPECT_EQ(kc, 5);
     EXPECT_EQ(est.registerClone(SharedParamKind::PhaseBias, "G01", "L1C"), kp) << "idempotent";
-    EXPECT_EQ(est.registerClockClone("G01"), kc) << "a clock clone is card SCL's";
+    EXPECT_EQ(est.registerClockClone("G01"), kc) << "a clock clone is registered like any other border clone";
     EXPECT_EQ(est.cloneColumn(SharedParamKind::PhaseBias, "G01", "L1C"), kp);
     EXPECT_EQ(est.cloneColumn(SharedParamKind::CodeBias, "G01", "C1C"), kb);
     EXPECT_EQ(est.cloneColumn(SharedParamKind::Clock, "G01", ""), kc);
@@ -362,7 +362,7 @@ TEST(BorderCloneTest, LoaderDefaultOffAndRequiresTheClockClone) {
     EXPECT_TRUE(bias);
     EXPECT_TRUE(departed);
     EXPECT_FALSE(bclLoads(bclConfig(false, true, false), "bias_noclone"))
-        << "the bias clone is a mode of card SCL's clone";
+        << "the bias clone is a mode of the clock clone";
     EXPECT_FALSE(bclLoads(bclConfig(false, false, true), "dep_noclone"))
-        << "the departed clone is a mode of card SCL's clone";
+        << "the departed clone is a mode of the clock clone";
 }

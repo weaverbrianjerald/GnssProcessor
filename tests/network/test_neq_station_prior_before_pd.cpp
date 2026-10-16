@@ -117,7 +117,7 @@ NetworkNormalEquations::StationPrior dcbDatum(Eigen::Index dcb_col, double sigma
 /// direction is the design's closed-form null (mass ratio 1+γ² of ambiguity to iono).
 /// Without this the admission test below could pass on a block that is merely
 /// ill-conditioned, which is a different finding.
-TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheCardsRankOneNull) {
+TEST(NeqStationPriorBeforePdTest, SyntheticBlockCarriesTheDesignsRankOneNull) {
     const StationRows S = buildStation(/*n_sat=*/5, /*n_shared=*/6, /*shared_base=*/0,
                                        /*d1=*/1.0, /*d2=*/kGamma, /*wet_map_base=*/1.0);
     const Eigen::MatrixXd N_rr =

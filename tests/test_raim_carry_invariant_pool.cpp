@@ -72,7 +72,7 @@ std::string networkConfig(const std::string& network_extra) {
 
 /// The invariant-carry lineage: carry_invariant takes effect only with phase_datum_eq34, which
 /// is why the runtime knob ANDs both.  Every "armed" posture below builds on this.
-constexpr const char* kCard4 =
+constexpr const char* kInvariantCarryPosture =
     "    \"phase_datum_eq34\": true,\n"
     "    \"carry_invariant\": true,\n"
     "    \"raim\": true,\n";
@@ -97,9 +97,9 @@ TEST(RaimCarryInvariantPool, ScreenDefaultsOff) {
 // The existing invariant-carry + RAIM posture (the one about 70 _ft63_* configs ship) loads
 // as before: RAIM nominally on, the re-host off, nothing re-hosted.  This guards
 // against the re-host changing any default behaviour.
-TEST(RaimCarryInvariantPool, LegacyCard4PostureUnchanged) {
+TEST(RaimCarryInvariantPool, LegacyInvariantCarryPostureUnchanged) {
     LogManager log;
-    const fs::path p = writeTempConfig("legacy", networkConfig(kCard4));
+    const fs::path p = writeTempConfig("legacy", networkConfig(kInvariantCarryPosture));
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_TRUE(cfg.networkRaim());                       // still nominally armed
@@ -112,10 +112,10 @@ TEST(RaimCarryInvariantPool, LegacyCard4PostureUnchanged) {
 // The armed posture.
 // ---------------------------------------------------------------------------
 
-TEST(RaimCarryInvariantPool, ArmsOnCard4Lineage) {
+TEST(RaimCarryInvariantPool, ArmsOnInvariantCarryLineage) {
     LogManager log;
     const fs::path p = writeTempConfig("armed",
-        networkConfig(std::string(kCard4) + "    \"raim_carry_invariant\": true,\n"));
+        networkConfig(std::string(kInvariantCarryPosture) + "    \"raim_carry_invariant\": true,\n"));
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_TRUE(cfg.networkRaimCarryInvariant());
@@ -192,7 +192,7 @@ TEST(RaimCarryInvariantPool, CarryInvariantWithoutEq34IsAHardLoadError) {
 TEST(RaimCarryInvariantPool, ScreenDoesNotDisarmWithholdSilently) {
     LogManager log;
     const fs::path p = writeTempConfig("withhold",
-        networkConfig(std::string(kCard4) +
+        networkConfig(std::string(kInvariantCarryPosture) +
                       "    \"raim_carry_invariant\": true,\n"
                       "    \"raim_within_epoch\": true,\n"
                       "    \"raim_withhold_sigma0\": 6.0,\n"));
