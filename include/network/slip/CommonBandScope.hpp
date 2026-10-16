@@ -523,4 +523,14 @@ int networkCommonBandScopeRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of CommonBandScope, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CommonBandScopeCounters {
+    /// The veto's per-pair-kind breakdown (§14.10): silent MW pairs the common-band
+    /// scope refused as exonerators because an IF-TD pair flagged, attributed to the
+    /// IF-TD pair kind that vetoed.  The premise is that the vetoes come from
+    /// pairs the single-pair detector never watched, so the total
+    /// (@ref n_cb_iftd_veto) alone cannot show it.
+    std::map<std::string, long long> n_cb_iftd_veto_by_pair;
+};
+
 } // namespace GnssProcessor

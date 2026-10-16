@@ -62,4 +62,9 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
 
 // ---- End of the harvest half, declarations ----
 
+/// @brief Run-scope counters of SlantIonoCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SlantIonoCarryCounters {
+    long long n_iono_blk_gap_drop   = 0;             ///< in-block iono carries dropped at the harvest prune for exceeding carry_iono_in_block_max_gap_s without a sighting (the absent-satellite / eclipse edge)
+};
+
 } // namespace GnssProcessor

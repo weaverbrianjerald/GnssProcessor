@@ -613,4 +613,18 @@ int networkGrossLosRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of GrossLos, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct GrossLosCounters {
+    /// Run-end telemetry of the gross line-of-sight screen (
+    /// docs/SPEC_event_harness.md §24.18).  All zero unless ctx.knobs.gl_on; the
+    /// denominators separate "seam never ran" from "no code row reached it" from
+    /// "nothing cleared the bar" from "evidence never persisted" (standing invariant
+    /// #4).
+    NetworkGrossLosTallies gross_los;
+    long long n_cr_gross_los          = 0;  ///< level entries erased by a gross line-of-sight declaration (docs/SPEC_event_harness.md §24.18).  Family (C) like the T4 erase: the arc is still tracked and its next harvest re-stashes it.  Zero unless network.gross_los_screen.
+    long long n_pc_erase_gross        = 0;  ///< entries erased by the gross line-of-sight erase
+    /// Screened-epoch sequence number, the holdoff's clock.
+    long long gl_seq{ 0 };
+};
+
 } // namespace GnssProcessor

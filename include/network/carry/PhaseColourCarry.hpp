@@ -102,4 +102,13 @@ void networkPrunePhaseColour(NetworkRun& run, const NetworkEpoch& ep);
  */
 int networkPhaseColourRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of PhaseColourCarry, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PhaseColourCarryCounters {
+    long long n_pc_stash              = 0;  ///< entries harvested
+    long long n_pc_stash_fail         = 0;  ///< harvest attempts refused (non-finite or a failed regression)
+    long long n_pc_gap_prune          = 0;  ///< entries pruned past the maximum gap
+    double    pc_abs_sum              = 0.0;///< sum of |estimate| over harvested entries (m)
+    double    pc_sq_sum               = 0.0;///< sum of estimate^2 over harvested entries (m^2)
+};
+
 } // namespace GnssProcessor

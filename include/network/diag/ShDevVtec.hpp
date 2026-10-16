@@ -123,4 +123,20 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep);
 
 // ---- End of the PASS B serial stages, declarations ----
 
+/// @brief Run-scope counters of ShDevVtec, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ShDevVtecCounters {
+    // Iono-2 run-end counters (invariant #4: wiring that is inert shows only through
+    // them): warm-prior harvests, cold seeds, C3c-funnel slip resets, and
+    // no-information harvest skips (V̂ ≥ P_pred + f²).
+    long long shdev_warm_total = 0, shdev_cold_total = 0,
+              shdev_slip_resets_total = 0, shdev_nodata_total = 0;
+    // Iono-2 v3 de-mean: epochs the global de-mean applied, station-mean removals, and
+    // Σ|g| for the run-end mean |g|.
+    long long shdev_demean_epochs_total = 0, shdev_demean_sta_total = 0;
+    double    shdev_demean_abs_g_sum = 0.0;
+    // Iono-2 v3k: D5-only re-taps that kept the level (variance re-tap) instead of
+    // erasing it.  shdev_slip_resets_total then counts actual erases only.
+    long long shdev_d5_keeps_total = 0;
+};
+
 } // namespace GnssProcessor

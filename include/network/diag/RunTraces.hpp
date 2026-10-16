@@ -1226,4 +1226,32 @@ struct NetworkRun;
  */
 void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& config_path_);
 
+    /// @brief Run-scope counters of RunTraces, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct RunTracesCounters {
+        std::vector<int> sta_in_solve_ep;        ///< per consume epoch: stations that entered the arrowhead
+        // ms_per_epoch_window anchors (P4(b)): wall ms and loop-epoch count as of the
+        // previous health row, so each row reports the mean over its own window (the
+        // operationally useful "is it slowing down now" signal), not a cumulative run mean
+        // labelled "rolling".
+        double health_win_ms_anchor     = 0.0;
+        size_t health_win_epochs_anchor = 0;
+        FlagRate fr_if_slip;    // tier T1: per (station,sat,pair) IF-phase sample, k=if_phase_td_k_mad
+        // Tier T1r: per (station, epoch, constellation) family of n>=2 non-ref DDs, the IF-TD
+        // reference arm.  Its action drains through sta_if_resets/refsat_reset and
+        // increments nothing in T1, so without its own tier the table reads T1 flags=0 while
+        // the arm drives acting refloats (§6.14.5 defect 1).  A separate tier on purpose:
+        // the opportunity denominator differs (station-epoch-constellations, not per-sat
+        // samples) and so does the threshold (hardened: max(k*s_eff, floor_frac*lambda_IF);
+        // legacy: a bare physical floor), and merging it into T1 would hide that asymmetry
+        // again.  Summed at run end from each station detector's RefGateCounters by the
+        // run-summary report (networkRunSummaryRunEnd), which hands it to the writer.
+        FlagRate fr_we_trigger; // tier T2: per warm within-epoch epoch, σ̂0_first > trig, k=sigma0_trigger
+        FlagRate fr_raim_cell;  // tier T3: per (sat,station) standardized residual, k=raim_k
+        FlagRate fr_raim_sat;   // tier T3 consensus: per spiked sat (>=min_sta), k=raim_k
+        FlagRate fr_attrib;     // tier T4: per median-polish sat column, eff/σ̂0 > k and σ̂0 > trigger (B8/P1-4)
+        FlagRate fr_attrib_arc; // tier T4: per median-polish arc interaction, inter/σ̂0 > k (the acting sub-path's criterion, before the persistence/maturity gates; without this line the tier reads 0 flags while it refloats arcs, §9.7.10)
+        FlagRate fr_clk_model;  // tier T5: per sat clock-model NIS (own, !ext), k=clock_model_k
+        FlagRate fr_clk_mon;    // tier T6: per sat clock-monitor abs/jump (own, !ext), absolute bounds
+    };
+
 } // namespace GnssProcessor

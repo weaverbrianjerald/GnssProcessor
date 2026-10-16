@@ -120,6 +120,7 @@
 #include "network/assembly/RowClassify.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
+#include <string>
 
 namespace GnssProcessor {
 
@@ -303,5 +304,53 @@ struct NetworkRunEndView;
 int networkRedundancyCensusRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
+
+/// @brief Run-scope counters of RedundancyCensus, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct RedundancyCensusCounters {
+
+    // --- redundancy / testability census ---
+    // Standing invariant #4 in its statistical form.  The failure mode this census
+    // must be able to disprove is "the sweep ran and found nothing", which cannot be
+    // told apart from "the sweep never ran" without denominators, so the passes, the
+    // sweeps and the rows are reported before any finding.  `redun_max_cold_*` exists
+    // for the opposite reason: the prefer-fallback directive says uncheckable but quiet
+    // rows (for example single-frequency rising satellites) must be counted and never
+    // evented, and keeping the worst one makes that a checkable claim rather than an
+    // assertion.
+    long long redun_passes = 0;             ///< seam invocations (the denominator for everything else).
+    long long redun_sweeps = 0;             ///< epochs on which at least one station was swept.
+    long long redun_sweeps_full = 0;        ///< of those, stride/trip full sweeps.
+    long long redun_sweeps_targeted = 0;    ///< of those, escalation-driven single-station sweeps.
+    long long redun_sweeps_trip = 0;        ///< of the full sweeps, those forced by a flight-recorder trip epoch.
+    long long redun_station_sweeps = 0;     ///< (station, epoch) pairs swept: the real cost unit.
+    long long redun_escalate_flagged = 0;   ///< (station, epoch) latches raised by the free tier: the escalation's opportunity count.
+    long long redun_escalations = 0;        ///< targeted sweeps taken from those latches.  Necessarily 0 under stride 1 (the scheduled sweep already covered every station), so it must never be read as "the free tier found nothing"; redun_escalate_flagged answers that.
+    long long redun_rows = 0;               ///< data rows examined in sweeps.
+    long long redun_rows_all = 0;           ///< all rows examined (the closure domain: pins and coupling rows carry leverage too).
+    long long redun_uncheckable = 0;        ///< data rows with r_i < eps (uncheckable; counted, not acted on).
+    long long redun_uncheckable_hot = 0;    ///< of those, rows that also exceeded the magnitude threshold: the cross-flag.
+    long long redun_events = 0;             ///< events emitted (after the rate limit): hot cells and unobservable locals.
+    long long redun_pool_skips = 0;         ///< (station, epoch, pool) centring pools skipped for population < 4.
+    long long redun_r_clamped = 0;          ///< rows whose r_i hit the kernel's [0,1] clamp at 0 (leverage >= 1/w).
+    double    redun_mass = 0.0;             ///< sum of r_i over data rows: the redundancy mass of what was swept.
+    long long redun_pivot_cols = 0;         ///< local columns examined by the INC-2 pivot census.
+    long long redun_pivot_flagged = 0;      ///< of those, columns below the relative pivot floor (column-epochs).
+    long long redun_unobs_entered = 0;      ///< decoupling edges: (station, key) first appearances, each evented.
+    long long redun_unobs_cleared = 0;      ///< re-coupling edges: (station, key) that regained information.
+    bool      redun_closure_any = false;    ///< at least one closure sample exists.
+    double    redun_closure_min_slack = 0.0;///< worst (smallest) n_free − trace(H); must stay >= 0.
+    long long redun_closure_neg = 0;        ///< sweeps whose slack went negative (a covariance/row-stack defect, not a data finding).
+    double    redun_max_hot_s = 0.0;        ///< largest cross-flagged centred deviation over the run.
+    std::string redun_max_hot_id;           ///< its (station/sat/class @tow) identity.
+    double    redun_max_cold_s = 0.0;       ///< largest centred deviation on an uncheckable row that stayed below the cross-flag.
+    std::string redun_max_cold_id;          ///< its (station/sat/class @tow) identity.
+    double    redun_wall_ms = 0.0;          ///< run-total wall time inside the census seam (the cost claim).
+
+    // Redundancy / testability census: the stride phase and event clock, and the
+    // one-shot warn latches (observer state of a measure-only instrument).
+    long long redun_epochs = 0;            ///< census seam passes: the stride phase counter and the event-holdoff clock.
+    bool      redun_cov_warned    = false; ///< one-shot: armed with no solved covariance to read.
+    bool      redun_closure_warned = false;///< one-shot: trace(H) exceeded the free-parameter bound.
+};
 
 } // namespace GnssProcessor

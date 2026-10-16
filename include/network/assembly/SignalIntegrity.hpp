@@ -346,4 +346,15 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of SignalIntegrity, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SignalIntegrityCounters {
+    // Run tallies of flicker/gap signal integrity; every field is documented on the
+    // struct.  Bumped only when ctx.knobs.sig_integrity_on, and reported by
+    // networkSignalIntegrityRunEnd (network/assembly/SignalIntegrity.cpp).  `demoted_rows`
+    // stays 0 here: the report sums the per-station NetStation::si_rows_demoted counters
+    // into its own copy (the fold runs inside the parallel produce, so the row tally
+    // cannot live here).
+    NetworkSignalIntegrityTallies sig;
+};
+
 } // namespace GnssProcessor

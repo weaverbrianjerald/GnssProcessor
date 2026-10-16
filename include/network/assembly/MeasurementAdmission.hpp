@@ -440,4 +440,15 @@ int networkMeasurementAdmissionRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of MeasurementAdmission, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct MeasurementAdmissionCounters {
+    // Run tallies of product-referenced measurement admission; every field is
+    // documented on the struct.  Bumped only when ctx.knobs.adm_on, and reported by
+    // networkMeasurementAdmissionRunEnd.  Named `adm` and not reachable
+    // as `ctx.admission` on purpose: that name belongs to the CB-ADM W6 code-bias
+    // admission census (@ref NetworkBiasAdmission below), a different mechanism, and
+    // the two are easy to confuse.
+    NetworkMeasurementAdmissionTallies adm;
+};
+
 } // namespace GnssProcessor

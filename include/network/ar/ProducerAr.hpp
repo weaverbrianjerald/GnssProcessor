@@ -353,4 +353,30 @@ int networkProducerArRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of ProducerAr, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ProducerArCounters {
+
+    // --- Run tallies of producer AR, phase 2 (network.ambiguity_resolution).
+    // These give the diagnostic a run-end clause; otherwise its only output would be
+    // one log line per epoch.  Standing invariant #4 in its ordinary form:
+    // `netar_epochs == 0` on an armed run means the search never reached the ILS
+    // (min_epochs never cleared, the covariance request threw, or the basis never had
+    // two undifferenced columns), which cannot be told apart from a clean quiet run
+    // without a denominator.  The distributions are kept as raw per-epoch samples
+    // rather than running means because the reported statistic is a median: ratio and
+    // p_succ are both heavy-tailed (a degenerate epoch's ratio is 1e4 by construction),
+    // and a mean of either is dominated by the epochs a grader would discard.  One
+    // double per epoch per series is about 120 kB at 24 h.
+    long long netar_epochs     = 0;   ///< epochs the ILS search ran (denominator)
+    long long netar_fix_epochs = 0;   ///< …of those, epochs the acceptance battery passed (full or partial)
+    long long netar_dd_fixed   = 0;   ///< Σ fixed DDs over the run (kept.size() summed)
+    long long netar_rows       = 0;   ///< trace rows written: P1 for the trace (0 with the trace armed = dead wiring)
+    bool      netar_carry_aware = false; ///< covariance mode the search consumed (docs/SPEC_carry_aware_covariance.md §4); part of the reading, not a footnote
+    std::vector<double> netar_n_dd;      ///< per-epoch full DD-basis size
+    std::vector<double> netar_n_search;  ///< per-epoch searched subset size (== n_dd when uncapped)
+    std::vector<double> netar_ratio;     ///< per-epoch accepted-fix ratio
+    std::vector<double> netar_p_succ;    ///< per-epoch accepted-fix bootstrap success rate
+    std::vector<double> netar_med_sigma; ///< per-epoch median DD formal σ (cycles): the convergence gauge
+};
+
 } // namespace GnssProcessor

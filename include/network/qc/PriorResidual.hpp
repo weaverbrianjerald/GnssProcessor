@@ -1343,4 +1343,58 @@ struct NetworkRun;
  */
 void networkPriorResidualArm(NetworkRun& run);
 
+/// @brief Run-scope counters of PriorResidual, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PriorResidualCounters {
+
+    // --- prior-residual census ---
+    // Standing invariant #4: the ladder is the telemetry.  The per-family ladders live
+    // in the accumulator (NetworkPriorResidual) and are read from it at run end; these
+    // are the seam-level counters that make the ladders interpretable: how many epochs
+    // the seam ran, how many rows reached it, how many identities were emitted and how
+    // many were dropped to the per-epoch buffer cap.  A family with n_rows = 0 must read
+    // as "ran, saw nothing", distinct from "never ran", and that distinction is
+    // prires_epochs > 0 with prires_rows = 0.
+    long long prires_epochs = 0;            ///< census epochs advanced (beginEpoch): the "did the wiring execute at all" denominator.
+    long long prires_emit_passes = 0;       ///< emission-seam invocations (should track prires_epochs; a gap means an epoch fed rows nobody drained).
+    long long prires_rows = 0;              ///< carried priors censused over the run, all families and labels.
+    long long prires_reported = 0;          ///< of those, rows above the trace threshold (nothing acted on them).
+    long long prires_events = 0;            ///< PRIORRES events emitted (after the per-cell holdoff).
+    long long prires_hits_dropped = 0;      ///< above-threshold rows whose individual identity was dropped to the per-epoch buffer cap.  Never affects a ladder, but a nonzero value means the event stream is a sample, and a truncated stream must not read as a quiet run.
+    double    prires_max_t = 0.0;           ///< the worst |t| over the whole run, any family, any label, excluding the RNEG class (see below).
+    std::string prires_max_id;              ///< its (family/label/station/sat/signal @tow) identity.
+    // --- The RNEG class (post_var > fold_var), partitioned out of the ladders.  Its |t|
+    // is not a standardized residual: the dispersion is formed from a (prior,
+    // posterior) pair that does not describe one fold, so r hits the redundancy floor
+    // and |t| inflates by √((p+v)/(εp)).  Left in, this class would dominate the
+    // run-end |t| extremum; the readable extremum for it is |ê| in metres.
+    long long prires_rneg_rows = 0;         ///< RNEG rows over the run (a subset of prires_rows).
+    double    prires_rneg_max_e = 0.0;      ///< the worst |ê| (m) over the whole run's RNEG class.
+    std::string prires_rneg_max_id;         ///< its (family/label/station/sat/signal @tow) identity.
+    double    prires_wall_ms = 0.0;         ///< run-total wall time inside the emission seam (the §5 cost claim; the per-row addRow cost rides the carry harvests and cannot be separated).
+
+    // --- constraint-aware global σ̂₀ ---
+    // Standing invariant #4 for the rider.  The four sums live in the accumulator (they
+    // are the statistic); these are the seam-level counters that say whether the
+    // wiring executed and in which degraded mode.  "0 rows on the data side" and "the
+    // rider never ran" are different findings, and a run whose every epoch carried the
+    // approx flag must not read like one that never needed it.
+    long long s0g_epochs = 0;               ///< drained epochs the rider evaluated: the "did it execute at all" denominator.
+    long long s0g_formed = 0;               ///< of those, epochs with a defined σ̂₀²_global (Σr > 0).
+    long long s0g_data_rows = 0;            ///< data rows folded into Σw·v² over the run (RAIM pool, de-duplicated).
+    long long s0g_prior_rows = 0;           ///< folded census rows in Σw·ê² over the run.
+    long long s0g_ep_approx = 0;            ///< epochs whose data side used the r ≡ 1 fallback (Σr_data is a row count).
+    long long s0g_ep_no_data = 0;           ///< epochs with zero data rows (the number is prior-only).
+    long long s0g_ep_no_prior = 0;          ///< epochs with zero folded prior rows (the number is data-only, which is what this number corrects).
+    long long s0g_ep_degenerate = 0;        ///< epochs where Σr ≤ 0 and no number was formed.
+    double    s0g_max_tension = 0.0;        ///< the worst per-epoch Σw·ê²/Σw·v² of the run.
+    double    s0g_max_tension_tow = -1.0;   ///< its GPS TOW (the cliff's timestamp, for §6 gate 3).
+
+    // Prior-residual census warn latch.
+    bool      prires_trunc_warned = false; ///< one-shot: the per-epoch identity buffer overflowed (ladders unaffected; the event stream became a sample).
+
+    // Constraint-aware global sigma0 warn latches.
+    bool      s0g_approx_warned = false;  ///< one-shot: the data side took the r ≡ 1 fallback.
+    bool      s0g_nodata_warned = false;  ///< one-shot: an epoch formed the number with no data rows at all.
+};
+
 }  // namespace GnssProcessor

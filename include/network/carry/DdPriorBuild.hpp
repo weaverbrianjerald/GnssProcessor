@@ -98,4 +98,20 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
  * @param ep  The epoch, read: se.time.tow.
  */
 void networkCarryDriverBeginEpoch(NetworkRun& run, const NetworkEpoch& ep);
+/// @brief Run-scope counters of DdPriorBuild, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct DdPriorBuildCounters {
+
+    // Invariant-carry driver counters (decomposition INC-4), mirrored from
+    // carry_driver.counters() at the install; the one-time GLONASS warn latch.
+    bool carry_glonass_warned = false;   // one-time WARN when a GLONASS ambiguity is excluded (FDMA)
+    // Carry arcs whose membership kill was suppressed by the D5 v4 flat set
+    // (NetworkCarryState::carry_innov_pending_flat).  The tripwire of
+    // invariant #4 for the knob: 0 with it armed means nothing reached it.  Counted per
+    // arc per buildCarryDdPriors call, so a within-epoch RAIM re-solve counts its arcs
+    // twice (the same convention as the driver's chords_born / slip_kills).  Only an
+    // arc that survives the call counts: one a T2 culprit kills in the re-solve does
+    // not (it is counted in we_culprit_withhold.ambs).
+    long long carry_innov_kill_suppressed = 0;
+};
+
 } // namespace GnssProcessor

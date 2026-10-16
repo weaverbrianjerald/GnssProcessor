@@ -382,4 +382,13 @@ std::string arSuspectCauseSummary(const std::array<long long, kArSuspectCauseCou
  */
 int networkArSuspectRunEnd(const NetworkRunEndView& v);
 
+/// @brief Run-scope counters of ArSuspect, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct ArSuspectRunCounters {
+    /// The search's suspect-corner mask (network/ar/ArSuspect.hpp), both
+    /// edges: events and stamps by cause, DDs masked, corners released and what their
+    /// DDs got at the first search after the release.  All zero unless
+    /// knobs.ar_suspect_epochs > 0.
+    ArSuspectCounters   netar_suspect;
+};
+
 } // namespace GnssProcessor

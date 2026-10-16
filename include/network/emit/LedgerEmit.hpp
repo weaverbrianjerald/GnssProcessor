@@ -291,4 +291,13 @@ namespace GnssProcessor {
 
     // ---- End of the run-end reports ----
 
+    /// @brief Run-scope counters of LedgerEmit, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+    struct LedgerEmitCounters {
+
+        /// --- The emitter's per-family bookkeeping read against the arc ledger, and the
+        /// declared roster's own wire census (network.ledger_emit).
+        /// Untouched unless the knob is armed.
+        NetworkLedgerEmitCounters le;
+    };
+
 } // namespace GnssProcessor

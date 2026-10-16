@@ -63,6 +63,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace spdlog { class logger; }
 
@@ -571,5 +572,45 @@ void networkPbHoldCloneHarvest(NetworkRun& run, const NetworkEpoch& ep);
 void networkPbHoldBlockAtHold(NetworkRunContext& ctx, const std::string& key,
                               unsigned generation, bool pb_marked, double epoch_s,
                               const std::function<double(const std::string&)>& bar);
+
+/// @brief Run-scope counters of PbHoldClone, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct PbHoldCloneCounters {
+    // --- Smoothed hold (network.emit_pb_hold_smoothed) ---
+    long long smh_births           = 0;  ///< clones born on a stashed clock
+    long long smh_births_pinned    = 0;  ///< clones born on the constellation's pinned clock (a transfer of zero)
+    long long smh_births_deferred  = 0;  ///< clones born at least one stash after their birth was queued (section 9)
+    long long smh_rebirths         = 0;  ///< clones born after a disengagement within their generation (section 9)
+    long long smh_defer_loose      = 0;  ///< stashes at which a pending birth waited because the anchor did not hold the clock
+    long long smh_defer_nostash    = 0;  ///< stashes at which a pending birth waited for a stashed clock (or a dense stash)
+    long long smh_pending_dropped  = 0;  ///< pending births dropped because their generation was superseded
+    std::vector<double> smh_defer_ep;    ///< epochs waited, per deferred birth
+    long long smh_updates          = 0;  ///< clone-epochs advanced by the exact route
+    long long smh_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< clone deaths by cause
+    long long smh_terms_s          = 0;  ///< clone terms updated by the one rule
+    long long smh_terms_d          = 0;  ///< clone terms re-attributed through P
+    long long smh_terms_outside    = 0;  ///< clone terms outside the dense block (kappa or marginalized)
+    long long smh_deficit_orphan   = 0;  ///< clock-family deficits with no pivot (dropped)
+    long long smh_epochs_restricted = 0; ///< epochs whose exact inputs were restricted to the keys the solve folded
+    long long smh_keys_unfolded    = 0;  ///< S keys the solve did not fold (a withdrawn clock, a skipped handover), summed
+    // --- The block clones (carried whenever network.emit_pb_hold_smoothed) ---
+    long long smh_pv_births         = 0;  ///< block clones born on a stashed clock
+    long long smh_pv_births_pinned  = 0;  ///< block clones born on the constellation's pinned clock
+    long long smh_pv_rebirths       = 0;  ///< block clones born again within their generation
+    long long smh_pv_defer_anchor   = 0;  ///< stashes at which a pending block birth waited for the anchor
+    long long smh_pv_defer_nostash  = 0;  ///< stashes at which a pending block birth waited for a stashed clock
+    long long smh_pv_defer_nopair   = 0;  ///< stashes at which a pending block birth waited for phase biases on two bands
+    long long smh_pv_pending_dropped = 0; ///< pending block births dropped with their generation
+    long long smh_pv_updates        = 0;  ///< block-clone epochs advanced (both rows)
+    long long smh_pv_deaths[static_cast<int>(PbHoldCloneDeath::kCount)]{};   ///< block-clone deaths by cause
+    long long smh_pv_follow[static_cast<int>(PbHoldFollow::kCount)]{};       ///< block-clone retirements by the step followed
+    long long smh_pv_reref_unmarked = 0;  ///< block clones retired at a re-reference whose satellite carried no phase-channel mark
+    long long smh_pv_steps_unmarked = 0;  ///< live block-clone steps of D above the smallest emitter jump bar of the pair (passed as motion), per held key
+    std::map<int, long long> smh_pv_steps_unmarked_hour;   ///< the same by hour of the run
+    double    smh_pv_step_unmarked_max = 0.0;  ///< the largest such step (m)
+    std::map<std::string, long long> smh_pv_pairs;   ///< the pair at birth ("L1C+L2W") -> block births
+    std::vector<double> smh_pv_phi_abs;   ///< |Phi_D| per live block clone at a held emission (m)
+    std::vector<double> smh_pv_lvl_abs;   ///< |Phi_c - Phi_D| (the level part) per live block clone at a held emission (m)
+    std::map<std::pair<char, int>, std::pair<double, long long>> smh_pv_r;   ///< (constellation, hour) -> (sum r_D, count), r_D = Phi_D^2 / (W_D - V_D)
+};
 
 }  // namespace GnssProcessor

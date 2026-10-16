@@ -175,6 +175,61 @@ int networkSecondPhaseScopeRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of SecondPhaseScope, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct SecondPhaseScopeCounters {
+    /// Run-end telemetry of the second phase channel, including both edges of standing
+    /// invariant #7 (docs/refound/SID_signal_identity_2026-09-22.md
+    /// section 4, R7).  The cell classes and the tier census are reduced in serial
+    /// sweeps; @c rows is summed from the per-station NetStation counters at teardown,
+    /// as for the second code.
+    ///
+    /// Standing invariant #4: @c rows == 0 with the knob armed means the run exercised
+    /// nothing (no station reported a second allow-listed band-1 phase), and the
+    /// teardown warns instead of reporting a clean run.
+    struct SecondPhase {
+        long long cells = 0;          ///< Second-phase (station, satellite, signal) cells open, summed over epochs.
+        long long cell_open = 0;      ///< Cell openings (the re-coupling edge): a cell that was not open last epoch.
+        long long cell_close = 0;     ///< Cell closings (the decoupling edge): a cell that was open last epoch and is gone.
+        long long rows = 0;           ///< Second-phase rows folded into the solve, over the run.
+        /// The fallback case: an allow-listed band-1 phase this station reports for a
+        /// satellite with no latched phase of that band beside it.  Those rows are not
+        /// added (the latch decides what "second" means); the count is a finding about
+        /// the canonical latch, not about the second phase channel.
+        long long fallback_rows = 0;
+        long long arcs_born = 0;      ///< Distinct (station, satellite, signal) cells the run ever opened.
+        long long arcs_live_max = 0;  ///< Cells open network-wide, maximum over epochs.
+        long long stations_max = 0;   ///< Stations contributing at least one second phase, maximum over epochs.
+        /// Phase-datum anchor incumbencies held on a second-phase arc, summed over
+        /// epochs.  R3's question as a number: a second-phase arc is a candidate like any
+        /// other, and this says whether the election ever seats one.
+        long long anchors = 0;
+        /// (satellite, signal) columns that reached the >= 2-station registration bar
+        /// only through second-phase arcs.  Per epoch, summed.  It measures the
+        /// premise directly: zero of these means the channel added rows without ever
+        /// widening a family's roster.
+        long long cols_via_second = 0;
+        // --- Slip census on second-phase arcs, by tier (R4) ---
+        // Keyed on RelevelEpochState::kCause*, the producer's own tier vocabulary, so
+        // these cannot drift from what the tiers did.  A tier that reads zero here
+        // while its arcs exist does not screen the second-phase rows, which is what
+        // standing invariant #1 asks about.
+        long long slip_arcs = 0;      ///< Second-phase arcs freed by any tier, summed over epochs.
+        long long slip_mw = 0;        ///< ... of those, with the MW wide-lane bit.
+        long long slip_lli = 0;       ///< ... with the receiver LLI bit.
+        long long slip_iftd = 0;      ///< ... with the IF-phase time-difference bit.
+        long long slip_t4 = 0;        ///< ... with the RAIM prominence-attribution (T4) bit.
+        long long slip_t3 = 0;        ///< ... with the RAIM per-satellite consensus (T3) bit.
+        long long slip_windup = 0;    ///< ... with the wind-up restart bit.
+        long long slip_gap = 0;       ///< ... with the gap re-entry bit (either gap tier).
+        // --- The between-channel witness (R8; observatory: counts, no action) ---
+        long long witness_pairs = 0;  ///< (station, satellite) pair-epochs with both band-1 phases and a previous epoch.
+        long long witness_jumps = 0;  ///< ... of those, whose epoch-to-epoch change exceeded 0.5 cycles.
+        double    witness_max = 0.0;  ///< The largest absolute change seen, in cycles.
+        std::string witness_max_id;   ///< "<station>|<satellite>|<signal>@<tow>" of that change.
+    };
+    SecondPhase second_phase;
+};
+
 }  // namespace GnssProcessor
 
 #endif  // GNSS_PROCESSOR_NETWORK_SECOND_PHASE_SCOPE_HPP

@@ -173,4 +173,17 @@ int networkCarryDispositionRunEnd(const NetworkRunEndView& v);
 
 // ---- End of the run-end reports ----
 
+/// @brief Run-scope counters of CarryDisposition, a base of NetworkServiceCounters (network/state/RunContext.hpp).
+struct CarryDispositionCounters {
+    // The decided-once fold disposition (networkCarryDecide before
+    // PASS B, read by the rows and the fold).  prm_disp counts key-epochs by
+    // (SharedParamKind, the disposition the fold applied); prm_departed the foldable
+    // ones whose column had left the layout (the estimator marginalizes them).  A key
+    // re-expressed between the decision and the fold (the handover S-transform, the
+    // ephemeris cut-over re-level) is counted with its largest variance change: the rows
+    // were built on the decided variance.  prm_undecided_at_fold: entries the fold met
+    // with no decision this epoch (0 unless a path skips the pass).
+    long long prm_decide_epochs = 0;
+};
+
 }  // namespace GnssProcessor
