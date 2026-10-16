@@ -34,14 +34,17 @@ namespace GnssProcessor {
         /// no second band-name table.  A constellation that cannot fill all four
         /// (structurally Galileo, whose band digits are 1/5/7/6) ends with
         /// @c CanonicalPair::decided() false and is never screened.
-        std::map<std::string, CanonicalPair> latchedPairs(const PppModel& model) {
+        std::map<std::string, CanonicalPair> latchedPairs(const PppModel& model,
+                                                          bool traits_bands) {
             std::map<std::string, CanonicalPair> out;
             for (const auto& e : model.exportCanonicalSignals()) {
-                const auto signal = SignalId::fromObsCode(systemFromName(e.constellation), e.signal);
+                const System sys = systemFromName(e.constellation);
+                const auto signal = SignalId::fromObsCode(sys, e.signal);
                 if (!signal) continue;
-                // The pair's bands are the digits 1 and 2 (a band role).
-                const bool band1 = signal->digit == '1';
-                if (!band1 && signal->digit != '2') continue;
+                // The pair's two bands: the digits 1 and 2, or the constellation's own.
+                const int slot = canonicalPairSlot(sys, signal->digit, traits_bands);
+                if (slot == 0) continue;
+                const bool band1 = slot == 1;
                 CanonicalPair& p = out[e.constellation];
                 if (e.obs_type == 'L') (band1 ? p.l1 : p.l2) = e.signal;
                 else if (e.obs_type == 'C') (band1 ? p.c1 : p.c2) = e.signal;
@@ -60,6 +63,15 @@ namespace GnssProcessor {
         }
 
     } // namespace
+
+    int canonicalPairSlot(System sys, char band_digit, bool traits_bands) {
+        if (!traits_bands) return band_digit == '1' ? 1 : (band_digit == '2' ? 2 : 0);
+        const ConstellationTraits& t = traitsOf(sys);
+        if (t.n_bands < 2) return 0;
+        if (band_digit == t.bands[0].digit) return 1;
+        if (band_digit == t.bands[1].digit) return 2;
+        return 0;
+    }
 
     // =====================================================================
     // The pure state machine
@@ -116,6 +128,7 @@ namespace GnssProcessor {
         auto& st = ctx.carry.cpa;
         st.armed = config_.networkCanonicalPairAdmission();
         st.keep_ep = std::max(0, config_.networkCanonicalPairKeepEpochs());
+        st.traits_bands = config_.networkN3cCanonicalPairTraits();
         if (!st.armed) return;
         st.pairs.assign(static_cast<std::size_t>(std::max(0, n_sta)), {});
     }
@@ -165,7 +178,7 @@ namespace GnssProcessor {
                     // is written once and never revised, so the refresh stops once
                     // it yields an entry.
                     if (!stations[i].model) continue;
-                    auto fresh = latchedPairs(*stations[i].model);
+                    auto fresh = latchedPairs(*stations[i].model, st.traits_bands);
                     auto fit = fresh.find(cons);
                     if (fit == fresh.end()) {
                         // Undecided: the station has not yet run computeModels for

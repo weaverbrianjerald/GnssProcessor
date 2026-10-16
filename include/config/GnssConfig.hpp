@@ -6173,6 +6173,22 @@ namespace GnssProcessor {
         bool networkN3cChannelFamily() const { return network_n3c_channel_family_; }
 
         /**
+         * @brief The canonical pair's bands come from the constellation traits
+         *        (@c network.n3c_canonical_pair_traits).
+         *
+         * Armed, the canonical-pair admission reads each constellation's pair as the
+         * first two bands of the constellation traits (GPS 1 and 2, Galileo 1 and 5)
+         * instead of the band digits 1 and 2 for every constellation. A constellation
+         * with no band 2 (Galileo) is screened on its own pair, and its latch decides
+         * the four slots as GPS's does. Inert unless @ref networkCanonicalPairAdmission
+         * is armed, because the traits only name the pair that rule screens.
+         *
+         * Solve-affecting when armed together with the admission, so it is graded as a
+         * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cCanonicalPairTraits() const { return network_n3c_canonical_pair_traits_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8386,6 +8402,7 @@ namespace GnssProcessor {
         bool   network_ledger_anchor_{false};                      ///< A family the coverage gate's drop edge erased and that returns with arcs of the same generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting (network.ledger_anchor); a new-generation return is elected as without the knob. anchor_arc_age becomes a reader of the ledger's admitted age. Solve-affecting when armed. Refused (error + disarm) without network.ledger_screens. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_bia_pin_pair_{false};                   ///< The code-bias datum pins the BIA clock-reference signal pair (GPS C1W with C2W) on a satellite that registers both, instead of the lexically first pair (network.n3c_bia_pin_pair). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         bool   network_n3c_channel_family_{false};                 ///< The datum graph census groups bias keys by "X against the rest" (NetworkSbasis::channelFamilyOf) instead of the attribute letter (network.n3c_channel_family). Measure-only: nothing in the solve reads the census. Not fingerprinted. Network mode only.
+        bool   network_n3c_canonical_pair_traits_{false};          ///< The canonical-pair admission reads each constellation's pair as the first two bands of its traits (GPS 1 and 2, Galileo 1 and 5) instead of the digits 1 and 2 (network.n3c_canonical_pair_traits). Inert without network.canonical_pair_admission. Solve-affecting when armed with it. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.

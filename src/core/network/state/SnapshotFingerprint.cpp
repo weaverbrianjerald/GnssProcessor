@@ -250,6 +250,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // and so the datum the carried code biases were accumulated in.  Appended only
         // when armed, so a snapshot written with it off keeps its fingerprint.
         if (config_.networkN3cBiaPinPair()) add("n3c:bia_pin_pair");
+        // The canonical pair read from the constellation traits changes which observables
+        // the admission requires (Galileo becomes screened), so a snapshot written on the
+        // other side holds carries the screen never saw.  Appended only when armed.
+        if (config_.networkN3cCanonicalPairTraits()) add("n3c:canonical_pair_traits");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

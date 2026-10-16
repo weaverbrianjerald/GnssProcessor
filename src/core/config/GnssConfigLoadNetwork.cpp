@@ -6151,6 +6151,13 @@ namespace GnssProcessor {
         // the solve or the wire.
         network_n3c_channel_family_ =
             jval<bool>(json, "network.n3c_channel_family", "network_n3c_channel_family", false);
+        // The canonical pair's bands from the constellation traits.  Default off; armed
+        // together with network.canonical_pair_admission it screens Galileo on (1, 5),
+        // which the digits-1-and-2 rule never could, so it is graded as a behavior change
+        // and is fingerprinted.  Alone it is inert.
+        network_n3c_canonical_pair_traits_ =
+            jval<bool>(json, "network.n3c_canonical_pair_traits",
+                       "network_n3c_canonical_pair_traits", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest

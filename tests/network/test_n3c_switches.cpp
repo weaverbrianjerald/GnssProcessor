@@ -7,6 +7,7 @@
 
 #include "filter/StateKeySchema.hpp"
 #include "network/solve/DatumGraph.hpp"
+#include "network/assembly/CanonicalPairAdmission.hpp"
 #include "network/solve/Sbasis.hpp"
 
 #include <cmath>
@@ -88,6 +89,23 @@ TEST(N3cSwitchesTest, ChannelFamilyCellsAndDirectionIdsFollowTheDefinition) {
     const auto ids = netDatumGraphDetailIds("PB:E03:L5X:0.5", true);
     ASSERT_EQ(ids.size(), 1u);
     EXPECT_EQ(ids[0], std::string("E03/") + kDatumGraphFamilyX);
+}
+
+// ---- D3: the canonical pair's bands come from the constellation traits ----
+
+TEST(N3cSwitchesTest, CanonicalPairSlotsFollowTheTraitsWhenTheSwitchIsOn) {
+    // Default: the digits 1 and 2 for every constellation, so Galileo band 5 fills no slot.
+    EXPECT_EQ(canonicalPairSlot(System::GPS, '1', false), 1);
+    EXPECT_EQ(canonicalPairSlot(System::GPS, '2', false), 2);
+    EXPECT_EQ(canonicalPairSlot(System::Galileo, '5', false), 0);
+    EXPECT_EQ(canonicalPairSlot(System::Galileo, '1', false), 1);
+    // Switch on: GPS is unchanged, Galileo's pair is (1, 5).
+    EXPECT_EQ(canonicalPairSlot(System::GPS, '1', true), 1);
+    EXPECT_EQ(canonicalPairSlot(System::GPS, '2', true), 2);
+    EXPECT_EQ(canonicalPairSlot(System::GPS, '5', true), 0);
+    EXPECT_EQ(canonicalPairSlot(System::Galileo, '1', true), 1);
+    EXPECT_EQ(canonicalPairSlot(System::Galileo, '5', true), 2);
+    EXPECT_EQ(canonicalPairSlot(System::Galileo, '7', true), 0);
 }
 
 }  // namespace
