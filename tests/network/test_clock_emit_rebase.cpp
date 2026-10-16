@@ -25,7 +25,7 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
-#include "network/emit/NetworkClockEmitRebase.hpp"
+#include "network/emit/ClockEmitRebase.hpp"
 
 #include <cmath>
 #include <filesystem>

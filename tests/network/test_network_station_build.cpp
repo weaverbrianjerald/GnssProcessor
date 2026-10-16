@@ -1,7 +1,7 @@
 /**
  * @file test_network_station_build.cpp
  * @brief The station build's two step tables and the parallel contract as a type (card NOM3
- *        step PB1b, network/assembly/NetworkStationBuild.hpp).
+ *        step PB1b, network/assembly/StationBuild.hpp).
  *
  * The compile-time half: the view members of StationBuild are const references (a step
  * cannot write shared state through them), the writable members are exactly the station, its
@@ -12,8 +12,8 @@
 
 #include <gtest/gtest.h>
 
-#include "network/assembly/NetworkStationBuild.hpp"
-#include "network/assembly/NetworkContributionKind.hpp"
+#include "network/assembly/StationBuild.hpp"
+#include "network/assembly/ContributionKind.hpp"
 
 #include <cstddef>
 #include <string>

@@ -34,12 +34,12 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkClockAnchor.hpp"
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/emit/NetworkPbHoldClone.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/ClockAnchor.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/emit/PbHoldClone.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

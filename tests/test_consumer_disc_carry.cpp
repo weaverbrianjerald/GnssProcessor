@@ -475,7 +475,7 @@ TEST(ConsumerDiscCarryTest, ConfigDefaultsAreOffAndTheKnobReachesOnlyTheDerivedC
 // ---------------------------------------------------------------------------
 TEST(ConsumerDiscCarryTest, ConsumerHistoryFileSitsBesideTheNetworkCopy) {
     const fs::path net = fs::path("C:/runs/evseed_x") / "state_snapshot.txt";
-    fs::path net_copy = net; net_copy += ".ep0604";                     // NetworkStateSnapshotWrite.cpp's suffix
+    fs::path net_copy = net; net_copy += ".ep0604";                     // StateSnapshotWrite.cpp's suffix
     const fs::path cons = RealTimeEngine::consumerSnapshotHistoryPath(net, 604);
     EXPECT_EQ(cons.filename().string(), "state_snapshot.txt.consumer.ep0604");
     EXPECT_EQ(cons.parent_path(), net_copy.parent_path());

@@ -1,7 +1,7 @@
 /**
  * @file test_network_rhs_attrib.cpp
  * @brief Card NOM step N2b: the reduced-RHS attribution iterates exactly the channels the
- *        kernel folds, so its closure holds by construction (network/qc/NetworkRhsAttrib.hpp).
+ *        kernel folds, so its closure holds by construction (network/qc/RhsAttrib.hpp).
  *
  * Card NOM section 16 (suspect 2) found that the attribution read a station's rows and its
  * post-PD diagonal prior but not the pre-PD station prior that @c addStation folds with
@@ -23,11 +23,11 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkNormalEquations.hpp"
-#include "network/qc/NetworkRhsAttrib.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/assembly/Contributions.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/NormalEquations.hpp"
+#include "network/qc/RhsAttrib.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
 #include <Eigen/Dense>

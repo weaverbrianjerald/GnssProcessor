@@ -36,7 +36,7 @@
 #include <cmath>
 #include <vector>
 
-#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/solve/NormalEquations.hpp"
 
 namespace GnssProcessor {
 namespace {

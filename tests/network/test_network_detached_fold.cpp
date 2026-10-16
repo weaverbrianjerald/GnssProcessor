@@ -51,8 +51,8 @@
 
 #include <gtest/gtest.h>
 
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/NormalEquations.hpp"
 
 #include <Eigen/Dense>
 

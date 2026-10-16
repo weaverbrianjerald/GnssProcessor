@@ -7,8 +7,8 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/qc/NetworkRaimWithinEpoch.hpp"
-#include "network/qc/NetworkWithinEpochCulprits.hpp"
+#include "network/qc/RaimWithinEpoch.hpp"
+#include "network/qc/WithinEpochCulprits.hpp"
 
 #include <map>
 #include <string>

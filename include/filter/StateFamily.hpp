@@ -182,7 +182,7 @@ namespace GnssProcessor {
      *
      * Label prefixes and snapshot tags are serialized contracts: the labels key
      * the normal-equation accumulators and the RHS attribution
-     * (`NetworkRhsAttrib.hpp`), the tags are written to RT snapshot files.
+     * (`RhsAttrib.hpp`), the tags are written to RT snapshot files.
      * Neither may change.
      *
      * The phase-colour family has no snapshot tag: it exists only on network

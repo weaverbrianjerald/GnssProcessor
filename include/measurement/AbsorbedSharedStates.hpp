@@ -8,7 +8,7 @@
  * The record lives on the station's @c MeasurementModel, because the first gates that
  * withhold a state sit in @c MeasurementModel::ensureNetworkSharedStates.  It is kept in
  * this small header, apart from the parameter inventory that classifies and counts it
- * (network/assembly/NetworkParamInventory.hpp), so that the user-side measurement header includes
+ * (network/assembly/ParamInventory.hpp), so that the user-side measurement header includes
  * no network header (card NOM2 section 1).
  *
  * A note is the raw (container, key, reason) triple a gate hands in; nothing here reads
@@ -60,7 +60,7 @@ namespace GnssProcessor {
      * A withheld state is a parameter instance with disposition @c Absorbed: the station's
      * observation still builds its row, and another parameter of the station takes the
      * withheld term up.  The reason table @c absorbedReasonSpec
-     * (network/assembly/NetworkParamInventory.hpp) gives each value its rule, its code site and what
+     * (network/assembly/ParamInventory.hpp) gives each value its rule, its code site and what
      * takes the state up.  The first four gates sit in
      * @c MeasurementModel::ensureNetworkSharedStates (PASS A, at allocation), the last two
      * prune states the station had allocated (serial, before PASS B).

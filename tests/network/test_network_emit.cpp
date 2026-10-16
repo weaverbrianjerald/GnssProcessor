@@ -18,7 +18,7 @@
 
 #include "products/NetworkProductEmitter.hpp"
 #include "products/SsrCorrectionStore.hpp"
-#include "network/solve/NetworkPivotHandover.hpp"   // A1 detector unit tests
+#include "network/solve/PivotHandover.hpp"   // A1 detector unit tests
 
 #include <map>
 #include <set>

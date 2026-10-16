@@ -76,20 +76,20 @@
 #include <utility>
 #include <vector>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
-#include "network/driver/NetworkSetupResult.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
+#include "network/driver/SetupResult.hpp"
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/state/NetworkCarryDisposition.hpp"   // networkCarryDecide (step 2: the birth test reads the carry)
-#include "network/assembly/NetworkContributionKind.hpp"
-#include "network/assembly/NetworkContributions.hpp"       // contributionSpec (step 2: CbFamilyBirth)
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkSbasis.hpp"
-#include "network/emit/NetworkSolPrep.hpp"
+#include "network/state/CarryDisposition.hpp"   // networkCarryDecide (step 2: the birth test reads the carry)
+#include "network/assembly/ContributionKind.hpp"
+#include "network/assembly/Contributions.hpp"       // contributionSpec (step 2: CbFamilyBirth)
+#include "network/solve/Estimator.hpp"
+#include "network/solve/Sbasis.hpp"
+#include "network/emit/SolPrep.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "support/NetworkTestRun.hpp"   // the run and epoch networkSolPrep's epoch form takes
 #include "math/TimeUtils.hpp"                   // continuousGpsSeconds (the READMIT clock)
 #include "products/NetworkProductEmitter.hpp"

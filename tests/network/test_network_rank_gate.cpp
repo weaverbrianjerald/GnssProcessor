@@ -44,9 +44,9 @@
 #include <spdlog/sinks/ostream_sink.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkPhaseDatum.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/PhaseDatum.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

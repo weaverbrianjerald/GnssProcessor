@@ -40,13 +40,13 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkClockAnchor.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/ClockAnchor.hpp"
+#include "network/solve/Estimator.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"
 
 #include <spdlog/spdlog.h>

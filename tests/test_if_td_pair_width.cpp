@@ -47,7 +47,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "slip/IfPhaseSlipDetector.hpp"
-#include "network/slip/NetworkSlipQc.hpp"
+#include "network/slip/SlipQc.hpp"
 
 #include <Eigen/Dense>
 #include <algorithm>

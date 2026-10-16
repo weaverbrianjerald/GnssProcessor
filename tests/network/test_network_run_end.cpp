@@ -1,7 +1,7 @@
 /**
  * @file test_network_run_end.cpp
  * @brief The run-end table (card NOM step TD1b): every row is filled and appears once, and
- *        the order constraints network/runend/NetworkRunEnd.hpp states hold; one row per subsystem
+ *        the order constraints network/runend/RunEnd.hpp states hold; one row per subsystem
  *        and the heading line of the walk (card NOM2 step TD2).
  *
  * The table is the run end's order, so these are the constraints a reordered or added row
@@ -12,25 +12,25 @@
  * culprit withhold of card WCF directly after the within-epoch RAIM report.
  */
 
-#include "network/runend/NetworkRunEnd.hpp"
+#include "network/runend/RunEnd.hpp"
 
-#include "network/runend/NetworkClosedLoopRunEnd.hpp"
-#include "network/runend/NetworkRunArtifactsRunEnd.hpp"
+#include "network/runend/ClosedLoopRunEnd.hpp"
+#include "network/runend/RunArtifactsRunEnd.hpp"
 #include "network/assembly/SignalRoster.hpp"
-#include "network/ar/NetworkAmbFloat.hpp"
-#include "network/assembly/NetworkCanonicalPairAdmission.hpp"
-#include "network/state/NetworkCarryDisposition.hpp"
-#include "network/state/NetworkCarrySites.hpp"
-#include "network/assembly/NetworkChannelAll.hpp"
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/emit/NetworkEmitStore.hpp"
-#include "network/carry/NetworkInject.hpp"
-#include "network/emit/NetworkLedgerEmit.hpp"
-#include "network/assembly/NetworkMultiGnss.hpp"
-#include "network/assembly/NetworkParamInventory.hpp"
-#include "network/qc/NetworkRaimWithinEpoch.hpp"
-#include "network/assembly/NetworkResponses.hpp"
-#include "network/qc/NetworkWithinEpochCulprits.hpp"
+#include "network/ar/AmbFloat.hpp"
+#include "network/assembly/CanonicalPairAdmission.hpp"
+#include "network/state/CarryDisposition.hpp"
+#include "network/state/CarrySites.hpp"
+#include "network/assembly/ChannelAll.hpp"
+#include "network/assembly/Contributions.hpp"
+#include "network/emit/EmitStore.hpp"
+#include "network/carry/Inject.hpp"
+#include "network/emit/LedgerEmit.hpp"
+#include "network/assembly/MultiGnss.hpp"
+#include "network/assembly/ParamInventory.hpp"
+#include "network/qc/RaimWithinEpoch.hpp"
+#include "network/assembly/Responses.hpp"
+#include "network/qc/WithinEpochCulprits.hpp"
 
 #include <gtest/gtest.h>
 
@@ -115,7 +115,7 @@ TEST(NetworkRunEndTable, EachSubsystemHasOneRow) {
     std::map<std::string, int> rows;
     for (const NetworkRunEndRow& row : kNetworkRunEndReports) ++rows[row.home];
     for (const auto& [home, n] : rows)
-        EXPECT_EQ(n, home == "app/NetworkRunArtifactsRunEnd.cpp" ? 3 : 1) << home;
+        EXPECT_EQ(n, home == "app/RunArtifactsRunEnd.cpp" ? 3 : 1) << home;
 }
 
 /// The captured text without spdlog's platform end-of-line carriage returns.

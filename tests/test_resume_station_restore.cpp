@@ -33,7 +33,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkStateSnapshot.hpp"
 
@@ -129,7 +129,7 @@ std::vector<std::string> lines(const std::string& t) {
 }
 
 /// The restore the driver performs for the rx-CB half (networkTryWarmResume in
-/// NetworkWarmResume.cpp), reproduced here so the sentinel convention is locked by
+/// WarmResume.cpp), reproduced here so the sentinel convention is locked by
 /// a test rather than by a comment; the driver's own block is one `if` there.
 std::map<std::pair<int, std::string>, LocalCarry>
 restoreRxCb(const NetworkStateSnapshot& s) {

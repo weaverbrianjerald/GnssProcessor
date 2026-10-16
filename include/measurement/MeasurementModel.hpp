@@ -133,7 +133,7 @@ namespace GnssProcessor {
          * noted in @ref absorbedSharedStates, which this call clears first: the
          * parameter inventory counts each as an absorbed instance (card NOM N1b; the
          * record is measurement/AbsorbedSharedStates.hpp, the inventory
-         * network/assembly/NetworkParamInventory.hpp).
+         * network/assembly/ParamInventory.hpp).
          *
          * @param observations This station's modeled observations for the epoch.
          * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to

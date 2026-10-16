@@ -18,11 +18,11 @@
 
 #include <gtest/gtest.h>
 
-#include "network/ar/NetworkAmbFloat.hpp"
-#include "network/solve/NetworkClockAnchor.hpp"
-#include "network/solve/NetworkClockLevel.hpp"
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/ar/AmbFloat.hpp"
+#include "network/solve/ClockAnchor.hpp"
+#include "network/solve/ClockLevel.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/driver/RunTypes.hpp"
 
 #include <Eigen/Dense>
 

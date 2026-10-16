@@ -1,7 +1,7 @@
 /**
  * @file test_network_phase_datum.cpp
  * @brief Unit tests for the phase-bias↔ambiguity datum maintenance seam
- *        (network/solve/NetworkPhaseDatum.hpp), decomposition INC-8.
+ *        (network/solve/PhaseDatum.hpp), decomposition INC-8.
  *
  * Covers healNearNullPhaseBias, the prioritized-datum spectrum-based drop and
  * soft anchor relocated unchanged out of the network run loop: a phase-bias
@@ -25,8 +25,8 @@
 #include <utility>
 #include <vector>
 
-#include "network/solve/NetworkPhaseDatum.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/PhaseDatum.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 
 namespace GnssProcessor {

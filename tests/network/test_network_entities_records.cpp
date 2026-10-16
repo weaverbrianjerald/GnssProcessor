@@ -16,8 +16,8 @@
 #include <sstream>
 #include <string>
 
-#include "network/state/NetworkEntities.hpp"
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/Entities.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "products/NetworkStateSnapshot.hpp"
 

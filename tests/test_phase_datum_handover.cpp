@@ -28,11 +28,11 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkAnchorHygiene.hpp"
-#include "network/solve/NetworkPhaseDatum.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/AnchorHygiene.hpp"
+#include "network/solve/PhaseDatum.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

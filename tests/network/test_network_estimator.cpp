@@ -41,8 +41,8 @@
 #include <utility>
 #include <vector>
 
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/solve/Sbasis.hpp"
 
 namespace GnssProcessor {
 namespace {
@@ -948,7 +948,7 @@ TEST(NetworkEstimatorTest, Eq34ComponentSplitLocalIntegrity) {
 // does in the field.
 //
 // Scope.  The production carry walk is two [&]-capturing lambdas in the
-// phase-datum election of NetworkChainDatum.cpp (recordEdge and the vshift
+// phase-datum election of ChainDatum.cpp (recordEdge and the vshift
 // forward pass), with no callable seam for a unit test.  `shiftWalk` and
 // `propagateChain` below are an independent reference reimplementation, written
 // to follow the production recurrence term for term.  The tests confirm or
@@ -1013,7 +1013,7 @@ struct ShiftWalk {
 };
 
 // Independent reference reimplementation of the production carry S-transformation
-// walk (NetworkChainDatum.cpp recordEdge and the vshift forward pass) on explicit
+// walk (ChainDatum.cpp recordEdge and the vshift forward pass) on explicit
 // trees.  It is a parallel copy for testing the algebra, not a call into production
 // (see the scope note above).  `carry` supplies the value each floated ambiguity
 // is taken to sit at when a re-pin lands at a new station; in the estimator this
@@ -1354,7 +1354,7 @@ struct RetainResult {
     std::set<std::pair<int, int>>         retained;  // edges kept across the gap
 };
 
-// Mirror of the extend-only retention in NetworkChainDatum.cpp: an incumbent edge
+// Mirror of the extend-only retention in ChainDatum.cpp: an incumbent edge
 // not seen this epoch keeps its identity iff its carry is alive; otherwise it is
 // dropped (a reroute erases the carry; a gap past the horizon prunes it) and
 // re-floats.

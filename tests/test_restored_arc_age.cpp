@@ -54,14 +54,14 @@
 
 #include <gtest/gtest.h>
 
-#include "network/solve/NetworkAnchorHygiene.hpp"
-#include "network/carry/NetworkInject.hpp"
-#include "network/solve/NetworkPhaseDatum.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/AnchorHygiene.hpp"
+#include "network/carry/Inject.hpp"
+#include "network/solve/PhaseDatum.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkStateSnapshot.hpp"
-#include "network/slip/NetworkSlipOracle.hpp"
+#include "network/slip/SlipOracle.hpp"
 
 #include <filesystem>
 #include <map>

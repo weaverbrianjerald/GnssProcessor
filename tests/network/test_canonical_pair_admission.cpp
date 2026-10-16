@@ -26,7 +26,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkCanonicalPairAdmission.hpp"
+#include "network/assembly/CanonicalPairAdmission.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

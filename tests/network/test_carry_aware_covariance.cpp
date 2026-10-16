@@ -37,7 +37,7 @@
 #include <random>
 #include <vector>
 
-#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/solve/NormalEquations.hpp"
 
 namespace GnssProcessor {
 namespace {
@@ -257,7 +257,7 @@ TEST(CarryAwareCovarianceTest, LocalCovarianceMatchesDenseAugmentedSolve) {
 // blind form can only couple two stations through Σ_ss; Ã⁻¹ is not block-diagonal, and a
 // DD chord spans two stations by construction.  A between-station DD σ is meaningful only
 // with this term, and jointConditionalCovariance's "same local space only" branch
-// (NetworkNormalEquations.cpp) cannot express it.
+// (NormalEquations.cpp) cannot express it.
 // ---------------------------------------------------------------------------------------
 TEST(CarryAwareCovarianceTest, CrossStationLocalTermIsRecovered) {
     std::mt19937 gen(20260804);

@@ -9,7 +9,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "products/BroadcastEphemerisTypes.hpp"
 #include "rinex/MultiRinexSync.hpp"
 

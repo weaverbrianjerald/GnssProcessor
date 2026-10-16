@@ -31,8 +31,8 @@
 
 #include <gtest/gtest.h>
 
-#include "network/ar/NetworkProducerAr.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/ar/ProducerAr.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <Eigen/Dense>
 
@@ -229,7 +229,7 @@ TEST(ProducerArTrace, OffPathOpensNoStreamAndWritesNoRows) {
 
     GnssProcessor::NetworkRunTraces traces(dir);
     // openAll is not called (that is the armed path); the off path is this state,
-    // and the writer in NetworkProducerAr.cpp is gated on is_open().
+    // and the writer in ProducerAr.cpp is gated on is_open().
     EXPECT_FALSE(traces.producer_ar_trace.is_open());
     EXPECT_EQ(traces.producer_ar_trace_path.filename().string(), "network_producer_ar.csv");
     EXPECT_FALSE(std::filesystem::exists(traces.producer_ar_trace_path));

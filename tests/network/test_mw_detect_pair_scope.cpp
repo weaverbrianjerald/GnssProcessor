@@ -30,7 +30,7 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/assembly/NetworkExtraBandScope.hpp"
+#include "network/assembly/ExtraBandScope.hpp"
 
 #include <string>
 

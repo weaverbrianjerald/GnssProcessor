@@ -15,9 +15,9 @@
 //   (c) The exact coupling update (card CTU) with the pairwise Q_S equals a brute-force
 //       M'BM over the dense Q_S, for one row and for the cross term of two rows.
 
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/carry/NetworkPivotFrameQ.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/carry/PivotFrameQ.hpp"
 
 #include <gtest/gtest.h>
 

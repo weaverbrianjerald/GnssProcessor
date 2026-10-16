@@ -4,7 +4,7 @@
  *        keeps the corroboration knobs from being silently inert (Card 4, M1).
  *
  * The D5 v3 suppression set and the v4 pending-flat set (both in
- * @c NetworkInstallCarry.cpp) are built from @c slip_qc.epoch.verdict / @c .stepped.
+ * @c InstallCarry.cpp) are built from @c slip_qc.epoch.verdict / @c .stepped.
  * The only writer of those is the slip-QC qualify pass, which
  * @c ApplicationNetworkAssembly.cpp runs only when a decision card is armed:
  * @c SlipQcState::cardsArmed() = @c lli_corroborate || @c gap_instrument ||

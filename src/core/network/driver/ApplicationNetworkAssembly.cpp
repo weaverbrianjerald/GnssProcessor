@@ -20,42 +20,42 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot + warm resume (RTB-7)
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
 #include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/Estimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
-#include "network/solve/NetworkSbasis.hpp"
-#include "network/assembly/NetworkExtraBandScope.hpp"  // the extra-band / primary-pair predicates (card L5P)
-#include "network/assembly/NetworkSecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges (card SCC)
-#include "network/assembly/NetworkSecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
-#include "network/solve/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
-#include "network/carry/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
-#include "network/ar/NetworkSdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/NetworkCoupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
-#include "network/assembly/NetworkParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
-#include "network/assembly/NetworkContributions.hpp" // row tags and the contribution tallies (card NOM N2a)
-#include "network/qc/NetworkPrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
-#include "network/diag/NetworkShDevVtec.hpp"     // networkShDevCarryAge (card NOM3 step PB1a)
-#include "network/assembly/NetworkStationBuild.hpp"  // networkAssemblyTally (card NOM3 step PB1a)
-#include "network/solve/NetworkSolveStations.hpp" // the consume and the in-solve track (PB1a)
-#include "network/solve/NetworkChainDatum.hpp"    // networkEq34PinAudit (card NOM3 step PB1a)
-#include "network/ar/NetworkArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps (card ARL)
+#include "network/solve/Sbasis.hpp"
+#include "network/assembly/ExtraBandScope.hpp"  // the extra-band / primary-pair predicates (card L5P)
+#include "network/assembly/SecondCodeScope.hpp" // secondCodeCellEdges, the two cell edges (card SCC)
+#include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness (card SID phase 6a)
+#include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule (card NOM N1)
+#include "network/assembly/Contributions.hpp" // row tags and the contribution tallies (card NOM N2a)
+#include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
+#include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge (card NOM3 step PB1a)
+#include "network/assembly/StationBuild.hpp"  // networkAssemblyTally (card NOM3 step PB1a)
+#include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
+#include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit (card NOM3 step PB1a)
+#include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps (card ARL)
 #include "filter/StateKeySchema.hpp"
-#include "network/driver/NetworkRunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
-#include "network/qc/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
+#include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
+#include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
-#include "network/diag/NetworkRunTraces.hpp" // trace-stream ownership + open logic + roster + FlagRate (INC-3)
-#include "network/state/NetworkRunContext.hpp"    // ctx: knobs + Tier-1 carry state + service counters (INC-4)
-#include "network/driver/NetworkSetupResult.hpp"   // setup-phase handoff (setup) + navAvailabilityGpsSeconds (INC-5)
+#include "network/diag/RunTraces.hpp" // trace-stream ownership + open logic + roster + FlagRate (INC-3)
+#include "network/state/RunContext.hpp"    // ctx: knobs + Tier-1 carry state + service counters (INC-4)
+#include "network/driver/SetupResult.hpp"   // setup-phase handoff (setup) + navAvailabilityGpsSeconds (INC-5)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // per-signal MW+GF integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
-#include "network/slip/NetworkSlipQc.hpp"       // slip-QC pure helpers: ifElevMap / parseIfPairResetKey (INC-2)
+#include "network/slip/SlipQc.hpp"       // slip-QC pure helpers: ifElevMap / parseIfPairResetKey (INC-2)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"    // identity reads (systemOfSat, ObservableId, ...), carriers
@@ -90,8 +90,8 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include "network/driver/NetworkEpoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
-#include "network/driver/NetworkRun.hpp"     // NetworkRun (card NOM3 step EP1)
+#include "network/driver/Epoch.hpp"   // NetworkEpoch (card NOM3 step EP1)
+#include "network/driver/Run.hpp"     // NetworkRun (card NOM3 step EP1)
 
 namespace GnssProcessor {
 
@@ -229,7 +229,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // adjacent indices race), so threads record into a per-index char buffer that
     // is folded into present[] serially afterwards.
     // PASS-A slip-scan seam (INC-6): the per-station buffers that the parallel loop
-    // below fills and the serial slip-QC drains (network/slip/NetworkSlipQc.cpp) consume.
+    // below fills and the serial slip-QC drains (network/slip/SlipQc.cpp) consume.
     PassABuffers pa(stations.size());
     auto& a_ok           = pa.a_ok;
     auto& a_err          = pa.a_err;
@@ -918,7 +918,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
         ctx.counters.n_mw_drop_unknown         += ac.drop_unknown;
         ctx.counters.n_mw_pair_scope_skipped   += ac.scope_skipped;   // pair scope (card L5P)
         // The producer AR search's suspect-corner mask (card ARL,
-        // network/ar/NetworkArSuspect.hpp): an MW verdict refused for want of an integer still
+        // network/ar/ArSuspect.hpp): an MW verdict refused for want of an integer still
         // says the arc's wide lane moved, so its corner is stamped (PASS A runs before the
         // search: this epoch's stamp).
         if (ar_suspect_armed)
@@ -928,7 +928,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                               kArSuspectMwUnknown, &ctx.counters.netar_suspect);
     }
 
-    // Serial slip-QC drains (INC-6), implemented in network/slip/NetworkSlipQc.cpp: the
+    // Serial slip-QC drains (INC-6), implemented in network/slip/SlipQc.cpp: the
     // phase-leveling T0 repair drain, the MW-detect / LLI refloat and the IF-phase
     // TD driver, in that order.
     networkSlipDrainT0Repairs(pa, config_, stations, present, i_lo, n_sta_total,
@@ -1065,7 +1065,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                           &ctx.counters.n_iftd_pair);
 
     // ---- Arc-scoped GF jump trigger (card ARL) ---------------------------------
-    // (include/network/slip/NetworkGfArcJump.hpp.)  The pre-solve witness of the slips the MW
+    // (include/network/slip/GfArcJump.hpp.)  The pre-solve witness of the slips the MW
     // drain and the IF-TD driver above both miss: the equal count (1,1), the 60/77
     // family, and a slip repeated in the epoch after an IF-TD flag.  Sited after the
     // IF-TD driver, so a band that driver already freed takes only the cause bit (its
@@ -1079,7 +1079,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
                               relevel_ptr ? &relevel_pend : nullptr,
                               common_band_ptr);
     // The producer AR search's suspect-corner mask (card ARL,
-    // network/ar/NetworkArSuspect.hpp): every GF flag stamps its corner, whatever the drain
+    // network/ar/ArSuspect.hpp): every GF flag stamps its corner, whatever the drain
     // did with it (a cold, pinned or common-band-kept flag still names a doubtful arc).
     if (ar_suspect_armed)
         for (const LosId& los : qc.epoch.gf_jump_flagged)
@@ -1228,7 +1228,7 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
     // first-signal phase-minus-code (all in m), plus the per-band RINEX LLI.  Absolute
     // values: the slip signature comes from differencing adjacent epochs offline.
     //
-    // The arithmetic lives in network/slip/NetworkRawObservables.cpp (slip-QC hardening, spec
+    // The arithmetic lives in network/slip/RawObservables.cpp (slip-QC hardening, spec
     // §1): Cards L and G need the same numbers as evidence, and a single definition of
     // "the raw step" keeps the three consumers from diverging.  This site is a pure
     // consumer walking qc.epoch.rows in the same order, so its rows are byte-unchanged
@@ -1471,7 +1471,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     // it re-registers when coverage returns (the anti-flap property).  A
     // quarantined pair is never pruned (station_keep always holds it), so it
     // survives as a station-local sponge (Schur-eliminated station-side, never
-    // registered, never datumed).  See network/assembly/NetworkBiasAdmission.hpp.
+    // registered, never datumed).  See network/assembly/BiasAdmission.hpp.
     if (config_.estimateNetworkSatCodeBias()) {
         std::set<std::string> cb_seen;
         NetworkBiasAdmission& adm = ctx.admission;
@@ -1668,7 +1668,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& ep, 
     networkCouplingReinitHistory(run, ep);
 
     // The parallel produce: one station's block per OpenMP iteration, the station steps of
-    // kStationBuildSteps (network/assembly/NetworkStationBuild.hpp, card NOM3 step PB1b).
+    // kStationBuildSteps (network/assembly/StationBuild.hpp, card NOM3 step PB1b).
     networkAssemblyProduce(run, ep, gim_, assembly);
 
     // The serial stages after the parallel produce (card NOM3 step PB1a).

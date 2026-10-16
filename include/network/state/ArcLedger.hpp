@@ -6,7 +6,7 @@
  *
  * ### Purpose
  *
- * Of the 29 arc-keyed containers in @c NetworkRunContext.hpp, 5 are keyed at the
+ * Of the 29 arc-keyed containers in @c RunContext.hpp, 5 are keyed at the
  * signal level, and 31 lifecycle holders emit nothing at their birth and death
  * edges.  Among them, @c StateManager::pruneAmbiguitiesExcept destroys an
  * ambiguity after one missed epoch, with no window and no event, and the gap prune
@@ -35,7 +35,7 @@
  * ### Where the records live (card NOM step N4f2)
  *
  * The ledger is the machine; the records are the arc table's.  Each record is the
- * @c ledger field of its arc's row (@c net::ArcState, network/state/NetworkEntities.hpp), beside
+ * @c ledger field of its arc's row (@c net::ArcState, network/state/Entities.hpp), beside
  * the arc's leveling carry and its other carried fields, so a reader that needs an
  * arc's lifecycle and its carry reads one row.  The ledger is bound to the run's
  * entities at construction and keys its calls by the (station index, satellite,
@@ -53,7 +53,7 @@
  * epochs, the unit of the existing re-entry instruments.
  *
  * The forget window is an epoch count, following the @c kAdmArcForgetEp precedent
- * (@c NetworkMeasurementAdmission.cpp).  A dead record is kept that long so a late
+ * (@c MeasurementAdmission.cpp).  A dead record is kept that long so a late
  * return is distinguishable from a first sighting; the anchor election does not
  * make that distinction.
  *
@@ -62,7 +62,7 @@
  * An arc whose station reported nothing this epoch is left frozen, never gapped.
  * Otherwise a station outage would open a gap at every one of its arcs, while the
  * population of interest is the arc that vanished while its station kept
- * reporting.  @c NetworkSignalIntegrity.cpp applies the same rule through its
+ * reporting.  @c SignalIntegrity.cpp applies the same rule through its
  * per-epoch @c seen set.
  *
  * ### Scale
@@ -86,8 +86,8 @@
 
 namespace GnssProcessor {
     namespace net {
-        struct NetworkEntities;   // network/state/NetworkEntities.hpp: the run's tables
-        struct ArcState;          // network/state/NetworkEntities.hpp: an arc's row (its ledger field)
+        struct NetworkEntities;   // network/state/Entities.hpp: the run's tables
+        struct ArcState;          // network/state/Entities.hpp: an arc's row (its ledger field)
     }
 
     /**
@@ -310,7 +310,7 @@ namespace GnssProcessor {
 
     /**
      * @brief The forget window, in processed epochs, following the
-     *        @c kAdmArcForgetEp precedent of @c NetworkMeasurementAdmission.cpp.
+     *        @c kAdmArcForgetEp precedent of @c MeasurementAdmission.cpp.
      *
      * A dead record is retained this long so that a return after it is still
      * reported with its previous generation rather than as a first sighting.
@@ -322,7 +322,7 @@ namespace GnssProcessor {
      *
      * Bounds the @c ARC event stream at 305 stations, where an unthrottled birth
      * edge would write about 12 000 rows on the first epoch alone (the figure
-     * @c NetworkSignalIntegrity.cpp gives for suppressing its own birth event).
+     * @c SignalIntegrity.cpp gives for suppressing its own birth event).
      * The per-transition trace is not throttled.
      */
     inline constexpr long long kArcLedgerEventHoldoffEp = 30;

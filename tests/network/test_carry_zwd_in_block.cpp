@@ -26,8 +26,8 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/solve/Estimator.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

@@ -55,12 +55,12 @@
 #include <string_view>
 #include <vector>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
-#include "network/qc/NetworkBlockBaarda.hpp"
-#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/qc/BlockBaarda.hpp"
+#include "network/solve/NormalEquations.hpp"
 
 namespace GnssProcessor {
 namespace {

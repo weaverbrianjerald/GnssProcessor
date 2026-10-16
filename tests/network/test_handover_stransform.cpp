@@ -47,12 +47,12 @@
 #include <vector>
 
 #include "config/GnssConfig.hpp"
-#include "network/state/NetworkRunContext.hpp"
-#include "network/solve/NetworkHandoverStransform.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
-#include "network/solve/NetworkSbasis.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/solve/HandoverStransform.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/diag/RunTraces.hpp"
+#include "network/driver/RunTypes.hpp"
+#include "network/solve/Sbasis.hpp"
 #include "logging/LogManager.hpp"
 
 #include <spdlog/sinks/null_sink.h>

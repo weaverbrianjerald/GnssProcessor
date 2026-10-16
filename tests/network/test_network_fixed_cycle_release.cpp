@@ -1,7 +1,7 @@
 /**
  * @file test_network_fixed_cycle_release.cpp
  * @brief Unit gates of the fixed-cycle hold's one release seam (card FCF, step FCF-3;
- *        network/ar/NetworkArLattice.hpp and network/ar/NetworkFixedCycles.hpp).
+ *        network/ar/ArLattice.hpp and network/ar/FixedCycles.hpp).
  *
  * Suite @c NetworkFixedCycleRelease (the gates of card FCF section 6, FCF-3):
  *  - each evidence cause releases exactly its arcs, with its detail bits (vanished, first seen,
@@ -37,15 +37,15 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/ar/NetworkArLattice.hpp"
-#include "network/ar/NetworkArcLife.hpp"
-#include "network/ar/NetworkFixedCycles.hpp"
-#include "network/driver/NetworkRunTypes.hpp"     // RelevelEpochState::kCause*, WithinEpochCulprits
+#include "network/ar/ArLattice.hpp"
+#include "network/ar/ArcLife.hpp"
+#include "network/ar/FixedCycles.hpp"
+#include "network/driver/RunTypes.hpp"     // RelevelEpochState::kCause*, WithinEpochCulprits
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"   // kArLatticeHeader
+#include "network/diag/RunTraces.hpp"   // kArLatticeHeader
 
 #include <Eigen/Dense>
 

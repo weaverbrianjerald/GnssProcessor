@@ -8,8 +8,8 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/qc/NetworkRaimWithinEpoch.hpp"
-#include "network/solve/NetworkSolveGlue.hpp"
+#include "network/qc/RaimWithinEpoch.hpp"
+#include "network/solve/SolveGlue.hpp"
 
 #include <cstring>
 #include <vector>

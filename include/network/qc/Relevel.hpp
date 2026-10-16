@@ -1,0 +1,95 @@
+#pragma once
+/**
+ * @file Relevel.hpp
+ * @brief Ephemeris-cutover clock re-level of the PPP-RTK network producer (card 6,
+ *        RTF-2 / plan D3).  When the broadcast IODE rolls (old -> new), the estimable
+ *        per-satellite clock Delta-dts jumps by -Delta_eph relative to the a-priori it is
+ *        measured against.  This seam re-bases the carried clock state by -Delta_eph, so
+ *        the solve runs in the new frame with no discontinuity bump (the consumer
+ *        reconstructs brdc(new_iode)+C0, card 7).  When the shift cannot be computed
+ *        (the prior ephemeris version is no longer held), it forces a per-satellite
+ *        discontinuity instead.
+ *
+ * Moved unchanged out of @ref networkSolveGlue as the separate emit-region block the
+ * INC-9/10 cuts left in place (see the ClockQc.hpp banner).  Owns no state: every
+ * carry object is a reference into the caller's NetworkRunContext.
+ *
+ * @warning Ordering: call after the observability gate (a gate-withheld epoch leaves the
+ *          carried clock untouched, so the re-level is deferred with relevel_iode in
+ *          lock-step) and before the D2 / clock-osc prior injection and the solve.
+ *          Shifting the prior is exact for any prior weight; a post-solve x_s shift is
+ *          not.  Mutates the satellite table (relevel_iode, the Disc::EphCutover bit) and, through
+ *          @ref ephCutoverShiftCarry, the sites of CarryMechanism::EphRelevel (clock_osc,
+ *          prev_carry, prev_clk, the local_carry and zwd_carry coupling; with
+ *          network.carry_rebase_complete also its owed sites).  Acts only when
+ *          brdc_rts is true, the only mode in which relevel_iode is meaningful.
+ */
+
+#include "rinex/MultiRinexSync.hpp"   // MultiRinexSync::SyncedEpoch (bare SyncedEpoch)
+#include "network/state/CarrySites.hpp" // CarrySiteCounts (card PRM phase 2)
+
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace spdlog { class logger; }
+
+namespace GnssProcessor {
+
+struct NetworkRunContext;   // network/state/RunContext.hpp, included in the .cpp only
+struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp only
+
+/**
+ * @brief Re-base one satellite's carried clock references by -@p d through the traversal
+ *        of carried references (card PRM phase 2, @c CarryMechanism::EphRelevel).
+ *
+ * The rule of the cut-over: the two-state oscillator's offset (when initialized), the
+ * satellite's carried clock entries in @c prev_carry (parked ones included), the clock
+ * monitor's jump baseline, and, under the conditional coupling (@p cpl_cond), the s_prev of
+ * every clock term of the satellite in the ambiguity and wet-delay carries.  The sites the
+ * re-level does not move are declared with their reason in the mechanism table.
+ *
+ * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the walk also moves
+ * the sites the table exempts as owed (card CLV section 6.4 item 6), by the same -d on the
+ * satellite's clock references only: the stash's pinned pivot value (when the satellite is
+ * the pivot), the code-bias excursion test's previous solved clock, the emitted clock at the
+ * phase hold's previous emission, and, under the conditional coupling as for the ambiguity
+ * and wet-delay carries, the s_prev of the satellite's clock terms in every other coupling
+ * map (the slant ionosphere and its block, the gross screen's three holds, the receiver
+ * clock, phase bias and code bias, card LGM's phase colour).
+ * @param carry    the run's carried state.
+ * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param sat      the satellite whose broadcast version rolled.
+ * @param d        the shift Delta_eph (m); every reference moves by -d.
+ * @param cpl_cond @c network.carry_conditional_coupling.
+ * @param counts   optional out: per-site tallies (accumulated).
+ * @param complete also move the owed sites (false = the walk of card PRM phase 2).
+ * @return the number of references moved.
+ */
+long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,
+                               const std::string& sat, double d,
+                               bool cpl_cond, CarrySiteCounts* counts = nullptr,
+                               bool complete = false);
+
+/**
+ * @brief Apply the ephemeris-cutover re-level for this epoch (card 6).
+ * @param ctx                   [in/out] carry (relevel_iode / eph_cutover_disc_pending /
+ *                              clock_osc / prev_carry / prev_clk / local_carry / zwd_carry)
+ *                              and knobs (carry_cpl_cond).  Passed whole so that a missing
+ *                              `&` cannot drop a carry mutation; the body opens with an
+ *                              alias preamble copied from the former SolveGlue block.
+ * @param log                   "main_log": the per-satellite re-level and forced-disc lines.
+ * @param traces                the emitEvent forwarder (RELEVEL tier events).
+ * @param se                    current synced epoch (LiveEphemerisStore query + event time).
+ * @param registered_clock_sats this epoch's registered satellite-clock keys.
+ * @param brdc_rts              gate: only the broadcast-anchored (brdc_rts) run carries the
+ *                              relevel_iode baseline.  A no-op otherwise.
+ */
+void networkEphCutoverRelevel(NetworkRunContext& ctx,
+                              const std::shared_ptr<spdlog::logger>& log,
+                              NetworkRunTraces& traces,
+                              const SyncedEpoch& se,
+                              const std::vector<std::string>& registered_clock_sats,
+                              bool brdc_rts);
+
+} // namespace GnssProcessor

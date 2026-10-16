@@ -19,9 +19,9 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkEntities.hpp"
+#include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
-#include "network/solve/NetworkAnchorReentry.hpp"
+#include "network/solve/AnchorReentry.hpp"
 
 #include <map>
 #include <set>

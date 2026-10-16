@@ -1,6 +1,6 @@
 /**
  * @file test_network_param_inventory.cpp
- * @brief Card NOM step N1: the parameter inventory of network/assembly/NetworkParamInventory.hpp.
+ * @brief Card NOM step N1: the parameter inventory of network/assembly/ParamInventory.hpp.
  *
  * Five contracts: the one classifier reads every key family a station's state manager
  * can hold (each key built by its @c StateKeySchema maker and read back); the receiver
@@ -21,8 +21,8 @@
 
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkParamInventory.hpp"
-#include "network/driver/NetworkRunTypes.hpp"   // StationAssembly (the drain's input)
+#include "network/assembly/ParamInventory.hpp"
+#include "network/driver/RunTypes.hpp"   // StationAssembly (the drain's input)
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"

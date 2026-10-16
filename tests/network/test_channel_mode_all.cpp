@@ -33,7 +33,7 @@
 
 #include "network/assembly/SignalRoster.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkChannelAll.hpp"
+#include "network/assembly/ChannelAll.hpp"
 #include "logging/LogManager.hpp"
 
 #include <algorithm>

@@ -1666,7 +1666,7 @@ namespace GnssProcessor {
          * near-null directions that withhold whole epochs.  Latched once and
          * immutable for the run.  Default false ⇒ the legacy per-epoch path is
          * byte-identical.
-         * @see network/assembly/NetworkBiasAdmission.hpp, docs/SPEC_cb_admission_card.md
+         * @see network/assembly/BiasAdmission.hpp, docs/SPEC_cb_admission_card.md
          */
         bool networkCbAdmission() const { return network_cb_admission_; }
 
@@ -2155,7 +2155,7 @@ namespace GnssProcessor {
          * coupling update's @f$Q_S@f$.  The pivot is the one the stashed posterior was
          * pinned on; it is not carried, so @f$r_p@f$ is the model's physical per-satellite
          * rate (the anchor's q with the anchor armed, the legacy rate without it;
-         * network/carry/NetworkPivotFrameQ.hpp).
+         * network/carry/PivotFrameQ.hpp).
          *
          * Requires @ref networkSharedCarryFullCov (the pairwise half needs the dense
          * fold), and refuses the anchor-free clock datums (sum-to-zero, broadcast-anchored)
@@ -2984,7 +2984,7 @@ namespace GnssProcessor {
          *        SPEC_event_harness §21.9; RS-4): declare the seam on the wire when the
          *        first post-resume emit re-realizes the phase-bias level.
          *
-         * The CLK-R @c resume_seam rule (NetworkEmitStore.cpp) marks a warm resume only
+         * The CLK-R @c resume_seam rule (EmitStore.cpp) marks a warm resume only
          * when the held-frame clock engine reports @c epochs==0, so a lineage that
          * restores that engine is never marked, which is exactly the case where the
          * clock is continuous and the phase biases are not.  The emitted phase biases
@@ -4789,7 +4789,7 @@ namespace GnssProcessor {
         /// same amount (the level direction; the clock enters every observation at -1 and
         /// a phase bias enters a phase row at +1, so the shift has the same sign on both)
         /// leaves every phase row invariant and moves every code row of s: the level is a
-        /// code-only quantity.  These knobs read it from the code (network/solve/NetworkClockLevel.hpp).
+        /// code-only quantity.  These knobs read it from the code (network/solve/ClockLevel.hpp).
         /// @{
         /// @brief Measure-only level monitor of card CTU (@c network.clock_level_monitor).
         ///
@@ -5624,7 +5624,7 @@ namespace GnssProcessor {
          *        phase 3b step 2).
          *
          * The mechanisms that move a border parameter's frame walk the carried references
-         * through one traversal (card PRM phase 2, @c network/state/NetworkCarrySites.hpp), each over
+         * through one traversal (card PRM phase 2, @c network/state/CarrySites.hpp), each over
          * its own site set; the references its hand-written list never moved are declared as
          * owed exemptions (card PRM sections 16.2 and 16.7).  With this knob the three walks
          * that carry such gaps also move them, each with its own rule: the
@@ -5974,7 +5974,7 @@ namespace GnssProcessor {
          * kind, the DD folds and the datum pins, the reduced right-hand-side
          * contribution at each named column and its solution share there under the
          * solve's own datum, with the kind totals and a closure line per column
-         * (@c networkRhsAttribColumnShares, network/qc/NetworkRhsAttrib.hpp).  A label that
+         * (@c networkRhsAttribColumnShares, network/qc/RhsAttrib.hpp).  A label that
          * names no shared column at a dump epoch keeps its slot, empty, and is named in
          * the log.
          *
@@ -6228,11 +6228,11 @@ namespace GnssProcessor {
          *        (@c network.raim_pool_data_rows_only; card RPA,
          *        docs/refound/RPA_raim_pool_data_rows_2026-10-08.md).
          *
-         * Both pools (the post-fit pass, network/qc/NetworkRaim.cpp, and the within-epoch
-         * assess, network/solve/NetworkSolveGlue.cpp) walk the rows of a station block once per
+         * Both pools (the post-fit pass, network/qc/Raim.cpp, and the within-epoch
+         * assess, network/solve/SolveGlue.cpp) walk the rows of a station block once per
          * carried ambiguity column.  Off, a row enters a column's pool when its
          * coefficient on the column exceeds 0.5 and its kind is one the declared rule
-         * admits (@c raimPoolAdmitsKind, network/assembly/NetworkRowClassify.hpp): the observation
+         * admits (@c raimPoolAdmitsKind, network/assembly/RowClassify.hpp): the observation
          * phase rows, the coupling and whitened block carried-prior rows and the SD-EWL
          * rows.  On the float vehicle about 90 % of the pool's samples are then
          * carried-prior rows, and they decide most T4 isolated-arc refloats (card NOM
@@ -8067,7 +8067,7 @@ namespace GnssProcessor {
         /// One recommendation row.
         ///
         /// `fp` = the knob is part of the warm-resume fingerprint (the add() set of
-        /// networkSnapshotFingerprint in NetworkSnapshotFingerprint.cpp).  This is the chain
+        /// networkSnapshotFingerprint in SnapshotFingerprint.cpp).  This is the chain
         /// axis, and it is why a recommendation cannot be read as an instruction: on a
         /// resumed leg, arming a fingerprinted knob does not take effect mid-chain.  With
         /// state_snapshot_require on the leg hard-aborts; with it off the leg silently

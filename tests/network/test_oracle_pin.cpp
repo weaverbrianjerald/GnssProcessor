@@ -1,7 +1,7 @@
 /**
  * @file test_oracle_pin.cpp
  * @brief The sim-only oracle ambiguity pin (`network.inject.events[] kind
- *        "oracle_pin"`, include/network/slip/NetworkOraclePin.hpp).
+ *        "oracle_pin"`, include/network/slip/OraclePin.hpp).
  *
  * Four suites, all structural (this file does not validate estimation accuracy):
  *
@@ -31,7 +31,7 @@
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/slip/NetworkOraclePin.hpp"
+#include "network/slip/OraclePin.hpp"
 #include "logging/LogManager.hpp"
 
 #include <nlohmann/json.hpp>

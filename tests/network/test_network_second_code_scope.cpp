@@ -39,7 +39,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkSecondCodeScope.hpp"
+#include "network/assembly/SecondCodeScope.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

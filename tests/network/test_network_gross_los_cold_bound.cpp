@@ -19,11 +19,11 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"     // knobs, the per-LOS states, the act lists, the tallies
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"     // knobs, the per-LOS states, the act lists, the tallies
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/qc/NetworkGrossLos.hpp"
-#include "network/driver/NetworkRunTypes.hpp"    // NetStation / StationAssembly / LocalCarry
+#include "network/qc/GrossLos.hpp"
+#include "network/driver/RunTypes.hpp"    // NetStation / StationAssembly / LocalCarry
 #include "logging/LogManager.hpp"
 
 #include <spdlog/spdlog.h>

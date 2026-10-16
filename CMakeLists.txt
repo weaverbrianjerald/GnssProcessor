@@ -65,7 +65,7 @@ add_library(gnss_core STATIC
     src/core/logging/LogManager.cpp
     src/core/logging/GatedSink.cpp
     src/core/logging/CsvRotator.cpp
-    src/core/network/diag/NetworkRunTraces.cpp
+    src/core/network/diag/RunTraces.cpp
     src/core/products/ProductManager.cpp
     src/core/products/ProductParser.cpp
     src/core/products/RinexNavParser.cpp
@@ -132,20 +132,20 @@ add_library(gnss_core STATIC
     src/core/app/ApplicationRealtime.cpp
     src/core/network/driver/ApplicationNetwork.cpp
     src/core/network/driver/ApplicationNetworkEpoch.cpp
-    src/core/network/driver/NetworkRun.cpp
-    src/core/network/driver/NetworkEpochAdmission.cpp
+    src/core/network/driver/Run.cpp
+    src/core/network/driver/EpochAdmission.cpp
     src/core/network/driver/ApplicationNetworkSetup.cpp
     src/core/app/ApplicationConsumerReplay.cpp
     src/core/network/driver/ApplicationNetworkAssembly.cpp
-    src/core/network/driver/NetworkKnobs.cpp
-    src/core/network/state/NetworkSnapshotFingerprint.cpp
-    src/core/network/state/NetworkWarmResume.cpp
-    src/core/network/state/NetworkEntities.cpp
-    src/core/network/state/NetworkRunFields.cpp
-    src/core/network/state/NetworkStateSnapshotWrite.cpp
-    src/core/network/state/NetworkBorderPrior.cpp
-    src/core/network/state/NetworkBorderStash.cpp
-    src/core/network/carry/NetworkLocalCarryHarvest.cpp
+    src/core/network/driver/Knobs.cpp
+    src/core/network/state/SnapshotFingerprint.cpp
+    src/core/network/state/WarmResume.cpp
+    src/core/network/state/Entities.cpp
+    src/core/network/state/RunFields.cpp
+    src/core/network/state/StateSnapshotWrite.cpp
+    src/core/network/state/BorderPrior.cpp
+    src/core/network/state/BorderStash.cpp
+    src/core/network/carry/LocalCarryHarvest.cpp
     src/core/network/assembly/SignalRoster.cpp
     src/core/network/assembly/SignalRosterSites.cpp
     src/core/app/EpochUpdateSupport.cpp
@@ -187,12 +187,12 @@ add_library(gnss_core STATIC
 	src/core/slip/SoftLliBridge.cpp
 	src/core/slip/JumpGapFitter.cpp
 	src/core/slip/SlipBridgeKernel.cpp
-	src/core/network/slip/NetworkRawObservables.cpp
-	src/core/network/slip/NetworkSlipQc.cpp
-	src/core/network/slip/NetworkGapResumeCensus.cpp
-	src/core/network/slip/NetworkSlipOracle.cpp
-	src/core/network/slip/NetworkCommonBandScope.cpp
-	src/core/network/slip/NetworkGfArcJump.cpp
+	src/core/network/slip/RawObservables.cpp
+	src/core/network/slip/SlipQc.cpp
+	src/core/network/slip/GapResumeCensus.cpp
+	src/core/network/slip/SlipOracle.cpp
+	src/core/network/slip/CommonBandScope.cpp
+	src/core/network/slip/GfArcJump.cpp
     src/core/aiding/AidingSourceRegistry.cpp
     src/core/aiding/ImuAidingSource.cpp
     src/core/aiding/ZuptAidingSource.cpp
@@ -204,8 +204,8 @@ add_library(gnss_core STATIC
     src/core/products/SsrCorrectionStore.cpp
     src/core/products/SignalDeclaration.cpp
     src/core/products/NetworkProductEmitter.cpp
-    src/core/network/emit/NetworkEmitRebase.cpp
-    src/core/network/emit/NetworkClockEmitRebase.cpp
+    src/core/network/emit/EmitRebase.cpp
+    src/core/network/emit/ClockEmitRebase.cpp
     src/core/products/NetworkProductIO.cpp
     src/core/products/NetworkStateSnapshot.cpp
     src/core/products/LiveEphemerisStore.cpp
@@ -213,8 +213,8 @@ add_library(gnss_core STATIC
     src/core/realtime/NtripClient.cpp
     src/core/realtime/TcpClient.cpp
     src/core/realtime/RtcmStreamReader.cpp
-    src/core/network/driver/NetworkStreamAligner.cpp
-    src/core/network/driver/NetworkStreamFrontEnd.cpp
+    src/core/network/driver/StreamAligner.cpp
+    src/core/network/driver/StreamFrontEnd.cpp
     src/core/realtime/RealTimeEngine.cpp
     src/core/realtime/RealTimeEngineAdmit.cpp
     src/core/realtime/RealTimeEngineSsrDiag.cpp
@@ -233,118 +233,118 @@ add_library(gnss_core STATIC
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
     src/core/filter/CovarianceReReference.cpp
-    src/core/network/solve/NetworkNormalEquations.cpp
-    src/core/network/solve/NetworkNormalEquationsDetached.cpp
-    src/core/network/solve/NetworkEstimator.cpp
-    src/core/network/carry/NetworkInvariantCarryDriver.cpp
-    src/core/network/solve/NetworkSbasis.cpp
-    src/core/network/assembly/NetworkExtraBandScope.cpp
-    src/core/network/assembly/NetworkSecondCodeScope.cpp
-    src/core/network/assembly/NetworkSecondPhaseScope.cpp
-    src/core/network/assembly/NetworkChannelAll.cpp
-    src/core/network/assembly/NetworkMultiGnss.cpp
-    src/core/network/solve/NetworkPhaseDatum.cpp
-    src/core/network/solve/NetworkPhaseAnchorEpoch.cpp
-    src/core/network/slip/NetworkSlipFunnel.cpp
-    src/core/network/solve/NetworkChainDatum.cpp
-    src/core/network/solve/NetworkAnchorHygiene.cpp
-    src/core/network/assembly/NetworkSignalIntegrity.cpp
-    src/core/network/assembly/NetworkMeasurementAdmission.cpp
-    src/core/network/qc/NetworkRaim.cpp
-    src/core/network/qc/NetworkClockQc.cpp
-    src/core/network/solve/NetworkClockAnchor.cpp
-    src/core/network/state/NetworkCarryDisposition.cpp
-    src/core/network/state/NetworkCarrySites.cpp
-    src/core/network/assembly/NetworkResponses.cpp
-    src/core/network/solve/NetworkClockLevel.cpp
-    src/core/network/diag/NetworkFrameDiag.cpp
-    src/core/network/qc/NetworkGrossLos.cpp
-    src/core/network/diag/NetworkStationBlock.cpp
-    src/core/network/solve/NetworkHandoverStransform.cpp
-    src/core/network/assembly/NetworkRowClassify.cpp
-    src/core/network/qc/NetworkRhsAttrib.cpp
-    src/core/network/qc/NetworkPrefitCensus.cpp
-    src/core/network/qc/NetworkRedundancyCensus.cpp
-    src/core/network/qc/NetworkMdb.cpp
-    src/core/network/solve/NetworkDatumGraph.cpp
-    src/core/network/qc/NetworkBlockBaarda.cpp
-    src/core/network/qc/NetworkCongruence.cpp
-    src/core/network/qc/NetworkCongruenceSetup.cpp
-    src/core/network/qc/NetworkPriorResidual.cpp
-    src/core/network/emit/NetworkSolPrep.cpp
-    src/core/network/emit/NetworkEmitStore.cpp
-    src/core/network/emit/NetworkPbHold.cpp
-    src/core/network/emit/NetworkBrdcWire.cpp
-    src/core/network/emit/NetworkLedgerEmit.cpp
-    src/core/network/diag/NetworkIonoDiag.cpp
-    src/core/network/diag/NetworkDdFrac.cpp
-    src/core/network/ar/NetworkSdEwlAr.cpp
-    src/core/network/diag/NetworkShDevVtec.cpp
-    src/core/network/solve/NetworkSolveStations.cpp
-    src/core/network/assembly/NetworkStationBuild.cpp
-    src/core/network/assembly/NetworkIonoConstraintRows.cpp
-    src/core/network/carry/NetworkLevelingCarry.cpp
-    src/core/network/carry/NetworkPhaseColourCarry.cpp
-    src/core/network/carry/NetworkRxClockCarry.cpp
-    src/core/network/carry/NetworkRxCodeBiasCarry.cpp
-    src/core/network/carry/NetworkSlantIonoCarry.cpp
-    src/core/network/assembly/NetworkStationAnchors.cpp
-    src/core/network/assembly/NetworkStationCarry.cpp
-    src/core/network/assembly/NetworkStationSplit.cpp
-    src/core/network/carry/NetworkZwdCarry.cpp
-    src/core/network/diag/NetworkShHealth.cpp
-    src/core/network/diag/NetworkLeveling.cpp
-    src/core/network/diag/NetworkStashStatus.cpp
-    src/core/network/ar/NetworkProducerAr.cpp
-    src/core/network/ar/NetworkArSuspect.cpp
-    src/core/network/ar/NetworkArcGraph.cpp
-    src/core/network/ar/NetworkArcLife.cpp
-    src/core/network/ar/NetworkArCycleBasis.cpp
-    src/core/network/ar/NetworkArLattice.cpp
-    src/core/network/ar/NetworkFixedCycles.cpp
-    src/core/network/carry/NetworkInstallCarry.cpp
-    src/core/network/carry/NetworkDdPriorBuild.cpp
-    src/core/network/solve/NetworkSolveGlue.cpp
-    src/core/network/solve/NetworkCodeBiasDatum.cpp
-    src/core/network/solve/NetworkClockDatum.cpp
-    src/core/network/solve/NetworkRankGate.cpp
-    src/core/network/solve/NetworkSbasisCompletion.cpp
-    src/core/network/qc/NetworkRaimWithinEpoch.cpp
-    src/core/network/qc/NetworkWithinEpochCulprits.cpp
-    src/core/network/carry/NetworkLevelAuthority.cpp
-    src/core/network/qc/NetworkRelevel.cpp
-    src/core/network/runend/NetworkTeardown.cpp
-    src/core/network/runend/NetworkRunTimingRunEnd.cpp
-    src/core/network/runend/NetworkRunArtifactsRunEnd.cpp
-    src/core/network/runend/NetworkSolveStationsRunEnd.cpp
-    src/core/network/runend/NetworkResumeRunEnd.cpp
-    src/core/network/runend/NetworkReadmitRunEnd.cpp
-    src/core/network/runend/NetworkClosedLoopRunEnd.cpp
-    src/core/network/carry/NetworkLevelingCarryRunEnd.cpp
-    src/core/network/carry/NetworkRxCodeBiasCarryRunEnd.cpp
-    src/core/network/carry/NetworkCarryVceRunEnd.cpp
-    src/core/network/carry/NetworkCarryVceApply.cpp
-    src/core/network/slip/NetworkSlipQcRunEnd.cpp
-    src/core/network/runend/NetworkRunEnd.cpp
-    src/core/network/driver/NetworkEpochObservers.cpp
-    src/core/network/carry/NetworkInject.cpp
-    src/core/network/assembly/NetworkCanonicalPairAdmission.cpp
+    src/core/network/solve/NormalEquations.cpp
+    src/core/network/solve/NormalEquationsDetached.cpp
+    src/core/network/solve/Estimator.cpp
+    src/core/network/carry/InvariantCarryDriver.cpp
+    src/core/network/solve/Sbasis.cpp
+    src/core/network/assembly/ExtraBandScope.cpp
+    src/core/network/assembly/SecondCodeScope.cpp
+    src/core/network/assembly/SecondPhaseScope.cpp
+    src/core/network/assembly/ChannelAll.cpp
+    src/core/network/assembly/MultiGnss.cpp
+    src/core/network/solve/PhaseDatum.cpp
+    src/core/network/solve/PhaseAnchorEpoch.cpp
+    src/core/network/slip/SlipFunnel.cpp
+    src/core/network/solve/ChainDatum.cpp
+    src/core/network/solve/AnchorHygiene.cpp
+    src/core/network/assembly/SignalIntegrity.cpp
+    src/core/network/assembly/MeasurementAdmission.cpp
+    src/core/network/qc/Raim.cpp
+    src/core/network/qc/ClockQc.cpp
+    src/core/network/solve/ClockAnchor.cpp
+    src/core/network/state/CarryDisposition.cpp
+    src/core/network/state/CarrySites.cpp
+    src/core/network/assembly/Responses.cpp
+    src/core/network/solve/ClockLevel.cpp
+    src/core/network/diag/FrameDiag.cpp
+    src/core/network/qc/GrossLos.cpp
+    src/core/network/diag/StationBlock.cpp
+    src/core/network/solve/HandoverStransform.cpp
+    src/core/network/assembly/RowClassify.cpp
+    src/core/network/qc/RhsAttrib.cpp
+    src/core/network/qc/PrefitCensus.cpp
+    src/core/network/qc/RedundancyCensus.cpp
+    src/core/network/qc/Mdb.cpp
+    src/core/network/solve/DatumGraph.cpp
+    src/core/network/qc/BlockBaarda.cpp
+    src/core/network/qc/Congruence.cpp
+    src/core/network/qc/CongruenceSetup.cpp
+    src/core/network/qc/PriorResidual.cpp
+    src/core/network/emit/SolPrep.cpp
+    src/core/network/emit/EmitStore.cpp
+    src/core/network/emit/PbHold.cpp
+    src/core/network/emit/BrdcWire.cpp
+    src/core/network/emit/LedgerEmit.cpp
+    src/core/network/diag/IonoDiag.cpp
+    src/core/network/diag/DdFrac.cpp
+    src/core/network/ar/SdEwlAr.cpp
+    src/core/network/diag/ShDevVtec.cpp
+    src/core/network/solve/SolveStations.cpp
+    src/core/network/assembly/StationBuild.cpp
+    src/core/network/assembly/IonoConstraintRows.cpp
+    src/core/network/carry/LevelingCarry.cpp
+    src/core/network/carry/PhaseColourCarry.cpp
+    src/core/network/carry/RxClockCarry.cpp
+    src/core/network/carry/RxCodeBiasCarry.cpp
+    src/core/network/carry/SlantIonoCarry.cpp
+    src/core/network/assembly/StationAnchors.cpp
+    src/core/network/assembly/StationCarry.cpp
+    src/core/network/assembly/StationSplit.cpp
+    src/core/network/carry/ZwdCarry.cpp
+    src/core/network/diag/ShHealth.cpp
+    src/core/network/diag/Leveling.cpp
+    src/core/network/diag/StashStatus.cpp
+    src/core/network/ar/ProducerAr.cpp
+    src/core/network/ar/ArSuspect.cpp
+    src/core/network/ar/ArcGraph.cpp
+    src/core/network/ar/ArcLife.cpp
+    src/core/network/ar/ArCycleBasis.cpp
+    src/core/network/ar/ArLattice.cpp
+    src/core/network/ar/FixedCycles.cpp
+    src/core/network/carry/InstallCarry.cpp
+    src/core/network/carry/DdPriorBuild.cpp
+    src/core/network/solve/SolveGlue.cpp
+    src/core/network/solve/CodeBiasDatum.cpp
+    src/core/network/solve/ClockDatum.cpp
+    src/core/network/solve/RankGate.cpp
+    src/core/network/solve/SbasisCompletion.cpp
+    src/core/network/qc/RaimWithinEpoch.cpp
+    src/core/network/qc/WithinEpochCulprits.cpp
+    src/core/network/carry/LevelAuthority.cpp
+    src/core/network/qc/Relevel.cpp
+    src/core/network/runend/Teardown.cpp
+    src/core/network/runend/RunTimingRunEnd.cpp
+    src/core/network/runend/RunArtifactsRunEnd.cpp
+    src/core/network/runend/SolveStationsRunEnd.cpp
+    src/core/network/runend/ResumeRunEnd.cpp
+    src/core/network/runend/ReadmitRunEnd.cpp
+    src/core/network/runend/ClosedLoopRunEnd.cpp
+    src/core/network/carry/LevelingCarryRunEnd.cpp
+    src/core/network/carry/RxCodeBiasCarryRunEnd.cpp
+    src/core/network/carry/CarryVceRunEnd.cpp
+    src/core/network/carry/CarryVceApply.cpp
+    src/core/network/slip/SlipQcRunEnd.cpp
+    src/core/network/runend/RunEnd.cpp
+    src/core/network/driver/EpochObservers.cpp
+    src/core/network/carry/Inject.cpp
+    src/core/network/assembly/CanonicalPairAdmission.cpp
     src/core/network/state/ArcLedger.cpp
-    src/core/network/solve/NetworkAnchorReentry.cpp
-    src/core/network/slip/NetworkOraclePin.cpp
-    src/core/network/slip/NetworkOraclePinSetup.cpp
-    src/core/network/carry/NetworkCoupling.cpp
-    src/core/network/carry/NetworkCouplingExact.cpp
-    src/core/network/carry/NetworkClockClone.cpp
-    src/core/network/carry/NetworkSharedHistory.cpp
-    src/core/network/diag/NetworkPhaseVisibleDiag.cpp
-    src/core/network/emit/NetworkPbHoldClone.cpp
-    src/core/network/assembly/NetworkParamRegistry.cpp
-    src/core/network/assembly/NetworkParamInventory.cpp
-    src/core/network/assembly/NetworkContributions.cpp
-    src/core/network/diag/NetworkAmbStateTrace.cpp
-    src/core/network/ar/NetworkAmbFloat.cpp
-    src/core/network/assembly/NetworkBiasAdmission.cpp
+    src/core/network/solve/AnchorReentry.cpp
+    src/core/network/slip/OraclePin.cpp
+    src/core/network/slip/OraclePinSetup.cpp
+    src/core/network/carry/Coupling.cpp
+    src/core/network/carry/CouplingExact.cpp
+    src/core/network/carry/ClockClone.cpp
+    src/core/network/carry/SharedHistory.cpp
+    src/core/network/diag/PhaseVisibleDiag.cpp
+    src/core/network/emit/PbHoldClone.cpp
+    src/core/network/assembly/ParamRegistry.cpp
+    src/core/network/assembly/ParamInventory.cpp
+    src/core/network/assembly/Contributions.cpp
+    src/core/network/diag/AmbStateTrace.cpp
+    src/core/network/ar/AmbFloat.cpp
+    src/core/network/assembly/BiasAdmission.cpp
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
     src/core/common/GnssIdentity.cpp

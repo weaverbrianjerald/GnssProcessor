@@ -88,28 +88,28 @@
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
-#include "network/emit/NetworkEmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
+#include "network/emit/EmitRebase.hpp"   // emit-layer frame re-base (Card 4, M1 phase D)
 #include "products/NetworkProductIO.hpp"
 #include "products/CombinedCorrectionSigma.hpp"   // combined-correction σ arithmetic (M4)
 #include "products/NetworkStateSnapshot.hpp"   // atomic state snapshot and warm resume (RTB-7)
 #include "products/LiveEphemerisStore.hpp"     // broadcast a-priori store for brdc_rts (Card 5, RTF-1)
 #include "products/RinexNavParser.hpp"         // RINEX-nav → LiveEphemerisStore loader (Card 5, RTF-1)
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/solve/Estimator.hpp"
 #include "filter/IlsCore.hpp"                 // producer-side network AR (Phase 2+): ils::ilsFix
-#include "network/solve/NetworkSbasis.hpp"
-#include "network/solve/NetworkPivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
-#include "network/carry/NetworkCarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/NetworkInvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/solve/Sbasis.hpp"
+#include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
+#include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
 #include "filter/StateKeySchema.hpp"
-#include "network/driver/NetworkRunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
-#include "network/qc/NetworkRobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
+#include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation, StationAssembly, carry PODs (INC-2)
+#include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
-#include "network/diag/NetworkRunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
-#include "network/state/NetworkRunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
+#include "network/diag/RunTraces.hpp" // trace-stream ownership, open logic, roster, FlagRate (INC-3)
+#include "network/state/RunContext.hpp"    // ctx: knobs, Tier-1 carry state, service counters (INC-4)
 #include "slip/MwSlipDetector.hpp"      // phase-leveling slip repair (T0, Increment 2)
 #include "slip/TurboEditResolver.hpp"   // MW+GF per-signal integer repair (Increment 2)
 #include "slip/IfPhaseSlipDetector.hpp" // IF-phase between-sat/between-epoch slip detection
-#include "network/slip/NetworkSlipQc.hpp"       // slip-QC pure helpers: ifElevMap, parseIfPairResetKey (INC-2)
+#include "network/slip/SlipQc.hpp"       // slip-QC pure helpers: ifElevMap, parseIfPairResetKey (INC-2)
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"    // systemOfSat, letterOfSat, systemName, ObservableId, SignalId
@@ -144,15 +144,15 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include "network/driver/NetworkSetupResult.hpp"
+#include "network/driver/SetupResult.hpp"
 
 // The run-end reports at the end of this file (card NOM step TD1b):
 #include "config/GnssConfig.hpp"
-#include "network/runend/NetworkRunEnd.hpp"
+#include "network/runend/RunEnd.hpp"
 #include <spdlog/spdlog.h>
-#include "network/driver/NetworkRun.hpp"
-#include "network/state/NetworkRunContext.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/driver/Run.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/diag/RunTraces.hpp"
 
 namespace GnssProcessor {
 
@@ -417,7 +417,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // (a BDS toc is native BDT and is shifted to the GPS scale, as
     // LiveEphemerisStore does for toe).  The staging sort here and the epoch-loop
     // feed both call navAvailabilityGpsSeconds, one inline function in
-    // network/driver/NetworkSetupResult.hpp, so their orders cannot drift apart.
+    // network/driver/SetupResult.hpp, so their orders cannot drift apart.
     // (Card 8, replay parity; INC-5)
     auto& brdc_nav_staged = setup.brdc_nav_staged;
     auto& brdc_nav_cursor = setup.brdc_nav_cursor;
@@ -1473,7 +1473,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             pending_contract.decl.emit_code_bias        = config_.estimateNetworkSatCodeBias();
             // Self-describe the phase-bias gauge in the on-disk contract (T3b).  Under
             // phase_datum_eq34 the emitted bias references a single-receiver chain
-            // (Card 3), not a pivot receiver.  The per-solve decl in NetworkSolveGlue.cpp
+            // (Card 3), not a pivot receiver.  The per-solve decl in SolveGlue.cpp
             // makes the same choice, but that object feeds only buildSharedDatum: the
             // serialized declaration is this one.  Without this branch the product would declare
             // amb_datum = 0 (PivotReceiverZeroAmbiguity), the legacy single-pivot datum it
@@ -1761,7 +1761,7 @@ int networkMarkerArpRunEnd(const NetworkRunEndView& v) {
 
 // ---- End of the run-end reports ----
 
-// Setup builder (card NOM3 step EP4); documented at its declaration in network/driver/NetworkSetupResult.hpp.
+// Setup builder (card NOM3 step EP4); documented at its declaration in network/driver/SetupResult.hpp.
 void networkMarkerArpCensusCopy(NetworkRunContext& ctx, const GnssConfig& config_, const NetworkSetupResult& setup) {
     // ---- End of the bindings ----
     // The marker → ARP roster census is measured in networkSetup_, which runs

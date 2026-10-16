@@ -20,7 +20,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/driver/RunTypes.hpp"
 
 #include <cmath>
 #include <map>

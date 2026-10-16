@@ -5,31 +5,31 @@
  *
  * The table is the epoch's instrument order, and a reordered or re-slotted row changes the
  * interleaving of trace rows, events and log lines without any unit test noticing; the order
- * constraints of network/driver/NetworkEpochObservers.hpp are checked by name below, and the whole
+ * constraints of network/driver/EpochObservers.hpp are checked by name below, and the whole
  * table is pinned so a change to it is a deliberate edit here.
  */
 
-#include "network/driver/NetworkEpochObservers.hpp"
+#include "network/driver/EpochObservers.hpp"
 
-#include "network/state/NetworkEntities.hpp"
-#include "network/diag/NetworkAmbStateTrace.hpp"
-#include "network/qc/NetworkBlockBaarda.hpp"
-#include "network/assembly/NetworkChannelAll.hpp"
-#include "network/qc/NetworkCongruence.hpp"
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/solve/NetworkDatumGraph.hpp"
-#include "network/diag/NetworkFrameDiag.hpp"
-#include "network/emit/NetworkLedgerEmit.hpp"
-#include "network/carry/NetworkLevelAuthority.hpp"
-#include "network/qc/NetworkMdb.hpp"
-#include "network/assembly/NetworkMultiGnss.hpp"
-#include "network/assembly/NetworkParamInventory.hpp"
-#include "network/diag/NetworkPhaseVisibleDiag.hpp"
-#include "network/qc/NetworkPrefitCensus.hpp"
-#include "network/qc/NetworkRedundancyCensus.hpp"
-#include "network/qc/NetworkRhsAttrib.hpp"
-#include "network/assembly/NetworkSecondPhaseScope.hpp"
-#include "network/diag/NetworkStationBlock.hpp"
+#include "network/state/Entities.hpp"
+#include "network/diag/AmbStateTrace.hpp"
+#include "network/qc/BlockBaarda.hpp"
+#include "network/assembly/ChannelAll.hpp"
+#include "network/qc/Congruence.hpp"
+#include "network/assembly/Contributions.hpp"
+#include "network/solve/DatumGraph.hpp"
+#include "network/diag/FrameDiag.hpp"
+#include "network/emit/LedgerEmit.hpp"
+#include "network/carry/LevelAuthority.hpp"
+#include "network/qc/Mdb.hpp"
+#include "network/assembly/MultiGnss.hpp"
+#include "network/assembly/ParamInventory.hpp"
+#include "network/diag/PhaseVisibleDiag.hpp"
+#include "network/qc/PrefitCensus.hpp"
+#include "network/qc/RedundancyCensus.hpp"
+#include "network/qc/RhsAttrib.hpp"
+#include "network/assembly/SecondPhaseScope.hpp"
+#include "network/diag/StationBlock.hpp"
 
 #include <gtest/gtest.h>
 

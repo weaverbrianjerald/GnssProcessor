@@ -67,7 +67,7 @@
 
 #include <gtest/gtest.h>
 
-#include "network/qc/NetworkPriorResidual.hpp"
+#include "network/qc/PriorResidual.hpp"
 
 #include <array>
 #include <cmath>

@@ -35,15 +35,15 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/state/NetworkRunContext.hpp"
-#include "network/ar/NetworkAmbFloat.hpp"
-#include "network/diag/NetworkAmbStateTrace.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/solve/NetworkHandoverStransform.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/ar/AmbFloat.hpp"
+#include "network/diag/AmbStateTrace.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/solve/HandoverStransform.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 
 #include <Eigen/Dense>
 
@@ -871,7 +871,7 @@ TEST(AmbFloatVehicleTest, EveryDropArmsTheWalkMetricIncludingAnIdempotentOne) {
 // coupling row is the exact cancellation of the two moves, and shifting one without
 // the other injects the frame step as row bias (the latent defect the design names;
 // the same rule governs D4's carry S-transformation in networkElectChainDatum,
-// NetworkChainDatum.cpp).
+// ChainDatum.cpp).
 //
 // The live seam needs the whole run context (the election, the ledger, the trace
 // streams), which a unit test cannot construct.  The defect is in the algebra, which is

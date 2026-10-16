@@ -20,10 +20,10 @@
 
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

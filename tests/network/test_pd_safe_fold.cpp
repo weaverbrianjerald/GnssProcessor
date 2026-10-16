@@ -37,10 +37,10 @@
 #include <string>
 #include <vector>
 
-#include "network/solve/NetworkNormalEquations.hpp"
-#include "network/carry/NetworkInvariantCarryDriver.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/ar/NetworkZStore.hpp"
+#include "network/solve/NormalEquations.hpp"
+#include "network/carry/InvariantCarryDriver.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/ar/ZStore.hpp"
 
 namespace GnssProcessor {
 namespace {

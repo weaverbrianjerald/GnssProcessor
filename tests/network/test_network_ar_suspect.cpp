@@ -1,7 +1,7 @@
 /**
  * @file test_network_ar_suspect.cpp
  * @brief Unit tests of the producer AR search's suspect-corner mask (card ARL, slip-ladder
- *        defect 3; include/network/ar/NetworkArSuspect.hpp).
+ *        defect 3; include/network/ar/ArSuspect.hpp).
  *
  * Five suites:
  *  - @c NetworkArSuspectLedger: the ledger kernel (stamp, window, age-out, the fold's
@@ -19,12 +19,12 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"     // NetworkKnobs::snapshot
+#include "network/state/RunContext.hpp"     // NetworkKnobs::snapshot
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/ar/NetworkArSuspect.hpp"
-#include "network/ar/NetworkProducerAr.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/ar/ArSuspect.hpp"
+#include "network/ar/ProducerAr.hpp"
+#include "network/driver/RunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 

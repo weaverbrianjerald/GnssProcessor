@@ -50,8 +50,8 @@
 #include <random>
 #include <vector>
 
-#include "network/qc/NetworkCongruence.hpp"
-#include "network/solve/NetworkNormalEquations.hpp"
+#include "network/qc/Congruence.hpp"
+#include "network/solve/NormalEquations.hpp"
 
 namespace GnssProcessor {
 namespace {

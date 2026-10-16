@@ -1,5 +1,5 @@
 // Unit tests for the conditional coupling-row seam of cards 1/1d
-// (network/carry/NetworkCoupling.hpp, split out of Application::networkPassB_ at INC-7b).
+// (network/carry/Coupling.hpp, split out of Application::networkPassB_ at INC-7b).
 // They exercise branches the 50-station byte-gate arms do not reach even with
 // coupling live: the CouplingRowBuilder scalar / departed / kappa-shrink branches over
 // a real registered estimator.  The builder takes explicit references, so it is
@@ -7,10 +7,10 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/solve/NetworkChainDatum.hpp"   // eq34ShiftCarry (the D4 shift through the traversal)
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/state/RunContext.hpp"
+#include "network/solve/ChainDatum.hpp"   // eq34ShiftCarry (the D4 shift through the traversal)
+#include "network/carry/Coupling.hpp"
+#include "network/solve/Estimator.hpp"
 #include "config/GnssConfigTypes.hpp"
 
 #include <Eigen/Dense>

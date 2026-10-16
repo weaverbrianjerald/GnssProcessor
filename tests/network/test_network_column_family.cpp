@@ -1,7 +1,7 @@
 /**
  * @file test_network_column_family.cpp
  * @brief The one shared-column classifier, @c sharedColumnFamily
- *        (network/assembly/NetworkRowClassify.hpp; card NOM step N0b).
+ *        (network/assembly/RowClassify.hpp; card NOM step N0b).
  *
  * The family of a shared column is read from the estimator's column identity
  * (@c NetworkEstimator::sharedColumnIdentity), and a column with no satellite identity
@@ -20,8 +20,8 @@
 
 #include <gtest/gtest.h>
 
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/assembly/NetworkRowClassify.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/assembly/RowClassify.hpp"
 
 #include <Eigen/Dense>
 

@@ -15,14 +15,14 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/ar/NetworkAmbFloat.hpp"
-#include "network/state/NetworkCarrySites.hpp"
-#include "network/solve/NetworkChainDatum.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/solve/NetworkHandoverStransform.hpp"
-#include "network/qc/NetworkRelevel.hpp"
+#include "network/ar/AmbFloat.hpp"
+#include "network/state/CarrySites.hpp"
+#include "network/solve/ChainDatum.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/solve/HandoverStransform.hpp"
+#include "network/qc/Relevel.hpp"
 #include "logging/LogManager.hpp"
 
 #include <cstdint>
@@ -212,8 +212,8 @@ TEST(CarrySites, MaskSelectsSites) {
 // without a table row fails here), and the only holder of regression terms is LocalCarry.
 TEST(CarrySites, EveryLocalCarryMapIsASite) {
     const std::filesystem::path root(GNSS_PROJECT_ROOT);
-    const std::string ctx_h  = readFile(root / "include" / "network" / "state" / "NetworkRunContext.hpp");
-    const std::string types_h = readFile(root / "include" / "network" / "driver" / "NetworkRunTypes.hpp");
+    const std::string ctx_h  = readFile(root / "include" / "network" / "state" / "RunContext.hpp");
+    const std::string types_h = readFile(root / "include" / "network" / "driver" / "RunTypes.hpp");
     ASSERT_FALSE(ctx_h.empty());
     ASSERT_FALSE(types_h.empty());
     const std::string body = structBody(ctx_h, "NetworkCarryState");
@@ -231,7 +231,7 @@ TEST(CarrySites, EveryLocalCarryMapIsASite) {
     }
     // The station carries moved to the entity tables (card NOM step N4a): each LocalCarry
     // field of an entity row is a site under the member it was (its FieldDecl row's `was`).
-    const std::string ent_h = readFile(root / "include" / "network" / "state" / "NetworkEntities.hpp");
+    const std::string ent_h = readFile(root / "include" / "network" / "state" / "Entities.hpp");
     ASSERT_FALSE(ent_h.empty());
     const std::regex field(R"(std::optional<LocalCarry>\s+(\w+)\s*;)");
     for (std::sregex_iterator it(ent_h.begin(), ent_h.end(), field), end; it != end; ++it) {

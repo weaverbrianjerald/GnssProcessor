@@ -15,8 +15,8 @@
 
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
-#include "network/driver/NetworkStreamAligner.hpp"
-#include "network/driver/NetworkStreamFrontEnd.hpp"
+#include "network/driver/StreamAligner.hpp"
+#include "network/driver/StreamFrontEnd.hpp"
 #include "rtcm/LockTimeTracker.hpp"
 
 #include <chrono>

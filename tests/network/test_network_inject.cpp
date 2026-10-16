@@ -19,11 +19,11 @@
  */
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/carry/NetworkInject.hpp"
+#include "network/carry/Inject.hpp"
 #include "logging/LogManager.hpp"
-#include "network/diag/NetworkRunTraces.hpp"
+#include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
 #include <nlohmann/json.hpp>

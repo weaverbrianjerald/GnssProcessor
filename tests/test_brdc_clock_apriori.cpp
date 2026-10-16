@@ -27,7 +27,7 @@
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "products/BrdcClockApriori.hpp"

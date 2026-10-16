@@ -43,13 +43,13 @@
 #include <string>
 #include <vector>
 
-#include "network/state/NetworkRunContext.hpp"
-#include "network/driver/NetworkEpoch.hpp"   // EpochEvents
+#include "network/state/RunContext.hpp"
+#include "network/driver/Epoch.hpp"   // EpochEvents
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkNormalEquations.hpp"
-#include "network/qc/NetworkRedundancyCensus.hpp"
-#include "network/assembly/NetworkRowClassify.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
+#include "network/solve/NormalEquations.hpp"
+#include "network/qc/RedundancyCensus.hpp"
+#include "network/assembly/RowClassify.hpp"
+#include "network/driver/RunTypes.hpp"
 
 namespace GnssProcessor {
 namespace {

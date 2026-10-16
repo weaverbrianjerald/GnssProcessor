@@ -62,8 +62,8 @@
 #include <string>
 #include <vector>
 
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/carry/NetworkInvariantCarryDriver.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/carry/InvariantCarryDriver.hpp"
 
 namespace GnssProcessor {
 namespace {

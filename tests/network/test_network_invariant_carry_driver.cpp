@@ -43,9 +43,9 @@
 #include <set>
 #include <vector>
 
-#include "network/carry/NetworkInvariantCarryDriver.hpp"
-#include "network/ar/NetworkZStore.hpp"
-#include "network/solve/NetworkEstimator.hpp"
+#include "network/carry/InvariantCarryDriver.hpp"
+#include "network/ar/ZStore.hpp"
+#include "network/solve/Estimator.hpp"
 
 namespace GnssProcessor {
 namespace {

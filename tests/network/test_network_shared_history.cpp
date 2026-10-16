@@ -30,16 +30,16 @@
 
 #include <gtest/gtest.h>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "config/GnssConfigTypes.hpp"
-#include "network/carry/NetworkClockClone.hpp"
-#include "network/carry/NetworkCoupling.hpp"
-#include "network/carry/NetworkCouplingExact.hpp"
-#include "network/solve/NetworkEstimator.hpp"
-#include "network/emit/NetworkPbHoldClone.hpp"
-#include "network/driver/NetworkRunTypes.hpp"
-#include "network/carry/NetworkSharedHistory.hpp"
+#include "network/carry/ClockClone.hpp"
+#include "network/carry/Coupling.hpp"
+#include "network/carry/CouplingExact.hpp"
+#include "network/solve/Estimator.hpp"
+#include "network/emit/PbHoldClone.hpp"
+#include "network/driver/RunTypes.hpp"
+#include "network/carry/SharedHistory.hpp"
 #include "logging/LogManager.hpp"
 
 #include <Eigen/Dense>

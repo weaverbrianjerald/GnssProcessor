@@ -23,9 +23,9 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkContributions.hpp"
-#include "network/qc/NetworkRaim.hpp"          // RaimPoolAdmissionTally
-#include "network/assembly/NetworkRowClassify.hpp"
+#include "network/assembly/Contributions.hpp"
+#include "network/qc/Raim.hpp"          // RaimPoolAdmissionTally
+#include "network/assembly/RowClassify.hpp"
 #include "logging/LogManager.hpp"
 
 #include <filesystem>

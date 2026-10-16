@@ -31,7 +31,7 @@
 #include <set>
 #include <string>
 
-#include "network/slip/NetworkCommonBandScope.hpp"
+#include "network/slip/CommonBandScope.hpp"
 
 using namespace GnssProcessor;
 

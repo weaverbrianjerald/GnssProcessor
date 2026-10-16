@@ -44,7 +44,7 @@
 #include "realtime/RealTimeEngine.hpp"
 
 #include "config/GnssConfig.hpp"
-#include "network/solve/NetworkSbasis.hpp"          // kWindUpYawModelId (wind-up model revision, wu93)
+#include "network/solve/Sbasis.hpp"          // kWindUpYawModelId (wind-up model revision, wu93)
 #include "filter/StateFamily.hpp"
 #include "filter/StateManager.hpp"
 #include "math/TimeUtils.hpp"

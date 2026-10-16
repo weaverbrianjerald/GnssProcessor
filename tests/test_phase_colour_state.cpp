@@ -21,9 +21,9 @@
 
 #include <nlohmann/json.hpp>
 
-#include "network/state/NetworkRunContext.hpp"
+#include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
-#include "network/assembly/NetworkParamRegistry.hpp"
+#include "network/assembly/ParamRegistry.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 
