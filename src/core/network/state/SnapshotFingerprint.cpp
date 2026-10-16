@@ -246,6 +246,10 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // and changes no byte of the solve, the same trace-knob rule the loader's
         // fingerprint-safe list applies.
         if (config_.networkLedgerAnchor()) add("sid:ledger_anchor");
+        // The pin pair as the BIA clock-reference pair moves the pinned code combination
+        // and so the datum the carried code biases were accumulated in.  Appended only
+        // when armed, so a snapshot written with it off keeps its fingerprint.
+        if (config_.networkN3cBiaPinPair()) add("n3c:bia_pin_pair");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

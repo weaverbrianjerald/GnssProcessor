@@ -6139,6 +6139,12 @@ namespace GnssProcessor {
         // validateNetworkPhaseDatum_.
         network_ledger_emit_ =
             jval<bool>(json, "network.ledger_emit", "network_ledger_emit", false);
+        // The ionosphere-free pin pair as the BIA clock-reference pair (the pin-pair
+        // decision of the signal-role audit).  Default off; armed, it changes the pinned
+        // code combination and so the emitted code-bias datum, so it is graded as a
+        // behavior change and is fingerprinted.
+        network_n3c_bia_pin_pair_ =
+            jval<bool>(json, "network.n3c_bia_pin_pair", "network_n3c_bia_pin_pair", false);
         network_raim_attribution_ =
             jval<bool>(json, "network.raim_attribution", "network_raim_attribution", false);
         // RAIM pool re-host (docs/SPEC_raim_pool_rehost.md).  Parsed here with the rest

@@ -6139,6 +6139,24 @@ namespace GnssProcessor {
         bool networkLedgerEmit() const { return network_ledger_emit_; }
 
         /**
+         * @brief The ionosphere-free pin pair is the BIA clock-reference pair
+         *        (@c network.n3c_bia_pin_pair).
+         *
+         * Armed, a satellite whose registered code signals include both signals of its
+         * constellation's clock-reference pair in the bias product (GPS: C1W with C2W)
+         * pins that pair in the code-bias datum, instead of the lexically first pair on
+         * distinct frequencies (GPS: C1C with C2W). A satellite that lacks either signal
+         * keeps the lexical choice. The roster's datum role and the declared @c cbpin
+         * pair follow the pin. The pin bands of the product were always the BIA bands, so
+         * only the signal on a band can change.
+         *
+         * Solve-affecting when armed (the pinned combination, and with it the datum of
+         * the emitted code biases, moves from C1C to C1W), so it is graded as a
+         * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cBiaPinPair() const { return network_n3c_bia_pin_pair_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8350,6 +8368,7 @@ namespace GnssProcessor {
         bool   network_ledger_emit_{false};                        ///< The emitter's per-family bookkeeping read against the arc ledger (the phase-bias hold's generation against the ledger's admitted arc births, both directions; the emitter's first-sighting test against the ledger's memory of the family) and the producer's declaration of its signal roster on the wire as a block of N records (network.ledger_emit). Observatory: the solve and every C / B / P / E record are byte-identical armed; the only wire difference is the N records. Not fingerprinted. Network mode only.
         bool   consumer_roster_latch_{false};                      ///< Consumer side (network.closed_loop.roster_latch): the consumer's per-band canonical latch follows the producer's declared roster where it tracks a declared signal, and a freshness flip on a signal the declaration does not name is not a staleness event. Inert (logged once) on a wire with no declaration. Derived onto the closed-loop consumer config only.
         bool   network_ledger_anchor_{false};                      ///< A family the coverage gate's drop edge erased and that returns with arcs of the same generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting (network.ledger_anchor); a new-generation return is elected as without the knob. anchor_arc_age becomes a reader of the ledger's admitted age. Solve-affecting when armed. Refused (error + disarm) without network.ledger_screens. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_bia_pin_pair_{false};                   ///< The code-bias datum pins the BIA clock-reference signal pair (GPS C1W with C2W) on a satellite that registers both, instead of the lexically first pair (network.n3c_bia_pin_pair). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.
