@@ -3,7 +3,7 @@
  * \brief The KalmanFilter driver: construction, predict, the measurement update, the
  *        IEKF step, the pseudo-observation update and the per-epoch hooks.
  *
- * The class's member functions live in five files by concern (card UOM step U2b):
+ * The class's member functions live in five files by concern:
  *   KalmanFilter.cpp           this driver: KalmanFilter(), predict, predictAided, update,
  *                              updateFromPrior, applyPseudoObservation, the take* drains,
  *                              beginEpoch, endEpoch, logKalmanFilterTimings, logQcCounters;

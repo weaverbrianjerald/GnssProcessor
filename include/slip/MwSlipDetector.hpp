@@ -92,8 +92,7 @@ namespace GnssProcessor {
          *       directly, because it needs the full @c MwSlipResult WL-pair
          *       semantics that the projection does not preserve; every other
          *       driver holds the concrete type.  The override is kept because
-         *       @c ISlipDetector declares @c detect pure virtual (card UOM
-         *       section 7 item 1 decides whether that interface stays).
+         *       @c ISlipDetector declares @c detect pure virtual.
          *
          * @param context Epoch inputs (only @c observations is consulted).
          * @return Unified slip events for this epoch.
@@ -1041,7 +1040,7 @@ namespace GnssProcessor {
                                 std::numeric_limits<double>::quiet_NaN()) const;
 
         // ======================================================================
-        // The two drivers' steps (card UOM step U5m-d)
+        // The two drivers' steps
         //
         // detectLargeMwResets and processMwSample are ordered drivers over the
         // private steps below; the working values the steps share are declared

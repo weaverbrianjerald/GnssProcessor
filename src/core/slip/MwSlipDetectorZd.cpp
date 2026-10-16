@@ -5,9 +5,7 @@
  * A (satellite, signal-pair) arc served in a zero-differenced frame: the lagged Welford
  * mean, read by the network producer's SD pre-reduce EWL rows.
  *
- * Part of MwSlipDetector (slip/MwSlipDetector.hpp lists every file of the class);
- * card UOM step U5m-c moved these bodies here unchanged (scripts/uom_u5m_verify.py
- * proves the move against the single source file of f823a36).
+ * Part of MwSlipDetector (slip/MwSlipDetector.hpp lists every file of the class).
  */
 
 #include "slip/MwSlipDetector.hpp"

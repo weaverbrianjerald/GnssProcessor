@@ -1,7 +1,7 @@
 /**
  * @file test_if_phase_ref_gate_defaults.cpp
  * @brief The network.slip_qc defaults table of IfPhaseSlipDetector::RefGateParams
- *        (card UOM step U5t-c).
+ *.
  *
  * RefGateParams mirrors the reference-gate members of the network's slip-QC
  * configuration (SlipQcConfig), and network setup copies every field from that

@@ -6,7 +6,7 @@
  *        share.
  *
  * KalmanFilter::validatePostFitResiduals (src/core/filter/KalmanPostFitQc.cpp) is an ordered
- * driver over named private stages (card UOM step U2c):
+ * driver over named private stages:
  *
  *   S0   beginPostFitQc_            the pass's thresholds, row references and counts
  *   E1                              no rows: {false, false}

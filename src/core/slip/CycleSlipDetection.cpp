@@ -5,8 +5,7 @@
  *        results are grouped per satellite.
  *
  * Each section reads and writes the epoch's @c SlipEpochWork through the alias
- * preamble at its top.  Bodies moved verbatim from CycleSlipManager.cpp (card
- * UOM step U3; scripts/uom_u3_verify.py).
+ * preamble at its top.
  */
 
 #include "slip/CycleSlipManager.hpp"

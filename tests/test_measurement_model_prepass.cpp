@@ -4,9 +4,8 @@
  *        the state pre-pass's births and prunes, the Jacobian row, the first
  *        phase innovation and the row variance.
  *
- * Card UOM step U4 split MeasurementModel by concern (the pre-pass, the row,
- * the variance, the DD build, the network surface).  Before it no unit test
- * drove computeMeasurementUpdate.  These cases pin what a reader of the split
+ * MeasurementModel is split by concern (the pre-pass, the row, the variance,
+ * the DD build, the network surface).  These cases pin what a reader of the split
  * relies on: the ambiguity seed (StateManager::computeAmbiguitySeed) and the
  * Jacobian row (buildJacobianRow) are two copies of the observation equation
  * that agree at birth, so a phase row's first innovation is zero; the prune

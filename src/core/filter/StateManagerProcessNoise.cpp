@@ -1,6 +1,6 @@
 /*!
  * \file StateManagerProcessNoise.cpp
- * \brief StateManager's process noise and transition matrices (card UOM step U6c).
+ * \brief StateManager's process noise and transition matrices.
  *
  * Owns getProcessNoiseMatrix, a short driver over one function per block of Q, and
  * getTransitionMatrix.  The blocks are called in the order of the original single
@@ -204,7 +204,7 @@ namespace GnssProcessor {
         // Per-satellite ionospheric noise, applied only when the processing mode
         // is PPP_RTK.  The states are born whenever uncombined processing is on
         // (in any mode), so a PPP run with uncombined processing gives them no
-        // process noise (card UOM defect S1).
+        // process noise.
         // Scale zenith spectral density by obliquity factor: q_slant = q_zenith / sin²(el)
         if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
             const double q_zenith_default = pn.ionosphere;

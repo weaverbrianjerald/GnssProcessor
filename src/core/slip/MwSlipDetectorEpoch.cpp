@@ -6,9 +6,7 @@
  * MwSlipDetector::MwEpochWork (slip/MwDetectorWork.hpp, which lists them): the epoch's
  * resets, pass 1 per satellite (its path, its LLI policy, its lanes), pass 2 per SD
  * group (the pivot election, the re-reference, the pivot's ZD sample, the SD samples),
- * and the epoch's end.  emitLaneSlip_ forms every flagged lane's results.  Card UOM step
- * U5m-d cut the bodies out unchanged apart from the declared edits
- * (scripts/uom_u5m_verify.py proves them against f823a36).
+ * and the epoch's end.  emitLaneSlip_ forms every flagged lane's results.
  */
 
 #include "slip/MwSlipDetector.hpp"

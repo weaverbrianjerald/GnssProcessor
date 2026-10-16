@@ -7,18 +7,17 @@
  * working value, KalmanFilter::PostFitQcWork (include/filter/KalmanPostFitQc.hpp, which
  * lists the stages and the four exits).  Each stage opens with an alias block that binds
  * the names its code had as locals of the former single function to the work value, so
- * the bodies read as they did; card UOM step U2c cut them out unchanged
- * (scripts/uom_u2_verify.py proves it).  The responses the dispatch calls (ambiguity
+ * the bodies read as they did.  The responses the dispatch calls (ambiguity
  * reset, row exclusion, complete reset) are in KalmanOutlierResponse.cpp.
  *
  * The four coherent-offset pivot detectors of stage S3 are one function over the rows of
- * kalman::kPivotDetectors (card UOM step U2d): detectPivotOffsets_ groups the rows once
+ * kalman::kPivotDetectors: detectPivotOffsets_ groups the rows once
  * per observable and runs each row of the table over its groups; testPivotGroup_ tests one
  * group (kalman::testCoherentOffset, then the row's options), reports it and responds.
  *
  * Every QC event of the screen and its responses increments one member of the
- * KalmanFilter's run-end counters (include/filter/KalmanQcCounters.hpp, card UOM step U2e)
- * where it happens; the counter lines are the only additions to the carried bodies.
+ * KalmanFilter's run-end counters (include/filter/KalmanQcCounters.hpp)
+ * where it happens.
  */
 
 #include "filter/KalmanFilter.hpp"
@@ -67,8 +66,8 @@ namespace GnssProcessor {
 
     CoherentOffset testCoherentOffset(const PivotDetectorSpec& spec, const PivotRowGroup& g) {
         // The four criteria in the order of the former four detector loops; each statistic
-        // is the expression those loops used, so a group fires exactly when it did before
-        // card UOM step U2d.
+        // is the expression those loops used, so a group fires exactly when it did with
+        // those loops.
         CoherentOffset t;
         t.n = g.indices.size();
         if (t.n < spec.min_rows) return t;

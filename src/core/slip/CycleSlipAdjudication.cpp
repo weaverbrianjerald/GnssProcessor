@@ -8,8 +8,7 @@
  * @c SatelliteSlipVerdict (slip/CycleSlipVerdict.hpp), which touches no filter
  * state, and applies it through one action: the culprit repair, the TurboEdit
  * suppression, or the full reset (with the LLI arc handling and the
- * satellite-wide re-inflation).  Bodies moved from CycleSlipManager.cpp (card
- * UOM steps U3b and U3c; scripts/uom_u3_verify.py).
+ * satellite-wide re-inflation).
  */
 
 #include "slip/CycleSlipManager.hpp"

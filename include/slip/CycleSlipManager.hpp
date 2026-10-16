@@ -168,8 +168,7 @@ public:
      *      resets, to satellites not already handled.
      *
      * The body is a short ordered driver over the private section members
-     * declared below (S0 to S17, the section list of card UOM's organization
-     * map), which share one @c SlipEpochWork.
+     * declared below (S0 to S17), which share one @c SlipEpochWork.
      *
      * @param epoch_prefix     Log prefix.
      * @param modeled_obs      Modeled observations for this epoch.

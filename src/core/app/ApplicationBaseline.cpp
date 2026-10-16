@@ -3,7 +3,7 @@
  * @brief The double-differenced baseline pipeline: Application::runBaseline and its stages.
  *
  * Kept apart from Application.cpp so that each processing mode has its own translation
- * unit.  runBaseline is a short ordered driver (card UOM step U7c) over three levels of
+ * unit.  runBaseline is a short ordered driver over three levels of
  * named stages, each a block of the former single 1,043-line function moved unchanged
  * (scripts/uom_u7_verify.py proves the move):
  *  - the run: the PathResolver pass, the input checks, the stations' alignment, the

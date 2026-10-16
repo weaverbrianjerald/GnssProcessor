@@ -1,5 +1,5 @@
-// Unit tests for the run-end counters of KalmanFilter's post-fit QC events (card UOM step
-// U2e): the counter rows are a complete declared table, and the run-end block prints one
+// Unit tests for the run-end counters of KalmanFilter's post-fit QC events:
+// the counter rows are a complete declared table, and the run-end block prints one
 // row per counter with its count.
 
 #include "filter/KalmanQcCounters.hpp"

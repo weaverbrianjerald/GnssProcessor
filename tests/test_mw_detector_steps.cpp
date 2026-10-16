@@ -1,6 +1,6 @@
 /**
  * @file test_mw_detector_steps.cpp
- * @brief Step-level pieces of the MW slip detector (card UOM step U5m-d): the verdict's
+ * @brief Step-level pieces of the MW slip detector: the verdict's
  *        defaults, the one function that forms a flagged lane's results, and the MW pivot
  *        election.
  *

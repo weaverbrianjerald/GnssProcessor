@@ -5,9 +5,7 @@
  *        path did not handle (TurboEdit GF-only resolutions, then the
  *        auxiliary detectors' resets).
  *
- * Bodies moved verbatim from CycleSlipManager.cpp (card UOM step U3;
- * scripts/uom_u3_verify.py); each pass's guard moved from the driver into the
- * pass.
+ * Each pass holds its own guard.
  */
 
 #include "slip/CycleSlipManager.hpp"

@@ -44,8 +44,7 @@ namespace GnssProcessor {
      * update was applied, skipped, or needs a measurement rebuild (ambiguity
      * reset or full reset).
      *
-     * The member functions are defined in five files by concern (card UOM step
-     * U2b), and each declaration below that is not in the driver names its file:
+     * The member functions are defined in five files by concern, and each declaration below that is not in the driver names its file:
      *   - src/core/filter/KalmanFilter.cpp: the driver (construction, predict,
      *     update, the IEKF step, the pseudo-observation update, the drains and
      *     the per-epoch hooks);
@@ -100,7 +99,7 @@ namespace GnssProcessor {
          * With no valid contribution this delegates to predict(dt), preserving
          * GNSS-only behavior byte-for-byte.  With an INS contribution the
          * assembly is the strapdown INS predict (the kernel of the retired
-         * IMU-only predict, deleted in card UOM step U2a): Identity-seeded F
+         * IMU-only predict): Identity-seeded F
          * (non-INS means are not propagated) and baseline Q over the
          * contribution's integrated interval rather than the GNSS dt.
          *
@@ -498,7 +497,7 @@ namespace GnssProcessor {
         /// beginEpoch so each epoch decides afresh; long-term biases are covered
         /// by the separate EWMA-based inflation.  Only Application::run calls
         /// beginEpoch: under RealTimeEngine (and the network consumer) and the
-        /// baseline driver the queue is never cleared (card UOM, defect K-D1).
+        /// baseline driver the queue is never cleared.
         std::map<std::string, double> pending_r_inflations_;
 
         /// Sat-bias resets queued by the stuck-code-bias detector.  Key
@@ -637,7 +636,7 @@ namespace GnssProcessor {
         //
         // validatePostFitResiduals drives them in order over one working value; the
         // stage list and its four exits are in include/filter/KalmanPostFitQc.hpp
-        // (card UOM step U2c).  Each is defined in src/core/filter/KalmanPostFitQc.cpp.
+        //.  Each is defined in src/core/filter/KalmanPostFitQc.cpp.
 
         /// The values the post-fit stages share for one pass; defined in
         /// include/filter/KalmanPostFitQc.hpp.

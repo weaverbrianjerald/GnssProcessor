@@ -4,7 +4,7 @@
  *        BSSD-aware ambiguity reset and the covariance-preserving integer
  *        repair.
  *
- * Moved verbatim from CycleSlipManager.cpp (card UOM step U3).  Both write the
+ * Moved verbatim from CycleSlipManager.cpp.  Both write the
  * filter state directly and record the epoch's smoother actions in
  * @c epoch_reset_sats_ (reset) and @c epoch_repairs_ (repair).
  */

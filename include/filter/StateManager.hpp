@@ -797,7 +797,7 @@ namespace GnssProcessor {
         const std::map<std::string, size_t>& indicesOf(StateFamily family) const;
 
         /**
-         * @brief The run-start table "state families as armed" (card UOM step U6f).
+         * @brief The run-start table "state families as armed".
          *
          * One line per row of @ref kStateFamilies, after a title line: whether this
          * configuration arms the family's birth site (@ref StateFamilySpec::birth),
@@ -1745,7 +1745,7 @@ namespace GnssProcessor {
         /**
          * @brief Q block of the slant ionosphere and its rate.
          *
-         * Applied only in @c ProcessingMode::PPP_RTK (card UOM defect S1).  Per
+         * Applied only in @c ProcessingMode::PPP_RTK.  Per
          * satellite: the zenith spectral density (or its adaptive override) over
          * max(sin^2 el, 0.01), as a random walk, or as the CWNA level/rate pair when
          * the rate state exists.  Frozen pivots get none.
@@ -1770,8 +1770,7 @@ namespace GnssProcessor {
          *        bias, clock): the random walk of the family's table row,
          *        @c pn.*q_psd * dt, none for a state whose satellite is a frozen pivot.
          *
-         * One function for the three blocks that were written three times (card UOM
-         * step U6e); the field and the satellite rule come from @ref kStateFamilies.
+         * One function for the three satellite blocks; the field and the satellite rule come from @ref kStateFamilies.
          *
          * @param Q      The process noise matrix being built.
          * @param family The family (its row has @c QRule::RandomWalk).

@@ -6,7 +6,7 @@
  *        their steps.
  *
  * MwSlipDetector::detectLargeMwResets (one epoch) and MwSlipDetector::processMwSample
- * (one sample) are ordered drivers over named private steps (card UOM step U5m-d):
+ * (one sample) are ordered drivers over named private steps:
  *
  *   detectLargeMwResets  (MwSlipDetector.cpp; the steps in MwSlipDetectorEpoch.cpp)
  *     E0  beginEpoch_                 per-epoch resets, the LLI rotation, the epoch time

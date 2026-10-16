@@ -10,7 +10,7 @@
  * the Kalman predict and the cycle-slip detection.  The stages that were inline blocks of
  * the former single Application::run read and write the epoch's PppEpochWork
  * (app/PppPipelineWork.hpp) through an alias block, so their bodies read as they did
- * (card UOM step U7b; scripts/uom_u7_verify.py proves the move).
+ *.
  */
 
 #include "app/Application.hpp"

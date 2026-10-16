@@ -1,7 +1,7 @@
 /**
  * @file test_cycle_slip_counters.cpp
  * @brief Unit tests for the post-processing slip layer's run-end counters
- *        (card UOM step U3d): the printed table and the detector rows a
+ *: the printed table and the detector rows a
  *        CycleSlipManager declares for the detectors the registry built.
  */
 

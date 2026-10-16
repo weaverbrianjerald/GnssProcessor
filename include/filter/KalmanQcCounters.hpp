@@ -8,7 +8,7 @@
  * QC branch that never acts looks the same in a clean log as one that acts silently, and
  * on the user side most of these events log at info or debug, which the shipped configs
  * hide (they set the kalman_filter level to warn).  Each event of the post-fit screen and
- * of its responses increments one member where it happens (card UOM step U2e), and
+ * of its responses increments one member where it happens, and
  * KalmanFilter::logKalmanFilterTimings prints the block once at the end of the run, beside
  * the timing summary, from the rows of @ref kKalmanQcCounterRows.
  *

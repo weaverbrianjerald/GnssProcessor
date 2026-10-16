@@ -6,16 +6,14 @@
  *
  * `StateManager` keeps the dynamic part of the state vector in one key->index
  * map per family (ambiguities, slant ionosphere, receiver code biases, ...).
- * Before card UOM step U1a every place that had to visit "all families" listed
- * the maps by hand: the state size, the index shift after a removal, the state
- * labels, the RT snapshot's restore kinds, its writer and its reader.  Those
- * lists had drifted apart (the phase-colour family was in three of them and
- * missing from four).  This header is now the one list: a reader finds every
+ * Every place that visits "all families" (the state size, the index shift after
+ * a removal, the state labels, the RT snapshot's restore kinds, its writer and
+ * its reader) reads this header, so the lists cannot drift apart.  It is the
+ * one list: a reader finds every
  * family in @ref kStateFamilies with its label prefix and snapshot tag, its
  * re-inflation counter, its gap response, the rule that names the satellite of
- * a key and its process-noise rule (step U6e), the configuration that arms its
- * birth, the source of its initial variance and the events wired to it (step
- * U6f, printed at run start by `StateManager::logFamiliesAsArmed`), and a new
+ * a key and its process-noise rule, the configuration that arms its
+ * birth, the source of its initial variance and the events wired to it (printed at run start by `StateManager::logFamiliesAsArmed`), and a new
  * family is added by one row here plus its map in `StateManager`.
  *
  * Plain value types and a constant table, with two small pure lookups; no
@@ -106,7 +104,7 @@ namespace GnssProcessor {
         None,                 ///< No process noise (the network owns the family's prior).
         RandomWalk,           ///< q * dt on the diagonal.
         ObliquityRandomWalk,  ///< q / max(sin^2 el, 0.01) * dt, or the CWNA pair with the rate
-                              ///< state; applied in ProcessingMode::PPP_RTK only (card UOM S1).
+                              ///< state; applied in ProcessingMode::PPP_RTK only.
         CwnaWithLevel,        ///< The rate half of the ionosphere CWNA pair (PPP_RTK only).
     };
 
@@ -135,7 +133,7 @@ namespace GnssProcessor {
     enum class InitialStdRule : std::uint8_t {
         ConfigField,     ///< filter.initial_std.<field> (@ref StateFamilySpec::initial_std).
         AmbiguityStd,    ///< GnssConfig::getAmbiguityStd() (1000 m, no JSON key) unless the caller
-                         ///< passes an override (card UOM defect S3).
+                         ///< passes an override.
         CallerSupplied,  ///< The creating code passes the variance (network.phase_colour_sigma_zen_m).
     };
 

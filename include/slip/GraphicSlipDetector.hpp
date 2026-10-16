@@ -120,7 +120,7 @@ namespace GnssProcessor {
          * @brief Enable CSV tracing for GRAPHIC diagnostics.
          *
          * No driver calls this, so the GRAPHIC trace is never opened.  A plain
-         * method since the virtual left @c ISlipDetector (card UOM step U5m-a).
+         * method since the virtual left @c ISlipDetector.
          *
          * @param log_dir Directory where the trace file will be created.
          * @return true if the file was successfully opened.

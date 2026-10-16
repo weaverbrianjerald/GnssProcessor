@@ -6,7 +6,7 @@
  * run() loads the configuration and dispatches on the mode: real time
  * (ApplicationRealtime.cpp), baseline (ApplicationBaseline.cpp), the network producer
  * (ApplicationNetwork.cpp), or the PPP / PPP-RTK pipeline, whose spine is runPpp().
- * runPpp() is a short ordered list of named stages (card UOM step U7b); each stage lives
+ * runPpp() is a short ordered list of named stages; each stage lives
  * in the file of its concern:
  *  - PppSetup.cpp         the a-priori position, the components and their wiring;
  *  - PppEpochSteps.cpp    one epoch up to the measurement update: the observations, the

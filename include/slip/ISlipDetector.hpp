@@ -34,13 +34,13 @@
  * @c setCorrections, @c kind and @c asMelbourneWubbena; the registry calls
  * @c name.  Every method of the interface is dispatched by one of them.  The
  * hard-gap restart and the CSV trace are not part of the contract: no caller
- * dispatched them through the base, so card UOM step U5m-a removed the three
+ * dispatched them through the base, so the interface has no such
  * virtuals (@c resetAll, @c enableTracing, @c isTracingEnabled), and the MW
  * detector keeps @c resetAll and @c enableTracing as plain methods of its own,
  * called on the concrete type.  The real-time, baseline and network pipelines
  * hold concrete detector types and use none of this interface.  Whether the
  * interface stays or becomes a declared detector table is a decision owed by
- * the author (card UOM section 7 item 1).
+ * the author.
  */
 
 #include "common/PppTypes.hpp"

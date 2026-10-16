@@ -23,7 +23,7 @@
  * Migration staging (docs/aiding_source_abstraction_design.md, "IMU migration
  * plan"): the contributions implemented here are the live path via
  * predictAided / collectPredict; the IMU-only KalmanFilter predict they replaced
- * was deleted in card UOM step U2a.
+ * no longer exists.
  */
 
 #include "aiding/IAidingSource.hpp"

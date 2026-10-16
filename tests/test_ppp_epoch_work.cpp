@@ -1,6 +1,6 @@
 /**
  * @file test_ppp_epoch_work.cpp
- * @brief The working values of the PPP / PPP-RTK pipeline (card UOM step U7b).
+ * @brief The working values of the PPP / PPP-RTK pipeline.
  *
  * Application::runPpp builds one PppEpochWork per epoch and the stages read and write
  * its members.  Those members were the epoch loop's locals, and the stages rely on the

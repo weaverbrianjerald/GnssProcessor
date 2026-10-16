@@ -8,7 +8,7 @@
  * the knob that arms its subsystem, and prints its lines (or, for the smoother, runs the
  * backward pass and writes its trace).  The table is the run end's table of contents;
  * each report is one block of the former single Application::run, moved unchanged
- * (card UOM step U7b; scripts/uom_u7_verify.py proves the move).
+ *.
  *
  * The order is the former run end's: the processing-time line measures the wall from the
  * start of the epoch loop to the moment its row runs, so the smoother and the NEQ export
@@ -139,7 +139,7 @@ void Application::writeSmootherTrace_(const Smoother& smoother) {
         // A state the layout does not hold (the receiver clock under BSSD
         // and in baseline mode: its index is the max() sentinel) is written
         // as NaN, as the other traces do; indexing x with the sentinel read
-        // outside the vector (card UOM, UB1).
+        // outside the vector.
         constexpr double kAbsent = std::numeric_limits<double>::quiet_NaN();
         auto value_or_nan = [&](const Eigen::VectorXd& x, size_t i) {
             return i < static_cast<size_t>(x.size()) ? x[static_cast<Eigen::Index>(i)] : kAbsent;

@@ -6,8 +6,6 @@
  *        deferred repairs in the new frame).
  *
  * All three are no-ops without BSSD (@c estimation.between_satellite_sd).
- * Bodies moved verbatim from CycleSlipManager.cpp (card UOM step U3;
- * scripts/uom_u3_verify.py).
  */
 
 #include "slip/CycleSlipManager.hpp"

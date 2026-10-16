@@ -1,11 +1,10 @@
 /**
  * @file test_state_manager_families.cpp
- * @brief The family table's behaviour columns against StateManager's code (card UOM
- *        steps U6e and U6f).
+ * @brief The family table's behaviour columns against StateManager's code.
  *
  * kStateFamilies declares, per dynamic family, its re-inflation counter, its gap
- * response, the rule that names the satellite of a key and its process-noise field
- * (U6e), and its birth gate and initial-variance source (U6f).  The lists that read the
+ * response, the rule that names the satellite of a key and its process-noise field,
+ * and its birth gate and initial-variance source.  The lists that read the
  * table (the gap edit, the frozen-pivot Q skip, the satellite random walks, the run-end
  * names) are exercised here, and every declared value that the code does not read from
  * the table is compared with what the code does, so the table cannot drift from the
@@ -237,7 +236,7 @@ std::vector<std::string> warnings(const std::vector<std::string>& lines) {
 
 TEST(StateManagerFamiliesTest, ArmedTableWarnsWhenABornFamilyGetsNoProcessNoise) {
     // PPP with uncombined processing: the slant ionosphere is born and observed, but its
-    // Q applies in PPP_RTK mode only (card UOM defect S1).  The table states it.
+    // Q applies in PPP_RTK mode only.  The table states it.
     LogManager lm;
     const GnssConfig ppp = loadConfig(
         R"({"processing": {"mode": "PPP", "uncombined_enabled": true}})", "ppp_unc");

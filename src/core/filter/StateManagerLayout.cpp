@@ -1,6 +1,6 @@
 /*!
  * \file StateManagerLayout.cpp
- * \brief StateManager's construction: the fixed core layout (card UOM step U6d).
+ * \brief StateManager's construction: the fixed core layout.
  *
  * Owns the constructor and its four steps.  Baseline (DD) mode lays out position
  * (plus the optional differential ZWD) in layoutBaseline_ and returns; the PPP /

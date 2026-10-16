@@ -1,5 +1,5 @@
 // Unit tests for the coherent-offset pivot detectors of KalmanFilter's post-fit screen
-// (card UOM step U2d): the detector table kalman::kPivotDetectors and the pure test it
+//: the detector table kalman::kPivotDetectors and the pure test it
 // shares, kalman::testCoherentOffset, with its median helper.
 //
 //   Table:    the four rows, in the order they run, with the parameters the former four

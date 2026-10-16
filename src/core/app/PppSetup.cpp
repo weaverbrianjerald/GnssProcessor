@@ -5,9 +5,7 @@
  *
  * Application::runPpp (Application.cpp) calls them in this file's order after the input
  * phases.  initializePosition seeds the state's position from the RINEX header or the
- * station information file; each build or wire stage below is one block of the former
- * single Application::run, moved unchanged (card UOM step U7b; scripts/uom_u7_verify.py
- * proves the move).  The order is load-bearing: the constructors log, the IMU source
+ * station information file; each build or wire stage below is one setup block.  The order is load-bearing: the constructors log, the IMU source
  * attaches to the KalmanFilter, PppModel::initializeState runs after the components exist,
  * and the trace logger opens last.
  */

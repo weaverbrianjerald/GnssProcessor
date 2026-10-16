@@ -1,6 +1,6 @@
 /**
  * @file test_state_family.cpp
- * @brief The declared table of dynamic state families (card UOM step U1a).
+ * @brief The declared table of dynamic state families.
  *
  * Guards the table itself (one row per family, unique serialized names) and the
  * StateManager loops that read it: the state size, the labels, the index shift

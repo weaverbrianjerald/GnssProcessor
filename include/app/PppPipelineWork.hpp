@@ -5,7 +5,7 @@
  * @brief The working values the stages of the PPP / PPP-RTK pipeline share.
  *
  * Application::runPpp (src/core/app/Application.cpp) is a short ordered driver over named
- * private stages (card UOM step U7b).  The values one epoch's stages hand to one another
+ * private stages.  The values one epoch's stages hand to one another
  * were locals of the epoch loop of a single 836-line Application::run; they are now the
  * members of @ref PppEpochWork, built empty at the top of each epoch and discarded at its
  * end.  Each stage opens with an alias block that binds the names the code had as loop

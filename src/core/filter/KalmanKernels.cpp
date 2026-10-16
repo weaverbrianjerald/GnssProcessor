@@ -6,7 +6,6 @@
  * Stateless functions only.  The sparse-H products are declared in
  * include/filter/KalmanKernels.hpp (namespace GnssProcessor::kalman); spliceAndPropagate
  * and josephPseudoUpdate are static members of KalmanFilter (include/filter/KalmanFilter.hpp).
- * Moved here from KalmanFilter.cpp unchanged by card UOM step U2b.
  */
 
 #include "filter/KalmanKernels.hpp"

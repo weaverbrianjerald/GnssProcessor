@@ -10,7 +10,7 @@
  *   seedCovarianceDiagonals     the constructor's initial P for unset core states.
  *
  * Called from KalmanPostFitQc.cpp (the dispatch and the backstop) and from the
- * constructor.  Moved here from KalmanFilter.cpp unchanged by card UOM step U2b.
+ * constructor.
  */
 
 #include "filter/KalmanFilter.hpp"

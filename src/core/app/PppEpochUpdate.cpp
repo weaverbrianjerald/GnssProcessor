@@ -6,9 +6,7 @@
  * loop with its KF-reset fan-out (runFilterUpdateLoop), the optional geometry
  * relinearization (IEKF, or the naive pass on the tightly coupled IMU path), the merge of
  * the epoch's resets for the smoother, the GIM ionosphere pseudo-observation, and integer
- * ambiguity resolution with its ATX gates.  Moved or cut from the former single
- * Application::run unchanged (card UOM step U7b; scripts/uom_u7_verify.py proves the
- * move).
+ * ambiguity resolution with its ATX gates.
  */
 
 #include "app/Application.hpp"

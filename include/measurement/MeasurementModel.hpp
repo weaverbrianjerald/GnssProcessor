@@ -39,7 +39,7 @@ namespace GnssProcessor {
      *  - PivotManager:  pivot selection, handover, and state re-referencing.
      *  - BssdTransform:     between-satellite single-difference S-transformation.
      *
-     * The implementation is split by concern (card UOM step U4):
+     * The implementation is split by concern:
      *  - MeasurementModel.cpp: construction and setters; computeMeasurementUpdate,
      *    the order of an epoch's steps and the row loop; hasValidGeometry;
      *    validateMeasurementUpdate; the BSSD forwarders.
@@ -202,8 +202,8 @@ namespace GnssProcessor {
          * the network driver calls this (per station, from the station's RINEX
          * "GLONASS SLOT / FRQ #" header).  The post-processing and real-time
          * constructions do not, so a GLONASS uncombined user run takes the
-         * default table here while @c PppModel uses the header slots (card UOM,
-         * defect MM-D2; identical whenever the header equals the table).
+         * default table here while @c PppModel uses the header slots
+         * (identical whenever the header equals the table).
          *
          * @param slots satellite-id -> FCN channel number.
          */
@@ -254,7 +254,7 @@ namespace GnssProcessor {
          *        whenever its size equals the state size after this call's pivot
          *        handover, prune and births, and from the current state
          *        otherwise.  Equal size does not imply equal layout or values
-         *        (card UOM, defect DD-D1).
+         *.
          * @param excluded_measurements Row signatures to skip, formatted
          *        @c "sat_i_<signal_token>" where the token matches
          *        @c EpochMeasurement::signal_types (@c rov_code when rov/ref agree,
@@ -733,7 +733,7 @@ namespace GnssProcessor {
          * model_corrections.ambiguity_std_substituted_atx when
          * loosen_amb_q_for_substituted_atx is on and the signal's ATX was
          * substituted, else GnssConfig::getAmbiguityStd(), 1000 m with no JSON key
-         * (card UOM defect S3).  (f) GLONASS under BSSD; a signal without applied
+         *.  (f) GLONASS under BSSD; a signal without applied
          * phase-bias coverage; an iono-free pair also without receiver ATX.
          * (g) The key from StateInitializer::resolveReceiverBias (DCB, IFB, ISC,
          * or GLONASS per-slot IFB; the GLONASS network keeps per-slot keys only).
@@ -1191,8 +1191,8 @@ namespace GnssProcessor {
          *
          * The ambiguity is read from @p current_state when its size equals the
          * state size after the three state writes, else from the state: equal
-         * size does not imply equal layout or values (card UOM, defect DD-D1,
-         * kept unchanged here).
+         * size does not imply equal layout or values (a known defect, kept
+         * unchanged here).
          *
          * @param current_state The caller's state snapshot.
          * @param dd            The working value (innovations and kept filled).

@@ -42,8 +42,7 @@ struct DeferredIntegerRepair {
  * @brief Per-epoch working value of @c CycleSlipManager::detectAndRepair.
  *
  * Built by the driver from its four arguments and the module logger, filled and
- * read by the sections in order (S0 to S17, the section list of card UOM's
- * organization map), discarded when the call returns.  It owns nothing that
+ * read by the sections in order (S0 to S17), discarded when the call returns.  It owns nothing that
  * outlives the epoch: what must persist lives in the manager (@c last_mw_slips_,
  * @c epoch_reset_sats_, @c epoch_repairs_, the soft-LLI bridge, the detectors).
  * The members are grouped by the section that first writes them.

@@ -5,9 +5,8 @@
  * @brief Run-end counters of the post-processing slip layer
  *        (@c CycleSlipManager), and the table they print.
  *
- * Standing invariant 4 (run-end counters are the ON-path telemetry): before
- * card UOM step U3 the post-processing slip layer had per-epoch counters only,
- * logged partially and never accumulated.  @c CycleSlipManager accumulates one
+ * Standing invariant 4 (run-end counters are the ON-path telemetry):
+ * @c CycleSlipManager accumulates one
  * @c CycleSlipCounters over the run and prints it when the manager is destroyed
  * at run end (nothing is printed for a manager that processed no epoch).
  *

@@ -8,9 +8,7 @@
  * in-house phase-bias estimate (used only with
  * processing.inhouse_bias_estimation).
  *
- * Part of MwSlipDetector (slip/MwSlipDetector.hpp lists every file of the class);
- * card UOM step U5m-c moved these bodies here unchanged (scripts/uom_u5m_verify.py
- * proves the move against the single source file of f823a36).
+ * Part of MwSlipDetector (slip/MwSlipDetector.hpp lists every file of the class).
  */
 
 #include "slip/MwSlipDetector.hpp"

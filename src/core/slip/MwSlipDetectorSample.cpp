@@ -5,9 +5,7 @@
  * processMwSample (MwSlipDetector.cpp) runs these in order over one
  * MwSlipDetector::MwSampleWork (slip/MwDetectorWork.hpp, which lists them); the sample
  * ends at the first stage that flags a slip.  Each stage opens with an alias block that
- * binds the names its code had in the former single function; card UOM step U5m-d cut
- * the bodies out unchanged apart from the declared edits (scripts/uom_u5m_verify.py
- * proves them against f823a36): the out-parameters are the verdict's fields, and the
+ * binds the names its code had in the former single function: the out-parameters are the verdict's fields, and the
  * values one stage hands to the next are the work value's members.
  */
 

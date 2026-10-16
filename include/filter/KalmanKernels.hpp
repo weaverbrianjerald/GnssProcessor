@@ -12,8 +12,7 @@
  *
  * Stateless free functions, defined in src/core/filter/KalmanKernels.cpp beside the
  * other algebra of the filter (KalmanFilter::spliceAndPropagate and
- * KalmanFilter::josephPseudoUpdate).  Card UOM step U2b moved them out of
- * KalmanFilter.cpp's anonymous namespace unchanged.  Included only by
+ * KalmanFilter::josephPseudoUpdate).  Included only by
  * src/core/filter/Kalman*.cpp.
  */
 

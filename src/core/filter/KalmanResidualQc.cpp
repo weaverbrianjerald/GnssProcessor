@@ -5,8 +5,7 @@
  *
  * KalmanFilter::residualQcKernel is pure and static (unit-tested in
  * tests/test_residual_qc_wtest.cpp); KalmanFilter::computeResidualQc_ applies it to an
- * EpochMeasurement.  Neither touches the state.  Moved here from KalmanFilter.cpp
- * unchanged by card UOM step U2b.
+ * EpochMeasurement.  Neither touches the state.
  */
 
 #include "filter/KalmanFilter.hpp"

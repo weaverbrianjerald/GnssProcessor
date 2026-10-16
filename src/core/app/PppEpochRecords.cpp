@@ -5,8 +5,6 @@
  *        line and the CSV traces.
  *
  * None of these changes the filter state except through the smoother's own buffer.
- * Moved or cut from the former single Application::run unchanged (card UOM step U7b;
- * scripts/uom_u7_verify.py proves the move).
  */
 
 #include "app/Application.hpp"

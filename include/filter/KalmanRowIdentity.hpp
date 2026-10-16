@@ -9,11 +9,10 @@
  * @c EpochMeasurement: the satellite id ("G01", or the BSSD single-difference pair
  * "G01-G05", non-pivot first) and the signal ("L1C", or an ionosphere-free pair
  * "L1C_L2W").  The KalmanFilter files parse them with these two functions only.
- * Card UOM step U2b moved them out of KalmanFilter.cpp's anonymous namespace unchanged so
- * the driver, the post-fit QC and the outlier responses share one copy; card UOM step U8
- * replaces them by the typed identities of common/GnssIdentity.hpp (the band table below
+ * The driver, the post-fit QC and the outlier responses share this one copy.  The typed
+ * identities of common/GnssIdentity.hpp are to replace them: the band table below
  * disagrees with PppUtils and GnssIdentity on QZSS L6, SBAS band 2, the GLONASS slots and
- * the BeiDou RINEX 3.02 B1I spelling; card UOM section 3, ID-SD1 and ID-SD3).
+ * the BeiDou RINEX 3.02 B1I spelling.
  *
  * Included only by src/core/filter/Kalman*.cpp.
  */

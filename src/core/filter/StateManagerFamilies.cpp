@@ -1,6 +1,6 @@
 /*!
  * \file StateManagerFamilies.cpp
- * \brief The run-start table "state families as armed" (card UOM step U6f).
+ * \brief The run-start table "state families as armed".
  *
  * Owns StateManager::familiesAsArmed and StateManager::logFamiliesAsArmed: one line
  * per row of kStateFamilies (filter/StateFamily.hpp), stating whether this
@@ -124,15 +124,15 @@ namespace GnssProcessor {
                 initialStdText(s, config_), processNoiseText(s, config_), eventsText(s)));
         }
         // A family the configuration creates whose process-noise rule does not apply
-        // on this run: its states are observed and never random-walk (card UOM
-        // defect S1, behaviour step UB2), stated here so a reader sees it at run start.
+        // on this run: its states are observed and never random-walk.  Stated here so
+        // a reader sees it at run start.
         for (const StateFamilySpec& s : kStateFamilies) {
             if (s.q_rule == QRule::None || !birthArmed(s.birth, config_)) continue;
             if (processNoiseApplied(s, config_)) continue;
             lines.push_back(fmt::format(
                 "WARNING: {} states are born on this run ({}) but get no process noise: "
-                "the rule applies in PPP_RTK mode only and this run's mode is not PPP_RTK "
-                "(card UOM defect S1)", s.name, birthText(s.birth)));
+                "the rule applies in PPP_RTK mode only and this run's mode is not PPP_RTK",
+                s.name, birthText(s.birth)));
         }
         return lines;
     }

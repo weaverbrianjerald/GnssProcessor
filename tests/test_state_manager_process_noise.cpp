@@ -1,6 +1,6 @@
 /**
  * @file test_state_manager_process_noise.cpp
- * @brief The blocks of StateManager's process noise matrix (card UOM step U6c).
+ * @brief The blocks of StateManager's process noise matrix.
  *
  * getProcessNoiseMatrix is a driver over one function per block of Q.  These
  * cases pin what each block writes on a default (PPP) configuration: the random

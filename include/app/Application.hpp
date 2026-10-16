@@ -63,12 +63,12 @@ struct NetworkSlipFunnel;    // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochColumns;         // app/NetworkEpoch.hpp (card NOM3 step EP1)
 struct EpochAssembly;        // app/NetworkEpoch.hpp (card NOM3 step EP1)
 
-struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share (card UOM U7b)
-struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read (card UOM U7b)
-struct BaselineRunWork;      // app/ApplicationBaseline.cpp: what one baseline run's stages share (card UOM U7c)
-struct BaselineRoverWork;    // app/ApplicationBaseline.cpp: what one rover's stages share (card UOM U7c)
-struct BaselineEpochWork;    // app/ApplicationBaseline.cpp: what one epoch of one rover shares (card UOM U7c)
-enum class BaselineEpochAction;  // app/ApplicationBaseline.cpp: how a baseline epoch ends (card UOM U7c)
+struct PppEpochWork;         // app/PppPipelineWork.hpp: the values one PPP epoch's stages share
+struct PppRunEndView;        // app/PppPipelineWork.hpp: what the PPP run-end reports read
+struct BaselineRunWork;      // app/ApplicationBaseline.cpp: what one baseline run's stages share
+struct BaselineRoverWork;    // app/ApplicationBaseline.cpp: what one rover's stages share
+struct BaselineEpochWork;    // app/ApplicationBaseline.cpp: what one epoch of one rover shares
+enum class BaselineEpochAction;  // app/ApplicationBaseline.cpp: how a baseline epoch ends
 class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
 
 /**
@@ -81,7 +81,7 @@ class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
  * `run()` loads the configuration and dispatches on the mode: real time
  * (@ref runRealTime), baseline (@ref runBaseline), the network producer
  * (@ref runNetwork), or the PPP / PPP-RTK pipeline (@ref runPpp).  runPpp() is
- * a short ordered list of named private stages (card UOM step U7b), declared
+ * a short ordered list of named private stages, declared
  * below in pipeline order under the file each lives in:
  *  - the input phases (Application.cpp): logging and configuration, data
  *    resolution, RINEX and product loading;
@@ -97,8 +97,7 @@ class  MultiRinexSync;       // rinex/MultiRinexSync.hpp
  *    NEQ, the soft-LLI snapshot, the summary line and the CSV traces;
  *  - the run end (PppRunEnd.cpp): a declared table of reports.
  * The baseline pipeline (@ref runBaseline, ApplicationBaseline.cpp) has the
- * same shape: a spine over setup, per-rover and per-epoch stages (card UOM
- * step U7c).
+ * same shape: a spine over setup, per-rover and per-epoch stages.
  */
 class Application {
 public:
@@ -179,7 +178,7 @@ private:
      * @brief The PPP / PPP-RTK pipeline: the spine @c run() dispatches to for the PPP,
      *        PPP-RTK and PPP-RTK-user modes.
      *
-     * A short ordered list of named stages (card UOM step U7b): the input phases
+     * A short ordered list of named stages: the input phases
      * (@ref resolveData, @ref loadInputData), the setup stages (PppSetup.cpp), the epoch
      * loop over the stages of PppEpochSteps.cpp, PppEpochUpdate.cpp and
      * PppEpochRecords.cpp with one @c PppEpochWork per epoch, and the run end
@@ -800,7 +799,7 @@ private:
      * turn (a star topology for BaselineMulti): DD measurement model, DD state
      * vector and integer ambiguity resolution.  Implemented in
      * @c ApplicationBaseline.cpp as a short ordered driver over the stages declared
-     * below (card UOM step U7c).
+     * below.
      *
      * @return 0 on clean shutdown, non-zero on error (including a run in which
      *         no rover overlaps the reference on any synced epoch).
@@ -808,7 +807,7 @@ private:
     int runBaseline();
 
     // -----------------------------------------------------------------------
-    // The baseline pipeline's stages (ApplicationBaseline.cpp, card UOM step U7c),
+    // The baseline pipeline's stages (ApplicationBaseline.cpp),
     // in the order runBaseline calls them.  The working values BaselineRunWork,
     // BaselineRoverWork and BaselineEpochWork are defined in that file.
     // -----------------------------------------------------------------------
