@@ -2,7 +2,7 @@
  * @file LedgerEmit.cpp
  * @brief The emitter's per-family bookkeeping read against the arc ledger, and the
  *        producer's declaration of its signal roster on the wire
- *        (@c network.ledger_emit; card SID phase 5a).
+ *        (@c network.ledger_emit).
  *
  * New code, not a relocation.  Seam contract: free functions over
  * @c (NetworkRunContext&, …) that own no state; every persistent object is a

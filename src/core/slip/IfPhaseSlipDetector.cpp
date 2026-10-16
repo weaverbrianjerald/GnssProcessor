@@ -172,7 +172,7 @@ namespace GnssProcessor {
         // share a frequency that pair is (0, 1) and the output is
         // byte-identical, also when (0, 1) passes the frequency guard and then
         // fails a later check, because the flag is set at the frequency guard,
-        // where an index test would also have committed (card SID phase 6a).
+        // where an index test would also have committed.
         const std::string sys_key = PppUtils::getSystemString(obs.system);
         const std::size_t n_use =
             all_pairs_ ? phase_signals.size() : std::size_t{ 2 };
@@ -191,7 +191,7 @@ namespace GnssProcessor {
         const double denom = f1sq - f2sq;
         if (std::abs(denom) < 1e-12) continue;
         // Claim the bare-system chain here, at the frequency guard, and not at
-        // the row push (see the comment above the loop; card SID phase 6a).
+        // the row push (see the comment above the loop).
         const bool is_first_pair = !if_pair_taken;
         if_pair_taken = true;
 

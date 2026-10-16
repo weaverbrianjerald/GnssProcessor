@@ -3,12 +3,12 @@
  * @brief The phase-visible consistency instrument (
  *        docs/refound/PVN_phase_visible_nees_2026-09-29.md), a measure-only diagnostic seam.
  *
- * Card LAH section 8: the smoothed phase-bias hold fails because the estimator states the
+ * The smoothed phase-bias hold fails because the estimator states the
  * ionosphere-free phase-visible clock of each satellite, @f$D = c - \sum_j w_j p_j@f$ (one
  * phase bias per band, @f$\sum w = 1@f$, @f$\sum w\lambda^2 = 0@f$), to a few millimetres
  * while it wanders centimetres within an arc.  This seam measures that consistency every
  * epoch, on the functional and the constellation contrast of the anchor guard's phase
- * statistic (@ref clockAnchorPhaseStatistic, card CTU2 section 5), read without its floor:
+ * statistic (@ref clockAnchorPhaseStatistic), read without its floor:
  *
  *  - the normalized update @f$e^2 / (S^- - S^+)@f$, where @f$e@f$ is the contrast update of
  *    @f$D@f$ against the dense fold's prior and @f$S^\mp@f$ its contrast-projected prior and
@@ -59,7 +59,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  * @note Returns immediately when @c ctx.knobs.pv_on is false.
  *
  * Epoch form; the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),

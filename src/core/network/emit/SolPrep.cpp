@@ -139,7 +139,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                          action, detail);
     };
 
-    // Card GFC: count this kept epoch's pin pair changes and family-row realizations, and
+    // Count this kept epoch's pin pair changes and family-row realizations, and
     // declare each family-row switch.  This is datum bookkeeping, not emission.  Both
     // scratch maps are empty unless an arm is effective, so otherwise it does nothing.
     networkCodeDatumFamilyKeptEpoch(ctx, emitEvent, events_ro);
@@ -174,7 +174,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // `b(pinned) + ISC^s` with a measured ISC rather than an assumed zero.  A companion
     // whose ISC had to be pinned at 0 is erased from the record: its value asserts
     // something the RINEX navigation message never stated, and the number alone cannot
-    // tell a consumer so.  Withholding it is the signal card RF-0f specifies ("emitted
+    // tell a consumer so.  Withholding it is the signal the ISC-state design specifies ("emitted
     // only when its ISC is observed").  Both sets are empty unless
     // network.sat_isc_state is armed, so otherwise the record stream is byte-identical.
     // --- Held extra-band column off the wire (B5D) -----------------------------------
@@ -729,13 +729,13 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             (present_sats.count(sat) ? retro_emit_sats : retro_pending).insert(sat);
         net::assignSatFlags(ctx.entities, net::Disc::UraRetro, retro_pending);   // absent sats wait for their next emit
         if (!retro_emit_sats.empty())
-            // The union drain (Card MS): every source of ura_retro_sats arrives here
+            // The union drain: every source of ura_retro_sats arrives here
             // (URA-retro QC contamination, the reference-satellite mark, the
             // datum-station slip re-reference, the RF-2 held-basis anchor handover, the
             // gross-LOS marks), and provenance is dropped at the union by design (see
             // the detail="union" event below).  A contaminated epoch can have moved any
             // channel, and a held-basis handover moves the phase bias, so this mark keeps
-            // the full satellite scope: Card MS narrows the scope only at sites that know
+            // the full satellite scope: the scope is narrowed only at sites that know
             // their channel, never at a union that does not.
             emitter.markSatDiscontinuity(retro_emit_sats,   // per-sat, not constellation-wide
                                          NetworkProductEmitter::kDiscChanAll);
@@ -772,7 +772,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Full scope (Card MS): the prior ephemeris version was evicted before
+            // Full scope: the prior ephemeris version was evicted before
             // Delta_eph could be computed, so the step is unknown in magnitude and in
             // channel; the satellite clock re-references and the bias split moves with it.
             if (!fresh.empty())
@@ -807,7 +807,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Code-bias channel only (Card MS): the code-bias carry's excursion detector
+            // Code-bias channel only: the code-bias carry's excursion detector
             // reinitialized, so the emitted code bias steps and nothing else does.
             if (!fresh.empty())
                 emitter.markSatDiscontinuity(fresh, NetworkProductEmitter::kDiscChanCodeBias);
@@ -821,7 +821,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     }
     // Land the per-satellite discontinuity for a satellite whose temporal clock anchor
     // decoupled, which makes the decoupling edge of invariant #7 visible on the wire
-    // (Card Q3, docs/SPEC_clock_temporal_anchor.md §2.4): in the same epoch its clock
+    // (docs/SPEC_clock_temporal_anchor.md §2.4): in the same epoch its clock
     // changed temporal regime (stiff to loose) and, on a resolved trip, value, so a
     // consumer integrating across it would cross a regime change it cannot see.  The
     // present/pending split is the same as in the blocks above (mark == land), so a
@@ -841,7 +841,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Clock channel only (Card MS): the Q3 temporal clock anchor decoupled, so the
+            // Clock channel only: the Q3 temporal clock anchor decoupled, so the
             // satellite's clock changed temporal regime and, on a resolved trip, value;
             // its phase and code biases did not.  CST S7.1 measured this site: a clock
             // decouple moved the phase bias by at most 0.011 m, yet a full-scope mark
@@ -882,7 +882,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         std::set<std::string> present;
         for (const auto& s : sol.sats) present.insert(s.sat);
         std::set<std::string> mark;
-        // Card GFC (network.code_datum_pair_continuity): a satellite the builder continued
+        // Pair continuity (network.code_datum_pair_continuity): a satellite the builder continued
         // this epoch changed pair without moving its datum (the new pair's target is its
         // previous solved combination).  Its re-selection is left undeclared only when the
         // comparison here is the one the builder made: the last emitted pair is the pair
@@ -934,7 +934,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Full scope (Card MS): the IF-pin re-selection re-references the emitted
+            // Full scope: the IF-pin re-selection re-references the emitted
             // dt^s <-> d^s split by the satellite's inter-channel bias, so all three
             // channels step.
             if (!fresh.empty())
@@ -971,7 +971,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             std::set<std::string> fresh;
             for (const auto& s : mark)
                 if (!retro_emit_sats.count(s)) fresh.insert(s);
-            // Code and clock channels (Card MS): after a sum-to-zero code channel with no
+            // Code and clock channels: after a sum-to-zero code channel with no
             // veteran, or an IF-pin split forced to the 0 seed, the emitted code bias
             // re-seeds; under the IF-pin convention the satellite clock is defined against
             // that same pinned pair, so the clock is re-referenced with it.  The phase
@@ -1003,7 +1003,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // emits in the new datum.
     // networkMultiGnssNotePivots records the realized clock pivots per constellation
     // at this one site where the handover baseline advances, before last_pivot is
-    // merged, so a handover is counted between emitted products (Card GAL).  It
+    // merged, so a handover is counted between emitted products.  It
     // returns on its first line unless a constellation other than GPS is active.
     networkMultiGnssNotePivots(ctx, config_, plan.clock_pivot,
                                net::letterMap(cons_rows, &net::ConstellationState::last_pivot));
@@ -1117,7 +1117,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         std::map<char, std::set<std::pair<std::string, std::string>>> by_const;
         std::set<std::string> emitted_sats;
         for (const auto& s : sol.sats) emitted_sats.insert(s.sat);
-        // Card GFC: the constellations with a satellite emitted on a held pin pair
+        // The constellations with a satellite emitted on a held pin pair
         // (network.code_datum_pair_continuity), so that a split that drops the cbpin=
         // declaration is attributed to the hold when one took part.  Empty unless armed.
         std::map<char, System> held_const;

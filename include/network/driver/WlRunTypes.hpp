@@ -42,7 +42,7 @@ struct SubBlockTimer {
 
 /// The D0b sub-blocks of the epoch loop (network.trace_section_timers): the disjoint
 /// brackets the epoch function opens and closes with networkSubBegin / networkSubEnd
-/// (runNetwork's subBegin / subEnd closures until card NOM3 step EP1), which tile the loop body
+/// (runNetwork's subBegin / subEnd closures until the epoch function replaced them), which tile the loop body
 /// between the assembly wall and the emitted-epoch readout.  The value indexes
 /// NetworkRunTiming::sub_blocks and @ref kSubBlockNames.  Moved here from runNetwork with
 /// its names so the driver's per-epoch line and the run-end ranking
@@ -50,7 +50,7 @@ struct SubBlockTimer {
 enum SubBlock {
     SB_SLIP = 0,     // block 1: PASS-A slip scans (MW refloat + IF-TD jumps), pre-assembly
     SB_PREASM,       //          pre-assembly measurement build (post-slip → assembly wall)
-    SB_GAUGEBUILD,   //          the block ahead of the DD build (until card NOM3 step EP1,
+    SB_GAUGEBUILD,   //          the block ahead of the DD build (until the epoch function replaced the closures,
                      //          also the carry-driver closure's set-up)
     SB_DDBUILD,      //          networkBuildCarryDdPriors: eq34 arc graph + carry_driver.buildDdPriors
                      //          (W·Pᶻ·Wᵀ dense DD-cov projection over K carried chords) (card 4)
@@ -71,7 +71,7 @@ enum SubBlock {
     SB_STASH_STATUS, // block 5/8: D2/C1/SH carry re-stash + VCE fold + epoch-status QC
     SB_ROSTER,       // signal-roster build and arc-ledger advance at the top of the
                      //       epoch, and the disagreement pass after the clock update
-                     //       (card SID phase 1).  Both brackets accumulate into one
+                     //      .  Both brackets accumulate into one
                      //       entry: they are the same observatory, and the cost of
                      //       interest is what the card adds to an epoch.
     SB_COUNT

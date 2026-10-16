@@ -364,11 +364,11 @@ void RealTimeEngine::flush() {
     logBiasAttrMismatchSummary("end of run");
     // The same summary for the orbit/clock coherence-echo mismatches (card 7).
     logOrbitEchoMismatchSummary("end of run");
-    // The declared-step carry counters, silent unless armed (card CC (A)).  The
+    // The declared-step carry counters, silent unless armed.  The
     // closed-loop harness never calls flush(); its consumer's counters go out on
     // the closed-loop summary (networkClosedLoopRunEnd) instead.
     logPbDiscCarrySummary_("end of run");
-    // The every-step translation counters (card PBT (A)).
+    // The every-step translation counters.
     logPbStepTranslateSummary_("end of run");
     // The hold reaction, silent unless a held entry was seen.
     logPbHoldSummary_("end of run");
@@ -377,11 +377,11 @@ void RealTimeEngine::flush() {
     // The ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
     // The declared-roster census, silent unless a declaration was seen or the
-    // 5b knob is armed (card SID phase 5).  The closed-loop harness and the
+    // 5b knob is armed.  The closed-loop harness and the
     // replay driver never call flush(), so both call this directly at their
     // own tails.
     logRosterConsumerSummary("end of run");
-    logReinflateSummary("end of run");   // card OWD (O2)
+    logReinflateSummary("end of run");
 }
 
 void RealTimeEngine::drainHeldObs() {
@@ -476,7 +476,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     // else: computeModels decides a constellation's canonical signals on its
     // first epoch, so a declaration handed over after this call is too late for
     // the band it would have moved.  No-op on a wire that carries no roster
-    // (producers without the declaration, every RTCM stream).  (card SID phase 5)
+    // (producers without the declaration, every RTCM stream).
     refreshDeclaredRoster_();
 
     if (!ppp_model_->computeModels(filtered_obs, ppp_state_, ctx.modeled_obs,
@@ -543,7 +543,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     resetOnPhaseBiasDisc(ctx);
     reinflateOnCodeBiasDisc(ctx);
     reinflateOnClockDisc(ctx);
-    reactToDeclaredLevelSteps_(ctx);   // card CLV2 (no-op unarmed)
+    reactToDeclaredLevelSteps_(ctx);   // no-op unarmed
 
     // --- Estimation tail ---------------------------------------------------
     runMeasurementUpdate(ctx);
@@ -581,7 +581,7 @@ bool RealTimeEngine::processEpoch(const std::vector<RinexObservation>& epoch_obs
     traceConsumerSat_(ctx);
 
     // The live filter memory is now "as of" this epoch: the stamp that
-    // writeStateSnapshotTo uses and checks against the network copy (card CC (B)).
+    // writeStateSnapshotTo uses and checks against the network copy.
     last_processed_epoch_ = ctx.current_time;
     has_processed_epoch_  = true;
 

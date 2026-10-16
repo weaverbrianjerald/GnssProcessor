@@ -92,7 +92,7 @@ struct EpochEvents;             // network/driver/Epoch.hpp
  *        ordering contract.
  *
  * Epoch form; the explicit form and its forwarding adapter
- * retired in card NOM3 step EP2 (the unit tests call this form through
+ * retired (the unit tests call this form through
  * tests/support/NetworkTestRun.hpp).
  *
  * @param run The run (network/driver/Run.hpp). Written through non-const bindings: run.ctx (ctx),

@@ -95,7 +95,7 @@ struct NetworkRaimCiTallies {
 
 /**
  * @brief The admissions of one carried-phase RAIM pool over a run, per contribution
- *        kind (the instrumentation gap of card NOM section 16).
+ *        kind (the instrumentation gap).
  *
  * The admission rule itself is a statement about row kinds and lives with the row
  * classifier (network/assembly/RowClassify.hpp, @c raimPoolAdmitsKind); this counter of what
@@ -116,19 +116,19 @@ struct RaimPoolAdmissionTally {
     std::array<long long, kContributionKinds + 1> visits{};   ///< Admitted (row, column) visits, by kind.
     std::array<long long, kContributionKinds + 1> rows{};     ///< Admitted rows, each once per station-epoch walk, by kind.
     std::array<long long, kContributionKinds + 1> refused{};  ///< Visits refused by the kind rule, by kind (@c Unset last).
-    /// Card RPA (@c network.raim_pool_data_rows_only on): (observation phase row, column)
+    /// Data-rows-only pool (@c network.raim_pool_data_rows_only on): (observation phase row, column)
     /// pairs whose coefficient exceeds 0.5 on a column the row's tag does not name.  Each
     /// is also a refused visit.  0 expected: a phase row carries +1 on its own column only.
     long long own_col_cleared_other{0};
-    /// Card RPA, knob on: (observation phase row, column) pairs whose tag names the column
+    /// Data-rows-only pool, knob on: (observation phase row, column) pairs whose tag names the column
     /// while the coefficient is at or below 0.5 (admitted by the tag).  0 expected.
     long long own_col_not_cleared{0};
-    /// Card RPA, knob on: (observation phase row, column) pairs where the tag and the
+    /// Data-rows-only pool, knob on: (observation phase row, column) pairs where the tag and the
     /// coefficient test agree that the column is the row's own (the admitted phase visits).
     long long own_col_agree{0};
 
     /**
-     * @brief Count one (row, column) visit that cleared 0.5 (or, with card RPA's knob on,
+     * @brief Count one (row, column) visit that cleared 0.5 (or, with the data-rows-only pool knob on,
      *        that the row's tag admitted).
      * @param k        The row's kind.
      * @param admitted Whether the pool's rule (@ref raimPoolAdmitsRow) admitted it.
@@ -137,7 +137,7 @@ struct RaimPoolAdmissionTally {
     void note(ContributionKind k, bool admitted, bool first);
 
     /**
-     * @brief Card RPA's own-column check for one (row, column) pair, knob on: does the
+     * @brief The own-column check for one (row, column) pair, knob on: does the
      *        column the row's tag names equal the column on which its coefficient exceeds
      *        0.5?  Counts observation phase rows only; every other kind is ignored.
      * @param k      The row's kind.
@@ -155,7 +155,7 @@ struct RaimPoolAdmissionTally {
     std::string text() const;
 
     /**
-     * @brief The run-end text of card RPA's own-column check (knob on).
+     * @brief The run-end text of the own-column check (knob on).
      * @return "own column: tag and coefficient agree A, coefficient > 0.5 on another
      *         column B, tag's column at or below 0.5 C".
      */
@@ -258,8 +258,8 @@ enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
  *
  * Step `raim_columns` of kStationBuildSteps (network/assembly/StationBuild.hpp); its kinds: none
  * (it records only). It returns at once unless `raim_ci_on || pd_handover_continuous`. Records:
- * qc_amb. The frozen text of networkPassB_'s produce loop below its bindings (card NOM3 step
- * PB1b).
+ * qc_amb. The frozen text of networkPassB_'s produce loop below its bindings.
+ *
  * @param build One station's build: the station and its slot writable, the run read only.
  * @return StationStep::Next.
  */

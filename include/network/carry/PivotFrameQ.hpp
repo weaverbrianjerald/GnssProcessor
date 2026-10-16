@@ -43,7 +43,7 @@ inline double pivotFrameCross(double rate_p, double dt_a, double dt_b) {
     return (rate_p > 0.0) ? rate_p * std::max(0.0, std::min(dt_a, dt_b)) : 0.0;
 }
 
-/// Run totals of card PFQ (standing invariant 4: an armed term must be countable).
+/// Run totals of the pivot-frame process noise term (standing invariant 4: an armed term must be countable).
 struct PivotFrameCounters {
     long long epochs{0};          ///< decision passes the term was armed on
     long long keys{0};            ///< clock key-epochs given the diagonal term

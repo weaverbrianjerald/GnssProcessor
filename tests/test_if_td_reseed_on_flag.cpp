@@ -1,7 +1,7 @@
 /**
  * @file test_if_td_reseed_on_flag.cpp
  * @brief IF-TD post-flag re-seed (`network.cycle_slip.if_phase_td_reseed_on_flag`,
- *        card ARL, slip-ladder defect 2).
+ *        slip-ladder defect 2).
  *
  * ### The defect
  *

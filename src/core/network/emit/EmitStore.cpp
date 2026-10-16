@@ -21,7 +21,7 @@
 #include "common/GnssIdentity.hpp"
 #include "network/emit/LedgerEmit.hpp"
 #include "network/emit/PbHold.hpp"
-#include "network/emit/BrdcWire.hpp"      // card NBP wire stamp
+#include "network/emit/BrdcWire.hpp"      // native broadcast clock wire stamp
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
@@ -159,7 +159,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
         //     graph per (const,signal): the common fractional δ is shared only within
         //     a component (each elects its own datum receiver r1).  This epoch's shared
         //     arcs, the same walk buildCarryDdPriors does, go to the shared union-find
-        //     (networkEmitRebaseComponents, on arcgraph::Dsu since card AGT).
+        //     (networkEmitRebaseComponents, on arcgraph::Dsu).
         EmitRebaseArcs rb_arcs;   // (const,signal) -> (station index, satellite), walk order
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i] || est_index_of[i] < 0) continue;
@@ -218,7 +218,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
                 if (it != rb_out.end()) npb.bias_m = it->second;
             }
     }
-    // Clock emission re-base (docs/SPEC_clock_emit_rebase.md, card CLK-R): the
+    // Clock emission re-base (docs/SPEC_clock_emit_rebase.md): the
     // per-constellation common-mode frame hold (stage 1) and the census-aligned
     // per-sat step marks (stage 2).  Written into sol before emitToStore and the
     // on-disk write, so the in-process consumer and a NetworkProductIO replay both
@@ -355,8 +355,8 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
             ser_consts_use = &pb_ser_consts;
         }
     }
-    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5,
-    // card PBH).  It is the last writer of the emitted phase bias; only read-only
+    // Emit-side phase-bias hold (docs/refound/PBH_phase_bias_hold_2026-09-19.md §5).
+    // It is the last writer of the emitted phase bias; only read-only
     // steps (the SID capture and declaration build) follow it before emitToStore.
     // That position has three consequences: it holds what the card-4 emission re-base
     // produced instead of being overwritten by it; it
@@ -368,19 +368,19 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     // in-process store carry the same held values.  Off: immediate return,
     // byte-identical.
     networkPbHold(ctx, config_, log, traces, emitter, se, sol);
-    // Card NBP: the wire refers to the stamped broadcast ephemeris.  After the hold (the
+    // Native broadcast clock: the wire refers to the stamped broadcast ephemeris.  After the hold (the
     // last reader of C_est) and before the store push and the product write, so the file
     // and the in-process consumer carry C_wire = C_est + O with iode=k.  Off: immediate
     // return, byte-identical.
     networkBrdcWire(ctx, config_, log, traces, setup, se, sol);
-    // Ledger-emit capture (card SID phase 5a, E1).  It runs between the hold (which
+    // Ledger-emit capture.  It runs between the hold (which
     // stamps the generations into `sol`) and emitToStore (which overwrites the
     // emitter's per-family baselines, after which every key answers "not a first
     // sighting").  Reads only; the fold that compares it with the ledger runs after
     // the roster's audit pass, where this epoch's admitted machine has been advanced.
     // Off: immediate return, byte-identical.
     networkLedgerEmitCapture(ctx, emitter, sol);
-    // Signal-roster declaration (card SID phase 5a, E2): the statement the producer is
+    // Signal-roster declaration: the statement the producer is
     // about to put on the wire, built from the roster as it stands after the datum-pin
     // writer, so the dph= / dco= designations describe this epoch's realized S-basis pin.
     // Built here rather than at the writer so the in-process store and the file
@@ -403,7 +403,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
     emitter.emitToStore(sol, network_store);
     // The declaration reaches the in-process consumer here, immediately after this
     // epoch's records and before the closed-loop consumer reads them below, which is
-    // the position the file replay gives it (card SID phase 5a, E2).
+    // the position the file replay gives it.
     if (ctx.ledger_emit.armed && ctx.ledger_emit.decl.present)
         network_store.setDeclaredRoster(ctx.ledger_emit.decl);
     // --- Drain the mark-scope census of this emit --------------------
@@ -480,7 +480,7 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
         }
     }
     if (product_writer) {
-        // Declared signal roster (card SID phase 5a, E2), written as a contiguous
+        // Declared signal roster, written as a contiguous
         // N block immediately before this epoch's heartbeat and epoch block,
         // following the S-line positional precedent, so a positional reader holds
         // the declaration for the epochs that follow it.  It is written only when

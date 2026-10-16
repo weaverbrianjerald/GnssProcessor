@@ -26,7 +26,7 @@
  */
 
 #include "rinex/MultiRinexSync.hpp"   // MultiRinexSync::SyncedEpoch (bare SyncedEpoch)
-#include "network/state/CarrySites.hpp" // CarrySiteCounts (card PRM phase 2)
+#include "network/state/CarrySites.hpp" // CarrySiteCounts
 
 #include <memory>
 #include <string>
@@ -41,7 +41,7 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
 
 /**
  * @brief Re-base one satellite's carried clock references by -@p d through the traversal
- *        of carried references (card PRM phase 2, @c CarryMechanism::EphRelevel).
+ *        of carried references (@c CarryMechanism::EphRelevel).
  *
  * The rule of the cut-over: the two-state oscillator's offset (when initialized), the
  * satellite's carried clock entries in @c prev_carry (parked ones included), the clock
@@ -49,21 +49,21 @@ struct NetworkRunTraces;    // network/diag/RunTraces.hpp, included in the .cpp 
  * every clock term of the satellite in the ambiguity and wet-delay carries.  The sites the
  * re-level does not move are declared with their reason in the mechanism table.
  *
- * With @p complete (@c network.carry_rebase_complete, card PRM phase 3b) the walk also moves
- * the sites the table exempts as owed (card CLV section 6.4 item 6), by the same -d on the
+ * With @p complete (@c network.carry_rebase_complete) the walk also moves
+ * the sites the table exempts as owed (the clock-level design, section 6.4 item 6), by the same -d on the
  * satellite's clock references only: the stash's pinned pivot value (when the satellite is
  * the pivot), the code-bias excursion test's previous solved clock, the emitted clock at the
  * phase hold's previous emission, and, under the conditional coupling as for the ambiguity
  * and wet-delay carries, the s_prev of the satellite's clock terms in every other coupling
  * map (the slant ionosphere and its block, the gross screen's three holds, the receiver
- * clock, phase bias and code bias, card LGM's phase colour).
+ * clock, phase bias and code bias, the phase colour).
  * @param carry    the run's carried state.
- * @param entities the run's entity tables (the station carries, card NOM step N4a).
+ * @param entities the run's entity tables (the station carries).
  * @param sat      the satellite whose broadcast version rolled.
  * @param d        the shift Delta_eph (m); every reference moves by -d.
  * @param cpl_cond @c network.carry_conditional_coupling.
  * @param counts   optional out: per-site tallies (accumulated).
- * @param complete also move the owed sites (false = the walk of card PRM phase 2).
+ * @param complete also move the owed sites (false = the walk without the owed sites).
  * @return the number of references moved.
  */
 long long ephCutoverShiftCarry(NetworkCarryState& carry, net::NetworkEntities& entities,

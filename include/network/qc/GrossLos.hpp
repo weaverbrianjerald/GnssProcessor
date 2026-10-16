@@ -78,7 +78,7 @@
  *    evidence does not apply to it; without the expiry, a deweight set once would
  *    carry over to a fresh arc unnoticed.
  *
- * ## The cold-start bound (card ICF response 1, @c network.gross_los_cold_bound_m)
+ * ## The cold-start bound (@c network.gross_los_cold_bound_m)
  *
  * The maturity horizon holds every σ-bar declaration for the first
  * @c gross_los_warmup_epochs emitted epochs, because a cold post-fit code residual
@@ -230,7 +230,7 @@ struct NetworkGrossLosTallies {
     long long sta_released = 0;      ///< Station-level releases (B4).
     long long sta_los_epochs = 0;    ///< Station-epochs spent under a standing station declaration (B4).
     std::map<std::string, long long> sta_declared_by_station;  ///< Station declarations per station name (B4).
-    // --- The cold-start bound (card ICF response 1); all zero unless
+    // --- The cold-start bound; all zero unless
     //     network.gross_los_cold_bound_m is positive.  The cold path's edges are counted
     //     here only, not in declared / cleared / expired above, so those keep describing
     //     the σ-bar path; currently_gross and max_concurrent count both paths.
@@ -308,7 +308,7 @@ struct GrossLosVerdict {
  * The rule is a free function so it can be unit-tested without a network.
  *
  * Two edge cases:
- *  - **Counted as rows, not distinct signal labels.**  Before card NOM step N2b a
+ *  - **Counted as rows, not distinct signal labels.**  Formerly a
  *    row's signal was read from its @c CB: column, so a code row of a posture whose
  *    satellite code biases are supplied externally, and a row of the W6 datum signal,
  *    had an empty label; a distinct-label test would have under-counted exactly
@@ -353,8 +353,8 @@ struct GrossLosState {
     double first_over_tow{0.0};
     /// Over-bar screened epochs since @ref first_over_tow: the same latency in epochs (RF-3b B5).
     int    first_over_age_ep{0};
-    /// The standing declaration was taken under the cold-start bound (card ICF response
-    /// 1).  While set, each epoch over the bound re-erases the carried ambiguity, and the
+    /// The standing declaration was taken under the cold-start bound.
+    /// While set, each epoch over the bound re-erases the carried ambiguity, and the
     /// release or expiry re-seeds it.  Cleared at the release and the expiry.
     bool   cold{false};
 };
@@ -404,7 +404,7 @@ GrossLosEdge networkGrossLosStep(GrossLosState& s, const GrossLosVerdict& v,
                                  int declare_epochs, int clear_epochs, double tow,
                                  bool allow_declare = true);
 
-/// The edge a @ref networkGrossLosColdStep transition produced (card ICF response 1).
+/// The edge a @ref networkGrossLosColdStep transition produced.
 enum class GrossLosColdEdge {
     None,     ///< The cold-start bound does not act on this line of sight this epoch.
     Declare,  ///< Decoupling edge: the line of sight is declared under the bound.
@@ -414,7 +414,7 @@ enum class GrossLosColdEdge {
 
 /**
  * @brief Pure function: the cold-start bound's transition for one line of sight
- *        (card ICF response 1, @c network.gross_los_cold_bound_m).
+ *        (@c network.gross_los_cold_bound_m).
  *
  * Called for an epoch in which the line of sight produced code rows, before
  * @ref networkGrossLosStep.  A @c Declare edge replaces that step for the epoch; the
@@ -446,7 +446,7 @@ GrossLosColdEdge networkGrossLosColdStep(GrossLosState& s, const GrossLosVerdict
                                          double tow);
 
 /**
- * @brief Run-end readout of the cold-start bound (card ICF response 1; standing
+ * @brief Run-end readout of the cold-start bound (standing
  *        invariant #4).
  *
  * Prints nothing when @c network.gross_los_cold_bound_m is 0.  Armed, it states the
@@ -521,7 +521,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *
  * Walks each station in the solve once, forms @f$v = y - A_s x_s - A_r x_r@f$,
  * takes the code observation rows by their contribution tags (the rule
- * @c networkPostfitSigma0 reads; card NOM step N2b), bins them per satellite, and
+ * @c networkPostfitSigma0 reads), bins them per satellite, and
  * drives the state machine above.
  *
  * Mutates persistent carries.  The response erases (or, under

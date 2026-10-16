@@ -121,7 +121,7 @@ struct TrackerHarness {
     /// False reproduces the pre-card call shape: no lookup bound at all.
     bool bind_latch{ true };
 
-    /// @param modeled_first  Card GRK knob state for this pass.
+    /// @param modeled_first  Gap re-entry key knob state for this pass.
     void run(const std::vector<PppObservation>& obs, bool modeled_first) {
         const std::vector<std::vector<PppObservation>> modeled{ obs };
         epoch.reset(1);
@@ -162,7 +162,7 @@ std::map<char, std::string> wLatch() { return { { '1', "L1W" }, { '2', "L2W" } }
 
 // Byte-identity control (standing invariant #6).  With the knob off, a station
 // reporting L1C and L1W tracks band 1 as L1C whatever it latched: the mismatch
-// card GRK names, and the behaviour of the unarmed path.
+// the gap re-entry key fix addresses, and the behaviour of the unarmed path.
 TEST(TrackerModeledFirstTest, OffTracksTheLexicallyLowestBandOneSignal) {
     TrackerHarness h;
     h.latch = wLatch();
@@ -539,7 +539,7 @@ TEST(TrackerModeledFirstTest, NoPerSignalListKeepsTheBroaderUnreachableCount) {
 // so the tracker and the carry cannot name the band differently there.  A return
 // on L2L at a station carrying L2W correctly finds no carry under L2L, and the
 // modelled L2W carry it would otherwise be scored against was tracked through
-// the break, so the case is not the key mismatch of card GRK.
+// the break, so the case is not the key mismatch of the gap re-entry key fix.
 TEST(TrackerModeledFirstTest, PerSignalTierNeverFeedsTheUnreachableCount) {
     UnreachableHarness h;
     // The carried, modelled band-2 signal is L2W, and it is tracked right now.

@@ -1567,7 +1567,7 @@ PrimCase randomPrimCase(std::mt19937& rng, int it) {
 TEST(NetworkArcGraphOracle, GrowBaselineForestThenParentOnlyReproducesTheFrozenPrim) {
     std::mt19937 rng(17u);
     const ArcFamily family{System::GPS, {*SignalId::fromObsCode(System::GPS, "L1C")}};
-    ForestRules legacy;   // card ARL tree_basis: min_common 2, stop at the gap, first common, no incumbent
+    ForestRules legacy;   // tree_basis: min_common 2, stop at the gap, first common, no incumbent
     legacy.band_mask   = 1;
     legacy.min_common  = 2;
     legacy.stop_at_gap = true;
@@ -2067,10 +2067,10 @@ TEST(NetworkArcGraphOracle, EmitRebaseComponentIdsEqualTheFrozenStringUnionFind)
 // components and spanning forest now come from the module, against the whole frozen function.
 // =====================================================================================
 
-/// Card NOM step N4a: the receiver phase-bias carry and the receiver-side eq34 parents moved
+/// The receiver phase-bias carry and the receiver-side eq34 parents moved
 /// from NetworkCarryState into the station table (network/state/Entities.hpp).  The frozen body
 /// keeps their pre-N4a map shapes: this shim converts the tables into those maps at entry, back
-/// at exit, and around the one walker call that reads the tables.  Card NOM step N4b moved the
+/// at exit, and around the one walker call that reads the tables.  A later step moved the
 /// eq34 datum receivers into the constellation table's channels, and N4c the eq34 arc elevations
 /// into the line-of-sight table; the shim carries their maps too.
 struct FrozenStationMaps {
@@ -2158,22 +2158,22 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
 auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
-FrozenStationMaps station_maps(ctx);   // card NOM step N4a shim, not in the frozen source
-auto& anchor_incumbent = station_maps.anchor_incumbent;   // card NOM step N4d shim
-auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // card NOM step N4b shim
+FrozenStationMaps station_maps(ctx);   // shim, not in the frozen source
+auto& anchor_incumbent = station_maps.anchor_incumbent;   // shim
+auto& eq34_datum_rx = station_maps.eq34_datum_rx;   // shim
 auto& eq34_rx_parent = station_maps.eq34_rx_parent;
-auto& eq34_sat_root = station_maps.eq34_sat_root;   // card NOM step N4e2 shim
-auto& eq34_prev_el = station_maps.eq34_prev_el;   // card NOM step N4c shim
+auto& eq34_sat_root = station_maps.eq34_sat_root;   // shim
+auto& eq34_prev_el = station_maps.eq34_prev_el;   // shim
 auto& eq34_reref_total = ctx.counters.eq34_reref_total;
 auto& eq34_erase_total = ctx.counters.eq34_erase_total;
 auto& eq34_shift_total = ctx.counters.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
-auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // card NOM step N4f1 shim
-auto& eq34_prev_target = station_maps.eq34_prev_target;   // card NOM step N4f1 shim
+auto& eq34_retained_edges = station_maps.eq34_retained_edges;   // shim
+auto& eq34_prev_target = station_maps.eq34_prev_target;   // shim
 auto& eq34_reref = events.phase_datum.eq34_reref;
-auto& local_carry = station_maps.local_carry;   // card NOM step N4f1 shim
+auto& local_carry = station_maps.local_carry;   // shim
 auto& rpb_carry = station_maps.rpb_carry;
 const bool carry_invariant         = ctx.knobs.carry_invariant;
 const bool eq34_shift_on = ctx.knobs.eq34_shift_on;
@@ -2998,10 +2998,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        station_maps.store();   // card NOM step N4a shim, not in the frozen source
+        station_maps.store();   // shim, not in the frozen source
         eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
-        station_maps.load();    // card NOM step N4a shim
+        station_maps.load();    // shim
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
         // Card PRM phase 3b step 2: the held emissions of the shifted families, left in the old

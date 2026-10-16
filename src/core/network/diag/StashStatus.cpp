@@ -13,7 +13,7 @@
 #include "common/GnssIdentity.hpp"   // letterOfSat
 #include "common/PppUtils.hpp"
 #include "network/carry/CarryVce.hpp"
-#include "network/solve/ClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of card Q3)
+#include "network/solve/ClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of the clock anchor design)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/PivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -86,7 +86,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     auto& sh_model = setup.sh_model;
     auto& sh_model2 = setup.sh_model2;   // Iono-2 dual-layer second shell (null unless armed)
     auto& stations = setup.stations;
-    const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s (the registry, card PRM)
+    const double q_pb    = ctx.params.q(SharedParamKind::PhaseBias); // m²/s (the registry)
     const double q_cb    = ctx.params.q(SharedParamKind::CodeBias);  // m²/s (W6 OSB carry-forward)
     auto& trace                = traces.trace;
     auto& epoch_status_trace   = traces.epoch_status_trace;
@@ -181,8 +181,8 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     std::map<std::string, PriresSharedPrior> prires_shared_prior;
     const bool prires_pb = ctx.knobs.prires_pb && prires_est.enabled();
     const bool prires_cb = ctx.knobs.prires_cb && prires_est.enabled();
-    // The satellite-clock family (docs/SPEC_clock_temporal_anchor.md §3, card Q3
-    // INC-0).  The VCE monitor above excludes it ("Clock / VtecSh out of scope (own
+    // The satellite-clock family (docs/SPEC_clock_temporal_anchor.md §3).
+    // The VCE monitor above excludes it ("Clock / VtecSh out of scope (own
     // models)"), which suits a carry that is not being calibrated; the clock anchor
     // derives its q from the measured dispersion of this prior, so the census
     // includes it.  The census standardizes by `fold_var − post_var`, which is
@@ -336,7 +336,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     // without a prior.
     if (!prires_shared_prior.empty()) {
         // The satellite-clock family's ê has its per-constellation common mode (the
-        // median) removed before standardizing (card Q3 INC-0).  The clock is the one
+        // median) removed before standardizing.  The clock is the one
         // carried family with a free per-epoch gauge (receiver clocks are white,
         // q = 1000), so the raw carried−solved difference carries the epoch's whole
         // gauge re-realization on every satellite.  Without the removal the family
@@ -361,7 +361,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
                 clk_med[c] = v[v.size() / 2];
             }
         }
-        // Gauge projection of the clock variances (§2.1 of card Q3).  The census
+        // Gauge projection of the clock variances (§2.1 of the clock anchor design).  The census
         // standardizes ê by `fold_var − post_var`, and ê above has the
         // per-constellation common mode removed, so both halves must be the variances
         // of that contrast; the raw marginals still carry the common-mode variance
@@ -435,7 +435,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             in.fold_var = p.fold_var;
             in.post_var = cp.var;
             // A clock row whose ê has the common mode removed uses the gauge-projected
-            // halves (§2.1 of card Q3), so `disp = fold_var − post_var` is the dispersion
+            // halves (§2.1 of the clock anchor design), so `disp = fold_var − post_var` is the dispersion
             // of the statistic reported.  Guarded on finiteness and on the
             // pair staying ordered: a non-positive or inverted projected pair means the
             // group was degenerate this epoch, and the raw pair (mismatched but well

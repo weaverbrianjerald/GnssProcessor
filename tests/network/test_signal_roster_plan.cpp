@@ -1,7 +1,7 @@
 /**
  * @file test_signal_roster_plan.cpp
- * @brief The "signals as planned" table of the signal roster (card NOM step N3a,
- *        docs/refound/NOM2_network_object_model_rows_2026-10-09.md section 4).
+ * @brief The "signals as planned" table of the signal roster
+ *        (docs/refound/NOM2_network_object_model_rows_2026-10-09.md section 4).
  *
  * Since step N3a the roster and its disagreement census are built on every network
  * run, and the table is the readout a reader meets first: per constellation and band,

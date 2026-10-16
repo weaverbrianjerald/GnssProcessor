@@ -52,7 +52,7 @@
 #include <vector>
 
 #include "network/solve/NormalEquations.hpp"
-#include "network/assembly/ContributionKind.hpp"   // ContributionKind, SharedFoldLog (card NOM N2a)
+#include "network/assembly/ContributionKind.hpp"   // ContributionKind, SharedFoldLog
 #include "products/NetworkProductEmitter.hpp"
 
 namespace spdlog { class logger; }
@@ -105,7 +105,7 @@ public:
      * The clone is the satellite's previous-epoch clock @f$c_s(t-1)@f$ carried for one
      * epoch in the shared border: the coupling rows keep their harvested clock
      * coefficients on it, and the walk @f$c_s(t)-c_s(t-1)@f$ enters once, in the border
-     * prior (@ref addCloneWalk), instead of once per row (the per-row form of card CTU
+     * prior (@ref addCloneWalk), instead of once per row (the per-row form of the exact coupling update
      * drops the time-update covariance between rows).  Keyed @c "sat|CLKC" (disjoint
      * from the clock's @c "sat|CLK") and labelled @c "CLKC:<sat>".  Its descriptor
      * carries @ref SharedParamKind::Clock with a clone flag, so no switch over the kind
@@ -114,7 +114,7 @@ public:
      * existing column index moves and the clones occupy the last
      * @ref numClockClones columns.  A clone is never emitted (@ref toSolutionEpoch),
      * never grouped as a satellite clock of the gauge-free downdate, and never
-     * marginalized by card Q3's clock refloat (@ref refoldSharedPriorDenseDroppingClocks).
+     * marginalized by the temporal clock anchor's clock refloat (@ref refoldSharedPriorDenseDroppingClocks).
      * @throws std::logic_error after @ref beginEpoch, like every registration.
      */
     Eigen::Index registerClockClone(const std::string& sat);
@@ -141,8 +141,8 @@ public:
     Eigen::Index registerClone(SharedParamKind kind, const std::string& sat,
                                const std::string& signal);
     /**
-     * @brief Register shared-history column @p j (card SCL2 X2,
-     *        @c network.carry_coupling_shared_history); idempotent; returns its column.
+     * @brief Register shared-history column @p j
+     *        (@c network.carry_coupling_shared_history); idempotent; returns its column.
      *
      * A history column is one constant direction of the clones' shared conditional
      * carried across stations (docs/refound/SCL2_level_residue_under_the_clone_2026-10-06.md,
@@ -176,39 +176,39 @@ public:
     ///         @ref registerClone). @throws std::out_of_range if absent.
     Eigen::Index cloneColumn(SharedParamKind kind, const std::string& sat,
                              const std::string& signal) const;
-    /// @return Whether shared column @p col is a clone of any kind (card BCL);
+    /// @return Whether shared column @p col is a clone of any kind;
     ///         false when
     ///         @p col is out of range.
     bool isClockClone(Eigen::Index col) const;
-    /// @return The shared-history column @p j (card SCL2 X2, @ref registerHistoryColumn).
+    /// @return The shared-history column @p j (@ref registerHistoryColumn).
     /// @throws std::out_of_range if absent.
     Eigen::Index historyColumn(int j) const;
-    /// @return Whether shared column @p col is a shared-history column (card SCL2 X2);
+    /// @return Whether shared column @p col is a shared-history column;
     ///         false when @p col is out of range.
     bool isHistoryColumn(Eigen::Index col) const;
     /**
      * @brief The identity of a satellite shared column: the reverse of
      *        @ref clockColumn / @ref phaseBiasColumn / @ref codeBiasColumn.
      *
-     * Read by card SMH's clone marginalization, which spreads a row's clone coefficients
+     * Read by the smoothed-hold clone's marginalization, which spreads a row's clone coefficients
      * over the border through a column-indexed regression and re-keys them by identity.
      * @param col          the shared column.
      * @param[out] kind    its kind (Clock, PhaseBias or CodeBias).
      * @param[out] sat     its satellite.
      * @param[out] signal  its signal (empty for a clock).
      * @return false (outputs untouched) for a column out of range, an SH-VTEC column, a
-     *         clock clone or a shared-history column (card SCL2 X2).
+     *         clock clone or a shared-history column.
      */
     bool sharedColumnIdentity(Eigen::Index col, SharedParamKind& kind, std::string& sat,
                               std::string& signal) const;
-    /// @return The number of clone columns registered this epoch (card SCL's clocks and
-    ///         card BCL's biases and departed keys); they are the last columns of the
+    /// @return The number of clone columns registered this epoch (the clock clone's clocks and
+    ///         the border clones' biases and departed keys); they are the last columns of the
     ///         layout before the history.  0 whenever the knobs are off.
     Eigen::Index numClockClones() const { return n_clones_; }
-    /// @return The number of shared-history columns registered this epoch (card SCL2 X2);
+    /// @return The number of shared-history columns registered this epoch;
     ///         they follow the clones.  0 whenever the knob is off.
     Eigen::Index numHistoryColumns() const { return n_hist_; }
-    /// @return The border's nuisance columns, the clones and the history (card SCL2 X2):
+    /// @return The border's nuisance columns, the clones and the history:
     ///         @ref numClockClones + @ref numHistoryColumns, the trailing columns of the
     ///         layout that the gate view marginalizes and the harvest regresses away.
     ///         Equals @ref numClockClones whenever the shared history is off.
@@ -223,10 +223,10 @@ public:
      * Format by kind: @c "CLK:<sat>" (satellite clock), @c "CB:<sat>:<signal>"
      * (satellite code bias), @c "PB:<sat>:<signal>" (satellite phase bias),
      * @c "SH:<C|S>:<n>:<m>" (SH-VTEC coefficient; @c "SH2:<C|S>:<n>:<m>" on the
-     * second shell), @c "CLKC:<sat>" (a clock clone, card SCL; no "CLK:" prefix
+     * second shell), @c "CLKC:<sat>" (a clock clone; no "CLK:" prefix
      * parser matches it), @c "PBC:<sat>:<signal>" and @c "CBC:<sat>:<signal>" (a phase-
-     * or code-bias clone, card BCL; no "PB:" or "CB:" prefix parser matches them),
-     * @c "HIST:<j>" (a shared-history column, card SCL2 X2).  Intended for the NEQ export and other offline attribution
+     * or code-bias clone; no "PB:" or "CB:" prefix parser matches them),
+     * @c "HIST:<j>" (a shared-history column).  Intended for the NEQ export and other offline attribution
      * tooling; labels are stable across epochs for an unchanged registration order.
      *
      * @throws std::out_of_range if @p col is not a registered column.
@@ -272,7 +272,7 @@ public:
      * @param prior Optional diagonal prior rows folded into this station's
      *            @f$N_{rr}/u_r@f$ before the positive-definiteness test, instead
      *            of afterwards through @ref addStationPrior
-     *            (@c network.station_prior_before_pd, card RF-PD-fix).  See
+     *            (@c network.station_prior_before_pd).  See
      *            @ref NetworkNormalEquations::StationPrior.  Empty (the default)
      *            keeps the legacy path, byte-identical.  A row passed here must
      *            not also be passed to @ref addStationPrior: the two paths are
@@ -331,7 +331,7 @@ public:
 
     /**
      * @brief Set the resolved relative eigenvalue tolerance of the shared-border
-     *        null-space rank gate (@c network.rank_gate_tol, Card DG): the one
+     *        null-space rank gate (@c network.rank_gate_tol): the one
      *        value every consumer reads.
      *
      * Default @ref kNullSpaceTol (1e-9), so an unset config is byte-identical: the
@@ -374,10 +374,10 @@ public:
     /// refolds that share its terms): the correlation-scaled carried block is accepted
     /// when its smallest LDLT pivot is at least this fraction of the largest
     /// (@c network.dense_fold_kappa; the class default is the historical 1e-6, the config
-    /// default 1e-12 since card SMH section 9).  A consistent carry whose level is loose
+    /// default 1e-12).  A consistent carry whose level is loose
     /// while its phase-visible combinations are phase-precise has correlations within
     /// about 1e-8 of one between a clock and its phase biases, which 1e-6 rejects (the fold
-    /// then falls back to the diagonal carry for that epoch, card CTU section 14).  The
+    /// then falls back to the diagonal carry for that epoch).  The
     /// absolute folded-information budget is unchanged.
     void setDenseFoldKappa(double k) { dense_fold_kappa_ = k; }
     /// The resolved dense-fold pivot bound (@ref setDenseFoldKappa).
@@ -391,7 +391,7 @@ public:
 
     /// Passthrough for the station PD null-direction read
     /// (@ref NetworkNormalEquations::setStationPdNullTrace;
-    /// @c network.trace_station_pd_null, Card RF-PD).  Configuration-level: set
+    /// @c network.trace_station_pd_null).  Configuration-level: set
     /// once before the epoch loop; survives @ref beginEpoch / @ref reset.  The
     /// record itself is read through @ref normals() →
     /// @ref NetworkNormalEquations::lastStationPdFailure in the caller's @c catch.
@@ -426,7 +426,7 @@ public:
      * passed), then the pinned row and column are zeroed and the diagonal set to the
      * pin scale @f$s=\max(1,\max_i|N_{ii}|)@f$ with @f$u_{col}=s\cdot\mathrm{value}@f$, so
      * @f$x_{col}=\mathrm{value}@f$ exactly.  @ref solve and @ref solveHeldDetached share
-     * this one implementation (card FCF moved it verbatim out of @ref solve), so the held
+     * this one implementation (it was moved verbatim out of @ref solve), so the held
      * solve is pinned exactly as the float one.
      *
      * @param[in,out] N     Reduced shared normals (square); pinned in place.
@@ -797,7 +797,7 @@ public:
     /// library default of NetworkSbasis::assertNullSpaceRank sits above the weak
     /// but real directions and miscounts them; 1e-9 lands in the GPS+Galileo gap.
     ///
-    /// The tolerance is a calibration parameter (Card DG).  This class constant
+    /// The tolerance is a calibration parameter.  This class constant
     /// (INC-8) is the single source of the default, so an unset
     /// @c network.rank_gate_tol is byte-identical, and the three consumers read
     /// @ref rankGateTol.  BeiDou is the reason: BDS adds a weak but real family
@@ -813,7 +813,7 @@ public:
     /// One reported near-null direction of an @ref EstimabilityDump: its
     /// eigenvalue plus the (column label, |component|) pairs of the ≤ 5
     /// heaviest-spanning shared columns; the machine-readable twin of the
-    /// "dir spanned by [...]" warn line (Card DG5).
+    /// "dir spanned by [...]" warn line.
     struct EstimabilityDirection {
         double ev{0.0};                                    ///< eigenvalue of the direction
         std::vector<std::pair<std::string, double>> top;   ///< ≤ 5 (col_desc label, |component|), heaviest first
@@ -823,7 +823,7 @@ public:
     /// storm analyzer (scripts/characterize_storm.py) can read a CSV instead of
     /// re-parsing warn text.  Observational only: the struct is filled from the
     /// same numbers the log lines print, in the same order, and filling it changes
-    /// neither the log text nor the solution (Card DG5).
+    /// neither the log text nor the solution.
     struct EstimabilityDump {
         bool   valid{false};        ///< false ⇒ the eigensolve did not converge (nothing was logged either)
         double tow{0.0};            ///< epoch GPS time-of-week
@@ -888,12 +888,12 @@ public:
         int             sh_layer{0}; ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
         double          value{0.0};  ///< prior mean
         double          info{0.0};   ///< information weight = 1 / prior-variance (>0)
-        /// Card SCL: the prior is on the clock clone column of @c sat
-        /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock; card BCL: on the
+        /// Clock clone: the prior is on the clock clone column of @c sat
+        /// (@ref registerClockClone, key @c "sat|CLKC"), with @c kind Clock; border clone: on the
         /// clone of (kind, sat, signal) (@ref registerClone).  False (the default) = the
         /// column of (kind, sat, signal), as before.
         bool            clone{false};
-        /// Card SCL2 X2: the prior is on shared-history column @c hist_idx
+        /// Shared history: the prior is on shared-history column @c hist_idx
         /// (@ref registerHistoryColumn, key @c "HIST|j"), with @c kind Clock and an empty
         /// @c sat.  False (the default) = as before.
         bool            hist{false};
@@ -959,7 +959,7 @@ public:
      */
     /// @param clock_gauge_free Marginalize the per-constellation satellite-clock
     ///        common direction out of the folded block before it is applied
-    ///        (Card Q3 §2.1; see @ref addSharedPriorClockGaugeFree for the algebra
+    ///        (the temporal clock anchor, §2.1; see @ref addSharedPriorClockGaugeFree for the algebra
     ///        and the rationale).  Applied to the joint Λ, so the clock↔code-bias
     ///        off-diagonals that the C1 dense carry exists to retain are preserved;
     ///        only the gauge direction's information is removed.
@@ -968,16 +968,16 @@ public:
                                     Eigen::VectorXd* lambda_diag = nullptr,
                                     bool clock_gauge_free = false);
 
-    /// One clone's walk factor (card BCL for a bias): the pseudo-observation
+    /// One clone's walk factor (a border clone for a bias): the pseudo-observation
     /// @f$x(t) - x(t-1) = \text{mean}@f$ with variance @c q, between the key's own column
     /// and its clone column.  The defaults (@c kind Clock, empty @c signal) are a clock's.
     struct CloneWalk {
         std::string sat;    ///< satellite id (its key and its clone must both be registered)
-        SharedParamKind kind{SharedParamKind::Clock};   ///< card BCL: the key's kind (Clock, PhaseBias or CodeBias)
-        std::string signal; ///< card BCL: the key's signal (empty for a clock)
+        SharedParamKind kind{SharedParamKind::Clock};   ///< border clone: the key's kind (Clock, PhaseBias or CodeBias)
+        std::string signal; ///< border clone: the key's signal (empty for a clock)
         double mean{0.0};   ///< the factor's mean (m): the fold-time carried clock minus the clone's prior mean, 0 unless the carry moved after the rows were built
         double q{0.0};      ///< the walk's variance over the epoch (m^2): the fold's var_eff minus the stashed variance
-        /// Card SCL B2: across a clock-pivot handover the dense S-transform re-expressed, the
+        /// Across a clock-pivot handover the dense S-transform re-expressed, the
         /// clock column is in the incoming frame and the clones in the outgoing one, so the
         /// factor is @f$c_s(t) - c_s(t-1) + c_q(t-1) = \text{mean}@f$ with @c ref the incoming
         /// pivot q (its clone must be registered).  Empty (the default): no third term.
@@ -994,12 +994,12 @@ public:
      * in for by its clone at the stashed variance, @ref addSharedPriorDense with
      * @ref SharedPrior::clone), this is the joint prior of the moved border and the clones
      * with covariance @f$[[P+Q, P], [P, P]]@f$ on each clock and its clone, formed without
-     * inverting that ill-conditioned block.  A factor with a @c ref (card SCL B2) adds the
+     * inverting that ill-conditioned block.  A factor with a @c ref adds the
      * reference clone with coefficient +1: @f$a = e_c - e_k + e_r@f$, information
      * @f$a a^\top/q@f$, right-hand side @f$a\,\text{mean}/q@f$.  A factor whose clock, clone
      * or reference clone is absent from the layout, or whose @c q is not positive and
      * finite, is skipped.
-     * @param sign +1 folds, -1 withdraws exactly what +1 folded (card Q3's refloat, which
+     * @param sign +1 folds, -1 withdraws exactly what +1 folded (the temporal clock anchor's refloat, which
      *             may call it after @ref solve, as it calls @ref withdrawSharedPrior, and
      *             folds a factor back with +1 when its re-solve throws).
      * @return The number of factors applied.
@@ -1009,7 +1009,7 @@ public:
 
     /**
      * @brief Fold (or withdraw) the clones' walk factors as one joint factor with a full
-     *        walk covariance (card PFQ on card SCL's clone,
+     *        walk covariance (pivot-frame process noise on the clock clone,
      *        docs/refound/PFQ_pivot_frame_process_noise_2026-10-08.md section 6).
      *
      * With the pivot-frame clock noise (@c network.clock_pivot_frame_q) the walks of two
@@ -1036,7 +1036,7 @@ public:
      * @brief The posterior regression of the clock clones on the rest of the border
      *, the ingredient of the harvest's clone marginalization.
      *
-     * Card SCL2 X2: with shared-history columns registered, the regressed set is
+     * With shared-history columns registered, the regressed set is
      * Y = [clones; history] (@ref numBorderNuisance rows, in column order), so @c K is
      * @f$K_Y = -J_{YY}^{-1}J_{YS'}@f$ and @c Bc is @f$\Sigma_{Y\mid s} = J_{YY}^{-1}@f$, the
      * ingredients of the history compression.  Off, Y is the clones alone (unchanged).
@@ -1062,7 +1062,7 @@ public:
 
     /**
      * @brief Fold diagonal shared priors with the per-constellation
-     *        satellite-clock gauge direction marginalized out (Card Q3 §2.1).
+     *        satellite-clock gauge direction marginalized out (temporal clock anchor, §2.1).
      *
      * ## Why
      *
@@ -1106,7 +1106,7 @@ public:
     /**
      * @brief Gauge-free diagonal analogue of
      *        @ref refoldSharedPriorDenseDroppingClocks: re-fold a gauge-free
-     *        clock prior set with @p drop_sats refloated (Card Q3).
+     *        clock prior set with @p drop_sats refloated.
      *
      * A gauge-free block is not diagonal, so @ref withdrawSharedPrior cannot undo
      * one key of it: removing a key also moves the group's information-weighted
@@ -1123,8 +1123,8 @@ public:
         const std::set<std::string>& drop_sats, bool restore = false);
 
     /**
-     * @brief Withdraw already-folded diagonal shared priors (Card Q3,
-     *        docs/SPEC_clock_temporal_anchor.md §2.4) so the epoch can be
+     * @brief Withdraw already-folded diagonal shared priors
+     *        (docs/SPEC_clock_temporal_anchor.md §2.4) so the epoch can be
      *        re-solved with those states refloated.
      *
      * The exact inverse of @ref addSharedPrior for the listed (identity, value,
@@ -1156,7 +1156,7 @@ public:
     /**
      * @brief Re-fold a dense carried block with some keys marginalized, after
      *        @ref solve, so the epoch can be re-solved with those states refloated
-     *        (Card Q3).
+     *        (the temporal clock anchor's refloat).
      *
      * The dense (C1) form of @ref withdrawSharedPrior.  Folds
      * @f$(\Lambda_{new} - \Lambda_{old})@f$ and
@@ -1174,7 +1174,7 @@ public:
      * @param keys      The keys the original fold used (order defines @p cov).
      * @param cov       The covariance the original fold used (P_prev + Q).
      * @param drop_sats Satellites whose clock key is to be marginalized (a clock clone
-     *                  key of the same satellite is kept, card SCL: the rows still
+     *                  key of the same satellite is kept: the rows still
      *                  reference the clone).
      * @param restore   Fold the inverse delta (Λ_old − Λ_new) instead: the exact
      *                  undo of a previous call with the same arguments, used when
@@ -1373,7 +1373,7 @@ public:
     // --- Reduced-RHS class attribution (diagnostics; filter/NetworkRhsAttrib) ---
 
     /// One captured shared-info RHS increment: the contribution kind the fold site named
-    /// (@ref contributionKind; card NOM step N2b, the attribution's class is a function
+    /// (@ref contributionKind; the attribution's class is a function
     /// of it) plus the delta the call folded into the shared RHS.
     struct AttribCapture {
         ContributionKind kind{ContributionKind::Unset};  ///< the kind the site named; @c Unset when it named none
@@ -1402,7 +1402,7 @@ public:
     /// @return This epoch's captured shared-info RHS increments (armed builds only).
     const std::vector<AttribCapture>& attribCaptures() const { return attrib_shared_; }
 
-    // --- Contribution kinds of the shared folds (card NOM N2a; filter/NetworkContributions) ---
+    // --- Contribution kinds of the shared folds ( filter/NetworkContributions) ---
 
     /**
      * @brief Name the kind of the next shared fold.
@@ -1489,7 +1489,7 @@ public:
      *         phase bias) keyed by RINEX sat id, ready for `NetworkProductEmitter`.
      *         SH-VTEC columns are not mapped, nor are clock clone columns (
      *         a border-internal state, never a product) or shared-history columns
-     *         (card SCL2 X2: the same).
+     *         (the same).
      */
     NetworkSolutionEpoch toSolutionEpoch(const Eigen::VectorXd& x_s,
                                          const GnssTime& epoch_time, int iod_ssr = 0,
@@ -1546,9 +1546,9 @@ private:
         int  sh_m{-1};         ///< VtecSh order  (VtecSh only)
         char sh_trig{0};       ///< VtecSh 'C'/'S' (VtecSh only)
         int  sh_layer{0};      ///< VtecSh shell index (VtecSh only; 0 = legacy layer)
-        bool clone{false};     ///< card SCL: a clock clone column (kind Clock, @ref registerClockClone); card BCL: a bias clone (its own kind, @ref registerClone)
-        bool hist{false};      ///< card SCL2 X2: a shared-history column (kind Clock, empty sat, @ref registerHistoryColumn)
-        int  hist_idx{-1};     ///< card SCL2 X2: its history index j
+        bool clone{false};     ///< a clock clone column (kind Clock, @ref registerClockClone); or a bias clone (its own kind, @ref registerClone)
+        bool hist{false};      ///< a shared-history column (kind Clock, empty sat, @ref registerHistoryColumn)
+        int  hist_idx{-1};     ///< its history index j
     };
 
     Eigen::Index registerColumn_(const std::string& sat, SharedParamKind kind,
@@ -1556,10 +1556,10 @@ private:
     static std::string key_(const std::string& sat, SharedParamKind kind,
                             const std::string& signal);
     /// The layout key of a prior: the SH key for VtecSh, @c "HIST|j" for a shared-history
-    /// column (card SCL2 X2), @c "sat|CLKC" for a clock clone (card SCL), @ref key_
+    /// column, @c "sat|CLKC" for a clock clone, @ref key_
     /// otherwise (the same string as before for every other prior).
     static std::string priorKey_(const SharedPrior& p);
-    /// The layout key of a clone (card SCL, card BCL): @c "sat|CLKC" for a clock,
+    /// The layout key of a clone (clock clone or border clone): @c "sat|CLKC" for a clock,
     /// @c "sat|PBC|signal" and @c "sat|CBC|signal" for the biases.
     static std::string cloneKey_(SharedParamKind kind, const std::string& sat,
                                  const std::string& signal);
@@ -1589,20 +1589,20 @@ private:
     std::map<std::string, Eigen::Index> index_;  ///< layout key → column
     std::vector<ColumnDesc> columns_;             ///< column → descriptor
     Eigen::Index n_clones_{0};                    ///< clock clone columns registered this epoch; cleared by reset()
-    Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch (card SCL2 X2); cleared by reset()
+    Eigen::Index n_hist_{0};                      ///< shared-history columns registered this epoch; cleared by reset()
     NetworkNormalEquations neq_{0};               ///< current-epoch arrowhead
     Eigen::MatrixXd shared_cov_;                  ///< covariance of x_s from the last solve() (for the D2 carry-forward prior)
     std::vector<NetworkNormalEquations::SumZeroGauge> phase_sumzero_gauges_;  ///< Fix A: anchor-free phase-bias gauges (empty = anchor-pin datum, byte-identical)
     std::vector<NetworkNormalEquations::DdPriorBlock> dd_priors_;             ///< per-component invariant-carry DD priors (Card 4 (M1); empty = off, byte-identical)
-    /// Take the kind named by @ref contributionKind for this fold, and clear it (card NOM
-    /// N2a): @c Unset when the site named none.
+    /// Take the kind named by @ref contributionKind for this fold, and clear it:
+    /// @c Unset when the site named none.
     ContributionKind takeContributionKind_() {
         const ContributionKind k = contrib_kind_;
         contrib_kind_ = ContributionKind::Unset;
         return k;
     }
     /// Capture one shared fold's RHS increment under its kind, when the recorder is armed
-    /// (@ref attribArm; card NOM step N2b).
+    /// (@ref attribArm).
     void noteCapture_(ContributionKind k, const Eigen::VectorXd& delta_rhs) {
         if (attrib_armed_) attrib_shared_.push_back(AttribCapture{k, delta_rhs});
     }
@@ -1629,17 +1629,17 @@ private:
         for (const ContributionKind k : kindsInOrder_(kinds))
             noteFold_(k, static_cast<long long>(std::count(kinds.begin(), kinds.end(), k)));
     }
-    ContributionKind contrib_kind_{ContributionKind::Unset};  ///< Kind named for the next shared fold (card NOM N2a); @c Unset when none.
+    ContributionKind contrib_kind_{ContributionKind::Unset};  ///< Kind named for the next shared fold; @c Unset when none.
     const std::vector<ContributionKind>* contrib_row_kinds_{nullptr};  ///< Per-row kinds for the next addSharedConstraintRows (not owned).
-    const std::vector<ContributionKind>* contrib_prior_kinds_{nullptr};  ///< Per-prior kinds for the next addSharedPrior / addSharedPriorClockGaugeFree (not owned; card NOM N2b).
+    const std::vector<ContributionKind>* contrib_prior_kinds_{nullptr};  ///< Per-prior kinds for the next addSharedPrior / addSharedPriorClockGaugeFree (not owned).
     bool contrib_replay_{false};                                 ///< Folds are a within-epoch replay's re-folds.
     SharedFoldLog contrib_log_;                                  ///< This epoch's shared folds (cleared by reset()).
     bool attrib_armed_{false};                   ///< RHS-attribution capture recorder armed (diagnostics)
     std::vector<AttribCapture> attrib_shared_;   ///< captured shared-info RHS increments (armed epochs only)
     int seam_threads_{1};                         ///< per-block DD carry-fold fan-out for foldReducedDdPriors() (1 = serial; byte-identical at any count; set by the driver)
     int carry_par_threads_{1};                    ///< network.parallel_carry: within-block per-station fan-out for the fold (1 = off; > 1 gives ULP-level differences on the reduction and stays byte-identical on the middle inverse; set by the driver)
-    double dense_fold_kappa_{1e-6};               ///< relative-pivot bound of the dense border fold (network.dense_fold_kappa, card CTU section 14); 1e-6 = the historical constant, byte-identical (@ref setDenseFoldKappa)
-    double rank_gate_tol_{kNullSpaceTol};         ///< resolved null-space rank-gate tolerance every consumer reads (gate / dump / drop-and-heal; network.rank_gate_tol, Card DG); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
+    double dense_fold_kappa_{1e-6};               ///< relative-pivot bound of the dense border fold (network.dense_fold_kappa); 1e-6 = the historical constant, byte-identical (@ref setDenseFoldKappa)
+    double rank_gate_tol_{kNullSpaceTol};         ///< resolved null-space rank-gate tolerance every consumer reads (gate / dump / drop-and-heal; network.rank_gate_tol); defaults to kNullSpaceTol so an unset config is byte-identical (@ref setRankGateTol)
     bool epoch_open_{false};                      ///< set by beginEpoch(), cleared by reset(); registration throws while set
     bool solved_{false};                          ///< set by solve(); blocks further addStation until beginEpoch()
 };

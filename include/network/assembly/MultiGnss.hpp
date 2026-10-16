@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file MultiGnss.hpp
- * @brief Telemetry for a second constellation on the network path, card GAL
+ * @brief Telemetry for a second constellation on the network path
  *        (docs/refound/GAL_gps_galileo_dual_2026-09-22.md).
  *
  * ### Contents of this file
@@ -22,7 +22,7 @@
  *    the declared dimension (one clock direction per constellation in pin mode);
  *  - the geometry-free datum counters of @c NetworkSbasis split per constellation
  *    (the global line in @c networkSbasisDatumRunEnd keeps its text);
- *  - the (constellation, signal) family census of card SID phase 6b, which on a
+ *  - the (constellation, signal) family census, which on a
  *    single-channel posture runs only because this telemetry is active;
  *  - the guarded temporal clock anchor's folds and trips per constellation.
  *
@@ -45,7 +45,7 @@ namespace GnssProcessor {
     struct PppObservation;
 
     /**
-     * @brief Run-scope counters of card GAL.  Lives in @c NetworkServiceCounters.
+     * @brief Run-scope counters of the second-constellation telemetry.  Lives in @c NetworkServiceCounters.
      *
      * Each map is keyed either by the constellation name the state manager uses for
      * the inter-system bias ("Galileo") or by the constellation letter the wire uses
@@ -99,7 +99,7 @@ namespace GnssProcessor {
      * constellation to exist in the solve.
      *
      * @param config The loaded configuration.
-     * @return @c true when the card GAL telemetry is live.
+     * @return @c true when the second-constellation telemetry is live.
      */
     bool networkMultiGnssActive(const GnssConfig& config);
 
@@ -160,7 +160,7 @@ namespace GnssProcessor {
                                     const std::map<std::string, std::string>& last_pivot);
 
     /**
-     * @brief Run-end lines of card GAL.  Silent unless @ref networkMultiGnssActive.
+     * @brief Run-end lines of the second-constellation telemetry.  Silent unless @ref networkMultiGnssActive.
      *
      * @param ctx     Run context (counters read).
      * @param config_ Configuration.
@@ -170,7 +170,7 @@ namespace GnssProcessor {
                                 const std::shared_ptr<spdlog::logger>& log);
 
     /**
-     * @brief The manifest fragment of card GAL: `"inter_system_bias": {...}`.
+     * @brief The manifest fragment of the second-constellation telemetry: `"inter_system_bias": {...}`.
      *
      * @param ctx     Run context (counters read).
      * @param config_ Configuration.

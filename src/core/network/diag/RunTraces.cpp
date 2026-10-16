@@ -16,7 +16,7 @@
 #include "logging/CsvRotator.hpp"       // maybeRotateCsv (P1 rotation, INC-4)
 #include "network/solve/PivotHandover.hpp" // formatPivotMap (health heartbeat, INC-4)
 #include "network/diag/AmbStateTrace.hpp"  // kAmbStateHeader (RF-1 §7.4 carry-state trace)
-#include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants (card SID phase 1)
+#include "network/state/ArcLedger.hpp"             // the arc ledger's two window constants
 #include "realtime/ConsumerSatTrace.hpp"    // ConsumerSatRow, kConsumerSatTraceHeader
 #include "math/TimeUtils.hpp"           // continuousGpsSeconds (heartbeat cadence, INC-4)
 
@@ -172,8 +172,8 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                         "ratio,pos_err_3d_m,east_m,north_m,up_m,ar_gate,p_succ\n";
         else
             log->warn("Network: failed to open closed-loop trace {}", cl_path.string());
-        // Per-satellite companion of the trace above (network.trace_consumer_sat;
-        // card CST, the instrument owed by EV6 §9 item 1).  Like cl_trace, the stream
+        // Per-satellite companion of the trace above (network.trace_consumer_sat).
+        // Like cl_trace, the stream
         // is owned here and its rows are written by the emit/store seam.  It needs the
         // same arming gate plus its own knob, so it exists only where there is a
         // consumer to read; unarmed, nothing is opened (byte-identical).
@@ -308,11 +308,11 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         if (producer_ar_trace) {
             std::string header = nc.ambiguity_resolution.decorrelated_partial
                                      ? kProducerArHeaderDecorrelated : kProducerArHeader;
-            // Card ARL: the suspect-corner mask's two columns, armed only, before the
+            // The suspect-corner mask's two columns, armed only, before the
             // header's newline.
             if (nc.ambiguity_resolution.suspect_epochs > 0)
                 header.insert(header.size() - 1, kProducerArSuspectColumns);
-            // Card AGT: the cycle basis's four columns, armed only, after those.
+            // The cycle basis's four columns, armed only, after those.
             if (nc.ambiguity_resolution.cycle_basis)
                 header.insert(header.size() - 1, kProducerArCycleBasisColumns);
             producer_ar_trace << header;
@@ -321,7 +321,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       producer_ar_trace_path.string());
         }
     }
-    // Card AGT (step AGT-6): the lattice observatory's two files, gated like the search trace
+    // The lattice observatory's two files, gated like the search trace
     // (its rows are a by-product of the search; the loader arms trace_lattice only with the
     // cycle basis).
     if (nc.ambiguity_resolution.trace_lattice && nc.ambiguity_resolution.enable) {
@@ -334,7 +334,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
         else log->warn("Network: failed to open lattice-observatory events trace {}",
                        ar_lattice_events_trace_path.string());
     }
-    // Card FCF: the fixed-cycle fold's two files, armed only (the loader refuses a fold without
+    // The fixed-cycle fold's two files, armed only (the loader refuses a fold without
     // the search and the cycle basis).
     if (nc.ambiguity_resolution.fixed_cycle_trace && nc.ambiguity_resolution.enable
         && nc.ambiguity_resolution.fixed_cycle_fold != FixedCycleFold::Off) {
@@ -556,7 +556,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                                   "w_phi,n_pb,decision\n";
     }
     if (config_.networkClockLevelMonitor() && nc.trace_events) {
-        // The level monitor of card CTU; the header documents the columns.
+        // The level monitor of the exact coupling update; the header documents the columns.
         level_bound_trace.open(level_bound_trace_path);
         if (level_bound_trace)
             level_bound_trace << "week,tow,sat,p_level_m2,inv_info_m2,ratio,raised_m2,n_code_ep\n";
@@ -606,7 +606,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       pb_hold_clone_trace_path.string());
     }
     if (nc.trace_station_block) {
-        // Per-station local-block audit (SPEC_event_harness §24.10, card ZP).  One `#`
+        // Per-station local-block audit (SPEC_event_harness §24.10).  One `#`
         // provenance line naming the object and its conditioning, then the column
         // header (scripts/zp_station_block_read.py skips `#`).  The provenance line
         // matters because every number in the file describes N_rr with the shared
@@ -685,7 +685,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open ambiguity carry-state trace {}",
                       amb_state_trace_path.string());
     }
-    // Card AIL: the ionosphere-free ambiguity information trace.
+    // The ionosphere-free ambiguity information trace.
     if (nc.trace_amb_if) {
         amb_if_trace.open(amb_if_trace_path);
         if (amb_if_trace)
@@ -695,7 +695,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
             log->warn("Network: failed to open ambiguity information trace {}",
                       amb_if_trace_path.string());
     }
-    // Card LGM: the per-line-of-sight phase-colour state trace.
+    // The per-line-of-sight phase-colour state trace.
     if (nc.phase_colour_state && nc.trace_phase_colour) {
         phase_colour_trace.open(phase_colour_trace_path);
         if (phase_colour_trace)
@@ -705,7 +705,7 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       phase_colour_trace_path.string());
     }
     if (config_.networkSignalRoster()) {
-        // One row per arc transition (card SID phase 1).  The provenance line above
+        // One row per arc transition.  The provenance line above
         // the header states what a row is and what it is not: the file is not a
         // per-record census of the ledger, and a count of its rows is a count of
         // edges.
@@ -915,8 +915,8 @@ void NetworkRunTraces::openAll(const GnssConfig& config_, const NetworkConfig& n
                       datum_graph_trace_path.string());
     }
     if (nc.trace_estimability) {
-        // Machine-readable counterpart of the Network[estimability] WARN dump (card
-        // DG5): one long-format file with three record kinds (EPOCH / DIR / RUN; see
+        // Machine-readable counterpart of the Network[estimability] WARN dump:
+        // one long-format file with three record kinds (EPOCH / DIR / RUN; see
         // the member Doxygen).  The col1..col5 fields are "label=weight" strings in
         // the log line's order; a trailing empty field means the direction had fewer
         // than 5 shared columns.
@@ -1694,7 +1694,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // adm_* block below).
                << (nc.trace_postfit_rows ? std::string("\"trace_postfit_rows\":true,")
                                          : std::string())
-               // SPEC_event_harness §24.10 card ZP station-block audit: same
+               // SPEC_event_harness §24.10 station-block audit: same
                // armed-only rule, so an unarmed run's manifest bytes are unchanged.
                << (nc.trace_station_block ? std::string("\"trace_station_block\":true,")
                                           : std::string())
@@ -1745,7 +1745,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // are unchanged.
                << (nc.estimate_rx_extra_band_code_delay
                        ? std::string("\"estimate_rx_extra_band_code_delay\":true,") : std::string())
-               // Card GFC: the two code-datum arms change which combination realizes the
+               // The two code-datum arms change which combination realizes the
                // inter-family code offset and whether a pin pair change re-seeds the
                // clock, so they are part of the product's frame.  Emitted only when armed
                // (as for sat_gf_extra_band_free above), so an unarmed run's manifest bytes
@@ -1754,7 +1754,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? std::string("\"code_datum_pair_continuity\":true,") : std::string())
                << (config_.networkCodeDatumFamilyDifference()
                        ? std::string("\"code_datum_family_difference\":true,") : std::string())
-               // Card GFC step 2: the first-sighting family prior's sigma, emitted only when
+               // The first-sighting family prior's sigma, emitted only when
                // armed (as for the two arms above).
                << (config_.networkCodeFamilyBirthPriorSigmaM() > 0.0
                        ? fmt::format("\"code_family_birth_prior_sigma_m\":{:g},",
@@ -1806,7 +1806,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                        ? fmt::format("\"amb_float_drop_floor_after_ep\":{},",
                                      nc.amb_float_drop_floor_after_ep)
                        : std::string())
-               // The second phase channel (card SID phase 6a) affects the solve, so the
+               // The second phase channel affects the solve, so the
                // manifest records the knob, its allow-list and its sigma scale when
                // armed.  Emitted only when armed, so an unarmed run's manifest bytes are
                // unchanged.
@@ -1839,7 +1839,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.gross_los_emit_exclude ? "true" : "false",
                                      nc.gross_los_station_tier ? "true" : "false")
                        : std::string())
-               // The cold-start bound of the same screen (card ICF response 1), under the
+               // The cold-start bound of the same screen, under the
                // same rule: solve-affecting, so recorded, and only when armed.
                << ((nc.gross_los_cold_bound_m > 0.0)
                        ? fmt::format("\"gross_los_cold_bound_m\":{},", nc.gross_los_cold_bound_m)
@@ -1999,11 +1999,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << "\"phase_leveling_local_block\":" << (pl_local_block ? "true" : "false") << ','
                << fmt::format("\"shared_carry_var_floor_pb_m2\":{},", pb_var_floor)
                << fmt::format("\"shared_carry_var_floor_cb_m2\":{},", cb_var_floor)
-               // Card PFQ: solve-affecting and fingerprinted, so an archived logs/ folder
+               // Pivot-frame process noise: solve-affecting and fingerprinted, so an archived logs/ folder
                // has to say whether the carried clocks took the pivot-frame noise.
                << (config_.networkClockPivotFrameQ()
                        ? std::string("\"clock_pivot_frame_q\":true,") : std::string{})
-               // Card BCL: solve-affecting and fingerprinted, armed-only like card PFQ's.
+               // Border clones: solve-affecting and fingerprinted, armed-only like the pivot-frame process noise.
                << (config_.networkCarryCouplingBiasClone()
                        ? std::string("\"carry_coupling_bias_clone\":true,") : std::string{})
                << (config_.networkCarryCouplingDepartedClone()
@@ -2111,13 +2111,13 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << (nc.slip_qc.gap_reentry_coresumed_share
                        ? std::string("\"gap_reentry_coresumed_share\":true,")
                        : std::string())
-               // The signal roster and arc ledger's own record (card SID phase 1).  They
+               // The signal roster and arc ledger's own record.  They
                // do not affect the solve, but the run-end census and the
                // signals_as_planned records are read against the ledger's horizon,
                // forget window and holdoff, so an archived logs/ folder has to carry
                // them (the four config values the horizon is derived from are written
                // too, so the number can be checked without re-reading the config).
-               // Written on every network run: since card NOM step N3a the roster and
+               // Written on every network run: the roster and
                // the ledger are built on every run, and network.signal_roster is the
                // switch of the ledger's trace only, recorded as "trace" (with the trace
                // file named when it is written).
@@ -2128,7 +2128,7 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                               "\"readmit_seed_horizon_s\":{},"
                               "\"forget_ep\":{},\"event_holdoff_ep\":{},"
                               "\"event_tier\":\"ARC\","
-                              // The reader's own state (card SID phase 2), and the two
+                              // The reader's own state, and the two
                               // extensions that are on whenever the roster is built: the
                               // IF pin writes the datum designation, and the admitted
                               // lifecycle runs beside the raw one.
@@ -2309,7 +2309,7 @@ void NetworkRunTraces::writeRunManifestComplete(const NetworkConfig& nc,
                << "\"stations_no_record\":" << counters.n_marker_arp_no_record << ','
                << fmt::format("\"max_h_m\":{:.4f},", counters.marker_arp_max_h)
                << "\"max_h_station\":\"" << counters.marker_arp_max_h_station << "\"},"
-               // The roster's own end-of-run census (card SID phase 2), so an
+               // The roster's own end-of-run census, so an
                // archived logs/ folder carries the new classes without the run-end
                // log text.  Written on every network run; the roster is built on every
                // run, so a field reads 0 only when nothing it
@@ -2482,11 +2482,11 @@ void NetworkRunTraces::closeAll() {
     if (raim_trace.is_open()) raim_trace.close();
     if (raim_attrib_trace.is_open()) raim_attrib_trace.close();
     if (producer_ar_trace.is_open()) producer_ar_trace.close();
-    if (ar_lattice_trace.is_open()) ar_lattice_trace.close();                 // card AGT, AGT-6
-    if (ar_lattice_events_trace.is_open()) ar_lattice_events_trace.close();   // card AGT, AGT-6
-    if (fixed_cycles_trace.is_open()) fixed_cycles_trace.close();             // card FCF
-    if (fixed_cycle_shift_trace.is_open()) fixed_cycle_shift_trace.close();   // card FCF
-    if (fixed_cycle_events_trace.is_open()) fixed_cycle_events_trace.close(); // card FCF, FCF-3
+    if (ar_lattice_trace.is_open()) ar_lattice_trace.close();                 // lattice observatory
+    if (ar_lattice_events_trace.is_open()) ar_lattice_events_trace.close();   // lattice observatory
+    if (fixed_cycles_trace.is_open()) fixed_cycles_trace.close();             // fixed-cycle fold
+    if (fixed_cycle_shift_trace.is_open()) fixed_cycle_shift_trace.close();   // fixed-cycle fold
+    if (fixed_cycle_events_trace.is_open()) fixed_cycle_events_trace.close(); // fixed-cycle fold
     if (epoch_status_trace.is_open()) epoch_status_trace.close();
     if (health_trace.is_open()) health_trace.close();
     if (events_trace.is_open()) events_trace.close();
@@ -2512,7 +2512,7 @@ void NetworkRunTraces::closeAll() {
     // of a datum-graph arm.
     if (datum_graph_trace.is_open()) datum_graph_trace.close();
     // Same reason: added after INC-4, and the complete edge record is the graded
-    // artifact of a card SID arm (the ARC event tier only samples it).
+    // artifact of a signal-identity arm (the ARC event tier only samples it).
     if (arc_ledger_trace.is_open()) arc_ledger_trace.close();
     // Same reason: added after INC-4, and the per-row residual dump is the graded
     // artifact of a §24.6 attribution leg, so its tail must be flushed at teardown.
@@ -2527,8 +2527,8 @@ void NetworkRunTraces::closeAll() {
     // Same reason (RF-1 §7.4): added after INC-4, and the carry-state trace is the
     // instrument that step 2 exists to produce, so its tail must be flushed at teardown.
     if (amb_state_trace.is_open()) amb_state_trace.close();
-    if (phase_colour_trace.is_open()) phase_colour_trace.close();   // card LGM
-    if (amb_if_trace.is_open()) amb_if_trace.close();               // card AIL
+    if (phase_colour_trace.is_open()) phase_colour_trace.close();   // phase colour
+    if (amb_if_trace.is_open()) amb_if_trace.close();               // ambiguity information
 }
 
 // Setup builder; documented at its declaration in network/diag/RunTraces.hpp.
@@ -2547,12 +2547,12 @@ void networkRunManifestStartup(NetworkRun& run, const std::filesystem::path& con
     // NetworkRunTraces (INC-4), where manifest_path is a member.
     traces.writeRunManifestStartup(config_, nc, ctx.knobs, config_path_,
                                    stations.size(), n_threads, log);
-    // The parameter model as armed (card PRM phase 1, section 6): one line per kind, read
+    // The parameter model as armed: one line per kind, read
     // from the registry, the same rows into the manifest.  Trace class: always written,
     // never read by the solve.
     for (const auto& line : ctx.params.modelTable())
         log->info("Network (param model): {}", line);
-    // Card PRM phase 3a: each kind's armed response policies per event.
+    // Each kind's armed response policies per event.
     for (const auto& line : ctx.params.responseTable())
         log->info("Network (param responses): {}", line);
     traces.appendRunManifestRecord(nc, ctx.params.modelJson());

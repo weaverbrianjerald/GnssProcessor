@@ -2,7 +2,7 @@
 /**
  * @file ArcLedger.hpp
  * @brief Arc lifecycle state machine: one record per (station, satellite, signal),
- *        owned by @c NetworkRunContext (card SID phase 1).
+ *        owned by @c NetworkRunContext.
  *
  * ### Purpose
  *
@@ -16,7 +16,7 @@
  * `runs/_msc/sid_audit_report_2026-09-22.md`, Part B.
  *
  * This ledger is one state machine those containers can read.  It is built on
- * every network run; the solve reads it only through a card SID
+ * every network run; the solve reads it only through a signal-identity
  * reader armed by its own knob, so with none armed it counts and traces and the
  * solve is unchanged.
  *
@@ -72,7 +72,7 @@
  * transition), and birth events are suppressed on the first epoch.  The
  * per-transition trace (`logs/network_arc_ledger.csv`) is not throttled and holds
  * every edge.  Each trace row names its side: raw, adm, or carry (a carry row is
- * written when the carry's gap prune retires an arc; card SID phase 3).
+ * written when the carry's gap prune retires an arc).
  */
 
 #include <cstddef>
@@ -122,7 +122,7 @@ namespace GnssProcessor {
      * Every screen that removes a modelled row, a satellite or a station records
      * the arcs it removed, with its own bit, in the per-epoch @ref ArcReasonEpoch
      * buffer, and the fold in @ref ArcLedger::admitEpoch stamps that mask on the
-     * admitted gap the removal opened (card SID phase 4, S1).  An admitted gap
+     * admitted gap the removal opened.  An admitted gap
      * that no writer explains carries @ref kArcReasonUnknown; that bit counts the
      * phase-3 no-verdict returns that remain unexplained.
      */
@@ -150,7 +150,7 @@ namespace GnssProcessor {
      *
      * @ref kArcReasonDeweight is excluded by construction: a de-weight leaves the
      * row in the solve, so counting it as a gap opener would attribute a removal
-     * to a screen that removed nothing (card SID phase 4).  @ref
+     * to a screen that removed nothing.  @ref
      * kArcReasonUnknown is excluded because the fold writes it when this mask
      * comes out empty.
      */
@@ -205,7 +205,7 @@ namespace GnssProcessor {
         bool      modelled{ false };          ///< the roster gave this signal the Modelled role at the last sighting.
         unsigned  reason_mask{ kArcReasonNone }; ///< why the arc last left (see @ref ArcDeathReason).
 
-        // --- Admitted lifecycle, kept beside the raw one (card SID phase 2) -----
+        // --- Admitted lifecycle, kept beside the raw one -----
         //
         // The two populations differ: the raw side is observed upstream of the
         // elevation mask, the allow list and every admission screen, while
@@ -221,7 +221,7 @@ namespace GnssProcessor {
         int       adm_generation{ 0 };              ///< increments at every admitted birth.
         unsigned  adm_reason_mask{ kArcReasonNone };///< why the admitted side last left.
 
-        // --- State-vector prune, recorded as a mark (card SID phase 3) ----------
+        // --- State-vector prune, recorded as a mark ----------
         //
         // @c StateManager::pruneAmbiguitiesExcept destroys an ambiguity column
         // after one missed epoch, with no window and no event; the audit found it
@@ -270,16 +270,16 @@ namespace GnssProcessor {
         long long adm_gap_len_ep{ -1 };
         int       adm_generation{ 0 };        ///< the admitted generation after the step.
         /// The ambiguity column of this arc was pruned during the gap this step
-        /// closes, so a re-entry returns to a fresh column (card SID phase 3).
+        /// closes, so a re-entry returns to a fresh column.
         bool      state_recreated{ false };
     };
 
     /**
-     * @brief One arc of the ledger-driven re-entry population (card SID phase 3).
+     * @brief One arc of the ledger-driven re-entry population.
      *
      * The population uses the same (station, satellite, signal) key as the
      * response, so the population and the action cannot disagree on the key
-     * (the defect of card GRK).
+     * (the gap re-entry key mismatch).
      */
     struct ArcReentryArc {
         int         station{ -1 };
@@ -291,7 +291,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief This epoch's ledger-driven re-entry population (card SID phase 3).
+     * @brief This epoch's ledger-driven re-entry population.
      *
      * Built once per epoch at the PASS-A slip site and handed to both re-entry
      * drains.  With @ref armed false every drain stays on its raw-driven path and
@@ -305,7 +305,7 @@ namespace GnssProcessor {
         long long not_modelled{ 0 };            ///< admitted returns whose signal the roster does not call Modelled.
     };
 
-    /// @brief The per-epoch reason buffer, defined below the class (card SID phase 4, S1).
+    /// @brief The per-epoch reason buffer, defined below the class.
     struct ArcReasonEpoch;
 
     /**
@@ -410,7 +410,7 @@ namespace GnssProcessor {
                       std::vector<std::pair<Key, ArcStep>>& out);
 
         /**
-         * @brief Advance the admitted lifecycle of the open epoch (card SID phase 2).
+         * @brief Advance the admitted lifecycle of the open epoch.
          *
          * Called once per epoch (at most once per @ref beginEpoch: the sweep
          * recognizes this epoch's admitted arcs by their @c ep_last_admitted stamp),
@@ -427,7 +427,7 @@ namespace GnssProcessor {
          * When @p reasons is non-null and armed, the reason mask of every admitted
          * gap this call opens is stamped from it: the screens' records for that arc,
          * narrowed to @ref kArcReasonGapMask, or @ref kArcReasonUnknown when nothing
-         * explains the gap (card SID phase 4, S1).  With @c nullptr the machine
+         * explains the gap.  With @c nullptr the machine
          * behaves as in phase 3.
          *
          * @param admitted The (station, satellite, signal) arcs admitted at this epoch.
@@ -441,7 +441,7 @@ namespace GnssProcessor {
                         const ArcReasonEpoch* reasons = nullptr);
 
         /**
-         * @brief Record that this arc's ambiguity column was pruned (card SID phase 3).
+         * @brief Record that this arc's ambiguity column was pruned.
          *
          * A mark, not a transition: the prune is not an arc event (the receiver
          * reports or not independently of the state vector); it means the column a
@@ -494,7 +494,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief One arc's reason record inside the epoch (card SID phase 4, S1).
+     * @brief One arc's reason record inside the epoch.
      */
     struct ArcReasonRec {
         unsigned  bits{ kArcReasonNone };  ///< the reasons recorded for this arc.
@@ -502,7 +502,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief The per-epoch reason buffer the screens write (card SID phase 4, S1).
+     * @brief The per-epoch reason buffer the screens write.
      *
      * Owned by @c NetworkRunContext.  Every screen that removes a modelled row, a
      * satellite or a station records the arcs it removed, with its own bit, here;
@@ -568,7 +568,7 @@ namespace GnssProcessor {
      * satellite, and the coverage gate removes a whole family; none of them names
      * a signal.  Such a writer expands to the arcs the screen removed, which on
      * the admitted side are the arcs alive (admitted Tracking or Reentered) when
-     * the screen fired (card SID phase 4 rule).
+     * the screen fired.
      *
      * @param buf     The buffer; a no-op when it is not armed.
      * @param led     The ledger, read-only.
@@ -583,7 +583,7 @@ namespace GnssProcessor {
                               const std::string& signal, unsigned bit);
 
     /**
-     * @brief The admitted Gap-to-Reentered arcs of this epoch (card SID phase 3).
+     * @brief The admitted Gap-to-Reentered arcs of this epoch.
      *        Pure function.
      *
      * A query, not a step: the admitted machine is advanced once per epoch far
@@ -608,7 +608,7 @@ namespace GnssProcessor {
                                     ArcReentryEpoch& out);
 
     /**
-     * @brief What the re-entry response did to one arc (card SID phase 3).
+     * @brief What the re-entry response did to one arc.
      *
      * The unified definition of an answered re-entry (R4).  The response records
      * its outcome per arc, and the census reads that record instead of inferring

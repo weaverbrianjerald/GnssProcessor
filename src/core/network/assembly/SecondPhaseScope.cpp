@@ -1,7 +1,7 @@
 /**
  * @file SecondPhaseScope.cpp
  * @brief Implementation of the second-phase-channel primitives and of the epoch
- *        tail (card SID phase 6a).  See the header for the contract and for which
+ *        tail.  See the header for the contract and for which
  *        seam consumes each one.
  */
 #include "network/assembly/SecondPhaseScope.hpp"
@@ -124,7 +124,7 @@ void networkSecondPhaseEpochTail(NetworkRun& run, const NetworkEpoch& ep) {
     //     other; this counts, per epoch, the seated anchors that are second-phase arcs.
     //     `anchor_incumbent` is keyed by the ambiguity key and holds the incumbent
     //     station's name.
-    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent,   // card NOM step N4d
+    net::forEach(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent,
                  [&](const SatSignalId& id, const std::string& name) {
         const std::string amb = net::ambKey(id);
         const auto parts = StateKeys::parseAmbiguityKey(amb);

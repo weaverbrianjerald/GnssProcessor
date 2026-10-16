@@ -114,7 +114,7 @@ struct NetworkSatSolution {
     /// replay use the same arithmetic, so a replay reproduces every declaration.  0
     /// unless the wire declares a step.
     double                                  level_step_m{0.0};
-    /// Card CLV return plan R-A (removed from the producer; read from an old wire): per code-bias
+    /// Return plan R-A (removed from the producer; read from an old wire): per code-bias
     /// signal, the FOLLOW STEP of a free same-band column since this satellite's previous
     /// emission (m): the re-base moved that code-bias record by this amount together with
     /// the clock, so a consumer reading band 1 through it sees no level step.  Serialized
@@ -331,7 +331,7 @@ public:
     /// The jump-test threshold (m) for a given (sat, signal): frac·λ when the
     /// fractional-cycle mode is armed and λ resolves, else the flat metre gate.  Public
     /// so the hold can read an estimator step against the bar the emitter applies to
-    /// the wire (card SMD's unmarked steps).
+    /// the wire (the smoothed-hold block member's unmarked steps).
     double discThresholdM(const std::string& sat, const std::string& signal) const;
 
     /// Stable lowercase name of one channel ("clk" / "cb" / "pb"), for trace events
@@ -345,7 +345,7 @@ public:
     /// @return the run count (0 unless the wire declares a level step).
     long long clvJumpExcluded() const { return clv_jump_excluded_; }
 
-    /// @brief Card CLV return plan R-A: code-bias value-jump tests whose raw step exceeded
+    /// @brief Return plan R-A: code-bias value-jump tests whose raw step exceeded
     ///        the bar only because of the column's declared follow step
     ///        (@ref NetworkSatSolution::cb_level_step_m, the B-record lvl= token), and
     ///        which the step's removal therefore did not declare.
@@ -436,7 +436,7 @@ public:
     int clockDiscontinuityCounter(const std::string& sat) const;
 
     /**
-     * @brief Whether this phase-bias key is a first sighting (card SID phase 5, E1).
+     * @brief Whether this phase-bias key is a first sighting.
      *
      * The emitter's own test, @c last_phase_bias_.find(key) == end(), exposed so it
      * can be compared with the arc ledger, which knows whether the family is
@@ -453,10 +453,10 @@ public:
      */
     bool isPhaseFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Code-bias twin of @ref isPhaseFirstSighting (card SID phase 5, E1).
+    /// Code-bias twin of @ref isPhaseFirstSighting.
     bool isCodeFirstSighting(const std::string& sat, const std::string& signal) const;
 
-    /// Clock twin of @ref isPhaseFirstSighting (card SID phase 5, E1).  Always true
+    /// Clock twin of @ref isPhaseFirstSighting.  Always true
     /// unless the emitter was constructed with @c emit_clock_disc (A2), which is what
     /// fills @c seen_clock_sats_.
     bool isClockFirstSighting(const std::string& sat) const;
@@ -553,7 +553,7 @@ private:
     /// declaration order.
     bool   disc_mark_scope_channel_{false};
     long long clv_jump_excluded_{0};   ///< See clvJumpExcluded().
-    long long clv_cb_jump_excluded_{0};   ///< card CLV R-A: see clvCbJumpExcluded()
+    long long clv_cb_jump_excluded_{0};   ///< return plan R-A: see clvCbJumpExcluded()
     bool   emit_clock_disc_{false};       ///< Maintain and stamp the clock disc counter (A2).
     /// Staleness horizon (s, product time; 0 = off) (RTA-11).  With it on, the
     /// last_seen maps below record each key's last-emitted epoch time.  A key that

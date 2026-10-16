@@ -23,8 +23,8 @@
  * |median| > 0.5·λ_IF floods (§14.10.3): on (L2W,L5Q) the IF coefficients are
  * 12.26 / −11.26 (noise amplification 16.6) against λ_IF = 0.1247 m, so noise alone
  * clears the fixed floor (5 351 candidates and 64 fires on a quiet 70-epoch
- * 60-station null).  The knob therefore opens the arm only behind the empirical gate
- * of card R, which scales with each chain's own dispersion, and the detector refuses
+ * 60-station null).  The knob therefore opens the arm only behind the empirical gate,
+ * which scales with each chain's own dispersion, and the detector refuses
  * the combination in code as well as in the loader.
  *
  * ### Gates in this file
@@ -144,7 +144,7 @@ std::vector<PppObservation> makeEpoch(double tow, std::size_t epoch_idx,
     return epoch;
 }
 
-/// The armed gate of card R with its default parameters (k = 6, min_n = 4,
+/// The armed gate with its default parameters (k = 6, min_n = 4,
 /// thin_widen = 3, coherence = 0.5, max_consecutive = 1, no warm-up abstention).
 IfPhaseSlipDetector::RefGateParams armedGate() {
     IfPhaseSlipDetector::RefGateParams p;
@@ -160,7 +160,7 @@ struct FanHarness {
     IfPhaseSlipDetector det{ config, log_manager };
 
     /// @param all_pairs  `if_phase_td_pairs = all`.
-    /// @param ref_gate   card R's empirical gate.
+    /// @param ref_gate   the empirical reference gate.
     /// @param ref_arm    the arm on the additional chains (§22.6).
     FanHarness(bool all_pairs, bool ref_gate, bool ref_arm) {
         det.setDeferFlagging(true);         // the network wiring

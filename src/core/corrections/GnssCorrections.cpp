@@ -21,7 +21,7 @@
 #include "math/TimeUtils.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
-#include "products/BrdcClockApriori.hpp"   // card NBP native broadcast clock a priori
+#include "products/BrdcClockApriori.hpp"   // native broadcast clock a priori
 #include "model/SatAttitude.hpp"
 #include <algorithm>
 #include <array>
@@ -161,7 +161,7 @@ namespace GnssProcessor {
         // it returns 0.0, so the broadcast fallback below still applies.
         double clock_corr = interpolateClock(satellite, time, *clocks_);
 
-        // Card NBP (network.apriori_source sp3_brdc_clock, producer stations only): the a
+        // Native broadcast clock (network.apriori_source sp3_brdc_clock, producer stations only): the a
         // priori is the continuous broadcast clock a_s(t) = brdc_k(t) + O_s,k of the
         // native selector.  It is the producer's declared a priori (the value the bed's CLK
         // carried), so it is returned as product-grade, and neither the live store's
@@ -422,7 +422,7 @@ namespace GnssProcessor {
         // live broadcast store to fall back to, so the satellite would be modelled
         // against a zero clock.  0.1 s matches the final sanity bound in
         // getSatelliteClockCorrection.  The output equals that of a 1 ms bound
-        // wherever every sample is below 1 ms.  (Card GAL.)
+        // wherever every sample is below 1 ms.
         constexpr double MAX_CLOCK_BIAS = 1e-1;
         constexpr size_t LAGRANGE_POINTS = 9;
 

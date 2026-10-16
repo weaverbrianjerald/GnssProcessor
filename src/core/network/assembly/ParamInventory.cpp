@@ -1,18 +1,18 @@
 /**
  * @file ParamInventory.cpp
- * @brief The network parameter inventory (see ParamInventory.hpp; card NOM N1).
+ * @brief The network parameter inventory (see ParamInventory.hpp).
  */
 #include "network/assembly/ParamInventory.hpp"
 
 #include "network/state/RunContext.hpp"     // NetworkRunContext::param_inventory
-#include "network/driver/SetupResult.hpp"    // NetworkSetupResult::stations (the card L5B run-end report)
+#include "network/driver/SetupResult.hpp"    // NetworkSetupResult::stations (the band-5 receiver-delay run-end report)
 #include "common/EpochMeasurement.hpp"   // rxIfbExcludedRows
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"    // StationAssembly::param_inv, ok, threw
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"  // appendRunManifestRecord
-#include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked, card L5B)
+#include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 
 #include <fmt/format.h>
@@ -140,7 +140,7 @@ std::string classNote(const ParamClass& c, const RxIfbRule& rule) {
         if (rule.drop)
             return fmt::format("rule rx_ifb: {} ({}); dropped: {}",
                                paramDispositionName(rule.disposition), rule.source, rule.dropped_by);
-        if (rule.estimated_by_knob)   // card L5B: the drop turned off by its own knob
+        if (rule.estimated_by_knob)   // the drop turned off by its own knob
             return fmt::format("rule rx_ifb: estimated ({}); not dropped by {}",
                                rule.estimated_by, rule.dropped_by);
         return fmt::format("rule rx_ifb: not armed ({} off), estimated", rule.dropped_by);
@@ -423,7 +423,7 @@ namespace {
 constexpr const char* kByAmbiguity = "the station's float ambiguity of the same satellite and signal";
 
 /// The reason table, in enum order (the static_assert below).  Each row was read against
-/// the code it names (card NOM N1b).
+/// the code it names.
 constexpr AbsorbedReasonSpec kAbsorbedReasonTable[kAbsorbedReasons] = {
     {AbsorbedReason::GlonassCodeOnlyScope, "glonass_code_only_scope", "GLONASS code-only scope",
      "GLONASS is admitted on code-only scope (network.estimate_glonass): a shared "
@@ -506,7 +506,7 @@ bool absorberPresent(const StateManager& sm, const AbsorbedInstance& a) {
 
 RxIfbRule networkRxIfbRule(const GnssConfig& config) {
     RxIfbRule r;
-    // Card L5B: network.estimate_rx_extra_band_code_delay turns the drop off where it can
+    // network.estimate_rx_extra_band_code_delay turns the drop off where it can
     // act.  Unarmed, or armed where it cannot act, this is the former single assignment
     // (drop = estimateNetworkSatCodeBias()).
     r.extra_band_tracked = rxExtraBandTracked(config.getFrequencyMode(), config.getActiveSystems());
@@ -898,7 +898,7 @@ std::string paramInventoryJson(const ParamInventoryTally& tally, const RxIfbRule
                      jsonEscape(rule.source), jsonEscape(rule.dropped_by), jsonEscape(rule.premise),
                      rule.iono_weighting ? "true" : "false", w6IonoText(rule),
                      rule.premise_holds ? "true" : "false");
-    // Card L5B: the knob that turned the drop off, only when it did (an unarmed record's
+    // The knob that turned the drop off, only when it did (an unarmed record's
     // bytes are unchanged).
     if (rule.estimated_by_knob)
         j += fmt::format(",\"estimated_by\":\"{}\"", jsonEscape(rule.estimated_by));
@@ -1010,7 +1010,7 @@ void networkParamInventoryRunEnd(const NetworkRunContext& ctx, const std::shared
              paramInventoryTable(inv.whole_run, inv.rx_ifb, "run"));
     traces.appendRunManifestRecord(nc, paramInventoryJson(inv.whole_run, inv.rx_ifb, "run"));
 
-    // The satellite-id census (card NOM N0b): the ids of no modelled constellation and the
+    // The satellite-id census: the ids of no modelled constellation and the
     // SBAS ids, with up to ten of each listed when any was counted.
     const SatIdentityCensus& c = inv.sat_ids;
     const auto listed = [](const std::set<std::string>& ids) {
@@ -1041,7 +1041,7 @@ void networkParamInventoryRunEnd(const NetworkRunContext& ctx, const std::shared
     /**
      * @brief Run-end section: parameters as armed (NOM N1).
      *
-     * The table's row for "parameters as armed" (card NOM N1) and its manifest record; the
+     * The table's row for "parameters as armed" and its manifest record; the
      * report is the overload above.
      *
      * Gate: none of its own: the row calls the report above on every run, as the teardown
@@ -1056,7 +1056,7 @@ static int networkParamInventoryTableRunEnd(const NetworkRunEndView& v) {
     const std::shared_ptr<spdlog::logger>& log = v.log;
     NetworkRunTraces& traces = v.traces;
 
-    // Card NOM N1: the instances of every kind over the run, with their treatments
+    // The instances of every kind over the run, with their treatments
     // ("parameters as armed", the run's table) and its manifest record.
     networkParamInventoryRunEnd(ctx, log, traces, config_.getNetworkConfig());
     return 0;

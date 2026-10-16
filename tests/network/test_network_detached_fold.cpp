@@ -43,8 +43,8 @@
  *    a condition number of 1e2 to 1e12; empty input returns x_float exactly; the
  *    preconditions (read from the kernel's folded state) and malformed rows throw;
  *  - the kernel's section timers: armed, a held solve with two folded blocks leaves every
- *    accumulator bitwise as it was (the held solves are the fixed-cycle seam's cost, card
- *    FCFB section 5).
+ *    accumulator bitwise as it was (the held solves are the fixed-cycle seam's cost; see the
+ *    fixed-cycle fold design, section 5).
  *
  * Suite name owned by this file alone (suite-hygiene rule in CLAUDE.md).
  */
@@ -828,9 +828,9 @@ TEST(NetworkDetachedFold, PlantedWrongIntegerCalibrationAndPower) {
     const Eigen::Matrix2d target = pairCovarianceCycles(0.06, 0.04);
     PairBed bed = makePairBed(rng, 6, 2, 20, target);   // 12 pairs, K = 24
 
-    // The hold sigmas: the design's 0.01 cycle, the 0.003 cycle of the FCF-2 arms (card
-    // FCFB section 3), and 0.0001 cycle, a hold small against the float in every
-    // direction (0.001 cycle, measured in card FCFB section 2, lies between).
+    // The hold sigmas: the design's 0.01 cycle, the 0.003 cycle of the FCF-2 arms (fixed-cycle fold design,
+    // section 3), and 0.0001 cycle, a hold small against the float in every
+    // direction (0.001 cycle, measured in section 2 of that design, lies between).
     constexpr int kHolds = 3;
     const double sigmas[kHolds] = {0.01, 0.003, 0.0001};
 
@@ -1105,7 +1105,7 @@ TEST(NetworkDetachedFold, TwoBlocksSharingAStationThrow) {
     EXPECT_NO_THROW(est.solveHeldDetached(s.datum, x, disjoint));
 }
 
-// The held solves are not timed or counted in the kernel's section timers (card FCFB
+// The held solves are not timed or counted in the kernel's section timers (fixed-cycle fold design,
 // section 5): with the timers armed, the float solve is counted, and a held solve with two
 // folded blocks (three shared solves inside it) leaves every accumulator bitwise as it was.
 TEST(NetworkDetachedFold, HeldSolveLeavesTheKernelsSectionTimersAlone) {

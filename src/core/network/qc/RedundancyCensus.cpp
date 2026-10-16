@@ -343,8 +343,8 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
         const std::string& sname = stations[i].name;
 
         // ---- cheap tier: classes and the centred magnitude metric ----------
-        // Each row's class and satellite come from its contribution tag (card NOM
-        // step N2b, filter/NetworkRowClassify).  An SH tie row is filed under no
+        // Each row's class and satellite come from its contribution tag
+        // (filter/NetworkRowClassify).  An SH tie row is filed under no
         // satellite: a whitened tie row spans the slant ionospheres of several lines of
         // sight, so it joins no per-satellite cell, block or bin (the block-Baarda census
         // counts it as an unnamed row), as before the tags, when its only shared columns

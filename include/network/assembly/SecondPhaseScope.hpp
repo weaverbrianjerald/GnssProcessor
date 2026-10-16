@@ -1,6 +1,6 @@
 /**
  * @file SecondPhaseScope.hpp
- * @brief Primitives of the second phase channel, card SID phase 6a
+ * @brief Primitives of the second phase channel
  *        (docs/refound/SID_signal_identity_2026-09-22.md section 4).
  *
  * With one carrier phase per station and band, a satellite's L1W phase bias is
@@ -10,7 +10,7 @@
  * float-ambiguity phase rows, every allow-listed band-1 phase it reports besides
  * its latched canonical one.
  *
- * This is the phase counterpart of card SCC.  The decisions below are pure
+ * This is the phase counterpart of the second code channel.  The decisions below are pure
  * functions of their inputs and are unit-tested directly
  * (tests/network/test_second_phase_channel.cpp):
  *
@@ -25,7 +25,7 @@
  *    (station, satellite, signal) cells the mechanism opens and closes;
  *  - @ref secondPhaseWitness: the per-line-of-sight slip witness.
  *
- * No receiver inter-signal phase state is added, by design.  Card SCC needs a
+ * No receiver inter-signal phase state is added, by design.  The second code channel needs a
  * receiver inter-signal code state because C1C and C1W both resolve to the
  * per-band receiver DCB, and a second code without it would assert a zero
  * inter-signal bias.  On the phase side a float ambiguity absorbs any constant
@@ -55,7 +55,7 @@ struct NetStation;
  *
  * Pure.  Accepts only a 3-character RINEX observation code of type 'L' whose
  * band digit is '1'.  Anything else is refused, not clamped: a code type belongs
- * to card SCC, and a band-2 entry belongs to phase 6b (this phase keeps the
+ * to the second code channel, and a band-2 entry belongs to phase 6b (this phase keeps the
  * band-1 scope its acceptance bars were set on).
  *
  * @param entry The configured string, e.g. "L1W".
@@ -130,7 +130,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
 
 /**
  * @brief Epoch tail of the second phase channel: the slip census by tier and the
- *        anchor census (card SID phase 6a, R3 + R4).
+ *        anchor census (R3 + R4).
  *
  * Runs late in the epoch, after every slip tier has written its freeing cause and
  * after the anchor election, because those are its inputs.  Read-only; every
@@ -162,7 +162,7 @@ struct NetworkRunEndView;
 /**
  * @brief Run-end report: the second phase channel.
  *
- * The second phase channel (card SID phase 6a): second-phase cells, rows and the
+ * The second phase channel: second-phase cells, rows and the
  * families they opened, with the rows summed from the stations into a local copy of the
  * tallies.
  *

@@ -16,18 +16,18 @@
 #include "network/solve/ChainDatum.hpp"
 #include "network/solve/ClockAnchor.hpp"   // guarded temporal clock anchor
 #include "network/carry/ClockClone.hpp"    // the one-epoch clock clone
-#include "network/carry/SharedHistory.hpp" // the shared history (card SCL2 X2)
+#include "network/carry/SharedHistory.hpp" // the shared history
 #include "network/solve/DatumGraph.hpp"   // datum graph census: the per-epoch spectral hand-off
 #include "network/diag/FrameDiag.hpp"   // networkDatumInfoRatio (invariant #7)
 #include "network/solve/HandoverStransform.hpp"   // the clock-pivot handover S-transform (queue 1(b))
 #include "network/solve/PhaseDatum.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/PrefitCensus.hpp"   // networkPrefitSigma0, the census-fed H σ̂₀ (H-rider)
-#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally (card NOM N2b)
+#include "network/qc/Raim.hpp"           // RaimPoolAdmissionTally: the within-epoch pool's admission tally
 #include "network/qc/Relevel.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch and inline A4 dump (INC-5)
 #include "network/qc/RobustStats.hpp"
-#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule (card NOM N2b)
+#include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
@@ -181,7 +181,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
     int gate_first_observed = -1;   // this epoch's first evaluation: the DG6 min/max sample
     double gate_ev_max      = -1.0; // λmax of the first evaluation, which sets the gate's own cutoff (invariant #7)
     ++ctx.counters.n_gate_evaluated;
-    // Card SCL: with clock clones registered, the gate judges the border with the clones
+    // With clock clones registered, the gate judges the border with the clones
     // marginalized and the idle ones dropped (filter/NetworkClockClone): a clone has a prior
     // and coupling rows, not observations, and an idle clone is not a gauge.  The view is
     // re-formed at every evaluation (the heal below folds priors first).  Off, no view is
@@ -235,7 +235,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
                 ctx.counters.n_heal_attempt_cols += static_cast<size_t>(healed);
             }
             if (healed > 0) {
-                // Card SCL: the view again, on the healed normals (off: not formed).
+                // The view again, on the healed normals (off: not formed).
                 ccl_gate = networkClockCloneGateView(ctx, est, ccl_gate_N);
                 const Eigen::MatrixXd* heal_N = ccl_gate ? &ccl_gate_N : &est.reducedSharedNormals();
                 sb.assertNullSpaceRank(*heal_N,
@@ -330,7 +330,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
                           registered_clock_sats, gate_ev_max,
                           /*gate_over_withheld=*/!gate_ok && gate_observed >= 0
                               && gate_observed < plan.declared_dimension,
-                          ccl_gate ? &ccl_gate_N : nullptr);   // card SCL: the gate's own view
+                          ccl_gate ? &ccl_gate_N : nullptr);   // the gate's own view
     // Datum graph census: the fallback spectral hand-off, for runs without SBC.  The
     // gate's own first evaluation is then the only realized near-null count, a count
     // with no direction identities, which the census labels `obs_src=count` rather
@@ -350,7 +350,7 @@ EpochAction networkRankGate(NetworkRun& run, const NetworkEpoch& ep, const Solve
 }
 // ---- End of the solve stages ----
 
-// ---- Run-end report (moved here by card NOM3 step SG) ----
+// ---- Run-end report ----
 
 // Run-end report: the observability rank gate and the datum-direction ratio.
 int networkRankGateRunEnd(const NetworkRunEndView& v) {

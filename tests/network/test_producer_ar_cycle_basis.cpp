@@ -9,7 +9,7 @@
  *  - on random pair graphs (partial L2, slips, several components, a sticky chain of searches):
  *    each band holds its lattice dimension in DD rows plus fundamental fallbacks, every row is a
  *    cycle, and the two bands of a shared chord are adjacent copies of one shape with one search
- *    block (card AGT section 4: "L1 and L2 rows share shape and block key");
+ *    block (arc-graph design, section 4: "L1 and L2 rows share shape and block key");
  *  - a slipped link reference re-seats the link, and the station's partner DDs map onto the
  *    stored basis instead of going fresh;
  *  - stickiness: an unchanged graph keeps every link and every cycle; a changed one keeps the
@@ -203,8 +203,8 @@ TEST(ProducerArCycleBasis, L1AndL2RowsShareShapeAndBlockKey) {
 }
 
 TEST(ProducerArCycleBasis, TheSearchBlockIsTheStationUnderTheCycleBasis) {
-    EXPECT_EQ(netar::searchBlockKey("G", "S1", "S2", false), "G|S1|S2");   // card ARL: per baseline
-    EXPECT_EQ(netar::searchBlockKey("G", "S1", "S2", true), "G|S1");       // card AGT: per station
+    EXPECT_EQ(netar::searchBlockKey("G", "S1", "S2", false), "G|S1|S2");   // per baseline
+    EXPECT_EQ(netar::searchBlockKey("G", "S1", "S2", true), "G|S1");       // per station
     EXPECT_EQ(netar::searchBlockKey("G", "S1", "S3", true), netar::searchBlockKey("G", "S1", "S2", true));
 }
 

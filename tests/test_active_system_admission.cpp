@@ -6,10 +6,10 @@
  * @c processing.active_systems: the synced epochs are stripped of every inactive system
  * right after the sync (@c MultiRinexSync::retainSystems), so a signal priority list for
  * an inactive system cannot put rows in the solve without a bias column.  The loader
- * therefore accepts such a list and only warns that it is ignored (the card GAL loader
+ * therefore accepts such a list and only warns that it is ignored (the earlier loader
  * refused it, which made two archived GPS-only configs unloadable).  Covered here: the
  * strip on synthetic epochs, the warning on an inline config, and the two real archived
- * configs loading with the warning (G3 of card OWD).
+ * configs loading with the warning.
  */
 #include <gtest/gtest.h>
 
@@ -69,7 +69,7 @@ CapturedLoad loadCapturing(const fs::path& p, const std::string& tag) {
     return out;
 }
 
-/// The warning's stable phrase (GnssConfigLoadNetwork.cpp, card OWD O4).
+/// The warning's stable phrase (GnssConfigLoadNetwork.cpp).
 constexpr const char* kIgnored = "is IGNORED";
 
 }  // namespace
@@ -125,8 +125,8 @@ TEST(ActiveSystemAdmission, ListOfAnInactiveSystemIsIgnoredWithAWarning) {
     fs::remove(p, ec);
 }
 
-// The two archived GPS-only configs that card GAL's check refused load, and the log names
-// the ignored Galileo list (G3 of card OWD).  Skipped when neither file is present.
+// The two archived GPS-only configs that the earlier check refused load, and the log names
+// the ignored Galileo list.  Skipped when neither file is present.
 TEST(ActiveSystemAdmission, ArchivedGpsOnlyConfigsLoadWithTheWarning) {
     const fs::path root = GNSS_PROJECT_ROOT;
     const fs::path configs[] = {

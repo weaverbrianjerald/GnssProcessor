@@ -349,7 +349,7 @@ namespace GnssProcessor {
         // processed epoch.  "count" is the historical rule and the default, so an
         // absent key is byte-identical.  "priority" walks the priority list and
         // takes the first entry that clears the coverage floor, then (by default,
-        // see card CSL-3 below) makes the code follow the phase's attribute.
+        // see below) makes the code follow the phase's attribute.
         {
             std::string raw = jval<std::string>(json, "processing.canonical_signal_rule",
                                                 "canonical_signal_rule", std::string{"count"});
@@ -650,7 +650,7 @@ namespace GnssProcessor {
                       ssr_bias_max_age_s_,
                       ssr_bias_max_age_s_ * ssr_bias_stale_hold_factor_,
                       ssr_bias_stale_hold_factor_);
-        // Declared-step ambiguity carry for a network-product consumer (card CC (A)).
+        // Declared-step ambiguity carry for a network-product consumer.
         // Default false keeps the reset reaction (byte-identical).  The closed-loop
         // harness derives it from network.closed_loop.pb_disc_carry
         // (deriveClosedLoopConsumerConfig); a standalone consumer sets it here.
@@ -661,8 +661,8 @@ namespace GnssProcessor {
                       "freshness flip translates the float ambiguity by -delta (value-only, "
                       "covariance kept) instead of resetting it; first sightings, an NL/WL "
                       "basis, a BSSD consumer and unknown keys still take the reset.");
-        // Ambiguity translation on every applied phase-bias step, declared or not
-        // (card PBT (A)).  Default false keeps the reset (or, with card CC armed, the
+        // Ambiguity translation on every applied phase-bias step, declared or not.
+        // Default false keeps the reset (or, with the declared-step carry armed, the
         // declared-step carry), byte-identical.  The closed-loop harness derives it
         // from network.closed_loop.pb_step_translate (deriveClosedLoopConsumerConfig);
         // a standalone consumer sets it here.
@@ -713,7 +713,7 @@ namespace GnssProcessor {
                           "the staleness gate, so the knob is inert here (the closed-loop "
                           "harness arms the gate on its derived consumer).");
         }
-        // Card CLV2: the consumer's response to a declared code-level step.  Default
+        // The consumer's response to a declared code-level step.  Default
         // false = byte-identical; the closed-loop harness derives it from
         // network.closed_loop.level_step_inflate, a standalone consumer sets it here.
         ssr_level_step_inflate_ = jval<bool>(json, "processing.ssr_level_step_inflate",

@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file BrdcWire.hpp
- * @brief Emit seam of card NBP: the wire's clock refers to the stamped broadcast
+ * @brief Emit seam of the native broadcast clock posture: the wire's clock refers to the stamped broadcast
  *        ephemeris under @c network.apriori_source @c sp3_brdc_clock.
  *
  * The producer's a priori is the continuous a_s(t) = brdc_k(t) + O_s,k
