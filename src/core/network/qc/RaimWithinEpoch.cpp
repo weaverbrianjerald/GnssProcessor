@@ -1552,6 +1552,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
     const std::vector<int>& est_index_of = *f.est_index_of;
     const RelevelEpochState& relevel_ev = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::ArcTable& arc_rows = ctx.entities.arcs;   // written
     // This epoch returns SkipEpoch (the driver's `continue`), so it never reaches the
     // SB_FRAMEDIAG consumer.  The recorder has to fire here, or the A4 trigger would
     // never dump the epoch that tripped it (only the next one, which is a different
@@ -1573,7 +1574,7 @@ void networkSigma0WithholdTail(NetworkRun& run, const NetworkEpoch& ep, const So
         for (const auto& fa : relevel_ev.free_ambs) {
             const auto parts = StateKeys::parseAmbiguityKey(fa.second);
             if (!parts) continue;
-            if (net::dropArc(ctx.entities.arcs, std::make_tuple(fa.first, parts->satellite, parts->signal), &net::ArcState::amb)) {
+            if (net::dropArc(arc_rows, std::make_tuple(fa.first, parts->satellite, parts->signal), &net::ArcState::amb)) {
                 ++ctx.counters.n_wh_free_erases;
                 prmRespond(ctx.counters.prm_resp,
                            ResponseSite::AmbWithholdErase);

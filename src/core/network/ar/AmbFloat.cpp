@@ -131,6 +131,7 @@ void networkAmbFloatApplyDrops(
     const std::vector<NetStation>& stations,
     const std::vector<std::map<std::string, double>>& elev_of,
     long long week, double tow, double pl_now_s, EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: stations
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf) return;            // the vehicle owns this response
     auto& relevel     = events.slip.relevel;
@@ -204,7 +205,7 @@ void networkAmbFloatApplyDrops(
         // lands even without a carry because a flagged arc with no carry is still not a
         // datum (RF-2 items 3 and 4).
         if (ctx.knobs.pd_held_basis)
-            net::putAmbFlagEp(ctx.entities, sta, amb_key) = now_ep;
+            net::putAmbFlagEp(entities, sta, amb_key) = now_ep;
         const auto it = net::getArc(ctx.entities.arcs, std::make_tuple(sta, parts->satellite, parts->signal), &net::ArcState::amb);
         if (it == nullptr) continue;      // nothing carried ⇒ nothing to drop
         const bool acted = dropAt((*it), sta, parts->satellite);
@@ -312,6 +313,7 @@ long long networkAmbFloatDeclaredHandover(
     const std::vector<AnchorHandoverEvent>& handovers,
     long long week, double tow,
     std::set<std::pair<std::string, std::string>>& handled_out) {
+    net::NetworkEntities& entities = ctx.entities;   // written
     // --- alias preamble (the seam contract) -------------------------------------
     if (!ctx.knobs.amb_float_kf || !ctx.knobs.amb_float_declared_handover) return 0;
     if (handovers.empty()) return 0;
@@ -359,7 +361,7 @@ long long networkAmbFloatDeclaredHandover(
         //      ChainDatum.cpp, SPEC_card1_coupling_carry §14).
         CarrySiteCounts prm_cc;
         long long n_shift = 0, n_pb = 0, n_cpl = 0;
-        declaredHandoverShiftCarry(ctx.carry, ctx.entities, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
+        declaredHandoverShiftCarry(ctx.carry, entities, sat, sig, delta, n_shift, n_pb, n_cpl, &prm_cc,
                                    ctx.knobs.rebase_complete);
         ++counters.prm_ref_calls[static_cast<int>(CarryMechanism::DeclaredHandover)];
         carryTallyMoved(counters.prm_ref_moved, CarryMechanism::DeclaredHandover, prm_cc);

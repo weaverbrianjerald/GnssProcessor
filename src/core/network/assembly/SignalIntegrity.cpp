@@ -99,6 +99,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
     const bool   deweight     = scale > 1.0;
 
     net::LosTable& los_rows = ctx.entities.los;   // the arc records
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     auto& ctr  = ctx.counters.sig;
     ++ctr.epochs;
 
@@ -146,7 +147,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
 
             const std::set<std::string> cur = signalIntegrityPhaseBands(obs);
             const bool first = net::getLos(los_rows, si, sat, &net::LosState::si_arc) == nullptr;
-            SignalIntegrityArc& a = net::putLos(ctx.entities, si, sat, &net::LosState::si_arc);
+            SignalIntegrityArc& a = net::putLos(entities, si, sat, &net::LosState::si_arc);
 
             const long long gap = first ? -1 : (epoch_idx - a.last_seen_ep - 1);
             if (cur.size() >= 2) a.ever_dual = true;

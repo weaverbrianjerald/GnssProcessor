@@ -77,6 +77,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
     auto& live_fingerprint = ctx.carry.live_fingerprint;
     auto& prev_carry = ctx.carry.prev_carry;
     net::StationTable& sta_rows = ctx.entities.stations;   // the station carries
+    net::NetworkEntities& entities = ctx.entities;   // written: constellations sat_signals sats
     auto& ura_sigma0_ewma = ctx.carry.ura_sigma0_ewma;
     auto& code_bias_datum_resumed_ = ctx.carry.code_bias_datum_resumed_;
     auto& ura_ewma_updates = ctx.carry.ura_ewma_updates;
@@ -677,10 +678,10 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // then changes, the eq34 L2X component loses its datum receiver, and
                     // the L2X phase-bias families step at the seam (§21.16).
                     if (ctx.knobs.resume_signal_canon_restore) {
-                        net::dropAll(ctx.entities.stations, &net::StationState::resume_canon_rows);
+                        net::dropAll(sta_rows, &net::StationState::resume_canon_rows);
                         long long staged = 0;
                         for (const auto& [idx, rows] : snap.canonical_signals) {
-                            auto& dst = net::put(ctx.entities.stations, StationId{idx},
+                            auto& dst = net::put(sta_rows, StationId{idx},
                                                  &net::StationState::resume_canon_rows);
                             for (const auto& c : rows) {
                                 dst.push_back(PppModel::CanonicalSignal{
@@ -727,9 +728,9 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // armed knob here always sits under a restored carry.
                     if (ctx.knobs.resume_rxcb_lin_restore) {
                         if (!snap.rx_cb_lin.empty()) {
-                            net::dropAll(ctx.entities.stations, &net::StationState::rxcb_lin_restore);
+                            net::dropAll(sta_rows, &net::StationState::rxcb_lin_restore);
                             for (const auto& [key, xl] : snap.rx_cb_lin)
-                                net::put(ctx.entities.stations, StationId{key.first},
+                                net::put(sta_rows, StationId{key.first},
                                          &net::StationState::rxcb_lin_restore)[key.second] = xl;
                             ctx.counters.n_resume_rxcb_lin_stations =
                                 static_cast<long long>(
@@ -895,7 +896,7 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                          std::numeric_limits<double>::infinity());
                             long long n_seed = 0, n_loose = 0;
                             const auto seedClock = [&](const std::string& sat) {
-                                net::putSig(ctx.entities, sat, "", &net::SatSignalState::tu_reinit)
+                                net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)
                                     [SharedParamKind::Clock] = t_seed;   // the satellite-wide wildcard
                                 ++n_seed;
                             };
@@ -995,21 +996,21 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                 ctx.carry.cxu_stash_s =
                                     static_cast<double>(snap.snap_week) * 604800.0 + snap.snap_tow;
                                 ctx.carry.cxu_stash_valid = ctx.carry.prev_carry_cov.P.rows() > 0;
-                                net::dropAll(ctx.entities.constellations,
+                                net::dropAll(entities.constellations,
                                              &net::ConstellationState::cxu_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty())
-                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                        net::put(entities.constellations, systemOfSat(sat),
                                                  &net::ConstellationState::cxu_pivot) = {sat, 0.0};
                                 ++ctx.counters.cxu_resume_stash;
                             }
                             // The restored block's frame is the snapshot's pivots.
                             if (ctx.knobs.pfq_on) {
-                                net::dropAll(ctx.entities.constellations,
+                                net::dropAll(entities.constellations,
                                              &net::ConstellationState::pfq_pivot);
                                 for (const auto& [c, sat] : snap.prev_pivot)
                                     if (!sat.empty())
-                                        net::put(ctx.entities.constellations, systemOfSat(sat),
+                                        net::put(entities.constellations, systemOfSat(sat),
                                                  &net::ConstellationState::pfq_pivot) = sat;
                             }
                             ctx.counters.n_resume_cpl_cov_keys    = static_cast<long long>(nk);
@@ -1199,8 +1200,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                                       "— the invariant carry COLD-STARTS (branch not "
                                       "reproduced; shared/emitter state stay warm).", cerr);
                             carry_driver.reset();
-                            net::dropAll(ctx.entities.sats, &net::SatelliteState::carry_vertex);
-                            net::dropAll(ctx.entities.constellations,
+                            net::dropAll(entities.sats, &net::SatelliteState::carry_vertex);
+                            net::dropAll(entities.constellations,
                                          &net::ConstellationState::channels,
                                          &net::ChannelState::group_id);
                             hb1(WarmResumeRefusal::Other,

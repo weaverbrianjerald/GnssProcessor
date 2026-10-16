@@ -738,6 +738,7 @@ void passARawObservables(const PassAView& v) {
 
 void passAIonoCsAdvance(const PassAView& v) {
     NetworkRunContext& ctx = v.ctx;
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     std::vector<bool>& present = v.present;
     SlipQcChannel& qc = v.qc;
     const int n_sta_total = v.n_sta_total;
@@ -768,7 +769,7 @@ void passAIonoCsAdvance(const PassAView& v) {
                 const double srad = std::sin(row.elev_deg * 0.017453292519943295);
                 const double sigma =
                     kIonoCsCodeSigmaZenith / std::max(srad, 0.15);
-                auto& cs = net::putLos(ctx.entities, i, row.satellite, &net::LosState::iono_cs);
+                auto& cs = net::putLos(entities, i, row.satellite, &net::LosState::iono_cs);
                 networkIonoCsUpdate(cs, i_code, di, adjacent, stepped, sigma);
                 cs.lam1_m = row.lam1_m;   // exact per-pair TECU conversion (LV-6)
             }

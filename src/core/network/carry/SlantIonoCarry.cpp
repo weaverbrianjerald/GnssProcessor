@@ -241,6 +241,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
     //     degrade.
     if (!iono_blk_on) return;
     net::LosTable& los_rows = ctx.entities.los;   // the I-in-block carries
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const StationAssembly& R = asm_res[i];
@@ -304,7 +305,7 @@ void networkHarvestSlantIonoBlock(NetworkRun& run, const NetworkEpoch& ep, Harve
                     ent.blk_idx = static_cast<int>(irow);
                 }
             }
-            net::putLos(ctx.entities, key.first, key.second, &net::LosState::iono_blk) = std::move(ent);
+            net::putLos(entities, key.first, key.second, &net::LosState::iono_blk) = std::move(ent);
             networkSharedHistoryNoteEntry(shx_h, est_idx, icol, SharedHistoryMap::Iono,
                                           static_cast<int>(i), isat);   // no-op off
         }

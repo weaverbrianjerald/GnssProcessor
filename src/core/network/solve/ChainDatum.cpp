@@ -124,14 +124,12 @@ void networkElectChainDatum(NetworkRunContext& ctx,
                             const std::set<std::pair<int, std::string>>& carry_slipped_ambs,
                             std::set<std::string>& shared_phase_keys, EpochEvents& events) {
 auto& prev_carry = ctx.carry.prev_carry;
-// The incumbent anchors as the old "sat_signal"-keyed map: read-only
-// until the wholesale replacement at the end of the election, which writes the table.
-const std::map<std::string, std::string> anchor_incumbent =
-    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent, '_');
+// The incumbent anchors (anchor_incumbent) and the component roots (eq34_sat_root) are read
+// off the satellite-signal table: it is written only by the wholesale replacements at the
+// end of the election.
+const net::SatSignalTable& sig_rows = ctx.entities.sat_signals;
 auto& this_epoch_anchor = events.phase_datum.this_epoch_anchor;
 net::NetworkEntities& entities = ctx.entities;   // eq34_rx_parent: the station signals (N4a); datum_rx: the constellation channels (N4b)
-const std::map<std::string, std::string> eq34_sat_root =   // the satellite signals (N4e2)
-    net::sigMap(ctx.entities.sat_signals, &net::SatSignalState::eq34_sat_root, '_');
 
 auto& eq34_reref_total = ctx.counters.eq34_reref_total;
 auto& eq34_erase_total = ctx.counters.eq34_erase_total;
@@ -139,12 +137,10 @@ auto& eq34_shift_total = ctx.counters.eq34_shift_total;
 auto& eq34_cpl_sprev_total = ctx.counters.eq34_cpl_sprev_total;
 auto& eq34_gap_repin_total = ctx.counters.eq34_gap_repin_total;
 auto& eq34_mismatch_epochs = ctx.counters.eq34_mismatch_epochs;
-// The arcs' retained edges and pin targets: copied in, written back at
-// the end of the election.
-std::set<std::pair<int, std::string>> eq34_retained_edges =
-    net::arcAmbSet(ctx.entities.arcs, &net::ArcState::eq34_retained_edge);
-const std::map<std::pair<int, std::string>, double> eq34_prev_target =
-    net::arcAmbMap(ctx.entities.arcs, &net::ArcState::eq34_prev_target);
+// The arcs' retained edges and pin targets are read off the arc table; this epoch's retained
+// edges are collected in new_retained_edges and replace the table's at the end of the election.
+const net::ArcTable& arc_rows = ctx.entities.arcs;
+std::set<std::pair<int, std::string>> new_retained_edges;
 auto& eq34_reref = events.phase_datum.eq34_reref;
 net::StationTable& sta_rows = ctx.entities.stations;   // rpb: the station signals (N4a)
 const bool carry_invariant         = ctx.knobs.carry_invariant;
@@ -400,7 +396,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             }
             incumbent_arcs.push_back(arc);
         };
-        for (const auto& [amb, sta] : anchor_incumbent) {
+        for (const auto& [sid, srow] : sig_rows) {
+            if (!srow.anchor_incumbent) continue;
+            const std::string amb = net::ambKey(sid);
+            const std::string& sta = *srow.anchor_incumbent;
             const auto a = StateKeys::parseAmbiguityKey(amb);
             if (!a || systemOfSat(a->satellite) != grp_sys || a->signal != grp_sig) continue;
             seedEdge(sta, a->satellite);
@@ -480,8 +479,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (r1 == static_cast<size_t>(-1)) {
                 std::map<std::string, int> root_votes;
                 for (const auto& s : comp_sats) {
-                    auto rt = eq34_sat_root.find(StateKeys::makeAmbiguityKey(s, grp_sig));
-                    if (rt != eq34_sat_root.end()) ++root_votes[rt->second];
+                    const std::string* rt = net::getSig(sig_rows, StateKeys::makeAmbiguityKey(s, grp_sig),
+                                                        &net::SatSignalState::eq34_sat_root);
+                    if (rt != nullptr) ++root_votes[*rt];
                 }
                 int best_v = 0; std::string best_name;
                 for (const auto& [nm, v] : root_votes)
@@ -576,14 +576,14 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 // (step ~0) instead of the first-sighting 0 a wholesale
                 // replace would have used.  Counts these re-pins.
                 if (eq34_extend_only
-                    && eq34_retained_edges.count({static_cast<int>(ri), amb}))
+                    && net::hasArcAmb(arc_rows, static_cast<int>(ri), amb, &net::ArcState::eq34_retained_edge))
                     ++eq34_gap_repin_total;
                 // Pin target: 0 on first sighting; else λ·round(carry/λ)
                 // at the (possibly new) edge station.  carry_val also
                 // feeds the pinmove computation below.
                 double target = 0.0;
                 double carry_val = std::numeric_limits<double>::quiet_NaN();
-                if (eq34_round && anchor_incumbent.count(amb)) {
+                if (eq34_round && net::getSig(sig_rows, amb, &net::SatSignalState::anchor_incumbent) != nullptr) {
                     auto lc = net::getArc(ctx.entities.arcs, std::make_tuple(
                         static_cast<int>(ri), sat, grp_sig), &net::ArcState::amb);
                     if (lc != nullptr && roundable) {
@@ -624,9 +624,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     // target unchanged (on the same host: pinmove 0, no step, no
                     // reref) and round only on a first realization.  Re-rounding
                     // every epoch ratchets the invariant carry (§13.7).
-                    auto ptf = eq34_prev_target.find({static_cast<int>(ri), amb});
-                    if (ptf != eq34_prev_target.end()) {
-                        target = ptf->second;
+                    const double* ptf = net::getArcAmb(arc_rows, static_cast<int>(ri), amb,
+                                                       &net::ArcState::eq34_prev_target);
+                    if (ptf != nullptr) {
+                        target = *ptf;
                         seed_rounded = true;
                         ++ctx.counters.seed_round_frozen;
                         // A frozen target can still land on a re-hosted edge (the
@@ -662,16 +663,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 bool known = true;
                 bool edge_changed = false;
                 if (sat_is_child) {
-                    auto ai = anchor_incumbent.find(amb);
-                    edge_changed = (ai != anchor_incumbent.end()
-                                    && ai->second != stations[ri].name);
+                    const std::string* ai =
+                        net::getSig(sig_rows, amb, &net::SatSignalState::anchor_incumbent);
+                    edge_changed = (ai != nullptr && *ai != stations[ri].name);
                     this_epoch_anchor[amb] = stations[ri].name;
                     // Root handover: the component frame steps by the
                     // datum receivers' fractional δ difference, which is
                     // not an integer and not computable here, so unknown.
-                    auto rt = eq34_sat_root.find(amb);
-                    if (rt != eq34_sat_root.end()
-                        && rt->second != stations[r1].name) known = false;
+                    const std::string* rt = net::getSig(sig_rows, amb, &net::SatSignalState::eq34_sat_root);
+                    if (rt != nullptr && *rt != stations[r1].name) known = false;
                     new_sat_root[amb] = stations[r1].name;
                 } else {
                     const std::string rxkey = stations[ri].name + rx_suffix;
@@ -713,10 +713,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     // Same station: its float was hard-pinned at last
                     // epoch's target, so the displacement is exactly the
                     // target difference (no carry noise involved).
-                    auto pt = eq34_prev_target.find(
-                        {static_cast<int>(ri), amb});
-                    pinmove = target
-                        - (pt != eq34_prev_target.end() ? pt->second : 0.0);
+                    const double* pt = net::getArcAmb(arc_rows, static_cast<int>(ri), amb,
+                                                      &net::ArcState::eq34_prev_target);
+                    pinmove = target - (pt != nullptr ? *pt : 0.0);
                 }
                 // Seed-round bookkeeping: a deferred pin's target is decided at
                 // the fold, so no frame step is computable here (the serial
@@ -886,7 +885,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 static_cast<long long>(eq34_reref.size());
         int n_erased = 0;
         // The re-referenced (sat, signal) keys' leveling carries, at every station.
-        net::eraseIf(ctx.entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
+        net::eraseIf(entities.arcs, &net::ArcState::amb, [&](const ArcId& id, const LocalCarry&) {
             if (eq34_reref.count({net::satKey(id.sat), net::signalKey(id.signal)})) {
                 ++n_erased;
                 ++ctx.counters.n_cr_eq34_reref;   // carry-retirement census: frame step
@@ -934,7 +933,7 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
     if (!shift_sat.empty() || !shift_rxg.empty()) {
         CarrySiteCounts prm_cc;
         long long n_shifted = 0, n_cpl = 0;
-        eq34ShiftCarry(ctx.carry, ctx.entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
+        eq34ShiftCarry(ctx.carry, entities, shift_sat, shift_rxg, shift_rpb, n_shifted, n_cpl, &prm_cc,
                        ctx.knobs.rebase_complete);
         if (!shift_sat.empty()) eq34_cpl_sprev_total += n_cpl;
         eq34_shift_total += n_shifted;
@@ -983,9 +982,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             return (net::getArc(ctx.entities.arcs, std::make_tuple(
                 static_cast<int>(idx), sat, sig), &net::ArcState::amb) != nullptr) != 0;
         };
-        eq34_retained_edges.clear();
         // Sat-side parents (amb → parent station) + their component roots.
-        for (const auto& [amb, sta] : anchor_incumbent) {
+        for (const auto& [sid, srow] : sig_rows) {
+            if (!srow.anchor_incumbent) continue;
+            const std::string amb = net::ambKey(sid);
+            const std::string& sta = *srow.anchor_incumbent;
             if (this_epoch_anchor.count(amb)) continue;    // re-seen live
             const auto a = StateKeys::parseAmbiguityKey(amb);
             if (!a) continue;
@@ -993,10 +994,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (gi == gname2idx.end()
                 || !carryAlive(gi->second, a->satellite, a->signal)) continue;  // dead ⇒ drop
             this_epoch_anchor.emplace(amb, sta);
-            eq34_retained_edges.emplace(static_cast<int>(gi->second), amb);
-            auto sr = eq34_sat_root.find(amb);
-            if (sr != eq34_sat_root.end())
-                new_sat_root.emplace(amb, sr->second);
+            new_retained_edges.emplace(static_cast<int>(gi->second), amb);
+            const std::string* sr = net::getSig(sig_rows, amb, &net::SatSignalState::eq34_sat_root);
+            if (sr != nullptr)
+                new_sat_root.emplace(amb, *sr);
         }
         // Receiver-side parents ("<name>|<c>|<σ>" → sat).
         net::byStationName(entities.stations, entities.names,
@@ -1016,12 +1017,15 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             if (gi == gname2idx.end()
                 || !carryAlive(gi->second, sat, sig)) continue;
             new_rx_parent.emplace(rxkey, sat);
-            eq34_retained_edges.emplace(static_cast<int>(gi->second),
-                                        StateKeys::makeAmbiguityKey(sat, sig));
+            new_retained_edges.emplace(static_cast<int>(gi->second),
+                                       StateKeys::makeAmbiguityKey(sat, sig));
           }
         });
         // Pinned integers ({receiver idx, "sat_signal"} → target).
-        for (const auto& [k, tgt] : eq34_prev_target) {
+        for (const auto& [aid, arow] : arc_rows) {
+            if (!arow.eq34_prev_target) continue;
+            const std::pair<int, std::string> k = net::arcPair(aid);
+            const double tgt = *arow.eq34_prev_target;
             if (new_prev_target.count(k)) continue;
             const auto a = StateKeys::parseAmbiguityKey(k.second);
             if (!a) continue;
@@ -1043,9 +1047,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             net::put(entities.stations, *sid, &net::StationState::signals, rxkey.substr(p1 + 1),
                      &net::StationSignalState::eq34_rx_parent) = sat;
     }
-    net::assignSig(ctx.entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
-    net::assignArcAmb(ctx.entities, &net::ArcState::eq34_prev_target, new_prev_target);
-    net::assignArcAmbFlags(ctx.entities, &net::ArcState::eq34_retained_edge, eq34_retained_edges);
+    net::assignSig(entities, &net::SatSignalState::eq34_sat_root, new_sat_root);
+    net::assignArcAmb(entities, &net::ArcState::eq34_prev_target, new_prev_target);
+    if (eq34_extend_only)
+        net::assignArcAmbFlags(entities, &net::ArcState::eq34_retained_edge, new_retained_edges);
     // Snapshot this epoch's arc elevations (I4) so next epoch's arcLife
     // can tell a rising arc from a setting one.  Rebuilt wholesale (a
     // pruned arc drops out); skipped when the longevity election is
@@ -1238,6 +1243,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
     const std::vector<int>& est_index_of = assembly.est_index_of;
     const EpochEvents::PhaseDatum& phase_datum_ev = ep.events.phase_datum;
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: arcs
     // The alias lines of networkPassB_ this stage reads, verbatim.
     auto& stations = setup.stations;
     const bool phase_datum_eq34        = ctx.knobs.phase_datum_eq34;
@@ -1267,7 +1273,7 @@ void networkEq34PinAudit(NetworkRun& run, const NetworkEpoch& ep, const EpochAss
         // did not land; its arc re-elects from scratch in the next epoch.
         if (est_index_of[i] >= 0) {
             for (const auto& [amb, tgt, y] : asm_res[i].pin_seed_targets) {
-                net::putArcAmb(ctx.entities, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = tgt;
+                net::putArcAmb(entities, static_cast<int>(i), amb, &net::ArcState::eq34_prev_target) = tgt;
                 ++ctx.counters.seed_round_deferred;
                 const double ay = std::abs(y);
                 if (ay > ctx.counters.seed_round_max_abs_y_m)

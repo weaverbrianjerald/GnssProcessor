@@ -299,7 +299,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
         // on which its restored arcs appear as first sightings.
         const bool sta_resume_pass =
             resume_run
-            && net::mark(ctx.entities.stations, StationId{static_cast<int>(si)},
+            && net::mark(sta_rows, StationId{static_cast<int>(si)},
                          &net::StationState::adm_resume_seen);
 
         // ---- (2) centre, and reduce to one verdict per (satellite, band) --

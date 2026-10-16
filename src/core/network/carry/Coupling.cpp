@@ -959,9 +959,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
     const bool   carry_cpl_reinit = ctx.knobs.carry_cpl_reinit; // widen the reinit feed to the realization-step sources and honour it with κ off; requires carry_cpl_cond (enforced at load)
     const double clk_mon_reinit_sig = ctx.knobs.clk_mon_reinit_sig;  // >0: inflate-q to this σ; ≤0: hard skip-stash refloat
     auto& prev_carry = ctx.carry.prev_carry;
-    const std::set<std::string> prev_clock_refloat_sats =
-        net::satSet(ctx.entities.sats, &net::SatelliteState::prev_clock_refloat);
-    net::NetworkEntities& entities = ctx.entities;   // tu_reinit: the satellite signals (N4d)
+    net::NetworkEntities& entities = ctx.entities;   // written: sat_signals (tu_reinit)
 
     // Coupling-row time update (network.carry_coupling_time_update): record
     // the (kind, sat) shared keys whose carried state folds this epoch with the loose
@@ -998,7 +996,7 @@ void networkCouplingReinitHistory(NetworkRun& run, const NetworkEpoch& ep) {
         for (const CarryPrior& cp : prev_carry)
             if (cp.inflate_q)
                 net::putSig(entities, cp.sat, "", &net::SatSignalState::tu_reinit)[cp.kind] = pl_now_s;
-        for (const std::string& sat : prev_clock_refloat_sats) {
+        for (const std::string& sat : net::satSet(ctx.entities.sats, &net::SatelliteState::prev_clock_refloat)) {
             net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::Clock] = pl_now_s;
             if (!(clk_mon_reinit_sig > 0.0)) {
                 net::putSig(entities, sat, "", &net::SatSignalState::tu_reinit)[SharedParamKind::PhaseBias] = pl_now_s;

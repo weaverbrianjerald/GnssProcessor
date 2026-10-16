@@ -212,6 +212,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     // records its unknown-integer identities only then).
     const bool ar_suspect_armed = ctx.knobs.ar_suspect_epochs > 0;
     net::ArcTable& arc_rows = ctx.entities.arcs;   // the leveling carry
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     auto& fr_if_slip = ctx.counters.fr_if_slip;
     // CB-ADM phase co-gate feed (see networkPassAHead_): null unless the flag is
     // armed and the census ran.  Withholds a quarantined signal's phase-bias state.
@@ -282,7 +283,7 @@ void Application::networkPassASlipScan_(NetworkRun& run, const NetworkEpoch& ep,
     passAWindupRestartStage(v, relevel_ptr, relevel_pend);
     passAGapReentryStage(v, relevel_ptr, relevel_pend);
     passAInjectedFreeStage(v, relevel_ptr, relevel_pend);
-    net::assignRelevelPend(ctx.entities, relevel_pend);
+    net::assignRelevelPend(entities, relevel_pend);
 }
 
 void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch& ep,

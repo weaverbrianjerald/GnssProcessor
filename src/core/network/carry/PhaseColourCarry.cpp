@@ -261,6 +261,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
     const bool pc_in_cols = ctx.knobs.pc_on && !R.pl_pc.empty();
     EpochEvents::Harvest& harvest_ev = events.harvest;   // written
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written: los
     // Stash each phase-colour column's posterior (the estimate, its pure
     // conditional variance, its border regression) and its row of the station's
     // harvest block, so the next epoch folds it jointly with the ambiguities it
@@ -289,7 +290,7 @@ void networkHarvestPhaseColourStation(NetworkRun& run, const NetworkEpoch& ep,
             ent.blk     = hblk;
             ent.blk_idx = static_cast<int>(prow);
         }
-        net::putLos(ctx.entities, static_cast<int>(i), pp.sat, &net::LosState::pc) = std::move(ent);
+        net::putLos(entities, static_cast<int>(i), pp.sat, &net::LosState::pc) = std::move(ent);
         networkSharedHistoryNoteEntry(shx_h, est_idx, pp.col, SharedHistoryMap::Pc,
                                       static_cast<int>(i), pp.sat);   // shared history; no-op off
         ++ctx.counters.n_pc_stash;
@@ -309,12 +310,13 @@ void networkPrunePhaseColour(NetworkRun& run, const NetworkEpoch& ep) {
     NetworkRunContext& ctx = run.ctx;
     double pl_now_s = ep.clock.pl_now_s;
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
     // Prune phase-colour entries past the maximum gap.  Such an entry would
     // not be folded anyway (the inject re-births the line of sight); the prune keeps
     // the map to the live lines of sight and counts the edge.  The horizon is the
     // registry's (network.phase_colour_max_gap_s, the same double).
     if (ctx.knobs.pc_on)
-        carryGapPrune(ctx.entities.los, &net::LosState::pc, pl_now_s,
+        carryGapPrune(los_rows, &net::LosState::pc, pl_now_s,
                       ctx.params.spec(NetworkParamKind::PhaseColour).gap_horizon_s,
                       [&](const auto&, const auto&) {
                           ++ctx.counters.n_pc_gap_prune;

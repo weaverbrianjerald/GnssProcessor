@@ -81,6 +81,7 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
                               NetworkRunTraces& traces, const SyncedEpoch& se,
                               const std::vector<NetStation>& stations,
                               NetworkPriorResidual& prires, EpochEvents& events) {
+    net::LosTable& los_rows = ctx.entities.los;   // written
     if (!prires.enabled()) return;
     EpochEvents::Status& status_ev = events.status;
     const auto t_begin = std::chrono::steady_clock::now();
@@ -236,7 +237,7 @@ void networkPriorResidualEmit(NetworkRunContext& ctx, const GnssConfig& config_,
         if (last != nullptr && now_ep - *last < holdoff)
             continue;
         if (hid)
-            net::put(ctx.entities.los, *hid, &net::LosState::events, sub,
+            net::put(los_rows, *hid, &net::LosState::events, sub,
                      &net::LosEventState::prires_event_last) = now_ep;
         traces.emitEvent(
             se.time, "PRIORRES",

@@ -222,6 +222,8 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
     const std::string& rhs_trip_pending = nep.events.qc.rhs_trip_pending;
     EpochEvents::Census& census_ev = events.census;   // written
     // ---- End of the bindings ----
+    net::LosTable& los_rows = ctx.entities.los;   // written
+    net::StationTable& station_tbl = ctx.entities.stations;   // written
     if (!ctx.knobs.redun_census_on) return;   // the driver's gate
     // Alias preamble (seam contract): the body reads the driver's names.
     const auto& nc      = config_.getNetworkConfig();
@@ -441,7 +443,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
                         : nullptr;
                 if (lit == nullptr || (ep - *lit) >= holdoff) {
                     if (hid)
-                        net::put(ctx.entities.los, *hid, &net::LosState::events, cls,
+                        net::put(los_rows, *hid, &net::LosState::events, cls,
                                  &net::LosEventState::redun_event_last) = ep;
                     emit("uncheckable_hot_cell", sat[static_cast<std::size_t>(row)],
                          sname, s, hot_sigma,
@@ -561,7 +563,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             // edge) is counted.  The per-station set is rebuilt each sweep, so a
             // column that recovers emits again if it becomes unobservable again.
             std::set<std::string>& prev =
-                net::put(ctx.entities.stations, StationId{static_cast<int>(i)},
+                net::put(station_tbl, StationId{static_cast<int>(i)},
                          &net::StationState::redun_unobs_active);
             for (const std::string& kkey : now) {
                 if (prev.find(kkey) != prev.end()) continue;

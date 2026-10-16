@@ -124,6 +124,7 @@ struct CellWorst {
 /// epoch.
 bool holdoffAllows(NetworkRunContext& ctx, const char* event, const std::string& station,
                    const std::string& sat, const char* cls, long long seq, long long holdoff) {
+    net::LosTable& los_rows = ctx.entities.los;   // written
     // The line of sight's clock of (event, class): the station by NAME (O3), and "?" (the
     // census's no-satellite placeholder) is the station's own row, SatId{}.
     const std::optional<LosId> id =
@@ -135,7 +136,7 @@ bool holdoffAllows(NetworkRunContext& ctx, const char* event, const std::string&
            : nullptr;
     if (last != nullptr && holdoff > 0 && (seq - *last) < holdoff) return false;
     if (id)
-        net::put(ctx.entities.los, *id, &net::LosState::events, sub,
+        net::put(los_rows, *id, &net::LosState::events, sub,
                  &net::LosEventState::prefit_event_last) = seq;
     return true;
 }
@@ -341,6 +342,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                          const NetworkEstimator& est,
                          const std::vector<StationAssembly>& asm_res,
                          const std::vector<int>& est_index_of, EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written: los stations
     if (!ctx.knobs.pc_walk_on) return;
     (void)config_;   // arming is expressed entirely through the knob snapshot
     // The census scalars are epoch events: an epoch the walk cannot serve leaves the
@@ -660,14 +662,14 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                       "epoch (a first sighting is not a topology change).",
                       se.time.tow, tie_now.size(), cm.label.size());
         }
-        net::dropAll(ctx.entities.stations, &net::StationState::topo_prev_tie);
+        net::dropAll(entities.stations, &net::StationState::topo_prev_tie);
         for (const auto& [idx, n] : tie_now)
-            net::put(ctx.entities.stations, StationId{idx}, &net::StationState::topo_prev_tie) = n;
-        net::assignLos(ctx.entities, &net::LosState::topo_prev_kind, kind_now);
+            net::put(entities.stations, StationId{idx}, &net::StationState::topo_prev_tie) = n;
+        net::assignLos(entities, &net::LosState::topo_prev_kind, kind_now);
     }
 
     // --- presence map advance (INC-3) ---------------------------------------
-    net::assignLosFlags(ctx.entities, &net::LosState::prefit_present_prev, present_now);
+    net::assignLosFlags(entities, &net::LosState::prefit_present_prev, present_now);
     ctx.carry.prefit_walk_seeded  = true;
 
     // --- publish the admission vet trigger ----------------------------------
@@ -677,7 +679,7 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
     // only the stamp `n_loop_epochs - 1` and counts anything older as an absent
     // consultation.  Both seams read `n_loop_epochs`, incremented once per loop
     // epoch before either runs, so the one-epoch offset is exact.
-    net::assignLosFlags(ctx.entities, &net::LosState::prefit_code_flag, code_flag_now);
+    net::assignLosFlags(entities, &net::LosState::prefit_code_flag, code_flag_now);
     ctx.carry.prefit_code_flag_ep = seq;
 
     // --- invariant #4: an inert walk reports that it is inert -----------------

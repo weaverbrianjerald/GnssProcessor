@@ -772,6 +772,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
     const std::filesystem::path& log_dir_ = run.log_dir;
     const RelevelEpochState& relevel = ep.events.slip.relevel;
     // ---- End of the bindings ----
+    net::ConstellationTable& cons_rows = ctx.entities.constellations;   // written
     // --- Alias preamble: byte-copies of the former Application::runNetwork aliases,
     //     so the relocated SB_NETAR body below reads the original names. ----------
     const auto& nc        = config_.getNetworkConfig();
@@ -1216,7 +1217,7 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
         // Each family's build becomes its memory for the next search, whether or not
         // this one ran (no covariance, no row): stickiness follows the basis, not the search.
         if (netar.cycle_basis)
-            arCycleBasisStore(ctx.entities.constellations, cycle_epoch, suspect_now_ep);
+            arCycleBasisStore(cons_rows, cycle_epoch, suspect_now_ep);
     }
 
     // --- One-shot full-arrowhead NEQ export (network.neq_export_epoch) -----------

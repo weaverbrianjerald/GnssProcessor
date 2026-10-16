@@ -308,6 +308,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
     const std::vector<std::string>& registered_clock_sats = ep.columns.registered_clock_sats;
     EpochEvents::Handover& handover_ev = events.handover;   // written
     // ---- End of the bindings ----
+    net::NetworkEntities& entities = ctx.entities;   // written
     (void)log;   // seam signature is uniform across the run loop
     const double clk_anchor_sigma = ctx.knobs.clk_anchor_sigma;   // was a parameter
     // The record is an epoch event: empty with the knob off, and never an earlier epoch's.
@@ -352,7 +353,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
             continue;
         }
         CarrySiteCounts undo_cc;
-        const long long n = undoClockStransform(ctx.carry, ctx.entities, it->first, it->second.c0,
+        const long long n = undoClockStransform(ctx.carry, entities, it->first, it->second.c0,
                                                 it->second.var_q, &undo_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, undo_cc);
@@ -388,7 +389,7 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
         // the stash's pivot value.
         CarrySiteCounts prm_cc;
         const ClockStransformResult r = applyClockStransform(
-            ctx.carry, ctx.entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
+            ctx.carry, entities, v_c, q, CarryMechanism::HandoverBeforeRows, &prm_cc);
         ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::HandoverBeforeRows)];
         carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::HandoverBeforeRows, prm_cc);
         pre.applied      = r.applied;
@@ -414,6 +415,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                                const std::set<char>& changed_consts,
                                const std::vector<std::string>& registered_clock_sats,
                                EpochEvents& events) {
+    net::NetworkEntities& entities = ctx.entities;   // written
     (void)config_;   // seam signature is uniform across the run loop
 
     // The release set is an epoch event: a handover epoch's release cannot reach the next
@@ -503,7 +505,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
                     && cp.fold.disposition != CarryDisposition::Undecided
                     && cp.value == cp.fold.value_decided_m && cp.var == cp.fold.var_decided_m2)
                     clean.insert(cp.sat);
-            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, ctx.entities, c, q, p_out);
+            const ClockStransformDenseResult d = applyClockStransformDense(ctx.carry, entities, c, q, p_out);
             if (d.applied) {
                 ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
                 carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, d.counts);
@@ -561,7 +563,7 @@ void networkHandoverStransform(NetworkRunContext& ctx,
         if (!before_rows && !dense_done) {
             // Every carried clock of the constellation through the one traversal.
             CarrySiteCounts prm_cc;
-            r = applyClockStransform(ctx.carry, ctx.entities, v_c, q, CarryMechanism::Handover, &prm_cc);
+            r = applyClockStransform(ctx.carry, entities, v_c, q, CarryMechanism::Handover, &prm_cc);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::Handover)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::Handover, prm_cc);
         }

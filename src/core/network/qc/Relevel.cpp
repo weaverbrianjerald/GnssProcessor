@@ -69,6 +69,7 @@ void networkEphCutoverRelevel(NetworkRunContext& ctx,
                               const SyncedEpoch& se,
                               const std::vector<std::string>& registered_clock_sats,
                               bool brdc_rts) {
+    net::NetworkEntities& entities = ctx.entities;   // written
     // --- Alias preamble (byte-copies of the SolveGlue run-TU alias block). ---
     const bool carry_cpl_cond = ctx.knobs.carry_cpl_cond;
     auto emitEvent = [&](const char* tier, const char* event,
@@ -120,13 +121,13 @@ if (brdc_rts) {
         const int new_iode = now->iode;
         const int* prev = net::getSat(ctx.entities.sats, sat, &net::SatelliteState::relevel_iode);
         if (prev == nullptr) {                               // first sighting: seed, no shift
-            net::putSat(ctx.entities, sat, &net::SatelliteState::relevel_iode) = new_iode;
+            net::putSat(entities, sat, &net::SatelliteState::relevel_iode) = new_iode;
             continue;
         }
         if (*prev == new_iode) continue;                     // no roll (the common case)
         const int old_iode = *prev;
         const auto shift = eph_store.ephCutoverShiftMetres(sat, se.time, old_iode);
-        net::putSat(ctx.entities, sat, &net::SatelliteState::relevel_iode) = new_iode;   // baseline advances regardless
+        net::putSat(entities, sat, &net::SatelliteState::relevel_iode) = new_iode;   // baseline advances regardless
         if (shift) {
             // Re-base the carried clock state by −Δ_eph.  Only the offset / level term
             // moves; the drift (c1) and the 2×2 covariance are frame-invariant.
@@ -142,7 +143,7 @@ if (brdc_rts) {
             // moved.  The sites the re-level does not move are declared in the mechanism table
             // (docs/refound/CLV_clock_level_2026-09-22.md section 6.4 item 6).
             CarrySiteCounts prm_cc;
-            ephCutoverShiftCarry(ctx.carry, ctx.entities, sat, d, carry_cpl_cond, &prm_cc,
+            ephCutoverShiftCarry(ctx.carry, entities, sat, d, carry_cpl_cond, &prm_cc,
                                  ctx.knobs.rebase_complete);
             ++ctx.counters.prm_ref_calls[static_cast<int>(CarryMechanism::EphRelevel)];
             carryTallyMoved(ctx.counters.prm_ref_moved, CarryMechanism::EphRelevel, prm_cc);
@@ -157,7 +158,7 @@ if (brdc_rts) {
             // discontinuity (the consumer resets this satellite's network-corrected
             // ambiguity across the step); NetworkSolPrep lands it at the satellite's next
             // actual emit.  Not expected when the check runs every epoch.
-            net::markSat(ctx.entities, sat, net::Disc::EphCutover);
+            net::markSat(entities, sat, net::Disc::EphCutover);
             log->warn("Network (Card 6): {} eph cutover IODE {}->{} but the prior version "
                       "is no longer held — forcing a per-sat discontinuity (Δ_eph "
                       "incomputable).", sat, old_iode, new_iode);
