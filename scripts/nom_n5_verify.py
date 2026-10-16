@@ -7,7 +7,7 @@ Each check runs its negative control first; a control that passes is itself a fa
 
   E1  The 68 moved members.  None is declared in NetworkCarryState or reached as
       `carry.<member>` anywhere under src/, include/ or tests/; each is declared exactly once
-      in its EpochEvents group (include/app/NetworkEpoch.hpp), and has exactly one net::kRunFields
+      in its EpochEvents group (include/network/driver/NetworkEpoch.hpp), and has exactly one net::kRunFields
       row, named "events.<group>.<member>", was == member, Persist::Epoch.
   E2  The hand clears.  Every hand clear of a moved member in the base revision (a `.clear()`
       of it or of an alias bound to it, or a reset to a literal) is listed by member with its
@@ -36,9 +36,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-RUN_CTX = 'include/app/NetworkRunContext.hpp'
-EPOCH_HPP = 'include/app/NetworkEpoch.hpp'
-RUN_CPP = 'src/core/app/NetworkRunFields.cpp'
+RUN_CTX = 'include/network/state/NetworkRunContext.hpp'
+EPOCH_HPP = 'include/network/driver/NetworkEpoch.hpp'
+RUN_CPP = 'src/core/network/state/NetworkRunFields.cpp'
 
 GROUPS = {
     'slip': ['carry_innov_flat_now', 'relevel', 'sid_reentry_outcome'],
@@ -94,7 +94,7 @@ RETAINED = {
 
 # Files whose `carry` is a test's own stand-in struct, not NetworkCarryState (the frozen
 # chain-election oracle's FakeCarry keeps the old member names).
-FAKE_CARRY = {'tests/test_network_arc_graph_oracles.cpp'}
+FAKE_CARRY = {'tests/network/test_network_arc_graph_oracles.cpp'}
 
 
 def strip_comments(s):
@@ -284,7 +284,7 @@ def main():
     c1 = e1(mutated(tree, RUN_CTX, lambda s: s.replace('struct NetworkCarryState {',
                                                          'struct NetworkCarryState {\n        long long ep_d5_flags = 0;', 1)))
     report('E1 moved members', e1(tree), c1, f'{len(GROUP_OF)} members in {len(GROUPS)} groups')
-    gl = 'src/core/filter/NetworkGrossLos.cpp'
+    gl = 'src/core/network/qc/NetworkGrossLos.cpp'
     c2, _ = e2(mutated(tree, gl, lambda s: s.replace('// ---- End of the bindings ----',
                                                      'gross_ev.gl_act_declare.clear();\n    // ---- End of the bindings ----', 1)),
                a.base, base_files={})
@@ -297,7 +297,7 @@ def main():
         print(f'        {m}: {", ".join(by[m])}')
     c3 = e3(mutated(tree, RUN_CPP, lambda s: s.replace('Persist::Latch', 'Persist::Pending', 1)))
     report('E3 retained members', e3(tree), c3, f'{len(RETAINED)} members')
-    sp = 'src/core/filter/NetworkInstallCarry.cpp'
+    sp = 'src/core/network/carry/NetworkInstallCarry.cpp'
     c4 = body_spellings(mutated(tree, sp, lambda s: s.replace('    // ---- End of the bindings ----\n',
                                                               '    // ---- End of the bindings ----\n    (void)ep.events;\n', 1)))
     report('E4 seam contract (lint V0 V4 V10 V11 V12, bindings)', e4(tree), c4)

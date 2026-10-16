@@ -495,8 +495,8 @@ the Kalman chapter with `KalmanFilter`, and so on.
 ## What to skip
 
 Everything that belongs to the network producer is out of scope until a task requires
-it: files named `Network*` (mostly in `include\filter\` and `src\core\filter\`),
-`ApplicationNetwork*.cpp`, `config\archive\`, `config\golden\`, `config\test_suite\`,
+it: `include\network\`, `src\core\network\` and `tests\network\` (the network producer),
+`config\archive\`, `config\golden\`, `config\test_suite\`,
 `docs\refound\`, `docs\cards\`, `docs\archive\`, and most of `scripts\`. That is about
 two thirds of the repository. It is a careful research record, not clutter, but it is
 not the starting point. When a task requires it, [7 · Network tour](07_network_tour.md)

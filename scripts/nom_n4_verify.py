@@ -15,7 +15,7 @@ files and, for V7, one `git diff` against --base.
       that row's name is a member of exactly one entity row struct.
   V2  no stale access: zero `carry.<m>` / `cs.<m>` / `ctx.carry.<m>` under src/, include/, tests/
       (the compiler is the second tool: the build fails on a stale access).
-  V3  order: no range loop over an entity table outside app/NetworkEntities.*; a member keyed by
+  V3  order: no range loop over an entity table outside network/state/NetworkEntities.*; a member keyed by
       station NAME is never walked by forEach (byStationName only, O3); no lower_bound /
       upper_bound / equal_range on a moved field (O8).  The loops over moved fields are listed.
   V4  round trip: every reach-table converter line of every --runs dir reads 0 failures
@@ -25,7 +25,7 @@ files and, for V7, one `git diff` against --base.
       site of a moved field is listed with its function.
   V6  snapshot: every Record row has both fill functions, a round-trip unit test names its tag,
       the writer calls recordToSnapshot for it, and kRestoreOrder equals the reader's call order.
-  V7  python scripts/nom_epoch_lint.py passes, and tests/test_network_epoch_contract.cpp differs
+  V7  python scripts/nom_epoch_lint.py passes, and tests/network/test_network_epoch_contract.cpp differs
       from --base only by the reach sampler's lines (N4.0).
 
 --whole (step N4g) checks G1 for the whole struct instead of one entity:
@@ -59,15 +59,15 @@ ROW_STRUCTS = {'station': ['StationState', 'StationSignalState'],
                'los': ['LosState', 'LosEventState'], 'sat_signal': ['SatSignalState'],
                'satellite': ['SatelliteState'], 'arc': ['ArcState']}
 TABLES = ('constellations', 'sats', 'sat_signals', 'stations', 'los', 'arcs')
-RUN_CTX = 'include/app/NetworkRunContext.hpp'
-ENT_HPP = 'include/app/NetworkEntities.hpp'
-ENT_CPP = 'src/core/app/NetworkEntities.cpp'
-RUN_CPP = 'src/core/app/NetworkRunFields.cpp'
+RUN_CTX = 'include/network/state/NetworkRunContext.hpp'
+ENT_HPP = 'include/network/state/NetworkEntities.hpp'
+ENT_CPP = 'src/core/network/state/NetworkEntities.cpp'
+RUN_CPP = 'src/core/network/state/NetworkRunFields.cpp'
 TSV = 'scripts/nom3_designs/N4_fields.tsv'
-WRITER = 'src/core/app/NetworkStateSnapshotWrite.cpp'
-READER = 'src/core/app/NetworkWarmResume.cpp'
-BUILD = 'src/core/filter/NetworkStationBuild.cpp'
-CONTRACT = 'tests/test_network_epoch_contract.cpp'
+WRITER = 'src/core/network/state/NetworkStateSnapshotWrite.cpp'
+READER = 'src/core/network/state/NetworkWarmResume.cpp'
+BUILD = 'src/core/network/assembly/NetworkStationBuild.cpp'
+CONTRACT = 'tests/network/test_network_epoch_contract.cpp'
 
 
 class Tree:
@@ -389,7 +389,7 @@ def v7(tree, entity, run_lint=True):
     for line in tree.contract_diff.splitlines():
         if line.startswith(('+++', '---')) or not line.startswith(('+', '-')):
             continue
-        if 'networkEntitiesReachSample' in line or 'app/NetworkEntities.hpp' in line:
+        if 'networkEntitiesReachSample' in line or 'network/state/NetworkEntities.hpp' in line:
             continue
         fails.append('contract test changed: ' + line.strip())
     return fails

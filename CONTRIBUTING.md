@@ -105,7 +105,7 @@ hand-written work:
 The repository also holds a multi-station network producer research program. Unless a
 task concerns it, the following can be skipped: `docs/refound/`, `docs/cards/`,
 `docs/archive/`, `config/archive/`, `config/golden/`, `config/test_suite/`, every
-`Network*` file under `include/filter/` and `src/core/filter/`, and most of `scripts/`.
+file under `include/network/`, `src/core/network/` and `tests/network/`, and most of `scripts/`.
 `CLAUDE.md` is the operating manual for that program and for AI coding assistants. It
 becomes useful later.
 

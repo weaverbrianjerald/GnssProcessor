@@ -5,7 +5,7 @@ and of the entity-table writers (check V12).
     python scripts/nom_epoch_lint.py [--tree DIR] [--partial] [--presolve-writer {outputs,epoch}]
 
 Run it with PYTHONIOENCODING=utf-8 on a cp1252 console, before committing a change to a per-epoch seam signature or to
-src/core/app/ApplicationNetworkEpoch.cpp (the seam contract in CLAUDE.md).  It reads the
+src/core/network/driver/ApplicationNetworkEpoch.cpp (the seam contract in CLAUDE.md).  It reads the
 working files of the tree (default: the repository this script sits in), needs no git
 revision and no build, and uses only the Python 3 standard library and scripts/nom_cpp.py.
 Exit 0 when every check passes, 1 when one fails, 2 when the epoch function or the epoch
@@ -63,7 +63,7 @@ What it proves (spec sections 2.3, 3.1 and 5.5 of the EP1 specification):
       its executable form.
   V11 Writer banners.  For every group, the set of seams whose spine call passes `ep.<group>`
       (or a member of it) to an output parameter equals the seams named in the group's
-      "written by" cell of the banner table in include/app/NetworkEpoch.hpp, and the seams
+      "written by" cell of the banner table in include/network/driver/NetworkEpoch.hpp, and the seams
       whose return the driver stores into the group (`ep.<group> = networkX(...)`) equal the
       cell's "stores networkX's return" phrases ("the solve's return" names networkSolveGlue,
       "that seam" the seam of the "available from" cell).  A banner writer with no epoch
@@ -102,13 +102,13 @@ from nom_cpp import (FileIndex, Ref, Resolver, Scopes, Tokens, calls_in, match_a
 from rt_seam_verify import strip_comments  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-EPOCH_CPP = "src/core/app/ApplicationNetworkEpoch.cpp"
-EPOCH_HPP = "include/app/NetworkEpoch.hpp"
+EPOCH_CPP = "src/core/network/driver/ApplicationNetworkEpoch.cpp"
+EPOCH_HPP = "include/network/driver/NetworkEpoch.hpp"
 EPOCH_FN = "networkProcessEpoch_"
 SOLVE = "networkSolveGlue"
 EMIT = "networkEmitStore"
 OBSERVE = "networkObserveEpoch"   # the observer table's slot walk (card NOM3 step EP3)
-OBSERVERS_CPP = "src/core/filter/NetworkEpochObservers.cpp"
+OBSERVERS_CPP = "src/core/network/driver/NetworkEpochObservers.cpp"
 _OBSERVER_ROW = re.compile(r'\{"(\w+)",\s*"[^"]*",\s*"[^"]*",\s*Slot::(\w+),\s*&(\w+)\}')
 PREAMBLE_OPEN = re.compile(r"//\s*-{2,}\s*From the run\b")
 PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
@@ -117,7 +117,7 @@ PREAMBLE_CLOSE = re.compile(r"//\s*-{2,}\s*End of the bindings")
 DRIVER_STORES = ("ep.ar_fixes", "ep.fixed_cycles", "ep.prep", "ep.emitted")
 POST_SOLVE_OUTPUTS = {"ep.solve.handoff": ("networkPostFitRaim", "networkClockQc"),
                       "ep.prep.sol": ("networkEmitStore",),
-                      # the epoch's events: each writer its own group (app/NetworkEpoch.hpp)
+                      # the epoch's events: each writer its own group (network/driver/NetworkEpoch.hpp)
                       "ep.events": ("networkInstallCarry", "networkGrossLosScreen", "networkSolPrep",
                                     "networkShHealth", "networkLeveling", "networkClockQc",
                                     "networkObserveEpoch", "networkStashStatus")}
@@ -1030,7 +1030,7 @@ def check_v4(T, solve_end, b, epath, decls, emit_call_tok, skip=()):
 
 
 # ---------------------------------------------------------------------------------------------
-# The banner of include/app/NetworkEpoch.hpp (V10, V11)
+# The banner of include/network/driver/NetworkEpoch.hpp (V10, V11)
 # ---------------------------------------------------------------------------------------------
 # Phrases of the banner's "written by" cells that name a seam without its identifier.
 BANNER_PHRASES = {"the solve": SOLVE}
@@ -1377,7 +1377,7 @@ class Lint:
 
     def v0_cmake(self, called):
         """The build compiles the epoch function's translation unit as it reads: CMakeLists.txt
-        lists src/core/app/ApplicationNetworkEpoch.cpp once, as a target's source, and names it
+        lists src/core/network/driver/ApplicationNetworkEpoch.cpp once, as a target's source, and names it
         nowhere else (no per-source property: compile options, definitions or flags, the one
         exception being MSVC's section-count flag `COMPILE_FLAGS "/bigobj"`); no compile
         definition defines a name the epoch function calls (`networkIonoDiag=networkDdFrac`
@@ -1542,7 +1542,7 @@ class Lint:
 # ---------------------------------------------------------------------------------------------
 # V12: the entity-table writers
 # ---------------------------------------------------------------------------------------------
-ENTITIES_CPP = "src/core/app/NetworkEntities.cpp"
+ENTITIES_CPP = "src/core/network/state/NetworkEntities.cpp"
 TABLE_OF_TYPE = {"ConstellationTable": "constellations", "SatelliteTable": "sats",
                  "SatSignalTable": "sat_signals", "StationTable": "stations", "LosTable": "los",
                  "ArcTable": "arcs", "NetworkEntities": "all"}
@@ -1619,16 +1619,20 @@ def check_v12(tree):
     if rows is None:
         return [f"{ENTITIES_CPP}: kEntityWriters is not defined"], ""
     got = entity_writer_bindings(tree)
+    # A row's home still names its file by the directory it had before the network files
+    # moved under network/<concern>/; the function name and the file's basename are the identity.
+    rows = {(k[0], k[1].rsplit("/", 1)[-1]): v for k, v in rows.items()}
     problems = []
     for key, tables in sorted(got.items(), key=lambda kv: (kv[0][1], kv[0][0] or "")):
-        want = rows.get(key)
+        want = rows.get((key[0], key[1].rsplit("/", 1)[-1]))
         if want is None:
             problems.append(f"src/core/{key[1]}: {key[0]} binds {' '.join(sorted(tables))} for writing "
                             "and has no kEntityWriters row")
         elif want != tables:
             problems.append(f"src/core/{key[1]}: {key[0]} binds {' '.join(sorted(tables))} for writing; "
                             f"its kEntityWriters row says {' '.join(sorted(want))}")
-    for key in sorted(set(rows) - set(got)):
+    got_ids = {(k[0], k[1].rsplit("/", 1)[-1]) for k in got}
+    for key in sorted(set(rows) - got_ids):
         problems.append(f"kEntityWriters row {key[0]} ({key[1]}): no non-const binding supports it")
     return problems, f"{len(got)} functions bind entity tables for writing, {len(rows)} kEntityWriters rows"
 

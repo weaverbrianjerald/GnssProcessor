@@ -39,7 +39,7 @@ code, test and reference files.
 
 About two thirds of the repository belongs to a multi-station network research program:
 `docs\refound\`, `docs\cards\`, `docs\archive\`, most of `config\` and `scripts\`, every
-`Network*` source file, and `CLAUDE.md`. It is a careful scientific record, but it is not
+file under `include\network\`, `src\core\network\` and `tests\network\`, and `CLAUDE.md`. It is a careful scientific record, but it is not
 the starting point. The [code tour](02_code_tour.md#what-to-skip) lists what to skip. When a
 task does touch the network, the [network tour](07_network_tour.md) is the entry point; the
 network code is being reorganized so that this tour covers more of it with every step.
