@@ -10,7 +10,8 @@
  * ifElevMap and parseIfPairResetKey moved here at decomposition INC-2, and the
  * serial drains of the SB_SLIP block moved here from ApplicationNetwork.cpp at
  * INC-6 (see docs/network_decomposition_plan.md).  The PASS-A parallel scan that
- * fills PassABuffers, and the calls into the drains, live in
+ * fills PassABuffers (network/slip/PassASlipScan) and the calls into the drains
+ * (network/slip/PassASlipDrains) are driven, stage by stage, by
  * Application::networkPassASlipScan_ (ApplicationNetworkAssembly.cpp, INC-7);
  * the SB_SLIP D0b timer bracket in ApplicationNetwork.cpp wraps that call.
  *
