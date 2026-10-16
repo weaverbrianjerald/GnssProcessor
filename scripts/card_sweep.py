@@ -29,30 +29,36 @@ def comment_span(line):
     i = line.find('//')
     if i >= 0 and line.count('"', 0, i) % 2 == 0: return i
     return None
-apply = '--apply' in sys.argv
-do_str = '--strings' in sys.argv
-ns = 0
-files = [f for f in subprocess.run(['git','ls-files','src','include','tests'],capture_output=True,text=True).stdout.split() if f.endswith(('.cpp','.hpp','.h'))]
-n1=n2=left=0; changed=0; dropped=0
-for f in files:
-    t=open(f,encoding='utf-8',errors='surrogateescape',newline='').read(); out=[]; ch=False
-    for line in t.splitlines(True):
-        body=line.rstrip('\r\n'); eol=line[len(body):]
-        i=comment_span(body)
-        code, com = (body, '') if i is None else (body[:i], body[i:])
-        if do_str and '"' in code and re.search(r'\bcards?[ \t]',code):
-            code2,k=sweep_strings(code); ns+=k; code=code2
-        if com and re.search(r'\bcards?\b',com,re.I):
-            c2,k1=P1.subn('',com); c2,k2=P2.subn('(',c2); n1+=k1; n2+=k2; com=c2
-        new=code+com
-        if new!=body:
-            if re.fullmatch(r'[ \t]*//[ \t]*',com) and code.strip(): new=code.rstrip()
-            elif re.fullmatch(r'[ \t]*//[ \t]*',new) and body.strip(): new=None; dropped+=1
-            ch=True
-        if new is not None:
-            if re.search(r'\bcards?[ \t]+[A-Z]',new): left+=1
-            out.append(new+eol)
-    if ch:
-        changed+=1
-        if apply: open(f,'w',encoding='utf-8',errors='surrogateescape',newline='').write(''.join(out))
-print(f'P1 {n1}  P2 {n2}  string literals {ns}  dropped empty comment lines {dropped}  files {changed}  lines still naming a card {left}')
+def main():
+    global ns
+    apply = '--apply' in sys.argv
+    do_str = '--strings' in sys.argv
+    ns = 0
+    files = [f for f in subprocess.run(['git','ls-files','src','include','tests'],capture_output=True,text=True).stdout.split() if f.endswith(('.cpp','.hpp','.h'))]
+    n1=n2=left=0; changed=0; dropped=0
+    for f in files:
+        t=open(f,encoding='utf-8',errors='surrogateescape',newline='').read(); out=[]; ch=False
+        for line in t.splitlines(True):
+            body=line.rstrip('\r\n'); eol=line[len(body):]
+            i=comment_span(body)
+            code, com = (body, '') if i is None else (body[:i], body[i:])
+            if do_str and '"' in code and re.search(r'\bcards?[ \t]',code):
+                code2,k=sweep_strings(code); ns+=k; code=code2
+            if com and re.search(r'\bcards?\b',com,re.I):
+                c2,k1=P1.subn('',com); c2,k2=P2.subn('(',c2); n1+=k1; n2+=k2; com=c2
+            new=code+com
+            if new!=body:
+                if re.fullmatch(r'[ \t]*//[ \t]*',com) and code.strip(): new=code.rstrip()
+                elif re.fullmatch(r'[ \t]*//[ \t]*',new) and body.strip(): new=None; dropped+=1
+                ch=True
+            if new is not None:
+                if re.search(r'\bcards?[ \t]+[A-Z]',new): left+=1
+                out.append(new+eol)
+        if ch:
+            changed+=1
+            if apply: open(f,'w',encoding='utf-8',errors='surrogateescape',newline='').write(''.join(out))
+    print(f'P1 {n1}  P2 {n2}  string literals {ns}  dropped empty comment lines {dropped}  files {changed}  lines still naming a card {left}')
+
+
+if __name__ == '__main__':
+    main()
