@@ -775,7 +775,7 @@ TEST(NetworkNormalEquationsTest, AddStationPriorMatchesDenseAugmentedSolve) {
 }
 
 // ===========================================================================
-// Rank-K double-difference prior fold: foldReducedDdPriors (Card 4 (M1) phase C)
+// Rank-K double-difference prior fold: foldReducedDdPriors (phase C)
 // ===========================================================================
 
 // A joint rank-K DD prior z ~ N(zhat, Pz), z = C x_L, folded via the per-component
@@ -1057,7 +1057,7 @@ TEST(NetworkNormalEquationsTest, FoldReducedDdPriorsDatumFreedomBasisInvariant) 
         << "a non-congruent re-basis must change the solution (invariance is non-vacuous)";
 }
 
-// The intended Card-4 composition: a pre-reduce local pin (addStationPrior, the tree/
+// The intended invariant-carry composition: a pre-reduce local pin (addStationPrior, the tree/
 // anchor phase datum) plus the post-reduce DD fold reproduce the dense stacked solve
 // with both augmentations, because the DD fold reads the already-pinned N_rr.  (Two
 // post-reduce folds, by contrast, drop the cross term over coupled columns.)

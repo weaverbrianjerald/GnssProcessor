@@ -10,7 +10,7 @@
  *
  *  1. With the anchor off, the fold variance is the legacy expression
  *     `cp.var + sat_clock_q·dt`, bit for bit.  The fold seam runs in every
- *     network run, so the card's byte-identity claim depends on it.
+ *     network run, so the byte-identity claim depends on it.
  *  2. A satellite starts LOOSE and becomes ANCHORED only after the guard has
  *     validated it.  Stiffness never precedes the evidence for it; this is the
  *     re-coupling rule of invariant #7, applied to a first sighting and to a

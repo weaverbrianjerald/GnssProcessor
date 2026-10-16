@@ -27,7 +27,7 @@
  *   stash value after any in-place frame transform).  A pinned column contributes no
  *   revision.  A declared frame step therefore never steps the clone.
  * - Re-harvest: at the stash the row is re-expressed on the new stash's keys.
- * - No fallback: a clone that would take card 1d's route (an unfactored epoch, a stale
+ * - No fallback: a clone that would take the scalar-κ route (an unfactored epoch, a stale
  *   stamp, its own clock outside the dense block) is destroyed, never shrunk.
  * - Transfer: the hold writes the hold family's transfer minus the clone's frame-free passed
  *   motion (@ref PbHoldClone::phi), so the members of the hold family share one frame

@@ -65,7 +65,7 @@
  *
  * ## The critical value is empirical, not tabular (the D5 precedent)
  *
- * D5 (@c project_m1_card4_d5_innovation) applies this statistic to one family,
+ * The D5 innovation gate applies this statistic to one family,
  * the invariant DD chords, and its three versions set the design constraints of
  * this census:
  *

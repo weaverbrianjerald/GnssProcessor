@@ -66,7 +66,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                 if (sig.empty()) continue;
                 const std::string amb_key = StateKeys::makeAmbiguityKey(g.satellite, sig);
                 // "Marked slipped" covers both vehicles.  carry_slipped_ambs is
-                // the card-4 C3c funnel, the only thing that forces a DD chord to
+                // the invariant-carry C3c funnel, the only thing that forces a DD chord to
                 // re-tap; on the leveling vehicle, what stops the stale value
                 // from folding is the free-epoch latch (`relevel.free_ambs`, read
                 // by the PASS-B inject site).  A classification that read only
@@ -87,7 +87,7 @@ void networkGapResumeCensus(NetworkRun& run, const NetworkEpoch& ep) {
                         pl_bridged = (gap >= 0.0 && gap <= pl_max_gap_s);
                     }
                 }
-                // (b) Card-4 invariant DD carry: whether the driver still holds a
+                // (b) Invariant DD carry: whether the driver still holds a
                 //     carried chord for this arc from before the break.
                 //     carry_sat_vertex already stores the kSatBase-offset vertex
                 //     id, so it is used as is; adding the base again would look

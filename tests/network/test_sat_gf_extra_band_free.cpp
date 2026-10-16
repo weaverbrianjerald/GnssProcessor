@@ -2,7 +2,7 @@
  * @file test_sat_gf_extra_band_free.cpp
  * @brief Tests for @c network.sat_gf_extra_band_free, the band-5 code datum.
  *
- * Card B5D: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
+ * Document: docs/refound/B5D_band5_code_datum_2026-09-20.md (requirements R1..R3, R7);
  * evidence: docs/refound/TBI_three_band_ignition_2026-09-20.md section 5.
  *
  * RF-0d pins every registered code column beyond the ionosphere-free pair through its
@@ -16,7 +16,7 @@
  * supplies the datum for the constant.
  *
  * The cases exercise the pure row builder, where the datum is decided.  They check the
- * folded stack arithmetically, not through logs: the card's bars are "no assertion row
+ * folded stack arithmetically, not through logs: the bars are "no assertion row
  * on a determined column", "exactly one level row per channel", "no absolute
  * broadcast-frame value in a sum-to-zero family" and "byte-identical OFF", and each is a
  * statement about @c H and @c z.
@@ -127,7 +127,7 @@ std::vector<Harness::Pair> registerRoster(NetworkEstimator& est,
     return keys;
 }
 
-/// The rows that touch one column, with their coefficients.  The card's bars are
+/// The rows that touch one column, with their coefficients.  The bars are
 /// statements about this list.
 std::vector<std::pair<Eigen::Index, double>> rowsOn(const Eigen::MatrixXd& H,
                                                     Eigen::Index col) {
@@ -188,7 +188,7 @@ TEST(SatGfExtraBandFreeTest, UnarmedIsIdenticalToRf0d) {
 // A determined extra-band column gets no assertion row and one level row (R2).
 // ===========================================================================
 
-// The card's first bar.  A column the data determine gets no geometry-free row.  The
+// The first bar.  A column the data determine gets no geometry-free row.  The
 // channel's sum-to-zero row, which RF-0d suppresses once every column of a channel is
 // pinned, returns because a freed column is not in the pinned set.  There is exactly one
 // such row per (constellation, signal) channel: the data do not determine the level, and
@@ -425,7 +425,7 @@ TEST(SatGfExtraBandFreeTest, LevelReseedOnASetChangeIsMarkedAndCounted) {
         h.code_bias_prev["G|C1W"][s] = 0.4;
         h.code_bias_prev["G|C2W"][s] = 1.1;
         // Their ionosphere-free pin carries cleanly (same pair, both values), so the
-        // Card-2 IF-pin re-seed adds no mark and the set below comes from the sum-to-zero
+        // time-linked IF-pin re-seed adds no mark and the set below comes from the sum-to-zero
         // re-reference alone.
         h.code_bias_ifpin_pair[s] = {"C1W", "C2W"};
     }

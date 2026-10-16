@@ -37,9 +37,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (INC-7b)
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -360,14 +360,14 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // phase-vs-code and the satellite are O(1) lookups with no matrix scan, whereas
     // the post-assembly sites (WE-CI, frame-diag) re-derive "is this a phase row"
     // from the shared-column labels.  Everything folded later (the datum pins, the
-    // GLONASS anchors, the SH/GIM iono rows, the SD-EWL rows, the Card-1 coupling
+    // GLONASS anchors, the SH/GIM iono rows, the SD-EWL rows, the coupling
     // rows) is appended, so rows [0, em.H.rows()) are the data rows and nothing
     // else is scaled here.
     //
     // Thread-safety: `st.phase_sigma_scale` is republished serially by
     // @ref networkSignalIntegrity before the parallel produce and only read (find)
     // here (the pinned_amb_sigma_scale contract).  Off
-    // byte-identity: the map is never populated when the card is disarmed, so `w`
+    // byte-identity: the map is never populated when the feature is disarmed, so `w`
     // keeps the exact cwiseInverse result with no additional floating-point
     // operations.
     if (!st.phase_sigma_scale.empty()) {
@@ -539,7 +539,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // the selection's own output and cannot disagree with which rows were added.
     //
     // R5 scales those rows' phase sigma.  R7 counts them.  The count runs whether
-    // or not the scale is applied: a scale of 1 is the card's default posture, not
+    // or not the scale is applied: a scale of 1 is the default posture, not
     // an unarmed one.
     //
     // Off: the cell set is never populated, the whole block is skipped and the

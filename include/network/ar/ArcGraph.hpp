@@ -7,7 +7,7 @@
  *
  * One owner serves every caller:
  *   - the chain datum: growChainForest;
- *   - the Card-4 carry: the integer-id layer;
+ *   - the invariant carry: the integer-id layer;
  *   - the datum-graph census and the emit re-base: Dsu;
  *   - the producer AR search: growBaselineForest, shortCycleBasis, basisChangeMap;
  *   - the integer hold: CycleLattice.
@@ -24,7 +24,7 @@
  *
  * ## Layers
  *
- *   1. **Integer ids** (opaque vertex ids, the Card-4 driver's space): @ref ArcKey, @ref arcgraph::Dsu,
+ *   1. **Integer ids** (opaque vertex ids, the invariant-carry driver's space): @ref ArcKey, @ref arcgraph::Dsu,
  *      @ref arcgraph::singleTreeOf, @ref arcgraph::fundamentalCycle,
  *      @ref arcgraph::promoteBridgingArcs, @ref arcgraph::chordRestriction.
  *   2. **Typed family graph**: one constellation with one band or an L1/L2 pair, stations and
@@ -43,7 +43,7 @@
  * A typed cycle term is +1 when the arc is traversed station to satellite, so the four-arc cycle
  * of a chord (r, j) closed against the reference satellite k on the baseline (r, p) is the
  * classical double difference (N_rj - N_rk) - (N_pj - N_pk).  The integer-id layer keeps the
- * Card-4 convention: +1 when an arc is traversed from its lower id to its higher id.
+ * Invariant-carry convention: +1 when an arc is traversed from its lower id to its higher id.
  *
  * ## Legacy orders
  *
@@ -100,14 +100,14 @@ struct ArcKey {
 
 namespace arcgraph {
 
-// ---- 1. Integer-id layer (opaque vertex ids: the Card-4 driver's space) ------------------------------
+// ---- 1. Integer-id layer (opaque vertex ids: the invariant-carry driver's space) ------------------------------
 
 /**
  * @brief Disjoint sets over sparse integer ids, path-compressed and unranked, so a root depends
  *        on the link sequence alone.
  *
  * The link rule (@ref dsuUnite links root(a) under root(b)) is the one the eq34 chain datum, the
- * Card-4 driver and the emit re-base already share, so a caller that unites in its legacy order
+ * invariant-carry driver and the emit re-base already share, so a caller that unites in its legacy order
  * gets its legacy roots.  Path compression changes no root.
  */
 struct Dsu {
@@ -125,7 +125,7 @@ int dsuFind(Dsu& d, int v);
 /**
  * @brief Join the sets of @p a and @p b by linking root(@p a) under root(@p b).
  *
- * The rule of the chain datum, the Card-4 driver and the emit re-base; callers pass the station
+ * The rule of the chain datum, the invariant-carry driver and the emit re-base; callers pass the station
  * first, then the satellite, so every root is a satellite.
  *
  * @param d The sets.
@@ -147,7 +147,7 @@ struct IntTree {
  *        fragment.
  *
  * This is the ZComponent constructor's contract (ZStore.hpp): a duplicate edge closes a
- * cycle, an empty edge list is the empty tree.  The Card-4 driver skips the component on none.
+ * cycle, an empty edge list is the empty tree.  The invariant-carry driver skips the component on none.
  * One difference is declared: a self-loop ArcKey(a, a) is refused here (it is a cycle of length
  * one), where ZComponent accepts one whose vertex is new; the driver drops degenerate arcs before
  * its tree (InvariantCarryDriver.cpp, "degenerate (defensive)"), so no caller can see it.
@@ -174,7 +174,7 @@ std::map<ArcKey, int> fundamentalCycle(const IntTree& tree, const ArcKey& arc);
 
 /**
  * @brief Move to @p tree_edges, in chord order, every chord that joins two fragments of the
- *        partial tree (the completion the retired Card-4 lane pair groups used).
+ *        partial tree (the completion the retired lane pair groups used).
  *
  * The fragments are those of @p tree_edges; each promoted chord joins two of them, so the result
  * is still a forest.  The chords that stay keep their order.  No production caller remains since
@@ -188,7 +188,7 @@ std::map<ArcKey, int> fundamentalCycle(const IntTree& tree, const ArcKey& arc);
 long long promoteBridgingArcs(std::vector<ArcKey>& tree_edges, std::vector<ArcKey>& chords);
 
 /**
- * @brief The coefficient of each old chord in a cycle, in old-chord order: a Card-4 W row (the
+ * @brief The coefficient of each old chord in a cycle, in old-chord order: an invariant-carry W row (the
  *        chord restriction).
  * @param cycle      The cycle (arc -> coefficient).
  * @param old_chords The old basis's chords.

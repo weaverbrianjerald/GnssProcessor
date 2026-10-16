@@ -32,7 +32,7 @@
  *       closed-loop consumer pinned off.
  *
  * The mechanism itself (which rows enter the solve, which families reach the wire)
- * is graded on the arms by the card's own gates.
+ * is graded on the arms by its own gates.
  */
 #include <gtest/gtest.h>
 
@@ -62,7 +62,7 @@ using GnssProcessor::signalRosterBuildCells;
 
 namespace {
 
-/// The card's default allow-list.
+/// The default allow-list.
 const std::vector<std::string> kDefaultList{ "L1C", "L1W" };
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
@@ -96,7 +96,7 @@ std::string networkConfig(const std::string& network_extra,
 }
 
 /// The network block that satisfies every interlock, so a test can vary one knob
-/// at a time without the loader disarming the card for an unrelated reason.
+/// at a time without the loader disarming the mechanism for an unrelated reason.
 /// `ambiguity_vehicle: float_kf` has its own prerequisites (phase leveling, the
 /// conditional coupling and the full shared covariance it rests on), which the
 /// loader checks first; without them the load itself would fail.
@@ -325,7 +325,7 @@ TEST(SecondPhaseChannelTest, TheRosterHonoursTheNetworkSignalAllowList) {
 
 TEST(SecondPhaseChannelTest, ASecondPhaseIsNotReportedAsAnExcludedSignal) {
     // The second phase is modelled, so it does not appear in the excluded list;
-    // otherwise the roster's census would count the card's rows as unused.
+    // otherwise the roster's census would count the second-phase rows as unused.
     const std::vector<std::string> tracked{ "C1C", "L1C", "L1W" };
     const std::vector<RosterLatchRow> latch{ { 'L', "L1C" }, { 'C', "C1C" } };
     const BandRoster on = band1(tracked, latch, kDefaultList, true);
@@ -505,7 +505,7 @@ TEST(SecondPhaseChannelTest, WarnsWhenTheIfTdTierCannotFormANonDegeneratePair) {
 }
 
 TEST(SecondPhaseChannelTest, TheClosedLoopConsumerIsPinnedOff) {
-    // The card is a producer-side mechanism: it exists so the satellite families
+    // The second-phase channel is a producer-side mechanism: it exists so the satellite families
     // share the network's stations, and a consumer is one station with no family
     // to support (R6).
     LogManager log;

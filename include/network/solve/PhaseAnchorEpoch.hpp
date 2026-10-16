@@ -42,7 +42,7 @@ struct EpochPassA;
 void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA& pass_a, EpochEvents& events);
 
 /**
- * @brief The eq34 receiver phase-bias allocation (card 3, rule D3c).
+ * @brief The eq34 receiver phase-bias allocation (rule D3c).
  *
  * A present station carries the per-(receiver,system,signal) split state if and only if it
  * carries an ungated shared phase-bias column on that signal; the set is re-derived each epoch

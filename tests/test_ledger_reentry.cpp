@@ -1,7 +1,7 @@
 /**
  * @file test_ledger_reentry.cpp
  * @brief Tests for the gap re-entry response driven by the arc ledger's admitted
- *        lifecycle (`network.ledger_reentry`, R5 of the build brief; Card SID
+ *        lifecycle (`network.ledger_reentry`, R5 of the build brief,
  *        phase 3).
  *
  * ## What is under test
@@ -298,7 +298,7 @@ TEST(LedgerReentryTest, ShiftedRowVerdictFreesTheLedgerArc) {
     EXPECT_EQ(h.counters.ledger_reentry_freed, 1);
     EXPECT_EQ(h.counters.ledger_reentry_bridged, 0);
     EXPECT_EQ(h.outcomeOf(kSig1), ArcReentryOutcome::Freed);
-    // This path cannot increment Card GRK's counter: the response key is the
+    // This path cannot increment the gap re-entry key-mismatch counter: the response key is the
     // ledger arc's key, so the two halves cannot name the band differently.
     EXPECT_EQ(h.counters.gap_reentry_unreachable, 0);
     // The band that tracked through is not in the population and is untouched.

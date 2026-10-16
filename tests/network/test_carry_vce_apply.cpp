@@ -395,7 +395,7 @@ TEST(NetworkCarryVceApplyTest, EventEraInflatesAndTheWindowGivesItBack) {
 // ---------------------------------------------------------------------------
 // Gate 6: off is structurally unity.  The fold sites are not conditional on the
 // knob; they multiply by factor() unconditionally, so this test is the
-// byte-identity argument for the whole card.
+// byte-identity argument for the whole feature.
 // ---------------------------------------------------------------------------
 TEST(NetworkCarryVceApplyTest, UnarmedInstancesAreExactlyUnity) {
     NetworkCarryVceApply fresh;
@@ -415,7 +415,7 @@ TEST(NetworkCarryVceApplyTest, UnarmedInstancesAreExactlyUnity) {
     EXPECT_FALSE(bogus.enabled());
     EXPECT_EQ(NetworkCarryVceApply::familySlot("zwd"), -1);
     EXPECT_EQ(NetworkCarryVceApply::familySlot("pl"), NetworkCarryVceApply::kPl);
-    // Spec section 3: the apply never reaches the Card-4 D5 instance, which pools
+    // Spec section 3: the apply never reaches the invariant-carry D5 instance, which pools
     // under the family name "dd" and already standardizes by its own sigma_hat_0;
     // scaling it would scale twice.  That instance is a separate NetworkCarryVce
     // owned by NetworkInvariantCarryDriver, so the apply cannot see it.  "dd"

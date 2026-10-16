@@ -1,7 +1,7 @@
 /**
  * @file test_warm_resume_require.cpp
  * @brief `network.state_snapshot_require` means "refuse" on every refusal branch
- *        (docs/SPEC_event_harness.md §6b, §11 Card A; HB-1).
+ *        (docs/SPEC_event_harness.md §6b, §11 A; HB-1).
  *
  * The requirement is that every refusal branch reports the same way under
  * `require`.  An event-harness leg relaunched in place hits the non-positive-age

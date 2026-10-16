@@ -3,8 +3,8 @@
  * \brief The network posture readout: recommended versus armed knobs, per run regime.
  *
  * Separate from @c GnssConfigLoadNetwork.cpp (which holds @c loadNetworkSection_)
- * because it changes for a different reason than the loader: a card that adds a
- * knob edits the loader, and a card that validates a knob adds a row here, so the
+ * because it changes for a different reason than the loader: a change that adds a
+ * knob edits the loader, and a change that validates a knob adds a row here, so the
  * two kinds of change touch different files.
  *
  * The readout is log-only: it reads already-parsed state and changes nothing.
@@ -276,15 +276,15 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.carry_coupling_time_update",
               "else the coupling rows re-assert the harvest-epoch border at full strength (~5.8 "
               "cyc, 1.5e4x weight lie)" },
-            // --- The exact coupling update and its companions (promoted by card
-            //     EXL).  Card 1d's scalar update ages each row's satellite clock term at the
+            // --- The exact coupling update and its companions
+            //     The scalar-κ update ages each row's satellite clock term at the
             //     legacy sat_clock_q while the clock anchor folds the same clock at its own q,
             //     so a young arc's ambiguity information is discarded every epoch
             //     and the clock level freezes (the root cause); the exact update re-expresses
             //     each row on the moved border with the fold's own Q.  Its companions are each
             //     measured necessary on this posture; the
             //     guard space (phase) and rank_gate_tol 1e-11 are value companions of the same
-            //     ledger row.  Regime: the float vehicle on the leveling carry with the card 1
+            //     ledger row.  Regime: the float vehicle on the leveling carry with the
             //     coupling trio, which the loader requires.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf && network_phase_leveling_
                   && network_carry_coupling_time_update_ && network_shared_carry_full_cov_,
@@ -786,7 +786,7 @@ namespace GnssProcessor {
               Tier::SCOPED, true , "network.code_datum_time_linked",
               "W6 code datum pinned in TIME not level: cures the ~0.92 m hysteretic OSB/clock "
               "wander after each rise/set" },
-            // --- Card GFC's refinements of the time-linked datum above (the Galileo package,
+            // --- The refinements of the time-linked datum above (the Galileo package,
             //     adopted 2026-10-13, ledger A16).  network.code_datum_pair_continuity is
             //     KEEP_OFF (it preserves the birth realizations; pilot-family users worse) and
             //     has no row: this table lists RECOMMEND_* ledger verdicts only.  Both rows
@@ -825,8 +825,8 @@ namespace GnssProcessor {
             //     cold-starts every epoch and the loader disarms the knob, and with
             //     channel_mode 'all' the loader refuses it because that mode already widens
             //     every band on the phase side.  The knob is armed although it fails a frozen
-            //     bar of its own card (B1, WTZZ00DEU): the verdict records the author's
-            //     decision and the card keeps the bar as failed.
+            //     bar of its own (B1, WTZZ00DEU): the verdict records the author's
+            //     decision and the bar stays recorded as failed.
             { nc.ambiguity_vehicle == NetworkAmbiguityVehicle::FloatKf
                   && network_carry_rx_code_bias_
                   && channel_mode_ != ChannelMode::All,
@@ -973,7 +973,7 @@ namespace GnssProcessor {
               "the settled window — set >= 1e-2 (a working value, not a promotion)" },
             // Resume frame and coupling-regressor restore (SPEC_synthetic_minimum_network
             // §18.10–§18.14).  On a warm resume, restore the phase-anchor incumbents and sticky
-            // targets, the Q3 per-satellite anchor state, the CLK-R held frame, the Card-1
+            // targets, the Q3 per-satellite anchor state, the CLK-R held frame, the coupling
             // regression of every restored leveling row, and the dense D2 border covariance
             // (QK/QP), so the first warm fold is conditional and dense.  Leg E: consumer h12
             // 0.62 m rms (p50 0.10) against 2.05 with the frame and regressors alone, and 0.52
@@ -1076,13 +1076,13 @@ namespace GnssProcessor {
               "readmit seeds cover the code-bias columns too (default true): the clock-only variant "
               "is FALSIFIED — the IF-pair code-bias seeds anchor the clock-vs-code-bias split at the "
               "return, without them the T3 clock tails come back (runs/readmit24h_e2clk)" },
-            // Coupling reinit sources (cards 1f/1g).  Meaningful only where the Card-1
+            // Coupling reinit sources.  Meaningful only where the
             // coupling rows exist: the conditional carry armed and not superseded by the
-            // Card-4 invariant carry (under carry_invariant the whole coupling trio is
+            // invariant carry (under carry_invariant the whole coupling trio is
             // structurally inert).  This row and the carry_coupling_gauge_project row in the
             // ON table are both fingerprinted.  Feed interlock: without eq34 or the
             // prioritized phase-anchor carry re-reference there is no realization-step source,
-            // and the card is inert (measured).
+            // and the knob is inert (measured).
             { network_carry_conditional_coupling_ && !network_carry_invariant_
                   && (network_phase_datum_eq34_ || network_phase_anchor_carry_reref_),
               network_carry_coupling_reinit_sources_,

@@ -37,9 +37,9 @@
 #include "network/assembly/SecondPhaseScope.hpp" // the cell edges + the witness
 #include "network/solve/PivotHandover.hpp"   // pivot-handover datum-change detector (A1/A2)
 #include "network/carry/CarryVce.hpp"        // LS-VCE carry-row variance-component monitor (M2)
-#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (Card 4, M1 C3b)
+#include "network/carry/InvariantCarryDriver.hpp"  // DD cycle-basis invariant carry (C3b)
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
-#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (Card 1/1d, INC-7b)
+#include "network/carry/Coupling.hpp"       // conditional coupling-row builder (INC-7b)
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
@@ -117,7 +117,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
                    NetworkOraclePin::Pin>* opin_table =
         ctx.carry.oracle_pin ? &ctx.carry.oracle_pin->table : nullptr;
     const bool   opin_on = (opin_table != nullptr) && !opin_table->empty();
-    const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection, κ shrink + M²κq inflation (Card 1d); requires carry_cpl_cond (enforced at load)
+    const bool   carry_cpl_tu   = ctx.knobs.carry_cpl_tu;  // border time update of the coupling rows at injection, κ shrink + M²κq inflation; requires carry_cpl_cond (enforced at load)
     const bool   zwd_on        = ctx.knobs.zwd_on;                 // carry per-station ZWD across epochs (B9)
     // ZWD carry random-walk process noise (B9, m²/s): both fold sites read
     // `zwd_q_eff` below rather than a bare `zwd_q` alias, so a seam window's own q
@@ -183,7 +183,7 @@ StationStep networkStationCarriedPriors(StationBuild& build) {
     // the two are folded by different calls that do not sum.  Empty when
     // off, so the finalize below is a no-op and R.prior_* stays empty.
     std::vector<std::tuple<Eigen::Index, double, double, RowTag>>& inj_prior = carry.inj_prior;  // (col, Λ, η, tag): RF-PD-fix pre-PD datum rows
-    // Conditional coupling (Card 1, network.carry_conditional_coupling): each
+    // Conditional coupling (network.carry_conditional_coupling): each
     // carried local column becomes one pseudo-observation row coupling it to
     // the free shared border (Odijk S-conditional carry) instead of an
     // independent diagonal prior; see network/carry/Coupling.hpp.  The scratch

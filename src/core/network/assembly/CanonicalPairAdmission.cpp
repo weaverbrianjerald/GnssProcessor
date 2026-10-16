@@ -135,7 +135,7 @@ namespace GnssProcessor {
         if (!st.armed) return se_in;           // byte-identical path: no copy, no walk
 
         auto& ctr = ctx.counters.cpa;
-        // The processed-epoch clock of this card.  It is a separate counter, not
+        // The processed-epoch clock of this seam.  It is a separate counter, not
         // the slip-QC index: that index is advanced inside PASS A, downstream of
         // this seam, and an epoch PASS A skips does not advance it, so a gap
         // measured against it would stop counting where a station dropped out.

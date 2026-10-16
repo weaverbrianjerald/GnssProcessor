@@ -10,7 +10,7 @@
  *
  * The raw MW/GF arithmetic has one definition, computed here once per epoch
  * whenever any consumer needs it.  The consumers are the `network.trace_slip_raw`
- * writer (`ApplicationNetworkAssembly.cpp`) and the decision cards that use the
+ * writer (`ApplicationNetworkAssembly.cpp`) and the decision instruments that use the
  * raw step as evidence rather than as a trace, among them the LLI-corroboration
  * gate and the arc-resumption instrument;
  * @ref SlipQcParams::anyConsumer lists them all.  Computed inside the trace
@@ -201,7 +201,7 @@ struct RawSlipVerdict {
     /// The adjacent predecessor used a different (sig1, sig2) pair, so @ref d_mw
     /// differences two MW combinations built on different signals (and, when a
     /// band changed, on different wide-lane wavelengths).  @ref measured stays
-    /// true: the step exists, and the slip cards use it.  A consumer that converts
+    /// true: the step exists, and the slip decision instruments use it.  A consumer that converts
     /// @ref d_mw into cycles of a specific lane must refuse the row, because the
     /// step was not formed on that lane.
     bool   pair_changed{false};
@@ -318,7 +318,7 @@ struct RawSlipHistory {
         std::map<std::string, double> gf_snap;
     };
     /// satellite → signal → continuity record.  Filled only when
-    /// @c SlipQcParams::gap_reentry_per_signal and a row-level card (gap_instrument
+    /// @c SlipQcParams::gap_reentry_per_signal and a row-level instrument (gap_instrument
     /// or gap_reentry) are armed; empty and untouched otherwise.
     std::map<std::string, std::map<std::string, SigPrev>> sig_prev;
 
@@ -408,7 +408,7 @@ struct RawSlipEpoch {
  * All defaults are inert.  Every master arm defaults off, and the two sub-gates
  * that default on (@ref gap_reentry_lli, @ref gap_reentry_per_signal_unmeasurable)
  * act only under their master arm.  The qualification pass is cheap and runs only
- * when a decision card is armed (@ref SlipQcChannel::cardsArmed); with every card
+ * when a decision instrument is armed (@ref SlipQcChannel::cardsArmed); with every instrument
  * off, nothing is adjudicated.
  */
 struct SlipQcParams {
@@ -429,7 +429,7 @@ struct SlipQcParams {
 
     // --- Gap re-entry response (network.cycle_slip.gap_reentry_relevel) ---
     /// Master arm for the gap re-entry slip response
-    /// (docs/SPEC_slip_qc_hardening §G3/W1, §12).  Card G's decision rule calls
+    /// (docs/SPEC_slip_qc_hardening §G3/W1, §12).  The gap-instrument decision rule calls
     /// for this response once `gap_shifted_bridged` is nonzero.
     ///
     /// The instrument and the response consume the same @ref GapResumption
@@ -467,7 +467,7 @@ struct SlipQcParams {
     /// the satellite present is still a re-entry.  Off by default; with it off, the
     /// run is byte-identical.  The per-signal response acts only with
     /// @ref gap_reentry armed (the loader warns otherwise), and the per-signal
-    /// collection needs a row-level card (@ref gap_reentry or @ref gap_instrument):
+    /// collection needs a row-level instrument (@ref gap_reentry or @ref gap_instrument):
     /// it de-duplicates against the row-level resumption list, and without that
     /// list one break would be counted by both tiers.
     bool   gap_reentry_per_signal{false};
@@ -665,10 +665,10 @@ struct CoresumedShareLedger {
 };
 
 /**
- * @brief Run-end counters for the slip-QC hardening cards (standing invariant
+ * @brief Run-end counters for the slip-QC hardening instruments (standing invariant
  *        #4: inert wiring is visible only through counters).
  *
- * Card E counts detections separately from refloats: a cold run detects and does
+ * Detections are counted separately from refloats: a cold run detects and does
  * not refloat, and a count of refloats alone makes the MW/LLI arm look dead
  * (defect L3).
  */
@@ -836,14 +836,14 @@ struct SlipQcCounters {
     /// silently, so "the response found nothing" and "the response could not act"
     /// stay distinguishable.
     long long gap_reentry_no_relevel{0};
-    /// Arcs whose only vehicle is the Card-4 C3c funnel: under
+    /// Arcs whose only vehicle is the invariant-carry C3c funnel: under
     /// @c network.carry_invariant the leveling local carry is superseded and
     /// structurally empty (which is why the loader disarms @c relevel_free_epoch
     /// there), so the funnel insert is the whole response and nothing is missing.
     /// Kept separate from @ref gap_reentry_no_relevel: this case is by design, the
     /// other is a response that could not land.
     long long gap_reentry_dd_only{0};
-    long long gap_reentry_dd_marked{0};     ///< Ambiguities inserted into the Card-4 C3c invariant-carry funnel (carry_invariant vehicle; orthogonal to the buckets above).
+    long long gap_reentry_dd_marked{0};     ///< Ambiguities inserted into the C3c invariant-carry funnel (carry_invariant vehicle; orthogonal to the buckets above).
 
     // --- Per-signal re-entry tier ---------------------------------
     //
@@ -1003,13 +1003,13 @@ struct SlipQcChannel {
     RawSlipEpoch                epoch;     ///< This epoch's evidence (reset every epoch).
     SlipQcCounters              counters;  ///< Run-end telemetry (invariant #4).
     /// Wavelength provider for the raw observables.  Null when no consumer asked
-    /// for them this run; nothing is then computed and every card is inert.
+    /// for them this run; nothing is then computed and every instrument is inert.
     std::unique_ptr<PppUtils>   utils;
     long long                   epoch_idx{0};  ///< Monotonic processed-epoch index.
 
     /// True when the raw observables must be computed this run.
     bool armed() const { return static_cast<bool>(utils); }
-    /// True when a decision card (not only the trace) is armed.
+    /// True when a decision instrument (not only the trace) is armed.
     bool cardsArmed() const { return params.lli_corroborate || params.gap_instrument || params.bridge_gf || params.iono_cs || params.gap_reentry || params.gap_reentry_per_signal; }
 };
 
@@ -1034,7 +1034,7 @@ struct SlipQcChannel {
  *                     `out.computed` is set.
  * @param per_signal   Also fill @ref RawSlipObs::sigs with every phase signal that
  *                     has a matching code and a resolvable wavelength.
- *                     Default false: the row is byte-identical to the pre-card one
+ *                     Default false: the row is byte-identical to the previous one
  *                     and nothing extra is allocated.
  * @param tracker_modeled_first
  *                     Take each band's signal from the lookup @p latch when that
@@ -1050,7 +1050,7 @@ struct SlipQcChannel {
  *                     accumulated in both states of @p tracker_modeled_first, one
  *                     per (station, satellite, epoch, band) cell whose tracker
  *                     signal differs from the latched one.  Default null, so every
- *                     pre-card caller compiles unchanged.
+ *                     existing caller compiles unchanged.
  * @param latch        The per-station canonical phase lookup (see
  *                     @ref TrackerLatchLookup).  Null (the default) leaves the
  *                     tracker on the lexical rule and the mismatch counter at 0

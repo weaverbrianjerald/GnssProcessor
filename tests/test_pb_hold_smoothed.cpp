@@ -113,7 +113,7 @@ constexpr double kReinitVar = 1e7;
     return ::testing::AssertionFailure() << a << " vs " << b << " (tol " << tol << " relative)";
 }
 
-/// Card CTU's epoch inputs over the stash (x, P) of the previous epoch, every key in S
+/// The exact-update epoch inputs over the stash (x, P) of the previous epoch, every key in S
 /// with the walk as its inflation, except @p reinit (a D key on the Reinit route).
 CouplingExactEpoch exactEpoch(const Eigen::VectorXd& x, const Eigen::MatrixXd& P,
                               const Eigen::VectorXd& q, double stash_s, int reinit) {

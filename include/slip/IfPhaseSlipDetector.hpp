@@ -14,7 +14,7 @@
 *       prioritized phase datum.  On that path it runs with deferred flagging:
 *       the driver pools the stations' double differences by signal pair, flags
 *       against the pooled MAD, and feeds the flags to the invariant-carry slip
-*       funnel (card 4, C3c) and, when the phase-leveling carry is the active
+*       funnel (C3c) and, when the phase-leveling carry is the active
 *       one, to its refloat.  In the general user pipeline (kinematic, or before
 *       convergence) the detector is inert: the position gating below is unsafe
 *       there, and the `enable_if_slip_detector` user toggle has no
@@ -345,7 +345,7 @@ namespace GnssProcessor {
          * epoch, while the raw wide-lane and geometry-free series stay flat to
          * ±0.1 cycles and no LLI is set.  Once the carry is warm, every fire
          * refloats both band ambiguities and marks the invariant-carry chords
-         * slipped (card 4).
+         * slipped.
          *
          * When @ref RefGateParams::enable is set the decision becomes:
          *   1. Scale: |median| must exceed max(k·s_eff, floor_frac·λ_IF), where

@@ -6,7 +6,7 @@
  *
  * The body began as a copy of the former SB_SOLPREP block (ApplicationNetwork.cpp
  * lines 5034-5770 at the cut), dedented 4 spaces (loop-body indent, no wrapping
- * if); later cards extended it in place.  The alias preamble copies the run-TU
+ * if); later changes extended it in place.  The alias preamble copies the run-TU
  * alias block so the body reads the original names, and the emitEvent forwarder is
  * rebuilt over NetworkRunTraces::emitEvent.  The five crossing locals stay declared
  * in the body and are moved into NetworkSolPrepResult by the return epilogue.  See
@@ -149,8 +149,8 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                                                    /*provider_id=*/0, /*solution_id=*/0);
     // Stamp, per emitted satellite, the broadcast-ephemeris version (IODE) that the
     // producer's clock-C0 baseline used, so the consumer applies C0 against the same
-    // broadcast clock (getSatelliteClockCorrection pinned to clock_iode, Card 7) and
-    // the eph-cutover re-level (Card 6) can detect a version roll (Card 5, RTF-2).
+    // broadcast clock (getSatelliteClockCorrection pinned to clock_iode) and
+    // the eph-cutover re-level can detect a version roll (RTF-2).
     // The broadcast clock is station-independent (one shared LiveEphemerisStore), so
     // computeSatelliteClock here reports the version the per-station emission path
     // (computeEmissionState) selected this epoch: toe granularity (hours) is far
@@ -158,7 +158,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // record.  Querying the store at the emit site is equivalent to the plan's
     // "thread the IODE out of the emission path" and needs no per-station
     // out-parameter.  GLONASS ('R') stays -1 (plan D8).  The block runs only in
-    // brdc_rts mode; in sp3 mode clock_iode stays -1 everywhere, the Card-4 writer
+    // brdc_rts mode; in sp3 mode clock_iode stays -1 everywhere, the product writer
     // emits no iode= token, and the product is byte-identical.
     if (brdc_rts) {
         auto& eph_store = LiveEphemerisStore::getInstance();
@@ -663,7 +663,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                 // constellation's carry: applied, with its coefficient, or skipped, the
                 // baseline free-fall (Queue 1(b) INC-2).  The tag is appended only when
                 // network.handover_stransform is armed, so PIVOT rows without it are
-                // byte-identical to those written before the card.
+                // byte-identical to those written before the knob.
                 std::string sts_tag;
                 {
                     const auto cit = handover_ev.sts_c0.find(c);
@@ -748,7 +748,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
                           "disc_bump", "union");
     }
     // Land the forced per-satellite discontinuities for eph cutovers whose prior
-    // version was evicted before Δ_eph could be computed (Card 6): the clock step is
+    // version was evicted before Δ_eph could be computed: the clock step is
     // unknown, so the consumer must reset that satellite's network-corrected
     // ambiguity.  This is a datum step, not a QC retro-bump, so it does not depend on
     // ura_retro_bump, but it uses the same present/pending split: a flagged satellite
@@ -787,7 +787,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
     // Land the code-bias discontinuity bump for satellites whose CB carry was
     // reinitialized by the previous epoch's common-mode excursion detector
     // (SPEC_day129_frame_guards Phase 2.1).  The reinit steps the emitted value this
-    // epoch, and under the Card-2 rule a signalled discontinuity must accompany it;
+    // epoch, and under the time-linked datum rule a signalled discontinuity must accompany it;
     // without one, a counter-following consumer integrates across the step (the
     // DOY-129 failure, where the fault bumped no counter).  The present/pending split
     // is the same as in the blocks around it, so the bump lands with the satellite
@@ -942,7 +942,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             retro_emit_sats.insert(mark.begin(), mark.end());
         }
     }
-    // Land the time-linked datum re-seed disc bumps (Card 2,
+    // Land the time-linked datum re-seed disc bumps (the knob
     // network.code_datum_time_linked): a sum-to-zero channel with no veteran, or an
     // IF-pin split forced to the 0 seed, stepped the emitted value, so the consumer
     // must reset instead of integrating across an unsignalled step.
@@ -1029,7 +1029,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
             const std::string* prev = net::getSig(ctx.entities.sat_signals, amb, &net::SatSignalState::emitted_anchor);
             if (prev != nullptr && *prev != sta) {
                 const auto amb_parts = StateKeys::parseAmbiguityKey(amb);   // "G01_L1C"
-                // Under eq34 (Card 3) the handover is a tree-edge reattach: the emitted
+                // Under eq34 the handover is a tree-edge reattach: the emitted
                 // δ̃_s steps by an exact integer number of cycles (the chain path
                 // difference; the receiver fractional part does not leak), usually 0
                 // under pin-to-round.  The discontinuity still goes through the
@@ -1177,7 +1177,7 @@ NetworkSolPrepResult networkSolPrep(NetworkRun& run, const NetworkEpoch& ep, Epo
         for (const auto& [cst, sat] : plan.clock_pivot)
             pending_contract.decl.clock_pivot_sat[cst] = sat;   // realized auto-picked pivots
         // Stamp the realized datum receiver r1 as the diagnostic pdr= token, the
-        // component-0 representative (Card 3, SingleReceiverChain).
+        // component-0 representative (SingleReceiverChain).
         const std::string* first_dr =
             net::first(cons_rows, &net::ConstellationState::channels, &net::ChannelState::datum_rx);
         if (phase_datum_eq34 && first_dr != nullptr) {

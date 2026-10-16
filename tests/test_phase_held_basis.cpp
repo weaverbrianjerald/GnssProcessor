@@ -2,18 +2,18 @@
  * @file test_phase_held_basis.cpp
  * @brief Contract tests for the phase datum as a held S-basis
  *        (@c network.phase_datum_held_basis, @c phase_anchor_min_age_ep,
- *        @c phase_anchor_flag_quiet_ep).  Card RF-2.
+ *        @c phase_anchor_flag_quiet_ep).
  *
- * Card: docs/refound/RF-1_steps345_mechanism_2026-09-15.md, last section.
+ * Document: docs/refound/RF-1_steps345_mechanism_2026-09-15.md, last section.
  *
  * Rationale.  Under RF-1 every network ambiguity is a float state with a
  * covariance, including the one ambiguity that realizes each satellite's
  * phase-bias datum.  On the 6 h field arm that datum converged, was dropped and
  * was re-flagged by T4 hundreds of times an hour, and each move is a phase-bias
- * re-realization the consumer has to re-converge through (figures in the card).
+ * re-realization the consumer has to re-converge through (figures in the referenced document).
  * The level vehicle's frozen zero-q anchor supplied the held property as a side
  * effect; `float_kf` removes it.  In the textbook S-system the S-basis
- * ambiguities are constants, not states, and this card makes them so.
+ * ambiguities are constants, not states, and this mechanism makes them so.
  *
  * The four items, and what a unit test can reach of each:
  *  1. **held basis**: the value is frozen at election and re-pinned unchanged for
@@ -194,7 +194,7 @@ TEST(PhaseHeldBasisTest, NegativeGateValuesAreRejected) {
 // (2) Item 1: the held column.  Its variance does not change under the fold.
 // =============================================================================
 
-// The central line of the S-basis contract, named by the card's first gate: a
+// The central line of the S-basis contract, named by the first gate: a
 // gauge-pinned column is excluded from the carry at both the inject and the harvest,
 // on the same predicate, so the held basis is never folded as a prior and never
 // harvested as a posterior; the filter does not update its variance.
@@ -327,7 +327,7 @@ TEST(PhaseHeldBasisTest, ElectionRefusesARecentlyFlaggedArc) {
 }
 
 // Both gates at 0 (off) refuse nothing, which is the behaviour without the gates.  The
-// non-zero defaults are the card's choice, and a 0 must never mean "refuse everything".
+// non-zero defaults are a deliberate choice, and a 0 must never mean "refuse everything".
 TEST(PhaseHeldBasisTest, ZeroGatesRefuseNothing) {
     net::ArcTable carry;
     std::map<std::pair<int, std::string>, long long> flags;
@@ -346,7 +346,7 @@ TEST(PhaseHeldBasisTest, ZeroGatesRefuseNothing) {
 // before any slip or T4 response touches that column, so a flag on the basis ambiguity
 // hands the datum over first, and the response then applies to the former anchor as an
 // ordinary float state.  Otherwise the response would re-realize the datum in place,
-// which is the churn the card measured on the field.
+// which is the churn measured on the field.
 TEST(PhaseHeldBasisTest, AFlagOnTheBasisHolderDeposesIt) {
     net::ArcTable carry;
     LocalCarry old{0.0, 1e-3, 0.0}; old.birth_ep = 10;
@@ -376,7 +376,7 @@ TEST(PhaseHeldBasisTest, AFlagOnTheBasisHolderDeposesIt) {
 // field most mature high-elevation arcs also pass that ceiling, so most handovers came
 // out continuous.  On the sim, whose ambiguity scale is about 5x larger, most do not:
 // most elections went cold, each re-realized the datum at 0, sigma0 exceeded the
-// withhold ceiling, and about half the epochs were withheld (figures in the card).  A
+// withhold ceiling, and about half the epochs were withheld (figures in the referenced document).  A
 // rank that elects a station the continuous branch then refuses reproduces the defect,
 // so the two must be one predicate, which is what these cases pin.
 // =============================================================================

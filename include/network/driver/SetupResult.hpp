@@ -47,7 +47,7 @@ namespace GnssProcessor {
     /// GPS-continuous scale (a BDS toc in native BDT is shifted to the GPS scale,
     /// following LiveEphemerisStore's toe convention).  One shared definition for
     /// the setup-side staging sort and the epoch-loop feed, so the sort order and
-    /// the feed cannot diverge (card 8, replay parity).
+    /// the feed cannot diverge (replay parity).
     inline double navAvailabilityGpsSeconds(const BroadcastEphemeris& e) {
         return brdcTocGpsSeconds(e);   // one definition, shared with the group-delay latch
     }
@@ -71,7 +71,7 @@ namespace GnssProcessor {
         bool brdc_rts = false;
         /// Staged broadcast nav records and the progressive feed cursor (brdc_rts
         /// only; empty otherwise).  The epoch loop's LiveEphemerisStore catch-up feed
-        /// advances the cursor.  (Card 8)
+        /// advances the cursor.
         std::vector<BroadcastEphemeris> brdc_nav_staged;
         std::size_t brdc_nav_cursor = 0;
         /// Under @c network.apriori_source @c sp3_brdc_clock: the native broadcast

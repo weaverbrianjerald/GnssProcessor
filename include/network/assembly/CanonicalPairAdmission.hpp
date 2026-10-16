@@ -35,7 +35,7 @@
  * phase on both band digits) is left untouched: its observations pass unchanged.
  * This covers every constellation on its first processed epoch, and structurally
  * Galileo, whose bands are 1/5/7/6 and which has no band-2 canonical.  On the
- * RF-0hv postures the card was measured on, only GPS is in scope.
+ * RF-0hv postures this seam was measured on, only GPS is in scope.
  *
  * ### Where it acts, and why there
  *
@@ -150,7 +150,7 @@ namespace GnssProcessor {
     /**
      * @brief Advance one (station, satellite)'s admission state by one processed epoch.
      *
-     * The pure state machine of the card, independent of the roster, the config and
+     * The pure state machine of the admission, independent of the roster, the config and
      * the traces, so the unit suite can drive it directly.
      *
      * @param tr        [in/out] that pair's carried state.
@@ -182,7 +182,7 @@ namespace GnssProcessor {
     struct NetworkCanonicalPairState {
         bool armed{ false };      ///< network.canonical_pair_admission.
         int  keep_ep{ 3 };        ///< network.canonical_pair_keep_epochs (clamped at 0).
-        long long epochs{ 0 };    ///< seam invocations: the processed-epoch clock of this card.
+        long long epochs{ 0 };    ///< seam invocations: the processed-epoch clock of this seam.
         /// (station index, satellite) -> its admission state.
         std::map<std::pair<int, std::string>, CanonicalPairTrack> track;
         /// station index -> constellation -> its latched canonical pair.  Refreshed
@@ -194,7 +194,7 @@ namespace GnssProcessor {
     };
 
     /**
-     * @brief Run-end counters: the on-path telemetry of the card (invariant 4).
+     * @brief Run-end counters: the on-path telemetry of the admission (invariant 4).
      *
      * Lives in @c NetworkServiceCounters.  Every disposition is counted against a
      * denominator, so a clean log is not mistaken for evidence that the rule acted:
@@ -222,7 +222,7 @@ namespace GnssProcessor {
      * @param config_ The run's config (reads the two @c network.canonical_pair_* knobs).
      * @param n_sta   Producer roster size (sizes the per-station latch cache).
      *
-     * When disabled, @c armed stays false and nothing else in the card is reachable.
+     * When disabled, @c armed stays false and nothing else in the admission is reachable.
      */
     void networkCanonicalPairArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                  int n_sta);

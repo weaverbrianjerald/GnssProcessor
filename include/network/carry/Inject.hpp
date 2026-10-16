@@ -250,7 +250,7 @@ namespace GnssProcessor {
         /// @brief Directive covering @p amb, or @c nullptr.  Cheap on the empty path.
         ///
         /// The injected schedule is consulted first: a harness leg that scripts an
-        /// @c anchor_handover for a family the production card also staged gets the
+        /// @c anchor_handover for a family the production path also staged gets the
         /// scripted directive (its @c cold mode is what such a leg tests), and the
         /// election reads exactly one directive per family.
         const InjectAnchorDirective* anchorFor(const std::string& amb) const {

@@ -171,7 +171,7 @@ int networkRunTimingRunEnd(const NetworkRunEndView& v) {
         // Σ net against the D0 `other` figure closes the accounting; "unattributed" is loop
         // time that no bracket covers (pre-slip pivot pass, the trace/readout tail, small
         // unbracketed gaps).  This ranked table is gate P0 of SPEC_dev_tier_perf_cards §3
-        // (the perlos card); P1/P2 target the measured top blocks.
+        // (the perlos work); P1/P2 target the measured top blocks.
         std::vector<int> d0b_order(SB_COUNT);
         for (int b = 0; b < SB_COUNT; ++b) d0b_order[b] = b;
         std::sort(d0b_order.begin(), d0b_order.end(), [&](int a, int c) {

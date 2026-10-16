@@ -1,6 +1,6 @@
 // Unit gates for the DD cycle-basis z-store (include/network/ar/ZStore.hpp), the
 // S-system-invariant carry that the generalized-LS network filter time-links
-// (Card 4 (M1) phase B).  Each gate drives the standalone ZComponent /
+// (phase B).  Each gate drives the standalone ZComponent /
 // NetworkZStore directly with a synthetic bipartite component of known raw
 // ambiguities N and covariance Cov(N).  The carried z / Pz are checked against the
 // from-scratch cycle-basis reference z = C·N, Pz = C·Cov·Cᵀ, which is independent

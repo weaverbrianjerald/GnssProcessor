@@ -17,7 +17,7 @@
  *    distinguish the allow list, a band the latch decided against, and a band the
  *    latch does not carry;
  *  - a band the model does not carry is Tracked only;
- *  - the arc-level tracker's own pick is reproduced, so the disagreement the card is
+ *  - the arc-level tracker's own pick is reproduced, so the disagreement the roster is
  *    named for is stated in one place instead of inferred.
  */
 
@@ -69,7 +69,7 @@ TEST(SignalRosterTest, ModelledRoleIsTheLatchUnderThePriorityRule) {
     // The priority list of the RF-0hv postures is W before C, so a station that
     // tracks both latches L1W / C1W.  The roster reports that and does not fall back
     // to the lexically first channel, which is what the arc-level tracker does and
-    // what the card is about.
+    // what the roster is about.
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" },
                                 { 'L', "L2W" }, { 'C', "C2W" } }),
@@ -237,7 +237,7 @@ TEST(SignalRosterTest, TrackerPicksTheLexicallyLowestPhaseWithAMatchingCode) {
     const auto no_code = signalRosterTrackerPicks({ "L1C", "C1W", "L1W" });
     EXPECT_EQ(no_code.at('1'), "L1W");
 
-    // The disagreement the card is named for, in one line.
+    // The disagreement the roster is named for, in one line.
     const auto cells = signalRosterBuildCells(
         kTrackedL1cL1w, latch({ { 'L', "L1W" }, { 'C', "C1W" } }), {}, false, nullptr);
     EXPECT_NE(picks.at('1'), cells.at('1').modelled_phase);

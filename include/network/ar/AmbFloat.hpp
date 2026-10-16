@@ -289,7 +289,7 @@ struct EpochEvents;   // network/driver/Epoch.hpp
      * Two filed latent defects this function must not re-open:
      *  (i) The D4 carry S-transformation in @c ChainDatum.cpp
      *      (SPEC_card1_coupling_carry §14) shifts @c lc.value_abs and every coupling
-     *      @c s_prev on a shifted PB column together, because a Card-1 coupling row's
+     *      @c s_prev on a shifted PB column together, because a coupling row's
      *      RHS is @f$y=(v-x_{lin})+\sum_j M_j\hat s_{prev,j}@f$ and, for a
      *      gauge-invariant row under a known frame step, the two moves cancel exactly.
      *      Shifting one and not the other injects the frame step as row bias.  This
