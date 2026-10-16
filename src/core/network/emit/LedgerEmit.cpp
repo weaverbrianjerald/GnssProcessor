@@ -387,7 +387,7 @@ void networkLedgerEmitRunEnd(const NetworkRunContext& ctx,
         return d > 0 ? 100.0 * static_cast<double>(n) / static_cast<double>(d) : 0.0;
     };
 
-    log->info("================ CARD SID PHASE 5a: THE EMITTER AGAINST THE LEDGER, AND THE "
+    log->info("================ SIGNAL IDENTITY PHASE 5a: THE EMITTER AGAINST THE LEDGER, AND THE "
               "DECLARED ROSTER (network.ledger_emit) ================");
     log->info("  capture ran on {} emit epoch(s); {} emitted (satellite, signal) "
               "famil(ies) examined, {:.3f} ms capture + {:.3f} ms fold per epoch",
