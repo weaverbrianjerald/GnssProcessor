@@ -62,7 +62,7 @@ Goldens, arm generators, posture checks.
 | `gen_net305_sh.py` | Generate 305-station global SH-VTEC PPP-RTK network configs. Merges the 305-station roster (from config/test_suite/_net305_3sys_smoke.json) into the … | 1 |
 | `gen_network_config.py` | Generate a PPP-RTK network config from a resolved station list. Loads the committed network config as a template (settings, estimation, filter, model… | 1 |
 | `gnss_config_chain.py` | Resolve `"extends"` config inheritance the way the C++ loader does. Commit 18b4502 gave configs a base+delta inheritance format. Every offline tool t… | 24 |
-| `loader_keys.py` | Which config keys the C++ loader reads, judged from its source (`src/core/config`). `rapid_arm.py`, `prm_ab.py` and `ird_make_arms.py` refuse an arm that sets a key the loader ignores, which would run as its base. `config CONFIG.json` lists a config's unread keys; `selftest`. | 3 |
+| `loader_keys.py` | Which config keys the C++ loader reads, judged from its source (`src/core/config`), including the paths it builds from a prefix constant, a class table or a logger name. `rapid_arm.py`, `prm_ab.py` and `ird_make_arms.py` refuse an arm that sets a key the loader ignores, which would run as its base; `rapid_arm.py make --allow-unread KEY` lets a named key through. `config CONFIG.json` lists a config's unread keys; `selftest`. | 3 |
 | `make_agu_configs.py` | Generate the AGU-abstract network configs from the FT63 pdfix_v3 lineage. The abstract needs ONE producer run whose emitted products a held-out consu… | 1 |
 | `ledger_render.py` | Render docs/CONFIG_promotion_ledger.md from the ledger JSON (one verdict per config key); `--check` exits 1 when the view is stale. | 3 |
 | `make_golden_config.py` | make_golden_config.py -- generate and VERIFY the golden network configs. WHY. The project ships new work default-OFF and byte-identity-gated, and the… | 101 |
@@ -425,27 +425,27 @@ import of a sibling script no longer resolves; edit before running one, or read 
 | `archive/make_agu305_configs.py` | Generate the 305-station AGU scaling configs (GPS-only, then GPS+Galileo). Same experiment as ``make_agu_configs.py`` at 5x the stations. The roster … | 0 |
 | `archive/make_agu_replay_arms.py` | Generate consumer-replay arms against an already-written network product file. ``Application::runConsumerReplay`` (armed by ``network.closed_loop.rep… | 0 |
 | `archive/verify_rinex2_parser.py` | Reference parser for RINEX 2.xx mixed observation files. Mirrors the algorithm now implemented in src/core/rinex/RinexParser.cpp so we can sanity-che… | 0 |
-| `archive/ev_coldfb_grade.py` | COLD ANCHOR-FALLBACK (SPEC_event_harness §15) — the ELECTION channels of a leg. `scripts/event_grade.py` grades the wire and consumer channels of an … | 0 |
+| `archive/ev_coldfb_grade.py` | COLD ANCHOR-FALLBACK (SPEC_event_harness §15): the ELECTION channels of a leg. `scripts/event_grade.py` grades the wire and consumer channels of an … | 0 |
 | `archive/ce_g4_read.py` | Card CE / s24.17 leg 3 (G4) reader: the guard's behaviour in the +/-N epochs around an event. python ce_g4_read.py <arm> [<arm> ...] [--tow 334020] [… | 0 |
 | `archive/ce_hourly_grade.py` | Card CE / s24.17 leg 2: the HOUR-BY-HOUR grade of a long cold arm. python scripts/ce_hourly_grade.py --arms c10,pvb6 [--hours 6] [--tow0 259200] [--r… | 0 |
 | `archive/cm_driver.ps1` | Card CM (SPEC_event_harness s24.8) detached run driver. | 0 |
 | `archive/d5v5_same_realization_ab.py` | SAME-REALIZATION A/B for the D5 v5 card: two legs off ONE snapshot, arm-to-arm. Why this is not ``d5v5_seam_ab.py``. That script grades each arm agai… | 0 |
-| `archive/fp2_fanout_window.py` | FP-2 FAN-OUT CENSUS on the pre-registered §20.2 window — k in [-1, +2]. python scripts/fp2_fanout_window.py [--runs C:/GnssProcessor/runs] [--prefix … | 0 |
+| `archive/fp2_fanout_window.py` | FP-2 FAN-OUT CENSUS on the pre-registered §20.2 window: k in [-1, +2]. python scripts/fp2_fanout_window.py [--runs C:/GnssProcessor/runs] [--prefix … | 0 |
 | `archive/fp2_wire_step_census.py` | UNDECLARED WIRE-STEP census across an FP-2 leg matrix. python scripts/fp2_wire_step_census.py [--runs C:/GnssProcessor/runs] [--prefix fp2] [--tol 0.… | 0 |
 | `archive/clkr_grade_g3.py` | Card CLK-R G3 grader (docs/SPEC_clock_emit_rebase.md §4). Grades the 12 h A/B (runs/clkr_12h_ctl vs runs/clkr_12h_on) against the stored denominator … | 0 |
 | `archive/clkr_run_arm.ps1` | Card CLK-R arm runner: serialized producer run + trace harvest. Usage: .\clkr_run_arm.ps1 -Config <config.json> -RunDir <runs/name> Redirects console… | 0 |
 | `archive/q3_consumer_hours.py` | Hourly LEVEL bands of the in-process closed-loop consumer, for Card Q3 A/B arms. Grades ``logs/closed_loop_trace.csv`` (the live WTZZ holdout) as hou… | 0 |
-| `archive/cbq305_readfirst.py` | Card CB-Q leg C — the invariant-#4 read-first sheet for a 2-signal arm. Reads the ON-PATH counters BEFORE any quality number, because the failure mod… | 0 |
+| `archive/cbq305_readfirst.py` | Card CB-Q leg C: the invariant-#4 read-first sheet for a 2-signal arm. Reads the ON-PATH counters BEFORE any quality number, because the failure mod… | 0 |
 | `archive/arc_life.py` | Arc-life estimator: per traced DD pair, split series into hold-segments at | 0 |
 | `archive/p1_trigger_verdict.py` | SPEC_day129_frame_guards Phase-1 trigger verdict. Reads one instrumented leg's traces and answers the three falsifiable questions the spec poses abou… | 0 |
 | `archive/weci_detonation_arm.py` | Warm-start arms over the 19:26:00 SH detonation from the guards_cont history. Derives an arm config from the anchor's OWN leg.json (fingerprint match… | 0 |
 | `archive/chain_status.py` | One-screen status for the DOY-129 continuous network run. python scripts/chain_status.py [--runroot C:/GnssProcessor/runs/day129_cont] Reports, per s… | 0 |
-| `archive/iofloat_run_arms.ps1` | _(no header comment — read the source)_ | 0 |
+| `archive/iofloat_run_arms.ps1` | _(no header comment, read the source)_ | 0 |
 | `archive/overnight_run_queue.ps1` | ---- 1. wait for the parent 24 h run --------------------------------------- | 0 |
-| `archive/p2_run_guards_chain.ps1` | Epoch times carry ~1e-5 s of double residue BELOW nominal (TimeUtils builds them through a Julian-date divide) — every tow comparison against a nomin… | 0 |
+| `archive/p2_run_guards_chain.ps1` | Epoch times carry ~1e-5 s of double residue BELOW nominal (TimeUtils builds them through a Julian-date divide). Every tow comparison against a nomin… | 0 |
 | `archive/analyze_network_clock_rms.py` | Per-constellation network satellite-clock RMS, epoch by epoch. Reads a network producer run's logs/ and reports, for each epoch, the per-constellatio… | 0 |
 | `archive/_arm_compare.py` | Extract the Card-1f/1g A/B metrics from a set of run logs. | 0 |
 | `archive/_ifg_ab.sh` | §6.14.6 three-arm validation. Captures CWD-relative ./logs/ with a SOURCE-mtime freshness assertion (the stale-trace-dir trap, SPEC_amb_iono §6.13.4). | 0 |
 | `archive/_ifref_ab.sh` | Card-R ref-gate A/B: capture CWD-relative ./logs/ with SOURCE-mtime freshness assertion. | 0 |
-| `archive/cmd_batch_commands.txt` | _(no header comment — read the source)_ | 0 |
-| `archive/run_d5_ab.ps1` | D5 A/B for SPEC_synthetic_minimum_network §13.7 — same-build control + treatment. Both arms run from their own cwd because Application::log_dir_ defa… | 0 |
+| `archive/cmd_batch_commands.txt` | _(no header comment, read the source)_ | 0 |
+| `archive/run_d5_ab.ps1` | D5 A/B for SPEC_synthetic_minimum_network §13.7: same-build control + treatment. Both arms run from their own cwd because Application::log_dir_ defa… | 0 |

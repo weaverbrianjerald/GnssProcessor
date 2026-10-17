@@ -1,8 +1,8 @@
-"""The 16 held-out census sites of card MSC, read from the tracked site_list.json beside this file.
+"""The 16 held-out census sites, selected 2026-09-21, read from the tracked site_list.json beside this file.
 
 Every field census (census2h.py, census6h.py, mday_census.py, gcensus.py) reads its site list
-through load().  The file is the card's selection as written on 2026-09-21: for each site the
-name, the RINEX path, the ECEF coordinate, the receiver and the signals it latches.
+through load().  The file holds, for each site, the name, the RINEX path, the ECEF coordinate,
+the receiver and the signals it latches.
 """
 import json
 import os

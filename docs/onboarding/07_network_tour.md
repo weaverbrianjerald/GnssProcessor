@@ -51,7 +51,8 @@ Release build only: Debug is 50 to 100 times slower. A 2 h field arm takes about
 minutes on an idle machine. Simulated arms start at 00:30:15
 (`--set network.start_offset_hours=0.504167`), because the simulated data's first minutes
 are an artifact. `make` refuses a `--set` key that the config loader does not read: the loader
-ignores an unknown key without a word, so the arm would run as its base.
+ignores an unknown key without a word, so the arm would run as its base. A key the loader reads
+by a route the check cannot see is let through by naming it with `--allow-unread KEY`.
 
 ## Start with the tables
 
