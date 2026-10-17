@@ -15,6 +15,10 @@ in parallel, and prints one scorecard.
   draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
   selftest
 
+`make` refuses a --set key that the config loader does not read (scripts/loader_keys.py):
+the loader ignores an unknown key without a word, so such an arm would run as its base and
+the comparison would measure nothing.
+
 RINEX ops (GPS by default, `sys=` to change).  Common selectors:
   stations = all | A,B,C | family:Q | family:X | every:N | first:N     (default all)
   sats     = all | G03,G06 | IIF | III | L5 | NOL5                      (default all)
@@ -110,11 +114,13 @@ name list.
 """
 import argparse
 import concurrent.futures as cf
+import contextlib
 import copy
 import csv
 import datetime
 import fnmatch
 import hashlib
+import io
 import json
 import math
 import os
@@ -124,6 +130,10 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # also under python -I
+import loader_keys  # noqa: E402
+from rinex_ids import norm_sat  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
 # The arm directories live under RUNS.  RAPID_RUNS_ROOT moves them (for example to a data
@@ -256,18 +266,13 @@ def match_types(codes, patterns):
     return [k for k, c in enumerate(codes) if any(fnmatch.fnmatchcase(c, p) for p in pats)]
 
 
-def norm_sat(sat):
-    """Canonical satellite id for a RINEX record (card RXP).
-
-    A RINEX 3 record may write its number blank-padded ("G 7" for "G07"), and 16 of
-    the 310 observation files of 2024-129 do.  Every id this tool compares against
-    (the `sats=` selectors, IIF / III, the draw keys) is zero-padded, so a raw slice
-    would skip those records: an op asked for on G03 would not reach a station that
-    writes "G 3".  Only comparisons and dictionary keys are normalized; the record's
-    own three bytes are written back untouched, because re-padding the file would
-    make the arm a second change.
-    """
-    return sat[:1] + "0" + sat[2:3] if len(sat) >= 3 and sat[1] == " " else sat
+# norm_sat (scripts/rinex_ids.py) gives the canonical satellite id of a RINEX record.  A RINEX 3
+# record may write its number blank-padded ("G 7" for "G07"), and 16 of the 310 observation
+# files of 2024-129 do.  Every id this tool compares against (the `sats=` selectors, IIF / III,
+# the draw keys) is zero-padded, so a raw slice would skip those records: an op asked for on G03
+# would not reach a station that writes "G 3".  Only comparisons and dictionary keys are
+# normalized; the record's own three bytes are written back untouched, because re-padding the
+# file would make the arm a second change.
 
 
 def sat_selected(sat, sel):
@@ -616,6 +621,7 @@ def set_key(cfg, dotted, value):
 
 
 def cmd_make(a):
+    loader_keys.refuse_unread([kv.split("=", 1)[0] for kv in a.set or []])
     base = json.load(open(a.base))
     arm, rd = copy.deepcopy(base), f"{RUNS}/_rap_{a.tag}"
     net = arm["network"]
@@ -1179,6 +1185,32 @@ def cmd_selftest(_):
     chk(not file_selected(cons_op, 2, "S03000SIM", []), "a consumer op does not reach a roster station")
     chk(file_selected(every2, 2, "S03000SIM", []) and not file_selected(every2, 29, "S30000SIM", []),
         "every:2 selects the even roster indices")
+    # `make` refuses a --set key the config loader does not read, before it writes any file
+    # (a key it ignores would make the arm its base), and applies the keys it reads, among them
+    # the closed-loop consumer station that the census scripts set.
+    global RUNS
+    runs0, RUNS = RUNS, d + "/runs"
+    try:
+        base = d + "/base.json"
+        json.dump({"network": {"stations": [], "start_offset_hours": 0.0}}, open(base, "w"))
+
+        def make(tag, sets):
+            a = argparse.Namespace(base=base, tag=tag, hours=None, set=sets, drop_station=None, rinex=None)
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_make(a)
+        try:
+            make("bad", ["network.start_offset_hours=1", "network.no_such_knob_xyz=true"])
+            chk(False, "make must refuse a key the loader does not read")
+        except SystemExit as ex:
+            chk("network.no_such_knob_xyz" in str(ex) and "start_offset_hours" not in str(ex),
+                f"the refusal names only the unread key: {ex}")
+        chk(not os.path.exists(RUNS + "/_rap_bad"), "a refused arm writes no directory")
+        make("good", ["network.start_offset_hours=1", "network.closed_loop.station.name=ABCD00XYZ"])
+        arm = json.load(open(RUNS + "/_rap_good/arm.json"))
+        chk(arm["network"]["start_offset_hours"] == 1 and arm["network"]["closed_loop"]["station"]["name"]
+            == "ABCD00XYZ", "make applies the keys the loader reads")
+    finally:
+        RUNS = runs0
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 

@@ -28,11 +28,13 @@ silently be its base.  The IRD-1 knobs (R1's traces) are therefore refused until
 import argparse
 import glob
 import hashlib
-import io
 import json
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import loader_keys  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace(os.sep, "/")
 RUNS = ROOT + "/runs"
@@ -132,17 +134,10 @@ def repoint(cfg, fixture):
     return cfg
 
 
-def loader_keys():
-    src = "".join(io.open(f, encoding="utf-8", errors="replace").read()
-                  for f in glob.glob(ROOT + "/src/core/config/*.cpp"))
-    return src
-
-
-def unread(sets, src=None):
-    """The keys of `sets` the loader does not read."""
-    src = loader_keys() if src is None else src
-    return sorted({kv.split("=", 1)[0] for kv in sets
-                   if '"%s"' % kv.split("=", 1)[0] not in src})
+def unread(sets, loader=None):
+    """The keys of `sets` the loader does not read (scripts/loader_keys.py)."""
+    loader = loader_keys.default() if loader is None else loader
+    return loader.unread([kv.split("=", 1)[0] for kv in sets])
 
 
 def compose(arm, bed, knob=None):
@@ -223,9 +218,9 @@ def cmd_list(_):
 
 
 def cmd_check(_):
-    src = loader_keys()
+    loader = loader_keys.default()
     for name in ARMS:
-        miss = unread(compose(name, "golden"), src)
+        miss = unread(compose(name, "golden"), loader)
         print("%-6s %s" % (name, "makeable" if not miss else "refused until the loader reads "
                            + ", ".join(miss)))
     return 0
@@ -252,8 +247,9 @@ def selftest():
     o = compose("A0", "r2", knob="network.phase_datum_min_stations=2")
     chk(o.count("network.phase_datum_min_stations=2") == 1
         and "network.phase_datum_min_stations=1" not in o, "the knob under test overrides the arm")
-    src = '"network.phase_datum_eq34" "network.cycle_slip.gf_arc_jump"'
-    chk(unread(["network.phase_datum_eq34=true", "network.trace_chain_datum=true"], src)
+    loader = loader_keys.LoaderKeys({"GnssConfigLoadNetwork.cpp":
+                                     'a = "network.phase_datum_eq34"; b = "network.cycle_slip.gf_arc_jump";'})
+    chk(unread(["network.phase_datum_eq34=true", "network.trace_chain_datum=true"], loader)
         == ["network.trace_chain_datum"], "a key the loader does not read is refused")
     try:
         ARMS["_bad"] = (["network.phase_datum_eq34=true", "network.phase_datum_eq34=false"], "")
