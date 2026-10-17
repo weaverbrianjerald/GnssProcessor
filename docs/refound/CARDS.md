@@ -174,6 +174,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: card NOM's standard on the user side; waves A and B LANDED 2026-10-15 (KalmanFilter, CycleSlipManager, MeasurementModel, the MW, TurboEdit and IF detectors, StateManager, the PPP pipeline: identical on 16 user arms and both goldens, run-start and run-end tables added, the BSSD smoother crash fixed); wave C and five behaviour fixes open.
 - [NTA](NTA_noon_turn_attitude_2026-10-16.md): open, 2026-10-16: one satellite attitude model for the PCO and the
   wind-up (the wind-up consumes `SatAttitude`, bit-identical off); `computeBeta`'s sign validated against an
-  independent computation (336 rows, seven satellites, both signs, 0.010 deg, no sign mismatch); GPS Block IIF and IIR
+  independent computation and against cssrlib (336 rows, seven satellites, both signs, 0.010 deg, no sign mismatch); GPS Block IIF and IIR
   noon turns (Kouba 2009) behind `processing.enable_noon_turn_attitude`, BUILT default off, UNVALIDATED; the goldens
   (00 to 06 UT) hold no GPS noon turn (smallest |beta| 5.74 deg); the graded 2 h windows are owed.
