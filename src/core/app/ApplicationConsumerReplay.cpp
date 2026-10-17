@@ -461,7 +461,7 @@ int Application::runConsumerReplay() {
         // offset.
         if (start_offset_s > 0.0) {
             if (start_anchor_s < 0.0) start_anchor_s = now_s;
-            if (now_s - start_anchor_s < start_offset_s) continue;
+            if (!TimeUtils::offsetReached(now_s, start_anchor_s, start_offset_s)) continue;
         }
         if (max_duration_s > 0.0) {
             if (!dur_anchored) { dur_anchor_s = now_s; dur_anchored = true; }
@@ -545,11 +545,10 @@ int Application::runConsumerReplay() {
         // band counts (121/119/120 instead of 120/120/120 at 30 s).  Rounding
         // the elapsed time to the nearest millisecond (far above the residue and
         // finer than any real epoch schedule) and then dividing as integers
-        // removes the boundary case.  The same residue class affects
-        // `start_offset_hours`; see SPEC_day129_frame_guards Appendix
-        // (start_offset_hours half-epoch residue).
+        // removes the boundary case.  The start-offset seek above compares on the
+        // same grid (TimeUtils::offsetReached).
         if (hour0_s < 0.0) hour0_s = now_s;
-        const long long elapsed_ms = std::llround((now_s - hour0_s) * 1.0e3);
+        const long long elapsed_ms = TimeUtils::elapsedMs(now_s, hour0_s);
         const int hour = static_cast<int>(elapsed_ms / 3600000LL);
         band_3d[hour].add(err3d);
         band_up[hour].add(enu.z());

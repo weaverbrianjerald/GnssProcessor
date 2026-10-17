@@ -260,12 +260,27 @@ namespace GnssProcessor {
          *
          * Uses a built-in table of leap-second insertions.  The returned value is
          * the number of seconds by which GPS time leads UTC at the given epoch
-         * (0 before the first table entry).
+         * (0 before the first table entry).  The table is dated in UTC, so the GPS
+         * instant is moved onto the UTC scale (by the offset that would take effect) before
+         * it is compared: a new offset applies from the GPS instant at which UTC reaches
+         * 0 h of the insertion date, which is that many seconds after 0 h on the GPS clock.
+         * A lookup keyed by a UTC-scale date is @ref leapSecondsAtUtcJd.
          *
          * @param gps_jd Julian Date on the GPS time scale.
          * @return GPS-UTC offset in seconds (integer-valued as double).
          */
         static double leapSecondsGpsUtc(double gps_jd);
+
+        /**
+         * @brief Looks up the number of leap seconds (GPS - UTC) for a given UTC JD.
+         *
+         * The same table as @ref leapSecondsGpsUtc, compared directly because its dates are
+         * UTC.  The conversion from a calendar UTC time to GPS time uses it.
+         *
+         * @param utc_jd Julian Date on the UTC time scale.
+         * @return GPS-UTC offset in seconds (integer-valued as double).
+         */
+        static double leapSecondsAtUtcJd(double utc_jd);
 
         /**
          * @brief Looks up the number of leap seconds (TAI - UTC) for a given GPS JD.
@@ -396,6 +411,42 @@ namespace GnssProcessor {
          * @return Continuous GPS seconds as a double.
          */
         static double continuousGpsSeconds(const GnssTime& t);
+
+        /**
+         * @brief Elapsed time between two continuous GPS seconds, rounded to the nearest
+         *        millisecond.
+         *
+         * Epoch times come from a calendar to GPS conversion that carries about 2e-5 s of
+         * double-precision residue, and a continuous GPS second count near 1.4e9 resolves
+         * only 2.4e-7 s.  Both are far below a millisecond and far below any real epoch
+         * schedule, so the rounded count is the elapsed time as the data states it.  Banding
+         * by elapsed hour and the start-offset seek (@ref offsetReached) read it, so that an
+         * epoch on a boundary does not fall on either side by the sign of the residue.
+         *
+         * @param later_s   Continuous GPS seconds of the later time.
+         * @param earlier_s Continuous GPS seconds of the earlier time (the anchor).
+         * @return @p later_s - @p earlier_s in whole milliseconds.
+         */
+        static long long elapsedMs(double later_s, double earlier_s);
+
+        /**
+         * @brief Whether the elapsed time from an anchor epoch has reached a start offset
+         *        (the start-offset seek of @c network.start_offset_hours).
+         *
+         * Compares on the whole-millisecond grid of @ref elapsedMs: an epoch has reached the
+         * offset when its elapsed time, rounded to the millisecond, is at least the offset,
+         * rounded to the millisecond.  An offset that lies on an epoch (a bare hour on a 30 s
+         * schedule) is therefore reached by that epoch, where a plain floating comparison
+         * reached it one epoch late whenever the residue of the elapsed time was negative.  An
+         * offset between two epochs (a half-epoch back-off) is reached by the same epoch under
+         * either comparison, because no epoch lies within a millisecond of it.
+         *
+         * @param now_s    Continuous GPS seconds of the epoch under test.
+         * @param anchor_s Continuous GPS seconds of the anchor (the first synced epoch).
+         * @param offset_s Start offset in seconds.
+         * @return True when the epoch is at or past the offset.
+         */
+        static bool offsetReached(double now_s, double anchor_s, double offset_s);
 
         /**
          * @brief Current system wall-clock time as continuous GPS seconds.

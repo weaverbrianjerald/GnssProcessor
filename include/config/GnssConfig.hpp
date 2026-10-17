@@ -7000,6 +7000,12 @@ namespace GnssProcessor {
          * handful of warm-up epochs instead of hours of processing.  Because the carry restarts
          * cold, this reproduces an externally driven event (eclipse / product anomaly after a
          * fresh warm-up) rather than the exact accumulated history.  Default 0 ⇒ process from the start.
+         *
+         * The elapsed span is compared with the offset on the millisecond grid
+         * (@c TimeUtils::offsetReached): the first epoch processed is the first one whose elapsed
+         * time, to the millisecond, is at least the offset.  An offset that lies on an epoch
+         * (1.0 on a 30 s schedule) starts the run on that epoch; an offset between two epochs
+         * starts it on the later one.
          */
         double networkStartOffsetHours() const { return network_start_offset_hours_; }
 
