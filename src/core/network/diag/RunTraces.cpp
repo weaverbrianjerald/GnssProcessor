@@ -1793,6 +1793,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      nc.amb_float_declared_handover ? "true" : "false",
                                      nc.trace_amb_state ? "true" : "false")
                        : std::string())
+               // The held S-basis of the phase datum (it requires the float_kf vehicle above)
+               // affects the solve.  Emitted only when armed, so an unarmed run's manifest
+               // bytes are unchanged.
+               << (config_.networkPhaseDatumHeldBasis()
+                       ? std::string("\"phase_datum_held_basis\":true,") : std::string())
                // The drop-only floor affects the solve, so the manifest records it
                // when armed (RF-3a).  Emitted only when armed, so an unarmed run's
                // manifest bytes are unchanged.
@@ -1824,6 +1829,11 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                                      }(),
                                      nc.second_phase_sigma_scale)
                        : std::string())
+               // The gross-LOS screen's master arm: solve-affecting, and its sub-rules below are
+               // inert without it.  Emitted only when armed, so an unarmed run's manifest
+               // bytes are unchanged.
+               << (nc.gross_los_screen ? std::string("\"gross_los_screen\":true,")
+                                       : std::string())
                // The four sub-rules of the gross-LOS screen, under the same rule (RF-3b).
                << ((nc.gross_los_min_rows_rule != NetworkGrossLosMinRowsRule::Fixed
                     || nc.gross_los_bound || nc.gross_los_emit_exclude
@@ -2003,6 +2013,10 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                // has to say whether the carried clocks took the pivot-frame noise.
                << (config_.networkClockPivotFrameQ()
                        ? std::string("\"clock_pivot_frame_q\":true,") : std::string{})
+               // The exact coupling time update: solve-affecting and fingerprinted, armed-only
+               // like the pivot-frame process noise.  The clones below are modes of it.
+               << (config_.networkCarryCouplingExactUpdate()
+                       ? std::string("\"carry_coupling_exact_update\":true,") : std::string{})
                // Border clones: solve-affecting and fingerprinted, armed-only like the pivot-frame process noise.
                << (config_.networkCarryCouplingBiasClone()
                        ? std::string("\"carry_coupling_bias_clone\":true,") : std::string{})
@@ -2200,6 +2214,12 @@ void NetworkRunTraces::writeRunManifestStartup(const GnssConfig& config_,
                << fmt::format("\"clock_monitor_jump_max_m\":{},", clk_mon_jump)
                << "\"clock_monitor_couple_raim\":" << (config_.networkClockMonitorCoupleRaim() ? "true" : "false") << ','
                << fmt::format("\"clock_monitor_reinit_sigma_m\":{},", clk_mon_reinit_sig)
+               // The clock temporal anchor's random-walk rate (m^2/s).  Solve-affecting and
+               // fingerprinted; the key's presence is the arm, so an unarmed run's manifest
+               // bytes are unchanged.
+               << (config_.networkClockTemporalAnchor()
+                       ? fmt::format("\"clock_anchor_q\":{},", config_.networkClockAnchorQ())
+                       : std::string())
                << "\"clock_model\":" << (clk_model_on ? "true" : "false") << ','
                << fmt::format("\"clock_model_q1\":{},", clk_model_q1)
                << fmt::format("\"clock_model_q2\":{},", clk_model_q2)

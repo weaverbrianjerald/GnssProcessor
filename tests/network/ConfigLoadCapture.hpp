@@ -47,6 +47,7 @@ inline std::string networkConfig(const std::string& network_extra) {
 
 struct LoadedConfig {
     bool ok{false};
+    GnssConfig config;   ///< the loaded configuration (meaningful when @c ok)
     std::string text;   ///< everything the loader logged
 };
 
@@ -76,8 +77,7 @@ inline LoadedConfig loadNetworkConfigCapturing(const std::string& tag, const std
     cfg_log->sinks().push_back(sink);
     main_log->sinks().push_back(sink);
 
-    GnssConfig cfg;
-    out.ok = cfg.loadFromJson(cfg_path, log);
+    out.ok = out.config.loadFromJson(cfg_path, log);
     cfg_log->flush();
     main_log->flush();
     out.text = oss.str();
