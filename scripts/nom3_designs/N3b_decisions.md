@@ -166,3 +166,23 @@ With every switch off the build is byte-identical to its base on both 2 h golden
 | D7 the arc ledger as lifecycle owner | 58.4 | 13.2 | 0.0 |
 
 Standing: D3 KEEP_OFF (worse than its own control). D1, D6 and D7 neutral at the held-out consumer: the 16-site census decides adoption (owed). D2 and D4 inert on both goldens.
+
+### 10.1 The 16-site census (2026-10-16)
+
+Consumer-only 6 h replays of each field wire (`runs_nom/_rap_n3c6_{base,d1,d6,d7}_f`) at WTZZ00DEU and the 16 sites of
+`runs/_msc/site_list.json`, exe `gnss_processor_n3c.exe`, `scripts/clock_level/gcensus.py` (keys `n3cc_*`, runs
+`runs_nom/_rap_n3cc_*`, log `D:/GnssProcessorSupport/gates/n3c_census.log`). Paired change of each site's mean hourly
+p50 (3D) against the base, better or worse at 1 cm:
+
+| switch | hours 2 to 6: median, better, worse | hour 1: median, better, worse | sites that moved more than 1 cm |
+| --- | --- | --- | --- |
+| D1 | +0.1 mm, 1, 0 | +0.7 mm, 4, 3 | ARHT -64.8 mm |
+| D6 | 0.0 mm, 1, 0 | 0.0 mm, 1, 1 | ARHT -208.5 mm (QUIN -6.4); 14 of 16 sites unchanged to 0.1 mm |
+| D7 | 0.0 mm, 2, 0 | 0.0 mm, 0, 0 | ARHT -32.2 mm, DAV1 -10.2 mm |
+
+Median site by hour (m), base 0.136 0.054 0.041 0.036 0.040 0.037; D6 0.134 0.051 0.038 0.033 0.035 0.032.
+
+Standing: no switch makes a site worse at 1 cm in hours 2 to 6. D6 recovers most of ARHT00ATA's GPS-only gap (+0.20 m in
+the GAD baseline): the wire now carries a bias for the signal that consumer tracks. D1 and D7 are neutral. Arming any of
+them re-bases the goldens and is the author's decision through the ledger; the rows stay UNVALIDATED until then, with
+the census as their evidence. D3 is KEEP_OFF in the ledger.

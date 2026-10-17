@@ -120,7 +120,7 @@ consumer veto IRD-7). Only work outside them is listed.
 - **CDDIS authentication in bootstrap.** bootstrap_internal_data.py uses plain urlopen and never reads .netrc (401); add an HTTPBasicAuthHandler fed from netrc and follow the Earthdata redirect. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 - **Archive candidates.** Move the 36 unreferenced one-off scripts that the scripts README marks as archive candidates to scripts/archive/, or delete them (git history keeps them). [scripts/README.md](../../scripts/README.md)
 
-- **N3c: the signal decisions, graded (switches landed 2026-10-16, default off).** Field 6 h at the held-out consumer: D1 -0.2 mm, D6 0.0, D7 0.0 (neutral), D3 +0.6 mm (KEEP_OFF); D2 and D4 inert; the sim golden unmoved. Owed: the 16-site census for D1, D6 and D7 (`scripts/clock_level/gcensus.py`), then a ledger verdict per switch (`scripts/nom3_designs/N3b_decisions.md` section 10). [NOM4](../refound/NOM4_network_object_model_finish_2026-10-15.md)
+- **N3c: the signal decisions, graded (switches landed 2026-10-16, default off).** Field 6 h at the held-out consumer: D1 -0.2 mm, D6 0.0, D7 0.0 (neutral), D3 +0.6 mm (KEEP_OFF); D2 and D4 inert; the sim golden unmoved. 16-site census (2026-10-16): no site worse at 1 cm for D1, D6 or D7; D6 recovers ARHT00ATA by 0.21 m. Owed: the author's arming decision for D1, D6 and D7 (a golden re-base) (`scripts/nom3_designs/N3b_decisions.md` section 10). [NOM4](../refound/NOM4_network_object_model_finish_2026-10-15.md)
 
 ## Documentation
 

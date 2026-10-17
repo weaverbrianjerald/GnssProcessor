@@ -17,9 +17,9 @@ grade : python gcensus.py grade <refkey> <key> [<key> ...]
 import csv, json, os, statistics as st, subprocess, sys
 
 ROOT = 'C:/GnssProcessor'
-RUNS = ROOT + '/runs'
+RUNS = os.environ.get('RAPID_RUNS_ROOT', ROOT + '/runs').replace('\\', '/')   # the runs root rapid_arm.py uses
 T0, NH = 259200.0, 6
-SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
+SL = json.load(open(ROOT + '/runs/_msc/site_list.json'))['sites']
 NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
 
 

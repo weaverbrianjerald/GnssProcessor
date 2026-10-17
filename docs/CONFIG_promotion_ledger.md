@@ -134,8 +134,8 @@ The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG
 | RECOMMEND_ON | 24 |
 | RECOMMEND_SCOPED | 85 |
 | ARMED | 21 |
-| UNVALIDATED | 56 |
-| KEEP_OFF | 94 |
+| UNVALIDATED | 55 |
+| KEEP_OFF | 95 |
 | REMOVE | 0 |
 | TRACE | 61 |
 | PARAM | 272 |
@@ -292,7 +292,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.cycle_slip.relevel_free_epoch` | false | true | Pinned true in both goldens; its free-epoch latch is the slip set read by the anchor handover, the phase-datum candidacy screen and the ARL fold slip set. RF-1 retired only its inject skip. | [RF-1](refound/RF-1_float_ambiguities_design.md) |
 | `processing.exclude_eclipsing_satellites` |  |  | Drops satellites in Earth's umbra at the geometry (nominal yaw only); true in both goldens through the base lineage; its edges force the per-run clock-pivot handovers (E02, G01) the ISB re-inflation answers. | [OWD](refound/OWD_owed_defects_2026-09-22.md) |
 
-## UNVALIDATED (56)
+## UNVALIDATED (55)
 
 Built and plausible, never graded on the current posture.
 
@@ -328,7 +328,7 @@ Built and plausible, never graded on the current posture.
 | `network.warmup_ura_floor_m` | 0.0 |  | Cold-start URA floor ramp for consumer down-weighting; wired and fingerprinted, set in no config and never graded; at 0 the ramp is inert (RF-IGN). | [RF-IGN](refound/RF-IGN_ignition_born_levels_2026-09-15.md) |
 | `network.clock_monitor` | false |  | Refloats a lone satellite clock locked past the abs/jump bounds (read via networkClockMonitor()); off in both goldens; its specified lock-in validation (305-station h4 run) was never run. |  |
 | `network.gross_los_station_tier` | false |  | Built, exercised once; inert in the RF-3 census arm (0 station declarations, byte-identical). Stays OFF until a posture exercises it beyond one declaration. | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |
-| `network.n3c_ledger_lifecycle` | false |  | Arc ledger as arc-lifecycle owner: arms the election's ledger read and restore (ledger_screens, ledger_anchor) and makes the coverage gate count a station with an admitted arc in Gap as tracking (all 11 field gate drops happened while the family had a gapped arc); the third site, gap re-entry, is network.ledger_reentry; the N3b decision D7. |  |
+| `network.n3c_ledger_lifecycle` | false |  | Arc ledger as arc-lifecycle owner: arms the election's ledger read and restore (ledger_screens, ledger_anchor) and makes the coverage gate count a station with an admitted arc in Gap as tracking (all 11 field gate drops happened while the family had a gapped arc); the third site, gap re-entry, is network.ledger_reentry; the N3b decision D7. Field 6 h census 2026-10-16: hours 2 to 6 median 0.0 mm, 2 better (ARHT -3.2 cm, DAV1 -1.0 cm), 0 worse; neutral. |  |
 | `network.per_const_withhold` | false |  | RTA-10 per-constellation carve-out at a tripped A4 withhold; never exercised (0 live configs), and the GPS plus Galileo goldens withhold no epoch in 6 h. |  |
 | `network.phase_bias_min_station_fraction` | 0.0 |  | Keeps a sparse phase signal but gives it no satellite phase-bias state; read at setup, never set in any config nor graded on the posture. |  |
 | `network.raim_refloat_maturity_gate` | false |  | T2d maturity gate on isolated-arc refloats; never A/B tested, and inert unless its horizon (default 0) is set above the carry warmup. |  |
@@ -339,10 +339,9 @@ Built and plausible, never graded on the current posture.
 | `network.eq34_fresh_pin_sigma_scale` | 1.0 |  | INC-3 fresh-pin deweight ramp (armed only with a ramp length > 0); built as an optional softener and never graded in any leg. Card IRD holds it at 1.0 and its integer claim refuses it. | [SPEC_eq34_reattach_hygiene](SPEC_eq34_reattach_hygiene.md) |
 | `network.clock_datum_satellite` |  |  | Pins the per-constellation clock pivot (default: sticky lexical auto-pick). Card PAC: G14 pinned cut the field hour-2 common drift from -0.180 to -0.063 m/h, consumer unchanged; not armed. | [PAC](refound/PAC_common_drift_pivot_clock_2026-10-01.md) |
 | `network.n3c_band_signal` | false |  | Slip tracker names a band by the roster's Modelled signal only: a Modelled phase not reported with its code leaves the pair instead of falling to the lexical pick (field 84 of 394 813 tracker slots); acts under tracker_modeled_first or roster_tracker; the N3b decision D4. |  |
-| `network.n3c_bia_pin_pair` | false |  | Code-bias datum pins the bias product's clock-reference pair (GPS C1W with C2W) instead of the lexically first pair (C1C with C2W); the N3b decision D1, graded on both beds before any arming. |  |
-| `network.n3c_canonical_pair_traits` | false |  | Canonical-pair admission reads each constellation's pair from its traits bands (GPS 1 and 2, Galileo 1 and 5) so Galileo cells are screened; inert unless network.canonical_pair_admission is armed, which both goldens leave off; the N3b decision D3. |  |
+| `network.n3c_bia_pin_pair` | false |  | Code-bias datum pins the bias product's clock-reference pair (GPS C1W with C2W) instead of the lexically first pair (C1C with C2W); the N3b decision D1, graded on both beds before any arming. Field 6 h census 2026-10-16: hours 2 to 6 median +0.1 mm, 1 site better, 0 worse (ARHT -6.5 cm); neutral. |  |
 | `network.n3c_channel_family` | false |  | Datum graph census groups bias keys by X against the rest (the code-bias datum's family) instead of the attribute letter; census only, so no solve or wire change; the N3b decision D2. |  |
-| `network.n3c_wire_per_signal` | false |  | Wire carries a phase-bias and a code-bias record for every signal the network models on a satellite's constellation, filled from the same-band signal of its channel family where no column exists (field 38 031 and 36 210 of 80 412 compared records lacked one); changes the wire and the closed-loop consumer; the N3b decision D6. |  |
+| `network.n3c_wire_per_signal` | false |  | Wire carries a phase-bias and a code-bias record for every signal the network models on a satellite's constellation, filled from the same-band signal of its channel family where no column exists (field 38 031 and 36 210 of 80 412 compared records lacked one); changes the wire and the closed-loop consumer; the N3b decision D6. Field 6 h census 2026-10-16: hours 2 to 6 median 0.0 mm, 1 better, 0 worse; ARHT00ATA (GPS-only consumer) -0.21 m, 14 of 16 sites unchanged. |  |
 | `network.use_sif_coordinates` | false |  | Fills only stations lacking position_ecef from the SIF registry, so inert on the explicit golden rosters; the 6 h DOY-129 arms runs/_rap_sif_*_f6 were census-neutral; no card. |  |
 | `network.estimate_rx_extra_band_code_delay` | false |  | L5B step R-1b: estimates the receiver band-5 code delay (offset stations 18 to 3) but the field census still fails. L5 is SEQUENCED, not closed; next R-1d. | [L5B](refound/L5B_band5_receiver_delay_2026-10-10.md) |
 | `network.sat_gf_extra_band_free` | false |  | B5D free band-5 code column (L5 add-back): cures the band-5 datum but the triple field consumer fails the adoption bars. L5 is SEQUENCED, not closed (L5B carries R-1b..R-4). | [L5B](refound/L5B_band5_receiver_delay_2026-10-10.md) |
@@ -355,7 +354,7 @@ Built and plausible, never graded on the current posture.
 | `network.streaming.enable` | false |  | RTF-3 live multi-station epoch source (per-station lanes, wait-budget aligner, bounded queue); 17 unit tests, but the end-to-end ON validation its card makes field-blocking was never run. | [rt_service_conventions](rt_service_conventions.md) |
 | `realtime.state_snapshot_path` |  |  | RT / consumer filter-state snapshot for a warm start; landed as the event-harness consumer default (card CC), but no benefit graded on a continuous product stream; seams are a scope-cut add-back. | [CC-declared-step-carry](cards/consumer/CC-declared-step-carry.md) |
 
-## KEEP_OFF (94)
+## KEEP_OFF (95)
 
 Measured null or harmful, falsified, or superseded; the code stays as a diagnostic or alternative.
 
@@ -441,6 +440,7 @@ Measured null or harmful, falsified, or superseded; the code stays as a diagnost
 | `network.roster_tracker` | false |  | Names each band by the roster's modelled phase; byte-identical to card GRK's armed latched-phase keying on both beds (SID phase 2), so it adds no behavior. | [SID](refound/SID_signal_identity_2026-09-22.md) |
 | `network.sim_zero_iono_sigma_m` | 0.0 |  | Test-only zero-ionosphere rows for no-iono sim fixtures: the ARL rung-0 and IRD microscope instrument (floats integer to 0.006 cycle). Wrong on real data; never in the goldens. | [IRD](refound/IRD_integer_recovering_datum_2026-10-13.md) |
 | `network.phase_datum_time_linked` | false |  | Pin bridge: cut code-bias rms 1.9x on the 24-station sim but was a net loss on the clock channel, so it was downgraded; card IRD holds it off and its integer claim refuses it. | [QPR-ITEMS-0-3](cards/queues/QPR-ITEMS-0-3.md) |
+| `network.n3c_canonical_pair_traits` | false |  | Canonical-pair admission reads each constellation's pair from its traits bands (GPS 1 and 2, Galileo 1 and 5) so Galileo cells are screened; inert unless network.canonical_pair_admission is armed, which both goldens leave off; the N3b decision D3. Field 6 h at the held-out consumer: hours 2 to 6 +0.6 mm against its own control (hour 3 +3.4 mm); worse, kept off. |  |
 | `network.service_mode` | false |  | RT-service bundle that force-arms a pre-refound toggle set including clock_model (NO-GO); the goldens are the posture. Still read by the loader arming block, the posture rt regime and the manifest. | [CLOCK_HADAMARD_CALIB_2026-07-14](CLOCK_HADAMARD_CALIB_2026-07-14.md) |
 | `network.cb_admission` | false |  | CB-ADM run-latched code-bias admission census, a BeiDou-scale remedy; code-only it is net-negative on the 305 storm and BeiDou is outside the posture. Off in both goldens. | [SPEC_cb_admission_card](SPEC_cb_admission_card.md) |
 | `network.estimate_iono_sh` | false | false | Co-estimated SH-VTEC field as the W6 ionosphere constraint; retired by the re-founding (free slant iono), pinned off in both goldens and refused by the loader beside w6_iono_constraint none (AB1). | [AB1](refound/AB1_sh_consumer_product_2026-09-20.md) |
