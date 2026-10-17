@@ -29,9 +29,9 @@ namespace {
 // Every coefficient load path (ProductParser::parseKlobuchar, loadKlobucharCoeffs)
 // clears the vector to size 0 on any count != 8 (e.g. duplicate GPSA/GPSB lines in
 // merged BRDC products, or a malformed value), and
-// Ionosphere::computeKlobucharDelay then indexes coeffs[0..7] without a size check.
+// Ionosphere::computeKlobucharDelay then returns 0 m for any other count.
 // This predicate therefore matches the parsers' success condition; anything else
-// falls back to the analytic quiet background instead of an out-of-bounds read.
+// falls back to the analytic quiet background instead of a silent zero background.
 bool navHasGpsKlobuchar(const std::filesystem::path& nav) {
     std::ifstream f(nav);
     if (!f.is_open()) return false;
@@ -49,7 +49,7 @@ bool navHasGpsKlobuchar(const std::filesystem::path& nav) {
         if (line.find("IONOSPHERIC CORR") == std::string::npos) continue;
         // Fortran 'D' exponents become 'E', as in the loaders (Ionosphere.cpp /
         // ProductParser.cpp).  This predicate has to agree with them: if it accepts
-        // and they reject, computeKlobucharDelay indexes an empty vector; if it rejects
+        // and they reject, computeKlobucharDelay returns 0 m for an empty vector; if it rejects
         // and they accept, the background falls back to analytic without notice.
         std::string norm = line;
         for (char& c : norm)

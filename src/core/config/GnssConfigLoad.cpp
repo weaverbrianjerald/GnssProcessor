@@ -286,15 +286,7 @@ namespace GnssProcessor {
                 log->warn("Unknown processing mode '{}', defaulting to PPP", mode);
                 processing_mode_ = ProcessingMode::PPP;
             }
-            const char* mode_label =
-                processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
-                processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
-                processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
-                processing_mode_ == ProcessingMode::BaselineMulti    ? "Baseline-Multi"  :
-                processing_mode_ == ProcessingMode::PPP_RTK_Network  ? "PPP-RTK-Network" :
-                processing_mode_ == ProcessingMode::PPP_RTK_User     ? "PPP-RTK-User"    :
-                                                                       "Baseline-Multi";
-            log->info("Processing mode: {}", mode_label);
+            log->info("Processing mode: {}", processingModeLabel(processing_mode_));
         }
         // The legacy key "signal_mode: all" means both "all bands" and "every
         // tracking-mode channel per band"; the current keys split those into
@@ -3401,11 +3393,7 @@ namespace GnssProcessor {
     //  Summary
     // =================================================================
     void GnssConfig::logConfigurationSummary_(LogManager& log_manager) const {
-        const char* mode_str =
-            processing_mode_ == ProcessingMode::PPP              ? "PPP"             :
-            processing_mode_ == ProcessingMode::PPP_RTK          ? "PPP-RTK"         :
-            processing_mode_ == ProcessingMode::BaselineSingle   ? "Baseline-Single" :
-                                                                   "Baseline-Multi";
+        const char* mode_str = processingModeLabel(processing_mode_);
         log_manager.getLogger()->info("Loaded configuration: mode={}, uncombined_enabled={}, elevation_mask={} deg, "
             "observation_path={}, navigation_path={}, {} products, leap_seconds={}",
             mode_str,

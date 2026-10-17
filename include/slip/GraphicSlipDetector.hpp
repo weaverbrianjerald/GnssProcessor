@@ -26,12 +26,19 @@
  *   - Works per signal (single frequency); no dual-frequency requirement.
  *   - Ionosphere-free to first order, so scintillation does not contaminate it.
  *   - The between-epoch difference does not remove the change in geometric
- *     range and clocks over the interval.  The detector compares |dG| directly
- *     with the threshold and applies no geometry or clock prediction.
+ *     range and clocks over the interval: dG still holds the range rate times
+ *     the epoch spacing (hundreds of metres for a moving satellite).  The
+ *     detector therefore tests the change of dG from one epoch to the next
+ *     (the second difference), centred on the median of the same quantity
+ *     over the arc's recent window.  A constant range rate cancels in the
+ *     second difference and the slowly varying range acceleration is the
+ *     median, so only a jump (a slip) or noise is left.  No geometry or
+ *     clock prediction is applied.
  *
  * The detector maintains per-(satellite, signal) arc statistics with a
- * MAD-based adaptive threshold.  When a slip is detected, the integer slip
- * magnitude is estimated by rounding 2*dG/lambda.
+ * MAD-based adaptive threshold on that centred statistic.  When a slip is
+ * detected, the integer slip magnitude is estimated by rounding
+ * 2*(second difference - median)/lambda.
  *
  * References:
  *   Yunck (1993), "Coping with the atmosphere and ionosphere in precise
@@ -137,19 +144,21 @@ namespace GnssProcessor {
          */
         struct GraphicArcStats {
             double prev_graphic{ 0.0 };      ///< GRAPHIC value at epoch t-1 (meters).
+            double prev_dg{ 0.0 };           ///< dG of the previous epoch (meters); valid when @c has_prev_dg.
+            bool   has_prev_dg{ false };     ///< True from the arc's third epoch, once a first difference exists.
             double last_epoch_s{ 0.0 };      ///< Continuous GPS seconds of last update.
             size_t count{ 0 };               ///< Number of epochs in this arc.
-            std::deque<double> diff_window;  ///< Rolling window of dG values for MAD.
+            std::deque<double> diff_window;  ///< Rolling window of the change of dG from epoch to epoch (the second difference, meters), for the median and the MAD.
         };
 
         /** Per-(satellite + signal) arc statistics.
          *  Key: "G01_L1C" */
         std::map<std::string, GraphicArcStats> graphic_stats_;
 
-        /** Maximum number of recent dG values for MAD computation. */
+        /** Maximum number of recent second-difference values for the median and MAD. */
         static constexpr size_t kWindowSize = 30;
 
-        /** Minimum epochs before adaptive threshold is used. */
+        /** Minimum window length (second-difference values) before the adaptive threshold is used. */
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
         /** kσ multiplier for the adaptive threshold, from
@@ -158,7 +167,8 @@ namespace GnssProcessor {
 
         /** Minimum slip threshold in meters.
          *  Code noise of ~0.3 m gives GRAPHIC noise of ~0.15 m (0.3/2), and
-         *  between-epoch differencing multiplies by sqrt(2), giving ~0.21 m for dG.
+         *  between-epoch differencing multiplies by sqrt(2), giving ~0.21 m for dG
+         *  and ~0.37 m for its change from epoch to epoch (the tested statistic).
          *  The 0.5 m floor corresponds to a slip of ~5.3 L1 cycles (2*0.5/lambda_L1). */
         static constexpr double kMinThresholdM = 0.50;
 
@@ -194,9 +204,27 @@ namespace GnssProcessor {
         static double computeMadSigma(const std::deque<double>& window);
 
         /**
+         * @brief Median of a diff window: the centre the tested statistic is measured from.
+         * @return The median, or NaN while the window is shorter than @c kMinEpochsForAdaptive.
+         */
+        static double computeWindowCentre(const std::deque<double>& window);
+
+        /**
          * @brief Compute adaptive threshold from arc stats.
          */
         double computeAdaptiveThreshold(const GraphicArcStats& stats) const;
+
+        /**
+         * @brief Append one row to the GRAPHIC trace (no-op while tracing is off).
+         *
+         * @c dg_m is the between-epoch GRAPHIC difference, @c resid_m the tested
+         * statistic (change of dG minus the window median).  Non-finite
+         * @p sigma and @p thresh print as the sentinel -1; other non-finite values print as nan.
+         */
+        void writeTraceRow(const PppObservation& obs, const std::string& phase_sig,
+                           double graphic, double dg, double sigma, double thresh,
+                           size_t arc_count, int slip_cycles, double fractional,
+                           double resid, bool is_slip) const;
 
         /** Output stream for GRAPHIC trace CSV file. */
         mutable std::ofstream trace_file_;

@@ -730,6 +730,8 @@ add_executable(gnss_tests
     tests/test_residual_history_tracker.cpp
     tests/test_sat_health.cpp
     tests/test_clock_level_batch2.cpp
+    tests/test_graphic_slip_detector.cpp
+    tests/test_minor_defect_fixes.cpp
     "src/core/math/Coordinates.cpp"
     "src/core/math/Interpolate.cpp")
 target_link_libraries(gnss_tests PRIVATE GTest::GTest GTest::Main gnss_core)

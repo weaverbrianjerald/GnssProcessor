@@ -3696,6 +3696,28 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Human-readable name of a processing mode, as printed in the log.
+     *
+     * One label per enumerator, in the spelling @c processing.mode accepts
+     * (hyphenated, any case).  The loader's "Processing mode" line and the
+     * configuration summary both print it, so the two cannot disagree.
+     *
+     * @param mode Processing mode.
+     * @return Static NUL-terminated name, e.g. "PPP-RTK-Network".
+     */
+    inline const char* processingModeLabel(ProcessingMode mode) {
+        switch (mode) {
+            case ProcessingMode::PPP:             return "PPP";
+            case ProcessingMode::PPP_RTK:         return "PPP-RTK";
+            case ProcessingMode::BaselineSingle:  return "Baseline-Single";
+            case ProcessingMode::BaselineMulti:   return "Baseline-Multi";
+            case ProcessingMode::PPP_RTK_Network: return "PPP-RTK-Network";
+            case ProcessingMode::PPP_RTK_User:    return "PPP-RTK-User";
+        }
+        return "unknown";
+    }
+
+    /**
      * @brief Frequency bands the Kalman filter estimates.
      *
      * Formerly @c SignalMode.  "Frequency" names what this enum controls (band
