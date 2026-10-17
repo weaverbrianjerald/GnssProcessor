@@ -10,7 +10,7 @@
  *     VMF3 hydrostatic and wet "a" coefficients multiplied by 1000 (a_h of about
  *     1.2 for a physical 1.2e-3).  @c Gpt3::query returns the physical value.  An
  *     unscaled read puts a_h three orders of magnitude too large, which drives
- *     the VMF3 mapping below 1 at every elevation, so the mapping is clamped to 1
+ *     the VMF3 mapping below 1 at every elevation under 90 degrees, so it is clamped to 1
  *     and the estimated zenith wet delay absorbs the whole slant error.
  *  2. A failed @c load() leaves the instance unloaded and empty.  A reload that
  *     fails after clearing the cells used to keep @c isLoaded() true, and the
