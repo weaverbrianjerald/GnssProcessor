@@ -231,6 +231,7 @@ std::unique_ptr<RealtimeStream> openPrimary(const RealTimeConfig& rt,
         cfg.host              = rt.tcp_host;
         cfg.port              = rt.tcp_port;
         cfg.reconnect_delay_s = rt.reconnect_delay_s;
+        cfg.silent_timeout_s  = rt.tcp_silent_timeout_s;
         log->info("Realtime primary: TCP {}:{}", cfg.host, cfg.port);
         auto s = RealtimeStream::openTcp("primary", cfg, lm);
         if (!s) log->error("Failed to start primary TCP client");
@@ -277,6 +278,7 @@ std::unique_ptr<RealtimeStream> openAuxRtcmStream(
         cfg.host              = cc.tcp_host;
         cfg.port              = cc.tcp_port;
         cfg.reconnect_delay_s = cc.reconnect_delay_s;
+        cfg.silent_timeout_s  = cc.tcp_silent_timeout_s;
         log->info("Realtime {}: TCP {}:{}", label, cfg.host, cfg.port);
         auto s = RealtimeStream::openTcp(label, cfg, lm);
         if (!s) log->error("Failed to start {} TCP client", label);

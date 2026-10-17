@@ -3323,6 +3323,11 @@ namespace GnssProcessor {
         std::string input_path;                   ///< Path for "file" input.
         std::string tcp_host;                     ///< Host for "tcp" input (e.g. receiver IP).
         int         tcp_port{ 28784 };            ///< Port for "tcp" input.
+        /// Seconds without a received byte after which the primary "tcp" connection is
+        /// treated as lost and redialed (@c realtime.tcp_silent_timeout_s); see
+        /// @c TcpConfig::silent_timeout_s.  0 (default) is off and keeps the socket
+        /// open for as long as the peer does, byte-identical to earlier releases.
+        double      tcp_silent_timeout_s{ 0.0 };
         std::string output_type{ "console" };     ///< Output destination: "console", "file", "nmea".
         std::string output_path;                  ///< Path for file-based output.
         size_t      max_epoch_buffer{ 100 };      ///< Max epochs to buffer before dropping oldest.
@@ -3363,6 +3368,11 @@ namespace GnssProcessor {
             std::string input_path;               ///< Path for "file" input_type.
             std::string tcp_host;                 ///< Host for "tcp" input.
             int         tcp_port{ 28784 };        ///< Port for "tcp" input.
+            /// Seconds without a received byte after which this stream's "tcp" connection
+            /// is treated as lost and redialed (@c tcp_silent_timeout_s key inside this
+            /// stream's block); see @c TcpConfig::silent_timeout_s.  0 (default) is off.
+            /// An ephemeris stream can be quiet for a minute or more between messages.
+            double      tcp_silent_timeout_s{ 0.0 };
 
             /**
              * @brief Per-stream SSR ingest accept policy (@c corrections_accept key

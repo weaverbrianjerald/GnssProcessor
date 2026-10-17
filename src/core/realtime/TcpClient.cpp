@@ -10,6 +10,7 @@
 
 #include "realtime/TcpClient.hpp"
 #include "logging/SafeLogger.hpp"
+#include <algorithm>
 #include <chrono>
 
 #ifdef _WIN32
@@ -56,7 +57,8 @@ void ensureWsaInit() {}
 // Apply a receive timeout so recv() returns periodically and the loop can
 // re-check running_: shutdown completes within one timeout instead of blocking
 // until the peer sends or closes.  A timeout alone is not treated as a lost
-// connection; the loop retries on the same socket (see recvTimedOut()).
+// connection; the loop retries on the same socket (see recvTimedOut()), unless
+// TcpConfig::silent_timeout_s is set and the silence has outlasted it.
 void setRecvTimeout(SOCKET sock, int timeout_ms) {
 #ifdef _WIN32
     DWORD tv = static_cast<DWORD>(timeout_ms);
@@ -187,19 +189,44 @@ void TcpClient::receiveLoop() {
         }
 
         connected_.store(true);
+        connections_.fetch_add(1);
 
         constexpr int kRecvBufBytes   = 4096;
         constexpr int kRecvTimeoutMs  = 1000;   // bounds shutdown latency
-        setRecvTimeout(sock, kRecvTimeoutMs);
+
+        // Silence watch: the receive timeout is also the granularity of the check,
+        // so it is shortened to the limit when that is below the shutdown interval.
+        const bool watch_silence = cfg_.silent_timeout_s > 0.0;
+        const auto silent_limit = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(cfg_.silent_timeout_s));
+        const int recv_timeout_ms = watch_silence
+            ? (std::min)(kRecvTimeoutMs,
+                         (std::max)(1, static_cast<int>(cfg_.silent_timeout_s * 1000.0)))
+            : kRecvTimeoutMs;
+        setRecvTimeout(sock, recv_timeout_ms);
+        auto last_rx = std::chrono::steady_clock::now();   // connect counts as the start of the silence
         std::vector<char> tmp(kRecvBufBytes);
 
         while (running_.load()) {
             const int n = recv(sock, tmp.data(), kRecvBufBytes, 0);
             if (n == 0) break;                       // peer closed -> reconnect
             if (n < 0) {
-                if (recvTimedOut()) continue;        // no data this interval -> re-check running_
+                if (recvTimedOut()) {
+                    // No data this interval: a silent peer past the limit is lost,
+                    // otherwise re-check running_ and wait on the same socket.
+                    if (watch_silence
+                        && std::chrono::steady_clock::now() - last_rx >= silent_limit) {
+                        silent_drops_.fetch_add(1);
+                        log->warn("TcpClient: no data from {}:{} for {:.1f} s; treating the "
+                                  "connection as lost", cfg_.host, cfg_.port,
+                                  cfg_.silent_timeout_s);
+                        break;
+                    }
+                    continue;
+                }
                 break;                               // real error -> reconnect
             }
+            last_rx = std::chrono::steady_clock::now();
 
             std::lock_guard<std::mutex> lock(buf_mutex_);
             // Drop the oldest bytes when the buffer would exceed kMaxBufSize.

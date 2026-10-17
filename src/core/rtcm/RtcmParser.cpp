@@ -108,7 +108,37 @@ void RtcmParser::updateTimeAnchor(const GnssTime& epoch) {
     // would re-cold-start every subsequent frame at January 1980.
     if (epoch.week > 0) {
         time_anchor_gps_s_ = TimeUtils::continuousGpsSeconds(epoch);
+        time_anchor_from_stream_ = true;
+        releaseDeferredGlonass(time_anchor_gps_s_);
     }
+}
+
+bool RtcmParser::deferGlonassEphemeris(const uint8_t* payload, std::size_t len) {
+    // Decoded without an anchor, so the payload is validated now and the record
+    // keeps its undated time of day.
+    std::vector<BroadcastEphemeris> decoded;
+    const auto res = RtcmNav::decodeBroadcast(payload, len, 1020, 0.0, decoded);
+    if (!res.ok || decoded.empty()) {
+        rtcmLog()->warn("RTCM 1020: broadcast-ephemeris decode incomplete (truncated payload?)");
+        return false;
+    }
+    if (deferred_glonass_.size() >= kMaxDeferredGlonass) {
+        // No time-bearing frame in a whole broadcast cycle: this input carries
+        // navigation messages only, so the host clock is the only date available.
+        rtcmLog()->debug("RTCM 1020: {} records held without a stream epoch; dating them "
+                         "from the host clock", deferred_glonass_.size());
+        releaseDeferredGlonass(TimeUtils::nowContinuousGpsSeconds());
+    }
+    deferred_glonass_.push_back(DeferredGlonass{std::move(decoded.front()), res.glonass_tod_s});
+    return true;
+}
+
+void RtcmParser::releaseDeferredGlonass(double anchor_gps_seconds) {
+    for (auto& held : deferred_glonass_) {
+        held.eph.glonass.toe = TimeUtils::glonassTodToGpsTime(held.tod_s, anchor_gps_seconds);
+        broadcast_eph_.push_back(std::move(held.eph));
+    }
+    deferred_glonass_.clear();
 }
 
 bool RtcmParser::parseHeader(const uint8_t* frame, std::size_t len,
@@ -153,15 +183,19 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         return decodeLegacySsr(payload, pl, msg_type);
     }
     if (RtcmNav::isBroadcastEphemerisType(msg_type)) {
+        // A GLONASS reference time is an undated time of day, so it needs the
+        // stream epoch itself, not only a week hint: until an MSM or SSR frame
+        // has set the tracker the record is held and dated later.
+        if (msg_type == 1020 && !time_anchor_from_stream_) {
+            return deferGlonassEphemeris(payload, pl);
+        }
         // The truncated broadcast week fields (10-bit GPS WN etc.) only need a
-        // week-scale hint; derive it from the stream-time tracker (RTB-1(a)).
-        // Nav content epochs (toe/toc, hours from "now") do not advance the
-        // tracker; only the per-second MSM/SSR stream epochs do.
+        // week-scale hint, and the GLONASS time of day a day-scale one; both come
+        // from the stream-time tracker (RTB-1(a)).  Nav content epochs (toe/toc,
+        // hours from "now") do not advance the tracker; only the per-second
+        // MSM/SSR stream epochs do.
         const double anchor = anchorGpsSeconds();
-        const int week = anchor > 0.0
-            ? static_cast<int>(anchor / static_cast<double>(TimeUtils::SECONDS_IN_WEEK))
-            : 0;
-        const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, week, broadcast_eph_);
+        const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, anchor, broadcast_eph_);
         if (!res.ok) {
             rtcmLog()->warn("RTCM {}: broadcast-ephemeris decode incomplete (truncated payload?)", msg_type);
         }

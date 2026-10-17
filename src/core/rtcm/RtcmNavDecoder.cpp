@@ -278,10 +278,11 @@ bool decodeBeidou1042(RtcmBitReader& r, int /*current_week*/, std::vector<Broadc
 // 1020: GLONASS ephemeris (sign-magnitude PZ-90 state)
 //
 // The broadcast toe (DF109 tb) is a time of day; it is promoted to a full GPS
-// time below by anchoring on the host clock.  The PZ-90 state vector is
-// converted from km, km/s and km/s² to SI.
+// time below by anchoring on the stream time the caller supplies.  The PZ-90
+// state vector is converted from km, km/s and km/s² to SI.
 // ---------------------------------------------------------------------------
-bool decodeGlonass1020(RtcmBitReader& r, int current_week, std::vector<BroadcastEphemeris>& out) {
+bool decodeGlonass1020(RtcmBitReader& r, double anchor_gps_seconds,
+                       std::vector<BroadcastEphemeris>& out, double& tod_s) {
     const int sat  = static_cast<int>(r.u(6));         // DF038 slot number
     const int freq = static_cast<int>(r.u(5));         // DF039 freq channel (0..20 -> k-7)
     r.u(1);                                            // DF040 almanac health
@@ -318,13 +319,14 @@ bool decodeGlonass1020(RtcmBitReader& r, int current_week, std::vector<Broadcast
     GlonassEphemeris& g = eph.glonass;
     // tb indexes 15-minute marks in the GLONASS (UTC(SU)+3h) day, i.e. a
     // time-of-day with no date.  It is promoted to a full GPS-week toe by
-    // anchoring on the rover's current GPS time (the same wall-clock anchor the
-    // MSM obs path uses), so the PZ-90 RK4 integration window (toe → query)
-    // stays small.  The converter resolves the day, so current_week is unused
-    // here; it is the week source for the Keplerian decoders only.
-    (void)current_week;
-    g.toe = TimeUtils::glonassTodToGpsTime(static_cast<double>(tb) * 900.0,
-                                           TimeUtils::nowContinuousGpsSeconds());
+    // anchoring on the stream time the caller passes (the same anchor the MSM
+    // observation path uses), so the PZ-90 RK4 integration window (toe → query)
+    // stays small and the ephemeris sits on the day of the observations it
+    // serves, also when historical data is replayed.  The converter resolves the
+    // day to the nearest match within ±12 h.  With no anchor the epoch stays
+    // {0, 0} and the time of day is returned for a later promotion.
+    tod_s = static_cast<double>(tb) * 900.0;
+    g.toe = TimeUtils::glonassTodToGpsTime(tod_s, anchor_gps_seconds);
     g.pos = Eigen::Vector3d{x, y, z};
     g.vel = Eigen::Vector3d{vx, vy, vz};
     g.acc = Eigen::Vector3d{ax, ay, az};
@@ -350,19 +352,24 @@ DecodeResult decodeBroadcast(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<BroadcastEphemeris>& out)
 {
     DecodeResult result{};
     RtcmBitReader r(payload, len_bytes);
     r.skip(12);   // DF002 (message type) already consumed by parseHeader.
 
+    // Full GPS week of the anchor: the week hint of the truncated-week decoders.
+    const int current_gps_week = anchor_gps_seconds > 0.0
+        ? static_cast<int>(anchor_gps_seconds / static_cast<double>(TimeUtils::SECONDS_IN_WEEK))
+        : 0;
+
     switch (msg_type) {
     case 1019: result.ok = decodeGps1019(r, current_gps_week, out);     break;
     case 1044: result.ok = decodeQzss1044(r, current_gps_week, out);    break;
     case 1046: result.ok = decodeGalileo1046(r, current_gps_week, out); break;
     case 1042: result.ok = decodeBeidou1042(r, current_gps_week, out);  break;
-    case 1020: result.ok = decodeGlonass1020(r, current_gps_week, out); break;
+    case 1020: result.ok = decodeGlonass1020(r, anchor_gps_seconds, out, result.glonass_tod_s); break;
     default:   result.ok = false;                                       break;
     }
     return result;

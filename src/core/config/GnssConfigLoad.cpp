@@ -2862,6 +2862,18 @@ namespace GnssProcessor {
             realtime_config_.input_path         = rt.value("input_path", "");
             realtime_config_.tcp_host           = rt.value("tcp_host", "");
             realtime_config_.tcp_port           = rt.value("tcp_port", 28784);
+            // Silent-peer limit of a TCP stream, one per stream block: seconds without a
+            // received byte before the connection is redialed.  0 (default) is off and
+            // byte-identical; a negative value is refused and read as off.
+            auto readTcpSilentTimeout = [&log](const auto& block, const char* where) {
+                double v = block.value("tcp_silent_timeout_s", 0.0);
+                if (!(v >= 0.0)) {
+                    log->warn("{}tcp_silent_timeout_s {} must be >= 0; using 0 (off).", where, v);
+                    v = 0.0;
+                }
+                return v;
+            };
+            realtime_config_.tcp_silent_timeout_s = readTcpSilentTimeout(rt, "realtime.");
             realtime_config_.output_type        = rt.value("output_type", "console");
             realtime_config_.output_path        = rt.value("output_path", "");
             realtime_config_.max_epoch_buffer   = rt.value("max_epoch_buffer", 100U);
@@ -2969,6 +2981,7 @@ namespace GnssProcessor {
                 c.input_path         = cc.value("input_path", std::string{});
                 c.tcp_host           = cc.value("tcp_host", std::string{});
                 c.tcp_port           = cc.value("tcp_port", 28784);
+                c.tcp_silent_timeout_s = readTcpSilentTimeout(cc, "realtime.corrections.");
                 // Per-stream SSR ingest accept policy (RTA-8(b)).  "all" (default)
                 // is the byte-identical unfiltered push; "orbit_only" drops this
                 // stream's clock/bias content and decomposes combined records so
@@ -3003,6 +3016,7 @@ namespace GnssProcessor {
                 e.input_path         = ec.value("input_path", std::string{});
                 e.tcp_host           = ec.value("tcp_host", std::string{});
                 e.tcp_port           = ec.value("tcp_port", 28784);
+                e.tcp_silent_timeout_s = readTcpSilentTimeout(ec, "realtime.ephemeris.");
                 // Same per-stream ingest policy as the corrections block
                 // (RTA-8(b)); the two streams share the transport descriptor.  A
                 // nav stream normally carries no SSR, so this guards against a
