@@ -193,8 +193,9 @@ inline constexpr int kCensusMinPoolRows = 4;
  * @brief One station's centred prefit census for one epoch.
  *
  * `s[row]` is NaN wherever the metric does not apply: a non-data row (pin or
- * coupling), a data row whose centring pool was skipped for low population, or a
- * row with a non-finite innovation or non-positive weight.
+ * coupling), a data row whose class is outside the class mask, a data row whose
+ * centring pool was skipped for low population, or a row with a non-finite innovation
+ * or non-positive weight.
  */
 struct StationPrefitCensus {
     std::vector<double> s;             ///< centred standardized residual per row (NaN = n/a).
@@ -224,10 +225,18 @@ struct StationPrefitCensus {
  *                       must be sized to @c R.y.size().
  * @param R              The station assembly.
  * @param min_pool_rows  Minimum population for a pool's median to be used.
+ * @param class_mask     Data classes the statistic is reported for, one bit per class
+ *                       (@c dataClassBit).  The cross-flag passes the prefit census's
+ *                       event-class mask (@c network.prefit_event_classes), so a class
+ *                       that census keeps out of its events, phase by default, is not
+ *                       cross-flagged here either.  The centring pools still use every
+ *                       data row; a masked row only gets no @c s.  The default covers
+ *                       every class.
  */
 StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
                                         const StationAssembly& R,
-                                        int min_pool_rows = kCensusMinPoolRows);
+                                        int min_pool_rows = kCensusMinPoolRows,
+                                        unsigned class_mask = ~0u);
 
 /**
  * @brief The cross-flag: the census's single decision.
@@ -329,6 +338,7 @@ struct RedundancyCensusCounters {
     long long redun_rows_all = 0;           ///< all rows examined (the closure domain: pins and coupling rows carry leverage too).
     long long redun_uncheckable = 0;        ///< data rows with r_i < eps (uncheckable; counted, not acted on).
     long long redun_uncheckable_hot = 0;    ///< of those, rows that also exceeded the magnitude threshold: the cross-flag.
+    long long redun_unchk_class_skipped = 0; ///< of those, rows whose class is outside network.prefit_event_classes: counted, never cross-flagged.
     long long redun_events = 0;             ///< events emitted (after the rate limit): hot cells and unobservable locals.
     long long redun_pool_skips = 0;         ///< (station, epoch, pool) centring pools skipped for population < 4.
     long long redun_r_clamped = 0;          ///< rows whose r_i hit the kernel's [0,1] clamp at 0 (leverage >= 1/w).
