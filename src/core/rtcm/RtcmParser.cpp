@@ -191,9 +191,9 @@ bool RtcmParser::parseFrame(const uint8_t* frame, std::size_t len) {
         }
         // The truncated broadcast week fields (10-bit GPS WN etc.) only need a
         // week-scale hint, and the GLONASS time of day a day-scale one; both come
-        // from the stream-time tracker (RTB-1(a)).  Nav content epochs (toe/toc,
-        // hours from "now") do not advance the tracker; only the per-second
-        // MSM/SSR stream epochs do.
+        // from the stream-time tracker.  Nav content epochs (toe/toc, hours from
+        // "now") do not advance the tracker; only the per-second MSM/SSR stream
+        // epochs do.
         const double anchor = anchorGpsSeconds();
         const auto res = RtcmNav::decodeBroadcast(payload, pl, msg_type, anchor, broadcast_eph_);
         if (!res.ok) {

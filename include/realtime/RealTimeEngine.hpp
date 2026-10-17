@@ -751,8 +751,8 @@ private:
     /// aiding capture, and advances @c prev_tow_ / @c prev_epoch_time_.
     /// Returns false on a non-advancing TOW (duplicate epoch).  The gap threshold is
     /// @c processing.data_gap_tolerance_s when positive, else 1.5 times the median
-    /// spacing of the accepted epochs (@ref EpochCadence), and 1 s until a spacing
-    /// has been measured.
+    /// spacing of the accepted epochs (@ref EpochCadence), but at least 1 s (also
+    /// the value until a spacing has been measured).
     bool stepTimeAndDetectGap(RtEpochContext& ctx);
 
     /// Corrections-ready startup gate: defers all estimation until the modeled
@@ -1219,7 +1219,8 @@ private:
     double    prev_tow_{ 0.0 };
     GnssTime  prev_epoch_time_{ 0, 0.0 };
     /// Spacings of the epochs accepted so far.  With @c processing.data_gap_tolerance_s
-    /// at 0 the data-gap threshold is 1.5 times their median; see @ref stepTimeAndDetectGap.
+    /// at 0 the data-gap threshold is 1.5 times their median, at least 1 s; see
+    /// @ref stepTimeAndDetectGap.
     EpochCadence epoch_cadence_;
     uint64_t  backlog_warn_ctr_{ 0 };          ///< Throttle counter for the obs-backlog warning (every Nth lagging epoch).
 

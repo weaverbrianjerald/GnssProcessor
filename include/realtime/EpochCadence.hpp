@@ -12,8 +12,11 @@
  *
  * The data-gap threshold is the configured @c processing.data_gap_tolerance_s
  * when it is positive, and otherwise 1.5 nominal intervals, the same default the
- * post-processing path applies.  Before any spacing has been measured the
- * threshold is @ref kUnmeasuredToleranceS.
+ * post-processing path applies, but never below @ref kFloorToleranceS.  The floor
+ * is the fixed 1 s the engine used before the interval was measured: a stream of
+ * 1.5 Hz or faster keeps that threshold, so one dropped epoch at 10 Hz is not a
+ * gap that re-seeds the receiver clock from a single epoch of code.  The
+ * threshold is @ref kFloorToleranceS too until a first spacing has been measured.
  */
 
 #include <algorithm>
@@ -39,10 +42,12 @@ public:
     /// Multiple of the nominal interval beyond which a spacing is a data gap.
     static constexpr double kGapFactor = 1.5;
 
-    /// Gap threshold (s) before the first spacing has been measured: the
-    /// fixed 1 s the real-time engine used for every stream.  It still flags
-    /// the first spacing after a warm resume, which spans the whole outage.
-    static constexpr double kUnmeasuredToleranceS = 1.0;
+    /// Lowest gap threshold (s): the fixed 1 s the real-time engine used for
+    /// every stream.  It is the threshold until a first spacing has been
+    /// measured, which still flags the first spacing after a warm resume (it
+    /// spans the whole outage), and the lower bound once the interval is known,
+    /// so the default never reads a fast stream more tightly than before.
+    static constexpr double kFloorToleranceS = 1.0;
 
     /**
      * @brief Record one accepted epoch spacing.
@@ -76,13 +81,14 @@ public:
      * @param configured_s The configured @c processing.data_gap_tolerance_s; a
      *                     value above 0 is used as given.
      * @return The threshold in seconds: @p configured_s when positive, else
-     *         @ref kGapFactor times the nominal interval, else
-     *         @ref kUnmeasuredToleranceS while no spacing has been measured.
+     *         @ref kGapFactor times the nominal interval but at least
+     *         @ref kFloorToleranceS, and @ref kFloorToleranceS while no spacing
+     *         has been measured.
      */
     double gapToleranceS(double configured_s) const {
         if (configured_s > 0.0) return configured_s;
         const double nominal = nominalIntervalS();
-        return nominal > 0.0 ? kGapFactor * nominal : kUnmeasuredToleranceS;
+        return std::max(kFloorToleranceS, kGapFactor * nominal);
     }
 
 private:

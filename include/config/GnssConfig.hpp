@@ -497,10 +497,13 @@ namespace GnssProcessor {
          * interval.  Post-processing takes the interval from the RINEX
          * header (the decimated rate when @c processing.gnss_rate_s is
          * larger).  The real-time engine has no header, so it takes the
-         * median spacing of the epochs it has accepted, and uses 1 s until
-         * the first spacing has been measured.
+         * median spacing of the epochs it has accepted; its threshold never
+         * falls below 1 s (the fixed value it used before the spacing was
+         * measured), and is 1 s until the first spacing has been measured.
+         * Baseline mode ignores the nominal interval and uses 60 s.
          *
-         * @return Gap tolerance in seconds (0 = 1.5 nominal intervals).
+         * @return Gap tolerance in seconds (0 = 1.5 nominal intervals; see
+         *         above for the real-time floor and the baseline default).
          */
         double getDataGapTolerance() const { return data_gap_tolerance_s_; }
 

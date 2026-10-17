@@ -5,8 +5,9 @@
  * Coverage:
  *   - Data gap: with `processing.data_gap_tolerance_s` at 0 the gap threshold is 1.5
  *     measured epoch intervals, so a 30 s stream is not a gap at every epoch (it used to
- *     read as one, which re-seeded the receiver clock from code every epoch).  A
- *     configured tolerance is still used as given.
+ *     read as one, which re-seeded the receiver clock from code every epoch).  It is
+ *     never below the fixed 1 s used before, so a stream faster than 1 Hz is read as it
+ *     was.  A configured tolerance is still used as given.
  *   - Staged snapshot restore: an unknown dynamic state kind is refused before any state
  *     is restored, so the cold start that follows starts from an untouched manager.
  */
@@ -142,6 +143,24 @@ TEST_F(RealtimeDefectTest, OneHertzStreamKeepsItsGapsAtOnePointFiveSeconds) {
     const double t = 519.0;
     EXPECT_FALSE(A::step(*engine, t + 1.4).gap);     // jitter inside 1.5 s
     EXPECT_TRUE(A::step(*engine, t + 1.4 + 2.0).gap);// a lost epoch
+}
+
+TEST_F(RealtimeDefectTest, TenHertzStreamKeepsTheOneSecondThreshold) {
+    build();
+    using A = RealtimeDefectTestAccess;
+    A::step(*engine, 4000.0);
+    double t = 4000.0;
+    for (int k = 1; k <= 30; ++k) {
+        t = 4000.0 + 0.1 * k;
+        EXPECT_FALSE(A::step(*engine, t).gap) << k;
+    }
+    // One dropped epoch (0.2 s) is no gap: the threshold is not 1.5 intervals (0.15 s).
+    const auto dropped = A::step(*engine, t + 0.2);
+    EXPECT_NEAR(dropped.dt, 0.2, 1e-9);
+    EXPECT_FALSE(dropped.gap);
+    // An outage above the fixed 1 s still is.
+    const auto outage = A::step(*engine, t + 0.2 + 1.5);
+    EXPECT_TRUE(outage.gap);
 }
 
 TEST_F(RealtimeDefectTest, ConfiguredToleranceIsUsedAsGiven) {

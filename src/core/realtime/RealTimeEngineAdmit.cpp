@@ -185,10 +185,11 @@ bool RealTimeEngine::stepTimeAndDetectGap(RtEpochContext& ctx) {
         }
         // A configured tolerance is used as given.  Left at 0 the threshold is 1.5
         // times the measured epoch spacing, the default the post-processing path
-        // applies, so a 30 s stream is not a gap at every epoch; until a spacing
-        // has been measured it is 1 s, which also flags the first spacing after a
-        // warm resume (it spans the outage).  The spacing is judged before it joins
-        // the window.
+        // applies, so a 30 s stream is not a gap at every epoch.  It is never below
+        // 1 s, the fixed value used before: a stream of 1.5 Hz or faster keeps it,
+        // and before a spacing has been measured it is 1 s, which also flags the first
+        // spacing after a warm resume (it spans the outage).  The spacing is judged
+        // before it joins the window.
         const double gap_tol = epoch_cadence_.gapToleranceS(config_.getDataGapTolerance());
         gap_detected = dt > gap_tol;
         epoch_cadence_.observe(dt);
