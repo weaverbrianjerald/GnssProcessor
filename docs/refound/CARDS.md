@@ -177,4 +177,5 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   windows, the last after all, the block that ended last inside a gap) instead of dropping to zero while the linear
   term extrapolates; BUILT without a knob (no golden evaluates the function); 8 field-roster stations gain 0.4 to
   6.4 mm, covered stations bit-identical; tools/sif_propagate and pyviz SifTruth moved in step. Same-build golden
-  identity owed (separate stage).
+  identity PASSED 2026-10-17 (field and sim 2 h arms identical to a main 4318fe3 control in every product, trace
+  and log); the merge is owed.

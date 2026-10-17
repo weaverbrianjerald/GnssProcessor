@@ -352,8 +352,8 @@ Standing documents (not split this pass):
 
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [SEA](refound/SEA_seasonal_term_outside_window_2026-10-16.md), the seasonal term of a SIF coordinate
-outside its block windows (open, 2026-10-16: built without a knob; the same-build golden identity
-check is owed).
+outside its block windows (open, 2026-10-17: built without a knob; the same-build golden identity
+check passed; the merge is owed).
 
 ### `sim-bed` — [topics/sim-bed.md](topics/sim-bed.md)
 

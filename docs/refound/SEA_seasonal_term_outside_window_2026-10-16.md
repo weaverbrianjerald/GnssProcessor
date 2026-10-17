@@ -5,14 +5,14 @@
 - **id:** SEA
 - **topic:** consumer
 - **status:** open
-- **summary:** BUILT 2026-10-16, default behaviour (no knob): the periodic (seasonal) term of the SIF coordinate function is one block chosen by the epoch with the NGS M-PAGES v1.2 rule (the covering block; the first block before all windows, the last after all, the block that ended last inside a gap), so it no longer drops to zero where the linear term extrapolates. 8 stations of the field roster gain 0.4 to 6.4 mm; the covered stations are bit-identical. Owed: the same-build golden comparison (field and sim, 2 h), a separate stage.
+- **summary:** BUILT 2026-10-16, default behaviour (no knob): the periodic (seasonal) term of the SIF coordinate function is one block chosen by the epoch with the NGS M-PAGES v1.2 rule (the covering block; the first block before all windows, the last after all, the block that ended last inside a gap), so it no longer drops to zero where the linear term extrapolates. 8 stations of the field roster gain 0.4 to 6.4 mm; the covered stations are bit-identical. The same-build golden comparison (field and sim, 2 h arms) PASSED 2026-10-17: every product, trace, log and manifest is identical to a control built from main `4318fe3` (section 8). Owed: the merge.
 - **source:** the register item "Build 5: SIF outside its window" ([OPEN_ITEMS](../status/OPEN_ITEMS.md), queued after NOM); NGS M-PAGES v1.2 `Lib/Station/Periodic.cpp`, `PeriodicMotion::computeDisplacement` (lines 148 to 200); [`StationInfoFile.cpp`](../../src/core/products/StationInfoFile.cpp)
 - **knobs / posture:** none. No ledger row: the change is the intended behaviour of the register item, and no golden reaches the function (section 4)
 - **dates in the text:** 2026-10-16
-- **hashes / run dirs:** base main `4318fe3`, branch `mpg/seasonal` (code `4b4313a`); exe `gnss_processor_seasonal.exe` `ed32e9be281843c6`; unit gates `tests/test_station_info_seasonal.cpp` (suite `SifSeasonalTermTest`) and `tools/sif_propagate/test_sif_propagate.py` section 10; smoke runs under `D:/GnssProcessorSupport/gates/seasonal/`
+- **hashes / run dirs:** base main `4318fe3`, branch `mpg/seasonal` (code `4b4313a`); exe `gnss_processor_seasonal.exe` `ed32e9be281843c6`, control exe `gnss_processor_seasonal_ctl.exe` `ec71c45fae3052be` (main `4318fe3`); unit gates `tests/test_station_info_seasonal.cpp` (suite `SifSeasonalTermTest`) and `tools/sif_propagate/test_sif_propagate.py` section 10; smoke runs under `D:/GnssProcessorSupport/gates/seasonal/`; identity arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_{ctl,new}_{f,s}`, gate output `D:/GnssProcessorSupport/gates/seasonal/chk/`
 - **gates (frozen at pre-registration):** section 6
 
-**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? The old rule summed the blocks covering the epoch, so a station whose last segment had closed kept its linear extrapolation and lost the seasonal term at once (a step of up to 13 mm in the two bundled SIFs, 245 of 3,079 stations at the golden epoch). The rule is now M-PAGES's, with the diagnostics, warnings, a Python twin and the pyviz port moved in step. Covered epochs are unchanged to the bit. The unit gates pass; the golden identity check is the next stage.
+**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? The old rule summed the blocks covering the epoch, so a station whose last segment had closed kept its linear extrapolation and lost the seasonal term at once (a step of up to 13 mm in the two bundled SIFs, 245 of 3,079 stations at the golden epoch). The rule is now M-PAGES's, with the diagnostics, warnings, a Python twin and the pyviz port moved in step. Covered epochs are unchanged to the bit. The unit gates pass, and the golden identity check passed on 2026-10-17: field and sim golden 2 h arms on the candidate and on a main `4318fe3` control are identical in every product, trace, log line and manifest record, as expected since neither golden evaluates the function. An independent recomputation from the raw SIFs reproduces the 8-station table. The merge is owed.
 
 ## 1. The defect
 
@@ -162,3 +162,76 @@ Written before the golden comparison; U and S are met, G is the next stage.
   far below what the census resolves, and no new arm is run. The row records no mechanism that the
   change alters, so it is not edited.
 - A knob to restore the old window-only term is not added (section 4). Reverting is one function.
+
+## 8. Check of 2026-10-17: gate G and an independent recomputation
+
+Gate G is met. The rows below were produced by a check stage that did not write the change.
+
+**Control and arms.** The control is a detached worktree of main `4318fe3` (`seasonal_ctl`, clean),
+built Release; its exe is `gnss_processor_seasonal_ctl.exe` (`ec71c45fae3052be`). The candidate exe
+is `gnss_processor_seasonal.exe` (`ed32e9be281843c6`); the mtimes of every changed source file
+precede the exe. Both ran from `D:/GnssProcessorSupport/gates/exe/x64-Release/`. The run manifests
+carry different `build.compiled` stamps (control Oct 17 00:20:45, candidate Oct 16 23:50:39), which
+shows which exe produced which arm. The arms are `scripts/rapid_arm.py make --hours 2` copies of
+`golden_field_refound.json` (sha256 `17f59663...`) and `golden_sim_refound.json` (`bb96e783...`),
+the sim arm with `network.start_offset_hours=0.504167` (the sim start rule). Against its golden an
+arm differs in `max_duration_s` 7200 and the product path (sim: and the start offset); the control
+and candidate `arm.json` differ in the product path alone. No knob exists, so there is no
+knob-on arm.
+
+**Identity.** `NOM_GATE_DROP_POSTURE=1 python scripts/nom_td_gate.py --whole <control> <candidate>`:
+
+| part | field (58 stations) | sim (60 stations) |
+| --- | --- | --- |
+| `arm.json` (run directory masked) | 928 lines identical | 946 lines identical |
+| `products.txt` | 113,888 lines identical (also in full, with `#` and `S,` lines) | 80,690 lines identical (in full 80,704) |
+| `logs/*.csv` in row order | 34 files identical, 240 epochs | 34 files identical, 241 epochs |
+| run manifest | 12 records identical, last `complete` | 12 records identical, last `complete` |
+| `stdout.txt` / main log (whole) | 3,185 / 2,422 lines identical | 2,923 / 2,159 lines identical |
+| `rt_engine.log`, exit code | 620 lines identical, 0 and 0 | 621 lines identical, 0 and 0 |
+| result | IDENTICAL | IDENTICAL |
+
+The same gate between two different arms (control field against control sim, `--no-arm-check`)
+reports DIFFERENT, so the comparison can fail. The identity is the expected one: the 58 and 60
+roster stations of the goldens all carry `position_ecef`, neither golden sets
+`processing.enable_station_info` or `network.use_sif_coordinates`, and no line of any of the four
+logs carries the new periodic warning. The only callers of `resolveStationCoordinate` and
+`resolveRosterCoordinate` are `Application::initializePosition` and the roster build.
+
+**Completion and grade.** All four arms exited 0 and the manifests end `complete`. Held-out
+consumer, 3D p50 by hour from the run start, identical on both exes: field WTZZ00DEU 0.0581 and
+0.0113 m (240 epochs; the baseline pair `_rf0hv15_field6` has 0.058 and 0.011), sim SZZ000SIM
+0.0994 and 0.0326 m (241 epochs; a third bucket holds the last epoch alone, 0.0549 m). The sim
+figures do not compare with the baseline pair `_rf0hv15_sim6` (0.137 and 0.072 m), whose run began at
+00:00:30 and not at the start offset of these arms. Wall time, control against candidate: field
+1231.7 and 1228.6 s, sim 691.8 and 669.7 s. No 16-site census was run: the wire is byte-identical,
+so every consumer replay of it is identical by construction.
+
+**Unit and twin checks re-run.** `SifSeasonalTermTest` 22 of 22 pass in the Debug exe, the four
+shipped-SIF cases among them (none skipped). `StationInfoTest`, `StationInfoGuardsTest`,
+`StationMarkerToArpTest` and `SifAprioriArpTest`: 61 pass, 2 skipped (the KRGG00ATF and GRAZ00AUT
+RINEX files are not in this worktree's `data/`; both stations are covered and bit-identical in the
+suite above). The full Debug suite log of the build stage: 3,162 passed, 8 skipped, exit 0.
+`tools/sif_propagate/test_sif_propagate.py` 652 checks; `pyviz/tests/test_eval_truth.py` 82 pass
+(71 pass and 5 skip on the control, which has no SIF data). `docs_index_check.py`,
+`make_golden_config.py --verify` and `config_posture_check.py --verify-loader` pass; the ledger and
+`config/` are not in the diff.
+
+**Independent recomputation.** A separate script (`gates/seasonal/chk/indep_mpages.py`), written from
+`Periodic.cpp` lines 148 to 200 and reading the raw SIF JSON without the repository's code,
+reproduces section 3 at the golden epoch: the seasonal X, Y and Z of the 8 stations to 0.001 mm and
+the norms 0.979, 1.216, 0.548, 6.447, 1.109, 1.409, 2.786 and 0.439 mm; the other 42 resolvable
+roster stations are covered; 8 roster names are absent from the SIFs. The C++ selection
+(`selectPeriodicBlock`), the Python twin and the pyviz port agree with the M-PAGES loop line by line
+(stable sort by start; first covering block; before the first start the first block; at or after the
+end of the last block, in start order, that block; otherwise the last block in start order that has
+ended), including nested windows.
+
+Annotation of section 1: the count of 158 stations without a periodic block includes KAYT00PHL,
+which has four periodic blocks (all ending in 2005) but every occupation flagged DO_NOT_USE, so no
+coordinate is resolved for it. Over the 3,237 stations the independent count is 2,834 covered, 246
+past the last window and 157 without a block; the 245 of section 1 are the resolvable stations among
+the 246.
+
+Open after this check: the merge. A code comment in the unit suite ("named by the card") names a
+card, against the comment rule; it is cosmetic.
