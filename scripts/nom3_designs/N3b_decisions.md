@@ -122,3 +122,33 @@ row's own constellation.
 | D9 | BeiDou band digit 1 is B1C (RINEX 3.04), never aliased to B1I (digit 2). | Inert until a BeiDou arm exists. |
 
 Implementing D1 to D7 moves output (the wire for D6, event text for D7, the screened Galileo cells for D3), so it is a graded step of its own (N3c, `docs/status/OPEN_ITEMS.md`): each decision a commit, the products, consumer trace and census of both goldens graded against the base, D8 and D9 as declarations with no output change.
+
+## 9. N3c: the switches (branch `nom/n3c`)
+
+Each of D1 to D7 is a default-off key in the network section, fingerprinted when it changes the
+solve, with a ledger row (UNVALIDATED) and a unit test of the site's answer with the switch on.
+Output with every switch off is the base's. Grading arms: `gates/n3c/make_arms.sh <side>` (field
+and sim golden, 2 h, base arms beside them).
+
+| # | key | site changed | what the switch does |
+| --- | --- | --- | --- |
+| D1 | `network.n3c_bia_pin_pair` | A1 `selectIfPinPair` (A3's hold compares with the selection and follows it; A5 reads bands, which were the BIA bands already) | a satellite that registers both signals of the product's clock-reference pair pins that pair (GPS C1W, C2W); otherwise the lexical pair. The roster's datum role and the declared `cbpin` follow. |
+| D2 | `network.n3c_channel_family` | F2 `netDatumGraphFamily` (through `netDatumGraphFamilyOf`) in the datum graph census; F1 and A4 already use `channelFamilyOf` | the census groups by "X against the rest". The census is measure-only, so the arm is expected identical to the base apart from the census lines. |
+| D3 | `network.n3c_canonical_pair_traits` | A10 `latchedPairs` (through `canonicalPairSlot`) | the pair is the first two traits bands (Galileo 1 and 5). Inert without `network.canonical_pair_admission`, which both goldens leave off: the arm arms both, with the admission alone as its control. |
+| D4 | `network.n3c_band_signal` | E9 `networkComputeRawObservables` | a band whose Modelled phase is not reported with its code leaves the tracker pair (no row when the lowest band leaves, a single-band row when the second does); a band the lookup does not name keeps the lexical pick. E1 and E2 keep their variance rules. |
+| D5 | none | none | no change: the goldens already use the priority latch (`processing.canonical_signal_rule` priority). |
+| D6 | `network.n3c_wire_per_signal` | the emitter's bias families, at the end of the solution preparation (`networkWireFillModelledSignals`) | each satellite with a clock gets a phase-bias and a code-bias record for every signal the roster models on its constellation; a missing one is copied from the same-band record of its channel family (D2's definition), never across families, bands or constellations. |
+| D7 | `network.n3c_ledger_lifecycle` | the anchor election (arms `network.ledger_screens` and `network.ledger_anchor`) and the coverage gate (`networkPhaseGateCountGapTrackers`); the gap re-entry keeps `network.ledger_reentry` | a returning family is restored, not elected afresh; a station with an admitted arc in Gap counts as tracking at the gate. `network.ledger_reentry` needs `network.roster_tracker` and `gap_reentry_relevel`; the arm sets them. |
+
+Readings taken where the decision text left room, to be revisited if a result asks:
+
+- D4: "lexical order never decides" is read as leaving the band out of the tracker's pair when its
+  Modelled phase cannot be formed this epoch, not as promoting another signal.
+- D6: "a family-level value uses D2's family" is read as the value a satellite has no column for
+  being the same-band record of its family. The column-level estimates are untouched.
+- D7: "the ledger owns the coverage gate" is read as counting an admitted arc in Gap as a tracker
+  of the family. `ambiguity_states` (N3a) is not part of this step.
+
+Not switched, with the reason: A2 (the group-delay pair is a property of the broadcast message),
+A13 (worker HV1's file), E1 and E2 (the decision keeps their variance rules), the sites of
+section 5 (no roster role to read), D8 and D9 (declarations with no output change, a later step).
