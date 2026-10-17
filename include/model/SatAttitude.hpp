@@ -195,10 +195,11 @@ public:
      * normal from the SP3 chord, and a velocity-free second source from the
      * broadcast inclination and node) on seven GPS satellites over DOY 129 of
      * 2024, both signs of beta: agreement within 0.01 deg and no sign mismatch,
-     * with @p correct_velocity_frame true.  With it false the ECEF velocity is
-     * used as is and beta is wrong by up to tens of degrees; the noon-turn model
-     * always converts (orbitGeometry()).  The reference rows are in
-     * tests/test_noon_turn_attitude.cpp.
+     * with @p correct_velocity_frame true.  A second pass with cssrlib's own Sun,
+     * inertial rotation and nominal yaw frame as the reference agrees to the same
+     * size.  With it false the ECEF velocity is used as is and beta is wrong by up
+     * to tens of degrees; the noon-turn model always converts (orbitGeometry()).
+     * The reference rows are in tests/test_noon_turn_attitude.cpp.
      *
      * @param[in] sat_pos Satellite ECEF position (meters).
      * @param[in] sat_vel Satellite ECEF velocity (m/s).

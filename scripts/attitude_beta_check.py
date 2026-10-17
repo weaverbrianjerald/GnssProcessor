@@ -26,6 +26,14 @@ Modes
 ``python scripts/attitude_beta_check.py csv --sp3 F --sats ... --out F``
     Write the inputs a C++ checker needs (ECEF position, ECEF velocity,
     ECEF Sun) and the reference beta, mu and yaw-steering X axis.
+``python scripts/attitude_beta_check.py cssrcsv --sp3 F --sats ... --out F [--cssrlib DIR]``
+    Same CSV as ``csv``, but every reference quantity comes from cssrlib
+    (RTKLIB port): its Sun (``sunmoonpos_eci``), its IAU-1980 precession,
+    nutation and sidereal rotation (``eci2ecef``) for the inertial orbit normal,
+    and its nominal yaw frame (``orb2ecef``) for the X axis.  The Sun column
+    carries the cssrlib Sun, so the C++ checker is fed the same Sun.  cssrlib has
+    no beta routine and no noon-turn model: the beta here is the orbit-normal
+    projection of its Sun, computed with its frames.
 ``python scripts/attitude_beta_check.py compare --ref F --cxx F``
     Compare a C++ checker output with the reference CSV.
 ``python scripts/attitude_beta_check.py follower --betas 2.44,-0.75``
@@ -348,6 +356,62 @@ def cmd_csv(a):
                                   + [f'{v:.9f}' for v in x_e]) + '\n')
 
 
+def calendar_from_jd(jd):
+    """Calendar [y, m, d, h, mi, s] of a Julian date (Meeus, Gregorian)."""
+    z = math.floor(jd + 0.5)
+    f = jd + 0.5 - z
+    alpha = math.floor((z - 1867216.25) / 36524.25)
+    b = z + 1 + alpha - math.floor(alpha / 4) + 1524
+    c = math.floor((b - 122.1) / 365.25)
+    d = math.floor(365.25 * c)
+    e = math.floor((b - d) / 30.6001)
+    day = b - d - math.floor(30.6001 * e)
+    month = e - 1 if e < 14 else e - 13
+    year = c - 4716 if month > 2 else c - 4715
+    secs = round(f * 86400.0)
+    return [int(year), int(month), int(day), secs // 3600, (secs % 3600) // 60, float(secs % 60)]
+
+
+def cmd_cssrcsv(a):
+    """Reference CSV built from cssrlib alone (Sun, inertial frame, nominal yaw frame)."""
+    sys.path.insert(0, a.cssrlib)
+    from cssrlib.gnss import epoch2time, gpst2utc
+    from cssrlib.peph import eci2ecef, orb2ecef, sunmoonpos_eci
+
+    sats = a.sats.split(',')
+    sp3 = read_sp3(a.sp3, sats)
+    erpv = np.zeros(5)
+
+    def inertial(jd, r_ecef):
+        tutc = gpst2utc(epoch2time(calendar_from_jd(jd)))
+        u, _ = eci2ecef(tutc, erpv)
+        return u.T @ r_ecef, u, tutc
+
+    with open(a.out, 'w') as fo:
+        fo.write('sat,jd,rx,ry,rz,vx,vy,vz,sx,sy,sz,beta_ref,beta_kep,mu_ref,psi_ref,'
+                 'ix,iy,iz\n')
+        for sat in sats:
+            ser = sp3[sat]
+            for k in range(2, len(ser) - 2, a.step):
+                jd, r_ecef = ser[k]
+                r_i, u, tutc = inertial(jd, r_ecef)
+                r_m, _, _ = inertial(ser[k - 1][0], ser[k - 1][1])
+                r_p, _, _ = inertial(ser[k + 1][0], ser[k + 1][1])
+                h = np.cross(r_i, r_p - r_m)
+                h /= np.linalg.norm(h)
+                sun_i, _ = sunmoonpos_eci(tutc, True, False)
+                s_hat = sun_i / np.linalg.norm(sun_i)
+                beta, mu, psi = beta_mu_psi(r_i, h, s_hat)
+                sun_e = u @ sun_i
+                x_e = orb2ecef(epoch2time(calendar_from_jd(jd)), r_ecef)[0]
+                vel = velocity_ecef(ser, k)
+                fo.write(','.join([sat, f'{jd:.8f}'] + [f'{v:.6f}' for v in r_ecef]
+                                  + [f'{v:.9f}' for v in vel]
+                                  + [f'{v:.3f}' for v in sun_e]
+                                  + [f'{beta:.6f}', 'nan', f'{mu:.4f}', f'{psi:.4f}']
+                                  + [f'{v:.9f}' for v in x_e]) + '\n')
+
+
 def cmd_compare(a):
     ref = [ln.strip().split(',') for ln in open(a.ref)][1:]
     cxx = [ln.strip().split(',') for ln in open(a.cxx)][1:]
@@ -418,6 +482,14 @@ def main():
         if name == 'csv':
             p.add_argument('--out', required=True)
         p.set_defaults(fn=fn)
+    p = sub.add_parser('cssrcsv')
+    p.add_argument('--sp3', required=True)
+    p.add_argument('--sats', required=True)
+    p.add_argument('--step', type=int, default=6, help='sample stride (SP3 epochs)')
+    p.add_argument('--out', required=True)
+    p.add_argument('--cssrlib', default='D:/GnssProcessorSupport/reference_software/cssrlib/src',
+                   help='directory that holds the cssrlib package')
+    p.set_defaults(fn=cmd_cssrcsv)
     p = sub.add_parser('follower')
     p.add_argument('--betas', required=True)
     p.add_argument('--dt', type=float, default=0.25)
