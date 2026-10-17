@@ -28,6 +28,7 @@
 #pragma once
 
 #include "network/solve/Estimator.hpp"   // SharedParamKind
+#include "common/ParamRef.hpp"          // NetworkParamKind (the kinds this registry describes)
 
 #include <array>
 #include <cstddef>
@@ -40,35 +41,6 @@ namespace GnssProcessor {
 
 class GnssConfig;
 struct NetworkKnobs;
-
-/**
- * @brief Every parameter kind of the network estimator.
- *
- * The first four are the shared border (the satellite parameters every station sees,
- * the existing @c SharedParamKind values, which stay as the border subset); the rest
- * are station-local (a column of one station's local block).  The gross-screen holds are
- * instances of Ambiguity and SlantIono with a hold state, not kinds.
- */
-enum class NetworkParamKind : int {
-    SatClock = 0,     ///< Satellite clock (border; signal-independent).
-    SatPhaseBias,     ///< Satellite phase bias per signal (border; carries the pivot lump).
-    SatCodeBias,      ///< Satellite code bias per signal (border).
-    VtecSh,           ///< Global SH-VTEC coefficient (border; network-wide).
-    Ambiguity,        ///< Float ambiguity per (station, satellite, signal) (local).
-    Zwd,              ///< Zenith wet delay per station (local).
-    SlantIono,        ///< Slant ionosphere per (station, satellite) (local).
-    RxClock,          ///< Receiver clock and ISB per station (local).
-    RxPhaseBias,      ///< Receiver phase bias of the eq34 chain datum (local).
-    RxCodeBias,       ///< Receiver code bias per (station, signal) (local).
-    PhaseColour,      ///< Band-common phase nuisance per (station, satellite) (local).
-    /// Receiver position per station: three columns of the station's state manager that
-    /// the network holds at the roster coordinate and never estimates (the
-    /// parameter inventory's coordinate instances, treatment Pinned).
-    RxPosition,
-};
-
-/// Number of @ref NetworkParamKind enumerators (the registry's table size).
-inline constexpr std::size_t kNetworkParamKindCount = 12;
 
 /// @brief How a kind's process noise scales across an epoch gap.
 enum class ParamQRule {
@@ -279,9 +251,6 @@ private:
 
 /// @brief The registry kind of a border @c SharedParamKind.
 NetworkParamKind paramKindOf(SharedParamKind kind);
-
-/// @brief Lower-case table name of a kind (e.g. "sat_clock").
-const char* paramKindName(NetworkParamKind kind);
 
 /// @brief Table name of a q rule (e.g. "rw").
 const char* paramQRuleName(ParamQRule rule);

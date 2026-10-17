@@ -59,8 +59,9 @@ byte-identical, so each step tests its config value at its first line, as every 
 Three run-start tables describe a parameter; each needs a row.
 
 - **Registry kind** ("Network (param model)"): an enumerator of `NetworkParamKind` and
-  `kNetworkParamKindCount` in `include\network\assembly\ParamRegistry.hpp` (at most 32 kinds);
-  a case in `paramKindName` and a block in `NetworkParamRegistry::build` in
+  `kNetworkParamKindCount` in `include\common\ParamRef.hpp` (at most 32 kinds);
+  a case in `paramKindName` (`src\core\common\ParamRef.cpp`) and a block in
+  `NetworkParamRegistry::build` in
   `src\core\network\assembly\ParamRegistry.cpp`, copied from the `Zwd` block (`estimated`,
   `carried`, `q_rule`, `gap_horizon_s`, `route`, `source`). Uncarried: `carried` false,
   route `NotCarried`.

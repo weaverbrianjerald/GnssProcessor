@@ -189,21 +189,6 @@ const char* paramDispositionName(ParamDisposition d) {
     return "?";
 }
 
-const char* paramFormName(ParamForm f) {
-    switch (f) {
-        case ParamForm::None:       return "";
-        case ParamForm::Isb:        return "isb";
-        case ParamForm::IfPair:     return "if";
-        case ParamForm::NarrowLane: return "nl";
-        case ParamForm::WideLane:   return "wl";
-        case ParamForm::Dcb:        return "dcb";
-        case ParamForm::Ifb:        return "ifb";
-        case ParamForm::Isc:        return "isc";
-        case ParamForm::GloSlotIfb: return "slot";
-    }
-    return "?";
-}
-
 const char* stateContainerName(StateContainer c) {
     switch (c) {
         case StateContainer::PositionIndex:           return "position_index";
@@ -649,20 +634,6 @@ void recordStationParams(const StateManager& sm, int station,
 // ---------------------------------------------------------------------------
 // Classes and tallies
 // ---------------------------------------------------------------------------
-
-bool operator<(const ParamClass& a, const ParamClass& b) {
-    // Table order: the registry's kind order, then the form, the constellation in enum
-    // order (GPS first; none, i.e. the receiver clock, before every constellation), the
-    // bands and the signals.
-    const auto key = [](const ParamClass& c) {
-        const int sys = c.sys == System::Unknown ? -1 : static_cast<int>(c.sys);
-        return std::make_tuple(static_cast<int>(c.kind), static_cast<int>(c.form), sys,
-                               static_cast<int>(c.band), static_cast<int>(c.band_b));
-    };
-    if (key(a) != key(b)) return key(a) < key(b);
-    if (a.signal != b.signal) return a.signal < b.signal;
-    return a.signal_b < b.signal_b;
-}
 
 std::string paramClassLabel(const ParamClass& c) {
     const std::string sys = traitsOf(c.sys).name;

@@ -106,7 +106,8 @@
  */
 
 #include "common/GnssIdentity.hpp"           // System, SatId, SignalId, StationId, FrequencyBand
-#include "network/assembly/ParamRegistry.hpp"   // NetworkParamKind
+#include "common/ParamRef.hpp"                  // NetworkParamKind, ParamForm, ParamClass, ParamInstanceId
+#include "network/assembly/ParamRegistry.hpp"   // the kind registry
 #include "measurement/AbsorbedSharedStates.hpp"  // StateContainer, AbsorbedReason, StationAbsorbed
 
 #include <array>
@@ -173,109 +174,11 @@ namespace GnssProcessor {
     // =======================================================================
 
     /**
-     * @brief The form of an instance, where one registry kind has more than one shape.
-     *
-     * The registry declares the receiver clock and its inter-system biases as
-     * one kind, because one carry, its three response sites and its value site act on
-     * both; likewise the receiver code bias and the ambiguity forms.  The inventory tells
-     * the shapes apart, so a table line is never "inter-system bias | rx_clock".  The
-     * (kind, form) pair decides which fields a class carries (the table in
-     * @ref ParamClass).
-     */
-    enum class ParamForm : std::uint8_t {
-        None = 0,    ///< The kind's plain form.
-        Isb,         ///< rx_clock: the inter-system bias of one constellation ("<system>", @c StateKeys::makeSystemTimeOffsetKey).
-        IfPair,      ///< ambiguity: of an ionosphere-free signal pair ("<sat>_L1C_L2W").
-        NarrowLane,  ///< ambiguity: narrow-lane, per band (@c StateKeys::makeNlAmbiguityKey).
-        WideLane,    ///< ambiguity: wide-lane, per band pair (@c StateKeys::makeWlAmbiguityKey).
-        Dcb,         ///< rx_code_bias: "<system>_DCB", the differential code bias of the clock-reference pair.
-        Ifb,         ///< rx_code_bias: "<system>_IFB<band>", the inter-frequency bias of a band outside that pair.
-        Isc,         ///< rx_code_bias: "<system>_ISC_<signal>", the inter-signal correction of a second code.
-        GloSlotIfb,  ///< rx_code_bias: "<system>_IFB<band>_k<slot>", the GLONASS per-slot inter-frequency bias.
-    };
-
-    /**
-     * @brief The name of a form, appended to the kind in the table ("rx_code_bias.ifb").
-     * @param f The form.
-     * @return "" for None; "isb", "if", "nl", "wl", "dcb", "ifb", "isc" or "slot".
-     */
-    const char* paramFormName(ParamForm f);
-
-    /**
-     * @brief One line of the table: an instance class.
-     *
-     * The fields a class carries are fixed by its (kind, form); every other field keeps its
-     * default.  "phase" and "code" name how the signal is rendered (L1C, C1C).
-     *
-     * | kind            | form            | sys | signal    | signal_b  | band | band_b |
-     * |-----------------|-----------------|-----|-----------|-----------|------|--------|
-     * | sat_clock       | none            |  x  |           |           |      |        |
-     * | sat_phase_bias  | none            |  x  | phase     |           |      |        |
-     * | sat_code_bias   | none            |  x  | code      |           |      |        |
-     * | ambiguity       | none            |  x  | phase     |           |      |        |
-     * | ambiguity       | if              |  x  | phase (1) | phase (2) |      |        |
-     * | ambiguity       | nl              |  x  |           |           |  x   |        |
-     * | ambiguity       | wl              |  x  |           |           |  x   |   x    |
-     * | zwd             | none            |     |           |           |      |        |
-     * | slant_iono      | none            |  x  |           |           |      |        |
-     * | rx_clock        | none            |     |           |           |      |        |
-     * | rx_clock        | isb             |  x  |           |           |      |        |
-     * | rx_phase_bias   | none            |  x  | phase     |           |      |        |
-     * | rx_code_bias    | dcb             | (x) |           |           |      |        |
-     * | rx_code_bias    | ifb             | (x) |           |           |  x   |        |
-     * | rx_code_bias    | isc             |  x  | code      |           |      |        |
-     * | rx_code_bias    | slot            | (x) |           |           |  x   |        |
-     * | phase_colour    | none            |  x  |           |           |      |        |
-     * | rx_position     | none            |     |           |           |      |        |
-     *
-     * (x): the receiver code-bias forms without a signal keep their class when the system
-     * name in the key is not a known constellation (@c System::Unknown); see
-     * @ref classifyStateColumn.  A band is read from the key's RINEX digit through
-     * @ref bandOfDigit (BeiDou digit '7' reads as B2I).  @c vtec_sh is never a station
-     * column.
-     */
-    struct ParamClass {
-        NetworkParamKind kind{NetworkParamKind::SatClock};  ///< Registry kind.
-        ParamForm        form{ParamForm::None};             ///< Form within the kind.
-        System           sys{System::Unknown};              ///< Constellation.
-        SignalId         signal{};                          ///< Signal (the first member of an ionosphere-free pair).
-        SignalId         signal_b{};                        ///< Second member of an ionosphere-free pair.
-        FrequencyBand    band{FrequencyBand::Unknown};      ///< Band (receiver IFB, slot IFB, narrow lane, first band of a wide lane).
-        FrequencyBand    band_b{FrequencyBand::Unknown};    ///< Second band of a wide lane.
-    };
-
-    /**
-     * @brief Order of two classes: kind, form, constellation (enum order; none first),
-     *        bands, signals.  The table's line order.
-     * @param a First class.
-     * @param b Second class.
-     * @return True when @p a orders before @p b.
-     */
-    bool operator<(const ParamClass& a, const ParamClass& b);
-
-    /**
      * @brief The human label of a class, e.g. "receiver IFB, GPS L5".
      * @param c The class.
      * @return The label.
      */
     std::string paramClassLabel(const ParamClass& c);
-
-    /**
-     * @brief The identity of one parameter instance: its class plus the subject fields
-     *        that a table line sums over.
-     *
-     * @ref sat is set for the kinds keyed by satellite (sat_clock, sat_phase_bias,
-     * sat_code_bias, ambiguity, slant_iono, phase_colour); @ref glo_slot for form
-     * @c GloSlotIfb only; @ref station for every instance (by
-     * @ref recordStationParams).  The class is a member, not a copy: the line an
-     * instance counts on is @c id.cls.
-     */
-    struct ParamInstanceId {
-        ParamClass cls{};        ///< The class (the table line).
-        SatId      sat{};        ///< The satellite (satellite-keyed kinds).
-        int        glo_slot{0};  ///< The GLONASS FDMA slot (form GloSlotIfb).
-        StationId  station{};    ///< The station.
-    };
 
     // =======================================================================
     // The station's state manager, listed and classified

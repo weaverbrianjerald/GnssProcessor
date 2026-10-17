@@ -351,6 +351,7 @@ add_library(gnss_core STATIC
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
     src/core/common/GnssIdentity.cpp
+    src/core/common/ParamRef.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
@@ -637,6 +638,7 @@ add_executable(gnss_tests
     tests/test_windup_restart_targets.cpp
     tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
+    tests/test_param_ref.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp
