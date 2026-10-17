@@ -12,7 +12,7 @@
 - **hashes / run dirs:** base main `4318fe3`, branch `mpg/seasonal` (code `4b4313a`); exe `gnss_processor_seasonal.exe` `ed32e9be281843c6`, control exe `gnss_processor_seasonal_ctl.exe` `ec71c45fae3052be` (main `4318fe3`); unit gates `tests/test_station_info_seasonal.cpp` (suite `SifSeasonalTermTest`) and `tools/sif_propagate/test_sif_propagate.py` section 10; smoke runs under `D:/GnssProcessorSupport/gates/seasonal/`; identity arms `D:/GnssProcessorSupport/runs_nom/_rap_seasonal_{ctl,new}_{f,s}`, gate output `D:/GnssProcessorSupport/gates/seasonal/chk/`
 - **gates (frozen at pre-registration):** section 6
 
-**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? The old rule summed the blocks covering the epoch, so a station whose last segment had closed kept its linear extrapolation and lost the seasonal term at once (a step of up to 13 mm in the two bundled SIFs, 245 of 3,079 stations at the golden epoch). The rule is now M-PAGES's, with the diagnostics, warnings, a Python twin and the pyviz port moved in step. Covered epochs are unchanged to the bit. The unit gates pass, and the golden identity check passed on 2026-10-17: field and sim golden 2 h arms on the candidate and on a main `4318fe3` control are identical in every product, trace, log line and manifest record, as expected since neither golden evaluates the function. An independent recomputation from the raw SIFs reproduces the 8-station table. The merge is owed.
+**Outcome.** Question: should the seasonal coordinate term follow the linear term past the end of its block window, as M-PAGES v1.2 does? The old sum over covering blocks dropped the seasonal term to zero while the linear term extrapolated, a step of up to 13 mm. The rule is now M-PAGES's: covered epochs are bit-identical and 8 field-roster stations gain 0.4 to 6.4 mm. Verdict: the unit gates and the same-build golden identity check (field and sim, 2 h arms) passed, as no golden evaluates the function (section 8). Standing: merge owed ([OPEN_ITEMS](../status/OPEN_ITEMS.md)).
 
 ## 1. The defect
 
@@ -235,3 +235,12 @@ the 246.
 
 Open after this check: the merge. A code comment in the unit suite ("named by the card") names a
 card, against the comment rule; it is cosmetic.
+
+## 9. Review fixes of 2026-10-17
+
+Two review items from the check of section 8 are closed. The code comment in
+`tests/test_station_info_seasonal.cpp` that named a card now reads "The two largest offsets:
+CHUR00CAN 6.4 mm, URUM00CHN 2.8 mm.", so the last paragraph of section 8 no longer applies to the
+tree. The Outcome paragraph of this card is trimmed to question, decisive result, verdict and
+standing; the figures it carried are in sections 1, 3 and 8. The comment change touches no
+executable line, so the identity result of section 8 stands without a re-run.

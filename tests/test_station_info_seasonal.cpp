@@ -539,7 +539,7 @@ TEST_F(SifSeasonalTermTest, EightRosterStationsGainTheirSeasonalTermAtTheGoldenE
         EXPECT_LT((got - expect).norm(), 5e-9) << got.transpose() << " vs " << expect.transpose();
         EXPECT_GT(got.norm(), 4.0e-4);   // the smallest of the eight is 0.44 mm
     }
-    // The largest two named by the card: CHUR00CAN 6.4 mm, URUM00CHN 2.8 mm.
+    // The two largest offsets: CHUR00CAN 6.4 mm, URUM00CHN 2.8 mm.
     const Eigen::Vector3d chur = seasonalTerm(*real()->find("CHUR00CAN"), kGoldenEpoch);
     const Eigen::Vector3d urum = seasonalTerm(*real()->find("URUM00CHN"), kGoldenEpoch);
     EXPECT_NEAR(chur.norm(), 6.447e-3, 5e-6);
