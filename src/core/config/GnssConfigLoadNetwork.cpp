@@ -1704,8 +1704,9 @@ namespace GnssProcessor {
                           "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
                           "Reaches the shared satellite PHASE + CODE bias columns "
                           "directly; composes EXACTLY with the post-reduce invariant-carry DD "
-                          "fold.  FLOAT rows only — no integer fixing (increment 2, "
-                          "unbuilt).  Rows are skipped at the clock-datum station "
+                          "fold.  The rows are FLOAT; integer decisions come only from "
+                          "network.sd_ewl.fix_enable (increments 2a and 2b; the zero-q hold, "
+                          "2c, is not built).  Rows are skipped at the clock-datum station "
                           "(no MW detector there) and wherever an arc is immature or "
                           "mixed-BIA-frame; watch the run-end counters.",
                           se.min_arc_epochs, se.sigma_floor_m,
@@ -2554,8 +2555,9 @@ namespace GnssProcessor {
                       "contract carries discscope= so checkContract names the divergence.");
         }
         // Emit-side phase-bias hold.  Emit-side only (no estimate, no datum,
-        // no row of the normal equations), but it changes the emitted value, so it is
-        // fingerprinted and travels in the S contract as pbhold=.
+        // no row of the normal equations), but it changes the emitted value, so it travels
+        // in the S contract as pbhold=.  It is not in the warm-resume fingerprint
+        // (SnapshotFingerprint.cpp).
         network_config_.emit_pb_hold =
             jval<bool>(json, "network.emit_pb_hold", "emit_pb_hold", false);
         network_config_.emit_pb_hold_max_gap_s =
@@ -9774,16 +9776,19 @@ namespace GnssProcessor {
             // Inert warnings (spec D7): the invariant carry subsumes the eq34
             // frame-continuity hygiene (the datum targets are plain 0 and continuity lives
             // in the carried DDs), so pin_round / carry_shift / rpb_q are gated off at their
-            // use sites when the carry is armed.
-            if (network_phase_datum_eq34_pin_round_)
-                log->warn("Network: network.phase_datum_eq34_pin_round is INERT under "
-                          "carry_invariant (per-epoch datum targets are 0; DD continuity is the carry).");
-            if (network_phase_datum_eq34_carry_shift_)
-                log->warn("Network: network.phase_datum_eq34_carry_shift is INERT under "
-                          "carry_invariant (no carry S-transform — the datum is re-realized freely).");
-            if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
-                log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
-                          "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
+            // use sites when the carry is armed.  Only then are the knobs inert: on the float
+            // vehicle (no carry_invariant) all three are live, so nothing is printed.
+            if (network_carry_invariant_) {
+                if (network_phase_datum_eq34_pin_round_)
+                    log->warn("Network: network.phase_datum_eq34_pin_round is INERT under "
+                              "carry_invariant (per-epoch datum targets are 0; DD continuity is the carry).");
+                if (network_phase_datum_eq34_carry_shift_)
+                    log->warn("Network: network.phase_datum_eq34_carry_shift is INERT under "
+                              "carry_invariant (no carry S-transform — the datum is re-realized freely).");
+                if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
+                    log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
+                              "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
+            }
         } else if (network_phase_datum_prioritized_) {
             log->info("Network producer: prioritized phase-bias anchor ON — the per-(sat,signal) "
                       "phase-bias gauge is pinned at the highest-coverage receiver tracking each "
