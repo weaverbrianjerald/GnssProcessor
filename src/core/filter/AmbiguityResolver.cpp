@@ -731,6 +731,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
             if (pairs[k].state_idx_i   >= 0 && pairs[k].state_idx_i   < na) H(a, pairs[k].state_idx_i)   = +1.0;
             if (pairs[k].state_idx_ref >= 0 && pairs[k].state_idx_ref < na) H(a, pairs[k].state_idx_ref) = -1.0;
             v(a) = afix_m - y_dd(k);
+            result.fixed_dd_rows.push_back({ pairs[k].state_idx_i, pairs[k].state_idx_ref });
             if (log->should_log(spdlog::level::debug)) {
                 log->debug("  [PAR] DD {}-{} {}: float={:.3f} cyc fixed={} cyc diff={:+.4f} cyc (λ={:.4f} m)",
                            pairs[k].sat_i, pairs[k].sat_ref, pairs[k].signal,
@@ -802,6 +803,7 @@ AmbiguityResolution AmbiguityResolver::resolve(
         if (pairs[k].state_idx_i   >= 0 && pairs[k].state_idx_i   < na) H(k, pairs[k].state_idx_i)   = +1.0;
         if (pairs[k].state_idx_ref >= 0 && pairs[k].state_idx_ref < na) H(k, pairs[k].state_idx_ref) = -1.0;
         v(k) = afix(k) - y_dd(k);
+        result.fixed_dd_rows.push_back({ pairs[k].state_idx_i, pairs[k].state_idx_ref });
     }
 
     Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(nb, nb) * config_.hold_variance;
@@ -1613,6 +1615,8 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
             if (p2.state_idx_i   >= 0 && p2.state_idx_i   < nx) H(2 * a + 1, p2.state_idx_i)   = +1.0;
             if (p2.state_idx_ref >= 0 && p2.state_idx_ref < nx) H(2 * a + 1, p2.state_idx_ref) = -1.0;
             v(2 * a + 1) = dd2 - (x(p2.state_idx_i) - x(p2.state_idx_ref));
+            result.fixed_dd_rows.push_back({ p1.state_idx_i, p1.state_idx_ref });
+            result.fixed_dd_rows.push_back({ p2.state_idx_i, p2.state_idx_ref });
             if (log->should_log(spdlog::level::debug)) {
                 log->debug("  [PAR] NL pair {}-{} {}/{}: N_1_fixed={} dd_wl={}, DD1={:.3f}m DD2={:.3f}m",
                            p1.sat_i, p1.sat_ref, p1.signal, p2.signal,
@@ -1712,6 +1716,8 @@ AmbiguityResolution AmbiguityResolver::resolveWlConstrained(
         if (p2.state_idx_i   >= 0 && p2.state_idx_i   < nx) H(2 * k + 1, p2.state_idx_i)   = +1.0;
         if (p2.state_idx_ref >= 0 && p2.state_idx_ref < nx) H(2 * k + 1, p2.state_idx_ref) = -1.0;
         v(2 * k + 1) = afix_orig(nlc.dd_idx_2) - (x(p2.state_idx_i) - x(p2.state_idx_ref));
+        result.fixed_dd_rows.push_back({ p1.state_idx_i, p1.state_idx_ref });
+        result.fixed_dd_rows.push_back({ p2.state_idx_i, p2.state_idx_ref });
     }
 
     Eigen::MatrixXd R   = Eigen::MatrixXd::Identity(n_fixed_dd, n_fixed_dd) * config_.hold_variance;
@@ -2792,10 +2798,18 @@ void AmbiguityResolver::holdAmbiguities(StateManager& state_manager,
         return;
     }
 
-    auto pairs = buildDdPairs(state_manager, {});
-    if (pairs.empty()) return;
+    // The held set is the rows the fix constrained.  Rebuilding the DD pairs here
+    // from the state alone has no observations, so every satellite would get
+    // elevation 0 and the AR elevation mask would drop each pair; the fix itself
+    // already holds the epoch's candidate set, pivots and mask.  A fix that
+    // constrained no single-signal DD (WL-only) leaves the rows empty.
+    const auto& rows = resolution.fixed_dd_rows;
+    if (rows.empty()) {
+        log->debug("Fix-and-hold skipped: the accepted fix constrained no single-signal DD ambiguity");
+        return;
+    }
 
-    const int nb = static_cast<int>(pairs.size());
+    const int nb = static_cast<int>(rows.size());
     const int nx = static_cast<int>(state_manager.getStateSize());
     Eigen::VectorXd x = state_manager.getStateVector();
     Eigen::MatrixXd P = state_manager.getCovariance();
@@ -2807,9 +2821,10 @@ void AmbiguityResolver::holdAmbiguities(StateManager& state_manager,
     int nv = 0;
 
     for (int k = 0; k < nb; ++k) {
-        int idx_i = pairs[k].state_idx_i;
-        int idx_r = pairs[k].state_idx_ref;
+        int idx_i = rows[k].state_idx_i;
+        int idx_r = rows[k].state_idx_ref;
 
+        if (idx_i < 0 || idx_r < 0 || idx_i >= nx || idx_r >= nx) continue;
         if (idx_i >= resolution.fixed_state.size() ||
             idx_r >= resolution.fixed_state.size()) continue;
 
