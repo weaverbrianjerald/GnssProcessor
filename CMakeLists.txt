@@ -631,6 +631,7 @@ add_executable(gnss_tests
     tests/test_station_marker_to_arp.cpp
     tests/test_sif_apriori_arp.cpp
     tests/test_log_manager_init.cpp
+    tests/test_product_cache_load_failure.cpp
     tests/test_windup_census_config.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp
@@ -639,6 +640,9 @@ add_executable(gnss_tests
     tests/network/test_network_param_inventory.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp
+    tests/network/test_service_mode_clock_refusals.cpp
+    tests/network/test_loader_message_conditions.cpp
+    tests/network/test_run_manifest_toggles.cpp
     tests/network/test_network_knobs_lane_emit.cpp
     tests/network/test_network_knobs_epoch_driver.cpp
     tests/network/test_network_knobs_station_assembly.cpp

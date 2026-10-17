@@ -58,6 +58,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
+#include "network/qc/PrefitCensus.hpp"   // dataClassBit
 
 // The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
@@ -77,7 +78,8 @@ namespace GnssProcessor {
 
 StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
                                         const StationAssembly& R,
-                                        int min_pool_rows) {
+                                        int min_pool_rows,
+                                        unsigned class_mask) {
     StationPrefitCensus c;
     const Eigen::Index m = std::min<Eigen::Index>(
         R.y.size(), static_cast<Eigen::Index>(cls.size()));
@@ -105,6 +107,7 @@ StationPrefitCensus stationPrefitCensus(const std::vector<NetRowClass>& cls,
     for (Eigen::Index row = 0; row < m; ++row) {
         const NetRowClass k = cls[static_cast<std::size_t>(row)];
         if (!isDataRowClass(k)) continue;                 // pins / coupling excluded
+        if ((class_mask & dataClassBit(k)) == 0) continue;   // class outside the mask: no s
         const int d = dataClassIndex(k);
         const bool centred = (d >= 0 && d < 3);
         if (centred && !pool_ok[d]) continue;             // pool skipped this epoch
@@ -359,7 +362,12 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             cls[u] = classifyRow(R, row, &sat[u]);
             if (cls[u] == NetRowClass::IonoShRow) sat[u].clear();
         }
-        const StationPrefitCensus pc = stationPrefitCensus(cls, R);
+        // The statistic covers the classes the prefit census lets raise events
+        // (network.prefit_event_classes, phase excluded by default): a phase row's prefit
+        // innovation is arc-specific, so its station median is no common mode and it
+        // would otherwise supply nearly every cross-flag.
+        const StationPrefitCensus pc =
+            stationPrefitCensus(cls, R, kCensusMinPoolRows, ctx.knobs.pc_event_mask);
         counters.redun_pool_skips += pc.n_pool_skipped;
 
         // Escalation latch: this station's largest centred deviation decides
@@ -416,6 +424,10 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             const double s = pc.s[static_cast<std::size_t>(row)];
             if (!(r(row) < eps)) continue;
             ++sta_unchk;                     // uncheckable: counted, never acted on
+            if ((ctx.knobs.pc_event_mask & dataClassBit(k)) == 0) {
+                ++counters.redun_unchk_class_skipped;   // outside the prefit census's event classes
+                continue;
+            }
             if (!std::isfinite(s)) continue;
             if (s > ep_unchk_max_s) ep_unchk_max_s = s;
             // ---- the cross-flag -------------------------------------------
@@ -675,12 +687,17 @@ int networkRedundancyCensusRunEnd(const NetworkRunEndView& v) {
     // Prefer-fallback control.  Uncheckable rows that stay quiet are the
     // single-frequency risers the prefer-fallback directive keeps; naming the worst
     // of them makes "counted, and none was hot" a claim a reader can check.
-    if (q.redun_uncheckable > q.redun_uncheckable_hot)
+    if (q.redun_unchk_class_skipped > 0)
+        log->info("Network (redundancy census): {} uncheckable row(s) are of a class "
+                  "outside network.prefit_event_classes ({}) and were counted, never "
+                  "cross-flagged.",
+                  q.redun_unchk_class_skipped, nc.prefit_event_classes);
+    if (q.redun_uncheckable > q.redun_uncheckable_hot + q.redun_unchk_class_skipped)
         log->info("Network (redundancy census): {} uncheckable row(s) stayed BELOW "
                   "the cross-flag and were counted, never evented and never "
                   "weight-touched (prefer-fallback directive).  Worst of them: {} at "
                   "s = {:.4e}.",
-                  q.redun_uncheckable - q.redun_uncheckable_hot,
+                  q.redun_uncheckable - q.redun_uncheckable_hot - q.redun_unchk_class_skipped,
                   q.redun_max_cold_id.empty() ? std::string("(none finite)")
                                               : q.redun_max_cold_id,
                   q.redun_max_cold_s);

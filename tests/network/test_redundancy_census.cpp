@@ -48,6 +48,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/NormalEquations.hpp"
 #include "network/qc/RedundancyCensus.hpp"
+#include "network/qc/PrefitCensus.hpp"   // dataClassBit
 #include "network/assembly/RowClassify.hpp"
 #include "network/driver/RunTypes.hpp"
 
@@ -465,6 +466,39 @@ TEST(RedundancyCensusTest, CensusSkipsThinPoolsAndExcludesPinsAndCoupling) {
     const StationPrefitCensus c3 = stationPrefitCensus(cls3, R3);
     EXPECT_NEAR(c3.s[0], 100.0, 1e-9);   // |50| * 2, no median subtracted
     EXPECT_EQ(c3.max_row, 0);
+}
+
+TEST(RedundancyCensusTest, CensusClassMaskKeepsMaskedClassesOutOfTheStatistic) {
+    // Four code rows and four phase rows.  The phase pool carries a parked cell that
+    // dwarfs the code one, as a freshly seeded arc does at a station whose receiver
+    // clock is not yet absorbed.  The prefit census keeps phase out of its event
+    // classes by default; the cross-flag passes that mask so it does the same.
+    constexpr Eigen::Index m = 8;
+    Eigen::VectorXd y(m);
+    y << 0.0, 0.1, 0.2, 50.0,  1.0, 1.1, 1.2, 9.0e5;
+    const Eigen::VectorXd w = Eigen::VectorXd::Constant(m, 1.0);
+    StationAssembly R = makeAssembly(Eigen::MatrixXd::Zero(m, 1),
+                                     Eigen::MatrixXd::Zero(m, 1), w, y);
+    std::vector<NetRowClass> cls(static_cast<std::size_t>(m), NetRowClass::ObsCode);
+    for (Eigen::Index i = 4; i < m; ++i) cls[static_cast<std::size_t>(i)] = NetRowClass::ObsPhase;
+
+    // Default mask (every class): the phase cell is the maximum.
+    const StationPrefitCensus all = stationPrefitCensus(cls, R);
+    EXPECT_EQ(all.max_row, 7);
+    EXPECT_EQ(all.n_data_rows, static_cast<int>(m));
+
+    // Code only: the phase rows carry no s, and the code cell is the maximum.
+    const StationPrefitCensus c = stationPrefitCensus(
+        cls, R, kCensusMinPoolRows, dataClassBit(NetRowClass::ObsCode));
+    for (Eigen::Index i = 4; i < m; ++i)
+        EXPECT_TRUE(std::isnan(c.s[static_cast<std::size_t>(i)])) << "row " << i;
+    EXPECT_EQ(c.max_row, 3);
+    EXPECT_NEAR(c.max_s, 49.8, 1e-9);        // |50 - median(0, 0.1, 0.2, 50) = 0.2|
+    EXPECT_EQ(c.n_data_rows, 4);
+    // The pools are built from every data row either way.
+    EXPECT_EQ(c.n[0], 4);
+    EXPECT_EQ(c.n[1], 4);
+    EXPECT_EQ(c.n_pool_skipped, 0);
 }
 
 // ===========================================================================

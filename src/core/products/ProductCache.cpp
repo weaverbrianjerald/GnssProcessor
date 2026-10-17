@@ -262,14 +262,17 @@ bool ProductCache::loadProducts(ProductParser& parser, LogManager& log_manager) 
         log_manager.getLogger("product_cache")->error(
             "Failed to load product cache: {}", e.what()
         );
-        clearCache();
+        clearCacheLocked_();   // load_mutex_ is already held by this call
         return false;
     }
 }
 
 void ProductCache::clearCache() {
     std::lock_guard<std::mutex> lock(load_mutex_);
+    clearCacheLocked_();
+}
 
+void ProductCache::clearCacheLocked_() {
     // Release the shared product copies (rebind to empty so getX() stays safe).
     // A model component still holding a getXShared() handle keeps its copy alive
     // until it releases the handle. clock_ref_signals_ is not cleared here.

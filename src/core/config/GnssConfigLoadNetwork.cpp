@@ -1704,8 +1704,9 @@ namespace GnssProcessor {
                           "sigma_floor={:.3f} m, max_abs_z={}, max_rows/sta={}).  "
                           "Reaches the shared satellite PHASE + CODE bias columns "
                           "directly; composes EXACTLY with the post-reduce invariant-carry DD "
-                          "fold.  FLOAT rows only — no integer fixing (increment 2, "
-                          "unbuilt).  Rows are skipped at the clock-datum station "
+                          "fold.  The rows are FLOAT; integer decisions come only from "
+                          "network.sd_ewl.fix_enable (increments 2a and 2b; the zero-q hold, "
+                          "2c, is not built).  Rows are skipped at the clock-datum station "
                           "(no MW detector there) and wherever an arc is immature or "
                           "mixed-BIA-frame; watch the run-end counters.",
                           se.min_arc_epochs, se.sigma_floor_m,
@@ -2554,8 +2555,9 @@ namespace GnssProcessor {
                       "contract carries discscope= so checkContract names the divergence.");
         }
         // Emit-side phase-bias hold.  Emit-side only (no estimate, no datum,
-        // no row of the normal equations), but it changes the emitted value, so it is
-        // fingerprinted and travels in the S contract as pbhold=.
+        // no row of the normal equations), but it changes the emitted value, so it travels
+        // in the S contract as pbhold=.  It is not in the warm-resume fingerprint
+        // (SnapshotFingerprint.cpp).
         network_config_.emit_pb_hold =
             jval<bool>(json, "network.emit_pb_hold", "emit_pb_hold", false);
         network_config_.emit_pb_hold_max_gap_s =
@@ -4327,7 +4329,9 @@ namespace GnssProcessor {
         // The carried clocks' process noise in the pivot frame.  The pairwise half
         // lives in the dense fold, so the dense carry is required; the anchor-free clock
         // datums have no pivot and the clock model carries no clock in the border, so both
-        // are refused.  Those keys load in later sections and are read raw here.
+        // are refused.  The clock datums load in later sections and are read raw here; the
+        // clock model is checked once the service profile has settled it, in
+        // applyNetworkServiceProfile_, where network_clock_model_ is the effective value.
         network_clock_pivot_frame_q_ =
             jval<bool>(json, "network.clock_pivot_frame_q", "clock_pivot_frame_q", false);
         if (network_clock_pivot_frame_q_) {
@@ -4344,10 +4348,6 @@ namespace GnssProcessor {
                     "network.clock_pivot_frame_q refuses network.clock_datum_sum_to_zero and "
                     "network.clock_datum_broadcast_anchored (the term is the pinned "
                     "pivot's walk; an anchor-free clock datum has no pivot).");
-            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
-                throw std::runtime_error(
-                    "network.clock_pivot_frame_q refuses network.clock_model (the clock "
-                    "model carries no satellite clock in the shared border).");
             log->info("Network producer: network.clock_pivot_frame_q = true — the "
                       "carried satellite clocks take their process noise in the pivot frame: "
                       "each folding clock other than the pinned pivot adds the pivot's walk "
@@ -4378,7 +4378,8 @@ namespace GnssProcessor {
         // walk enters the border prior once.  It is a mode of the exact rule over the dense
         // block, so both must be armed.  The clock model carries no clock in the border, and
         // the gauge-free fold's direction would have to span the clones; both are refused.
-        // The two refused keys are read raw here: their own sections load later.
+        // The gauge-free key is read raw here (its section loads later); the clock model is
+        // checked once the service profile has settled it, in applyNetworkServiceProfile_.
         network_carry_coupling_clock_clone_ =
             jval<bool>(json, "network.carry_coupling_clock_clone",
                        "carry_coupling_clock_clone", false);
@@ -4393,11 +4394,6 @@ namespace GnssProcessor {
                     "network.carry_coupling_clock_clone requires network.shared_carry_full_cov "
                     "= true (the clones stand in for the clocks of the stashed dense "
                     "border block).");
-            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
-                throw std::runtime_error(
-                    "network.carry_coupling_clock_clone refuses network.clock_model ("
-                    "the clock model carries no satellite clock in the dense border, so there is "
-                    "nothing to clone).");
             if (jval<bool>(json, "network.clock_anchor_gauge_free",
                            "network_clock_anchor_gauge_free", false))
                 throw std::runtime_error(
@@ -9821,16 +9817,19 @@ namespace GnssProcessor {
             // Inert warnings (spec D7): the invariant carry subsumes the eq34
             // frame-continuity hygiene (the datum targets are plain 0 and continuity lives
             // in the carried DDs), so pin_round / carry_shift / rpb_q are gated off at their
-            // use sites when the carry is armed.
-            if (network_phase_datum_eq34_pin_round_)
-                log->warn("Network: network.phase_datum_eq34_pin_round is INERT under "
-                          "carry_invariant (per-epoch datum targets are 0; DD continuity is the carry).");
-            if (network_phase_datum_eq34_carry_shift_)
-                log->warn("Network: network.phase_datum_eq34_carry_shift is INERT under "
-                          "carry_invariant (no carry S-transform — the datum is re-realized freely).");
-            if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
-                log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
-                          "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
+            // use sites when the carry is armed.  Only then are the knobs inert: on the float
+            // vehicle (no carry_invariant) all three are live, so nothing is printed.
+            if (network_carry_invariant_) {
+                if (network_phase_datum_eq34_pin_round_)
+                    log->warn("Network: network.phase_datum_eq34_pin_round is INERT under "
+                              "carry_invariant (per-epoch datum targets are 0; DD continuity is the carry).");
+                if (network_phase_datum_eq34_carry_shift_)
+                    log->warn("Network: network.phase_datum_eq34_carry_shift is INERT under "
+                              "carry_invariant (no carry S-transform — the datum is re-realized freely).");
+                if (network_phase_datum_eq34_rpb_q_m2s_ > 0.0)
+                    log->warn("Network: network.phase_datum_eq34_rpb_q_m2s is INERT under carry_invariant "
+                              "(the RPB re-estimates fresh; the DD carry is the phase time-link).");
+            }
         } else if (network_phase_datum_prioritized_) {
             log->info("Network producer: prioritized phase-bias anchor ON — the per-(sat,signal) "
                       "phase-bias gauge is pinned at the highest-coverage receiver tracking each "
@@ -10501,6 +10500,23 @@ namespace GnssProcessor {
                        "so).  The oscillator is a measured NO-GO on this lineage (Hadamard p ≈ 1 "
                        "⇒ white-FM, RWFM undetectable); disarm network.clock_model.",
                        network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
+        }
+        // (d) The clock_model refusals of clock_pivot_frame_q and carry_coupling_clock_clone.
+        //     Their parse sites load before the arming above, so a raw read of the key there
+        //     missed the oscillator service_mode force-arms.  network_clock_model_ is the
+        //     effective value here, so both refusals see what the run would execute.
+        if (network_clock_model_) {
+            const std::string armed_by =
+                network_service_mode_ ? "force-armed by network.service_mode; " : "";
+            if (network_clock_pivot_frame_q_)
+                throw std::runtime_error(
+                    "network.clock_pivot_frame_q refuses network.clock_model (" + armed_by +
+                    "the clock model carries no satellite clock in the shared border).");
+            if (network_carry_coupling_clock_clone_)
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone refuses network.clock_model (" + armed_by +
+                    "the clock model carries no satellite clock in the dense border, so there is "
+                    "nothing to clone).");
         }
         if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
             log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "
