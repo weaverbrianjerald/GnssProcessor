@@ -767,8 +767,8 @@ namespace GnssProcessor {
                     const std::string amb_key = obs.satellite + "_" + ref_type;
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
-                        !phaseBiasCoveredForAr(obs.satellite, ref_type, obs.time);
-                    const bool missing_atx = !ifCombHasFullRxAtx(ref_type, obs.system);
+                        !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
+                    const bool missing_atx = !ifCombHasFullRxAtx(rowProducts(), ref_type, obs.system);
                     if (missing_bia || missing_atx) {
                         state_manager_.markAmbiguityUnresolvable(amb_key);
                         log_manager_.getLogger("measurement_model")->trace(
@@ -786,7 +786,7 @@ namespace GnssProcessor {
                     const std::string amb_key = obs.satellite + "_" + ref_type;
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
-                        !phaseBiasCoveredForAr(obs.satellite, ref_type, obs.time);
+                        !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
                     if (missing_bia) {
                         state_manager_.markAmbiguityUnresolvable(amb_key);
                         log_manager_.getLogger("measurement_model")->trace(
@@ -1033,8 +1033,8 @@ namespace GnssProcessor {
                     // correction.  The strict prune below drops the state on the
                     // epoch SSR coverage arrives mid-arc; ensureRequiredStates
                     // re-creates it if coverage disappears.
-                    if (biaCoversSignal(obs.satellite, ref_type)
-                        || ssrCoversCodeSignal(obs.satellite, ref_type, obs.time)) continue;
+                    if (biaCoversSignal(rowProducts(), obs.satellite, ref_type)
+                        || ssrCoversCodeSignal(rowProducts(), obs.satellite, ref_type, obs.time)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
@@ -1049,7 +1049,7 @@ namespace GnssProcessor {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     if (ref_type.find('_') == std::string::npos) continue;
-                    if (ifCombHasFullBia(obs.satellite, ref_type)) continue;
+                    if (ifCombHasFullBia(rowProducts(), obs.satellite, ref_type)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);

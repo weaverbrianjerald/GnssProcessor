@@ -1,9 +1,11 @@
 /**
  * @file MeasurementModelRow.cpp
- * @brief MeasurementModel's row: whether an observation enters the update
- *        (isUsableMeasurement), its Jacobian row and predicted observable
- *        (buildJacobianRow), and the product coverage checks they and the
- *        pre-pass use.
+ * @brief The row of the single-receiver model: whether an observation enters the update
+ *        (isUsableMeasurement), the product coverage checks, and the Jacobian row and
+ *        predicted observable (MeasurementModel::buildJacobianRow).
+ *
+ * The usability rule and the coverage checks are free functions (measurement/RowRules.hpp):
+ * they read configuration, the model's product tables and the SSR store, never a state.
  *
  * buildJacobianRow is the observation equation of the single-receiver model:
  * the a-priori model value plus one term per estimated or applied quantity
@@ -15,7 +17,9 @@
  */
 
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/RowRules.hpp"
 #include "common/PppTypes.hpp"
+#include "common/PppUtils.hpp"
 #include "common/SignalBand.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "filter/StateKeySchema.hpp"
@@ -27,20 +31,19 @@ namespace GnssProcessor {
     // Product coverage checks
     // ===================================================================
 
-    bool MeasurementModel::ifCombHasFullBia(const std::string& satellite,
-                                             const std::string& if_key) const {
+    bool ifCombHasFullBia(const RowProducts& products, const std::string& satellite,
+                          const std::string& if_key) {
         const size_t us = if_key.find('_');
         if (us == std::string::npos || us == 0 || us + 1 >= if_key.size())
             return true; // not an IF key: treated as covered
         const std::string sig1 = if_key.substr(0, us);
         const std::string sig2 = if_key.substr(us + 1);
-        return ppp_model_.hasBiasEntry(satellite, sig1)
-            && ppp_model_.hasBiasEntry(satellite, sig2);
+        return products.ppp_model.hasBiasEntry(satellite, sig1)
+            && products.ppp_model.hasBiasEntry(satellite, sig2);
     }
 
-    bool MeasurementModel::ssrCoversCodeSignal(const std::string& satellite,
-                                               const std::string& signal,
-                                               const GnssTime& obs_time) const {
+    bool ssrCoversCodeSignal(const RowProducts& products, const std::string& satellite,
+                             const std::string& signal, const GnssTime& obs_time) {
         // Matches the ssr_bias_term gate in buildJacobianRow.  The network producer
         // estimates satellite biases as states (importing them would make those
         // states unobservable), so it never imports SSR code biases and this
@@ -48,51 +51,52 @@ namespace GnssProcessor {
         // live store: true iff a non-trivial ssr_bias_term will be applied to this
         // (sat, raw signal) row, in which case an estimated sat-bias state for the
         // same row would be redundant.  With an empty store (post-processing), false.
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
+        const GnssConfig& config = products.config;
+        if (config.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
         // With the staleness gate on, coverage uses the same limit as the apply gate
         // (max age × stale-hold factor).  Once the gate drops a bias the row is
         // uncorrected, so the sat-bias state and the no-BIA downweight apply again
         // (A5).
-        if (config_.enableSsrBiasMaxAge())
-            return ssrStore().hasCodeBias(satellite, signal, obs_time,
-                                          config_.getSsrBiasMaxAge()
-                                              * config_.getSsrBiasStaleHoldFactor());
-        return ssrStore().hasCodeBias(satellite, signal);
+        if (config.enableSsrBiasMaxAge())
+            return products.ssr.hasCodeBias(satellite, signal, obs_time,
+                                            config.getSsrBiasMaxAge()
+                                                * config.getSsrBiasStaleHoldFactor());
+        return products.ssr.hasCodeBias(satellite, signal);
     }
 
-    bool MeasurementModel::biaCoversSignal(const std::string& satellite,
-                                           const std::string& signal) const {
-        if (!ppp_model_.hasBiasEntry(satellite, signal)) return false;
-        if (!config_.getModelCorrections().bias_coverage_requires_apply) return true;
+    bool biaCoversSignal(const RowProducts& products, const std::string& satellite,
+                         const std::string& signal) {
+        if (!products.ppp_model.hasBiasEntry(satellite, signal)) return false;
+        if (!products.config.getModelCorrections().bias_coverage_requires_apply) return true;
         // Producer exemption: the network's code rows are corrected by the
         // network-estimated shared code-bias states, not by the .BIA, so its
         // coverage semantics stay legacy under either flag value.
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network) return true;
-        return config_.getModelCorrections().enable_code_phase_bias;
+        if (products.config.getProcessingMode() == ProcessingMode::PPP_RTK_Network) return true;
+        return products.config.getModelCorrections().enable_code_phase_bias;
     }
 
-    bool MeasurementModel::ssrCoversPhaseSignal(const std::string& satellite,
-                                                const std::string& signal,
-                                                const GnssTime& obs_time) const {
+    bool ssrCoversPhaseSignal(const RowProducts& products, const std::string& satellite,
+                              const std::string& signal, const GnssTime& obs_time) {
         // Phase-channel counterpart of ssrCoversCodeSignal.  The network producer
         // estimates satellite phase biases as states and never imports them, so it
         // returns false.  In every other mode this is a presence check against the
         // live store, age-gated with the same limit as the apply site, so coverage
         // matches what buildJacobianRow applies to the row.
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
+        const GnssConfig& config = products.config;
+        if (config.getProcessingMode() == ProcessingMode::PPP_RTK_Network)
             return false;
-        if (config_.enableSsrBiasMaxAge())
-            return ssrStore().getPhaseBias(satellite, signal, obs_time,
-                                           config_.getSsrBiasMaxAge()
-                                               * config_.getSsrBiasStaleHoldFactor())
+        if (config.enableSsrBiasMaxAge())
+            return products.ssr.getPhaseBias(satellite, signal, obs_time,
+                                             config.getSsrBiasMaxAge()
+                                                 * config.getSsrBiasStaleHoldFactor())
                 .has_value();
-        return ssrStore().getPhaseBias(satellite, signal).has_value();
+        return products.ssr.getPhaseBias(satellite, signal).has_value();
     }
 
-    bool MeasurementModel::phaseBiasCoveredForAr(const std::string& satellite,
-                                                 const std::string& signal,
-                                                 const GnssTime& obs_time) const {
+    bool phaseBiasCoveredForAr(const RowProducts& products, const std::string& satellite,
+                               const std::string& signal, const GnssTime& obs_time) {
+        const GnssConfig& config = products.config;
         const size_t us = signal.find('_');
         const bool is_if = (us != std::string::npos && us > 0 && us + 1 < signal.size());
         // Veto AR eligibility when the covering network phase bias declares
@@ -102,12 +106,12 @@ namespace GnssProcessor {
         // veto, and only with the toggle on, so an absent bias, a .BIA-only path and the
         // toggle off are byte-identical.  For an IF combination, both component biases
         // must be integer-grade (T3a).
-        if (config_.networkRequireSignalIntegerForAr()) {
-            const bool   gate    = config_.enableSsrBiasMaxAge();
-            const double max_age = config_.getSsrBiasMaxAge() * config_.getSsrBiasStaleHoldFactor();
+        if (config.networkRequireSignalIntegerForAr()) {
+            const bool   gate    = config.enableSsrBiasMaxAge();
+            const double max_age = config.getSsrBiasMaxAge() * config.getSsrBiasStaleHoldFactor();
             auto nonInteger = [&](const std::string& sig) -> bool {
-                auto pb = gate ? ssrStore().getPhaseBias(satellite, sig, obs_time, max_age)
-                               : ssrStore().getPhaseBias(satellite, sig);
+                auto pb = gate ? products.ssr.getPhaseBias(satellite, sig, obs_time, max_age)
+                               : products.ssr.getPhaseBias(satellite, sig);
                 return pb.has_value() && !pb->signal_integer;
             };
             if (is_if) {
@@ -117,45 +121,49 @@ namespace GnssProcessor {
                 return false;
             }
         }
-        if (!config_.getModelCorrections().bias_coverage_requires_apply) {
+        if (!config.getModelCorrections().bias_coverage_requires_apply) {
             // Legacy: raw .BIA presence, exactly the historical AR gate.
-            return is_if ? ifCombHasFullBia(satellite, signal)
-                         : ppp_model_.hasBiasEntry(satellite, signal);
+            return is_if ? ifCombHasFullBia(products, satellite, signal)
+                         : products.ppp_model.hasBiasEntry(satellite, signal);
         }
         if (is_if) {
             const std::string sig1 = signal.substr(0, us);
             const std::string sig2 = signal.substr(us + 1);
-            return (biaCoversSignal(satellite, sig1) && biaCoversSignal(satellite, sig2))
-                || (ssrCoversPhaseSignal(satellite, sig1, obs_time)
-                    && ssrCoversPhaseSignal(satellite, sig2, obs_time));
+            return (biaCoversSignal(products, satellite, sig1)
+                    && biaCoversSignal(products, satellite, sig2))
+                || (ssrCoversPhaseSignal(products, satellite, sig1, obs_time)
+                    && ssrCoversPhaseSignal(products, satellite, sig2, obs_time));
         }
-        return biaCoversSignal(satellite, signal)
-            || ssrCoversPhaseSignal(satellite, signal, obs_time);
+        return biaCoversSignal(products, satellite, signal)
+            || ssrCoversPhaseSignal(products, satellite, signal, obs_time);
     }
 
-    bool MeasurementModel::ifCombHasFullRxAtx(const std::string& if_key,
-                                               System system) const {
+    bool ifCombHasFullRxAtx(const RowProducts& products, const std::string& if_key,
+                            System system) {
         const size_t us = if_key.find('_');
         if (us == std::string::npos || us == 0 || us + 1 >= if_key.size())
             return true;
         const std::string sig1 = if_key.substr(0, us);
         const std::string sig2 = if_key.substr(us + 1);
-        return ppp_model_.hasReceiverAtxEntry(sig1, system)
-            && ppp_model_.hasReceiverAtxEntry(sig2, system);
+        return products.ppp_model.hasReceiverAtxEntry(sig1, system)
+            && products.ppp_model.hasReceiverAtxEntry(sig2, system);
     }
 
     // ===================================================================
     // Measurement filtering
     // ===================================================================
 
-    bool MeasurementModel::isUsableMeasurement(const PppObservation& obs,
+    bool isUsableMeasurement(const GnssConfig& config,
+        LogManager& log_manager,
+        const PivotSignalMap& pivot_signals,
+        const PppObservation& obs,
         const std::string& ref_type,
         const std::set<std::string>& excluded,
-        const std::string& epoch_prefix) const {
+        const std::string& epoch_prefix) {
         if (ref_type.empty()) return false;
 
-        if (obs.system == System::GLONASS && config_.enableBetweenSatelliteSd()
-            && !config_.enableGlonassBssd()) {
+        if (obs.system == System::GLONASS && config.enableBetweenSatelliteSd()
+            && !config.enableGlonassBssd()) {
             return false;
         }
 
@@ -166,21 +174,21 @@ namespace GnssProcessor {
         // optimization.  Doppler is included: under BSSD it is SD-transformed
         // alongside code/phase, which cancels the receiver clock rate and the
         // ISBR in same-system pairs.
-        if (!bssd_pivot_signals_.empty() && ref_type.size() >= 2
+        if (!pivot_signals.empty() && ref_type.size() >= 2
             && (ref_type[0] == 'C' || ref_type[0] == 'L' || ref_type[0] == 'D')) {
             const std::string cons = PppUtils::getSystemString(obs.satellite);
-            auto cit = bssd_pivot_signals_.find(cons);
-            if (cit != bssd_pivot_signals_.end()
+            auto cit = pivot_signals.find(cons);
+            if (cit != pivot_signals.end()
                 && !cit->second.count(ref_type)) return false;
         }
 
         const MeasurementType mt = classifyMeasurement(ref_type);
 
         if (mt != MeasurementType::Code && mt != MeasurementType::Phase &&
-            !(mt == MeasurementType::Doppler && config_.estimateVelocity()))
+            !(mt == MeasurementType::Doppler && config.estimateVelocity()))
             return false;
 
-        const bool is_uncombined = config_.isUncombinedEnabled();
+        const bool is_uncombined = config.isUncombinedEnabled();
         const bool has_underscore = (ref_type.find('_') != std::string::npos);
 
         if (mt == MeasurementType::Doppler) {
@@ -196,7 +204,7 @@ namespace GnssProcessor {
 
         const std::string excl_key = obs.satellite + "_" + ref_type;
         if (excluded.count(excl_key)) {
-            log_manager_.getLogger("measurement_model")->debug(
+            log_manager.getLogger("measurement_model")->debug(
                 "{}Excluding previously rejected measurement: {}", epoch_prefix, excl_key);
             return false;
         }

@@ -125,7 +125,7 @@ walks `kPppRunEndReports`, one row per report, in print order:
 The optional HTML report (`pyviz\run_report.py`) runs after the table.
 
 > **Design fact.** The base variance of each observation is set in step 5, inside
-> `PppModel`, by the stochastic model. `MeasurementModel::rowVariance()`
+> `PppModel`, by the stochastic model. `rowVariance()`
 > (`src\core\measurement\MeasurementModelVariance.cpp`) starts from it and adds terms
 > only for a PPP-RTK user of network corrections (the correction URA, clock staleness,
 > phase-bias sigma) and the optional code downweight for signals without a `.BIA`
@@ -170,8 +170,8 @@ variance). The class is split over six files in `src\core\measurement\`:
 | --- | --- |
 | `MeasurementModel.cpp` | `computeMeasurementUpdate()`: the order of the epoch's steps (first-epoch seeds, pivot handover, the state pre-pass, pivot freeze) and the row loop. |
 | `MeasurementModelStates.cpp` | The state pre-pass: `ensureRequiredStates()`, a 30-line driver over 13 members called in a fixed order (the keep sets, slant ionosphere, phase colour, the network's cold clock seed, the BSSD pivot seeds, per-band or NL/WL ambiguities, then, after the ambiguity prune, the AR eligibility marks and the receiver and satellite code biases). The order is a dependency chain. |
-| `MeasurementModelRow.cpp` | One row: `isUsableMeasurement()` and `buildJacobianRow()`, the observation equation (one term per estimated or applied quantity). |
-| `MeasurementModelVariance.cpp` | `rowVariance()`: the variance of one row, its terms in the order the banner lists. |
+| `MeasurementModelRow.cpp` | One row: `buildJacobianRow()`, the observation equation (one term per estimated or applied quantity), and the definitions of the free functions `isUsableMeasurement()` and the product coverage checks (declared in `include\measurement\RowRules.hpp`). |
+| `MeasurementModelVariance.cpp` | `rowVariance()`, a free function declared in `RowRules.hpp`: the variance of one row, its terms in the order the banner lists. |
 | `MeasurementModelDd.cpp` | The baseline double difference: `buildDdMeasurement()`, a 28-line driver over stages (`ddRunStages()`); the three stages that write filter state are named in it. |
 | `MeasurementModelNetwork.cpp` | The part only the network producer reaches. Skip. |
 

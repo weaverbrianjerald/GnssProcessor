@@ -102,7 +102,8 @@ namespace GnssProcessor {
 
             bool sat_usable = false;
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (!isUsableMeasurement(obs, ref_type, no_excl, "")) continue;
+                if (!isUsableMeasurement(config_, log_manager_, bssd_pivot_signals_, obs, ref_type,
+                                         no_excl, "")) continue;
                 if (ref_type.find('_') != std::string::npos) continue;  // raw signals only
                 sat_usable = true;
 

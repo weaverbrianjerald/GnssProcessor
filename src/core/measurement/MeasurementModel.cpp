@@ -12,9 +12,11 @@
  *    validateMeasurementUpdate, and the forwarders to PivotManager.
  *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates, one
  *    member per state category, called in a fixed order.
- *  - MeasurementModelRow.cpp: one row (isUsableMeasurement, buildJacobianRow)
- *    and the product coverage checks they use.
- *  - MeasurementModelVariance.cpp: the variance of one row (rowVariance).
+ *  - MeasurementModelRow.cpp: the row's Jacobian and predicted observable
+ *    (buildJacobianRow), and the definitions of the usability rule and the
+ *    product coverage checks (free functions, measurement/RowRules.hpp).
+ *  - MeasurementModelVariance.cpp: the definition of rowVariance, the variance
+ *    of one row (a free function, measurement/RowRules.hpp).
  *  - MeasurementModelDd.cpp: the baseline double-difference build, in stages.
  *  - MeasurementModelNetwork.cpp: the network producer's surface.
  *
@@ -238,7 +240,8 @@ namespace GnssProcessor {
         size_t num_obs = 0;
         for (const auto& obs : observations)
             for (const auto& [ref_type, observed] : obs.observed)
-                if (isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix))
+                if (isUsableMeasurement(config_, log_manager_, bssd_pivot_signals_, obs, ref_type,
+                                        excluded_measurements, epoch_prefix))
                     ++num_obs;
 
         if (num_obs == 0) {
@@ -261,7 +264,8 @@ namespace GnssProcessor {
             if (!hasValidGeometry(obs, epoch_prefix)) continue;
 
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (!isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix)) continue;
+                if (!isUsableMeasurement(config_, log_manager_, bssd_pivot_signals_, obs, ref_type,
+                                        excluded_measurements, epoch_prefix)) continue;
 
                 try {
                     Eigen::VectorXd jacobian;
@@ -270,7 +274,7 @@ namespace GnssProcessor {
                         continue;
 
                     update.innovations(row) = observed - predicted;
-                    update.R_v(row) = rowVariance(obs, ref_type);
+                    update.R_v(row) = rowVariance(rowProducts(), obs, ref_type);
 
                     update.H.row(row) = jacobian;
                     update.satellite_ids.push_back(obs.satellite);

@@ -1,7 +1,7 @@
 /**
  * @file MeasurementModelVariance.cpp
- * @brief MeasurementModel's row variance: the stochastic-model variance of one
- *        row plus the consumer's network-correction terms.
+ * @brief The variance of one row (measurement/RowRules.hpp): the stochastic-model
+ *        variance plus the consumer's network-correction terms.
  *
  * The composition, in the order rowVariance applies it:
  *  1. the stochastic-model variance (obs.variances, from PppModel);
@@ -16,15 +16,17 @@
  * None of steps 2 to 5 applies to the network producer's own rows.
  */
 
-#include "measurement/MeasurementModel.hpp"
+#include "measurement/RowRules.hpp"
+#include "config/GnssConfig.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "math/TimeUtils.hpp"
 #include <cmath>
 
 namespace GnssProcessor {
 
-    double MeasurementModel::rowVariance(const PppObservation& obs,
-                                         const std::string& ref_type) const {
+    double rowVariance(const RowProducts& products, const PppObservation& obs,
+                       const std::string& ref_type) {
+        const GnssConfig& config = products.config;
         double variance = obs.variances.at(ref_type);
 
         // When the network product carries a per-key combined-correction σ
@@ -46,13 +48,13 @@ namespace GnssProcessor {
         // byte-identical.
         bool   combined_active = false;
         double combined_var    = 0.0;
-        if (config_.networkConsumeCombinedSigma()
-            && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network
+        if (config.networkConsumeCombinedSigma()
+            && config.getProcessingMode() != ProcessingMode::PPP_RTK_Network
             && ref_type.size() >= 2) {
-            const auto&  ssr      = ssrStore();
-            const double clk_hold = config_.getSsrClockStaleHoldFactor();
+            const auto&  ssr      = products.ssr;
+            const double clk_hold = config.getSsrClockStaleHoldFactor();
             const double window   = SsrCorrectionStore::clockHoldWindow(
-                config_.getSsrMaxAge(), clk_hold);
+                config.getSsrMaxAge(), clk_hold);
             // The combined σ applies only to a fresh network correction.  A
             // stale-held clock (content age in (max_age, hold_window],
             // RTA-9(b)) keeps the v1 URA path below, so its ZOH clock-staleness
@@ -68,15 +70,15 @@ namespace GnssProcessor {
                     const double age = TimeUtils::continuousGpsSeconds(obs.time)
                                      - TimeUtils::continuousGpsSeconds(*ep);
                     clock_fresh = SsrCorrectionStore::classifyClockAge(
-                                      age, config_.getSsrMaxAge(), clk_hold)
+                                      age, config.getSsrMaxAge(), clk_hold)
                                   == SsrCorrectionStore::ClockAgeRung::Fresh;
                 }
             }
             double sig_c = 0.0;
             if (ref_type[0] == 'L') {          // phase row: combined phase σ (sigc)
-                const bool   pb_gate    = config_.enableSsrBiasMaxAge();
-                const double pb_max_age = config_.getSsrBiasMaxAge()
-                                        * config_.getSsrBiasStaleHoldFactor();
+                const bool   pb_gate    = config.enableSsrBiasMaxAge();
+                const double pb_max_age = config.getSsrBiasMaxAge()
+                                        * config.getSsrBiasStaleHoldFactor();
                 auto pb = pb_gate
                     ? ssr.getPhaseBias(obs.satellite, ref_type, obs.time, pb_max_age)
                     : ssr.getPhaseBias(obs.satellite, ref_type);
@@ -124,13 +126,13 @@ namespace GnssProcessor {
         // so a held clock is never consumed at full weight.  Factor 0 (default)
         // leaves the branch unchanged.
         {
-            const double clk_hold = config_.getSsrClockStaleHoldFactor();
+            const double clk_hold = config.getSsrClockStaleHoldFactor();
             const bool consumer_rows =
-                config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network;
-            if ((config_.networkConsumeUra() || clk_hold > 1.0) && consumer_rows
+                config.getProcessingMode() != ProcessingMode::PPP_RTK_Network;
+            if ((config.networkConsumeUra() || clk_hold > 1.0) && consumer_rows
                 && !combined_active) {   // combined σ supersedes URA on this row (M4)
-                const auto& ssr = ssrStore();
-                const double max_age = config_.getSsrMaxAge();
+                const auto& ssr = products.ssr;
+                const double max_age = config.getSsrMaxAge();
                 // URA freshness is gated on the same window as the
                 // clock/orbit overlay.  getUra's own default is a looser 60 s,
                 // so a 60 s old URA could qualify a clock the store rejects at
@@ -146,10 +148,10 @@ namespace GnssProcessor {
                        - TimeUtils::continuousGpsSeconds(*ep);
                     have_dt = true;
                 }
-                const double q2 = config_.networkUraStalenessQ2();
+                const double q2 = config.networkUraStalenessQ2();
                 double add_var = 0.0;
                 bool staleness_folded = false;   // ZOH term already delivered by the URA channel
-                if (config_.networkConsumeUra()) {
+                if (config.networkConsumeUra()) {
                     if (auto ura = ssr.getUra(obs.satellite, obs.time, window)) {
                         add_var += (*ura) * (*ura);
                         if (q2 > 0.0 && have_dt && dt > 0.0) {
@@ -189,9 +191,9 @@ namespace GnssProcessor {
         // biases only) and are untouched.  Producer rows are excluded.  σ is 0
         // for RTCM/IGS-SSR biases and when emit_phase_bias_sigma is off, so with
         // the knob off (or on a non-network stream) R is byte-identical.
-        if (config_.networkConsumePhaseBiasSigma() && !combined_active
+        if (config.networkConsumePhaseBiasSigma() && !combined_active
             && ref_type.size() >= 2 && ref_type[0] == 'L'
-            && config_.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
+            && config.getProcessingMode() != ProcessingMode::PPP_RTK_Network) {
             // Use the same freshness decision as the SSR apply site in
             // buildJacobianRow, so R is inflated by the σ of the bias that was
             // applied, not of one the apply path has already aged out (or, at
@@ -199,12 +201,12 @@ namespace GnssProcessor {
             // recomputed here because they are out of scope in this function.
             // With the A5 gate off, the plain overload is used and the result
             // is byte-identical.
-            const bool   pb_gate    = config_.enableSsrBiasMaxAge();
-            const double pb_max_age = config_.getSsrBiasMaxAge()
-                                    * config_.getSsrBiasStaleHoldFactor();
+            const bool   pb_gate    = config.enableSsrBiasMaxAge();
+            const double pb_max_age = config.getSsrBiasMaxAge()
+                                    * config.getSsrBiasStaleHoldFactor();
             auto pb = pb_gate
-                ? ssrStore().getPhaseBias(obs.satellite, ref_type, obs.time, pb_max_age)
-                : ssrStore().getPhaseBias(obs.satellite, ref_type);
+                ? products.ssr.getPhaseBias(obs.satellite, ref_type, obs.time, pb_max_age)
+                : products.ssr.getPhaseBias(obs.satellite, ref_type);
             if (pb && pb->sigma_m > 0.0 && std::isfinite(pb->sigma_m)) {
                 variance += pb->sigma_m * pb->sigma_m;
             }
@@ -216,8 +218,8 @@ namespace GnssProcessor {
             variance += combined_var;
 
         // Downweight code on signals without BIA coverage
-        if (!config_.estimateSatBiases()
-            && config_.noBiaCodeDownweight() > 1.0
+        if (!config.estimateSatBiases()
+            && config.noBiaCodeDownweight() > 1.0
             && ref_type.size() >= 2 && ref_type[0] == 'C') {
             const bool is_if = (ref_type.find('_') != std::string::npos);
             // A signal the live SSR stream corrects is not missing
@@ -226,12 +228,12 @@ namespace GnssProcessor {
             // only; IF rows get ssr_bias_term = 0, so the IF branch
             // keeps the .BIA check alone.)
             const bool missing_bia = is_if
-                ? !ifCombHasFullBia(obs.satellite, ref_type)
-                : (config_.isUncombinedEnabled()
-                   && !biaCoversSignal(obs.satellite, ref_type)
-                   && !ssrCoversCodeSignal(obs.satellite, ref_type, obs.time));
+                ? !ifCombHasFullBia(products, obs.satellite, ref_type)
+                : (config.isUncombinedEnabled()
+                   && !biaCoversSignal(products, obs.satellite, ref_type)
+                   && !ssrCoversCodeSignal(products, obs.satellite, ref_type, obs.time));
             if (missing_bia)
-                variance *= config_.noBiaCodeDownweight();
+                variance *= config.noBiaCodeDownweight();
         }
 
         return variance;

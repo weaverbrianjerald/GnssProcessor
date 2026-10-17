@@ -2,6 +2,7 @@
 
 #include "filter/StateManager.hpp"
 #include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states)
+#include "measurement/RowRules.hpp"             // RowProducts, PivotSignalMap (the row rules are free functions)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -45,9 +46,11 @@ namespace GnssProcessor {
      *    validateMeasurementUpdate; the BSSD forwarders.
      *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates and
      *    its members, one per state category (the table at ensureRequiredStates).
-     *  - MeasurementModelRow.cpp: isUsableMeasurement, buildJacobianRow (the
-     *    observation equation) and the product coverage checks.
-     *  - MeasurementModelVariance.cpp: rowVariance, the variance of one row.
+     *  - MeasurementModelRow.cpp: buildJacobianRow (the observation equation);
+     *    also the definitions of the row rules isUsableMeasurement and the
+     *    product coverage checks (free functions, measurement/RowRules.hpp).
+     *  - MeasurementModelVariance.cpp: the definition of rowVariance, the
+     *    variance of one row (a free function, measurement/RowRules.hpp).
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
      *  - MeasurementModelNetwork.cpp: the network-only surface.
      */
@@ -540,7 +543,7 @@ namespace GnssProcessor {
         ///
         /// Key: constellation ("GPS"), Value: set of signals
         /// ({"L1W","L1C","C1W","C1C","L2W","C2W",...}).
-        std::map<std::string, std::set<std::string>> bssd_pivot_signals_;
+        PivotSignalMap bssd_pivot_signals_;
 
         /// Per-satellite NL reference band for the @c StateAmbiguityBasis::NlWl
         /// path.  Cleared and rebuilt by @c ensureRequiredStates every epoch as
@@ -558,129 +561,16 @@ namespace GnssProcessor {
         Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();
 
         // -------------------------------------------------------------------
-        // Product coverage checks (MeasurementModelRow.cpp)
+        // Row rules (free functions of measurement/RowRules.hpp)
         // -------------------------------------------------------------------
 
         /**
-         * @brief Check whether both component signals of an IF combination
-         *        have BIA product coverage.
-         * @param satellite Satellite id.
-         * @param if_key    Iono-free pair "a_b"; any other key counts as covered.
-         * @return True when both signals have a .BIA entry (or the key is not a pair).
+         * @brief The configuration, product tables and SSR store the row rules read
+         *        (measurement/RowRules.hpp), resolved now: the store is the override when
+         *        one is set, else the process-wide singleton.
+         * @return Three non-owning references into this model's dependencies.
          */
-        bool ifCombHasFullBia(const std::string& satellite,
-                              const std::string& if_key) const;
-
-        /**
-         * @brief Whether the live SSR stream supplies a code bias for this exact
-         *        (satellite, raw signal), i.e. whether @c ssr_bias_term will
-         *        correct the row in @c buildJacobianRow.
-         *
-         * Matches the apply-site activation: false in the network producer mode
-         * (which estimates satellite biases as states rather than importing
-         * them); otherwise a presence check via
-         * @c SsrCorrectionStore::hasCodeBias.  When the A5 staleness gate is on,
-         * the check is age-gated with the same effective stale-hold limit as the
-         * apply site: a bias the gate has dropped no longer defines this row's
-         * datum, so the sat-bias state and the no-BIA downweight apply again.
-         * Used to suppress redundant per-(satellite, signal) sat-bias state
-         * allocation for signals the stream already corrects.  Post-processing
-         * leaves the SSR store empty, so this is always false there and the
-         * state layout is byte-identical.
-         *
-         * @param obs_time Observation epoch for the staleness comparison
-         *        (ignored unless @c enableSsrBiasMaxAge).
-         *
-         * @note Raw signals only.  IF-combined rows (key contains '_') get
-         *       @c ssr_bias_term = 0 (SSR code biases are per raw signal), so
-         *       their sat-bias state stays the only correction and must not be
-         *       suppressed; pass raw signal keys here.
-         */
-        bool ssrCoversCodeSignal(const std::string& satellite,
-                                 const std::string& signal,
-                                 const GnssTime& obs_time) const;
-
-        /**
-         * @brief Whether a .BIA entry counts as bias coverage for the
-         *        "already corrected?" gates: code rows (sat-bias absorber
-         *        allocation, no-BIA code downweight) and phase rows (AR
-         *        eligibility via @c phaseBiasCoveredForAr).
-         *
-         * Legacy semantics (default): a pure @c hasBiasEntry presence check.  A
-         * .BIA that is loaded but not applied (@c enable_code_phase_bias false,
-         * e.g. forced off by @c network.estimate_iono_sh and inherited by the
-         * derived closed-loop consumer) still reports coverage, so the row runs
-         * at full code weight with no absorber while carrying the raw satellite
-         * OSB content.  With @c model_corrections.bias_coverage_requires_apply
-         * the entry counts only while @c enable_code_phase_bias is actually
-         * folding it into @c obs.modeled.  The network producer
-         * (@c ProcessingMode::PPP_RTK_Network) keeps legacy semantics under
-         * either setting: its code rows are corrected by network-estimated
-         * shared code-bias states, not by the .BIA.
-         */
-        bool biaCoversSignal(const std::string& satellite,
-                             const std::string& signal) const;
-
-        /**
-         * @brief Whether the live SSR stream supplies a phase bias for this
-         *        exact (satellite, raw signal), i.e. whether the phase
-         *        @c ssr_bias_term will correct the row in @c buildJacobianRow.
-         *
-         * Phase-channel counterpart of @c ssrCoversCodeSignal: false in the
-         * network producer mode (which estimates satellite phase biases as
-         * states rather than importing them); otherwise a presence check via
-         * @c SsrCorrectionStore::getPhaseBias, age-gated with the same
-         * effective stale-hold limit as the apply site when the A5 staleness
-         * gate is on.  Post-processing leaves the SSR store empty, so this is
-         * always false there.
-         *
-         * @param obs_time Observation epoch for the staleness comparison
-         *        (ignored unless @c enableSsrBiasMaxAge).
-         */
-        bool ssrCoversPhaseSignal(const std::string& satellite,
-                                  const std::string& signal,
-                                  const GnssTime& obs_time) const;
-
-        /**
-         * @brief AR-eligibility phase-bias coverage for an ambiguity's signal:
-         *        whether the satellite phase bias on this (satellite, signal)
-         *        is removed from the phase observable, so that its float
-         *        ambiguity may be fixed to an integer.
-         *
-         * With @c network.require_signal_integer_for_ar on, a covering network
-         * phase bias present in the SSR store (age-gated when the staleness gate
-         * is on) that declares @c signal_integer = false vetoes eligibility; for
-         * an IF key, either component can veto.  With the toggle off, or with no
-         * such bias in the store, the checks below decide unchanged.
-         *
-         * Legacy semantics (default,
-         * @c model_corrections.bias_coverage_requires_apply off): raw .BIA
-         * presence (@c ifCombHasFullBia for IF-combined keys, @c hasBiasEntry
-         * for raw signals), byte-identical to the original gate.  With the
-         * toggle on, a signal is covered iff the .BIA entry is actually applied
-         * (@c biaCoversSignal) or a live network/SSR phase bias corrects the row
-         * (@c ssrCoversPhaseSignal); for an IF key, both components must be
-         * covered by the same source.  This lets the closed-loop PPP-RTK
-         * consumer, which inherits @c enable_code_phase_bias=false from the
-         * producer, key AR eligibility on the network PB products it applies
-         * rather than on a .BIA it does not apply.
-         *
-         * @param signal Raw phase signal (e.g. "L1C") or IF key ("L1C_L5Q").
-         * @param obs_time Observation epoch for the SSR staleness comparison.
-         */
-        bool phaseBiasCoveredForAr(const std::string& satellite,
-                                   const std::string& signal,
-                                   const GnssTime& obs_time) const;
-
-        /**
-         * @brief Check whether both component signals of an IF combination
-         *        have receiver antenna ATX coverage (PCO/PCV).
-         * @param if_key Iono-free pair "a_b"; any other key counts as covered.
-         * @param system The satellite's system.
-         * @return True when both signals have a receiver ATX entry (or the key is
-         *         not a pair).
-         */
-        bool ifCombHasFullRxAtx(const std::string& if_key, System system) const;
+        RowProducts rowProducts() const { return RowProducts{config_, ppp_model_, ssrStore()}; }
 
         // -------------------------------------------------------------------
         // State pre-pass (MeasurementModelStates.cpp)
@@ -913,31 +803,9 @@ namespace GnssProcessor {
                                      const RequiredStates& need);
 
         // -------------------------------------------------------------------
-        // One row: usability, geometry and the observation equation
+        // One row: geometry and the observation equation
         // (MeasurementModelRow.cpp; hasValidGeometry in MeasurementModel.cpp)
         // -------------------------------------------------------------------
-
-        /**
-         * @brief Whether an observation's signal enters this epoch's update.
-         *
-         * False for: GLONASS under BSSD unless enable_glonass_bssd; a code,
-         * phase or Doppler signal the BSSD pivot does not track; a signal that
-         * is neither code nor phase (nor Doppler with velocity estimation); an
-         * iono-free pair in uncombined mode, a raw signal in iono-free mode, a
-         * Doppler pair; a signal without an observed, variance and modeled
-         * value; a row the Kalman filter's rebuild loop excluded
-         * (@c "<sat>_<signal>", logged at debug).
-         *
-         * @param obs          The satellite's modeled observation.
-         * @param ref_type     The signal (a RINEX code, or an iono-free pair "a_b").
-         * @param excluded     The rebuild loop's excluded row signatures.
-         * @param epoch_prefix Log prefix.
-         * @return True when the signal is usable.
-         */
-        bool isUsableMeasurement(const PppObservation& obs,
-            const std::string& ref_type,
-            const std::set<std::string>& excluded,
-            const std::string& epoch_prefix) const;
 
         /**
          * @brief The row loop's per-satellite geometry gate: a finite satellite
@@ -993,32 +861,6 @@ namespace GnssProcessor {
             size_t state_size,
             Eigen::VectorXd& jacobian,
             double& predicted) const;
-
-        // -------------------------------------------------------------------
-        // One row's variance (MeasurementModelVariance.cpp)
-        // -------------------------------------------------------------------
-
-        /**
-         * @brief The measurement variance of one row (m^2): the stochastic-model
-         *        variance plus the consumer's network-correction terms, times the
-         *        no-BIA code downweight.
-         *
-         * In order: obs.variances[ref_type]; with consume_combined_sigma and a
-         * fresh network correction carrying a combined sigma, that sigma
-         * (age-inflated) in place of the next two terms; otherwise the network
-         * URA with the ZOH clock-staleness term and the held-clock fallback,
-         * and on phase rows the network phase-bias sigma; then, without
-         * estimate_sat_biases, the no-BIA downweight factor on a code row
-         * without .BIA or SSR coverage.  The network producer's own rows get
-         * none of the network terms.
-         *
-         * @param obs      The satellite's modeled observation.
-         * @param ref_type The signal (one with a variance: the row loop admits
-         *                 only usable signals).
-         * @return The row's variance, before the row loop's non-finite guard.
-         */
-        double rowVariance(const PppObservation& obs,
-                           const std::string& ref_type) const;
 
         // -------------------------------------------------------------------
         // BSSD delegation (forwarders to PivotManager)
