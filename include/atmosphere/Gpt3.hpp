@@ -53,8 +53,8 @@ namespace GnssProcessor {
         struct Result {
             double pressure_mbar;  /**< Total pressure at station, mbar. */
             double temperature_K;  /**< Temperature at station, Kelvin. */
-            double a_h;            /**< VMF hydrostatic mapping "a" coefficient (dimensionless). */
-            double a_w;            /**< VMF wet mapping "a" coefficient (dimensionless). */
+            double a_h;            /**< VMF hydrostatic mapping "a" coefficient (dimensionless, about 1.2e-3). */
+            double a_w;            /**< VMF wet mapping "a" coefficient (dimensionless, about 0.55e-3). */
         };
 
         /**
@@ -73,14 +73,20 @@ namespace GnssProcessor {
          * longitude-fastest from (lat = 87.5, lon = 2.5) southwards/eastwards
          * in 5° steps.
          *
+         * The file stores the VMF3 hydrostatic and wet "a" coefficients
+         * multiplied by 1000 (a_h a0 of about 1.2 for a physical 1.2e-3).  The
+         * load converts them, so @c query() returns the physical values.  A row
+         * whose a_h a0 lies outside [0.8, 1.8] or whose a_w a0 lies outside
+         * [0.2, 1.2] in the file's units is refused, because a file in other
+         * units would otherwise return coefficients off by orders of magnitude.
+         *
          * @param grid_file Filesystem path to @c gpt3_5.grd.
          * @param log_mgr   Logger used to report load progress / errors.
          * @return @c true if the grid loaded successfully (full 2592
-         *         cells with no parse failures), @c false otherwise.
-         *         On failure an empty instance stays empty and unloaded.
-         *         @c loaded_ is not reset on failure: a failing call on an
-         *         already loaded instance leaves @c isLoaded() true (with the
-         *         cells cleared if the header line was valid).
+         *         cells with no parse failures and every coefficient in range),
+         *         @c false otherwise.  On failure the instance is left empty and
+         *         unloaded (@c isLoaded() false), including an instance that
+         *         held a grid before the call.
          */
         bool load(const std::filesystem::path& grid_file, LogManager& log_mgr);
 
@@ -140,8 +146,8 @@ namespace GnssProcessor {
             double dT[5];  /**< Temperature lapse-rate harmonic in K/km. */
             double undu;   /**< Geoid undulation at grid cell (m). */
             double Hs;     /**< Orthometric grid height (m). */
-            double a_h[5]; /**< VMF hydrostatic "a" harmonic (dimensionless). */
-            double a_w[5]; /**< VMF wet "a" harmonic (dimensionless). */
+            double a_h[5]; /**< VMF hydrostatic "a" harmonic (dimensionless, file value x 1e-3). */
+            double a_w[5]; /**< VMF wet "a" harmonic (dimensionless, file value x 1e-3). */
         };
 
         /**

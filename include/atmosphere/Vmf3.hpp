@@ -57,8 +57,8 @@ namespace GnssProcessor {
          * @param lon_rad        Geodetic longitude (radians).
          * @param doy            Fractional day-of-year.
          * @param elevation_rad  Elevation angle (radians, 0..π/2).
-         * @param a_h            VMF hydrostatic "a" coefficient (from GPT3).
-         * @param a_w            VMF wet "a" coefficient (from GPT3).
+         * @param a_h            VMF hydrostatic "a" coefficient (from GPT3, dimensionless, about 1.2e-3).
+         * @param a_w            VMF wet "a" coefficient (from GPT3, dimensionless, about 0.55e-3).
          * @param[out] mf_d      Hydrostatic mapping function (unitless, ≥1);
          *                       1.0 when the continued-fraction denominator is
          *                       below 1e-12 in magnitude.

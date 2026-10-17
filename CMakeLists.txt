@@ -475,6 +475,7 @@ enable_testing()
 add_executable(gnss_tests
     tests/test_math_core.cpp
     tests/test_atmosphere_models.cpp
+    tests/test_gpt3_load_path.cpp
     tests/test_site_displacement.cpp
     tests/test_phase_windup_sign.cpp
     tests/test_antenna_model.cpp
