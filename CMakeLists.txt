@@ -630,6 +630,7 @@ add_executable(gnss_tests
     tests/test_station_marker_to_arp.cpp
     tests/test_sif_apriori_arp.cpp
     tests/test_log_manager_init.cpp
+    tests/test_product_cache_load_failure.cpp
     tests/test_windup_census_config.cpp
     tests/test_windup_restart_response_config.cpp
     tests/test_windup_restart_targets.cpp

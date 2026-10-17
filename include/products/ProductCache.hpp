@@ -116,6 +116,15 @@ private:
     ProductCache() = default;
     ~ProductCache() = default;
 
+    /**
+     * @brief Reset every cached product to empty and mark the cache unloaded.
+     *
+     * The body shared by clearCache() and the failure path of loadProducts().
+     * The caller must hold @c load_mutex_; the mutex is not recursive, so taking it
+     * here would deadlock a caller that already holds it.
+     */
+    void clearCacheLocked_();
+
     // Thread-safe loading flag
     std::atomic<bool> loaded_{false};
     
