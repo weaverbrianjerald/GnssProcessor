@@ -152,3 +152,17 @@ Readings taken where the decision text left room, to be revisited if a result as
 Not switched, with the reason: A2 (the group-delay pair is a property of the broadcast message),
 A13 (worker HV1's file), E1 and E2 (the decision keeps their variance rules), the sites of
 section 5 (no roster role to read), D8 and D9 (declarations with no output change, a later step).
+
+## 10. Graded (2026-10-16; base and switches on the N3c build, held-out consumer WTZZ00DEU, field golden)
+
+With every switch off the build is byte-identical to its base on both 2 h goldens. On the sim golden no switch moves the products (the fixture tracks one signal per band). On the field golden D2 and D4 move nothing (D2 reaches only a measure-only census; D4's site is not reached), and D1, D3, D6 and D7 move the products. Consumer 3D error, hourly median, 6 h (`runs_nom/_rap_n3c6_*_f`):
+
+| switch | hour 1 | hours 2 to 6 (mean of hourly medians) | against the base (13.2 mm) |
+| --- | --- | --- | --- |
+| base | 58.1 mm | 13.2 mm | |
+| D1 BIA clock-reference pin pair | 54.6 | 13.0 | -0.2 mm (neutral); hour 1 -3.5 mm |
+| D3 per-constellation canonical pairs (with canonical-pair admission) | 55.0 | 13.8 | +0.6 mm (hour 3 +3.4); the admission alone +0.2 |
+| D6 one wire bias per modelled signal | 58.1 | 13.2 | 0.0 (the products change, this consumer does not) |
+| D7 the arc ledger as lifecycle owner | 58.4 | 13.2 | 0.0 |
+
+Standing: D3 KEEP_OFF (worse than its own control). D1, D6 and D7 neutral at the held-out consumer: the 16-site census decides adoption (owed). D2 and D4 inert on both goldens.
