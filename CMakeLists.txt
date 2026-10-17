@@ -724,6 +724,7 @@ add_executable(gnss_tests
     tests/network/test_network_column_family.cpp
     tests/network/test_ctu_level_guard.cpp
     tests/test_owd_wire_contract.cpp
+    tests/test_product_contract_gaps.cpp
     tests/test_reinflate_never_shrinks.cpp
     tests/test_active_system_admission.cpp
     tests/test_group_delay_latch.cpp

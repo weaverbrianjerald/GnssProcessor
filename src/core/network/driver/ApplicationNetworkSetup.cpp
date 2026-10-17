@@ -1586,6 +1586,10 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                 nc.emit_pb_hold && nc.emit_pb_hold_phase_clock;
             pending_contract.emit_pb_hold_smoothed =          // pbhold=3: the smoothed hold
                 nc.emit_pb_hold && nc.emit_pb_hold_smoothed;
+            // The wind-up mode this run applies (wumode=), so a replay or real-time
+            // consumer on another mode is caught by checkContract instead of absorbing
+            // the whole-cycle frame difference into its ambiguities.
+            pending_contract.windup_mode = windUpModeOf(config_);
             // Advertise the combined-σ age-scaling coefficient on the S line only when the
             // combined-σ channel is on and a coefficient is set, so a run with the channel
             // off (or agek = 0) writes a byte-identical v2 header (no agek= token).
@@ -1612,7 +1616,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                           "the PREVIOUS run's products from that path.",
                           prod_path.string(), stale_ec.message());
             log->info("Network: will serialize per-epoch products with a v2 S-basis contract "
-                      "(realized pivots stamped at first emit) to '{}'", prod_path.string());
+                      "(realized pivots stamped at first emit, wind-up mode '{}') to '{}'",
+                      pending_contract.windup_mode, prod_path.string());
         }
     }
 

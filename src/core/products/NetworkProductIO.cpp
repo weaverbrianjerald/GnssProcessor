@@ -5,6 +5,7 @@
 
 #include "products/NetworkProductIO.hpp"
 #include "products/SsrCorrectionStore.hpp"
+#include "config/GnssConfig.hpp"             // windUpModeOf
 #include "math/TimeUtils.hpp"                // IGS long-name spans on the GPS time scale
 
 #include <fmt/format.h>
@@ -21,6 +22,11 @@
 #include <stdexcept>
 
 namespace GnssProcessor {
+
+std::string windUpModeOf(const GnssConfig& config) {
+    if (!config.getModelCorrections().enable_phase_windup) return kWindUpModeOff;
+    return config.accumulatePhaseWindUp() ? kWindUpModeAccumulated : kWindUpModeFractional;
+}
 
 namespace {
 
@@ -342,6 +348,12 @@ struct LineAssembler {
                             c.disc_threshold_frac_cycles = std::stod(f[k].substr(9));  // per-λ jump gate (H3)
                         } else if (f[k].rfind("discscope=", 0) == 0) {
                             c.disc_mark_scope_channel = (f[k].substr(10) == "channel");  // disc mark scope
+                        } else if (f[k].rfind("wumode=", 0) == 0) {
+                            // Wind-up mode the producer ran, stored verbatim so a mode a
+                            // later build adds survives a round trip.  Dispatched here,
+                            // ahead of the ':' pivot fallback, like the other
+                            // key=value tokens.
+                            c.windup_mode = f[k].substr(7);
                         } else if (f[k].rfind("pbhold=", 0) == 0) {
                             const int ph = std::stoi(f[k].substr(7));
                             c.emit_pb_hold = (ph != 0);               // phase-bias hold
@@ -578,6 +590,15 @@ void NetworkProductWriter::writeSLine_(const SbasisContract& contract) {
     if (contract.emit_pb_hold)
         out_ << (contract.emit_pb_hold_smoothed ? ",pbhold=3"
                  : contract.emit_pb_hold_phase_clock ? ",pbhold=2" : ",pbhold=1");
+    // The wind-up mode the producer ran (off, fractional or accumulated).  The
+    // wind-up construction id in field 3 does not carry it, and a consumer on the
+    // other mode sits in a different phase frame by whole cycles that its float
+    // ambiguities absorb without a trace.  Written when non-empty: the producer
+    // always sets it, so every product declares it, while a contract assembled
+    // without one writes the S line as before.  A reader that does not know the
+    // token skips it.
+    if (!contract.windup_mode.empty())
+        out_ << ",wumode=" << contract.windup_mode;
     out_ << '\n';
 }
 
@@ -638,7 +659,7 @@ void NetworkProductWriter::writeHeader_(const SbasisContract* contract) {
             "[,clkset=1][,frame=<id>][,cepoch=<e>][,atx=<f>][,oref=<CoM|APC>][,pdr=<rx>][,agek=<k>]"
             "[,discfrac=<c>][,hsig=<src>][,cbpin=<const>:<s1>-<s2>...]"
             "[,gfpin=<const>:<s1>-<s2>...][,sat_gf_datum=<mode>]"
-            "[,discscope=channel][,pbhold=1]"
+            "[,discscope=channel][,pbhold=1][,wumode=<off|fractional|accumulated>]"
             "   (B6 S-basis contract)\n"
             "# N,constellation,band_digit[,ph=<sig>[+<sig>...]][,co=<sig>[+<sig>...]]"
             "[,comp=<sig>[+<sig>...]][,dph=<sig>][,dco=<sig>]"
@@ -946,6 +967,18 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     if (file.decl.windup_yaw_model_id != expected.decl.windup_yaw_model_id)
         note(fmt::format("windup_yaw_model_id: file '{}' vs expected '{}'",
                          file.decl.windup_yaw_model_id, expected.decl.windup_yaw_model_id));
+    // The wind-up mode (off, fractional, accumulated): the same construction applied
+    // in another mode is another phase frame, by whole cycles per satellite and
+    // signal.  A float ambiguity absorbs the difference, so no residual or sigma0
+    // shows it and this check is the only place it can be caught.  Compared only
+    // when both sides declare a mode: a wire written before the declaration cannot be
+    // verified and is accepted (it keeps replaying), and a consumer that declares no
+    // mode expects none.
+    if (!expected.windup_mode.empty() && !file.windup_mode.empty() &&
+        file.windup_mode != expected.windup_mode)
+        note(fmt::format("windup_mode: file '{}' vs expected '{}' (a different carrier-phase "
+                         "frame, absorbed by the ambiguities and invisible in the residuals)",
+                         file.windup_mode, expected.windup_mode));
     if (file.decl.amb_datum != expected.decl.amb_datum)       note("amb_datum differs");
     if (file.decl.isb_datum != expected.decl.isb_datum)       note("isb_datum differs");
     if (file.decl.emit_code_bias != expected.decl.emit_code_bias)
@@ -995,11 +1028,21 @@ bool NetworkProductReader::checkContract(const SbasisContract& file,
     }
     // Replay-emitter construction parameters: a divergence in one of them means a
     // consumer replaying with its own emitter config would reproduce different
-    // discontinuity counters from the producer's live store.  Six of the eight are
-    // compared below; code_bias_jump_test and clock_disc_on_set_change are not.
+    // discontinuity counters from the producer's live store.  All seven are
+    // compared below.
     if (file.disc_threshold_m != expected.disc_threshold_m)
         note(fmt::format("disc_threshold_m: file {} vs expected {}",
                          file.disc_threshold_m, expected.disc_threshold_m));
+    // The code-bias magnitude jump test and the clock-set-change disc bump each add
+    // a channel of discontinuity declarations (cbjump=, clkset=).  A replay
+    // without the channel the producer ran misses every declaration it carried, so
+    // the counters diverge from the producer's live store.
+    if (file.code_bias_jump_test != expected.code_bias_jump_test)
+        note(fmt::format("code_bias_jump_test: file {} vs expected {}",
+                         file.code_bias_jump_test, expected.code_bias_jump_test));
+    if (file.clock_disc_on_set_change != expected.clock_disc_on_set_change)
+        note(fmt::format("clock_disc_on_set_change: file {} vs expected {}",
+                         file.clock_disc_on_set_change, expected.clock_disc_on_set_change));
     // The per-λ fractional-cycle threshold (H3): a per-λ vs flat mismatch, or a
     // differing fraction, makes the consumer's replay emitter mis-count
     // discontinuities.

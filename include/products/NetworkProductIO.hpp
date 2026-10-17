@@ -57,6 +57,9 @@
  *     [,frame=<id>][,cepoch=<epoch>]        #   RTA-12 contract identity fields
  *     [,agek=<val>]                         #   M4 combined-σ age-scaling coefficient
  *     [,atx=<file>][,oref=<CoM|APC>]        #   (each absent when empty);
+ *     [,wumode=<mode>]                      #   wind-up mode the producer ran:
+ *                                           #   off | fractional | accumulated
+ *                                           #   (a wire without it is undeclared)
  *     [,cbpin=<const>:<s1>-<s2>...]         #   §1.5 code-bias IF pin pair per
  *                                           #   constellation (the pair the OSB
  *                                           #   stream is internally consistent in)
@@ -117,6 +120,33 @@
 #include <vector>
 
 namespace GnssProcessor {
+
+class GnssConfig;   // forward declaration: windUpModeOf takes a const reference
+
+/// Wind-up modes an S line declares with its @c wumode= token (see
+/// @c SbasisContract::windup_mode).  The three are different phase frames: the
+/// carrier-phase wind-up correction is absent, applied as the wrapped
+/// fractional-cycle angle of each epoch, or applied as an angle unwrapped across
+/// epochs.  They differ by whole cycles per satellite and signal, which a float
+/// ambiguity absorbs without any residual trace.
+inline constexpr const char* kWindUpModeOff         = "off";
+inline constexpr const char* kWindUpModeFractional  = "fractional";
+inline constexpr const char* kWindUpModeAccumulated = "accumulated";
+
+/**
+ * @brief The wind-up mode a run's configuration applies.
+ *
+ * The single owner of the rule that maps configuration to the declared mode:
+ * @c off when @c model_corrections.enable_phase_windup is false, otherwise
+ * @c accumulated when @c estimation.accumulate_phase_windup is true and
+ * @c fractional when it is not.  The producer stamps it into the S line, and a
+ * replay or real-time consumer pins its own expectation to it.
+ *
+ * @param config Run configuration (the producer's, or the consumer's own).
+ * @return One of @ref kWindUpModeOff, @ref kWindUpModeFractional,
+ *         @ref kWindUpModeAccumulated.
+ */
+std::string windUpModeOf(const GnssConfig& config);
 
 /// S-basis contract stamped into a v2 product header (the "S" line), so a consumer
 /// can check compatibility before claiming integer recovery (B6).  Holds the S-basis
@@ -197,13 +227,13 @@ struct SbasisContract {
     /// Whether the producer's emitter ran the opt-in code-bias magnitude jump test
     /// (@c network.code_bias_disc_jump_test).  Fourth replay-emitter construction
     /// parameter.  Serialized as an optional trailing @c cbjump=1 field only when
-    /// true (byte-identical when off).
+    /// true (byte-identical when off).  @c checkContract compares it.
     bool              code_bias_jump_test{false};
     /// Whether the producer's emitter bumped clock disc counters on a constellation
     /// clock-set change (@c network.clock_disc_on_set_change, the sum-to-zero
     /// datum-move signal).  Fifth replay-emitter construction parameter.  Serialized
     /// as an optional trailing @c clkset=1 field only when true (byte-identical when
-    /// off).
+    /// off).  @c checkContract compares it.
     bool              clock_disc_on_set_change{false};
     /// Which statistic the H heartbeat's sigma0 field carries (H-rider, edge-queue
     /// §1.6 item 3a).  Empty = the RTA-10 default (the within-epoch RAIM's σ̂₀, 0
@@ -311,6 +341,27 @@ struct SbasisContract {
     /// of the pair differs, which matters to a grader and to anyone combining this
     /// product with an external DCB).
     std::string       sat_gf_datum;
+    /// The wind-up mode the producer ran: @ref kWindUpModeOff,
+    /// @ref kWindUpModeFractional or @ref kWindUpModeAccumulated; empty when the
+    /// wire does not declare it (a product written before the S line carried it).
+    ///
+    /// @c windup_yaw_model_id (S line field 3) names the wind-up construction; this
+    /// field names the mode that construction was applied in.  The two are
+    /// independent: a producer and a consumer on the same construction but on
+    /// different modes disagree about the phase frame by whole cycles per satellite
+    /// and signal.  A float ambiguity absorbs that difference, so no residual
+    /// shows it and only the contract can.
+    ///
+    /// Serialized as a trailing @c wumode=<mode> S-line field only when non-empty.
+    /// The producer always sets it, so every product it writes declares the mode;
+    /// a contract built by hand and left empty writes the S line without the
+    /// token.  A reader that predates the token skips it as an unknown field.
+    /// Stored verbatim, so a mode a later build adds survives a round trip.
+    /// @c checkContract compares it only when both the file and the consumer
+    /// expectation declare it: an undeclared wire cannot be verified and is not
+    /// refused, so a product written before the declaration keeps replaying.
+    /// Not a replay-emitter parameter: @c makeReplayEmitter ignores it.
+    std::string       windup_mode;
     bool              present{false};         ///< True when parsed from (or written to) a v2 header.
 };
 
@@ -511,6 +562,14 @@ public:
     /// convention (B6).  Returns true if compatible; on any mismatch returns false
     /// and (if @p mismatches non-null) appends a human-readable line per differing
     /// field.  The caller decides whether a mismatch is a warning or a hard error.
+    ///
+    /// All seven replay-emitter construction parameters are compared
+    /// (@c disc_threshold_m, @c emit_clock_disc, @c staleness_horizon_s,
+    /// @c code_bias_jump_test, @c clock_disc_on_set_change,
+    /// @c disc_threshold_frac_cycles, @c disc_mark_scope_channel), as are the
+    /// phase-bias hold flags and the wind-up mode.  The wind-up mode is compared
+    /// only when both sides declare it (see @c SbasisContract::windup_mode); a
+    /// file that does not is accepted, since its mode cannot be verified.
     static bool checkContract(const SbasisContract& file, const SbasisContract& expected,
                               std::vector<std::string>* mismatches = nullptr);
 
