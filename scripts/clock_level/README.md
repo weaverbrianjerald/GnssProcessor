@@ -21,6 +21,7 @@ copy, and that includes the files the writers produce (output location substitut
 | `simcensus6h.py` | SMH, SMD, QPV | The 6 h census on the sim bed: 16 in-network stations (S01, S05, ..., S57, S60), tags `smc6_<station>_<key>`. Absolute values are optimistic. The paired change between two wires of one solve is the quantity read. |
 | `p50.py` | LAH | Consumer 3D p50 by hour from `closed_loop_trace.csv`. |
 | `gcensus.py` | GAL2, L5R | The 16-site census plus WTZZ on a 6 h field wire. `make <key> <consumer base run> <wire run> <exe>` builds each replay from the base run's own `arm.json` (the wire's own for its posture's consumer, the dual control's for a dual GPS consumer of another wire); `grade <refkey> <key> ...` prints the median site p50 by hour and the paired change over hours 2 to 6 and hour 1. |
+| `msc_sites.py`, `site_list.json` | MSC | Card MSC's 16 held-out census sites, as selected on 2026-09-21 (name, RINEX path, ECEF coordinate, receiver, latched signals). `msc_sites.load()` returns the list; the four censuses above read it through that call. |
 | `band5_offsets.py` | L5R | Per station, the mean GPS code post-fit residual over hours 2 to 6 by band, with a block standard error; counts the stations with a station-constant offset (card L5R's P3). |
 
 ## Clock level and the anchor
@@ -85,7 +86,6 @@ copy, and that includes the files the writers produce (output location substitut
 
 All of these are under the git-ignored `runs/`:
 
-- `runs/_msc/site_list.json`: card MSC's 16-site selection, read by both field censuses.
 - `runs/_rf0hv10_field6/arm.json` and `runs/_rf0hv11_sim6/arm.json`: the censuses' base arms.
 - `runs/simnet60_quiet_wu93_24h/S01000SIM/truth_bias.csv`: the sim datum share in `clklevel.py` and
   `g3grade.py`. Without it, the sim level rows come out empty.

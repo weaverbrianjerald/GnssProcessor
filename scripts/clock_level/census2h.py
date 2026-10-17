@@ -3,7 +3,7 @@
 
 make : python scripts/clock_level/census2h.py make <key> <wire run dir, bare> <exe> [key.path=value ...]
        (extra settings go to every replay arm, e.g. a consumer knob)
-       Consumer-only replays of the wire (runs/_msc/site_list.json sites plus WTZZ), tags
+       Consumer-only replays of the wire (site_list.json sites plus WTZZ), tags
        msc_<site>_<key>_d, 2 h, base arm runs/_rf0hv10_field6/arm.json.
 grade: python scripts/clock_level/census2h.py grade <refkey> <key> [<key> ...]
        Per site the hour-1 and hour-2 p50 of each key against the reference key's same hours
@@ -12,9 +12,11 @@ grade: python scripts/clock_level/census2h.py grade <refkey> <key> [<key> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
+import msc_sites
+
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace(os.sep, '/')
 RUNS = ROOT + '/runs'; T0 = 259200.0
-SL = json.load(open(RUNS + '/_msc/site_list.json'))['sites']
+SL = msc_sites.load()
 
 
 def make(key, wire, exe, extra=()):

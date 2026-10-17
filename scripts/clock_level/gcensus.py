@@ -2,7 +2,7 @@
 """The 16-site census for cards GAL2 and L5R (2026-10-08): consumer-only replays of a 6 h field wire.
 
 make  : python gcensus.py make <key> <consumer base run> <wire run> <exe> [key.path=value ...] [--rinex OP ...]
-        Replays at WTZZ00DEU (the base's own consumer) and the 16 sites of runs/_msc/site_list.json,
+        Replays at WTZZ00DEU (the base's own consumer) and the 16 sites of site_list.json,
         6 h, built with rapid_arm.py make from <consumer base run>/arm.json (so every consumer knob is
         that run's: the wire's own arm for a consumer of the wire's posture, the dual control's arm for
         a dual GPS consumer of another wire), reading <wire run>/products.txt.  Tags <key>_<site4>.
@@ -16,10 +16,12 @@ grade : python gcensus.py grade <refkey> <key> [<key> ...]
 """
 import csv, json, os, statistics as st, subprocess, sys
 
+import msc_sites
+
 ROOT = 'C:/GnssProcessor'
 RUNS = os.environ.get('RAPID_RUNS_ROOT', ROOT + '/runs').replace('\\', '/')   # the runs root rapid_arm.py uses
 T0, NH = 259200.0, 6
-SL = json.load(open(ROOT + '/runs/_msc/site_list.json'))['sites']
+SL = msc_sites.load()
 NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
 
 
