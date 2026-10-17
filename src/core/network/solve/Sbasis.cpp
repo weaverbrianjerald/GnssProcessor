@@ -37,8 +37,23 @@ namespace GnssProcessor {
 
 std::pair<std::string, std::string> NetworkSbasis::selectIfPinPair(
     std::vector<std::string> sigs,
-    const std::function<double(const std::string&)>& freqOf) {
+    const std::function<double(const std::string&)>& freqOf,
+    const std::pair<std::string, std::string>& reference) {
     if (sigs.empty()) return {};
+    // The bias product's clock-reference pair, when the caller supplies it and the
+    // satellite registers both of its signals on distinct carrier frequencies.  The
+    // product defines the clock and the broadcast group delay on that pair, so it is
+    // the pair whose ionosphere-free combination carries a physical datum.
+    if (!reference.first.empty() && !reference.second.empty()) {
+        const auto has = [&](const std::string& s) {
+            return std::find(sigs.begin(), sigs.end(), s) != sigs.end();
+        };
+        const double fa = freqOf(reference.first);
+        const double fb = freqOf(reference.second);
+        if (has(reference.first) && has(reference.second) && std::isfinite(fa) && fa > 0.0
+            && std::isfinite(fb) && fb > 0.0 && std::abs(fa - fb) > 1.0)
+            return reference;
+    }
     // Strict total order on (RINEX band digit, full signal name).  The band digit
     // orders bands (GPS L1 before L2 before L5), and the full name breaks same-band
     // ties (C1C before C1W, C2L before C2W), so the result does not depend on the
@@ -1246,8 +1261,14 @@ NetworkSbasis::CodeBiasDatumRows NetworkSbasis::buildCodeBiasDatumRows(
         // then full signal name), so same-band channels (C1C vs C1W) do not swap
         // with the insertion order of registered_code_keys and re-datum the emitted
         // clock; see NetworkSbasis::selectIfPinPair.
+        // The bias product's clock-reference pair of this satellite's constellation, only
+        // when network.n3c_bia_pin_pair supplies it.
+        std::pair<std::string, std::string> pin_ref;
+        if (const auto rit = family_arms.pin_reference.find(letterOfSat(sat));
+            rit != family_arms.pin_reference.end())
+            pin_ref = rit->second;
         const auto if_pin = NetworkSbasis::selectIfPinPair(
-            sigs, [&](const std::string& s) { return freqOf(sat, s); });
+            sigs, [&](const std::string& s) { return freqOf(sat, s); }, pin_ref);
         std::string sig1 = if_pin.first;
         std::string sig2 = if_pin.second;
         double      f1   = sig1.empty() ? 0.0 : freqOf(sat, sig1);

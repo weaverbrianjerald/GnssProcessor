@@ -83,6 +83,8 @@
 #include <utility>
 #include <vector>
 
+#include "common/GnssTypes.hpp"   // System
+
 namespace spdlog { class logger; }
 
 namespace GnssProcessor {
@@ -112,6 +114,22 @@ namespace GnssProcessor {
             return !l1.empty() && !c1.empty() && !l2.empty() && !c2.empty();
         }
     };
+
+    /**
+     * @brief Which slot of a constellation's canonical pair a band digit fills.
+     *
+     * By default the pair is the band digits '1' and '2' for every constellation, so a
+     * constellation without a band 2 (Galileo) never has all four slots. With
+     * @p traits_bands (@c network.n3c_canonical_pair_traits) the pair is the first two
+     * bands of the constellation traits (GPS '1' and '2', Galileo '1' and '5').
+     *
+     * @param sys          The constellation.
+     * @param band_digit   RINEX band digit of a latched signal.
+     * @param traits_bands true to take the pair from the constellation traits.
+     * @return 1 for the first band of the pair (@c l1 / @c c1), 2 for the second
+     *         (@c l2 / @c c2), 0 for neither.
+     */
+    int canonicalPairSlot(System sys, char band_digit, bool traits_bands);
 
     /// @brief Decision of the state machine for one (station, satellite) epoch.
     enum class CanonicalPairAction {
@@ -182,6 +200,7 @@ namespace GnssProcessor {
     struct NetworkCanonicalPairState {
         bool armed{ false };      ///< network.canonical_pair_admission.
         int  keep_ep{ 3 };        ///< network.canonical_pair_keep_epochs (clamped at 0).
+        bool traits_bands{ false };  ///< network.n3c_canonical_pair_traits: the pair's bands come from the traits.
         long long epochs{ 0 };    ///< seam invocations: the processed-epoch clock of this seam.
         /// (station index, satellite) -> its admission state.
         std::map<std::pair<int, std::string>, CanonicalPairTrack> track;

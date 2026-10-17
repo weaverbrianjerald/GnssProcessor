@@ -226,6 +226,27 @@ netDatumGraphComponents(const std::vector<NetDatumGraphEdge>& edges);
  */
 std::string netDatumGraphFamily(std::string_view signal);
 
+/// Family name of the combined I+Q channel under the "X against the rest" definition.
+inline constexpr const char* kDatumGraphFamilyX = "X";
+/// Family name of every other signal under the "X against the rest" definition.
+inline constexpr const char* kDatumGraphFamilyRest = "rest";
+
+/**
+ * @brief The receiver channel family of a satellite's observation code, under either
+ *        definition (@c network.n3c_channel_family).
+ *
+ * With @p x_rule false this is @ref netDatumGraphFamily (the attribute letter). With it
+ * true the family is "X against the rest" as @c NetworkSbasis::channelFamilyOf defines it
+ * for the satellite's constellation: @ref kDatumGraphFamilyX for the combined I+Q signals,
+ * @ref kDatumGraphFamilyRest for every other signal. A code with no tracking attribute
+ * still maps to @ref kDatumGraphNoFamily under both definitions.
+ *
+ * @param sat    RINEX satellite id, whose constellation decides the definition.
+ * @param signal Full observation code, e.g. "L5X" / "C1C".
+ * @param x_rule true for "X against the rest".
+ */
+std::string netDatumGraphFamilyOf(std::string_view sat, std::string_view signal, bool x_rule);
+
 /// One tier-2 (satellite × channel-family) cell and its two predicates.
 struct NetDatumGraphPrediction {
     std::string sat;               ///< satellite id.
@@ -267,7 +288,8 @@ struct NetDatumGraphPrediction {
 std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     const std::set<std::string>& shared_phase_keys,
     const std::vector<std::pair<std::string, std::string>>& registered_code_keys,
-    const std::map<std::string, int>& code_support);
+    const std::map<std::string, int>& code_support,
+    bool x_rule = false);
 
 /// Key convention of the @c code_support map: @c "SAT|FAMILY".
 inline std::string netDatumGraphSupportKey(std::string_view sat,
@@ -342,9 +364,11 @@ struct NetDatumGraphSpectral {
  * when the census is off.  The inherited limit is SBC's six-participant cap: a
  * widely spread direction is identified by its heaviest six participants.
  *
+ * @param x_rule true for the "X against the rest" family definition
+ *               (@ref netDatumGraphFamilyOf); default the attribute letter.
  * @return Unique "SAT/FAMILY" identities, ascending.
  */
-std::vector<std::string> netDatumGraphDetailIds(std::string_view detail);
+std::vector<std::string> netDatumGraphDetailIds(std::string_view detail, bool x_rule = false);
 
 // ---------------------------------------------------------------------------
 //  Reconciliation, the main deliverable (INC-1)

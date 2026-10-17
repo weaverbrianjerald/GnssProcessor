@@ -246,6 +246,25 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // and changes no byte of the solve, the same trace-knob rule the loader's
         // fingerprint-safe list applies.
         if (config_.networkLedgerAnchor()) add("sid:ledger_anchor");
+        // The pin pair as the BIA clock-reference pair moves the pinned code combination
+        // and so the datum the carried code biases were accumulated in.  Appended only
+        // when armed, so a snapshot written with it off keeps its fingerprint.
+        if (config_.networkN3cBiaPinPair()) add("n3c:bia_pin_pair");
+        // The canonical pair read from the constellation traits changes which observables
+        // the admission requires (Galileo becomes screened), so a snapshot written on the
+        // other side holds carries the screen never saw.  Appended only when armed.
+        if (config_.networkN3cCanonicalPairTraits()) add("n3c:canonical_pair_traits");
+        // The tracker pair without the lexical substitute changes which satellites the slip
+        // detectors see and what their history holds.  Appended only when armed.
+        if (config_.networkN3cBandSignal()) add("n3c:band_signal");
+        // The wire's per-signal records carry values the columns do not, so a closed-loop
+        // consumer resumed across the flip would hold a different bias set.  Appended only
+        // when armed.
+        if (config_.networkN3cWirePerSignal()) add("n3c:wire_per_signal");
+        // The coverage gate's count of gapped arcs decides which families are dropped and
+        // so which carries are erased; the election's restore is fingerprinted above.
+        // Appended only when armed.
+        if (config_.networkN3cLedgerLifecycle()) add("n3c:ledger_lifecycle");
         add(fmt::format("{}", pl_var_floor));    add(fmt::format("{}", pb_var_floor));
         add(fmt::format("{}", cb_var_floor));    add(fmt::format("{}", zwd_on));
         add(fmt::format("{}", zwd_q));           add(fmt::format("{}", clk_model_on));

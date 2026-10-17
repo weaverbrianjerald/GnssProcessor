@@ -29,6 +29,7 @@
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
+#include "products/ProductCache.hpp"        // the bias product's clock-reference pair (network.n3c_bia_pin_pair)
 #include "products/NetworkProductEmitter.hpp"
 #include "math/TimeUtils.hpp"
 
@@ -370,6 +371,17 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
 
         std::set<std::string> isc_bridged = networkIscBridgedRoster(stations, present, config_);
 
+        // The family clock datum's arms; the builder reads the two family arms only under the
+        // time link (and the first-sighting prior only with the family difference).  The pin
+        // reference is the bias product's clock-reference pair per constellation, supplied
+        // only under network.n3c_bia_pin_pair.
+        NetworkSbasis::CodeDatumFamilyArms family_arms{config_.networkCodeDatumPairContinuity(),
+                                                       config_.networkCodeDatumFamilyDifference(),
+                                                       config_.networkCodeFamilyBirthPriorSigmaM()};
+        if (config_.networkN3cBiaPinPair())
+            for (const auto& [letter, ref] : ProductCache::getInstance().getClockRefSignals())
+                family_arms.pin_reference.emplace(letter, std::make_pair(ref.sig1, ref.sig2));
+
         std::set<std::string> extra_band_determined = networkExtraBandRoster(stations, present, config_);
 
         // The first-sighting family prior keys its birth test on how this
@@ -395,11 +407,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
             code_bias_sat_seen_, code_bias_datum_resumed_,
             this_epoch_if_pin_sel, this_epoch_if_pin_real,
             this_epoch_cb_ifpin, this_epoch_cb_reseed,
-            // The family clock datum's arms; the builder reads them only under the time link (and the
-            // first-sighting prior only with the family difference).
-            NetworkSbasis::CodeDatumFamilyArms{config_.networkCodeDatumPairContinuity(),
-                                               config_.networkCodeDatumFamilyDifference(),
-                                               config_.networkCodeFamilyBirthPriorSigmaM()},
+            family_arms,
             cb_carry);
         // Hand this epoch's pair holds, pair changes, family-row realizations and
         // first-sighting prior rows and skips to the emit site, which counts them once per kept

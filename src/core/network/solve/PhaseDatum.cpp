@@ -128,7 +128,8 @@ void networkBuildPhaseDatumCandidates(
         const std::vector<std::vector<PppObservation>>& modeled,
         PhaseDatumCandidates& cnd,
         std::size_t& n_gated_epochs,
-        std::size_t& n_gated_key_epochs) {
+        std::size_t& n_gated_key_epochs,
+        const ArcLedger* gap_ledger) {
     const double pref_el = config_.networkPhaseDatumPrefElevDeg();
     const int    pdp_min_sta = config_.networkPhaseDatumMinStations();
 
@@ -199,10 +200,24 @@ void networkBuildPhaseDatumCandidates(
     // drop-edge rule needs the set, and a second census would double-count the
     // two gate counters this function owns.
     std::set<std::string> gated_amb;   // "sat_signal" excluded this epoch
+    std::size_t gap_kept = 0;          // keys the ledger's gapped arcs lifted over the bar
     if (pdp_min_sta > 1) {
         std::map<std::string, int> n_trk;
         for (size_t i = 0; i < stations.size(); ++i)
             for (const auto& kv : usable_keys[i]) ++n_trk[kv.first];
+        // Under network.n3c_ledger_lifecycle a station whose admitted arc of a key is in Gap
+        // still counts as tracking it, so a family is not dropped while an arc of it can
+        // return.  Only keys below the bar on present stations alone are looked up.
+        if (gap_ledger != nullptr) {
+            std::set<std::string> thin;
+            for (const auto& kv : union_keys)
+                if (n_trk[kv.first] < pdp_min_sta) thin.insert(kv.first);
+            if (!thin.empty()) {
+                networkPhaseGateCountGapTrackers(*gap_ledger, usable_keys, union_keys, n_trk);
+                for (const std::string& k : thin)
+                    if (n_trk[k] >= pdp_min_sta) ++gap_kept;
+            }
+        }
         for (auto it = union_keys.begin(); it != union_keys.end();) {
             if (n_trk[it->first] < pdp_min_sta) {
                 gated_amb.insert(it->first);
@@ -249,6 +264,29 @@ void networkBuildPhaseDatumCandidates(
     // The gate's exclusions, read by the drop-edge predicate.  Moved like the
     // other members so the census stays fresh on every call.
     cnd.gated_keys  = std::move(gated_amb);
+    cnd.gap_kept_keys = gap_kept;
+}
+
+std::size_t networkPhaseGateCountGapTrackers(
+        const ArcLedger& led,
+        const std::vector<std::map<std::string, std::string>>& usable_keys,
+        const std::map<std::string, std::string>& union_keys,
+        std::map<std::string, int>& n_trk) {
+    std::size_t counted = 0;
+    net::forEach(led.arcs(), &net::ArcState::ledger,   // the records
+                 [&](const ArcId& id, const ArcRecord& a) {
+        if (a.adm_state != ArcState::Gap) return;
+        const std::string amb =
+            StateKeys::makeAmbiguityKey(net::satKey(id.sat), net::signalKey(id.signal));
+        if (union_keys.count(amb) == 0) return;               // not a candidate key
+        const int sta = id.station.index;
+        if (sta >= 0 && static_cast<std::size_t>(sta) < usable_keys.size()
+            && usable_keys[static_cast<std::size_t>(sta)].count(amb) != 0)
+            return;                                           // tracking: already counted
+        ++n_trk[amb];
+        ++counted;
+    });
+    return counted;
 }
 
 void networkElectPhaseAnchors(
@@ -1358,6 +1396,15 @@ static int networkPhaseDatumGatesRunEnd(const NetworkRunEndView& v) {
                   "phase-bias column(s) on {} epoch(s) ({} column-epoch(s) total; their phase "
                   "rows served the satellite clock through the local blocks).",
                   config_.networkPhaseDatumMinStations(), n_gated_epochs, n_gated_key_epochs);
+    if (config_.networkN3cLedgerLifecycle())
+        log->info("Network (ledger lifecycle): the coverage gate kept {} column-epoch(s) that "
+                  "present stations alone would have dropped, counting a station whose admitted "
+                  "arc of the column is in Gap as still tracking it{}",
+                  v.ctx.counters.n_gated_gap_kept,
+                  v.ctx.counters.n_gated_gap_kept == 0
+                      ? " (ARMED AND INERT here: no gap fell on a thin column, or "
+                        "network.phase_datum_min_stations is 1)."
+                      : ".");
     // Drop edge of the same gate, reported in both knob states
     // (invariant #4): with the knob off this line gives the size of the class, the number
     // the fix is judged against.

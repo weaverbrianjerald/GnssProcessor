@@ -361,6 +361,12 @@ public:
         /// deviation, in metres, of the first-sighting family prior (see
         /// @ref codeFamilyBirthPriors); 0 is off.  Read only with @ref family_difference.
         double birth_prior_sigma_m{0.0};
+        /// @c network.n3c_bia_pin_pair: the clock-reference signal pair of the bias product
+        /// per constellation letter (GPS: C1W, C2W).  A satellite that registers both
+        /// signals of its constellation's pair pins that pair (see
+        /// @ref NetworkSbasis::selectIfPinPair).  Empty (the default) leaves the
+        /// lexical choice.  Read whether or not the time link is on.
+        std::map<char, std::pair<std::string, std::string>> pin_reference;
     };
 
     /// What became of one ionosphere-free pin pair change under
@@ -1287,12 +1293,18 @@ public:
      *               result is treated as "frequency unavailable" for the
      *               distinct-frequency test on @c second, and a non-finite
      *               frequency of @c first leaves @c second empty.
+     * @param reference The constellation's clock-reference pair of the bias product
+     *               (@c network.n3c_bia_pin_pair).  When both of its signals are in
+     *               @p sigs and lie on distinct finite frequencies, it is returned
+     *               as is; otherwise the order above decides.  Default empty: the
+     *               order above alone, byte-identical.
      * @return @c {first, second}; @c second is empty when no distinct second
      *         frequency exists (or @p sigs is empty, in which case both are empty).
      */
     static std::pair<std::string, std::string> selectIfPinPair(
         std::vector<std::string> sigs,
-        const std::function<double(const std::string&)>& freqOf);
+        const std::function<double(const std::string&)>& freqOf,
+        const std::pair<std::string, std::string>& reference = {});
 
     /// Result of @ref codeS2zTimeLink: the time-linked sum-to-zero target for one
     /// (constellation,signal) code-bias channel (@c network.code_datum_time_linked).

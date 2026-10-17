@@ -68,9 +68,11 @@ struct PhaseSignal {
 /// signals of @p usable.
 const PhaseSignal* latchedPhaseOfBand(const std::vector<PhaseSignal>& usable, char band,
                                       int station, const std::string& system,
-                                      const TrackerLatchLookup* latch) {
+                                      const TrackerLatchLookup* latch, bool* named = nullptr) {
+    if (named != nullptr) *named = false;
     if (latch == nullptr || !*latch) return nullptr;
     const std::string k = (*latch)(station, system, band);   // a phase on this band, e.g. L2W
+    if (named != nullptr) *named = !k.empty();
     for (const PhaseSignal& p : usable)
         if (p.phase == k && p.signal.digit == band) return &p;
     return nullptr;
@@ -86,7 +88,8 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                                   bool per_signal,
                                   bool tracker_modeled_first,
                                   SlipQcCounters* cnt,
-                                  const TrackerLatchLookup* latch) {
+                                  const TrackerLatchLookup* latch,
+                                  bool band_role_only) {
     for (int i = 0; i < n_sta_total; ++i) {
         if (i >= static_cast<int>(out.rows.size())) break;
         if (!present[i]) continue;
@@ -134,12 +137,23 @@ void networkComputeRawObservables(const std::vector<std::vector<PppObservation>>
                 const std::string system = systemName(obs.system);
                 for (const PhaseSignal** p : { &p1, &p2 }) {
                     if (*p == nullptr) continue;
+                    bool named = false;
                     const PhaseSignal* m =
-                        latchedPhaseOfBand(ph, (*p)->signal.digit, i, system, latch);
-                    if (m == nullptr) continue;         // no latched cell here
+                        latchedPhaseOfBand(ph, (*p)->signal.digit, i, system, latch, &named);
+                    if (m == nullptr) {
+                        // The lookup names a signal for this band but its phase is not
+                        // reported with its code this epoch.  With band_role_only the band
+                        // has no tracker signal this epoch; the lexical pick never stands
+                        // in for a band that has a Modelled signal.
+                        if (tracker_modeled_first && band_role_only && named) *p = nullptr;
+                        continue;                       // no latched cell here
+                    }
                     if (tracker_modeled_first) *p = m;
                     if (cnt != nullptr && m != *p) ++cnt->gap_tracker_key_mismatch;
                 }
+                // A satellite whose lowest band lost its signal has no tracker row this
+                // epoch (a second band that lost its signal leaves a single-band row).
+                if (p1 == nullptr) continue;
             }
             const std::string& s1 = p1->phase;
             const std::string  s2 = p2 ? p2->phase : std::string{};

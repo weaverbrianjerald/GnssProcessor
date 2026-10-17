@@ -6139,6 +6139,119 @@ namespace GnssProcessor {
         bool networkLedgerEmit() const { return network_ledger_emit_; }
 
         /**
+         * @brief The ionosphere-free pin pair is the BIA clock-reference pair
+         *        (@c network.n3c_bia_pin_pair).
+         *
+         * Armed, a satellite whose registered code signals include both signals of its
+         * constellation's clock-reference pair in the bias product (GPS: C1W with C2W)
+         * pins that pair in the code-bias datum, instead of the lexically first pair on
+         * distinct frequencies (GPS: C1C with C2W). A satellite that lacks either signal
+         * keeps the lexical choice. The roster's datum role and the declared @c cbpin
+         * pair follow the pin. The pin bands of the product were always the BIA bands, so
+         * only the signal on a band can change.
+         *
+         * Solve-affecting when armed (the pinned combination, and with it the datum of
+         * the emitted code biases, moves from C1C to C1W), so it is graded as a
+         * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cBiaPinPair() const { return network_n3c_bia_pin_pair_; }
+
+        /**
+         * @brief One channel-family definition, "X against the rest"
+         *        (@c network.n3c_channel_family).
+         *
+         * Armed, the datum graph census groups a satellite's bias keys by the
+         * receiver channel family of @c NetworkSbasis::channelFamilyOf (the combined
+         * I+Q signals, attribute X, against every other signal) instead of by the
+         * tracking attribute letter. The attribute letter splits natural receiver
+         * pairs (C1C with C2W, C1C with C5Q) into two families on every
+         * constellation; the code-bias datum already uses the other definition.
+         *
+         * Reaches the datum graph census only, which is measure-only: the solve and
+         * the wire are unchanged armed. Not fingerprinted. Network mode only.
+         */
+        bool networkN3cChannelFamily() const { return network_n3c_channel_family_; }
+
+        /**
+         * @brief The canonical pair's bands come from the constellation traits
+         *        (@c network.n3c_canonical_pair_traits).
+         *
+         * Armed, the canonical-pair admission reads each constellation's pair as the
+         * first two bands of the constellation traits (GPS 1 and 2, Galileo 1 and 5)
+         * instead of the band digits 1 and 2 for every constellation. A constellation
+         * with no band 2 (Galileo) is screened on its own pair, and its latch decides
+         * the four slots as GPS's does. Inert unless @ref networkCanonicalPairAdmission
+         * is armed, because the traits only name the pair that rule screens.
+         *
+         * Solve-affecting when armed together with the admission, so it is graded as a
+         * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cCanonicalPairTraits() const { return network_n3c_canonical_pair_traits_; }
+
+        /**
+         * @brief The slip tracker names a band by the roster's Modelled signal only
+         *        (@c network.n3c_band_signal).
+         *
+         * Armed, the arc-level slip tracker takes each band's signal from the roster's
+         * Modelled role (the station's latch where the roster has no role yet), and a
+         * band whose Modelled phase is not reported with its code this epoch is left
+         * out of the tracker's pair for that epoch. Lexical order never names a band
+         * that has a Modelled signal. A satellite whose lowest band is left out has no
+         * tracker row that epoch; one whose second band is left out has a single-band
+         * row. Bands with no Modelled signal anywhere keep the lexical pick, because
+         * no role exists to read. Acts only where the tracker names bands by the
+         * lookup (@c network.cycle_slip.tracker_modeled_first or
+         * @c network.roster_tracker).
+         *
+         * Solve-affecting when armed (the slip detectors see fewer rows), so it is
+         * graded as a behaviour change and it is fingerprinted (armed-only append).
+         * Network mode only.
+         */
+        bool networkN3cBandSignal() const { return network_n3c_band_signal_; }
+
+        /**
+         * @brief The wire carries one bias per modelled signal
+         *        (@c network.n3c_wire_per_signal).
+         *
+         * Armed, every satellite with a clock record gets a phase-bias and a code-bias
+         * record for each signal the network models on its constellation (the roster's
+         * modelled phases and codes, second phases and companion codes included). A
+         * signal the satellite has no estimated column for takes the value of the signal
+         * on the same band in the same channel family ("X against the rest",
+         * @c NetworkSbasis::channelFamilyOf), the lexically first when several qualify;
+         * with no such signal the record stays absent. The assumption a consumer made
+         * silently when it fell back to a family-equivalent record is then stated on the
+         * wire, keyed by the signal it is for.
+         *
+         * Changes the wire (and so the closed-loop consumer), so it is graded as a
+         * behaviour change and it is fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cWirePerSignal() const { return network_n3c_wire_per_signal_; }
+
+        /**
+         * @brief The arc ledger owns the arc lifecycle at the anchor election and the
+         *        coverage gate (@c network.n3c_ledger_lifecycle).
+         *
+         * Armed, a returning arc is never a first sighting and a gapped arc is not a
+         * departed one:
+         *  - the anchor election reads the ledger and restores a returning family's
+         *    previous incumbent (the loader arms @c network.ledger_screens and
+         *    @c network.ledger_anchor with it, and logs that it did);
+         *  - the coverage gate counts a station whose admitted arc of a family is in
+         *    Gap as still tracking it, so a family does not drop (and its carried
+         *    ambiguities are not erased) while an arc of it can still return. The
+         *    gap ends in a return or in death, and the family is gated as usual after.
+         *
+         * The gap re-entry response keeps its own key, @c network.ledger_reentry, which
+         * needs @c network.roster_tracker and @c network.cycle_slip.gap_reentry_relevel.
+         * Inert at the gate unless @c network.phase_datum_min_stations is above 1.
+         *
+         * Solve-affecting when armed, so it is graded as a behaviour change and it is
+         * fingerprinted (armed-only append). Network mode only.
+         */
+        bool networkN3cLedgerLifecycle() const { return network_n3c_ledger_lifecycle_; }
+
+        /**
          * @brief The consumer's band latch and its freshness response follow the
          *        declared roster
          *        (@c network.closed_loop.roster_latch).
@@ -8350,6 +8463,12 @@ namespace GnssProcessor {
         bool   network_ledger_emit_{false};                        ///< The emitter's per-family bookkeeping read against the arc ledger (the phase-bias hold's generation against the ledger's admitted arc births, both directions; the emitter's first-sighting test against the ledger's memory of the family) and the producer's declaration of its signal roster on the wire as a block of N records (network.ledger_emit). Observatory: the solve and every C / B / P / E record are byte-identical armed; the only wire difference is the N records. Not fingerprinted. Network mode only.
         bool   consumer_roster_latch_{false};                      ///< Consumer side (network.closed_loop.roster_latch): the consumer's per-band canonical latch follows the producer's declared roster where it tracks a declared signal, and a freshness flip on a signal the declaration does not name is not a staleness event. Inert (logged once) on a wire with no declaration. Derived onto the closed-loop consumer config only.
         bool   network_ledger_anchor_{false};                      ///< A family the coverage gate's drop edge erased and that returns with arcs of the same generation restores its previous incumbent as the candidate of record (subject to the election's existing rules) instead of being elected as a first sighting (network.ledger_anchor); a new-generation return is elected as without the knob. anchor_arc_age becomes a reader of the ledger's admitted age. Solve-affecting when armed. Refused (error + disarm) without network.ledger_screens. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_bia_pin_pair_{false};                   ///< The code-bias datum pins the BIA clock-reference signal pair (GPS C1W with C2W) on a satellite that registers both, instead of the lexically first pair (network.n3c_bia_pin_pair). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_channel_family_{false};                 ///< The datum graph census groups bias keys by "X against the rest" (NetworkSbasis::channelFamilyOf) instead of the attribute letter (network.n3c_channel_family). Measure-only: nothing in the solve reads the census. Not fingerprinted. Network mode only.
+        bool   network_n3c_canonical_pair_traits_{false};          ///< The canonical-pair admission reads each constellation's pair as the first two bands of its traits (GPS 1 and 2, Galileo 1 and 5) instead of the digits 1 and 2 (network.n3c_canonical_pair_traits). Inert without network.canonical_pair_admission. Solve-affecting when armed with it. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_band_signal_{false};                    ///< The slip tracker names a band by the roster's Modelled signal only: a band whose Modelled phase is not reported with its code this epoch is left out of the tracker pair, never replaced by the lexical pick (network.n3c_band_signal). Acts only under tracker_modeled_first or roster_tracker. Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_wire_per_signal_{false};                ///< The wire carries a phase-bias and a code-bias record for every signal the network models on a satellite's constellation; a signal without an estimated column takes the value of the same-band signal of its channel family (network.n3c_wire_per_signal). Changes the wire. Fingerprinted (armed-only append). Network mode only.
+        bool   network_n3c_ledger_lifecycle_{false};               ///< The arc ledger owns the arc lifecycle at the anchor election (arms network.ledger_screens and network.ledger_anchor) and at the coverage gate (a station with an admitted arc in Gap still counts as tracking) (network.n3c_ledger_lifecycle). Solve-affecting when armed. Fingerprinted (armed-only append). Network mode only.
         LedgerReentryNoVerdict network_ledger_reentry_no_verdict_{LedgerReentryNoVerdict::Bridge}; ///< Response to a re-entry with no raw verdict (network.ledger_reentry_no_verdict): `bridge` (default) leaves it to the PASS-B inject and only counts and events it as ARC arc_reentry with verdict=none; `refloat` treats it as unmeasurable, which network.cycle_slip.gap_reentry_relevel_unmeasurable then decides. Inert without network.ledger_reentry.
         bool   network_exclude_unmodeled_antenna_stations_{false}; ///< Hard exclusion (policy backstop): drop from the network entirely any station whose receiver antenna still has no ATX match after the always-on radome→NONE fallback (an unknown antenna type → fully unmodelled receiver PCO/PCV, a systematic error in every obs feeding the shared clocks/biases). Never built, counted at the build summary, echoed in the manifest; an unmodelled clock-datum pivot is a hard build error instead. Off = every loaded station is built (byte-identical). Network mode only.
         bool   network_raim_attribution_{false};  ///< Drive RAIM refloats by prominence attribution (median-polish sat/station/arc) instead of per-satellite consensus; off = consensus behaviour.

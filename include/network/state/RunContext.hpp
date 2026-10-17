@@ -971,6 +971,7 @@ namespace GnssProcessor {
         // census would reconcile against a stale epoch, which is why it is one resolved
         // knob and not three independent config reads.
         bool      dg_on{};            ///< Master: network.datum_graph_census.
+        bool      dg_x_family{};      ///< network.n3c_channel_family: the census groups by "X against the rest".
         long long dg_event_holdoff{}; ///< Per-identity DATUMGRAPH event rate limit, in processed epochs.
         // --- product-referenced measurement admission ---
         // Nothing to resolve against the estimation configuration: the screen reads

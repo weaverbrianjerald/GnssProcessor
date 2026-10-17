@@ -725,7 +725,10 @@ void passARawObservables(const PassAView& v) {
                                      // roster's own answer.
                                      qc.params.tracker_modeled_first || roster_tracker,
                                      &qc.counters,
-                                     roster_tracker ? &roster_lu : &latch);
+                                     roster_tracker ? &roster_lu : &latch,
+                                     // network.n3c_band_signal: a band with a Modelled
+                                     // signal that is not usable this epoch leaves the pair.
+                                     config_.networkN3cBandSignal());
         // The qualification pass (empirical step gates, LLI credibility, arc
         // resumptions) runs only for a decision mechanism; with only the trace armed the
         // observables are pure output and nothing is adjudicated.

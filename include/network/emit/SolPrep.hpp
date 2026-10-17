@@ -84,6 +84,36 @@ struct NetworkSolPrepResult {
                                                     ///< (replay) + heartbeat.
 };
 
+struct SignalRoster;            // network/assembly/SignalRoster.hpp
+
+/// @brief What one @ref networkWireFillModelledSignals pass added.
+struct NetworkWireFillCounts {
+    long long sats{0};    ///< Satellites that received at least one record.
+    long long phase{0};   ///< Phase-bias records added.
+    long long code{0};    ///< Code-bias records added.
+};
+
+/**
+ * @brief Give every satellite with a clock record one bias per modelled signal
+ *        (@c network.n3c_wire_per_signal).
+ *
+ * The signals are the roster's modelled phases (second phases included) and modelled
+ * and companion codes on the satellite's constellation, taken over all stations. For a
+ * modelled signal the satellite has no record for, the value is that of a record the
+ * satellite does have on the same band digit and in the same channel family
+ * (@c NetworkSbasis::channelFamilyOf, "X against the rest"); the lexically first such
+ * record when several qualify. The whole phase-bias record is copied (value, integer
+ * flags, sigma), a code bias copies the value. A signal with no such source stays
+ * absent, so the wire never asserts a value across families or bands. Records are
+ * added after every source has been read, so a filled record is never itself a source.
+ *
+ * @param sol    The solution epoch to complete (modified).
+ * @param roster The signal roster of this epoch.
+ * @return Counts of what was added.
+ */
+NetworkWireFillCounts networkWireFillModelledSignals(NetworkSolutionEpoch& sol,
+                                                     const SignalRoster& roster);
+
 struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 struct EpochEvents;             // network/driver/Epoch.hpp
@@ -175,6 +205,8 @@ struct SolPrepCounters {
     size_t n_perconst_partial_epochs = 0;     // epochs published partially: the σ̂0 carve-out pruned >=1 constellation (RTA-10)
     size_t n_perconst_diffuse_published = 0;  // epochs published in full although the global σ̂0 tripped, every constellation being individually clean: the diffuse cross-constellation edge of the per-const approximation (RTA-10)
     long long cb_exc_bumps           = 0;   ///< code-bias discontinuity bumps landed
+    NetworkWireFillCounts wire_fill;        ///< Records added under network.n3c_wire_per_signal.
+    long long wire_fill_epochs = 0;         ///< Emitted epochs on which the fill ran.
 };
 
 } // namespace GnssProcessor
