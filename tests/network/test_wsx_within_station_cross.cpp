@@ -35,6 +35,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -179,7 +180,7 @@ std::string wsxConfig(bool exact, bool cross) {
 bool wsxLoads(bool exact, bool cross, const char* tag, bool* armed = nullptr) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / (std::string("wsx_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("wsx_load_") + tag + ".json");
     { std::ofstream f(p); f << wsxConfig(exact, cross); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);

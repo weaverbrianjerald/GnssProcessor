@@ -44,6 +44,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -80,7 +81,7 @@ NetworkProductEmitter makeEmitter(bool channel_scope) {
 }
 
 fs::path writeMsConfig(const std::string& tag, const std::string& scope_json) {
-    const fs::path p = fs::temp_directory_path() / ("ms_disc_mark_scope_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ms_disc_mark_scope_" + tag + ".json");
     std::ofstream f(p);
     f << "{\n"
          "  \"processing\": {\n"
@@ -327,8 +328,8 @@ TEST(DiscMarkScopeTest, ConfigParsesSatAndChannelAndFallsBackOnUnknown) {
 }
 
 TEST(DiscMarkScopeTest, SLineDeclaresTheScopeAndOffIsByteIdentical) {
-    const fs::path with_p    = fs::temp_directory_path() / "ms_discscope_with.txt";
-    const fs::path without_p = fs::temp_directory_path() / "ms_discscope_without.txt";
+    const fs::path with_p    = gnss_test::tempDir() / "ms_discscope_with.txt";
+    const fs::path without_p = gnss_test::tempDir() / "ms_discscope_without.txt";
     std::error_code ec; fs::remove(with_p, ec); fs::remove(without_p, ec);
 
     SbasisContract base;

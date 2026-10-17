@@ -35,6 +35,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -76,7 +77,7 @@ bool bclLoads(const std::string& body, const char* tag, bool* bias = nullptr,
               bool* departed = nullptr) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / (std::string("bcl_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("bcl_load_") + tag + ".json");
     { std::ofstream f(p); f << body; }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
@@ -308,7 +309,7 @@ TEST(BorderCloneTest, DepartedCloneIsExactWhereThePerRowFormIsNot) {
 TEST(BorderCloneTest, GateViewMarginalizesABiasClone) {
     LogManager log;
     GnssConfig cfg;
-    const fs::path path = fs::temp_directory_path() / "bcl_ctx_gate.json";
+    const fs::path path = gnss_test::tempDir() / "bcl_ctx_gate.json";
     { std::ofstream f(path); f << bclConfig(true, true, false); }
     ASSERT_TRUE(cfg.loadFromJson(path, log));
     auto ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());

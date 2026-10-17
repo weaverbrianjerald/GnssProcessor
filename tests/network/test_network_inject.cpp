@@ -32,6 +32,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -41,7 +42,7 @@ namespace {
 
     /// Write @p body to a unique temp file and return its path (the loader takes a path).
     fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-        const fs::path p = fs::temp_directory_path() / ("netinj_cfg_" + tag + ".json");
+        const fs::path p = gnss_test::tempDir() / ("netinj_cfg_" + tag + ".json");
         std::ofstream f(p);
         f << body;
         f.close();
@@ -114,7 +115,7 @@ namespace {
         Harness(const nlohmann::json& inject, const std::string& tag) {
             EXPECT_TRUE(loadWith(inject, cfg, lm, tag));
             ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
-            traces = std::make_unique<NetworkRunTraces>(fs::temp_directory_path());
+            traces = std::make_unique<NetworkRunTraces>(gnss_test::tempDir());
             log = lm.getLogger("main_log");
             networkInjectArm(*ctx, cfg, lm, log);
         }

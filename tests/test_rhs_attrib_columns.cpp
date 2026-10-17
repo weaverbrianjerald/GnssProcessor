@@ -47,6 +47,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -339,7 +340,7 @@ TEST(RhsAttribColumnsTest, EmptyKnobWritesNothingAndTheRowDumpNamesKinds) {
     solveFixture(f, /*pin_value=*/0.0);
     const NetworkAttribFrame frame = captureFrame(f);
     ASSERT_TRUE(frame.valid);
-    const fs::path root = fs::temp_directory_path() / "rhs_attrib_columns_test";
+    const fs::path root = gnss_test::tempDir() / "rhs_attrib_columns_test";
     std::error_code ec;
     fs::remove_all(root, ec);
     const fs::path off = root / "off";
@@ -405,7 +406,7 @@ std::string networkConfig(const std::string& network_extra) {
 }
 
 std::vector<std::string> loadColumns(const std::string& tag, const std::string& extra) {
-    const fs::path p = fs::temp_directory_path() / ("rhs_attrib_columns_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("rhs_attrib_columns_" + tag + ".json");
     {
         std::ofstream o(p);
         o << networkConfig(extra);

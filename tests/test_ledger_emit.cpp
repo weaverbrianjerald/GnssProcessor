@@ -58,6 +58,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -81,7 +82,7 @@ namespace {
 const GnssTime kT0{ 2313, 259200.0 };
 
 std::string tempFile(const char* name) {
-    return (fs::temp_directory_path() / name).string();
+    return (gnss_test::tempDir() / name).string();
 }
 
 /// The declaration the field posture would state: two bands, two phases and two
@@ -171,7 +172,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& network_extr
         "    ]\n"
         "  }\n"
         "}\n";
-    const fs::path p = fs::temp_directory_path() / ("ledgeremit_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ledgeremit_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     return p;
@@ -191,7 +192,7 @@ struct Loaded {
 /// A traces object over a scratch directory whose streams stay closed, so the
 /// event calls of the fold are exercised without writing a file.
 std::unique_ptr<NetworkRunTraces> quietTraces() {
-    return std::make_unique<NetworkRunTraces>(fs::temp_directory_path() / "ledgeremit_tr");
+    return std::make_unique<NetworkRunTraces>(gnss_test::tempDir() / "ledgeremit_tr");
 }
 
 }  // namespace

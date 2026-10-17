@@ -67,6 +67,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -86,7 +87,7 @@ std::shared_ptr<spdlog::logger> nullLogger() {
 struct TempTree {
     std::filesystem::path root;
     explicit TempTree(const std::string& tag)
-        : root(std::filesystem::temp_directory_path()
+        : root(gnss_test::tempDir()
                / ("gnss_slip_oracle_" + tag)) {
         std::error_code ec;
         std::filesystem::remove_all(root, ec);
@@ -775,7 +776,7 @@ std::string networkConfig(const std::string& extra) {
 
 bool loadInto(const std::string& tag, const std::string& extra, GnssConfig& cfg) {
     LogManager lm;
-    const auto p = std::filesystem::temp_directory_path()
+    const auto p = gnss_test::tempDir()
                    / ("slip_oracle_cfg_" + tag + ".json");
     { std::ofstream f(p); f << networkConfig(extra); }
     const bool ok = cfg.loadFromJson(p, lm);

@@ -54,6 +54,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using GnssProcessor::AmbFoldRoute;
 using GnssProcessor::AmbStateRow;
@@ -72,7 +73,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("ambfloat_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ambfloat_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();
@@ -403,7 +404,7 @@ TEST(AmbFloatVehicleTest, TraceRowKeepsFullPrecisionOnTheGradedQuantities) {
 // =============================================================================
 
 TEST(AmbFloatVehicleTest, TraceStreamStaysClosedWhenUnarmed) {
-    const fs::path dir = fs::temp_directory_path() / "ambstate_off_case";
+    const fs::path dir = gnss_test::tempDir() / "ambstate_off_case";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);

@@ -36,12 +36,13 @@
 #include "sim/SimConfig.hpp"
 #include "sim/TrajectoryGenerator.hpp"
 #include "sim/Verifier.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
 namespace {
 std::filesystem::path tmpDir(const std::string& name) {
-    auto d = std::filesystem::temp_directory_path() / ("gnss_sim_test_" + name);
+    auto d = gnss_test::tempDir() / ("gnss_sim_test_" + name);
     std::error_code ec;
     std::filesystem::create_directories(d, ec);
     return d;

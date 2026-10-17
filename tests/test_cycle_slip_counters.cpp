@@ -17,6 +17,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -25,7 +26,7 @@ namespace {
 void loadConfig(GnssConfig& config, LogManager& log_manager,
                 const std::string& tag, const std::string& json) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / ("gnss_cycle_slip_counters_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("gnss_cycle_slip_counters_" + tag + ".json");
     {
         std::ofstream f(p);
         f << json;

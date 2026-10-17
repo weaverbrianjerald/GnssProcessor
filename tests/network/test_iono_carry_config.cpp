@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "config/GnssConfig.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 #include "logging/LogManager.hpp"
 
 #include <filesystem>
@@ -25,7 +26,7 @@ namespace {
 
 // Write @p body to a unique temp file and return its path.
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("ionocarry_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ionocarry_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

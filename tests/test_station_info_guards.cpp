@@ -37,6 +37,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 #ifndef GNSS_TEST_DATA_DIR
 #define GNSS_TEST_DATA_DIR ""
@@ -258,7 +259,7 @@ protected:
             { "gnss_station_info_guards_main.json", mainSyntheticSif() },
             { "gnss_station_info_guards_meta2015.json", metadataFallbackSif() } } };
         for (const auto& [name, doc] : docs) {
-            const fs::path p = fs::temp_directory_path() / name;
+            const fs::path p = gnss_test::tempDir() / name;
             std::ofstream(p) << doc.dump(1);
             temp_files_.push_back(p);
             syn_->load(p);

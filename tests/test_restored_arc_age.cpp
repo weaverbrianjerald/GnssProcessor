@@ -71,6 +71,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -371,7 +372,7 @@ TEST(RestoredArcAge, TheOracleWindowIsStillFlooredByARealBirth) {
 // ===========================================================================
 
 TEST(RestoredArcAge, ASnapshotRoundTripYieldsSentinelAgesOnEveryRestoredEntry) {
-    const auto path = std::filesystem::temp_directory_path()
+    const auto path = gnss_test::tempDir()
                     / "gnss_restored_arc_age_snapshot.txt";
     std::error_code ec;
     std::filesystem::remove(path, ec);

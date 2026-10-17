@@ -45,6 +45,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -64,7 +65,7 @@ std::shared_ptr<spdlog::logger> nullLogger() {
 // ===========================================================================
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("opin_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("opin_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     return p;
@@ -121,7 +122,7 @@ bool loadPin(const nlohmann::json& ev, const std::string& root, GnssConfig& cfg,
 struct TempTree {
     fs::path root;
     explicit TempTree(const std::string& tag)
-        : root(fs::temp_directory_path() / ("gnss_oracle_pin_" + tag)) {
+        : root(gnss_test::tempDir() / ("gnss_oracle_pin_" + tag)) {
         std::error_code ec;
         fs::remove_all(root, ec);
         fs::create_directories(root);
@@ -362,7 +363,7 @@ TEST(OraclePinConfig, AnEmptyTruthRootFailsTheLoad) {
     {   // A root that does not exist is refused the same way.
         LogManager log; GnssConfig cfg;
         EXPECT_FALSE(loadPin(pinEvent("all"),
-                             jsonPath(fs::temp_directory_path() / "gnss_opin_absent"),
+                             jsonPath(gnss_test::tempDir() / "gnss_opin_absent"),
                              cfg, log, "gone"));
     }
 }

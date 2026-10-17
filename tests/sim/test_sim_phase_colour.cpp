@@ -43,6 +43,7 @@
 #include "common/Constants.hpp"
 #include "sim/PhaseColour.hpp"
 #include "sim/SimConfig.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 using namespace GnssProcessor::sim;
@@ -50,7 +51,7 @@ using namespace GnssProcessor::sim;
 namespace {
 
 std::filesystem::path tempDir(const std::string& leaf) {
-    const auto d = std::filesystem::temp_directory_path() / ("gnss_simpc_test_" + leaf);
+    const auto d = gnss_test::tempDir() / ("gnss_simpc_test_" + leaf);
     std::error_code ec;
     std::filesystem::create_directories(d, ec);
     return d;

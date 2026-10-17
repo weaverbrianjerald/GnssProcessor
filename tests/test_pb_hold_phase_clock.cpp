@@ -44,6 +44,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -129,7 +130,7 @@ std::string lahConfig(bool hold, bool phase_clock, double max_gap_s) {
 bool lahLoads(bool hold, bool phase_clock, const char* tag) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / (std::string("lah_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("lah_load_") + tag + ".json");
     { std::ofstream f(p); f << lahConfig(hold, phase_clock, 300.0); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
@@ -148,7 +149,7 @@ struct LahHarness {
     SyncedEpoch                            se;
 
     LahHarness(bool phase_clock, const char* tag, double max_gap_s = 300.0) {
-        cfg_path = fs::temp_directory_path()
+        cfg_path = gnss_test::tempDir()
                    / ("lah_cfg_" + std::string(tag) + (phase_clock ? "_on" : "_off") + ".json");
         { std::ofstream f(cfg_path); f << lahConfig(true, phase_clock, max_gap_s); }
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
@@ -157,7 +158,7 @@ struct LahHarness {
         ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
         EXPECT_EQ(ctx->knobs.emit_pb_hold_phase_clock, phase_clock)
             << "the knob must reach the run snapshot";
-        const fs::path dir = fs::temp_directory_path() / "lah_traces";
+        const fs::path dir = gnss_test::tempDir() / "lah_traces";
         fs::create_directories(dir);
         traces = std::make_unique<NetworkRunTraces>(dir);
         emitter = std::make_unique<NetworkProductEmitter>(0.05, /*emit_clock_disc=*/false);
@@ -432,7 +433,7 @@ TEST(PbHoldPhaseClockTest, ANewGenerationResetsTheLastTransferBeforeAMissingCloc
 // --- 5. The contract -------------------------------------------------------------------
 
 TEST(PbHoldPhaseClockTest, SLineWritesPbhold2AndCheckContractNamesADisagreement) {
-    const fs::path p = fs::temp_directory_path() / "lah_contract.txt";
+    const fs::path p = gnss_test::tempDir() / "lah_contract.txt";
     SbasisContract c;
     c.present = true;
     c.apriori_product_id = "CODFIN2024129";
@@ -466,7 +467,7 @@ TEST(PbHoldPhaseClockTest, SLineWritesPbhold2AndCheckContractNamesADisagreement)
     fs::remove(p);
 
     // The plain hold still writes pbhold=1 and reads back without the mode.
-    const fs::path q = fs::temp_directory_path() / "lah_contract_plain.txt";
+    const fs::path q = gnss_test::tempDir() / "lah_contract_plain.txt";
     SbasisContract plain = c;
     plain.emit_pb_hold_phase_clock = false;
     { NetworkProductWriter w(q.string(), plain); }

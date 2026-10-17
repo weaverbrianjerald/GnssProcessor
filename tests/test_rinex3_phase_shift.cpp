@@ -37,6 +37,7 @@
 #include "logging/LogManager.hpp"
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -113,7 +114,7 @@ void loadConfig(GnssConfig& cfg, LogManager& lm, const std::filesystem::path& di
 }
 
 std::filesystem::path testDir() {
-    const auto dir = std::filesystem::temp_directory_path() / "gnss_rinex3_phase_shift";
+    const auto dir = gnss_test::tempDir() / "gnss_rinex3_phase_shift";
     std::filesystem::create_directories(dir);
     return dir;
 }

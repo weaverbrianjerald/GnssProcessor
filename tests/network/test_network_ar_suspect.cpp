@@ -36,6 +36,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -511,7 +512,7 @@ std::string arConfig(const std::string& ar_body) {
 
 bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg,
                 LogManager& log) {
-    const fs::path p = fs::temp_directory_path() / ("ar_suspect_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ar_suspect_cfg_" + tag + ".json");
     { std::ofstream f(p); f << body; }
     const bool ok = cfg.loadFromJson(p, log);
     std::error_code ec; fs::remove(p, ec);

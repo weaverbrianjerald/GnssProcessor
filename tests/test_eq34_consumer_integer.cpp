@@ -83,6 +83,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -102,7 +103,7 @@ constexpr double kAmbVar = 1.6e-5;
 double fracDist(double v) { return std::abs(v - std::round(v)); }
 
 std::string tempFile(const char* name) {
-    return (std::filesystem::temp_directory_path() / name).string();
+    return (gnss_test::tempDir() / name).string();
 }
 
 // ===========================================================================

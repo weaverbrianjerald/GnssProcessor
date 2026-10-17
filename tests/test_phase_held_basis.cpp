@@ -51,6 +51,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LocalCarry;
@@ -66,7 +67,7 @@ namespace fs = std::filesystem;
 namespace {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("heldbasis_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("heldbasis_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

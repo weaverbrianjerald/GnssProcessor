@@ -31,6 +31,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -320,7 +321,7 @@ TEST(TurboEditCodeEventVeto, DisturbedIonoBlocksVeto) {
 TEST(TurboEditCodeEventVeto, ConfigKillSwitchRestoresReset) {
     namespace fs = std::filesystem;
     const fs::path cfg_path =
-        fs::temp_directory_path() / "gnss_te_veto_off_test.json";
+        gnss_test::tempDir() / "gnss_te_veto_off_test.json";
     {
         std::ofstream f(cfg_path);
         f << R"({ "estimation": { "cycle_slip": {
@@ -355,7 +356,7 @@ TEST(TurboEditCodeEventVeto, LoaderDefaultOnAndFlatAlias) {
     LogManager log_manager;
 
     {
-        const fs::path p = fs::temp_directory_path() / "gnss_te_veto_default_test.json";
+        const fs::path p = gnss_test::tempDir() / "gnss_te_veto_default_test.json";
         { std::ofstream f(p); f << R"({ "estimation": { "cycle_slip": { "turbo_edit": true } } })"; }
         GnssConfig config;
         ASSERT_TRUE(config.loadFromJson(p, log_manager));
@@ -363,7 +364,7 @@ TEST(TurboEditCodeEventVeto, LoaderDefaultOnAndFlatAlias) {
         std::error_code ec; fs::remove(p, ec);
     }
     {
-        const fs::path p = fs::temp_directory_path() / "gnss_te_veto_alias_test.json";
+        const fs::path p = gnss_test::tempDir() / "gnss_te_veto_alias_test.json";
         { std::ofstream f(p); f << R"({ "cycle_slip_turbo_edit_mw_only_veto": false })"; }
         GnssConfig config;
         ASSERT_TRUE(config.loadFromJson(p, log_manager));
@@ -560,7 +561,7 @@ TEST(TurboEditCodeEventVeto, L1L5FamilyPairVetoed) {
 // suppressed; the converged ambiguity survives).  No resets, no repairs.
 TEST(TurboEditGapBridge, PerSignalDropoutMootAttribution) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / "gnss_te_moot_settle_test.json";
+    const fs::path p = gnss_test::tempDir() / "gnss_te_moot_settle_test.json";
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {
@@ -772,7 +773,7 @@ TEST(TurboEditGapBridge, AmbiguousFloatWithoutSiblingOrSettleResets) {
 // suppressed) and repairs once the across-gap WL estimate settles.
 TEST(TurboEditGapBridge, AmbiguousFloatDefersThenSettlesToRepair) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / "gnss_te_settle_repair_test.json";
+    const fs::path p = gnss_test::tempDir() / "gnss_te_settle_repair_test.json";
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {
@@ -825,7 +826,7 @@ TEST(TurboEditGapBridge, AmbiguousFloatDefersThenSettlesToRepair) {
 // the configured cap, so a satellite cannot stay pending indefinitely.
 TEST(TurboEditGapBridge, DeferralTimeoutFallsBackToReset) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / "gnss_te_settle_timeout_test.json";
+    const fs::path p = gnss_test::tempDir() / "gnss_te_settle_timeout_test.json";
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {
@@ -919,7 +920,7 @@ TEST(TurboEditGapBridge, NoWlInformationStaysSilent) {
 // without the bridge, in full.
 TEST(TurboEditGapBridge, ConfigDisableRestoresSilence) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / "gnss_te_bridge_off_test.json";
+    const fs::path p = gnss_test::tempDir() / "gnss_te_bridge_off_test.json";
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {
@@ -1124,7 +1125,7 @@ TEST(TurboEditLowRate, QuietIonoGfOnlyEqualSlipRepairsAt30s) {
 TEST(TurboEditLowRate, SplitGateConfigLeverReachesTheSolve) {
     namespace fs = std::filesystem;
     const fs::path p =
-        fs::temp_directory_path() / "gnss_te_split_gate_test.json";
+        gnss_test::tempDir() / "gnss_te_split_gate_test.json";
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {

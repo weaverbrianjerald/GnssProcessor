@@ -59,6 +59,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -314,7 +315,7 @@ std::string iftdConfig(bool reseed) {
 
 bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg,
                 LogManager& log) {
-    const fs::path p = fs::temp_directory_path() / ("iftd_reseed_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("iftd_reseed_cfg_" + tag + ".json");
     { std::ofstream f(p); f << body; }
     const bool ok = cfg.loadFromJson(p, log);
     std::error_code ec; fs::remove(p, ec);
@@ -334,7 +335,7 @@ struct DriverHarness {
     std::set<std::pair<int, std::string>> carry_slipped_ambs;
     FlagRate                   fr;
     SyncedEpoch                se;
-    NetworkRunTraces           traces{ fs::temp_directory_path() / "gnss_iftd_reseed_test_unused" };
+    NetworkRunTraces           traces{ gnss_test::tempDir() / "gnss_iftd_reseed_test_unused" };
     std::shared_ptr<spdlog::logger> log{ nullLogger() };
     IfTdPairTallies            tally;
 

@@ -27,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -63,7 +64,7 @@ NetworkSolutionEpoch makeEpoch(const GnssTime& t, double pb01) {
 }
 
 std::string tempFile(const char* name) {
-    return (std::filesystem::temp_directory_path() / name).string();
+    return (gnss_test::tempDir() / name).string();
 }
 
 /// Exact on-disk bytes of @p path (binary, no newline translation), for
@@ -2880,7 +2881,7 @@ namespace {
 
 /// Fresh empty scratch directory under the system temp dir for rotation tests.
 std::filesystem::path rotatorScratchDir(const char* name) {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / name;
+    const std::filesystem::path dir = gnss_test::tempDir() / name;
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir);

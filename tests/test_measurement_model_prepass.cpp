@@ -30,6 +30,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -52,7 +53,7 @@ protected:
     /// Load an uncombined GPS PPP-RTK configuration with the given ambiguity
     /// basis and build the model stack around it.
     void load(const std::string& basis) {
-        const auto path = std::filesystem::temp_directory_path()
+        const auto path = gnss_test::tempDir()
             / (std::string("mm_prepass_")
                + ::testing::UnitTest::GetInstance()->current_test_info()->name() + ".json");
         {

@@ -52,6 +52,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -116,7 +117,7 @@ std::error_code& ec_ignore() {
 }
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("cc_disc_carry_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("cc_disc_carry_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();
@@ -495,7 +496,7 @@ TEST(ConsumerDiscCarryTest, ConsumerHistoryFileSitsBesideTheNetworkCopy) {
 TEST(ConsumerDiscCarryTest, ConsumerFileCarriesTheNetworkCopysTow) {
     const int    week = 2313;
     const double tow  = 277290.00000810623;   // the field seed's ep0604 stamp, double residue included
-    const fs::path dir = fs::temp_directory_path();
+    const fs::path dir = gnss_test::tempDir();
     const fs::path net = dir / "cc_disc_carry_state_snapshot.txt";
     fs::path net_copy = net; net_copy += ".ep0604";
     const fs::path cons = RealTimeEngine::consumerSnapshotHistoryPath(net, 604);
@@ -545,7 +546,7 @@ TEST(ConsumerDiscCarryTest, WriteStateSnapshotToRefusesBeforeAnyEpoch) {
     LogManager lm;
     GnssConfig cfg;
     RealTimeEngine eng(cfg, lm);
-    const fs::path p = fs::temp_directory_path() / "cc_disc_carry_never_written.txt";
+    const fs::path p = gnss_test::tempDir() / "cc_disc_carry_never_written.txt";
     std::error_code ec; fs::remove(p, ec);
     std::string err;
     const GnssTime t{ 2313, 277290.0 };

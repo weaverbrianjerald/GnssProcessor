@@ -47,6 +47,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -477,7 +478,7 @@ bool smhLoads(bool hold, bool smoothed, bool phase_clock, bool exact, const char
               bool within = true, bool anchor = true, const std::string& extra = std::string{}) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / (std::string("smh_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("smh_load_") + tag + ".json");
     { std::ofstream f(p); f << smhConfig(hold, smoothed, phase_clock, exact, within, anchor, extra); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
@@ -532,12 +533,12 @@ double pbOf(const NetworkSolutionEpoch& sol, const std::string& sat) {
 TEST(PbHoldSmoothedTest, TheHoldWritesTheClonesTransferAndRevertsContinuously) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path cfg_path = fs::temp_directory_path() / "smh_cfg_hold.json";
+    const fs::path cfg_path = gnss_test::tempDir() / "smh_cfg_hold.json";
     { std::ofstream f(cfg_path); f << smhConfig(true, true, false, true); }
     ASSERT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
     auto ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
     ASSERT_TRUE(ctx->knobs.emit_pb_hold_smoothed) << "the knob must reach the run snapshot";
-    const fs::path dir = fs::temp_directory_path() / "smh_traces";
+    const fs::path dir = gnss_test::tempDir() / "smh_traces";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -589,7 +590,7 @@ TEST(PbHoldSmoothedTest, TheHoldWritesTheClonesTransferAndRevertsContinuously) {
 /// A run context from the smoothed-hold config, for the seam tests below.
 std::unique_ptr<NetworkRunContext> smhContext(GnssConfig& cfg, const char* tag) {
     LogManager log_mgr;
-    const fs::path p = fs::temp_directory_path() / (std::string("smh_ctx_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("smh_ctx_") + tag + ".json");
     { std::ofstream f(p); f << smhConfig(true, true, false, true); }
     EXPECT_TRUE(cfg.loadFromJson(p, log_mgr));
     std::error_code ec; fs::remove(p, ec);
@@ -619,7 +620,7 @@ PbHoldClone liveClone(const std::string& sat, double v, long long ep) {
 TEST(PbHoldSmoothedTest, TheBridgeKeepsTheMedianAndTheRebornCloneContinuesIt) {
     GnssConfig cfg;
     auto ctx = smhContext(cfg, "bridge");
-    const fs::path dir = fs::temp_directory_path() / "smh_traces_bridge";
+    const fs::path dir = gnss_test::tempDir() / "smh_traces_bridge";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -673,7 +674,7 @@ TEST(PbHoldSmoothedTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
     // death epoch while its mates hold (the constellation's median step is 0).
     GnssConfig cfg;
     auto ctx = smhContext(cfg, "bridgestep");
-    const fs::path dir = fs::temp_directory_path() / "smh_traces_bridgestep";
+    const fs::path dir = gnss_test::tempDir() / "smh_traces_bridgestep";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -714,7 +715,7 @@ TEST(PbHoldSmoothedTest, AZeroPassedMotionWritesThePhaseClockTransfer) {
     // LAH writes, or it and its bridged neighbours drift apart by the median.
     GnssConfig cfg;
     auto ctx = smhContext(cfg, "frame");
-    const fs::path dir = fs::temp_directory_path() / "smh_traces_frame";
+    const fs::path dir = gnss_test::tempDir() / "smh_traces_frame";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -854,7 +855,7 @@ std::string slurp(const fs::path& p) {
 }
 
 TEST(PbHoldSmoothedTest, SLineWritesPbhold3AndCheckContractNamesADisagreement) {
-    const fs::path p = fs::temp_directory_path() / "smh_contract.txt";
+    const fs::path p = gnss_test::tempDir() / "smh_contract.txt";
     SbasisContract c;
     c.present = true;
     c.apriori_product_id = "CODFIN2024129";

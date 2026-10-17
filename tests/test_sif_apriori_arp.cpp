@@ -58,6 +58,7 @@
 #include <string>
 #include <system_error>
 #include <tuple>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 #ifndef GNSS_TEST_DATA_DIR
 #define GNSS_TEST_DATA_DIR ""
@@ -162,7 +163,7 @@ protected:
     /// Parse the first 30 s of @p obs through the real config loader and parser.
     static std::unique_ptr<RinexParser> parseHead(const fs::path& obs, const std::string& tag,
                                                   GnssConfig& cfg, std::unique_ptr<ProductParser>& pp) {
-        const fs::path j = fs::temp_directory_path() / ("sif_apriori_arp_" + tag + ".json");
+        const fs::path j = gnss_test::tempDir() / ("sif_apriori_arp_" + tag + ".json");
         {
             std::string fwd = obs.string();
             for (char& c : fwd) if (c == '\\') c = '/';

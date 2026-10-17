@@ -50,6 +50,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -445,7 +446,7 @@ bool loadSimGoldenWith(const std::function<void(nlohmann::json&)>& edit, GnssCon
     std::ifstream in(src);
     nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
     edit(j);
-    const fs::path p = fs::temp_directory_path() / ("gnss_nbp_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("gnss_nbp_" + tag + ".json");
     { std::ofstream out(p); out << j.dump(2); }
     LogManager log;
     bool ok = false;

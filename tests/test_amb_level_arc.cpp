@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 
@@ -100,7 +101,7 @@ protected:
     int epoch = 0;
 
     void SetUp() override {
-        const auto path = std::filesystem::temp_directory_path()
+        const auto path = gnss_test::tempDir()
             / (std::string("alc_arc_") + ::testing::UnitTest::GetInstance()->current_test_info()->name() + ".json");
         {
             std::ofstream out(path);

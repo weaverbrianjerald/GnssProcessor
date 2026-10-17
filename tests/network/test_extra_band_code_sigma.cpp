@@ -33,6 +33,7 @@
 #include <fstream>
 #include <string>
 #include <system_error>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -49,7 +50,7 @@ constexpr NetworkPinBands kGps{ '1', '2' };
 constexpr NetworkPinBands kGal{ '1', '5' };
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("l5p_eb_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("l5p_eb_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

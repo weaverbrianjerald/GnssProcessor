@@ -38,6 +38,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -236,7 +237,7 @@ bool pvLoads(bool on, bool raim_we, int window_ep, const char* tag, GnssConfig* 
     LogManager log_mgr;
     GnssConfig local;
     GnssConfig& cfg = out ? *out : local;
-    const fs::path p = fs::temp_directory_path() / (std::string("pv_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("pv_load_") + tag + ".json");
     { std::ofstream f(p); f << pvConfig(on, raim_we, window_ep); }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
@@ -255,7 +256,7 @@ TEST(PhaseVisibleMonitorTest, SeamCountsRowsSettlesAfterFifteenAndClosesWindows)
     for (const bool on : { false, true }) {
         GnssConfig cfg;
         ASSERT_TRUE(pvLoads(on, true, 5, on ? "seam_on" : "seam_off", &cfg));
-        const fs::path dir = fs::temp_directory_path() / "pv_traces";
+        const fs::path dir = gnss_test::tempDir() / "pv_traces";
         fs::create_directories(dir);
         NetworkTestRun fx(cfg, nullptr, dir);   // the run networkPhaseVisibleMonitor's epoch form takes
         NetworkRunContext& ctx = fx.ctx();

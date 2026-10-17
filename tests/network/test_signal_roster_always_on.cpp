@@ -32,6 +32,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -57,7 +58,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& network_extr
         "    ]\n"
         "  }\n"
         "}\n";
-    const fs::path p = fs::temp_directory_path() / ("roster_always_on_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("roster_always_on_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     return p;

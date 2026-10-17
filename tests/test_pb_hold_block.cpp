@@ -51,6 +51,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -400,7 +401,7 @@ std::string smdConfig() {
 
 std::unique_ptr<NetworkRunContext> smdContext(GnssConfig& cfg, const char* tag) {
     LogManager log_mgr;
-    const fs::path p = fs::temp_directory_path() / (std::string("smd_ctx_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("smd_ctx_") + tag + ".json");
     { std::ofstream f(p); f << smdConfig(); }
     EXPECT_TRUE(cfg.loadFromJson(p, log_mgr));
     std::error_code ec; fs::remove(p, ec);
@@ -560,7 +561,7 @@ double pbOf(const NetworkSolutionEpoch& sol, const std::string& sat) {
 TEST(PbHoldBlockTest, AMarkRetiresTheBlockBesideTheWritingClockClone) {
     GnssConfig cfg;
     auto ctx = smdContext(cfg, "hold");
-    const fs::path dir = fs::temp_directory_path() / "smd_traces_hold";
+    const fs::path dir = gnss_test::tempDir() / "smd_traces_hold";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -631,7 +632,7 @@ TEST(PbHoldBlockTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
     // revert.
     GnssConfig cfg;
     auto ctx = smdContext(cfg, "bridgestep");
-    const fs::path dir = fs::temp_directory_path() / "smd_traces_bridgestep";
+    const fs::path dir = gnss_test::tempDir() / "smd_traces_bridgestep";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -670,7 +671,7 @@ TEST(PbHoldBlockTest, ASwitchToTheBridgeKeepsTheEpochsClockStep) {
 TEST(PbHoldBlockTest, TheClockMemberIgnoresTheBlockOnTheWire) {
     GnssConfig cfg;
     auto ctx = smdContext(cfg, "clockmember");
-    const fs::path dir = fs::temp_directory_path() / "smd_traces_clk";
+    const fs::path dir = gnss_test::tempDir() / "smd_traces_clk";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
     NetworkProductEmitter emitter(0.05, /*emit_clock_disc=*/false);
@@ -713,7 +714,7 @@ std::string slurp(const fs::path& p) {
 /// block member existed carries pbhold=4, which still reads as a smoothed hold, so an older
 /// product keeps its meaning.
 TEST(PbHoldBlockTest, AnOlderPbhold4FileReadsAsASmoothedHold) {
-    const fs::path p = fs::temp_directory_path() / "smd_contract.txt";
+    const fs::path p = gnss_test::tempDir() / "smd_contract.txt";
     SbasisContract c;
     c.present = true;
     c.apriori_product_id = "CODFIN2024129";

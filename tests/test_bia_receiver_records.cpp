@@ -40,6 +40,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -47,7 +48,7 @@ using namespace GnssProcessor;
 namespace {
 
 fs::path writeTempBia(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("rx_bias_" + tag + ".BIA");
+    const fs::path p = gnss_test::tempDir() / ("rx_bias_" + tag + ".BIA");
     std::ofstream f(p);
     f << body;
     f.close();

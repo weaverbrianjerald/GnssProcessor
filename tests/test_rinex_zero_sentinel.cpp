@@ -23,6 +23,7 @@
 #include "logging/LogManager.hpp"
 #include "products/ProductParser.hpp"
 #include "rinex/RinexParser.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -97,7 +98,7 @@ const RinexObservation* findObs(const std::vector<RinexObservation>& v,
 } // namespace
 
 TEST(RinexZeroSentinelTest, LegacyPathIngestsWrittenZeros) {
-    const auto dir = std::filesystem::temp_directory_path() / "gnss_zero_sentinel";
+    const auto dir = gnss_test::tempDir() / "gnss_zero_sentinel";
     std::filesystem::create_directories(dir);
     const auto obs = writeFixture(dir);
     LogManager lm;
@@ -115,7 +116,7 @@ TEST(RinexZeroSentinelTest, LegacyPathIngestsWrittenZeros) {
 }
 
 TEST(RinexZeroSentinelTest, GuardSkipsZerosKeepsValidPartners) {
-    const auto dir = std::filesystem::temp_directory_path() / "gnss_zero_sentinel";
+    const auto dir = gnss_test::tempDir() / "gnss_zero_sentinel";
     std::filesystem::create_directories(dir);
     const auto obs = writeFixture(dir);
     LogManager lm;

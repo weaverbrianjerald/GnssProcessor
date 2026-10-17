@@ -29,6 +29,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -43,7 +44,7 @@ constexpr size_t kPppCoreSize = 5;
 void loadBridgeConfig(GnssConfig& config, LogManager& log_manager,
                       const std::string& tag) {
     namespace fs = std::filesystem;
-    const fs::path p = fs::temp_directory_path() / ("gnss_soft_lli_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("gnss_soft_lli_" + tag + ".json");
     {
         std::ofstream f(p);
         f << R"({ "estimation": { "cycle_slip": {

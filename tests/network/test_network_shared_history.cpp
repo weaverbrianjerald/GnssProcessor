@@ -55,6 +55,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -96,7 +97,7 @@ std::string shxConfig(bool clone, bool shx, const std::string& extra = "") {
 bool shxLoads(const std::string& body, const char* tag, bool* armed = nullptr, int* rank = nullptr) {
     LogManager log_mgr;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / (std::string("shx_load_") + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / (std::string("shx_load_") + tag + ".json");
     { std::ofstream f(p); f << body; }
     const bool ok = cfg.loadFromJson(p, log_mgr);
     std::error_code ec; fs::remove(p, ec);
@@ -113,7 +114,7 @@ struct ShxCtx {
     fs::path   path;
     std::unique_ptr<NetworkRunContext> ctx;
     ShxCtx(const char* tag, bool shx = true, const std::string& extra = "") {
-        path = fs::temp_directory_path() / (std::string("shx_ctx_") + tag + ".json");
+        path = gnss_test::tempDir() / (std::string("shx_ctx_") + tag + ".json");
         { std::ofstream f(path); f << shxConfig(true, shx, extra); }
         EXPECT_TRUE(cfg.loadFromJson(path, log));
         ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());

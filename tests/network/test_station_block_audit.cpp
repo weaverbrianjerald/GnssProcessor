@@ -62,6 +62,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -372,7 +373,7 @@ TEST(StationBlockAuditTest, SpanIsDeterministicTruncatedAtTheCoverAndCsvSafe) {
 TEST(StationBlockAuditTest, UnarmedOpensNothingAndArmedWritesTheDocumentedHeader) {
     namespace fs = std::filesystem;
     const auto log = nullLogger();
-    const fs::path dir = fs::temp_directory_path() / "gnss_station_block_audit_trace_test";
+    const fs::path dir = gnss_test::tempDir() / "gnss_station_block_audit_trace_test";
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir);

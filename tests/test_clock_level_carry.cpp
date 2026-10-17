@@ -49,6 +49,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -412,7 +413,7 @@ TEST(ClockLevelCarryTest, LevelStepRoundTripsTheWireAndKeepsTheDeclarations) {
         epochs.push_back(sol);
     }
 
-    const fs::path p = fs::temp_directory_path() / "clv_level_step_roundtrip.txt";
+    const fs::path p = gnss_test::tempDir() / "clv_level_step_roundtrip.txt";
     std::error_code ec;
     fs::remove(p, ec);
     NetworkProductEmitter live = NetworkProductReader::makeReplayEmitter(contract);
@@ -515,7 +516,7 @@ TEST(ClockLevelCarryTest, CodeBiasFollowStepRoundTripsTheWire) {
         epochs.push_back(sol);
     }
 
-    const fs::path p = fs::temp_directory_path() / "clv_cb_follow_roundtrip.txt";
+    const fs::path p = gnss_test::tempDir() / "clv_cb_follow_roundtrip.txt";
     std::error_code ec;
     fs::remove(p, ec);
     NetworkProductEmitter live = NetworkProductReader::makeReplayEmitter(contract);

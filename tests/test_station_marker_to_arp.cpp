@@ -47,6 +47,7 @@
 #include "rinex/RinexParser.hpp"
 
 #include <Eigen/Dense>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -109,7 +110,7 @@ void loadObsConfig(GnssConfig& cfg, LogManager& lm, const fs::path& dir,
 
 /// A network config carrying `network_extra` inside the `network` object.
 fs::path writeNetworkConfig(const std::string& tag, const std::string& network_extra) {
-    const fs::path p = fs::temp_directory_path() / ("marker_arp_net_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("marker_arp_net_" + tag + ".json");
     std::ofstream f(p);
     f << "{\n"
          "  \"processing\": {\n"
@@ -198,7 +199,7 @@ TEST(StationMarkerToArpTest, AgreesWithTheConsumerTruthPath) {
 // zero, so the reduction cannot tell them apart; hasAntennaDeltaHen lets the
 // setup report the station it could not reduce (requirement U1).
 TEST(StationMarkerToArpTest, AbsentHeaderRecordIsDistinguishableFromZero) {
-    const auto dir = fs::temp_directory_path() / "gnss_marker_arp";
+    const auto dir = gnss_test::tempDir() / "gnss_marker_arp";
     fs::create_directories(dir);
 
     struct Case { const char* tag; bool with_delta; const char* line; bool expect_has; };

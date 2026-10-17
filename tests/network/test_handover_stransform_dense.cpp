@@ -52,6 +52,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -173,7 +174,7 @@ struct Loaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("sts_dense_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("sts_dense_cfg_" + tag + ".json");
         { std::ofstream f(path); f << body; }
         ok = cfg.loadFromJson(path, log);
     }
@@ -198,7 +199,7 @@ struct SeamBed {
         EXPECT_TRUE(L.ok);
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
         log = std::make_shared<spdlog::logger>("sts_dense_test", sink);
-        trace_dir = fs::temp_directory_path() / ("sts_dense_traces_" + tag);
+        trace_dir = gnss_test::tempDir() / ("sts_dense_traces_" + tag);
         fs::create_directories(trace_dir);
         traces = std::make_unique<NetworkRunTraces>(trace_dir);
         traces->openAll(L.cfg, L.cfg.getNetworkConfig(), L.cfg.getGlobalVtecShConfig(),
