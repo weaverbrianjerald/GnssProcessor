@@ -49,6 +49,7 @@
 #include "network/solve/Sbasis.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -597,7 +598,7 @@ namespace {
 
 std::filesystem::path writeCfg(const std::string& tag, const std::string& network_extra) {
     const std::filesystem::path p =
-        std::filesystem::temp_directory_path() / ("rank_gate_cfg_" + tag + ".json");
+        gnss_test::tempDir() / ("rank_gate_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << "{\n"
          "  \"processing\": {\n"

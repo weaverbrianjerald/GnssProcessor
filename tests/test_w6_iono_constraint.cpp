@@ -49,6 +49,7 @@
 #include "network/solve/Sbasis.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkProductIO.hpp"   // the S-line declaration (RF-0d item 2)
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -56,7 +57,7 @@ using namespace GnssProcessor;
 namespace {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("w6_iono_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("w6_iono_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();
@@ -717,7 +718,7 @@ TEST(W6IonoConstraintTest, SatGfDatumUnknownValueFallsBackToNone) {
 // in the ionosphere the consumer estimates for itself.  It round-trips beside gfpin=,
 // not inside it, and is not taken by the bare-':' realized-pivot fallback.
 TEST(W6IonoConstraintTest, SatGfDatumDeclarationRoundTripsOnTheSLine) {
-    const fs::path path = fs::temp_directory_path() / "w6_iono_satgfdatum_sline.txt";
+    const fs::path path = gnss_test::tempDir() / "w6_iono_satgfdatum_sline.txt";
     std::error_code ec; fs::remove(path, ec);
 
     SbasisContract c;
@@ -752,8 +753,8 @@ TEST(W6IonoConstraintTest, SatGfDatumDeclarationRoundTripsOnTheSLine) {
 // product and every stored product hash still round-trips.  The armed file is the
 // unarmed file plus exactly that one token, and nothing else.
 TEST(W6IonoConstraintTest, SatGfDatumDeclarationAbsentWhenUnarmed) {
-    const fs::path with_p    = fs::temp_directory_path() / "w6_iono_satgf_with.txt";
-    const fs::path without_p = fs::temp_directory_path() / "w6_iono_satgf_without.txt";
+    const fs::path with_p    = gnss_test::tempDir() / "w6_iono_satgf_with.txt";
+    const fs::path without_p = gnss_test::tempDir() / "w6_iono_satgf_without.txt";
     std::error_code ec; fs::remove(with_p, ec); fs::remove(without_p, ec);
 
     SbasisContract base;
@@ -953,7 +954,7 @@ TEST(W6IonoConstraintTest, IscStateUnarmedIsByteIdenticalToRf0d) {
 // The wire half: `isc=obs` is a per-record token that round-trips, and a record
 // without it parses exactly as it did before the token existed.
 TEST(W6IonoConstraintTest, IscObsTokenRoundTripsOnTheBRecord) {
-    const fs::path path = fs::temp_directory_path() / "w6_iono_isc_token.txt";
+    const fs::path path = gnss_test::tempDir() / "w6_iono_isc_token.txt";
     std::error_code ec; fs::remove(path, ec);
 
     SbasisContract c;

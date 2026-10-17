@@ -40,6 +40,7 @@
 #include <iomanip>
 #include <limits>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 
@@ -339,7 +340,7 @@ TEST(ImuStreamingIngest, AddSampleMatchesBatchLoad) {
     // Batch: write a temp CSV (full precision so the text round-trips exactly)
     // and loadData.
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::temp_directory_path() / "gnss_aiding_imu_stream_test.csv";
+    const fs::path tmp = gnss_test::tempDir() / "gnss_aiding_imu_stream_test.csv";
     {
         std::ofstream f(tmp);
         f << std::setprecision(17);

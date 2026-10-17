@@ -58,6 +58,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -93,7 +94,7 @@ fs::path writeTempConfig(const std::string& tag, const std::string& network_extr
         "    ]\n"
         "  }\n"
         "}\n";
-    const fs::path p = fs::temp_directory_path() / ("cta_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("cta_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     return p;
@@ -358,7 +359,7 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.cta_on);
     ASSERT_TRUE(ctx.knobs.cta_resolve);
-    const fs::path dir = fs::temp_directory_path() / "cta_guard_traces";
+    const fs::path dir = gnss_test::tempDir() / "cta_guard_traces";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 
@@ -425,7 +426,7 @@ TEST(ClockAnchorGuard, GenuineStepIsDetectedRefloatedAndValueCorrectedInEpoch) {
 TEST(ClockAnchorGuard, WholeConstellationCommonModeDoesNotTrip) {
     Loaded L("common", kArmed);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
-    const fs::path dir = fs::temp_directory_path() / "cta_common_traces";
+    const fs::path dir = gnss_test::tempDir() / "cta_common_traces";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 
@@ -462,7 +463,7 @@ TEST(ClockAnchorGuard, RecouplingNeedsTheConsecutiveInBandRunAndDoesNotMark) {
     Loaded L("recouple", kArmed);
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
     ASSERT_EQ(ctx.knobs.cta_recouple_ep, 3);
-    const fs::path dir = fs::temp_directory_path() / "cta_recouple_traces";
+    const fs::path dir = gnss_test::tempDir() / "cta_recouple_traces";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 

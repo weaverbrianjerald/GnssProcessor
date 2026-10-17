@@ -51,6 +51,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -126,7 +127,7 @@ struct PbhHarness {
             "    ]\n"
             "  }\n"
             "}\n";
-        cfg_path = fs::temp_directory_path()
+        cfg_path = gnss_test::tempDir()
                    / ("pbh_cfg_" + std::string(tag) + (hold_on ? "_on" : "_off") + ".json");
         { std::ofstream f(cfg_path); f << body; }
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, log_mgr));
@@ -134,7 +135,7 @@ struct PbhHarness {
         EXPECT_DOUBLE_EQ(cfg.getNetworkConfig().emit_pb_hold_max_gap_s, max_gap_s);
         ctx = std::make_unique<NetworkRunContext>(cfg, cfg.getNetworkConfig());
         EXPECT_EQ(ctx->knobs.emit_pb_hold, hold_on) << "the knob must reach the run snapshot";
-        const fs::path dir = fs::temp_directory_path() / "pbh_traces";
+        const fs::path dir = gnss_test::tempDir() / "pbh_traces";
         fs::create_directories(dir);
         traces = std::make_unique<NetworkRunTraces>(dir);
         emitter = std::make_unique<NetworkProductEmitter>(0.05, /*emit_clock_disc=*/false);
@@ -326,7 +327,7 @@ std::string slurp(const fs::path& p) {
 }
 
 TEST(PbEmitHoldTest, PRecordGenTokenRoundTrips) {
-    const fs::path p = fs::temp_directory_path() / "pbh_wire.txt";
+    const fs::path p = gnss_test::tempDir() / "pbh_wire.txt";
     {
         NetworkProductWriter w(p.string());
         auto sol = pbhEpoch(259200.0, 0.10);
@@ -356,7 +357,7 @@ TEST(PbEmitHoldTest, PRecordGenTokenRoundTrips) {
 }
 
 TEST(PbEmitHoldTest, SLinePbHoldTokenRoundTripsAndCheckContractNamesADisagreement) {
-    const fs::path p = fs::temp_directory_path() / "pbh_contract.txt";
+    const fs::path p = gnss_test::tempDir() / "pbh_contract.txt";
     SbasisContract c;
     c.present = true;
     c.apriori_product_id = "CODFIN2024129";
@@ -385,7 +386,7 @@ TEST(PbEmitHoldTest, SLinePbHoldTokenRoundTripsAndCheckContractNamesADisagreemen
 
     // An off contract writes no pbhold= token, so its S line matches one written
     // before the knob existed.
-    const fs::path q = fs::temp_directory_path() / "pbh_contract_off.txt";
+    const fs::path q = gnss_test::tempDir() / "pbh_contract_off.txt";
     SbasisContract off = c;
     off.emit_pb_hold = false;
     { NetworkProductWriter w(q.string(), off); }

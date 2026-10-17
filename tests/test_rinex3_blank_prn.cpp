@@ -35,6 +35,7 @@
 #include "products/ProductParser.hpp"
 #include "products/RinexNavParser.hpp"
 #include "rinex/RinexParser.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -105,7 +106,7 @@ const RinexObservation* findSat(const std::vector<RinexObservation>& v,
 }
 
 std::filesystem::path testDir() {
-    const auto dir = std::filesystem::temp_directory_path() / "gnss_rinex3_blank_prn";
+    const auto dir = gnss_test::tempDir() / "gnss_rinex3_blank_prn";
     std::filesystem::create_directories(dir);
     return dir;
 }

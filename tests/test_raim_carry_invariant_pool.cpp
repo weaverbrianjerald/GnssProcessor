@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -43,7 +44,7 @@ using namespace GnssProcessor;
 namespace {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("raim_ci_pool_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("raim_ci_pool_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

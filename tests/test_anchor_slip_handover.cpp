@@ -64,6 +64,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -166,7 +167,7 @@ struct Loaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("anc_slip_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("anc_slip_cfg_" + tag + ".json");
         std::ofstream f(path);
         f << body;
         f.close();
@@ -319,7 +320,7 @@ TEST(AnchorSlipHandoverLookup, InjectedDirectiveWinsForTheSameFamily) {
 TEST(AnchorSlipHandoverLifetime, BothVectorsClearPerEpochIncludingUnarmedRuns) {
     Loaded L("life", "");
     NetworkRunContext ctx(L.cfg, L.cfg.getNetworkConfig());
-    const fs::path dir = fs::temp_directory_path() / "anc_slip_traces";
+    const fs::path dir = gnss_test::tempDir() / "anc_slip_traces";
     fs::create_directories(dir);
     NetworkRunTraces traces(dir);
 

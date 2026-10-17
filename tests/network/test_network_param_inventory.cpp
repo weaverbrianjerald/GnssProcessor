@@ -34,6 +34,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace K = GnssProcessor::StateKeys;
@@ -61,7 +62,7 @@ SignalId sig(System s, const char* code) { return *SignalId::fromObsCode(s, code
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     static const unsigned run_id = std::random_device{}();
     static std::atomic<unsigned> n{0};
-    const fs::path p = fs::temp_directory_path()
+    const fs::path p = gnss_test::tempDir()
                      / ("nom_inventory_cfg_" + tag + "_" + std::to_string(run_id) + "_"
                         + std::to_string(n++) + ".json");
     std::ofstream f(p);

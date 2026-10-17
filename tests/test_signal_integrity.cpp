@@ -57,6 +57,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -70,7 +71,7 @@ constexpr const char* kC1 = "C1C";
 constexpr const char* kC2 = "C2W";
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("siginteg_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("siginteg_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

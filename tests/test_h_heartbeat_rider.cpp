@@ -32,6 +32,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -39,7 +40,7 @@ using namespace GnssProcessor;
 namespace {
 
 fs::path writeTempFile(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("h_rider_" + tag);
+    const fs::path p = gnss_test::tempDir() / ("h_rider_" + tag);
     std::ofstream f(p);
     f << body;
     f.close();
@@ -108,7 +109,7 @@ TEST(HHeartbeatRider, ContractHsigTokenRoundTrips) {
     c.h_sigma0_source = "pc";
     c.present = true;
 
-    const fs::path p = fs::temp_directory_path() / "h_rider_contract.txt";
+    const fs::path p = gnss_test::tempDir() / "h_rider_contract.txt";
     { NetworkProductWriter w(p.string(), c); ASSERT_TRUE(w.good()); }
 
     SbasisContract back;
@@ -125,7 +126,7 @@ TEST(HHeartbeatRider, ContractWithoutHsigStaysEmpty) {
     c.apriori_product_id = "CODTEST";
     c.present = true;
 
-    const fs::path p = fs::temp_directory_path() / "h_rider_nohsig.txt";
+    const fs::path p = gnss_test::tempDir() / "h_rider_nohsig.txt";
     { NetworkProductWriter w(p.string(), c); ASSERT_TRUE(w.good()); }
 
     // Byte-level: the token must be absent, not empty-valued.

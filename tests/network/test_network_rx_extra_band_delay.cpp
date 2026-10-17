@@ -50,6 +50,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace K  = GnssProcessor::StateKeys;
@@ -64,7 +65,7 @@ constexpr const char* kKnob = "network.estimate_rx_extra_band_code_delay";
 /// The temp path of one test's file, a fixed name per tag (the pattern of
 /// test_codebias_network_config.cpp), so repeated runs reuse it instead of accumulating.
 fs::path tempPath(const std::string& tag, const std::string& ext) {
-    return fs::temp_directory_path() / ("l5b_rxifb_" + tag + ext);
+    return gnss_test::tempDir() / ("l5b_rxifb_" + tag + ext);
 }
 
 /// A minimal loadable network config.  @p frequency_mode is the

@@ -61,6 +61,7 @@
 #include "logging/LogManager.hpp"
 #include "network/qc/BlockBaarda.hpp"
 #include "network/solve/NormalEquations.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -1191,7 +1192,7 @@ namespace {
 namespace bbfs = std::filesystem;
 
 bbfs::path writeBbConfig(const std::string& tag, const std::string& body) {
-    const bbfs::path p = bbfs::temp_directory_path() / ("blockbaarda_cfg_" + tag + ".json");
+    const bbfs::path p = gnss_test::tempDir() / ("blockbaarda_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

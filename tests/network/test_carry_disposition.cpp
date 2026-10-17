@@ -27,6 +27,7 @@
 #include <fstream>
 #include <random>
 #include <string>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -61,7 +62,7 @@ struct Loaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("prm1b_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("prm1b_cfg_" + tag + ".json");
         { std::ofstream f(path); f << body; }
         ok = cfg.loadFromJson(path, log);
     }

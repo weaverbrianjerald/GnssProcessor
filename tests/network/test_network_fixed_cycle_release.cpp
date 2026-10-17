@@ -59,6 +59,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -145,7 +146,7 @@ struct Loaded {
     GnssConfig cfg;
     std::filesystem::path path;
     Loaded(const std::string& tag, const std::string& network_extra) {
-        path = std::filesystem::temp_directory_path() / ("fcyc_release_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("fcyc_release_cfg_" + tag + ".json");
         std::ofstream f(path);
         f << "{\n  \"processing\": { \"mode\": \"ppp-rtk-network\", \"active_systems\": [ \"GPS\" ],\n"
              "                  \"signal_priorities\": { \"GPS\": \"WC\" } },\n"

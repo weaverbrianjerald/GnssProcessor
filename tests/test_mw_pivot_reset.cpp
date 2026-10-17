@@ -69,6 +69,7 @@
 #include "products/ProductTypes.hpp"
 #include "rinex/RinexParser.hpp"
 #include "slip/MwSlipDetector.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -184,7 +185,7 @@ struct Bed {
 
     explicit Bed(const std::string& detect_reference = {}) {
         if (!detect_reference.empty()) {
-            const auto path = std::filesystem::temp_directory_path()
+            const auto path = gnss_test::tempDir()
                 / ("gnss_mw_pivot_reset_" + detect_reference + ".json");
             {
                 std::ofstream f(path);

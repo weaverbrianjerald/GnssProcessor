@@ -36,6 +36,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -74,7 +75,7 @@ std::string networkConfig(const std::string& extra) {
 
 bool loadWith(const std::string& extra, GnssConfig& cfg, LogManager& log,
               const std::string& tag) {
-    const fs::path p = fs::temp_directory_path() / ("icf_cold_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("icf_cold_cfg_" + tag + ".json");
     {
         std::ofstream f(p);
         f << networkConfig(extra);

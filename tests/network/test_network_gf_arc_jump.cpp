@@ -48,6 +48,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -313,7 +314,7 @@ struct Harness {
     std::map<std::tuple<int, std::string, std::string>, RelevelPend> pends;
     CommonBandEpoch            common_band;
     SyncedEpoch                se;
-    NetworkRunTraces           traces{std::filesystem::temp_directory_path()
+    NetworkRunTraces           traces{gnss_test::tempDir()
                                       / "gnss_gf_arc_jump_test_unused"};
     std::shared_ptr<spdlog::logger> log{nullLogger()};
     double                     gf{-3.0};

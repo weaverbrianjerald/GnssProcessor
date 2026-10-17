@@ -40,6 +40,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using GnssProcessor::netar::DdFixLabel;
 using GnssProcessor::netar::lowestSigmaOrder;
@@ -223,7 +224,7 @@ TEST(ProducerArTrace, HeaderMatchesTheDocumentedColumnContract) {
 // ===========================================================================
 TEST(ProducerArTrace, OffPathOpensNoStreamAndWritesNoRows) {
     const std::filesystem::path dir =
-        std::filesystem::temp_directory_path() / "gnss_producer_ar_off_test";
+        gnss_test::tempDir() / "gnss_producer_ar_off_test";
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 

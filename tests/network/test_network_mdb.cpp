@@ -63,6 +63,7 @@
 #include "network/qc/Mdb.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "logging/LogManager.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -79,7 +80,7 @@ double oracleMdb(double sigma, double r, double k) {
 // --- config-load fixtures (the house pattern, test_network_process_noise_config) --
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("netmdb_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("netmdb_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

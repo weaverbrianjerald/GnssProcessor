@@ -94,6 +94,7 @@
 #include "math/TimeUtils.hpp"                   // continuousGpsSeconds (the READMIT clock)
 #include "products/NetworkProductEmitter.hpp"
 #include "rinex/MultiRinexSync.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -330,7 +331,7 @@ std::string networkConfig(const std::string& extra) {
 /// Load @p extra into @p cfg through a temporary file.
 bool loadWith(const std::string& extra, GnssConfig& cfg, LogManager& log,
               const std::string& tag) {
-    const fs::path p = fs::temp_directory_path() / ("gfc_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("gfc_cfg_" + tag + ".json");
     {
         std::ofstream f(p);
         f << networkConfig(extra);
@@ -377,7 +378,7 @@ struct EmitHarness {
 
     std::unique_ptr<NetworkTestRun> makeRun(const std::string& tag) {
         EXPECT_TRUE(loadWith("", cfg, logman, "emit_" + tag));
-        trace_dir = fs::temp_directory_path() / ("gfc_emit_traces_" + tag);
+        trace_dir = gnss_test::tempDir() / ("gfc_emit_traces_" + tag);
         fs::create_directories(trace_dir);
         return std::make_unique<NetworkTestRun>(cfg, nullLogger(), trace_dir);
     }
@@ -2384,7 +2385,7 @@ TEST(CodeDatumFamilyTest, BirthPriorIsFoldedOnceAcrossAReadmitSeed) {
     ASSERT_TRUE(ctx.knobs.readmit_seed_cb);
     ASSERT_GT(ctx.knobs.readmit_seed_horizon_s, 0.0);
     ASSERT_GT(ctx.knobs.clk_mon_reinit_sig, 0.0);   // a flagged satellite is loosened, not dropped
-    const fs::path dir = fs::temp_directory_path() / "gfc_readmit_once_traces";
+    const fs::path dir = gnss_test::tempDir() / "gfc_readmit_once_traces";
     fs::create_directories(dir);
     auto traces = std::make_unique<NetworkRunTraces>(dir);
     traces->openAll(cfg, cfg.getNetworkConfig(), cfg.getGlobalVtecShConfig(),

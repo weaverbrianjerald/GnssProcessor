@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -49,7 +50,7 @@ std::string arConfig(const std::string& ar_body) {
 NetworkArConfig load(const std::string& tag, const std::string& ar_body) {
     LogManager log;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / ("ar_cycle_basis_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("ar_cycle_basis_cfg_" + tag + ".json");
     { std::ofstream f(p); f << arConfig(ar_body); }
     EXPECT_TRUE(cfg.loadFromJson(p, log));
     std::error_code ec;

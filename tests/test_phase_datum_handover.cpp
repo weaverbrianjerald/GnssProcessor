@@ -46,6 +46,7 @@
 #include <tuple>     // 1(d): the LocalCarry map key (station, sat, signal)
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -666,7 +667,7 @@ std::string networkConfig(const std::string& extra) {
 bool loadNet(const std::string& tag, const std::string& extra, GnssConfig& cfg) {
     namespace fs = std::filesystem;
     LogManager log;
-    const fs::path p = fs::temp_directory_path() / ("pd_handover_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("pd_handover_" + tag + ".json");
     { std::ofstream f(p); f << networkConfig(extra); }
     const bool ok = cfg.loadFromJson(p, log);
     std::error_code ec;

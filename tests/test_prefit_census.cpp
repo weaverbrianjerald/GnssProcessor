@@ -59,6 +59,7 @@
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -141,7 +142,7 @@ std::shared_ptr<spdlog::logger> nullLogger() {
 }
 
 fs::path scratchDir(const std::string& tag) {
-    const fs::path p = fs::temp_directory_path() / ("prefit_census_" + tag);
+    const fs::path p = gnss_test::tempDir() / ("prefit_census_" + tag);
     std::error_code ec;
     fs::create_directories(p, ec);
     return p;
@@ -168,7 +169,7 @@ std::string configJson(const std::string& net_extra) {
 std::unique_ptr<GnssConfig> loadCfg(LogManager& log, const std::string& tag,
                                     const std::string& net_extra) {
     auto cfg = std::make_unique<GnssConfig>();
-    const fs::path p = fs::temp_directory_path() / ("prefit_census_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("prefit_census_cfg_" + tag + ".json");
     { std::ofstream f(p); f << configJson(net_extra); }
     const bool ok = cfg->loadFromJson(p, log);
     std::error_code ec; fs::remove(p, ec);

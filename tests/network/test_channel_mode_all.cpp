@@ -44,6 +44,7 @@
 #include <string>
 #include <system_error>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 
@@ -59,7 +60,7 @@ using GnssProcessor::signalRosterBuildCells;
 namespace {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("cma_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("cma_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

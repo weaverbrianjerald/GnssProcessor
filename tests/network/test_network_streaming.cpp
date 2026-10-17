@@ -24,6 +24,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -67,7 +68,7 @@ SyncedEpoch makeEpoch(double tow) {
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
     const fs::path p =
-        fs::temp_directory_path() / ("net_streaming_cfg_" + tag + ".json");
+        gnss_test::tempDir() / ("net_streaming_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

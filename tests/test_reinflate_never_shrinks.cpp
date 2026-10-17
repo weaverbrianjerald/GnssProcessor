@@ -26,6 +26,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -151,7 +152,7 @@ TEST(ReinflateNeverShrinks, IonosphereKeepsAndRaises) {
 
 // Slant ionosphere rate (present only with estimation.enable_iono_rate): kept and raised.
 TEST(ReinflateNeverShrinks, IonosphereRateKeepsAndRaises) {
-    const fs::path p = fs::temp_directory_path() / "owd_reinflate_iono_rate.json";
+    const fs::path p = gnss_test::tempDir() / "owd_reinflate_iono_rate.json";
     { std::ofstream f(p); f << "{ \"estimation\": { \"enable_iono_rate\": true } }\n"; }
     LogManager log;
     GnssConfig cfg;

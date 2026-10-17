@@ -56,6 +56,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -902,7 +903,7 @@ struct Loaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("ctu_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("ctu_cfg_" + tag + ".json");
         std::ofstream f(path);
         f << body;
         f.close();

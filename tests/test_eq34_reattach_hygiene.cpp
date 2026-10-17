@@ -49,6 +49,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -65,7 +66,7 @@ constexpr const char* kSig = "L1C";
 const std::set<std::pair<int, std::string>> kNoSlips;
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("eq34hyg_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("eq34hyg_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();
@@ -210,7 +211,7 @@ AnchorHygiene runHygiene(NetworkRunContext& ctx, const GnssConfig& cfg, Census& 
                          double tow,
                          const std::set<std::pair<int, std::string>>& slipped = {}) {
     LogManager lm;
-    NetworkRunTraces traces(fs::temp_directory_path());   // no stream opened ⇒ no I/O
+    NetworkRunTraces traces(gnss_test::tempDir());   // no stream opened ⇒ no I/O
     AnchorHygiene hyg;
     networkAnchorHygiene(ctx, cfg, spdlog::default_logger(), traces, epochAt(tow),
                          c.stations, c.present, slipped, c.cnd, hyg);

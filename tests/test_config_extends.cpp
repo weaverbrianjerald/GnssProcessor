@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -39,7 +40,7 @@ using namespace GnssProcessor;
 namespace {
 
 fs::path cfgDir() {
-    const fs::path d = fs::temp_directory_path() / "gnss_extends_tests";
+    const fs::path d = gnss_test::tempDir() / "gnss_extends_tests";
     fs::create_directories(d);
     return d;
 }

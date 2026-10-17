@@ -70,6 +70,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -801,7 +802,7 @@ TEST(RhsAttribLocalTest, UnknownLabelsKeepTheirSlotAndAreNamedOnce) {
     auto log = std::make_shared<spdlog::logger>("rhs_attrib_local_test", sink);
     log->set_level(spdlog::level::info);
 
-    const fs::path dir = fs::temp_directory_path() / "rhs_attrib_local_test";
+    const fs::path dir = gnss_test::tempDir() / "rhs_attrib_local_test";
     std::error_code ec;
     fs::remove_all(dir, ec);
     const std::vector<std::string> columns{"LOC:STA1:GPS_DCB", "LOC:NOSTA:GPS_DCB",

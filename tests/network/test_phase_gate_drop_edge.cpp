@@ -46,6 +46,7 @@
 #include <map>
 #include <set>
 #include <string>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using GnssProcessor::GnssConfig;
 using GnssProcessor::LogManager;
@@ -87,7 +88,7 @@ std::string networkConfig(const std::string& extra) {
 
 bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) {
     const fs::path p =
-        fs::temp_directory_path() / ("ev7_gatedrop_cfg_" + tag + ".json");
+        gnss_test::tempDir() / ("ev7_gatedrop_cfg_" + tag + ".json");
     { std::ofstream f(p); f << body; }
     LogManager log;
     const bool ok = cfg.loadFromJson(p, log);

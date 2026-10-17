@@ -33,6 +33,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -74,7 +75,7 @@ std::string shape(const std::vector<CanonicalPairStep>& steps) {
 }
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("cpa_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("cpa_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

@@ -77,6 +77,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -3141,7 +3142,7 @@ std::unique_ptr<GnssConfig> loadChainConfig(LogManager& lm, const ChainKnobs& k,
         + "  }\n"
         + "}\n";
     const std::filesystem::path p =
-        std::filesystem::temp_directory_path() / ("agt4_chain_oracle_" + std::to_string(tag) + ".json");
+        gnss_test::tempDir() / ("agt4_chain_oracle_" + std::to_string(tag) + ".json");
     {
         std::ofstream f(p);
         f << json;

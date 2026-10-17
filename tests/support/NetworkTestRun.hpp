@@ -52,6 +52,7 @@
 #include <new>
 #include <optional>
 #include <utility>
+#include "TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 
@@ -67,7 +68,7 @@ public:
                             std::filesystem::path trace_dir = {})
         : config_(config),
           log_(log ? std::move(log) : spdlog::default_logger()),
-          log_dir_(trace_dir.empty() ? std::filesystem::temp_directory_path() : std::move(trace_dir)),
+          log_dir_(trace_dir.empty() ? gnss_test::tempDir() : std::move(trace_dir)),
           ctx_(config_, config_.getNetworkConfig()),
           traces_(log_dir_),
           run_(ctx_, config_, config_.getNetworkConfig(), log_, traces_, setup_, log_dir_,

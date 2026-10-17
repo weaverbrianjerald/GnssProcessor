@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -53,7 +54,7 @@ std::string networkConfig(const std::string& network_extra) {
 /// Write @p body to a temporary file and load it into @p cfg.
 bool loadInto(const std::string& tag, const std::string& body, GnssConfig& cfg) {
     LogManager log;
-    const fs::path p = fs::temp_directory_path() / ("knobs_lane_emit_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("knobs_lane_emit_cfg_" + tag + ".json");
     {
         std::ofstream f(p);
         f << body;

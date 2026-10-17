@@ -40,6 +40,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -63,7 +64,7 @@ const std::string kStationsOffBed =
 /// The two stations on a sim bed: each RINEX path in a directory that holds a
 /// truth_ambiguities.csv (created once, in a temporary directory of its own).
 std::string simBedStations() {
-    const fs::path bed = fs::temp_directory_path() / "fcf_config_simbed";
+    const fs::path bed = gnss_test::tempDir() / "fcf_config_simbed";
     std::error_code ec;
     for (const char* sta : {"AAAA", "BBBB"}) {
         fs::create_directories(bed / sta, ec);
@@ -146,7 +147,7 @@ struct Loaded {
 
 Loaded load(const std::string& tag, const std::string& json) {
     Loaded out;
-    const fs::path dir = fs::temp_directory_path() / ("fcf_config_" + tag);
+    const fs::path dir = gnss_test::tempDir() / ("fcf_config_" + tag);
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);

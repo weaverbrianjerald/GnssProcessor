@@ -45,6 +45,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -78,7 +79,7 @@ struct Harness {
     double                  pl_max_gap_s{ 900.0 };
     SyncedEpoch             se;
     std::filesystem::path   events_csv;
-    NetworkRunTraces        traces{ std::filesystem::temp_directory_path()
+    NetworkRunTraces        traces{ gnss_test::tempDir()
                                     / "gnss_gap_reentry_coresumed_test_unused" };
     std::shared_ptr<spdlog::logger> log{ std::make_shared<spdlog::logger>(
         "test_gap_reentry_coresumed", std::make_shared<spdlog::sinks::null_sink_mt>()) };
@@ -103,7 +104,7 @@ struct Harness {
         params.gap_reentry_per_signal      = true;
         params.gap_reentry_coresumed_share = share;
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-        events_csv = std::filesystem::temp_directory_path()
+        events_csv = gnss_test::tempDir()
                    / (std::string("gnss_gap_reentry_coresumed_") + info->name() + "_"
                       + tag + ".csv");
         traces.events_trace.open(events_csv, std::ios::trunc);

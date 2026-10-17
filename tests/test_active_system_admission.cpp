@@ -25,6 +25,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -50,7 +51,7 @@ struct CapturedLoad {
 CapturedLoad loadCapturing(const fs::path& p, const std::string& tag) {
     CapturedLoad out;
     LogManager log;
-    const fs::path dir = fs::temp_directory_path() / ("owd_active_admission_" + tag);
+    const fs::path dir = gnss_test::tempDir() / ("owd_active_admission_" + tag);
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
@@ -98,7 +99,7 @@ TEST(ActiveSystemAdmission, RetainSystemsKeepsOnlyActiveSystems) {
 
 // A priority list for an inactive system loads, with one warning naming the ignored list.
 TEST(ActiveSystemAdmission, ListOfAnInactiveSystemIsIgnoredWithAWarning) {
-    const fs::path p = fs::temp_directory_path() / "owd_active_admission_inline.json";
+    const fs::path p = gnss_test::tempDir() / "owd_active_admission_inline.json";
     {
         std::ofstream f(p);
         f << "{\n"

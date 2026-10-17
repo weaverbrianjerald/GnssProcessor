@@ -38,6 +38,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -758,7 +759,7 @@ struct RebaseLoaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("carry_rebase_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("carry_rebase_cfg_" + tag + ".json");
         std::ofstream f(path);
         f << body;
         f.close();

@@ -29,6 +29,7 @@
 
 #include "sim/AmbiguityDraw.hpp"
 #include "sim/SimConfig.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 using namespace GnssProcessor::sim;
@@ -61,7 +62,7 @@ std::vector<int> sweep(const AmbiguityDrawConfig& cfg, std::uint64_t salt) {
 /// Write a temp sim-config JSON and load it; returns loadSimConfig's verdict.
 bool tryLoad(const std::string& body, std::string& err, SimConfig& out) {
     static int seq = 0;
-    const auto path = std::filesystem::temp_directory_path() /
+    const auto path = gnss_test::tempDir() /
                       ("gnss_amb_regime_" + std::to_string(++seq) + ".json");
     { std::ofstream f(path); f << body; }
     const bool ok = loadSimConfig(path, out, &err);

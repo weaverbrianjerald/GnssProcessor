@@ -23,6 +23,7 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -36,7 +37,7 @@ bool loadFieldGoldenWith(const std::function<void(nlohmann::json&)>& edit, GnssC
     nlohmann::json j = nlohmann::json::parse(in, nullptr, true, /*ignore_comments=*/true);
     edit(j);
     const std::filesystem::path p =
-        std::filesystem::temp_directory_path() / ("gnss_exl_" + tag + ".json");
+        gnss_test::tempDir() / ("gnss_exl_" + tag + ".json");
     { std::ofstream out(p); out << j.dump(2); }
     LogManager log;
     const bool ok = cfg.loadFromJson(p, log);

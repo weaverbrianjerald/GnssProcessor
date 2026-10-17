@@ -24,6 +24,7 @@
 #include <fstream>
 #include <map>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 
@@ -212,7 +213,7 @@ namespace {
 /// unique to this process and test (so concurrent test runs cannot collide).
 GnssConfig loadConfig(const std::string& json, const std::string& tag) {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path()
+    const fs::path dir = gnss_test::tempDir()
         / ("uom_families_" + tag + "_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()));
     std::error_code ec;
     fs::create_directories(dir, ec);

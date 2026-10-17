@@ -28,6 +28,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -69,7 +70,7 @@ NetworkStateSnapshot frameSnapshot() {
 }
 
 fs::path writeTempConfig(const std::string& tag, const std::string& body) {
-    const fs::path p = fs::temp_directory_path() / ("resumeframe_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("resumeframe_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     f.close();

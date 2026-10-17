@@ -30,6 +30,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -137,7 +138,7 @@ TEST(AntennaPcvTest, AtxPlusSignedPcvGridParses) {
     atx += col60("",                                "END OF ANTENNA");
 
     namespace fs = std::filesystem;
-    const fs::path tmp = fs::temp_directory_path() / "gnss_test_plus_signed.atx";
+    const fs::path tmp = gnss_test::tempDir() / "gnss_test_plus_signed.atx";
     { std::ofstream o(tmp); o << atx; }
 
     GnssConfig    config;

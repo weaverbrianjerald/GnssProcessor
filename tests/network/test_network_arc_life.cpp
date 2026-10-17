@@ -37,6 +37,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -135,7 +136,7 @@ std::string ctxConfig() {
 TEST(NetworkArcLife, TheRunContextIsReadByStationSatelliteAndPhaseCode) {
     LogManager log;
     GnssConfig cfg;
-    const fs::path p = fs::temp_directory_path() / "arc_life_ctx.json";
+    const fs::path p = gnss_test::tempDir() / "arc_life_ctx.json";
     { std::ofstream f(p); f << ctxConfig(); }
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     std::error_code ec; fs::remove(p, ec);

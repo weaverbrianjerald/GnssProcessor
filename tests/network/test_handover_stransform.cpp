@@ -57,6 +57,7 @@
 
 #include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
 namespace fs = std::filesystem;
@@ -147,7 +148,7 @@ struct Loaded {
             "    ]\n"
             "  }\n"
             "}\n";
-        path = fs::temp_directory_path() / ("sts_cfg_" + tag + ".json");
+        path = gnss_test::tempDir() / ("sts_cfg_" + tag + ".json");
         std::ofstream f(path);
         f << body;
         f.close();
@@ -420,7 +421,7 @@ TEST(HandoverStransformConfig, BeforeRowsNeedsTheTransformAndRefusesBrdcRts) {
             "    ]\n"
             "  }\n"
             "}\n";
-        const fs::path path = fs::temp_directory_path() / ("sts_rows_" + tag + ".json");
+        const fs::path path = gnss_test::tempDir() / ("sts_rows_" + tag + ".json");
         { std::ofstream f(path); f << body; }
         LogManager log;
         GnssConfig cfg;
@@ -452,7 +453,7 @@ struct PreviewBed {
                      + (armed ? "    \"handover_stransform_before_rows\": true,\n" : "")) {
         static auto sink = std::make_shared<spdlog::sinks::null_sink_mt>();
         const auto log = std::make_shared<spdlog::logger>("sts_rows_test", sink);
-        trace_dir = fs::temp_directory_path() / ("sts_rows_traces_" + tag);
+        trace_dir = gnss_test::tempDir() / ("sts_rows_traces_" + tag);
         fs::create_directories(trace_dir);
         fx = std::make_unique<NetworkTestRun>(L.cfg, log, trace_dir);
         traces = &fx->traces();

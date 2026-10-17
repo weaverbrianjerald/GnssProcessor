@@ -51,6 +51,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 namespace {
@@ -406,7 +407,7 @@ struct UnreachableHarness {
     double                  pl_now_s{ 270390.0 };
     double                  pl_max_gap_s{ 900.0 };
     SyncedEpoch             se;
-    NetworkRunTraces        traces{ std::filesystem::temp_directory_path()
+    NetworkRunTraces        traces{ gnss_test::tempDir()
                                     / "gnss_tracker_modeled_first_test_unused" };
     std::shared_ptr<spdlog::logger> log{ std::make_shared<spdlog::logger>(
         "test_tracker_modeled_first", std::make_shared<spdlog::sinks::null_sink_mt>()) };

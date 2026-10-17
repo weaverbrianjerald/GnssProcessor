@@ -54,6 +54,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace fs = std::filesystem;
 using namespace GnssProcessor;
@@ -80,7 +81,7 @@ fs::path writeTempConfig(const std::string& tag) {
         "    ]\n"
         "  }\n"
         "}\n";
-    const fs::path p = fs::temp_directory_path() / ("solprep_disc_cfg_" + tag + ".json");
+    const fs::path p = gnss_test::tempDir() / ("solprep_disc_cfg_" + tag + ".json");
     std::ofstream f(p);
     f << body;
     return p;
@@ -115,7 +116,7 @@ struct Harness {
     std::unique_ptr<NetworkTestRun> makeRun(const std::string& tag) {
         cfg_path = writeTempConfig(tag);
         EXPECT_TRUE(cfg.loadFromJson(cfg_path, logman));
-        trace_dir = fs::temp_directory_path() / ("solprep_disc_traces_" + tag);
+        trace_dir = gnss_test::tempDir() / ("solprep_disc_traces_" + tag);
         fs::create_directories(trace_dir);
         return std::make_unique<NetworkTestRun>(cfg, nullLogger(), trace_dir);
     }
@@ -173,7 +174,7 @@ struct Harness {
 /// the live counters say.
 int replayedClockDisc(const Harness& h, const NetworkSolPrepResult& r,
                       const std::string& sat, const std::string& tag) {
-    const fs::path path = fs::temp_directory_path() / ("solprep_disc_prod_" + tag + ".txt");
+    const fs::path path = gnss_test::tempDir() / ("solprep_disc_prod_" + tag + ".txt");
     fs::remove(path);
     {
         NetworkProductWriter w(path.string());

@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
 
@@ -57,7 +58,7 @@ protected:
     int epoch = 0;
 
     void build(bool presence_flip, bool carry = false) {
-        const auto path = std::filesystem::temp_directory_path()
+        const auto path = gnss_test::tempDir()
             / (std::string("pbf_") + ::testing::UnitTest::GetInstance()->current_test_info()->name()
                + ".json");
         {
