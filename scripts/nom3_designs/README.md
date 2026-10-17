@@ -11,6 +11,7 @@ generator and its verifier are built from: types in code, every cut range, every
 | `PB1_design.md` | PB1: PASS B's stages in the epoch form, then the produce loop as a declared per-station step table with the parallel contract as a type | as SG | as SG |
 | `HV1_design.md` | HV1: the station-local carry harvest cut by carried kind under one orchestrator | as SG | as SG |
 | `N4_design.md`, `N4_fields.tsv` | NOM N4 and N5: entity tables own the run state (one entity per sub-step, persistence declared per field, the snapshot records filled from the declarations), then `EpochEvents` and entity-table bindings; the TSV places every `NetworkCarryState` member | `nom/wave3` `4816d1d` | designed and pre-registered (2026-10-15); defaults stated, not built |
+| `N6_design.md`, `N6_sites.tsv` | NOM N6: the network owns its local parameter set (`StationParams`, no borrowed `StateManager`) and one observation-equation function serves the producer's H, the consumer's H and the seeds; a byte-identical body (N6.0 to N6f) and a behaviour-changing tail (N6g to N6i); the TSV counts the user-side state use per network file | main `b701d01` | designed and pre-registered (2026-10-16); defaults stated, not built |
 
 How to read them:
 
