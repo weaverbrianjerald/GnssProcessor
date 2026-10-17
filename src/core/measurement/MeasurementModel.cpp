@@ -13,8 +13,12 @@
  *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates, one
  *    member per state category, called in a fixed order.
  *  - MeasurementModelRow.cpp: the row's Jacobian and predicted observable
- *    (buildJacobianRow), and the definitions of the usability rule and the
- *    product coverage checks (free functions, measurement/RowRules.hpp).
+ *    (buildJacobianRow, over the term list of measurement/ObservationEquation.hpp
+ *    and the lookup of measurement/UserParamView.hpp), and the definitions of the
+ *    usability rule and the product coverage checks (free functions,
+ *    measurement/RowRules.hpp).
+ *  - MeasurementModelRowReference.cpp: the row builder as it was before the term
+ *    list, and the comparison with it (processing.obs_equation_check).  Temporary.
  *  - MeasurementModelVariance.cpp: the definition of rowVariance, the variance
  *    of one row (a free function, measurement/RowRules.hpp).
  *  - MeasurementModelDd.cpp: the baseline double-difference build, in stages.

@@ -23,6 +23,7 @@
 // ---- The table (TD1b's generated region, regrouped by TD2; edited by hand since) ----
 
 #include "network/runend/ClosedLoopRunEnd.hpp"
+#include "network/runend/ObsEquationCheckRunEnd.hpp"
 #include "network/runend/ReadmitRunEnd.hpp"
 #include "network/runend/ResumeRunEnd.hpp"
 #include "network/runend/RunArtifactsRunEnd.hpp"
@@ -213,6 +214,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/solve/PhaseDatum.cpp", networkPhaseDatumRunEnd},
     {"the ambiguity-state trace",
      "network/diag/AmbStateTrace.cpp", networkAmbStateTraceRunEnd},
+    {"the observation-equation check: rows compared by the term list and the reference builder",
+     "network/runend/ObsEquationCheckRunEnd.cpp", networkObsEquationCheckRunEnd},
     {"the emit-layer frame re-base",
      "network/emit/EmitRebase.cpp", networkEmitRebaseRunEnd},
     {"the clock emission re-base and frame hold",

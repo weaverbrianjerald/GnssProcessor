@@ -1235,6 +1235,22 @@ namespace GnssProcessor {
         bool runSmoother() const { return run_smoother_; }
 
         /**
+         * @brief Check the term-list observation equation against the row builder it replaced.
+         *
+         * When true, every code and phase row of the single-receiver model (the PPP loop, the
+         * real-time engine, the network producer's stations and the closed-loop consumer) is
+         * built twice: by the term list (measurement/ObservationEquation.hpp) and by the
+         * reference builder, and the two are compared bit for bit (usability, every entry of the
+         * Jacobian row, the predicted observable).  The counts are process-wide
+         * (measurement/ObservationEquationCheck.hpp) and the network run end prints them with
+         * the carrier frequency sources that differ.  Solve-inert; roughly doubles the cost of
+         * building the rows.  Default off.
+         *
+         * @return True if the comparator is on.
+         */
+        bool obsEquationCheck() const { return obs_equation_check_; }
+
+        /**
          * @brief Check if cross-session normal-equation export is enabled.
          *
          * When true, the post-processing run accumulates a label-keyed normal
@@ -8324,6 +8340,7 @@ namespace GnssProcessor {
         int    relinearize_max_count_;              ///< Hard cap on total relinearizations per run; -1 = unlimited.
         int    eigen_threads_;                       ///< Eigen thread count (0=default, 1=sequential, N=pinned).  See eigenThreads().
         bool run_smoother_;                    ///< Run backward RTS smoother after forward Kalman pass (post-processing only).
+        bool obs_equation_check_{ false };     ///< Build every code and phase row by the term list and by the reference builder and compare them bit for bit (processing.obs_equation_check). Solve-inert diagnostic. Default off.
         bool enable_neq_export_{ false };      ///< Accumulate & export cross-session normal equations (.neq/.asc); post-processing only.
         bool enable_trig_sp3_interp_{ false }; ///< Use sidereal-trig (sin/cos) SP3 position interpolation instead of the default polynomial (Neville) path. Default off (byte-identical legacy).
         bool enable_orbit_normal_attitude_{ false }; ///< Use beta-driven orbit-normal yaw attitude for satellite PCO/PCV; else nominal yaw-steering + legacy BeiDou-2 GEO orbit-normal. Default off.

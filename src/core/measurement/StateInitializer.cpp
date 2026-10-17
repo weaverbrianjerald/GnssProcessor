@@ -9,6 +9,7 @@
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
 #include "filter/StateKeySchema.hpp"
+#include "measurement/UserParamView.hpp"   // userCodeBiasKey
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -68,6 +69,18 @@ char StateInitializer::systemToClockRefChar(System system) {
 // ===========================================================================
 // Receiver bias resolution
 // ===========================================================================
+
+namespace {
+
+/// Names the state of an entry: the typed key, and the text key it is stored under.  The text
+/// is empty (and the entry has no key) for a key the identity tables cannot render.
+void setKey(StateInitializer::ReceiverBiasEntry& entry, const RxCbKey& key) {
+    entry.state_key = userCodeBiasKey(key);
+    entry.key       = key;
+    entry.has_key   = !entry.state_key.empty();
+}
+
+} // anonymous namespace
 
 StateInitializer::ReceiverBiasEntry
 StateInitializer::resolveReceiverBias(const std::string& obs_signal,
@@ -140,7 +153,11 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
             const std::string canonical =
                 ppp_model_.latchedCanonicalCodeOnBandDigit(sys, code->signal.digit);
             if (!canonical.empty() && canonical != obs_signal) {
-                result.state_key   = StateKeys::makeReceiverIscKey(sys, obs_signal);
+                RxCbKey key;
+                key.sys    = system;
+                key.form   = ParamForm::Isc;
+                key.signal = code->signal;
+                setKey(result, key);
                 result.coefficient = 1.0;
                 return result;
             }
@@ -182,8 +199,12 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
             const int k = ppp_model_.getGlonassChannel(satellite);
             if (k < -7 || k > 6) return result;      // unknown slot -> no IFB column
             if (k == 0) return result;               // central channel = held datum
-            result.state_key   = StateKeys::makeGlonassPerSlotIfbKey(
-                                     systemName(system), sig->digit, k);
+            RxCbKey key;
+            key.sys      = system;
+            key.form     = ParamForm::GloSlotIfb;
+            key.band     = fb;
+            key.glo_slot = k;
+            setKey(result, key);
             result.coefficient = 1.0;
         }
         return result;  // GLONASS fully handled here (per-slot, or none for CDMA/k=0)
@@ -194,7 +215,6 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     if (it == clock_refs.end()) return result;
 
     const auto& ref = it->second;
-    const std::string sys = systemName(system);
 
     // The band digits of this signal and of the clock-reference pair (ref.sig1, ref.sig2).
     const auto sig_j = SignalId::fromObsCode(system, obs_signal);
@@ -214,7 +234,12 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     // residual de-weighting.
     if (band_j != band_1 && band_j != band_2) {
         if (system == System::GLONASS) return result;   // no FDMA per-band IFB
-        result.state_key   = StateKeys::makeIfbKey(sys, band_j);
+        RxCbKey key;
+        key.sys  = system;
+        key.form = ParamForm::Ifb;
+        key.band = bandOfDigit(system, band_j);
+        setKey(result, key);
+        if (!result.has_key) return result;   // a band digit the constellation does not use
         result.coefficient = 1.0;
         return result;
     }
@@ -231,7 +256,10 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
     const double dmu = mu1 - mu2;
     if (std::abs(dmu) < 1e-12) return result;
 
-    result.state_key = StateKeys::makeDcbKey(sys);
+    RxCbKey key;
+    key.sys  = system;
+    key.form = ParamForm::Dcb;
+    setKey(result, key);
     result.coefficient = (band_j == band_1) ? (mu1 / dmu) : (mu2 / dmu);
     return result;
 }

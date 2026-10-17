@@ -95,6 +95,10 @@ add_library(gnss_core STATIC
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/MeasurementModelStates.cpp
     src/core/measurement/MeasurementModelRow.cpp
+    src/core/measurement/MeasurementModelRowReference.cpp
+    src/core/measurement/ObservationEquation.cpp
+    src/core/measurement/ObservationEquationCheck.cpp
+    src/core/measurement/UserParamView.cpp
     src/core/measurement/MeasurementModelVariance.cpp
     src/core/measurement/MeasurementModelDd.cpp
     src/core/measurement/MeasurementModelNetwork.cpp
@@ -323,6 +327,7 @@ add_library(gnss_core STATIC
     src/core/network/runend/ResumeRunEnd.cpp
     src/core/network/runend/ReadmitRunEnd.cpp
     src/core/network/runend/ClosedLoopRunEnd.cpp
+    src/core/network/runend/ObsEquationCheckRunEnd.cpp
     src/core/network/carry/LevelingCarryRunEnd.cpp
     src/core/network/carry/RxCodeBiasCarryRunEnd.cpp
     src/core/network/carry/CarryVceRunEnd.cpp
@@ -639,6 +644,7 @@ add_executable(gnss_tests
     tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
     tests/test_param_ref.cpp
+    tests/test_observation_equation.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp

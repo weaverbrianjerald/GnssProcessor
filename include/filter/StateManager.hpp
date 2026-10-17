@@ -876,6 +876,21 @@ namespace GnssProcessor {
                                     const Eigen::VectorXd& x) const;
 
         /**
+         * @brief The carrier frequency (Hz) of a band digit that @ref computeAmbiguitySeed
+         *        scales the slant ionosphere with.
+         *
+         * Read-only access to the seed's own frequency table, so that the observation-equation
+         * check can report where it differs from the frequency source of the row builder
+         * (@c PppUtils::getFrequency) and from the identity layer.  The GLONASS FDMA bands
+         * return the slot-0 frequency; a band the system does not use returns its band 1.
+         *
+         * @param band   The RINEX band digit ('1', '2', '5', ...).
+         * @param system The constellation.
+         * @return The frequency (Hz).
+         */
+        static double ambiguitySeedFrequencyHz(char band, System system);
+
+        /**
          * @brief Update a PppState object from a raw state-vector representation.
          *
          * Copies position, clock, ZWD and, when present, velocity, phase clock and

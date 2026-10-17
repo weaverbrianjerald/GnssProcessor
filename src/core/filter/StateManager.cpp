@@ -695,6 +695,10 @@ namespace GnssProcessor {
         return true;
     }
 
+    double StateManager::ambiguitySeedFrequencyHz(char band, System system) {
+        return bandFrequency(band, system);
+    }
+
     double StateManager::computeAmbiguitySeed(const PppObservation& obs,
                                                const std::string& ref_type,
                                                const Eigen::VectorXd& x) const {

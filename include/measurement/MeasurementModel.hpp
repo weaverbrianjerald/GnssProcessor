@@ -25,6 +25,9 @@
 namespace GnssProcessor {
 
     class SsrCorrectionStore;
+    struct ObsInput;
+    struct ObservationEquation;
+    struct ObsTermValues;
 
     /**
      * @file MeasurementModel.hpp
@@ -46,9 +49,13 @@ namespace GnssProcessor {
      *    validateMeasurementUpdate; the BSSD forwarders.
      *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates and
      *    its members, one per state category (the table at ensureRequiredStates).
-     *  - MeasurementModelRow.cpp: buildJacobianRow (the observation equation);
-     *    also the definitions of the row rules isUsableMeasurement and the
-     *    product coverage checks (free functions, measurement/RowRules.hpp).
+     *  - MeasurementModelRow.cpp: buildJacobianRow (the observation equation as a
+     *    term list, measurement/ObservationEquation.hpp, over the state through
+     *    measurement/UserParamView.hpp); also the definitions of the row rules
+     *    isUsableMeasurement and the product coverage checks (free functions,
+     *    measurement/RowRules.hpp).
+     *  - MeasurementModelRowReference.cpp: the row builder as it was before the term
+     *    list, and the comparison with it (processing.obs_equation_check).  Temporary.
      *  - MeasurementModelVariance.cpp: the definition of rowVariance, the
      *    variance of one row (a free function, measurement/RowRules.hpp).
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
@@ -830,20 +837,24 @@ namespace GnssProcessor {
          * @brief Build one row of H and the predicted observable: the
          *        single-receiver observation equation.
          *
-         * Code and phase rows: the a-priori model value plus the range
-         * correction for the position's offset from the linearization point,
-         * and one term per estimated or applied quantity: zenith wet delay,
-         * receiver clock (no column under BSSD), phase clock (phase rows),
-         * troposphere gradients, inter-system bias, slant ionosphere
-         * (uncombined; +alpha on code, -alpha on phase), receiver code bias
-         * (code, estimate_ifb), satellite code bias (estimate_sat_biases), the
-         * network producer's satellite phase bias, receiver phase bias and
-         * satellite clock, the SSR satellite bias (no state; not on the network
-         * producer), the ambiguity (phase; per band, or lambda_b (NL - s WL) on
-         * the NL/WL basis) and the network's phase colour.  Doppler rows:
+         * Code and phase rows: the term list of the observation equation
+         * (@c observationEquation, measurement/ObservationEquation.hpp) over this
+         * model's state vector (@c UserParamView), summed for the predicted
+         * observable and scattered into the row.  The terms are the a-priori model
+         * value, the range correction for the position's offset from the
+         * linearization point, and one per estimated or applied quantity: zenith
+         * wet delay, receiver clock (no column under BSSD), phase clock (phase
+         * rows), troposphere gradients, inter-system bias, slant ionosphere
+         * (uncombined; +alpha on code, -alpha on phase), receiver code bias (code,
+         * estimate_ifb), satellite code bias (estimate_sat_biases), the network
+         * producer's satellite phase bias, receiver phase bias and satellite clock,
+         * the SSR satellite bias (no state; not on the network producer), the
+         * ambiguity (phase; per band, or lambda_b (NL - s WL) on the NL/WL basis)
+         * and the network's phase colour.  Doppler rows (@ref buildDopplerRow):
          * velocity, clock rate, inter-system rate and the tightly coupled IMU
          * partials.  Prints the PHASE-DECOMP and CODE-DECOMP traces at trace
-         * level.
+         * level.  With processing.obs_equation_check the row is also built by
+         * @ref buildJacobianRowReference and the two are compared bit for bit.
          *
          * @param obs        The satellite's modeled observation.
          * @param ref_type   The signal (a RINEX code, or an iono-free pair "a_b").
@@ -853,7 +864,9 @@ namespace GnssProcessor {
          * @param predicted  Out: the predicted observable (m).
          * @return False when the row cannot be built: a Doppler row without a
          *         velocity state, or a phase row whose ambiguity state (or, on
-         *         the NL/WL basis, reference band or wavelength) is missing.
+         *         the NL/WL basis, reference band or wavelength) is missing, or a
+         *         row whose satellite or signal text is not a canonical RINEX id
+         *         where a state key must be formed from it.
          */
         bool buildJacobianRow(const PppObservation& obs,
             const std::string& ref_type,
@@ -861,6 +874,89 @@ namespace GnssProcessor {
             size_t state_size,
             Eigen::VectorXd& jacobian,
             double& predicted) const;
+
+        /**
+         * @brief What the observation equation reads besides the observation and the
+         *        state: this model's configuration, tables, SSR store, frequency
+         *        helper, receiver-bias resolver and NL/WL reference bands.
+         * @return Non-owning references into this model.
+         */
+        ObsInput obsInput() const;
+
+        /**
+         * @brief The Doppler row: velocity, receiver clock rate, inter-system rate and,
+         *        with tightly coupled IMU, the attitude and accelerometer-bias partials.
+         * @param obs       The satellite's modeled observation.
+         * @param ref_type  The Doppler signal.
+         * @param x         The state vector the row is evaluated at.
+         * @param jacobian  Out: the row of H (sized and zeroed by the caller).
+         * @param predicted Out: the predicted Doppler (m/s).
+         * @return False without a velocity state.
+         */
+        bool buildDopplerRow(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x,
+            Eigen::VectorXd& jacobian,
+            double& predicted) const;
+
+        /**
+         * @brief Whether the row's decomposition trace will print (the satellite is named
+         *        and the model's logger is at trace level).
+         * @param obs The satellite's modeled observation.
+         * @return True when @ref traceRowDecomposition would write a line.
+         */
+        bool wantsRowDecomposition(const PppObservation& obs) const;
+
+        /**
+         * @brief Prints the PHASE-DECOMP or CODE-DECOMP trace of a row: the predicted
+         *        observable and the clock, ionosphere, bias and ambiguity terms in it.
+         * @param obs       The satellite's modeled observation.
+         * @param ref_type  The signal.
+         * @param predicted The row's predicted observable.
+         * @param terms     The value of each term of the row's equation.
+         */
+        void traceRowDecomposition(const PppObservation& obs,
+            const std::string& ref_type,
+            double predicted,
+            const ObsTermValues& terms) const;
+
+        /**
+         * @brief The code and phase row builder as it was written before the observation
+         *        equation became a term list, kept for the check
+         *        (MeasurementModelRowReference.cpp).
+         * @param obs        The satellite's modeled observation.
+         * @param ref_type   The signal.
+         * @param x          The state vector the row is evaluated at.
+         * @param state_size The number of state columns.
+         * @param jacobian   Out: the row of H.
+         * @param predicted  Out: the predicted observable (m).
+         * @return False when the row cannot be built.
+         */
+        bool buildJacobianRowReference(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x,
+            size_t state_size,
+            Eigen::VectorXd& jacobian,
+            double& predicted) const;
+
+        /**
+         * @brief Builds the row by the reference builder and counts whether the term-list
+         *        row agrees with it bit for bit (processing.obs_equation_check).
+         * @param obs        The satellite's modeled observation.
+         * @param ref_type   The signal.
+         * @param x          The state vector the row is evaluated at.
+         * @param state_size The number of state columns.
+         * @param eq         The term-list equation of the row.
+         * @param jacobian   The term-list Jacobian row (zero when @c eq is unusable).
+         * @param predicted  The term-list predicted observable.
+         */
+        void checkRowAgainstReference(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x,
+            size_t state_size,
+            const ObservationEquation& eq,
+            const Eigen::VectorXd& jacobian,
+            double predicted) const;
 
         // -------------------------------------------------------------------
         // BSSD delegation (forwarders to PivotManager)

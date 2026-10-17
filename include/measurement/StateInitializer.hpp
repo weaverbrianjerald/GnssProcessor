@@ -18,6 +18,7 @@
 #include "config/GnssConfig.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
+#include "common/ParamRef.hpp"
 #include "common/PppTypes.hpp"
 #include <Eigen/Dense>
 #include <cmath>
@@ -139,6 +140,8 @@ public:
     struct ReceiverBiasEntry {
         std::string state_key;   /**< Key into code_bias_indices_ (e.g. "GPS_DCB" or "GPS_IFB5"). */
         double      coefficient; /**< Jacobian coefficient for the state.  NaN means no bias is modelled. */
+        RxCbKey     key{};       /**< The same state as a typed key (valid when @ref has_key). */
+        bool        has_key{false}; /**< True exactly when @ref state_key is non-empty. */
     };
 
     /**
