@@ -7,13 +7,16 @@
  * Computes station displacements due to ocean tidal loading with the BLQ amplitude and
  * Greenwich phase-lag convention of the IERS Conventions (2010). The model evaluates 11
  * major tidal constituents (M2, S2, N2, K2, K1, O1, P1, Q1, Mf, Mm, Ssa) from
- * astronomical arguments built with Doodson multipliers. It applies no nodal
- * corrections and no admittance interpolation to minor constituents.
+ * astronomical arguments built with Doodson multipliers. It applies no admittance
+ * interpolation to minor constituents. Nodal corrections (the 18.6-year modulation
+ * of the lunar constituents) are applied only after setNodalCorrections(true).
  *
- * Station-specific amplitude and phase coefficients come from one of two sources:
+ * Station-specific amplitude and phase coefficients come from one of three sources:
  * a BLQ file, e.g. from the Onsala Space Observatory ocean loading provider
  * (http://holt.oso.chalmers.se/loading/) or the IERS ocean loading tables
- * (parseBLQ()), or the EOT20 global load grid (parseEot20Load(), radial only).
+ * (parseBLQ()), the per-station block of an NGS Station Information File
+ * (otlCoefficientsFromSif(), three components), or the EOT20 global load grid
+ * (parseEot20Load(), radial only).
  *
  * Without station-specific coefficients the displacement is zero
  * (computeApproximateDisplacement()).
@@ -66,6 +69,53 @@ namespace GnssProcessor {
         "M2", "S2", "N2", "K2", "K1", "O1", "P1", "Q1", "Mf", "Mm", "Ssa"
     };
 
+    struct StationInfo;   // common/StationInfo.hpp
+
+    /**
+     * @brief How the east and north columns of a SIF ocean tide loading block map onto
+     *        the model's west and south rows.
+     *
+     * The SIF block is generated from BLQ files, whose rows are radial, west positive and
+     * south positive, and stores them under the names UP, EAST and NORTH. M-PAGES passes
+     * the EAST and NORTH columns to the HARDISP routine as its west and south rows
+     * unchanged. Two independent checks agree with that reading
+     * (scripts/otl_compare/sif_horizontal_convention.py and sif_vs_blq_rows.py): the
+     * horizontal vector of a station points up the gradient of the radial depression
+     * measured from its neighbours in 98 % of 568 stations for M2 (100 % for S2 and N2),
+     * and the Onsala semidiurnal columns match the CSR4.0 west and south rows without a
+     * shift.
+     */
+    enum class SifOtlHorizontal {
+        LegacyShifted,  ///< Columns read as true east and north: west = east and south = north with 180 degrees added to both phases. Reverses the horizontal vector; kept so runs that armed the station-info subsystem stay byte-identical.
+        BlqRows         ///< Columns hold the BLQ west and south rows: copied unchanged.
+    };
+
+    /**
+     * @brief Convert the ocean tide loading block of a SIF station record to model
+     *        coefficients.
+     *
+     * The radial column is copied in both modes. The record must carry a block
+     * (@c StationInfo::has_otl); the result is marked valid regardless, so the caller
+     * checks @c has_otl first.
+     *
+     * @param station    SIF station record (amplitudes in metres, phases in degrees).
+     * @param horizontal Horizontal mapping, see @ref SifOtlHorizontal.
+     * @return Coefficients in the model's Up / West / South convention, M2..Ssa order.
+     */
+    OtlStationCoefficients otlCoefficientsFromSif(const StationInfo& station,
+                                                  SifOtlHorizontal horizontal);
+
+    /**
+     * @brief Nodal amplitude factor and phase correction of one constituent.
+     *
+     * The tidal argument of the constituent is advanced by @c u_rad and its amplitude
+     * is scaled by @c f at the epoch's lunar node longitude.
+     */
+    struct OtlNodalFactor {
+        double f{ 1.0 };      ///< Amplitude factor (dimensionless).
+        double u_rad{ 0.0 };  ///< Phase correction added to the astronomical argument [rad].
+    };
+
     /**
      * @class OceanTideModel
      * @brief Compute ocean tidal loading station displacement.
@@ -77,8 +127,10 @@ namespace GnssProcessor {
      * astronomical argument (Doodson multipliers applied to GMST + pi and the lunar and
      * solar mean longitudes, plus the species phase bias), A_{k,j} is the station
      * amplitude, and phi_{k,j} is the Greenwich phase lag.  The time dependence is
-     * carried entirely by chi_j(t); there is no separate omega_j·t term and no nodal
-     * correction u_j(t).
+     * carried entirely by chi_j(t); there is no separate omega_j·t term. With
+     * setNodalCorrections(true) the amplitude is scaled by the nodal factor f_j(t) and
+     * the argument advanced by the nodal correction u_j(t) (nodalFactor()), and the
+     * Greenwich argument is taken from UTC instead of GPS time.
      *
      * The result is converted from a local (Up, West, South) frame to ECEF.
      */
@@ -101,6 +153,45 @@ namespace GnssProcessor {
          * @return True if valid coefficients are available.
          */
         bool hasStationCoefficients() const { return station_coeffs_.valid; }
+
+        /**
+         * @brief Switch the nodal corrections and the UTC Greenwich argument on or off.
+         *
+         * Off (the default) reproduces the original evaluation exactly: no nodal factors
+         * and a Greenwich argument taken from GPS time. On, each constituent is scaled by
+         * f_j and advanced by u_j at the epoch's lunar node longitude, and the Greenwich
+         * sidereal angle is computed from the UTC Julian date (the IERS HARDISP
+         * convention; GPS time is 18 s ahead of UTC, 0.15 degrees of semidiurnal
+         * argument). UT1 - UTC (below 0.9 s) is neglected, as in HARDISP.
+         *
+         * @param on True to apply the corrections.
+         */
+        void setNodalCorrections(bool on) { nodal_corrections_ = on; }
+
+        /**
+         * @brief Whether the nodal corrections and the UTC Greenwich argument are on.
+         * @return True if setNodalCorrections(true) was called.
+         */
+        bool nodalCorrections() const { return nodal_corrections_; }
+
+        /**
+         * @brief Nodal factor f and phase correction u of one of the 11 constituents.
+         *
+         * Evaluates f * exp(i u) = 1 + sum_k r_k * exp(-i n_k * Omega) over the side lines
+         * of the constituent that differ from it only in the lunar node multiplier n_k.
+         * The ratios r_k are the equilibrium-tide amplitude ratios of the Cartwright-Tayler-
+         * Edden development tabulated in the IERS HARDISP routine (ADMINT.F); the loading
+         * admittance is taken as flat across a main line and its side lines. The series
+         * reproduces the usual closed forms (for M2, f = 1 - 0.0373 cos(Omega) and
+         * u = -2.14 degrees sin(Omega)) to 0.0005 in f and 0.1 degrees in u for M2, N2, K1,
+         * O1, Q1 and Mf.
+         *
+         * @param constituent         Index in the BLQ order M2, S2, N2, K2, K1, O1, P1, Q1,
+         *                            Mf, Mm, Ssa.
+         * @param node_longitude_rad  Longitude of the Moon's ascending node, Omega [rad].
+         * @return The factor and correction; the identity (1, 0) for an index outside 0..10.
+         */
+        static OtlNodalFactor nodalFactor(std::size_t constituent, double node_longitude_rad);
 
         /**
          * @brief Compute the ocean tidal loading displacement in ECEF coordinates.
@@ -174,6 +265,19 @@ namespace GnssProcessor {
     private:
         LogManager& log_manager_;
         OtlStationCoefficients station_coeffs_;
+        bool nodal_corrections_{ false };  ///< Nodal factors and UTC Greenwich argument (default off).
+
+        /**
+         * @brief Greenwich mean sidereal angle from the UTC Julian date [rad].
+         *
+         * Same IAU 1982 expression as computeFundamentalArguments(), with the Julian date
+         * on the UTC scale in place of the GPS scale.
+         *
+         * @param time         GNSS epoch.
+         * @param t_centuries  Julian centuries of TT from J2000.0 (quadratic and cubic terms).
+         * @return GMST in radians, in [0, 2 pi) up to the sign of fmod.
+         */
+        double greenwichAngleUtc(const GnssTime& time, double t_centuries) const;
 
         /**
          * @brief Compute the five fundamental Delaunay arguments and GMST at an epoch.

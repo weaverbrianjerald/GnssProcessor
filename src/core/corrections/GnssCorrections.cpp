@@ -1154,6 +1154,10 @@ namespace GnssProcessor {
         ocean_tide_model_.setStationCoefficients(coeffs);
     }
 
+    void GnssCorrections::setOceanTideNodalCorrections(bool on) {
+        ocean_tide_model_.setNodalCorrections(on);
+    }
+
     bool GnssCorrections::loadOceanTideFromEot20(const std::string& nc_path,
                                                  const Eigen::Vector3d& station_ecef) {
         OtlStationCoefficients coeffs;
