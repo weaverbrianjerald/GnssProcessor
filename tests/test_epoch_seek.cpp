@@ -132,6 +132,21 @@ TEST(EpochSeekTest, HalfEpochBackOffKeepsItsEpoch) {
     }
 }
 
+// A bare-hour offset and its backed-off twin (the hour less half an epoch) select the same epoch,
+// for each hour of the day and both fixture starts: the back-off is no longer needed, and a
+// config that still carries it behaves as before.
+TEST(EpochSeekTest, BareHourSelectsTheEpochOfItsBackedOffTwin) {
+    for (const double first_s : {0.0, 30.0}) {
+        const std::vector<double> t = dayOfEpochs(first_s);
+        for (int hour = 1; hour <= 23; ++hour) {
+            const double bare_s = hour * 3600.0;
+            const double twin_s = bare_s - 0.5 * kStep;
+            ASSERT_EQ(newRuleFirst(t, bare_s), newRuleFirst(t, twin_s))
+                << "hour " << hour << ", first epoch at " << first_s << " s";
+        }
+    }
+}
+
 // The offsets written in the repository's configs (hours): every one that carries a half-epoch
 // back-off selects the legacy epoch, whatever the anchor.  The few that sit on an epoch are
 // the bare cases and select the epoch they name.
