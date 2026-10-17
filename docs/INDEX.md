@@ -350,6 +350,11 @@ Standing documents (not split this pass):
 | [CI census](cards/consumer/CI-census-wire-vs-code.md) | wire-vs-CODE census: W1 and W3 FAIL; the clock carries a metre-level code-model error | closed | 2026-09-14 |
 | [consumer AR](cards/consumer/CONSUMER-AR-BLUNDER.md) | consumer WL-only blunder: a frame mismatch FFR misses, caught by the innovation screen | closed | — |
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[SEA](refound/SEA_seasonal_term_outside_window_2026-10-16.md), the seasonal term of a SIF coordinate
+outside its block windows (open, 2026-10-16: built without a knob; the same-build golden identity
+check is owed).
+
 ### `sim-bed` — [topics/sim-bed.md](topics/sim-bed.md)
 
 | card | one line | status | last dated |
