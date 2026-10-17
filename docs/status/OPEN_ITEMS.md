@@ -137,6 +137,8 @@ consumer veto IRD-7). Only work outside them is listed.
 Verified in the code (CAF section 2, the 2026-10-07 pass, or the ledger review of 2026-10-13)
 unless marked suspected.
 
+The five fixes of branch nom/defects (c9e7f31, 77f1494, 110d5f2, 7b0c38a, 66498e4) merged into main on 2026-10-16. Gate: the 23 G5 arms and the snapshot bytes against a control built at the branch base (b701d01), 24 of 24 identical once the declared changes are checked and masked (declaration, normalizer and result: `D:/GnssProcessorSupport/gates/defects/`). Two consequences of the census mask that the declaration did not list: the per-cell event holdoff rows fall with the obs_phase events, and the "stayed BELOW the cross-flag" line is absent when its count is zero.
+
 - **ProductCache deadlock (fixed in c9e7f31, branch nom/defects).** loadProducts' catch block calls clearCache(), which relocks the non-recursive load_mutex_ on any product-load exception; fix with an unlocked clearCacheLocked_() called from both. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 - **PPP fix-and-hold holds nothing.** holdAmbiguities (ar_mode 3) builds DD pairs with no observations, so every elevation is 0 and the 20 degree AR mask drops every pair. [CAF §2](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 - **service_mode arms the NO-GO clock model (refusals fixed in 77f1494, branch nom/defects).** It force-arms `network.clock_model` after the clock_pivot_frame_q and clock-clone refusals read raw JSON, so both refusals are bypassed. [ledger](../CONFIG_promotion_ledger.md)
