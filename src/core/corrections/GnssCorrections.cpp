@@ -1884,14 +1884,15 @@ namespace GnssProcessor {
         const Eigen::Vector3d& sat_vel,
         bool accumulate,
         double max_gap_s,
-        bool correct_velocity_frame) const {
+        bool correct_velocity_frame,
+        const SatAttitude::NoonTurnLaw* noon_turn_law) const {
 
         // Wu et al. (1993), stated in this function's variables.  k = sat->rx.
         //
         // The quadrature term's sign is -sgn((x cross y) . k): minus when the
         // antenna's own third axis points along +k, plus when it points along -k.
-        // All three satellite branches below build x_s cross y_s == ez (the
-        // geocentric nadir, approximately +k), and the receiver pair is
+        // Every SatAttitude frame has x_s cross y_s == ez (the geocentric nadir,
+        // approximately +k), and the receiver pair is
         // x_r = north, y_r = east, with x_r cross y_r == down and
         // down.k == +cos(zenith) > 0 over the whole observable hemisphere.
         // Both dipoles therefore take the minus sign:
@@ -1915,58 +1916,16 @@ namespace GnssProcessor {
         Eigen::Vector3d k = k_raw / k_raw_norm;
 
         // --- Satellite body frame ---
-        Eigen::Vector3d ez = -sat_pos.normalized();
-        Eigen::Vector3d x_s, y_s;
-
-        // BeiDou-2 GEO (C01-C05, C59, C60): orbit-normal mode
-        bool use_orbit_normal = false;
-        if (system == System::BeiDou && satellite.size() >= 2) {
-            int prn = 0;
-            try { prn = std::stoi(satellite.substr(1)); } catch (...) {}
-            if ((prn >= 1 && prn <= 5) || prn == 59 || prn == 60)
-                use_orbit_normal = true;
-        }
-
-        if (use_orbit_normal) {
-            // Inertial velocity -- r x v_ecef is not the orbit normal; see
-            // SatAttitude::inertialVelocity.  Mirrors the SatAttitude ON frame.
-            Eigen::Vector3d orbit_normal = sat_pos.cross(
-                correct_velocity_frame ? SatAttitude::inertialVelocity(sat_pos, sat_vel)
-                                       : sat_vel);
-            if (orbit_normal.norm() < 1e-8) orbit_normal = Eigen::Vector3d::UnitY();
-            y_s = orbit_normal.normalized();
-            x_s = y_s.cross(ez);
-            if (x_s.norm() < 1e-8) x_s = Eigen::Vector3d::UnitX();
-            x_s.normalize();
-            y_s = ez.cross(x_s);
-            y_s.normalize();
-        }
-        else if (sun_pos.norm() > 1e6) {
-            // Standard yaw-steering
-            Eigen::Vector3d e_sun = (sun_pos - sat_pos).normalized();
-            Eigen::Vector3d ey = ez.cross(e_sun);
-            if (ey.norm() < 1e-8) {
-                Eigen::Vector3d vhat = sat_vel.norm() > 1e-8 ? sat_vel.normalized() : Eigen::Vector3d::UnitY();
-                ey = ez.cross(vhat);
-            }
-            ey.normalize();
-            Eigen::Vector3d ex = ey.cross(ez);
-            if (ex.norm() < 1e-8) ex = Eigen::Vector3d::UnitX();
-            ex.normalize();
-            x_s = ex;
-            y_s = ey;
+        // SatAttitude owns the frame, so this and the satellite PCO share one
+        // model.  The orbit-normal flag is passed as false: the wind-up keeps the
+        // BeiDou-2 GEO orbit-normal rule and yaw-steers everything else.  Without a
+        // Sun direction (norm at most 1e6 m) the frame is built from the velocity.
+        const int sat_prn = SatAttitude::prnOf(satellite);
+        SatAttitude::Frame att;
+        if (sun_pos.norm() > 1e6 || SatAttitude::usesLegacyOrbitNormal(system, sat_prn)) {
+            att = SatAttitude::compute(system, sat_prn, sat_pos, sat_vel, sun_pos,
+                                       /*enable_orbit_normal=*/false, correct_velocity_frame);
         } else {
-            // Velocity-based fallback.  Built about the nadir axis (ez), as in the
-            // orbit-normal and yaw-steering branches above, so that
-            // x_s cross y_s == ez in all three branches and the single
-            // -k.cross(y_s) quadrature sign below holds unconditionally.
-            //
-            // Relative to a frame built about z_s = -ez (radially outward, the
-            // opposite handedness relative to k), this frame negates y_s and
-            // leaves x_s bit-identical, so the dipole built below with the minus
-            // sign equals the outward frame's dipole with a plus sign.  That
-            // identity is the check on this branch: a Ds that differs from the
-            // outward-frame plus-sign dipole means the frame is wrong.
             Eigen::Vector3d vel = sat_vel;
             if (vel.norm() < 1e-8 && !orbits_->empty()) {
                 auto orbit_it = std::find_if(orbits_->begin(), orbits_->end(),
@@ -1974,20 +1933,13 @@ namespace GnssProcessor {
                 if (orbit_it != orbits_->end() && orbit_it->velocity_valid)
                     vel = orbit_it->velocity;
             }
-            y_s = vel.norm() > 1e-8 ? vel.normalized().cross(ez) : Eigen::Vector3d::Zero();
-            if (y_s.norm() < 1e-8) y_s = Eigen::Vector3d(0, 1, 0);
-            y_s.normalize();
-            x_s = y_s.cross(ez);
-            if (x_s.norm() < 1e-8) x_s = Eigen::Vector3d::UnitX();
-            x_s.normalize();
-            // Re-derive y_s from the final x_s so that x_s cross y_s == ez
-            // exactly, as in the orbit-normal branch.  This is a no-op whenever
-            // y_s is already perpendicular to ez (every non-degenerate path); it
-            // matters only in the doubly degenerate case where y_s fell through
-            // to the hard-coded (0, 1, 0).
-            y_s = ez.cross(x_s);
-            y_s.normalize();
+            att = SatAttitude::velocityFrame(sat_pos, vel);
         }
+        if (noon_turn_law != nullptr) {
+            att = SatAttitude::applyNoonTurn(att, *noon_turn_law, sat_pos, sat_vel, sun_pos);
+        }
+        const Eigen::Vector3d& x_s = att.i_s;
+        const Eigen::Vector3d& y_s = att.j_s;
 
         // --- Receiver local frame (North / East) ---
         if (rx_pos.norm() < 1e3) return 0.0;

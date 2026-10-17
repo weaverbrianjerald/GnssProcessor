@@ -1298,6 +1298,27 @@ namespace GnssProcessor {
         bool enableOrbitNormalAttitude() const { return enable_orbit_normal_attitude_; }
 
         /**
+         * @brief Whether GPS Block IIF and IIR satellites follow the noon-turn attitude.
+         *
+         * When false (default) every satellite keeps its nominal Sun-tracking yaw
+         * and the satellite PCO and the phase wind-up are byte-identical to the
+         * nominal-attitude result.  When true, a GPS Block IIF or IIR satellite
+         * near its orbit noon at small |beta| (IIF below 4.35 deg, IIR below
+         * 2.39 deg) yaws at its maximum rate instead of tracking the Sun
+         * (Kouba 2009), and the PCO and the wind-up both use that attitude
+         * (SatAttitude::applyNoonTurn).  The block comes from the ATX satellite
+         * type, so a run without a satellite ATX entry is unaffected.  Galileo,
+         * GLONASS, BeiDou and the other GPS blocks keep the nominal yaw.
+         *
+         * Not part of any snapshot fingerprint: a snapshot written with one setting
+         * must not be resumed with the other.
+         *
+         * Configured via @c processing.enable_noon_turn_attitude.  Default false.
+         * @return True if the noon-turn attitude is enabled.
+         */
+        bool enableNoonTurnAttitude() const { return enable_noon_turn_attitude_; }
+
+        /**
          * @brief Half-window size (epochs) used per side by the bridge fit.
          * @return Number of epochs sampled on each side of a reset boundary.
          */
@@ -8326,6 +8347,7 @@ namespace GnssProcessor {
         bool run_smoother_;                    ///< Run backward RTS smoother after forward Kalman pass (post-processing only).
         bool enable_neq_export_{ false };      ///< Accumulate & export cross-session normal equations (.neq/.asc); post-processing only.
         bool enable_trig_sp3_interp_{ false }; ///< Use sidereal-trig (sin/cos) SP3 position interpolation instead of the default polynomial (Neville) path. Default off (byte-identical legacy).
+        bool enable_noon_turn_attitude_{ false }; ///< GPS Block IIF/IIR yaw-rate-limited noon turn for the satellite PCO and the phase wind-up (Kouba 2009); else nominal yaw everywhere. Default off.
         bool enable_orbit_normal_attitude_{ false }; ///< Use beta-driven orbit-normal yaw attitude for satellite PCO/PCV; else nominal yaw-steering + legacy BeiDou-2 GEO orbit-normal. Default off.
         bool enable_noncausal_slip_bridge_;    ///< Non-causal cycle-slip bridge before the smoother (post-processing only).
         int  slip_bridge_half_window_epochs_;  ///< Half-window (epochs) per side for the bridge GF/MW fit.

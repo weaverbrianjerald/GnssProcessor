@@ -20,6 +20,7 @@
 #include "math/TimeUtils.hpp"
 #include "common/PppTypes.hpp"
 #include "corrections/OceanTideModel.hpp"
+#include "model/SatAttitude.hpp"
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -456,10 +457,17 @@ namespace GnssProcessor {
          *        gaps in that interval.
          * @param correct_velocity_frame When true, the BeiDou-2 GEO orbit normal
          *        is built from the inertial velocity instead of the ECEF velocity.
+         * @param noon_turn_law Yaw-rate limit of the satellite for the noon-turn
+         *        attitude (SatAttitude::noonTurnLaw()), or null for the nominal
+         *        attitude.  Null reproduces the result without this argument bit
+         *        for bit.  The satellite PCO takes the same law, so the two stay
+         *        on one attitude.
          * @return Phase wind-up correction in meters (to add to carrier range).
          *
          * Computes the phase bias caused by relative antenna orientation
-         * (receiver vs satellite) and returns the equivalent length offset.
+         * (receiver vs satellite) and returns the equivalent length offset.  The
+         * satellite body frame comes from SatAttitude, the model the satellite PCO
+         * uses.
          */
         double computePhaseWindUp(const std::string& satellite, System system, const Eigen::Vector3d& rx_pos,
             const Eigen::Vector3d& sat_pos, double wavelength, const GnssTime& time,
@@ -467,7 +475,8 @@ namespace GnssProcessor {
             const Eigen::Vector3d& sat_vel = Eigen::Vector3d::Zero(),
             bool accumulate = false,
             double max_gap_s = 300.0,
-            bool correct_velocity_frame = false) const;
+            bool correct_velocity_frame = false,
+            const SatAttitude::NoonTurnLaw* noon_turn_law = nullptr) const;
 
         /**
          * @brief Enable CSV tracing of per-satellite phase wind-up diagnostics.
