@@ -114,6 +114,13 @@ namespace GnssProcessor {
         /// "SBAS"; "Unknown").
         const char* name{"Unknown"};
         bool        fdma{false};           ///< True when some band's carrier depends on the satellite's frequency slot (GLONASS G1, G2).
+        /// True for the one constellation that is the time reference and the inter-system-bias
+        /// reference of a multi-constellation solution: its clock defines the receiver clock
+        /// state, and every other constellation carries an inter-system bias (a system time
+        /// offset state) relative to it, so the reference itself carries none.  Exactly one
+        /// row sets it (GPS); read it through @ref isTimeReference and
+        /// @ref timeReferenceSystem, never by comparing against @c System::GPS.
+        bool        time_reference{false};
         /// The constellation's physical bands in RINEX digit order; the first
         /// @ref n_bands entries are valid.
         std::array<BandSlot, kMaxConstellationBands> bands{};
@@ -133,15 +140,19 @@ namespace GnssProcessor {
          * @param name   Its name.
          * @param fdma   True for an FDMA constellation.
          * @param bands  Its bands, in RINEX digit order (at most @ref kMaxConstellationBands).
+         * @param time_reference True for the time and inter-system-bias reference
+         *                       constellation (see @ref ConstellationTraits::time_reference).
          * @return The row.
          */
         constexpr ConstellationTraits makeTraits(System sys, char letter, const char* name, bool fdma,
-                                                 std::initializer_list<BandSlot> bands) {
+                                                 std::initializer_list<BandSlot> bands,
+                                                 bool time_reference = false) {
             ConstellationTraits t;
             t.sys    = sys;
             t.letter = letter;
             t.name   = name;
             t.fdma   = fdma;
+            t.time_reference = time_reference;
             for (const BandSlot& b : bands) t.bands[t.n_bands++] = b;
             return t;
         }
@@ -150,7 +161,8 @@ namespace GnssProcessor {
 
         inline constexpr ConstellationTraits kGps = makeTraits(
             System::GPS, 'G', "GPS", false,
-            {{'1', FB::GpsL1}, {'2', FB::GpsL2}, {'5', FB::GpsL5}});
+            {{'1', FB::GpsL1}, {'2', FB::GpsL2}, {'5', FB::GpsL5}},
+            /*time_reference=*/true);   // the one time and inter-system-bias reference
         inline constexpr ConstellationTraits kGalileo = makeTraits(
             System::Galileo, 'E', "Galileo", false,
             {{'1', FB::GalE1}, {'5', FB::GalE5a}, {'6', FB::GalE6}, {'7', FB::GalE5b},
@@ -159,6 +171,9 @@ namespace GnssProcessor {
             System::GLONASS, 'R', "GLONASS", true,
             {{'1', FB::GloG1}, {'2', FB::GloG2}, {'3', FB::GloG3}, {'4', FB::GloG1a},
              {'6', FB::GloG2a}});
+        // BeiDou digit '1' is B1C (1575.42 MHz) and digit '2' is B1I (1561.098 MHz), as in
+        // RINEX 3.04.  The RINEX 3.02 spelling of B1I (C1I, C1Q) is told apart by its
+        // attribute in SignalId::band, never by aliasing the digit onto B1I.
         inline constexpr ConstellationTraits kBeiDou = makeTraits(
             System::BeiDou, 'C', "BeiDou", false,
             {{'1', FB::BdsB1C}, {'2', FB::BdsB1I}, {'5', FB::BdsB2a}, {'6', FB::BdsB3},
@@ -193,6 +208,34 @@ namespace GnssProcessor {
         case System::Unknown: return D::kUnknown;
         }
         return D::kUnknown;
+    }
+
+    /**
+     * @brief Whether a constellation is the time and inter-system-bias reference.
+     *
+     * Reads @ref ConstellationTraits::time_reference.  The reference constellation defines
+     * the receiver clock datum and holds no inter-system bias; every other constellation
+     * holds one relative to it.  Declaring the role in the table keeps the choice of
+     * reference in one place instead of one comparison per use.
+     *
+     * @param sys The constellation (any value, @c System::Unknown included).
+     * @return True for the reference constellation (GPS), false for every other value.
+     */
+    constexpr bool isTimeReference(System sys) { return traitsOf(sys).time_reference; }
+
+    /**
+     * @brief The constellation that is the time and inter-system-bias reference.
+     *
+     * The row of the traits table that sets @ref ConstellationTraits::time_reference.
+     *
+     * @return The reference constellation (GPS).
+     */
+    constexpr System timeReferenceSystem() {
+        constexpr System all[] = {System::GPS, System::Galileo, System::GLONASS,
+                                  System::BeiDou, System::QZSS, System::SBAS};
+        for (const System s : all)
+            if (traitsOf(s).time_reference) return s;
+        return System::Unknown;
     }
 
     /**
@@ -374,6 +417,31 @@ namespace GnssProcessor {
      * @return Wavelength in metres, or 0.0 where the frequency is 0.0.
      */
     double nominalWavelengthM(FrequencyBand band);
+
+    /**
+     * @brief The nominal carrier frequency (Hz) that a RINEX frequency digit declares for a
+     *        constellation, from the digit alone.
+     *
+     * The digit is read through @ref bandOfDigit and the band through
+     * @ref nominalCarrierFrequencyHz.  For BeiDou, digit '1' is B1C (1575.42 MHz) and digit
+     * '2' is B1I (1561.098 MHz); digit '1' is never aliased to B1I.  A caller that holds
+     * the full signal, with its attribute, reads @ref SignalId::band instead.
+     *
+     * @param sys   The constellation.
+     * @param digit The RINEX frequency digit ('1', '2', '5', ...).
+     * @return Frequency in Hz; 0.0 for a digit the constellation does not use.
+     */
+    double nominalCarrierFrequencyOfDigitHz(System sys, char digit);
+
+    /**
+     * @brief The nominal carrier wavelength (m) that a RINEX frequency digit declares for a
+     *        constellation: speed of light over @ref nominalCarrierFrequencyOfDigitHz.
+     *
+     * @param sys   The constellation.
+     * @param digit The RINEX frequency digit ('1', '2', '5', ...).
+     * @return Wavelength in metres, or 0.0 for a digit the constellation does not use.
+     */
+    double nominalWavelengthOfDigitM(System sys, char digit);
 
     /**
      * @brief Metres of first-order ionospheric delay per TECU on a carrier:

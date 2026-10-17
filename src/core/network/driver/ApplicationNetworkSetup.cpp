@@ -531,7 +531,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             return 1;
         }
         for (const std::string& sys : config_.getActiveSystems()) {
-            if (sys != systemName(System::GPS)) {
+            if (sys != systemName(timeReferenceSystem())) {
                 log->error("Network: network.apriori_source sp3_brdc_clock is GPS-only "
                            "(processing.active_systems names '{}').", sys);
                 return 1;
@@ -545,7 +545,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         }
         std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
         nav.erase(std::remove_if(nav.begin(), nav.end(),
-                                 [](const BroadcastEphemeris& e) { return e.system != System::GPS; }),
+                                 [](const BroadcastEphemeris& e) { return !isTimeReference(e.system); }),
                   nav.end());
         if (nav.empty()) {
             log->error("Network: parsed 0 GPS broadcast records from '{}'.",

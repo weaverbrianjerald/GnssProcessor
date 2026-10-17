@@ -129,7 +129,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
           carry_driver.installPosterior(est, x_s, plan.shared_datum,
                                         carry_par ? 1 : seam_threads); }
     catch (const std::exception& ex) {
-        log->warn("Network[Card4]: DD-carry install failed at TOW {:.1f} ({}); "
+        log->warn("Network[invariant carry]: DD-carry install failed at TOW {:.1f} ({}); "
                   "carry reset (refloats next epoch).", se.time.tow, ex.what());
         carry_driver.reset();
     }
@@ -364,7 +364,7 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
                 // buildCarryDdPriors.  Warn once so a wiring regression is visible.  The
                 // flag is dropped, which is safe: q_z and next-epoch detection remain.
                 if (++carry_innov_map_miss == 1)
-                    log->warn("Network[Card4 D5]: an innovation flag (group {}, arc {}→{}) did "
+                    log->warn("Network[invariant carry D5]: an innovation flag (group {}, arc {}→{}) did "
                               "not resolve to an ambiguity in the reverse map at TOW {:.1f} — "
                               "the next-epoch re-tap is skipped for it (reverse-map/block "
                               "mismatch; investigate if this recurs).",

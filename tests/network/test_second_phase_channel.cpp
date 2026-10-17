@@ -141,7 +141,7 @@ TEST(SecondPhaseChannelTest, AdmitsABandOnePhaseType) {
     EXPECT_TRUE(secondPhaseAllowEntryValid("L1X", nullptr));
 }
 
-TEST(SecondPhaseChannelTest, RefusesACodeTypeBecauseThatIsCardScc) {
+TEST(SecondPhaseChannelTest, RefusesACodeTypeBecauseThatBelongsToTheSecondCodeChannel) {
     std::string why;
     EXPECT_FALSE(secondPhaseAllowEntryValid("C1W", &why));
     EXPECT_NE(why.find("PHASE"), std::string::npos);
@@ -417,7 +417,7 @@ TEST(SecondPhaseChannelTest, DropsARefusedAllowListEntryAndKeepsTheRest) {
     std::error_code ec; fs::remove(p, ec);
 }
 
-TEST(SecondPhaseChannelTest, AListWithFewerThanTwoAdmittedPhasesDisarmsTheCard) {
+TEST(SecondPhaseChannelTest, AListWithFewerThanTwoAdmittedPhasesDisarmsTheChannel) {
     LogManager log;
     const fs::path p = writeTempConfig("thin",
         networkConfig(std::string(kArmable) +

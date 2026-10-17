@@ -112,7 +112,7 @@ BroadcastEphemeris gpsEphAt(const std::string& sat, int iode, double af0,
 // (a) D7 pinned eval: the returned clock is broadcast(clock_iode) + SSR delta,
 // using the retained previous ephemeris version when the producer stamped that
 // one.  A stamp whose version is no longer held drops the clock to broadcast grade.
-TEST(SsrStoreInjectionTest, Card7PinnedEvalUsesStampedVersion) {
+TEST(SsrStoreInjectionTest, PinnedEvalUsesStampedVersion) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
     // v10 (af0 1e-5 s, toe kT-600) then v11 (af0 2e-5 s, toe at the query
@@ -161,7 +161,7 @@ TEST(SsrStoreInjectionTest, Card7PinnedEvalUsesStampedVersion) {
 // withhold arms with the store's skew budget, and a matching applied orbit
 // passes untouched.  The orbit side reads a different store than the clock,
 // which is the RTA-8 split routing the echo seam exists for.
-TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
+TEST(SsrStoreInjectionTest, OrbitEchoWithholdUnderBudget) {
     LiveEphemerisStore::getInstance().clear();   // permissive gate (post-processing)
 
     LogManager log;
@@ -218,7 +218,7 @@ TEST(SsrStoreInjectionTest, Card7OrbitEchoWithholdUnderBudget) {
 // longer held is not applied by Geometry's overlay gate; the echo check
 // replicates that gate (through the same pinned pick) and classifies the record
 // as "no applied orbit" instead of a false Match.
-TEST(SsrStoreInjectionTest, Card7OrbitEchoRequiresApplicableOrbit) {
+TEST(SsrStoreInjectionTest, OrbitEchoRequiresApplicableOrbit) {
     auto& eph_store = LiveEphemerisStore::getInstance();
     eph_store.clear();
     // The live store holds broadcast version 20 and no other.

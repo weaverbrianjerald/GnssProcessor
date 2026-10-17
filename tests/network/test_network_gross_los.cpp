@@ -424,7 +424,7 @@ TEST(NetworkGrossLosGl2, TheTriggerIsTheOverBarCountNotTheDeclaredCount) {
 // The config gate: off changes nothing
 // ---------------------------------------------------------------------------
 
-TEST(NetworkGrossLosConfig, DefaultsAreOffAndPreCard) {
+TEST(NetworkGrossLosConfig, DefaultsAreOffAndChangeNothing) {
     LogManager log; GnssConfig cfg;
     ASSERT_TRUE(loadWith("", cfg, log, "off"));
     const auto& nc = cfg.getNetworkConfig();
@@ -610,7 +610,7 @@ TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
     lc.coupling = { CoupledShared{ SharedParamKind::Clock, "G13", "", 0, 0, 'C',
                                    0, 0.8, 1.5, 0.2 } };
     net::putArc(ctx.entities, lk, &net::ArcState::amb) = lc;
-    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono_blk) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
 
     events.gross.gl_act_declare.push_back({ 0, "G13" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
@@ -622,18 +622,18 @@ TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
     EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).var, 1.0e-6);
     EXPECT_TRUE(net::putArc(ctx.entities, lk, &net::ArcState::amb).coupling.empty());
     ASSERT_EQ((net::getArc(ctx.entities.arcs, lk, &net::ArcState::gl_hold_amb) != nullptr), 1u);
-    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono) != nullptr), 1u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono_blk) != nullptr), 1u);
     EXPECT_EQ(ctx.counters.gross_los.bound_amb_held, 1);
     EXPECT_EQ(ctx.counters.gross_los.bound_iono_held, 1);
 
     // A harvest moves the carried value; the next act pass puts it back, otherwise the
     // "fixed prior with zero process noise" would be nominal only.
     net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs = 999.0;
-    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono).value_abs = -7.0;
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono_blk).value_abs = -7.0;
     events.gross.gl_act_declare.clear();
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
     EXPECT_DOUBLE_EQ(net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs, 42.5);
-    EXPECT_DOUBLE_EQ(net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono).value_abs, 3.25);
+    EXPECT_DOUBLE_EQ(net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono_blk).value_abs, 3.25);
     EXPECT_GE(ctx.counters.gross_los.bound_los_epochs, 1);
 
     // The release edge drops the hold, and the states continue from where they were
@@ -641,7 +641,7 @@ TEST(NetworkGrossLosRf3b, BoundHoldsTheFreedStatesInsteadOfErasingThem) {
     events.gross.gl_act_release.push_back({ 0, "G13" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
     EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0));
-    EXPECT_TRUE((net::present(ctx.entities.los, &net::LosState::gl_hold_iono) == 0));
+    EXPECT_TRUE((net::present(ctx.entities.los, &net::LosState::gl_hold_iono_blk) == 0));
     net::putArc(ctx.entities, lk, &net::ArcState::amb).value_abs = 11.0;
     events.gross.gl_act_release.clear();
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
@@ -664,11 +664,11 @@ TEST(NetworkGrossLosRf3b, WithoutTheBoundTheResponseIsStillTheErase) {
     const auto lk = std::make_tuple(0, std::string("G13"), std::string("L1C"));
     const std::pair<int, std::string> ik{ 0, "G13" };
     net::putArc(ctx.entities, lk, &net::ArcState::amb) = LocalCarry{ 42.5, 1.0e-6, 100.0 };
-    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
+    net::putLos(ctx.entities, ik.first, ik.second, &net::LosState::iono_blk) = LocalCarry{ 3.25, 1.0e-4, 100.0 };
     events.gross.gl_act_declare.push_back({ 0, "G13" });
     networkGrossLosAct(ctx, nullptr, stations, asm_res, events);
     EXPECT_EQ((net::getArc(ctx.entities.arcs, lk, &net::ArcState::amb) != nullptr), 0u);
-    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono) != nullptr), 0u);
+    EXPECT_EQ(static_cast<std::size_t>(net::getLos(ctx.entities.los, ik.first, ik.second, &net::LosState::iono_blk) != nullptr), 0u);
     EXPECT_TRUE((net::present(ctx.entities.arcs, &net::ArcState::gl_hold_amb) == 0));
     EXPECT_EQ(ctx.counters.gross_los.iono_erased, 1);
 }

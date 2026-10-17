@@ -1352,9 +1352,9 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
         if (sup == 0)
             log->warn("Network (D5 v3): the corroboration gate is ARMED but suppressed "
                       "NOTHING — the flat set never reached the driver.  Standing invariant #4: "
-                      "check that a slip-QC DECISION CARD ran the QUALIFY pass this run "
+                      "check that a slip-QC DECISION INSTRUMENT ran the QUALIFY pass this run "
                       "(network.cycle_slip.gap_instrument / .mw_lli_corroborate / "
-                      ".relevel_bridge_gf / the CS-GF authority — SlipQcState::cardsArmed()); "
+                      ".relevel_bridge_gf / the CS-GF authority — SlipQcState::decisionInstrumentArmed()); "
                       "without one the gate is INERT, not permissive.  ⚠ network.trace_slip_raw "
                       "is NOT one of them: it COMPUTES the observables but adjudicates none, so "
                       "every verdict map is empty and nothing is ever taggable.");
@@ -1397,7 +1397,7 @@ static int networkD5GateRunEnd(const NetworkRunEndView& v) {
                       "no corroborated-flat D5 flag ever reached a carry arc.  Standing "
                       "invariant #4: the knob is INERT this run, not benign.  Check, in order: "
                       "did the D5 gate flag at all (the innovation-gate line above); did a "
-                      "slip-QC DECISION CARD run the QUALIFY pass (cardsArmed() — "
+                      "slip-QC DECISION INSTRUMENT run the QUALIFY pass (decisionInstrumentArmed() — "
                       "gap_instrument / mw_lli_corroborate / relevel_bridge_gf / the CS-GF "
                       "authority; network.trace_slip_raw does NOT qualify, it computes without "
                       "adjudicating, so every flag reads 'no evidence' and none is taggable); "

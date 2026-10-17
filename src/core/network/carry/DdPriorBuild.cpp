@@ -110,7 +110,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
             const System sys = systemOfSat(parts->satellite);
             if (sys == System::GLONASS) {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
                 if (!carry_glonass_warned) {
-                    log->warn("Network[Card4]: GLONASS ambiguities are EXCLUDED from the "
+                    log->warn("Network[invariant carry]: GLONASS ambiguities are EXCLUDED from the "
                               "invariant carry (FDMA — no common wavelength for an integer "
                               "DD; IE-FDMA is a v2 item).  They keep their legacy treatment.");
                     carry_glonass_warned = true;

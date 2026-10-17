@@ -1257,7 +1257,7 @@ TEST(BlockBaardaSweepTest, LoaderHardErrorsWithoutASweepHost) {
     }
 }
 
-TEST(BlockBaardaSweepTest, LoaderHardErrorsOnCorroborationWithoutTheCard) {
+TEST(BlockBaardaSweepTest, LoaderHardErrorsOnCorroborationWithoutBlockBaarda) {
     // The join runs inside the sweep, so arming it alone produces no blocks, no
     // contingency table and no warning at run time.
     EXPECT_TRUE(bbLoadFails("corrob_alone",
@@ -1284,7 +1284,7 @@ TEST(BlockBaardaSweepTest, LoaderAutoArmsGapInstrumentForTheCorroborationJoin) {
     EXPECT_TRUE(nc.slip_qc.gap_instrument)
         << "the corroboration join must auto-arm its own evidence source";
     EXPECT_FALSE(nc.slip_qc.lli_corroborate)
-        << "a DECISION card must never be auto-armed by a measure-only census";
+        << "a DECISION instrument must never be auto-armed by a measure-only census";
 
     // ...and it does not arm gap_instrument when the join is off.
     GnssConfig plain;

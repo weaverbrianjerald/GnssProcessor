@@ -2488,7 +2488,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
         if (correlated_iono) Pk(k - 1, k - 1) = 25.0;   // bcol.back() == shc
 
         std::vector<double> single_traj, dd_traj, err_ratio;
-        std::printf("\n=== Card 1c contraction trace | correlated_iono=%d fixed=%d | DD sat1 truth N_{1,1}-N_{0,1}=%+.3f m ===\n",
+        std::printf("\n=== Conditional-carry contraction trace | correlated_iono=%d fixed=%d | DD sat1 truth N_{1,1}-N_{0,1}=%+.3f m ===\n",
                     correlated_iono ? 1 : 0, fixed ? 1 : 0, N_true[1][1] - N_true[0][1]);
         std::printf(" ep | inj_sig2   q_cond(N11) | Mr[clk1  pb1    sh  ] |  single_sig  |   DD_sig    | DD_val_err\n");
 
@@ -2653,18 +2653,18 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
     // leaks into the DD and makes it grossly overconfident (|err|/σ well above 4);
     // this is the discrimination arm.  With the fix, the same probe stays consistent.
     EXPECT_GT(maxr(corr.err_ratio), 4.0)
-        << "unfixed correlated-iono arm should be grossly overconfident (the Card-1c "
+        << "unfixed correlated-iono arm should be grossly overconfident (the stale-row "
            "defect) — the fixture lost its discrimination";
     EXPECT_LT(maxr(corr_fix.err_ratio), 3.0)
-        << "Card 1d: fixed correlated-iono arm must stay consistent (|err|/sigma <= 3)";
+        << "kappa-fixed correlated-iono arm must stay consistent (|err|/sigma <= 3)";
     EXPECT_LT(maxr(plain_fix.err_ratio), 3.0)
-        << "Card 1d: fixed plain arm must stay consistent (|err|/sigma <= 3)";
+        << "kappa-fixed plain arm must stay consistent (|err|/sigma <= 3)";
     // Consistent accumulation: under the fix the DD σ keeps contracting in both
     // geometries (no floor from re-counted information, no divergence).
     EXPECT_GT(contraction(plain_fix.dd_sig), 1.8)
-        << "Card 1d: fixed plain arm DD sigma should contract ~1/sqrt(k)";
+        << "kappa-fixed plain arm DD sigma should contract ~1/sqrt(k)";
     EXPECT_GT(contraction(corr_fix.dd_sig), 1.3)
-        << "Card 1d: fixed correlated-iono arm DD sigma should still contract";
+        << "kappa-fixed correlated-iono arm DD sigma should still contract";
 }
 
 // ── Kappa shrink ──────────────────────────────────────────────────────────────────
@@ -2685,7 +2685,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryContractionTrace) {
 // (c₁, c₂, M₀, M₁) with an explicit link row c₂−c₁ ~ N(0,q).  The raw (unfixed
 // conditional-coupling) recursion fails against the moving border; that failing arm is the
 // contraction defect.
-namespace card1d {
+namespace conditional_carry_fixture {
 
 struct Blk { Eigen::MatrixXd A_s, A_r; Eigen::VectorXd w, y; };
 
@@ -2920,14 +2920,14 @@ inline Batch runBatch(const Fixture& fx, int s) {
     return Batch{z(1), z(3), Ninv(1, 1), Ninv(3, 3)};
 }
 
-}  // namespace card1d
+}  // namespace conditional_carry_fixture
 
 // With the large-q moving clock border, the κ-fixed recursion equals the
 // hand-built batch (values and formal variances) while the raw recursion
 // fails grossly; a moderate q exercises κ away from both limits (kappa-shrink gate).
 // See docs/SPEC_card1_coupling_carry.md.
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
-    using namespace card1d;
+    using namespace conditional_carry_fixture;
     for (const double q : {1e4, 1.0}) {
         const Fixture fx(q, std::sqrt(q));
         const EpochTwo fixed = runRecursion(fx, Mode::Fixed);
@@ -2948,8 +2948,8 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
             << "q=" << q << ": κ-fixed recursion must equal the batch solve";
         if (q == 1e4) {
             EXPECT_GT(raw_err, 0.05)
-                << "raw Card-1 rows should fail against the large-q moving border "
-                   "(the Card-1c defect) — the fixture lost its discrimination";
+                << "raw conditional-coupling rows should fail against the large-q moving border "
+                   "(the stale-row defect) — the fixture lost its discrimination";
             EXPECT_GT(raw_err, 1e3 * std::max(fixed_err, 1e-12))
                 << "the fixed recursion should be orders of magnitude closer to batch";
         }
@@ -2960,7 +2960,7 @@ TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateRecursiveEqualsBatch) {
 // rows (κ = 1, zero inflation; guards the behavior closest to off), and q → ∞
 // reproduces the departed-column marginalization (κ = 0, σ² += M²·P_prev).
 TEST(NetworkEstimatorTest, ConditionalCarryTimeUpdateLimits) {
-    using namespace card1d;
+    using namespace conditional_carry_fixture;
     {   // q = 0: κ-fixed construction == raw construction (to 1e-13)
         const Fixture fx(0.0, 1.0);
         const EpochTwo fixed = runRecursion(fx, Mode::Fixed);

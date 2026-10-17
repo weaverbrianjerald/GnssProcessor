@@ -366,7 +366,7 @@ TEST(NetworkDatumGraphCensus, ThinButNonzeroSupportPredictsNothing) {
     const NetDatumGraphPrediction* x = cellOf(cells, "E03/X");
     ASSERT_NE(x, nullptr);
     EXPECT_EQ(x->n_code_support, 1);
-    EXPECT_FALSE(x->zero_support) << "one observable is support; thinness is not this card's call";
+    EXPECT_FALSE(x->zero_support) << "one observable is support; thinness is not this prediction's call";
 }
 
 // The flooding failure mode.  With no satellite code-bias column anywhere, the

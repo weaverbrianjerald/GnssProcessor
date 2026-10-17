@@ -626,7 +626,7 @@ TEST(NetworkRankGateTest, ConfigDefaultsToTheCompileConstant) {
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
     EXPECT_EQ(cfg.networkRankGateTol(), NetworkEstimator::kNullSpaceTol)
-        << "an unset key must reproduce the pre-card constant EXACTLY — the "
+        << "an unset key must reproduce the pre-knob constant EXACTLY — the "
            "OFF-path byte-identity claim is that the same double travels through "
            "the same arithmetic";
     std::error_code ec;

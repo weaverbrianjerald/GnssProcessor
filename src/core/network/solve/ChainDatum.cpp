@@ -266,13 +266,13 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         const bool        roundable = grp_sys == System::GPS || grp_sys == System::Galileo
                                    || grp_sys == System::BeiDou || grp_sys == System::QZSS;
         // The group signal's carrier wavelength for that rounding, from the band digit
-        // alone as PppUtils::getWavelength reads it (BeiDou digit 1 is B1C there, where
+        // alone as the traits table declares it (BeiDou digit 1 is B1C there, where
         // SignalId::band reads L1I as B1I); 0 where the signal does not parse or the band
         // is unknown.  No FDMA group is rounded, so the slot is 0.
         double grp_lambda = 0.0;
         if (roundable)
             if (const auto signal = SignalId::fromObsCode(grp_sys, grp_sig))
-                grp_lambda = wavelengthM(bandOfDigit(grp_sys, signal->digit), /*glo_slot=*/0);
+                grp_lambda = nominalWavelengthOfDigitM(grp_sys, signal->digit);
         const std::string sys_str = systemName(grp_sys);
         const std::string rpb_key = StateKeys::makeReceiverPhaseBiasKey(sys_str, grp_sig);
         const std::string dr_key  = constellationKey(grp_sys) + "|" + grp_sig;
