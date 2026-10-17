@@ -59,9 +59,15 @@ void RealTimeEngine::runMeasurementUpdate(RtEpochContext& ctx) {
         meas_model_->setProtectedAmbiguityKeys(std::move(held));
     }
     size_t carry_bad = 0;
+    // Pre-update innovation screen: tests every row's innovation against the predicted
+    // state before the first update pass can spread a gross row over the states, and
+    // builds that first pass itself (with the flagged rows held out).  False when the
+    // screen is off, so the loop builds the pass as it always did.
+    const bool first_pass_built = screenInnovations_(ctx, carry_excluded);
     for (int pass = 0; pass < max_passes; ++pass) {
-        meas_update = meas_model_->computeMeasurementUpdate(
-            modeled_obs, state_manager_->getStateVector(), carry_excluded);
+        if (!(pass == 0 && first_pass_built))
+            meas_update = meas_model_->computeMeasurementUpdate(
+                modeled_obs, state_manager_->getStateVector(), carry_excluded);
         if (meas_update.innovations.size() == 0
             || !meas_model_->validateMeasurementUpdate(meas_update))
             break;

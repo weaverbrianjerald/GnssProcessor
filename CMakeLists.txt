@@ -231,6 +231,8 @@ add_library(gnss_core STATIC
     src/core/realtime/PbDiscCarryLedger.cpp
     src/core/realtime/PbStepTranslateLedger.cpp
     src/core/realtime/AmbLevelCheck.cpp
+    src/core/realtime/InnovationScreen.cpp
+    src/core/realtime/RealTimeEngineScreen.cpp
     src/core/realtime/ConsumerSatTrace.cpp
     src/core/filter/PivotManager.cpp
     src/core/filter/DdPivotManager.cpp
@@ -594,6 +596,8 @@ add_executable(gnss_tests
     tests/test_amb_level_arc.cpp
     tests/test_amb_level_statistics.cpp
     tests/test_amb_level_band_scope.cpp
+    tests/test_innovation_screen.cpp
+    tests/test_innovation_screen_engine.cpp
     tests/test_disc_mark_scope.cpp
     tests/test_consumer_sat_trace.cpp
     tests/test_transforms.cpp

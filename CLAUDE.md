@@ -707,6 +707,14 @@ its concern:
   must precede the per-signal handlers.
 - **New update / constraint / AR / trace step** → `RealTimeEngineEstimate.cpp`.
   Pseudo-observation constraints belong after the update and before AR.
+- **New pre-update row screen or exclusion** (a test of the epoch's innovations against
+  the predicted state that holds rows out of the update) → `RealTimeEngineScreen.cpp`
+  (the engine side: S from the predicted covariance, exclusion keys, re-float, events,
+  run-end block), with the arithmetic, the episodes and the counters in
+  `realtime/InnovationScreen` (pure, unit-tested on synthetic matrices). The seam runs inside
+  `runMeasurementUpdate`, builds the first pass itself and returns false with the knob off.
+  An exclusion is an event at both edges (standing invariant 7): the held-out key is
+  re-tested every epoch, and a persistent phase row that cannot heal is re-floated.
 - **New construction step** → `RealTimeEngineInit.cpp` (the order there is a real
   dependency chain — `seedInitialState` must follow `initProcessingComponents`).
 - **New RTCM ingest step** → `RealTimeEngineIngest.cpp`. The obs-buffering loop

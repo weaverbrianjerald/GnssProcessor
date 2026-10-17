@@ -11760,6 +11760,18 @@ namespace GnssProcessor {
             clc.amb_level_check_window_ep = cl.value("amb_level_check_window_ep", 20);
             clc.amb_level_check_k         = cl.value("amb_level_check_k", 4.0);
             clc.amb_level_check_mode      = cl.value("amb_level_check_mode", std::string("act"));
+            // The consumer's pre-update innovation screen (derived into the consumer
+            // engine as processing.innovation_screen).  Same contract as
+            // amb_level_check: default false, byte-identical, and it never reaches the
+            // producer's solve or its resume fingerprint.
+            clc.innovation_screen              = cl.value("innovation_screen", false);
+            clc.innovation_screen_k            = cl.value("innovation_screen_k", 6.0);
+            clc.innovation_screen_mode         = cl.value("innovation_screen_mode", std::string("act"));
+            clc.innovation_screen_rows         = cl.value("innovation_screen_rows", std::string("all"));
+            clc.innovation_screen_max_fraction = cl.value("innovation_screen_max_fraction", 0.25);
+            clc.innovation_screen_refloat_ep   = cl.value("innovation_screen_refloat_ep", 3);
+            clc.innovation_screen_phase_floor_m = cl.value("innovation_screen_phase_floor_m", 0.3);
+            clc.innovation_screen_code_floor_m  = cl.value("innovation_screen_code_floor_m", 1.0);
             clc.state_snapshot           = cl.value("state_snapshot", false);
             // Replay (Q5): consumes an already-written product file instead of the
             // live producer.  Presence alone arms the replay driver (the enable flag
@@ -12080,6 +12092,29 @@ namespace GnssProcessor {
             c.amb_level_check_k_ = (cl.amb_level_check_k > 0.0) ? cl.amb_level_check_k : 4.0;
             c.amb_level_check_mode_ =
                 (cl.amb_level_check_mode == "observe") ? "observe" : "act";
+        }
+        // The same derivation for the pre-update innovation screen.  Never cleared
+        // here: an explicit processing.innovation_screen on the base config is kept.  The
+        // seven parameters are carried along so the harness key is self-contained and are
+        // read only when the screen is armed; out-of-range values fall back to the
+        // defaults, as the base config's parse does.
+        if (cl.innovation_screen) {
+            c.innovation_screen_ = true;
+            c.innovation_screen_k_ = (cl.innovation_screen_k > 0.0) ? cl.innovation_screen_k : 6.0;
+            c.innovation_screen_mode_ =
+                (cl.innovation_screen_mode == "observe") ? "observe" : "act";
+            c.innovation_screen_rows_ =
+                (cl.innovation_screen_rows == "phase" || cl.innovation_screen_rows == "code")
+                    ? cl.innovation_screen_rows : "all";
+            c.innovation_screen_max_fraction_ =
+                (cl.innovation_screen_max_fraction > 0.0 && cl.innovation_screen_max_fraction <= 1.0)
+                    ? cl.innovation_screen_max_fraction : 0.25;
+            c.innovation_screen_refloat_ep_ =
+                (cl.innovation_screen_refloat_ep >= 1) ? cl.innovation_screen_refloat_ep : 3;
+            c.innovation_screen_phase_floor_m_ =
+                (cl.innovation_screen_phase_floor_m >= 0.0) ? cl.innovation_screen_phase_floor_m : 0.3;
+            c.innovation_screen_code_floor_m_ =
+                (cl.innovation_screen_code_floor_m >= 0.0) ? cl.innovation_screen_code_floor_m : 1.0;
         }
         // The canonical-signal rule is a network-side lever.  The derived
         // consumer is a full copy of the producer config and runs its own PppModel, so

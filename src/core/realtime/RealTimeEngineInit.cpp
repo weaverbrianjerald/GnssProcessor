@@ -147,6 +147,9 @@ void RealTimeEngine::initStateManagerAndApriori() {
     amb_level_generations_.clear();
     amb_level_events_.clear();
     amb_level_epoch_checks_ = 0;
+    // The innovation screen's exclusion episodes name keys of the previous manager.
+    innovation_screen_ = InnovationScreen{};
+    innovation_screen_configured_ = false;
 
     // Seed initial position.
     initial_position_ = Eigen::Vector3d(0.0, 0.0, Constants::EARTH_RADIUS);

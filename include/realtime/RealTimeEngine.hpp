@@ -46,6 +46,7 @@
 #include "products/SsrCorrectionStore.hpp"   // SsrCorrectionStore + NetworkProducerStatus (RTA-10)
 #include "realtime/PbDiscCarryLedger.hpp"    // Declared-step ambiguity carry ledger
 #include "realtime/AmbLevelCheck.hpp"        // Consumer ambiguity level re-validation
+#include "realtime/InnovationScreen.hpp"     // Consumer pre-update innovation screen
 #include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger
 #include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
 #include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
@@ -543,6 +544,21 @@ public:
     /// drain.  0 on an unarmed engine and on any epoch that did not update.
     uint64_t ambLevelEpochChecks() const { return amb_level_epoch_checks_; }
 
+    // --- Consumer innovation screen readout ------------------------------
+    /// True iff @c processing.innovation_screen is armed on this engine's config
+    /// (the closed-loop harness derives it from
+    /// @c network.closed_loop.innovation_screen).
+    bool innovationScreenArmed() const { return config_.innovationScreen(); }
+    /// Run-end counters of the screen. All zero, and never printed, with the knob
+    /// off, so the off path stays byte-identical.
+    const InnovationScreen::Counters& innovationScreenCounters() const {
+        return innovation_screen_.counters();
+    }
+    /// One INFO block with the screen's counters, the epoch-maximum histogram and the
+    /// exclusion-episode closure. Silent unless armed. The closed-loop harness and the
+    /// replay driver never call @c flush(), so both call this at their own tails.
+    void logInnovationScreenSummary(const char* tag) const;
+
     // --- Harness-driven snapshot write and restore readout ------
     /// Epoch time of the last epoch that ran the full estimation tail (the
     /// epoch the live filter memory is "as of"); nullopt before the first.
@@ -601,6 +617,7 @@ public:
 private:
     friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
     friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges.
+    friend struct InnovationScreenTestAccess;  ///< Drives the innovation screen on a hand-built measurement.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -786,6 +803,34 @@ private:
     void noteAmbLevelDisturbed_(const std::string& sat);
     /// One INFO line with the level-check counters; silent unless armed.
     void logAmbLevelCheckSummary_(const char* tag);
+
+    // --- Pre-update innovation screen (RealTimeEngineScreen.cpp) ------------
+    /**
+     * @brief Build the epoch's first measurement pass with the innovation screen applied.
+     *
+     * Builds the pass-0 measurement into @c ctx.meas_update, tests every eligible row's
+     * innovation against the predicted state, and in act mode holds the flagged rows out
+     * (adding their keys to @p excluded) and re-floats the ambiguities of persistent
+     * phase rows before building the measurement again. The caller's update loop then
+     * starts from the measurement this left in @c ctx.meas_update.
+     *
+     * @param ctx       Epoch context; @c modeled_obs is read, @c meas_update is written.
+     * @param excluded  Row keys ("<sat>_<signal>") already held out of the update; the
+     *                  screen's exclusions are added so they persist across rebuild passes.
+     * @return false when the screen is off (nothing was built); true when
+     *         @c ctx.meas_update holds the first pass.
+     */
+    bool screenInnovations_(RtEpochContext& ctx, std::set<std::string>& excluded);
+    /// Resolve the screen's knobs from the config onto @ref innovation_screen_ once.
+    void configureInnovationScreen_();
+    /// Test @p mu against the predicted covariance and return the epoch's decisions.
+    /// Reads the state covariance and the screen's episode ledger; writes only the ledger.
+    InnovationScreen::Outcome evaluateInnovationScreen_(const EpochMeasurement& mu);
+    /// Apply @p out: log every event with its identity, record it on the consumer
+    /// satellite trace, add the exclusions to @p excluded and re-float the ambiguities.
+    /// In observe mode only the logging and the trace run.
+    void applyInnovationScreen_(const InnovationScreen::Outcome& out,
+                                std::set<std::string>& excluded);
 
     // --- Measurement-set conditioning (RealTimeEnginePrepare.cpp) ---------
     void dropBroadcastGrade(RtEpochContext& ctx); ///< Drop broadcast-grade sats from the precise solution.
@@ -1198,6 +1243,15 @@ private:
     std::vector<AmbLevelEvent> amb_level_events_;
     /// This epoch's full-window evaluations, drained with the events.
     uint64_t amb_level_epoch_checks_{ 0 };
+
+    // --- Consumer pre-update innovation screen ---------------------------
+    /// The statistic, the exclusion episodes and the counters. Configured once on the
+    /// first armed epoch (@c innovation_screen_configured_); untouched with
+    /// @c processing.innovation_screen off. The episodes live across epochs on purpose
+    /// (the streak that triggers a re-float); they are not part of the RT snapshot, so a
+    /// restored consumer starts with no open episode.
+    InnovationScreen innovation_screen_;
+    bool             innovation_screen_configured_{ false };   ///< The knobs have been resolved onto @ref innovation_screen_.
     /// Generations of the two selected ambiguity signals at the last ALC sample.
     /// StateManager assigns unique IDs across births, resets and translations,
     /// so this also detects a signal-pair change or removal/rebirth of a key.

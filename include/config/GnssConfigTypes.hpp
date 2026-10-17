@@ -290,6 +290,48 @@ namespace GnssProcessor {
         /// path) or @c "observe" (count only, no state written).
         std::string   amb_level_check_mode{ "act" };
         /**
+         * @brief Screen the consumer's innovations against the predicted state before
+         *        each measurement update.
+         *
+         * Key @c network.closed_loop.innovation_screen, default false (byte-identical).
+         * Each undifferenced code and phase row is tested before the update by its
+         * conditional normalized innovation (the row's innovation against what the other
+         * rows imply for it, in units of its predicted standard deviation); a row above
+         * the threshold is held out of that epoch's update as an event with counters,
+         * every epoch re-tests the excluded rows, and a phase row flagged on several
+         * consecutive epochs has its ambiguity re-floated.  A single gross row (a 92 m
+         * phase step) otherwise moves the first update pass by hundreds of metres and the
+         * post-fit peel resets innocent satellites.
+         * @c deriveClosedLoopConsumerConfig copies it and the seven parameters below into
+         * the consumer engine's config as @c processing.innovation_screen*
+         * (@c GnssConfig::innovationScreen); a standalone real-time consumer sets those
+         * @c processing keys directly.  It never reaches the producer's solve or its
+         * resume fingerprint.  See @c RealTimeEngine::screenInnovations_
+         * (RealTimeEngineScreen.cpp) and @ref InnovationScreen.
+         */
+        bool          innovation_screen{ false };
+        /// Flag threshold on the conditional normalized innovation |w|
+        /// (@c innovation_screen_k, default 6.0).
+        double        innovation_screen_k{ 6.0 };
+        /// Action on a flagged row: @c "act" (exclude, re-float a persistent phase row)
+        /// or @c "observe" (count only, nothing written) (@c innovation_screen_mode).
+        std::string   innovation_screen_mode{ "act" };
+        /// Rows that may be excluded: @c "all", @c "phase" or @c "code"
+        /// (@c innovation_screen_rows, default @c "all").
+        std::string   innovation_screen_rows{ "all" };
+        /// The screen abstains when more than this fraction of an epoch's rows is flagged
+        /// (@c innovation_screen_max_fraction, default 0.25).
+        double        innovation_screen_max_fraction{ 0.25 };
+        /// Consecutive flagged epochs after which a phase row's ambiguity is re-floated
+        /// (@c innovation_screen_refloat_ep, default 3).
+        int           innovation_screen_refloat_ep{ 3 };
+        /// Model-error floor added to the carrier-phase rows' noise in the screen's
+        /// innovation covariance, metres (@c innovation_screen_phase_floor_m, default 0.3).
+        double        innovation_screen_phase_floor_m{ 0.3 };
+        /// The same floor for the code rows, metres (@c innovation_screen_code_floor_m,
+        /// default 1.0).
+        double        innovation_screen_code_floor_m{ 1.0 };
+        /**
          * @brief Warm start of the closed-loop consumer in the event harness
          *        (@c network.closed_loop.state_snapshot, default false; false is
          *        byte-identical and writes no file) (part B).
