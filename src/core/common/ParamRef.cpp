@@ -5,6 +5,7 @@
 #include "common/ParamRef.hpp"
 
 #include <charconv>
+#include <string>
 #include <string_view>
 #include <tuple>
 
@@ -116,6 +117,185 @@ bool operator<(const RxCbKey& a, const RxCbKey& b) {
             // reaches a map, but the order stays a strict weak order on the form.
             return a.form < b.form;
     }
+}
+
+// =======================================================================
+// One parameter, without its station
+// =======================================================================
+
+bool operator==(const ParamRef& a, const ParamRef& b) {
+    return a.kind == b.kind && a.form == b.form && a.sys == b.sys && a.sat == b.sat
+        && a.signal == b.signal && a.signal_b == b.signal_b && a.band == b.band
+        && a.band_b == b.band_b && a.glo_slot == b.glo_slot && a.axis == b.axis
+        && a.core == b.core;
+}
+
+std::string describe(const ParamRef& r) {
+    std::string out = paramKindName(r.kind);
+    if (r.form != ParamForm::None) {
+        out += '.';
+        out += paramFormName(r.form);
+    }
+    switch (r.core) {
+        case UserCore::None:          break;
+        case UserCore::PhaseClock:    out += " phase_clock"; break;
+        case UserCore::GradientNorth: out += " gradient_north"; break;
+        case UserCore::GradientEast:  out += " gradient_east"; break;
+    }
+    if (r.kind == NetworkParamKind::RxPosition) out += " axis=" + std::to_string(r.axis);
+    if (r.sys != System::Unknown) out += std::string(" ") + systemName(r.sys);
+    if (r.sat.valid()) out += " " + r.sat.str();
+    if (r.signal.digit != '\0') out += " " + r.signal.str();
+    if (r.signal_b.digit != '\0') out += " " + r.signal_b.str();
+    if (r.band != FrequencyBand::Unknown) out += " band=" + std::to_string(static_cast<int>(r.band));
+    if (r.band_b != FrequencyBand::Unknown) out += " band_b=" + std::to_string(static_cast<int>(r.band_b));
+    if (r.form == ParamForm::GloSlotIfb) out += " k=" + std::to_string(r.glo_slot);
+    return out;
+}
+
+ParamRef rxPositionRef(std::uint8_t axis) {
+    ParamRef r;
+    r.kind = NetworkParamKind::RxPosition;
+    r.axis = axis;
+    return r;
+}
+
+ParamRef zwdRef() {
+    ParamRef r;
+    r.kind = NetworkParamKind::Zwd;
+    return r;
+}
+
+ParamRef rxClockRef() {
+    ParamRef r;
+    r.kind = NetworkParamKind::RxClock;
+    return r;
+}
+
+ParamRef isbRef(System sys) {
+    ParamRef r;
+    r.kind = NetworkParamKind::RxClock;
+    r.form = ParamForm::Isb;
+    r.sys  = sys;
+    return r;
+}
+
+ParamRef phaseClockRef() {
+    ParamRef r;
+    r.kind = NetworkParamKind::RxClock;
+    r.core = UserCore::PhaseClock;
+    return r;
+}
+
+ParamRef gradientRef(bool north) {
+    ParamRef r;
+    r.kind = NetworkParamKind::Zwd;
+    r.core = north ? UserCore::GradientNorth : UserCore::GradientEast;
+    return r;
+}
+
+ParamRef slantIonoRef(SatId sat) {
+    ParamRef r;
+    r.kind = NetworkParamKind::SlantIono;
+    r.sat  = sat;
+    return r;
+}
+
+ParamRef rxCodeBiasRef(const RxCbKey& key) {
+    ParamRef r;
+    r.kind     = NetworkParamKind::RxCodeBias;
+    r.form     = key.form;
+    r.sys      = key.sys;
+    r.band     = key.band;
+    r.signal   = key.signal;
+    r.glo_slot = key.glo_slot;
+    return r;
+}
+
+RxCbKey rxCbKeyOf(const ParamRef& r) {
+    RxCbKey key;
+    key.sys      = r.sys;
+    key.form     = r.form;
+    key.band     = r.band;
+    key.signal   = r.signal;
+    key.glo_slot = r.glo_slot;
+    return key;
+}
+
+ParamRef satCodeBiasRef(SatId sat, SignalId code) {
+    ParamRef r;
+    r.kind   = NetworkParamKind::SatCodeBias;
+    r.sat    = sat;
+    r.signal = code;
+    return r;
+}
+
+ParamRef satCodeBiasIfRef(SatId sat, const SignalPair& pair) {
+    ParamRef r = satCodeBiasRef(sat, pair.a);
+    r.form     = ParamForm::IfPair;
+    r.signal_b = pair.b;
+    return r;
+}
+
+ParamRef satPhaseBiasRef(SatId sat, SignalId phase) {
+    ParamRef r;
+    r.kind   = NetworkParamKind::SatPhaseBias;
+    r.sat    = sat;
+    r.signal = phase;
+    return r;
+}
+
+ParamRef rxPhaseBiasRef(System sys, SignalId phase) {
+    ParamRef r;
+    r.kind   = NetworkParamKind::RxPhaseBias;
+    r.sys    = sys;
+    r.signal = phase;
+    return r;
+}
+
+ParamRef satClockRef(SatId sat) {
+    ParamRef r;
+    r.kind = NetworkParamKind::SatClock;
+    r.sat  = sat;
+    return r;
+}
+
+ParamRef ambiguityRef(SatId sat, SignalId phase) {
+    ParamRef r;
+    r.kind   = NetworkParamKind::Ambiguity;
+    r.sat    = sat;
+    r.signal = phase;
+    return r;
+}
+
+ParamRef ambiguityIfRef(SatId sat, const SignalPair& pair) {
+    ParamRef r = ambiguityRef(sat, pair.a);
+    r.form     = ParamForm::IfPair;
+    r.signal_b = pair.b;
+    return r;
+}
+
+ParamRef narrowLaneRef(SatId sat, FrequencyBand ref_band) {
+    ParamRef r;
+    r.kind = NetworkParamKind::Ambiguity;
+    r.form = ParamForm::NarrowLane;
+    r.sat  = sat;
+    r.band = ref_band;
+    return r;
+}
+
+ParamRef wideLaneRef(SatId sat, FrequencyBand ref_band, FrequencyBand band) {
+    ParamRef r = narrowLaneRef(sat, ref_band);
+    r.form   = ParamForm::WideLane;
+    r.band_b = band;
+    return r;
+}
+
+ParamRef phaseColourRef(SatId sat) {
+    ParamRef r;
+    r.kind = NetworkParamKind::PhaseColour;
+    r.sat  = sat;
+    return r;
 }
 
 } // namespace GnssProcessor

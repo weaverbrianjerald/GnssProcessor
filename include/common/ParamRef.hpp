@@ -13,6 +13,8 @@
  *    signals or bands).
  *  - @ref ParamInstanceId: a class plus the subject fields a table line sums over
  *    (satellite, GLONASS slot, station).
+ *  - @ref ParamRef: one parameter without its station, the identity the observation equation
+ *    names its terms by.
  *
  * They live in common/ so that code on the user side of the estimator, which must include no
  * network header, can name a network parameter.
@@ -51,6 +53,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace GnssProcessor {
@@ -303,5 +306,209 @@ inline bool operator!=(const RxCbKey& a, const RxCbKey& b) { return !(a == b); }
  * @return True when @p a orders before @p b.
  */
 bool operator<(const RxCbKey& a, const RxCbKey& b);
+
+// =======================================================================
+// One parameter, without its station
+// =======================================================================
+
+/**
+ * @brief A column of the single-receiver state that is no network parameter: a fixed-core
+ *        column the user side adds by configuration flag.
+ *
+ * The observation equation (measurement/ObservationEquation.hpp) is shared by the
+ * single-receiver filter and the network producer.  The receiver phase clock and the
+ * troposphere gradients are terms of the equation that only a user configuration switches on;
+ * they are named here so that the equation names every column it can write.  Every network
+ * term has @c None.  The columns of the Doppler rows (velocity, clock rate, the IMU states)
+ * are not terms of the shared equation.
+ */
+enum class UserCore : std::uint8_t {
+    None = 0,       ///< A network parameter (the default).
+    PhaseClock,     ///< The receiver phase-clock offset: +1 on every phase row.
+    GradientNorth,  ///< The troposphere north gradient: mapping function times cos(azimuth).
+    GradientEast,   ///< The troposphere east gradient: mapping function times sin(azimuth).
+};
+
+/**
+ * @brief The identity of one parameter, without its station: what the observation equation
+ *        names, and what a view of the parameters answers for.
+ *
+ * Which fields a reference carries is fixed by its (kind, form), as for @ref ParamClass,
+ * and every other field keeps its default:
+ *
+ * | term                         | kind           | form | fields used                      |
+ * |------------------------------|----------------|------|----------------------------------|
+ * | receiver position component  | rx_position    | none | axis                             |
+ * | zenith wet delay             | zwd            | none |                                  |
+ * | receiver clock               | rx_clock       | none |                                  |
+ * | inter-system bias            | rx_clock       | isb  | sys                              |
+ * | receiver phase clock         | rx_clock       | none | core                             |
+ * | troposphere gradient         | zwd            | none | core                             |
+ * | slant ionosphere             | slant_iono     | none | sat                              |
+ * | receiver code bias           | rx_code_bias   | key  | the fields of @ref RxCbKey       |
+ * | satellite code bias          | sat_code_bias  | none | sat, signal                      |
+ * | satellite code bias, IF pair | sat_code_bias  | if   | sat, signal, signal_b            |
+ * | satellite phase bias         | sat_phase_bias | none | sat, signal                      |
+ * | receiver phase bias          | rx_phase_bias  | none | sys, signal                      |
+ * | satellite clock              | sat_clock      | none | sat                              |
+ * | ambiguity                    | ambiguity      | none | sat, signal                      |
+ * | ambiguity, IF pair           | ambiguity      | if   | sat, signal, signal_b            |
+ * | narrow-lane ambiguity        | ambiguity      | nl   | sat, band (the reference band)   |
+ * | wide-lane ambiguity          | ambiguity      | wl   | sat, band (reference), band_b    |
+ * | phase colour                 | phase_colour   | none | sat                              |
+ *
+ * The receiver code-bias row repeats @ref RxCbKey; @ref rxCodeBiasRef and @ref rxCbKeyOf
+ * convert.  A user-only column has a non-default @ref core and the kind that names its place
+ * in the row (the phase clock sits with the receiver clock, a gradient with the
+ * troposphere).  The factory functions below build each row of the table.
+ */
+struct ParamRef {
+    NetworkParamKind kind{NetworkParamKind::RxClock};  ///< Registry kind.
+    ParamForm        form{ParamForm::None};            ///< Form within the kind.
+    System           sys{System::Unknown};             ///< Constellation (inter-system bias, receiver phase and code bias).
+    SatId            sat{};                            ///< The satellite (satellite-keyed kinds).
+    SignalId         signal{};                         ///< Signal (the first member of an ionosphere-free pair).
+    SignalId         signal_b{};                       ///< Second member of an ionosphere-free pair.
+    FrequencyBand    band{FrequencyBand::Unknown};     ///< Band (receiver IFB, slot IFB; the reference band of a narrow or wide lane).
+    FrequencyBand    band_b{FrequencyBand::Unknown};   ///< Second band of a wide lane.
+    int              glo_slot{0};                      ///< GLONASS FDMA slot (form GloSlotIfb).
+    std::uint8_t     axis{0};                          ///< Component of the receiver position (0, 1, 2 for x, y, z).
+    UserCore         core{UserCore::None};             ///< The user-only column, or None.
+};
+
+/**
+ * @brief Equality of two parameter references (all fields).
+ * @param a First reference.
+ * @param b Second reference.
+ * @return True when every field is equal.
+ */
+bool operator==(const ParamRef& a, const ParamRef& b);
+
+/**
+ * @brief Inequality of two parameter references.
+ * @param a First reference.
+ * @param b Second reference.
+ * @return @c !(a == b).
+ */
+inline bool operator!=(const ParamRef& a, const ParamRef& b) { return !(a == b); }
+
+/**
+ * @brief A short text of a reference for logs and test messages ("ambiguity.if G05 L1C L2W").
+ * @param r The reference.
+ * @return Kind, form, then the fields the kind carries.
+ */
+std::string describe(const ParamRef& r);
+
+/**
+ * @brief One component of the receiver position.
+ * @param axis 0, 1 or 2 (x, y, z).
+ * @return The reference (kind rx_position).
+ */
+ParamRef rxPositionRef(std::uint8_t axis);
+/// @return The zenith wet delay of the receiver.
+ParamRef zwdRef();
+/// @return The receiver clock.
+ParamRef rxClockRef();
+/**
+ * @brief The inter-system bias of a constellation against the time reference.
+ * @param sys The constellation.
+ * @return The reference (kind rx_clock, form isb).
+ */
+ParamRef isbRef(System sys);
+/// @return The receiver phase-clock offset (user-only).
+ParamRef phaseClockRef();
+/**
+ * @brief A troposphere gradient (user-only).
+ * @param north True for the north gradient, false for the east gradient.
+ * @return The reference.
+ */
+ParamRef gradientRef(bool north);
+/**
+ * @brief The slant ionosphere of a satellite.
+ * @param sat The satellite.
+ * @return The reference (kind slant_iono).
+ */
+ParamRef slantIonoRef(SatId sat);
+/**
+ * @brief A receiver code-bias state.
+ * @param key The typed key (differential, inter-frequency, per-slot or inter-signal bias).
+ * @return The reference (kind rx_code_bias; the key's form and fields).
+ */
+ParamRef rxCodeBiasRef(const RxCbKey& key);
+/**
+ * @brief The receiver code-bias key of a reference.
+ * @param r A reference of kind rx_code_bias.
+ * @return The key (fields the form does not use keep their defaults).
+ */
+RxCbKey rxCbKeyOf(const ParamRef& r);
+/**
+ * @brief The code bias of one satellite signal.
+ * @param sat  The satellite.
+ * @param code The code signal.
+ * @return The reference (kind sat_code_bias).
+ */
+ParamRef satCodeBiasRef(SatId sat, SignalId code);
+/**
+ * @brief The code bias of one satellite on an ionosphere-free pair of codes.
+ * @param sat  The satellite.
+ * @param pair The pair.
+ * @return The reference (kind sat_code_bias, form if).
+ */
+ParamRef satCodeBiasIfRef(SatId sat, const SignalPair& pair);
+/**
+ * @brief The phase bias of one satellite signal.
+ * @param sat   The satellite.
+ * @param phase The phase signal.
+ * @return The reference (kind sat_phase_bias).
+ */
+ParamRef satPhaseBiasRef(SatId sat, SignalId phase);
+/**
+ * @brief The receiver phase bias of one constellation signal.
+ * @param sys   The constellation.
+ * @param phase The phase signal.
+ * @return The reference (kind rx_phase_bias).
+ */
+ParamRef rxPhaseBiasRef(System sys, SignalId phase);
+/**
+ * @brief The clock of one satellite.
+ * @param sat The satellite.
+ * @return The reference (kind sat_clock).
+ */
+ParamRef satClockRef(SatId sat);
+/**
+ * @brief The float ambiguity of one satellite signal.
+ * @param sat   The satellite.
+ * @param phase The phase signal.
+ * @return The reference (kind ambiguity).
+ */
+ParamRef ambiguityRef(SatId sat, SignalId phase);
+/**
+ * @brief The float ambiguity of an ionosphere-free pair of phase signals.
+ * @param sat  The satellite.
+ * @param pair The pair.
+ * @return The reference (kind ambiguity, form if).
+ */
+ParamRef ambiguityIfRef(SatId sat, const SignalPair& pair);
+/**
+ * @brief The narrow-lane ambiguity of a satellite on its reference band.
+ * @param sat      The satellite.
+ * @param ref_band The reference band.
+ * @return The reference (kind ambiguity, form nl).
+ */
+ParamRef narrowLaneRef(SatId sat, FrequencyBand ref_band);
+/**
+ * @brief The wide-lane ambiguity of a satellite between its reference band and another.
+ * @param sat      The satellite.
+ * @param ref_band The reference band.
+ * @param band     The other band.
+ * @return The reference (kind ambiguity, form wl).
+ */
+ParamRef wideLaneRef(SatId sat, FrequencyBand ref_band, FrequencyBand band);
+/**
+ * @brief The phase colour of a satellite.
+ * @param sat The satellite.
+ * @return The reference (kind phase_colour).
+ */
+ParamRef phaseColourRef(SatId sat);
 
 } // namespace GnssProcessor
