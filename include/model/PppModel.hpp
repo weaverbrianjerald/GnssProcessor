@@ -7,7 +7,7 @@
  *
  * Bundles the geometry, atmospheric models and GNSS corrections needed to form
  * modeled code and carrier-phase observations for the estimator, over config,
- * product data, a RINEX parser and the StateManager.
+ * product data and a RINEX parser.
  */
 
 #include "config/GnssConfig.hpp"
@@ -15,7 +15,6 @@
 #include "products/SignalDeclaration.hpp"   // the declared signal roster
 #include "logging/LogManager.hpp"
 #include "rinex/RinexParser.hpp"
-#include "filter/StateManager.hpp"
 #include "common/PppTypes.hpp"
 #include "model/Planetary.hpp"
 #include "atmosphere/Ionosphere.hpp"
@@ -81,10 +80,9 @@ namespace GnssProcessor {
          * @param product_parser Parser/loader for external products (SP3, CLK, ERP, etc.).
          * @param log_manager Reference to the logging manager used for diagnostics.
          * @param rinex_parser Reference to the RINEX parser providing observation metadata.
-         * @param state_manager Reference to StateManager for accessing/adding ambiguities and state values.
          */
         PppModel(const GnssConfig& config, ProductParser& product_parser, LogManager& log_manager,
-            const RinexParser& rinex_parser, StateManager& state_manager);
+            const RinexParser& rinex_parser);
 
         /**
          * @brief Seed a fresh PppState from configuration defaults.
@@ -891,7 +889,6 @@ namespace GnssProcessor {
         ProductParser& product_parser_;        /**< Product parser providing SP3/CLK/ERP/etc. */
         LogManager& log_manager_;              /**< Logging manager used for diagnostic messages. */
         const RinexParser& rinex_parser_;      /**< RINEX parser for observation metadata. */
-        StateManager& state_manager_;          /**< State manager for ambiguity and state bookkeeping. */
 
         PppUtils ppp_utils_;                   /**< Utility helpers for PPP math and constants. */
         std::optional<Ionosphere> ionosphere_; /**< Klobuchar fallback model.  Constructed only when @c model_corrections.enable_klobuchar_ionosphere is true; std::nullopt otherwise.  Constructing it pulls in another @c Model::Geometry plus a Klobuchar coefficient parse, both of which are wasted in IF / DD / PPP-RTK-uncombined where Klobuchar is never queried. */

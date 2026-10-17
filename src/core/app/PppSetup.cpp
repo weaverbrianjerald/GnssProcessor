@@ -203,7 +203,7 @@ bool Application::initializePosition() {
 // ---------------------------------------------------------------------------
 
 void Application::buildPppComponents_() {
-    ppp_model_       = std::make_unique<PppModel>(config_, *product_parser_, log_manager_, *rinex_parser_, *state_manager_);
+    ppp_model_       = std::make_unique<PppModel>(config_, *product_parser_, log_manager_, *rinex_parser_);
     meas_model_      = std::make_unique<MeasurementModel>(*state_manager_, *ppp_model_, config_, log_manager_);
     kalman_filter_   = std::make_unique<KalmanFilter>(*state_manager_, config_, log_manager_, *ppp_model_);
     wls_estimator_   = std::make_unique<WlsEstimator>(config_, *state_manager_, log_manager_);

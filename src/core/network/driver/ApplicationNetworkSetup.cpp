@@ -944,7 +944,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         st.sm->setStateVector(x0);
         st.sm->setStateEpochTime(synced.front().time);
         st.model = std::make_unique<PppModel>(
-            config_, *product_parser_, log_manager_, *parser, *st.sm);
+            config_, *product_parser_, log_manager_, *parser);
         // Label the canonical-signal rider with the station name, unconditionally.  The
         // latch's own "locked for GPS …" line goes to the ppp_model logger, which is
         // empty in every run, so the labelled rider (RS-8, SPEC_event_harness §21.16)

@@ -84,7 +84,7 @@ protected:
         products = std::make_unique<ProductParser>(config, log);
         rinex = std::make_unique<RinexParser>(config, log, *products);
         states = std::make_unique<StateManager>(5, log, config);
-        ppp = std::make_unique<PppModel>(config, *products, log, *rinex, *states);
+        ppp = std::make_unique<PppModel>(config, *products, log, *rinex);
         model = std::make_unique<MeasurementModel>(*states, *ppp, config, log);
         model->setSsrStore(&store);
         auto x = states->getStateVector();

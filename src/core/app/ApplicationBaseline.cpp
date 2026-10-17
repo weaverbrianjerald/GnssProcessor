@@ -472,7 +472,7 @@ void Application::buildBaselineReference_(const RinexParser* ref_parser,
         ref_state_manager_->setStateEpochTime(synced.front().time);
     }
     ref_ppp_model_ = std::make_unique<PppModel>(
-        config_, *product_parser_, log_manager_, *ref_parser, *ref_state_manager_);
+        config_, *product_parser_, log_manager_, *ref_parser);
 
     // Optional GIM-backed higher-order ionosphere correction.  Baseline
     // (DD) processing differences the higher-order term between rover
@@ -647,7 +647,7 @@ void Application::buildBaselineRoverFilter_(const RinexParser* rov_parser,
     }
 
     ppp_model_ = std::make_unique<PppModel>(
-        config_, *product_parser_, log_manager_, *rov_parser, *state_manager_);
+        config_, *product_parser_, log_manager_, *rov_parser);
     if (gim_ && gim_->isLoaded()) {
         ppp_model_->setGim(gim_.get());
     }

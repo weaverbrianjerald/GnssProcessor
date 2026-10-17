@@ -195,15 +195,13 @@ struct ModelFixture {
     GnssConfig   cfg;
     std::unique_ptr<ProductParser> pp;
     std::unique_ptr<RinexParser>   rp;
-    std::unique_ptr<StateManager>  sm;
     std::unique_ptr<PppModel>      model;
 
     explicit ModelFixture(const std::string& tag) {
         EXPECT_TRUE(loadInto(tag, networkConfig(), cfg, log));
         pp    = std::make_unique<ProductParser>(cfg, log);
         rp    = std::make_unique<RinexParser>(cfg, log, *pp);
-        sm    = std::make_unique<StateManager>(5, log, cfg);
-        model = std::make_unique<PppModel>(cfg, *pp, log, *rp, *sm);
+        model = std::make_unique<PppModel>(cfg, *pp, log, *rp);
         model->setCanonicalTraceLabel("AAAA");
     }
 };
