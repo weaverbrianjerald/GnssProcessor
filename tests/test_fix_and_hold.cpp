@@ -12,9 +12,13 @@
  * the call returned without a single pseudo-observation.
  *
  * The first group drives the production chain (resolve, install, hold) on a
- * synthetic float state with the default mask and pins that the hold changes the
- * covariance of every fixed pair and of nothing else.  The second group calls the
- * hold on hand-built resolutions to pin the gates and the row selection.
+ * synthetic single-signal float state with the default mask and pins that the hold
+ * changes the covariance of every fixed pair and of nothing else.  The second group
+ * does the same on a dual-frequency state with widelane integers.  That takes the
+ * WL-constrained search, the path dual-frequency PPP-AR uses whenever MW integers
+ * exist, and pins that both signals of each fixed narrowlane pair are held, for the
+ * full set and for a partial subset.  The third group calls the hold on hand-built
+ * resolutions to pin the gates and the row selection.
  *
  * Suite name @c PppFixAndHoldTest is owned solely by this file.
  */
@@ -31,7 +35,11 @@
 
 #include <cmath>
 #include <cstddef>
+#include <initializer_list>
+#include <map>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace GnssProcessor;
@@ -46,22 +54,23 @@ constexpr size_t kPppCoreSize = 5;
 constexpr double kPosVar = 4.0e-4;
 constexpr double kAmbVar = 1.6e-5;
 
-/// One synthetic GPS satellite on L1C.
+/// One synthetic GPS satellite.
 struct SatSpec {
     const char* name;
     double      elevation_deg;
     int         integer;        ///< Known DD integer (cycles) against the pivot.
     double      frac_cycles;    ///< Float error (cycles) on top of the integer.
+    int         wl_integer;     ///< Single-difference widelane integer (dual-frequency states).
 };
 
 /// The pivot (highest elevation) is G01.  G05 sits below the default 20 degree AR
 /// mask, so it must neither enter the fix nor be held.
 const SatSpec kSats[] = {
-    { "G01", 80.0,  0,  0.000 },
-    { "G02", 45.0,  3,  0.010 },
-    { "G03", 30.0, -2, -0.020 },
-    { "G04", 60.0,  5,  0.015 },
-    { "G05", 15.0,  7,  0.030 },
+    { "G01", 80.0,  0,  0.000, 2 },
+    { "G02", 45.0,  3,  0.010, 3 },
+    { "G03", 30.0, -2, -0.020, 0 },
+    { "G04", 60.0,  5,  0.015, 6 },
+    { "G05", 15.0,  7,  0.030, 1 },
 };
 
 /// Variance of the double difference of two states.
@@ -76,13 +85,10 @@ protected:
     PppUtils     utils_{ log_ };
     StateManager sm_{ kPppCoreSize, log_, config_ };
     std::vector<PppObservation> obs_;
+    std::map<std::string, int>  wl_;   ///< SD widelane integers, key SAT_L1C_L2W (buildDual only).
 
-    /// Seed the five satellites.  @p g04_frac_cycles and @p g04_var_m2 replace G04's
-    /// float error and variance, so a test can make that one pair unfixable.
-    void build(double g04_frac_cycles, double g04_var_m2 = kAmbVar) {
-        // A common fractional offset on every satellite of the signal: the
-        // per-satellite floats are not integer, only their differences are.
-        const double common_offset_cycles = 0.37;
+    /// Seed the satellites of @c kSats on @p signals, one observation per satellite.
+    void seed(const std::vector<std::string>& signals, double g04_frac_cycles, double g04_var_m2) {
         for (const auto& s : kSats) {
             PppObservation o{};
             o.satellite = s.name;
@@ -92,10 +98,18 @@ protected:
             obs_.push_back(o);
 
             const double frac = (std::string(s.name) == "G04") ? g04_frac_cycles : s.frac_cycles;
-            const double lam = utils_.getWavelength(System::GPS, "L1C", s.name);
-            ASSERT_GT(lam, 0.0);
-            sm_.addAmbiguity(std::string(s.name) + "_L1C",
-                             lam * (common_offset_cycles + 100.0 + s.integer + frac));
+            for (const std::string& signal : signals) {
+                // A common fractional offset on every satellite of the signal: the
+                // per-satellite floats are not integer, only their differences are.
+                const bool   second = (signal == "L2W");
+                const double common_offset_cycles = second ? 0.61 : 0.37;
+                const int    integer = s.integer - (second ? s.wl_integer : 0);
+                const double lam = utils_.getWavelength(System::GPS, signal, s.name);
+                ASSERT_GT(lam, 0.0);
+                sm_.addAmbiguity(std::string(s.name) + "_" + signal,
+                                 lam * (common_offset_cycles + 100.0 + integer + frac));
+            }
+            if (signals.size() == 2) wl_[std::string(s.name) + "_L1C_L2W"] = s.wl_integer;
         }
         const std::size_t n = sm_.getStateSize();
         Eigen::MatrixXd P = Eigen::MatrixXd::Identity(static_cast<Eigen::Index>(n),
@@ -103,8 +117,25 @@ protected:
         for (int d = 0; d < 3; ++d) P(d, d) = kPosVar;
         for (const auto& kv : sm_.getAmbiguities())
             P(static_cast<Eigen::Index>(kv.second), static_cast<Eigen::Index>(kv.second)) = kAmbVar;
-        P(sm_.getAmbiguityIndex("G04_L1C"), sm_.getAmbiguityIndex("G04_L1C")) = g04_var_m2;
+        for (const std::string& signal : signals) {
+            const Eigen::Index g04 = sm_.getAmbiguityIndex("G04_" + signal);
+            P(g04, g04) = g04_var_m2;
+        }
         sm_.setCovariance(P);
+    }
+
+    /// Seed the five satellites on L1C.  @p g04_frac_cycles and @p g04_var_m2 replace
+    /// G04's float error and variance, so a test can make that one pair unfixable.
+    void build(double g04_frac_cycles, double g04_var_m2 = kAmbVar) {
+        seed({ "L1C" }, g04_frac_cycles, g04_var_m2);
+    }
+
+    /// Seed the five satellites on L1C and L2W and fill @c wl_ with their widelane
+    /// integers.  The L2W integer follows N2 = N1 - WL, so the narrowlane search
+    /// variable of every pair is N1 plus the same float error as on L1C alone.
+    /// G04's error and variance apply to both of its signals.
+    void buildDual(double g04_frac_cycles, double g04_var_m2 = kAmbVar) {
+        seed({ "L1C", "L2W" }, g04_frac_cycles, g04_var_m2);
     }
 
     /// Production defaults for everything the fix gates read, except the two
@@ -117,7 +148,9 @@ protected:
         return cfg;
     }
 
-    int idx(const char* sat) const { return sm_.getAmbiguityIndex(std::string(sat) + "_L1C"); }
+    int idx(const char* sat, const char* signal = "L1C") const {
+        return sm_.getAmbiguityIndex(std::string(sat) + "_" + signal);
+    }
 
     /// What the PPP callers do with a successful fix, before the hold.
     void installFix(const AmbiguityResolution& r) {
@@ -136,6 +169,60 @@ protected:
         if (shifted_idx >= 0) r.fixed_state(shifted_idx) += shift_m;
         r.fixed_dd_rows   = rows;
         return r;
+    }
+
+    using RowSet = std::set<std::pair<int, int>>;
+
+    /// The rows a resolution constrained, as (non-pivot index, pivot index) pairs.
+    static RowSet rowSetOf(const AmbiguityResolution& r) {
+        RowSet rows;
+        for (const auto& row : r.fixed_dd_rows) rows.insert({ row.state_idx_i, row.state_idx_ref });
+        return rows;
+    }
+
+    /// The rows of both signals against the pivot G01 for each satellite of @p sats.
+    RowSet dualRows(std::initializer_list<const char*> sats) const {
+        RowSet rows;
+        for (const char* sat : sats) {
+            for (const char* signal : { "L1C", "L2W" })
+                rows.insert({ idx(sat, signal), idx("G01", signal) });
+        }
+        return rows;
+    }
+
+    /// Install @p res as the PPP callers do, hold it, and check the hold on a
+    /// dual-frequency state.  Both signals of every satellite in @p held have their
+    /// DD variance against the pivot fall; the state already sits on the fix, so no
+    /// mean moves; both signals of every satellite in @p left_float keep their mean
+    /// and their whole covariance row bit-identical.
+    void installAndCheckHold(AmbiguityResolver& resolver, const AmbiguityResolution& res,
+                             std::initializer_list<const char*> held,
+                             std::initializer_list<const char*> left_float) {
+        installFix(res);
+        const Eigen::MatrixXd P_fix = sm_.getCovariance();
+        const Eigen::VectorXd x_fix = sm_.getStateVector();
+
+        resolver.holdAmbiguities(sm_, res);
+
+        const Eigen::MatrixXd P_held = sm_.getCovariance();
+        const Eigen::VectorXd x_held = sm_.getStateVector();
+
+        for (const char* sat : held) {
+            for (const char* signal : { "L1C", "L2W" }) {
+                const int i = idx(sat, signal), ref = idx("G01", signal);
+                EXPECT_LT(ddVariance(P_held, i, ref), ddVariance(P_fix, i, ref) * 0.999)
+                    << sat << " " << signal << " was not held";
+            }
+        }
+        EXPECT_LT((x_held - x_fix).cwiseAbs().maxCoeff(), 1e-9);
+        for (const char* sat : left_float) {
+            for (const char* signal : { "L1C", "L2W" }) {
+                const int i = idx(sat, signal);
+                EXPECT_EQ(x_held(i), x_fix(i)) << sat << " " << signal;
+                for (Eigen::Index k = 0; k < P_fix.cols(); ++k)
+                    EXPECT_EQ(P_held(i, k), P_fix(i, k)) << sat << " " << signal << " column " << k;
+            }
+        }
     }
 };
 
@@ -209,6 +296,58 @@ TEST_F(PppFixAndHoldTest, PartialFixHoldsOnlyTheKeptSubset) {
     }
     const int left_out = idx("G04");
     EXPECT_EQ(P_held(left_out, left_out), P_fix(left_out, left_out));
+}
+
+// ---------------------------------------------------------------------------
+// The WL-constrained search: dual-frequency states with widelane integers
+// ---------------------------------------------------------------------------
+
+// With widelane integers the fix fixes N1 of each pair and constrains the DD of both
+// signals, so the hold has to take both signals of each fixed pair.
+TEST_F(PppFixAndHoldTest, WlConstrainedFullFixHoldsBothSignalsOfEveryFixedPair) {
+    buildDual(0.015);
+    AmbiguityResolver resolver(arConfig(3), log_);
+
+    const AmbiguityResolution res = resolver.resolve(sm_, obs_, wl_, {}, {});
+    ASSERT_TRUE(res.success);
+    ASSERT_EQ(res.num_fixed, 3) << "G02, G03, G04 against G01; G05 is below the mask";
+    ASSERT_EQ(res.fixed_dd_rows.size(), static_cast<std::size_t>(2 * res.num_fixed));
+    EXPECT_EQ(rowSetOf(res), dualRows({ "G02", "G03", "G04" }));
+
+    installAndCheckHold(resolver, res, { "G02", "G03", "G04" }, { "G05" });
+}
+
+// A partial WL-constrained fix constrains a subset: the pair it left out stays float
+// on both signals.
+TEST_F(PppFixAndHoldTest, WlConstrainedPartialFixHoldsOnlyTheKeptPairs) {
+    // G04 is loose on both signals and 0.3 cycle off: the full set fails the per-pair
+    // fraction cap and the subset search drops that pair.
+    buildDual(0.30, 1.6e-3);
+    AmbiguityResolverConfig cfg = arConfig(3);
+    cfg.enable_partial_ar = true;
+    AmbiguityResolver resolver(cfg, log_);
+
+    const AmbiguityResolution res = resolver.resolve(sm_, obs_, wl_, {}, {});
+    ASSERT_TRUE(res.success);
+    ASSERT_EQ(res.num_fixed, 2) << "G02 and G03; G04 is dropped by the subset search";
+    ASSERT_EQ(res.fixed_dd_rows.size(), static_cast<std::size_t>(2 * res.num_fixed));
+    EXPECT_EQ(rowSetOf(res), dualRows({ "G02", "G03" }));
+
+    installAndCheckHold(resolver, res, { "G02", "G03" }, { "G04", "G05" });
+}
+
+// A pair without a widelane integer is no NL candidate: it stays float and unheld.
+TEST_F(PppFixAndHoldTest, WlConstrainedPairWithoutWidelaneLockStaysFloat) {
+    buildDual(0.015);
+    wl_.erase("G04_L1C_L2W");
+    AmbiguityResolver resolver(arConfig(3), log_);
+
+    const AmbiguityResolution res = resolver.resolve(sm_, obs_, wl_, {}, {});
+    ASSERT_TRUE(res.success);
+    ASSERT_EQ(res.num_fixed, 2) << "G02 and G03; G04 has no widelane integer";
+    EXPECT_EQ(rowSetOf(res), dualRows({ "G02", "G03" }));
+
+    installAndCheckHold(resolver, res, { "G02", "G03" }, { "G04", "G05" });
 }
 
 // ---------------------------------------------------------------------------
