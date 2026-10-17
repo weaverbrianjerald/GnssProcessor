@@ -1264,6 +1264,20 @@ namespace GnssProcessor {
                         "cycle_slip_graphic_sigma_multiplier",    cycle_slip_.graphic_sigma_multiplier);
         load_sigma_mult("estimation.cycle_slip.ewl_sigma_multiplier",
                         "cycle_slip_ewl_sigma_multiplier",        cycle_slip_.ewl_sigma_multiplier);
+        // GRAPHIC tested statistic: |dG| (default) or the trend-centred second
+        // difference.  Logged only when set, so a run that leaves it off prints the
+        // same lines as before the key existed.
+        cycle_slip_.graphic_trend_centred =
+            jval<bool>(json, "estimation.cycle_slip.graphic_trend_centred",
+                       "cycle_slip_graphic_trend_centred", false);
+        if (cycle_slip_.graphic_trend_centred) {
+            if (cycle_slip_.graphic)
+                log->info("GRAPHIC detector tests the trend-centred second difference "
+                          "(estimation.cycle_slip.graphic_trend_centred)");
+            else
+                log->warn("estimation.cycle_slip.graphic_trend_centred is set but "
+                          "estimation.cycle_slip.graphic is off; the key has no effect");
+        }
         log->info("Cycle-slip σ multipliers (kσ gate): mw={:.1f}, turbo_edit={:.1f}, graphic={:.1f}, ewl={:.1f}",
                   cycle_slip_.mw_sigma_multiplier, cycle_slip_.turbo_edit_sigma_multiplier,
                   cycle_slip_.graphic_sigma_multiplier, cycle_slip_.ewl_sigma_multiplier);

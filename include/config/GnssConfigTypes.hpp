@@ -4296,6 +4296,17 @@ namespace GnssProcessor {
         double graphic_sigma_multiplier    = 6.0;  ///< GRAPHIC code+phase gate.
         double ewl_sigma_multiplier        = 5.0;  ///< Extra-wide-lane gate.
 
+        /// Statistic the GRAPHIC detector tests (effective only with @c graphic).
+        /// False (default): |dG|, the between-epoch GRAPHIC difference, which holds
+        /// the range rate times the epoch spacing, so for a moving satellite it
+        /// exceeds the threshold at the first epoch the window gives one (arc epoch 6)
+        /// and the arc is reset there.  True: the change of dG from one epoch to the
+        /// next minus its median over the arc's recent window, which a constant range
+        /// rate does not move; the first possible detection is one epoch later.  The
+        /// GRAPHIC trace gains a trailing @c resid_m column.  Via
+        /// @c estimation.cycle_slip.graphic_trend_centred.
+        bool graphic_trend_centred = false;
+
         // --- MW detection-reference selection (see MwDetectReference doc) ---
         /// Reference the MW slip deviation is measured against.
         /// "hatch_mean" (legacy) | "local_median" (trend-immune level test) |

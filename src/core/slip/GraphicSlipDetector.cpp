@@ -30,10 +30,18 @@ namespace GnssProcessor {
         : config_(config),
           log_manager_(log_manager),
           ppp_utils_(log_manager),
-          sigma_multiplier_(config.getCycleSlipConfig().graphic_sigma_multiplier) {
-        log_manager_.getLogger("cycle_slip_manager")->info(
-            "GraphicSlipDetector initialized (MAD-based, k={:.1f}, floor={:.3f} m, min_epochs={})",
-            sigma_multiplier_, kMinThresholdM, kMinEpochsForAdaptive);
+          sigma_multiplier_(config.getCycleSlipConfig().graphic_sigma_multiplier),
+          trend_centred_(config.getCycleSlipConfig().graphic_trend_centred) {
+        if (trend_centred_) {
+            log_manager_.getLogger("cycle_slip_manager")->info(
+                "GraphicSlipDetector initialized (MAD-based, trend-centred second difference, "
+                "k={:.1f}, floor={:.3f} m, min_epochs={})",
+                sigma_multiplier_, kMinThresholdM, kMinEpochsForAdaptive);
+        } else {
+            log_manager_.getLogger("cycle_slip_manager")->info(
+                "GraphicSlipDetector initialized (MAD-based, k={:.1f}, floor={:.3f} m, min_epochs={})",
+                sigma_multiplier_, kMinThresholdM, kMinEpochsForAdaptive);
+        }
     }
 
     // =================================================================
@@ -62,7 +70,8 @@ namespace GnssProcessor {
         trace_file_ << "week,tow_s,satellite,system,elevation_deg,"
                     << "signal,graphic_m,dg_m,"
                     << "mad_sigma_m,threshold_m,arc_count,"
-                    << "slip_cycles,fractional,is_slip,resid_m\n";
+                    << "slip_cycles,fractional,is_slip"
+                    << (trend_centred_ ? ",resid_m" : "") << "\n";
 
         logger->info("GRAPHIC tracing enabled: {}", trace_path.string());
         return true;
@@ -154,6 +163,20 @@ namespace GnssProcessor {
         return std::max(sigma_multiplier_ * sigma, kMinThresholdM);
     }
 
+    GraphicSlipDetector::TestedStatistic
+    GraphicSlipDetector::testedStatistic(const GraphicArcStats& stats, double dg) const {
+        if (!trend_centred_)
+            return { dg, dg };
+
+        // The change of dG since the previous epoch, measured from the median of that
+        // change over the arc's recent window.  A constant range rate cancels in the
+        // change and a slowly varying range acceleration is the median, so a moving
+        // satellite sits at zero and only a jump or noise remains.  The centre is NaN
+        // until the window holds enough values, and so is the value.
+        const double ddg = dg - stats.prev_dg;
+        return { ddg - computeWindowCentre(stats.diff_window), ddg };
+    }
+
     // =================================================================
     // Trace row
     // =================================================================
@@ -171,13 +194,15 @@ namespace GnssProcessor {
                     << phase_sig << ","
                     << std::setprecision(6) << graphic << ","
                     << dg << ","
-                    << (std::isfinite(sigma) ? sigma : -1.0) << ","
-                    << (std::isfinite(thresh) ? thresh : -1.0) << ","
+                    << sigma << ","
+                    << thresh << ","
                     << arc_count << ","
                     << slip_cycles << ","
                     << std::setprecision(3) << fractional << ","
-                    << (is_slip ? 1 : 0) << ","
-                    << std::setprecision(6) << resid << "\n";
+                    << (is_slip ? 1 : 0);
+        if (trend_centred_)
+            trace_file_ << "," << std::setprecision(6) << resid;
+        trace_file_ << "\n";
     }
 
     // =================================================================
@@ -235,36 +260,31 @@ namespace GnssProcessor {
                 }
 
                 // Epoch 1+: between-epoch difference.  It holds the range rate times
-                // the epoch spacing, so on its own it says nothing about a slip.
+                // the epoch spacing, so it is a slip statistic only for a static
+                // satellite; the trend-centred mode removes the rate below.
                 const double dg = graphic - stats.prev_graphic;
 
-                // Second epoch: the first difference exists but has nothing to be
-                // compared with yet.  Store it and continue.
-                if (!stats.has_prev_dg) {
+                // Trend-centred mode, second epoch: the first difference exists but
+                // has nothing to be compared with yet.  Store it and continue.
+                if (trend_centred_ && !stats.has_prev_dg) {
                     stats.prev_dg      = dg;
                     stats.has_prev_dg  = true;
                     stats.prev_graphic = graphic;
                     stats.last_epoch_s = epoch_s;
                     stats.count++;
 
-                    writeTraceRow(obs, sp.phase, graphic, dg, NaN, NaN, stats.count,
+                    writeTraceRow(obs, sp.phase, graphic, dg, -1.0, -1.0, stats.count,
                                   0, NaN, NaN, false);
                     continue;
                 }
 
-                // Epoch 2+: the change of dG since the previous epoch, measured from
-                // the median of that change over the arc's recent window.  A constant
-                // range rate cancels in the change and a slowly varying range
-                // acceleration is the median, so a moving satellite sits at zero and
-                // only a jump or noise remains.  The window feeds both the centre and
-                // the MAD threshold; both are NaN until it holds enough values.
-                const double ddg    = dg - stats.prev_dg;
-                const double centre = computeWindowCentre(stats.diff_window);
-                const double resid  = ddg - centre;
+                // The tested statistic.  The window feeds both its centre and the MAD
+                // threshold; both are NaN until it holds enough values.
+                const TestedStatistic tested = testedStatistic(stats, dg);
                 const double thresh = computeAdaptiveThreshold(stats);
                 const double sigma  = computeMadSigma(stats.diff_window);
-                const bool exceeds  = std::isfinite(thresh) && std::isfinite(resid)
-                                      && std::abs(resid) > thresh;
+                const bool exceeds  = std::isfinite(thresh) && std::isfinite(tested.value)
+                                      && std::abs(tested.value) > thresh;
 
                 // Estimate integer slip magnitude
                 const double lambda = ppp_utils_.getWavelength(obs.system, sp.phase, obs.satellite);
@@ -273,8 +293,9 @@ namespace GnssProcessor {
                 bool   slip_known  = false;
 
                 if (exceeds && lambda > 0.0) {
-                    // dG_slip = dN * lambda / 2, so dN = 2 * resid / lambda
-                    const double dn_float = 2.0 * resid / lambda;
+                    // The slip appears in the tested statistic as dN * lambda / 2,
+                    // so dN = 2 * statistic / lambda
+                    const double dn_float = 2.0 * tested.value / lambda;
                     slip_cycles = static_cast<int>(std::round(dn_float));
                     fractional  = std::abs(dn_float - slip_cycles);
                     slip_known  = (fractional < kMaxFractional) && (slip_cycles != 0);
@@ -282,15 +303,18 @@ namespace GnssProcessor {
 
                 const bool is_slip = exceeds;
 
-                writeTraceRow(obs, sp.phase, graphic, dg, sigma, thresh, stats.count,
-                              slip_cycles, fractional, resid, is_slip);
+                writeTraceRow(obs, sp.phase, graphic, dg,
+                              std::isfinite(sigma) ? sigma : -1.0,
+                              std::isfinite(thresh) ? thresh : -1.0,
+                              stats.count, slip_cycles, fractional, tested.value, is_slip);
 
                 if (is_slip) {
                     logger->info(
-                        "GRAPHIC slip detected for {} {}: |resid|={:.4f} m > thresh={:.4f} m, "
+                        "GRAPHIC slip detected for {} {}: |{}|={:.4f} m > thresh={:.4f} m, "
                         "dN_est={}, frac={:.3f}, sigma={:.4f} m, arc_n={}",
                         obs.satellite, sp.phase,
-                        std::abs(resid), thresh,
+                        trend_centred_ ? "resid" : "dG",
+                        std::abs(tested.value), thresh,
                         slip_cycles, fractional,
                         std::isfinite(sigma) ? sigma : -1.0, stats.count);
 
@@ -305,7 +329,7 @@ namespace GnssProcessor {
 
                 // Update running statistics
                 stats.count++;
-                stats.diff_window.push_back(ddg);
+                stats.diff_window.push_back(tested.window_entry);
                 if (stats.diff_window.size() > kWindowSize)
                     stats.diff_window.pop_front();
                 stats.prev_dg      = dg;

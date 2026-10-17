@@ -277,8 +277,20 @@ difference
 \end{equation}
 removes the constant ambiguity but not the geometry: $\mathrm{d}\graphicc$
 still holds the range rate times the epoch spacing, hundreds of metres for a
-moving satellite.  The detector therefore tests the change of the difference
-from one epoch to the next, measured from its median,
+moving satellite.  Two tests are implemented, selected by
+\texttt{estimation.cycle\_slip.graphic\_trend\_centred}.
+
+The default compares $\lvert\mathrm{d}\graphicc\rvert$ with the gate.  The gate
+is a multiple of the MAD sigma of the recent differences, a spread about their
+median, while $\lvert\mathrm{d}\graphicc\rvert$ is measured from zero.  For a
+moving satellite the test therefore fails at the first epoch the window gives a
+gate (the sixth epoch of an arc) and resets the arc there, again and again.  It
+is kept as the default so that a run that selects the detector keeps its
+output.  The integer estimate is
+$\slipd N = \operatorname{round}\!\bigl(2\,\mathrm{d}\graphicc / \lambda_\sigl\bigr)$.
+
+The trend-centred test uses the change of the difference from one epoch to the
+next, measured from its median,
 \begin{equation}
 r^\sat_\sigl(k)
 \;=\;
@@ -293,7 +305,9 @@ and only a jump or noise remains.  The gate is a multiple of the MAD sigma of
 the same window, so the threshold and the tested value share one centre.  A
 slip of $\slipd N$ cycles on signal $\sigl$ produces a jump of
 $\tfrac12 \lambda_\sigl\,\slipd N$ in $r$, and the integer estimate is
-$\slipd N = \operatorname{round}\!\bigl(2\,r / \lambda_\sigl\bigr)$.
+$\slipd N = \operatorname{round}\!\bigl(2\,r / \lambda_\sigl\bigr)$.  The first
+possible detection is one epoch later than in the default, since the second
+difference exists from the third epoch of an arc.
 With $\sigma_\code \sim \SI{0.3}{m}$ the noise of $r$ is
 $\sim\SI{0.4}{m}$, so the $6\sigma$ gate sits near \SI{2}{m}, about 20 L1
 cycles.  The hard floor \texttt{kMinThresholdM} $= \SI{0.5}{m}$

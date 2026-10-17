@@ -27,18 +27,27 @@
  *   - Ionosphere-free to first order, so scintillation does not contaminate it.
  *   - The between-epoch difference does not remove the change in geometric
  *     range and clocks over the interval: dG still holds the range rate times
- *     the epoch spacing (hundreds of metres for a moving satellite).  The
- *     detector therefore tests the change of dG from one epoch to the next
- *     (the second difference), centred on the median of the same quantity
- *     over the arc's recent window.  A constant range rate cancels in the
- *     second difference and the slowly varying range acceleration is the
- *     median, so only a jump (a slip) or noise is left.  No geometry or
- *     clock prediction is applied.
+ *     the epoch spacing (hundreds of metres for a moving satellite).  No
+ *     geometry or clock prediction is applied.  Two tests are available,
+ *     chosen by @c CycleSlipConfig::graphic_trend_centred:
+ *       - Default: |dG| is compared directly with the threshold.  The
+ *         threshold is a spread about the median of the recent dG values but
+ *         the tested value is not measured from that median, so for a moving
+ *         satellite the test fails at the first epoch the window gives a
+ *         threshold (arc epoch 6) and the arc is reset there, over and over.
+ *         Kept as the default so that a run that selects the detector keeps
+ *         its output.
+ *       - Trend-centred: the change of dG from one epoch to the next (the
+ *         second difference), measured from the median of the same quantity
+ *         over the arc's recent window, is compared with the threshold.  A
+ *         constant range rate cancels in the second difference and the slowly
+ *         varying range acceleration is the median, so only a jump (a slip)
+ *         or noise is left.
  *
  * The detector maintains per-(satellite, signal) arc statistics with a
- * MAD-based adaptive threshold on that centred statistic.  When a slip is
+ * MAD-based adaptive threshold on the tested statistic.  When a slip is
  * detected, the integer slip magnitude is estimated by rounding
- * 2*(second difference - median)/lambda.
+ * 2*(tested statistic)/lambda.
  *
  * References:
  *   Yunck (1993), "Coping with the atmosphere and ionosphere in precise
@@ -80,13 +89,16 @@ namespace GnssProcessor {
      * For each signal with matched code+phase on the same band, the detector
      * forms the GRAPHIC combination and monitors its between-epoch change.
      * A MAD-based adaptive threshold flags outliers as slips, and the slip
-     * magnitude is estimated by rounding.
+     * magnitude is estimated by rounding.  The monitored statistic is |dG| by
+     * default and the trend-centred second difference when
+     * @c CycleSlipConfig::graphic_trend_centred is set (see the file header).
      */
     class GraphicSlipDetector : public ISlipDetector {
     public:
         /**
          * @brief Construct a new GraphicSlipDetector.
-         * @param config Configuration providing thresholds.
+         * @param config Configuration providing the sigma multiplier and the
+         *        choice of tested statistic (@c graphic_trend_centred).
          * @param log_manager Log manager for diagnostic messages.
          */
         GraphicSlipDetector(const GnssConfig& config, LogManager& log_manager);
@@ -144,31 +156,39 @@ namespace GnssProcessor {
          */
         struct GraphicArcStats {
             double prev_graphic{ 0.0 };      ///< GRAPHIC value at epoch t-1 (meters).
-            double prev_dg{ 0.0 };           ///< dG of the previous epoch (meters); valid when @c has_prev_dg.
-            bool   has_prev_dg{ false };     ///< True from the arc's third epoch, once a first difference exists.
+            double prev_dg{ 0.0 };           ///< dG of the previous epoch (meters); trend-centred mode only, valid when @c has_prev_dg.
+            bool   has_prev_dg{ false };     ///< Trend-centred mode only: true from the arc's third epoch, once a first difference exists.
             double last_epoch_s{ 0.0 };      ///< Continuous GPS seconds of last update.
             size_t count{ 0 };               ///< Number of epochs in this arc.
-            std::deque<double> diff_window;  ///< Rolling window of the change of dG from epoch to epoch (the second difference, meters), for the median and the MAD.
+            /// Rolling window for the median and the MAD: dG in the default mode,
+            /// the change of dG from epoch to epoch (the second difference, meters)
+            /// in the trend-centred mode.
+            std::deque<double> diff_window;
         };
 
         /** Per-(satellite + signal) arc statistics.
          *  Key: "G01_L1C" */
         std::map<std::string, GraphicArcStats> graphic_stats_;
 
-        /** Maximum number of recent second-difference values for the median and MAD. */
+        /** Maximum number of recent window values for the median and MAD. */
         static constexpr size_t kWindowSize = 30;
 
-        /** Minimum window length (second-difference values) before the adaptive threshold is used. */
+        /** Minimum window length (values) before the adaptive threshold is used. */
         static constexpr size_t kMinEpochsForAdaptive = 5;
 
         /** kσ multiplier for the adaptive threshold, from
          *  @c GnssConfig::getCycleSlipConfig().graphic_sigma_multiplier (default 6.0). */
         double sigma_multiplier_;
 
+        /** True when the tested statistic is the trend-centred second difference, from
+         *  @c GnssConfig::getCycleSlipConfig().graphic_trend_centred (default false:
+         *  the test is on |dG|). */
+        bool trend_centred_;
+
         /** Minimum slip threshold in meters.
          *  Code noise of ~0.3 m gives GRAPHIC noise of ~0.15 m (0.3/2), and
          *  between-epoch differencing multiplies by sqrt(2), giving ~0.21 m for dG
-         *  and ~0.37 m for its change from epoch to epoch (the tested statistic).
+         *  and ~0.37 m for its change from epoch to epoch (the trend-centred statistic).
          *  The 0.5 m floor corresponds to a slip of ~5.3 L1 cycles (2*0.5/lambda_L1). */
         static constexpr double kMinThresholdM = 0.50;
 
@@ -204,7 +224,7 @@ namespace GnssProcessor {
         static double computeMadSigma(const std::deque<double>& window);
 
         /**
-         * @brief Median of a diff window: the centre the tested statistic is measured from.
+         * @brief Median of a diff window: the centre the trend-centred statistic is measured from.
          * @return The median, or NaN while the window is shorter than @c kMinEpochsForAdaptive.
          */
         static double computeWindowCentre(const std::deque<double>& window);
@@ -215,11 +235,34 @@ namespace GnssProcessor {
         double computeAdaptiveThreshold(const GraphicArcStats& stats) const;
 
         /**
+         * @brief The value an epoch is tested with, and the value its window takes in.
+         */
+        struct TestedStatistic {
+            double value;         ///< Compared with the threshold; NaN while the centre is not available.
+            double window_entry;  ///< Pushed into @c GraphicArcStats::diff_window when the epoch is not a slip.
+        };
+
+        /**
+         * @brief Form the tested statistic of one epoch.
+         *
+         * Default mode: both fields are @p dg.  Trend-centred mode: @c window_entry is the
+         * change of dG since the previous epoch and @c value is that change minus the median
+         * of the window (NaN while the window is short).
+         *
+         * @param stats Arc statistics before this epoch is folded in.
+         * @param dg    Between-epoch GRAPHIC difference of this epoch (meters).
+         * @return The tested value and the window entry.
+         */
+        TestedStatistic testedStatistic(const GraphicArcStats& stats, double dg) const;
+
+        /**
          * @brief Append one row to the GRAPHIC trace (no-op while tracing is off).
          *
-         * @c dg_m is the between-epoch GRAPHIC difference, @c resid_m the tested
-         * statistic (change of dG minus the window median).  Non-finite
-         * @p sigma and @p thresh print as the sentinel -1; other non-finite values print as nan.
+         * @c dg_m is the between-epoch GRAPHIC difference.  In the trend-centred
+         * mode the row ends with @c resid_m, the tested statistic (change of dG
+         * minus the window median); in the default mode the column does not exist
+         * and @p resid is ignored.  Every value prints as given, so the caller
+         * passes the sentinel it wants for a missing sigma or threshold.
          */
         void writeTraceRow(const PppObservation& obs, const std::string& phase_sig,
                            double graphic, double dg, double sigma, double thresh,
