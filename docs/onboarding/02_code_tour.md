@@ -164,13 +164,17 @@ header. Every QC event increments one member of `KalmanQcCounters`
 
 `include\measurement\MeasurementModel.hpp` first; it holds the table "the state
 pre-pass, in call order" (each state category's birth function, gate, seed and initial
-variance). The class is split over six files in `src\core\measurement\`:
+variance). The class is split over six files in `src\core\measurement\`, and its row is
+built by the observation equation's files beside them:
 
 | File | Content |
 | --- | --- |
 | `MeasurementModel.cpp` | `computeMeasurementUpdate()`: the order of the epoch's steps (first-epoch seeds, pivot handover, the state pre-pass, pivot freeze) and the row loop. |
 | `MeasurementModelStates.cpp` | The state pre-pass: `ensureRequiredStates()`, a 30-line driver over 13 members called in a fixed order (the keep sets, slant ionosphere, phase colour, the network's cold clock seed, the BSSD pivot seeds, per-band or NL/WL ambiguities, then, after the ambiguity prune, the AR eligibility marks and the receiver and satellite code biases). The order is a dependency chain. |
-| `MeasurementModelRow.cpp` | One row: `buildJacobianRow()`, the observation equation (one term per estimated or applied quantity), and the definitions of the free functions `isUsableMeasurement()` and the product coverage checks (declared in `include\measurement\RowRules.hpp`). |
+| `MeasurementModelRow.cpp` | One row: `buildJacobianRow()`, which builds the term list of the observation equation over the state (`ObservationEquation.cpp`, `UserParamView.cpp`), sums it for the predicted observable and scatters the partials; the Doppler row; and the definitions of the free functions `isUsableMeasurement()` and the product coverage checks (declared in `include\measurement\RowRules.hpp`). |
+| `ObservationEquation.cpp` | The observation equation of a code or phase row as a list of terms in the order of the sum: one function per effect (clock, troposphere, ionosphere, biases, ambiguity), `evaluate()` for the predicted observable and `scatterDense()` for the Jacobian row. Parameters are named by `ParamRef` (`include\common\ParamRef.hpp`) and found through a lookup the caller supplies. |
+| `UserParamView.cpp` | The single-receiver lookup: where a `ParamRef` sits in a `StateManager` and a state vector, and the one place a typed identity becomes a user-side state key (`userKey()`). |
+| `MeasurementModelRowReference.cpp`, `ObservationEquationCheck.cpp` | Temporary. The row builder as written before the term list, and the counters of `processing.obs_equation_check`, which builds every row both ways and compares the bits. |
 | `MeasurementModelVariance.cpp` | `rowVariance()`, a free function declared in `RowRules.hpp`: the variance of one row, its terms in the order the banner lists. |
 | `MeasurementModelDd.cpp` | The baseline double difference: `buildDdMeasurement()`, a 28-line driver over stages (`ddRunStages()`); the three stages that write filter state are named in it. |
 | `MeasurementModelNetwork.cpp` | The part only the network producer reaches. Skip. |
@@ -407,15 +411,17 @@ Each kind of change has one place. The driver functions stay lists of calls.
   `StateKeySchema.hpp`. Its process noise is one call in `getProcessNoiseMatrix()`
   (`StateManagerProcessNoise.cpp`); a new birth gate is a `BirthGate` enumerator with its
   two cases in `StateManagerFamilies.cpp`. Its birth is a member of the state pre-pass,
-  its column a term of `buildJacobianRow()` (both below). The state size, labels,
+  its column a term of the observation equation (both below). The state size, labels,
   snapshot, gap decoupling and run-start table follow from the row.
 - **A new fixed core state**: the constructor's steps in `StateManagerLayout.cpp`
   (`layoutCore_()`, `seedCoreVariances_()`, `logLayout_()`) and its block of **Q**.
 - **A new state birth, seed or prune in the pre-pass**: a member in
   `MeasurementModelStates.cpp`, called by `ensureRequiredStates()` at its place in the
   dependency order, and a row of the pre-pass table in `MeasurementModel.hpp`.
-- **A new term of the observation equation**: `buildJacobianRow()`
-  (`MeasurementModelRow.cpp`); a rule for whether a row enters: `isUsableMeasurement()`.
+- **A new term of the observation equation**: an `ObsEffect` and its function in
+  `observationEquation()` (`ObservationEquation.cpp`), at its place in the order of the sum;
+  the column is named by a `ParamRef` (`include\common\ParamRef.hpp`) and found by
+  `UserParamView::find()`; a rule for whether a row enters: `isUsableMeasurement()`.
 - **A new variance term**: `rowVariance()` (`MeasurementModelVariance.cpp`), at its place
   in the composition; a new weighting model: `model\StochasticModel`
   ([worked example](03_worked_example.md)).

@@ -43,9 +43,12 @@ A keyed state (ambiguity, per-satellite ionosphere) instead needs a `make`/`pars
 `include\filter\StateKeySchema.hpp`, an `add...State` function in `StateManager`
 (`addIonosphereState`) and a creation site in `MeasurementModel`.
 
-**Partial.** `MeasurementModel::buildJacobianRow` writes
-`jacobian(state_manager_.getTropoIndex()) = mapping_wet;` (`PppObservation::mf_w`) and adds
-`mapping_wet * zwd` to the predicted observable. A new column needs the same two things.
+**Partial.** The observation equation (`observationEquation()` in
+`src\core\measurement\ObservationEquation.cpp`) gives the ZWD term the partial `mapping_wet`
+(`PppObservation::mf_w`) at `getTropoIndex()` and the product `mapping_wet * zwd` in the
+predicted observable. A new column needs the same two things: a term in that function,
+named by a `ParamRef` (`include\common\ParamRef.hpp`) and found in the state by
+`UserParamView::find()`.
 The gradient has both already: `estimation.estimate_tropo_gradients` (default false)
 allocates `getTropoGradientNorthIndex()` and `getTropoGradientEastIndex()`, with partials
 `mf_grad * cos_az` and `mf_grad * sin_az`. For it the recipe starts at step 2.

@@ -322,3 +322,21 @@ T1 to T7 still hold on `ff7766a`. `docs/onboarding/README.md` names the tour's n
 | G-US | 3,100 passed, 24 skipped, 0 failed |
 
 Not in this landing: wave C's identity migration (`uom/u8-helpers` built and gated; `uom/u8-c1`, `uom/u8-c2`, `uom/u8-c3` part-built on the pre-merge base) and the five behaviour fixes of section 11 (separate branches; adoption is the author's).
+
+## 16. 2026-10-17: card NOM step N6a edits these user-side files (branch `nom/n6`)
+
+Card NOM step N6 (`scripts/nom3_designs/N6_design.md`) gives the network its own local parameter set and one observation equation that the producer, the consumer and the seeds read. Its decision D4 takes the "later one observation equation" item of this card into N6. Step N6a is the first of the user-side edits, and the list below is the announcement the design asks for. All of N6a is identical output with the check key off; with `processing.obs_equation_check` on, every code and phase row is built twice and compared bit for bit.
+
+| file | change |
+| --- | --- |
+| `src/core/measurement/MeasurementModelRow.cpp` | `buildJacobianRow` builds the term list of the equation (`observationEquation`), sums it (`evaluate`) and scatters the partials (`scatterDense`); the Doppler branch is the member `buildDopplerRow`, the decomposition traces are the member `traceRowDecomposition`; the file banner |
+| `include/measurement/MeasurementModel.hpp` | declarations of `obsInput`, `buildDopplerRow`, `wantsRowDecomposition`, `traceRowDecomposition`, `buildJacobianRowReference`, `checkRowAgainstReference`; the `buildJacobianRow` Doxygen; the file banner |
+| `src/core/measurement/MeasurementModel.cpp` | the banner only |
+| `include/measurement/StateInitializer.hpp`, `src/core/measurement/StateInitializer.cpp` | `ReceiverBiasEntry` also carries the receiver code-bias state as a typed `RxCbKey` (`key`, `has_key`); the text key is rendered from it by `userCodeBiasKey` and is unchanged |
+| `include/filter/StateManager.hpp`, `src/core/filter/StateManager.cpp` | the read-only static `ambiguitySeedFrequencyHz`, the seed's own frequency table, for the check's frequency report |
+| `include/config/GnssConfig.hpp`, `src/core/config/GnssConfigLoad.cpp` | the key `processing.obs_equation_check` (default off; a TRACE row of the ledger) |
+| `include/common/ParamRef.hpp`, `src/core/common/ParamRef.cpp` | `ParamRef`, `UserCore` and the factory functions that name a parameter without its station |
+
+New files: `include/measurement/ObservationEquation.hpp` and `src/core/measurement/ObservationEquation.cpp` (the term list, its sum and its Jacobian row), `include/measurement/UserParamView.hpp` and `src/core/measurement/UserParamView.cpp` (where a parameter sits in a `StateManager`, and the one function that renders a typed identity as a user-side key), `include/measurement/ObservationEquationCheck.hpp`, `src/core/measurement/ObservationEquationCheck.cpp` and `src/core/measurement/MeasurementModelRowReference.cpp` (the comparator and the row builder it compares against; both are deleted by step N6e), the run-end row `src/core/network/runend/ObsEquationCheckRunEnd.cpp`, and `tests/test_observation_equation.cpp`.
+
+Rules the edits keep. The summation order of the predicted observable is unchanged: the terms are added left to right in the order `modeled`, range correction, receiver clock, phase clock, wet troposphere, gradients, inter-system bias, slant ionosphere, receiver code bias, satellite code bias, satellite phase bias, satellite clock, SSR bias, ambiguity, phase colour, and a term with a factor keeps the factor outside the sum of its parts. A satellite or signal text that is not a canonical RINEX id (`SatId::str` and `SignalId::obsCode` would not give the text back) makes a row that needs a state key from it unusable; every parser and decoder of the tree produces canonical ids, and the check counts any such row. N6b (the seeds: `StateInitializer.*`, `StateManager.cpp`, `MeasurementModelStates.cpp`, the 14 seed call sites) edits further files of this list; edits to them by this card should merge with `nom/n6`.
