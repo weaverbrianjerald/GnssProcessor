@@ -4327,7 +4327,9 @@ namespace GnssProcessor {
         // The carried clocks' process noise in the pivot frame.  The pairwise half
         // lives in the dense fold, so the dense carry is required; the anchor-free clock
         // datums have no pivot and the clock model carries no clock in the border, so both
-        // are refused.  Those keys load in later sections and are read raw here.
+        // are refused.  The clock datums load in later sections and are read raw here; the
+        // clock model is checked once the service profile has settled it, in
+        // applyNetworkServiceProfile_, where network_clock_model_ is the effective value.
         network_clock_pivot_frame_q_ =
             jval<bool>(json, "network.clock_pivot_frame_q", "clock_pivot_frame_q", false);
         if (network_clock_pivot_frame_q_) {
@@ -4344,10 +4346,6 @@ namespace GnssProcessor {
                     "network.clock_pivot_frame_q refuses network.clock_datum_sum_to_zero and "
                     "network.clock_datum_broadcast_anchored (the term is the pinned "
                     "pivot's walk; an anchor-free clock datum has no pivot).");
-            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
-                throw std::runtime_error(
-                    "network.clock_pivot_frame_q refuses network.clock_model (the clock "
-                    "model carries no satellite clock in the shared border).");
             log->info("Network producer: network.clock_pivot_frame_q = true — the "
                       "carried satellite clocks take their process noise in the pivot frame: "
                       "each folding clock other than the pinned pivot adds the pivot's walk "
@@ -4378,7 +4376,8 @@ namespace GnssProcessor {
         // walk enters the border prior once.  It is a mode of the exact rule over the dense
         // block, so both must be armed.  The clock model carries no clock in the border, and
         // the gauge-free fold's direction would have to span the clones; both are refused.
-        // The two refused keys are read raw here: their own sections load later.
+        // The gauge-free key is read raw here (its section loads later); the clock model is
+        // checked once the service profile has settled it, in applyNetworkServiceProfile_.
         network_carry_coupling_clock_clone_ =
             jval<bool>(json, "network.carry_coupling_clock_clone",
                        "carry_coupling_clock_clone", false);
@@ -4393,11 +4392,6 @@ namespace GnssProcessor {
                     "network.carry_coupling_clock_clone requires network.shared_carry_full_cov "
                     "= true (the clones stand in for the clocks of the stashed dense "
                     "border block).");
-            if (jval<bool>(json, "network.clock_model", "network_clock_model", false))
-                throw std::runtime_error(
-                    "network.carry_coupling_clock_clone refuses network.clock_model ("
-                    "the clock model carries no satellite clock in the dense border, so there is "
-                    "nothing to clone).");
             if (jval<bool>(json, "network.clock_anchor_gauge_free",
                            "network_clock_anchor_gauge_free", false))
                 throw std::runtime_error(
@@ -10441,6 +10435,23 @@ namespace GnssProcessor {
                        "so).  The oscillator is a measured NO-GO on this lineage (Hadamard p ≈ 1 "
                        "⇒ white-FM, RWFM undetectable); disarm network.clock_model.",
                        network_service_mode_ ? " (FORCE-ARMED by network.service_mode)" : "");
+        }
+        // (d) The clock_model refusals of clock_pivot_frame_q and carry_coupling_clock_clone.
+        //     Their parse sites load before the arming above, so a raw read of the key there
+        //     missed the oscillator service_mode force-arms.  network_clock_model_ is the
+        //     effective value here, so both refusals see what the run would execute.
+        if (network_clock_model_) {
+            const std::string armed_by =
+                network_service_mode_ ? "force-armed by network.service_mode; " : "";
+            if (network_clock_pivot_frame_q_)
+                throw std::runtime_error(
+                    "network.clock_pivot_frame_q refuses network.clock_model (" + armed_by +
+                    "the clock model carries no satellite clock in the shared border).");
+            if (network_carry_coupling_clock_clone_)
+                throw std::runtime_error(
+                    "network.carry_coupling_clock_clone refuses network.clock_model (" + armed_by +
+                    "the clock model carries no satellite clock in the dense border, so there is "
+                    "nothing to clone).");
         }
         if (network_raim_withhold_sigma0_ != 0.0 && network_raim_withhold_sigma0_ <= 1.0) {
             log->warn("Network: network.raim_withhold_sigma0 {} (service-armed at 2x "
