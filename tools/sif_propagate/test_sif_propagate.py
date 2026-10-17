@@ -8,7 +8,8 @@ Layers of check:
                epoch) cases, captured from the C++ resolveStationCoordinate itself
                (tests/test_station_info.cpp temp oracle). Exercises periodic (CIT),
                heavy post-seismic (ANTC ~0.5 m), multi-occupation + zero-cross-cov
-               (AB02 @ 2024.36), and a no-nonlinear-term epoch (AMC4 @ 2018.5).
+               (AB02 @ 2024.36), and an epoch before the first periodic window
+               (AMC4 @ 2018.5: the first block's seasonal term continued).
   2. ANCHORS - the exact numbers asserted in tests/test_station_info.cpp
                (parsing / unit normalisation / PSD & periodic coefficients).
   3. SELFCHK - internal identities (find() keys, dt=0 -> Cxx, covariance symmetry,
@@ -24,9 +25,14 @@ Layers of check:
                re-log, firmware-only, before-first-segment), 'latest' mode.
   8. CLI     - stderr warnings and the appended output columns.
   9. REAL    - the defects on the shipped SIFs (GAMB00PYF, STHL00GBR, AZAZ00USA,
-               NIUM00NIU, CHUR00CAN); each check skips when its station is absent.
+               NIUM00NIU, CHUR00CAN) and the 8 stations of the 2024-129 field
+               roster whose periodic block is extrapolated; each check skips when
+               its station is absent.
+ 10. PERIODIC - synthetic SIF: the seasonal term outside its block windows (the
+               NGS M-PAGES v1.2 rule): covering block, before the first, after the
+               last, inside a gap, file order, overlap, continuity.
 
-Sections 5 to 8 need no fixtures.  Exit code 0 iff every check passes; 2 when no
+Sections 5 to 8 and 10 need no fixtures.  Exit code 0 iff every check passes; 2 when no
 SIF fixtures are found (the fixture-free sections still run first).
 """
 from __future__ import annotations
@@ -63,6 +69,10 @@ HISTORICAL_CSV_COLUMNS = [
 EXTRAPOLATION_CSV_COLUMNS = [
     "extrapolated", "extrapolation_years", "segment_start_year", "segment_end_year",
     "antenna_change_in_gap", "receiver_change_in_gap",
+]
+PERIODIC_CSV_COLUMNS = [
+    "periodic_reach", "periodic_extrapolation_years",
+    "periodic_block_start_year", "periodic_block_end_year",
 ]
 
 # --- oracle captured from the C++ engine (tests/test_station_info.cpp) --------- #
@@ -134,8 +144,12 @@ ORACLE = [
      [[0.000000236918, 0.000000273158, -0.000000201682],
       [0.000000273158, 0.000001292601, -0.000000827206],
       [-0.000000201682, -0.000000827206, 0.000000813083]]),
+    # 2.63 yr before the first periodic window (2021.13): the first block's seasonal
+    # term is continued, so FULL differs from LIN by 0.68 mm.  Before the block
+    # selection rule the engine applied no term here (FULL == LIN); the FULL value
+    # is the one tests/test_station_info_seasonal.cpp pins on the C++ side.
     ("AMC400USA", 2018.5,
-     (-1248596.393444710, -4819428.201899112, 3976505.924241956),
+     (-1248596.393551557, -4819428.201226350, 3976505.924238630),
      (-1248596.393444710, -4819428.201899112, 3976505.924241956),
      [[0.000000247937, 0.000000313064, -0.000000229829],
       [0.000000313064, 0.000001442945, -0.000000932929],
@@ -340,8 +354,10 @@ def test_occupation_mode(reg):
     check(sp._CSV_COLUMNS[:25] == HISTORICAL_CSV_COLUMNS,
           "historical CSV column order unchanged")
     check(sp._CSV_COLUMNS[24] == "occupation_mode", "occupation_mode at its historical index")
-    check(sp._CSV_COLUMNS[25:] == EXTRAPOLATION_CSV_COLUMNS,
+    check(sp._CSV_COLUMNS[25:31] == EXTRAPOLATION_CSV_COLUMNS,
           "extrapolation columns appended after occupation_mode")
+    check(sp._CSV_COLUMNS[31:] == PERIODIC_CSV_COLUMNS,
+          "periodic columns appended after the extrapolation columns")
     try:
         sp.resolve_station_coordinate(cit, 2024.36, occupation="bogus")
         check(False, "bogus occupation mode should raise")
@@ -853,6 +869,120 @@ def test_extrapolation_synthetic():
               f"a flagged window covering t does not count as covered {flags(r)}")
 
 
+def test_periodic_synthetic():
+    print("[10] PERIODIC seasonal term outside its block windows (synthetic SIF)")
+    P = (4000000.0, 1000000.0, 4800000.0)
+
+    def blk(start, end, k):
+        """A periodic block whose amplitudes are k mm, so the block is identifiable."""
+        return {"START": _ts(*start), "END": OPEN if end is None else _ts(*end),
+                "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": 1.0 * k, "X_SIN": -0.75 * k,
+                                 "Y_COS": -0.5 * k, "Y_SIN": 1.5 * k,
+                                 "Z_COS": 0.25 * k, "Z_SIN": 2.0 * k}]}
+
+    b1, b2, b3 = (blk((2010,), (2014,), 1.0), blk((2015,), (2019,), 2.0),
+                  blk((2019,), (2022,), 3.0))
+    mk = lambda sid, blocks: _station(sid, [_occ(_ts(1990), OPEN, P)], periodic=blocks)
+    stations = [
+        mk("PER100USA", [b1, b2, b3]),
+        mk("PER200USA", [b2, b3, b1]),                       # file order: not chronological
+        mk("PER300USA", [b3, b1, b2]),
+        mk("PER400USA", [blk((2010,), (2014,), 1.0), blk((2012,), (2018,), 2.0)]),  # overlap
+        mk("PER500USA", [blk((2010,), None, 1.0)]),          # open-ended
+        mk("PER600USA", []),                                 # no block
+    ]
+    expect = lambda block, t: _block_term(block, t)
+    with _synthetic_registry((2020.0, stations)) as (reg, _paths):
+        for sid in ("PER100USA", "PER200USA", "PER300USA"):
+            st = reg.find(sid)
+            for t, want_blk, want_reach in (
+                    (2008.5, b1, "before_first"), (2012.0, b1, "covered"),
+                    (2014.0, b1, "in_gap"), (2014.6, b1, "in_gap"), (2015.0, b2, "covered"),
+                    (2019.0, b3, "covered"), (2021.5, b3, "covered"),
+                    (2022.0, b3, "after_last"), (2023.25, b3, "after_last")):
+                r = sp.resolve_station_coordinate(st, t, True, False)
+                nop = sp.resolve_station_coordinate(st, t, False, False)
+                got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+                check(r.periodic_reach == want_reach,
+                      f"{sid}@{t}: reach {r.periodic_reach} (want {want_reach})")
+                check(math.dist(got, expect(want_blk, t)) < 5e-9,
+                      f"{sid}@{t}: the {want_reach} case evaluates the right block")
+        st = reg.find("PER100USA")
+        r = sp.resolve_station_coordinate(st, 2008.5, True, False)
+        check(abs(r.periodic_extrapolation_years - (2008.5 - 2010.0)) < 1e-12
+              and r.periodic_block_start_year == 2010.0, "before_first: signed years, first block")
+        r = sp.resolve_station_coordinate(st, 2023.25, True, False)
+        check(abs(r.periodic_extrapolation_years - 1.25) < 1e-12
+              and r.periodic_block_end_year == 2022.0, "after_last: years past the end, last block")
+        r = sp.resolve_station_coordinate(st, 2014.6, True, False)
+        check(abs(r.periodic_extrapolation_years - 0.6) < 1e-12
+              and r.periodic_block_start_year == 2010.0, "in_gap: years past the earlier block's end")
+        r = sp.resolve_station_coordinate(st, 2014.0, True, False)
+        check(r.periodic_reach == "in_gap" and r.periodic_extrapolation_years == 0.0,
+              "the window end is exclusive: in the gap, 0.0 yr")
+        r = sp.resolve_station_coordinate(st, 2012.0, True, False)
+        check(r.periodic_extrapolation_years == 0.0 and r.periodic_block_end_year == 2014.0,
+              "covered: 0.0 yr, bounds of the covering block")
+
+        # The term is continuous where the last window ends (the old rule dropped it).
+        eps = 1e-6
+        a = sp.resolve_station_coordinate(st, 2022.0 - eps, True, False).ecef
+        z = sp.resolve_station_coordinate(st, 2022.0 + eps, True, False).ecef
+        n = sp.resolve_station_coordinate(st, 2022.0, False, False).ecef
+        step = math.dist(a, z)
+        size = math.dist(a, n)
+        check(size > 1e-3 and step < 5e-7,
+              f"no step where the last window ends: term {size * 1e3:.2f} mm, step {step * 1e3:.5f} mm")
+
+        # Overlapping windows are not summed: the first in start order only.
+        r = sp.resolve_station_coordinate(reg.find("PER400USA"), 2013.0, True, False)
+        nop = sp.resolve_station_coordinate(reg.find("PER400USA"), 2013.0, False, False)
+        got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+        check(r.periodic_reach == "covered" and r.periodic_block_start_year == 2010.0
+              and math.dist(got, expect(blk((2010,), (2014,), 1.0), 2013.0)) < 5e-9,
+              "overlap: only the first block, not the sum")
+
+        r = sp.resolve_station_coordinate(reg.find("PER500USA"), 2060.0, True, False)
+        check(r.periodic_reach == "covered" and r.periodic_block_end_year == 9999.0,
+              "an open-ended last block covers every later epoch")
+
+        for sid, flag in (("PER100USA", False), ("PER600USA", True)):
+            r = sp.resolve_station_coordinate(reg.find(sid), 2023.0, flag, False)
+            check(r.periodic_reach == "not_evaluated" and r.periodic_extrapolation_years == 0.0,
+                  f"{sid}: switched off or without blocks -> not_evaluated")
+        check(sp.format_periodic_warning("PER100USA",
+                                         sp.resolve_station_coordinate(reg.find("PER100USA"), 2012.0),
+                                         2012.0) == "",
+              "a covered epoch has no periodic warning text")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2023.25),
+                                       2023.25)
+        check("1.250 yr after the last periodic block [2019.0000, 2022.0000)" in w
+              and w.startswith("PER100USA: periodic term at 2023.250000"), f"after_last warning: {w!r}")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2008.5),
+                                       2008.5)
+        check("1.500 yr before the first periodic block [2010.0000, 2014.0000)" in w,
+              f"before_first warning: {w!r}")
+        w = sp.format_periodic_warning("PER100USA",
+                                       sp.resolve_station_coordinate(reg.find("PER100USA"), 2014.6),
+                                       2014.6)
+        check("0.600 yr after the periodic block [2010.0000, 2014.0000) and before the next one" in w,
+              f"in_gap warning: {w!r}")
+
+
+def _block_term(block, t, ref=2020.0):
+    """Seasonal ECEF displacement of one raw SIF periodic block (mm -> m) at ``t``."""
+    out = [0.0, 0.0, 0.0]
+    for f in block["FREQUENCIES"]:
+        w = 2.0 * sp._PI / f["PERIOD"]
+        c, s = math.cos(w * (t - ref)), math.sin(w * (t - ref))
+        out[0] += 1e-3 * (f["X_COS"] * c + f["X_SIN"] * s)
+        out[1] += 1e-3 * (f["Y_COS"] * c + f["Y_SIN"] * s)
+        out[2] += 1e-3 * (f["Z_COS"] * c + f["Z_SIN"] * s)
+    return tuple(out)
+
+
 def test_cli_synthetic():
     print("[8] CLI warnings and appended columns (synthetic SIF)")
     P_A = (-2491490.0, -4660803.0, 3559129.0)
@@ -863,6 +993,10 @@ def test_cli_synthetic():
                            _ant(_ts(2019), OPEN, "T2              NONE", "2")],
                  receivers=[_rec(_ts(2005), OPEN, "RX")]),
         _station("EXB100USA", [_occ(_ts(2005), _ts(2015), P_A), _occ(_ts(2016), OPEN, P_A)]),
+        # Covered occupation, closed periodic block: only the seasonal term is extrapolated.
+        _station("PER100USA", [_occ(_ts(2000), OPEN, P_A)],
+                 periodic=[{"START": _ts(2005), "END": _ts(2018),
+                            "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": 2.0}]}]),
     ]
     with _synthetic_registry((2020.0, stations)) as (_reg, paths):
         def run(*extra, epoch="2020.0", keys=("EXA100USA", "ABCD00XYZ", "abcd")):
@@ -884,8 +1018,8 @@ def test_cli_synthetic():
               "CLI removes its stderr handler on return")
 
         rows = list(csv.reader(io.StringIO(out)))
-        check(rows[0] == HISTORICAL_CSV_COLUMNS + EXTRAPOLATION_CSV_COLUMNS,
-              "CSV header: historical columns, then the extrapolation columns")
+        check(rows[0] == HISTORICAL_CSV_COLUMNS + EXTRAPOLATION_CSV_COLUMNS + PERIODIC_CSV_COLUMNS,
+              "CSV header: historical columns, then the extrapolation and periodic columns")
         byreq = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
         e = byreq.get("EXA100USA", {})
         check((e.get("extrapolated"), e.get("extrapolation_years"), e.get("segment_start_year"),
@@ -897,6 +1031,32 @@ def test_cli_synthetic():
         a = byreq.get("abcd", {})
         check(a.get("found") == "True" and a.get("extrapolated") == "False"
               and a.get("segment_end_year") == "", "bare code row: covered, open segment blank")
+
+        # Periodic block diagnostics: the warning, the appended cells, the switch.
+        rc, out, err = run(keys=("PER100USA", "ABCD00USA"))
+        check("# WARNING: PER100USA: periodic term at 2020.000000: epoch is 2.000 yr after the "
+              "last periodic block [2005.0000, 2018.0000)" in err,
+              f"extrapolated periodic block warned on stderr: {err!r}")
+        check("PER100USA: epoch" not in err, "the occupation is covered: no occupation warning")
+        check("ABCD00USA: periodic" not in err, "a station without blocks is not warned")
+        rows = list(csv.reader(io.StringIO(out)))
+        byreq = {row[0]: dict(zip(rows[0], row)) for row in rows[1:]}
+        p = byreq.get("PER100USA", {})
+        check((p.get("periodic_reach"), p.get("periodic_extrapolation_years"),
+               p.get("periodic_block_start_year"), p.get("periodic_block_end_year"),
+               p.get("extrapolated"))
+              == ("after_last", "2.000000", "2005.000000", "2018.000000", "False"),
+              f"CSV periodic cells: {p}")
+        a = byreq.get("ABCD00USA", {})
+        check((a.get("periodic_reach"), a.get("periodic_block_start_year"),
+               a.get("periodic_block_end_year")) == ("not_evaluated", "", ""),
+              f"no-block row: not_evaluated, blank bounds: {a}")
+        rc, out, err = run("--no-periodic", keys=("PER100USA",))
+        check("periodic term" not in err, f"--no-periodic draws no periodic warning: {err!r}")
+        rc, out, err = run("--format", "json", keys=("PER100USA",))
+        pj = {r["requested"]: r for r in json.loads(out)["stations"]}.get("PER100USA", {})
+        check(pj.get("periodic_reach") == "after_last" and pj.get("periodic_extrapolation_years") == 2.0
+              and pj.get("periodic_block_end_year") == 2018.0, f"JSON periodic fields: {pj}")
 
         rc, out, err = run("--format", "json")
         recs = {r["requested"]: r for r in json.loads(out)["stations"]}
@@ -1003,6 +1163,40 @@ def test_real_files(reg):
         check(r.valid and not r.extrapolated and r.segment_end_year == 9999.0,
               "CIT100USA @2024.35 covered by its open segment")
 
+    # Seasonal term past the last periodic window: the 8 stations of the 2024-129
+    # field golden roster (epoch 2024 + 128.5 / 366).  Offsets are the term now
+    # applied; the summing rule applied none of it (every epoch is past all windows).
+    golden = 2024.0 + (129.0 - 0.5) / 366.0
+    roster = (  # id, seasonal XYZ [m], years past the last window end, block window
+        ("BSHM00ISR", (0.000390350, -0.000331744, 0.000834791), 0.359312, 2023.101370, 2023.991781),
+        ("PALM00ATA", (-0.000266316, -0.001007491, -0.000626162), 0.331968, 2020.568306, 2024.019125),
+        ("NIUM00NIU", (-0.000479490, -0.000263441, 0.000028151), 0.331968, 2022.950685, 2024.019125),
+        ("CHUR00CAN", (-0.001482611, 0.004894193, -0.003925403), 0.230875, 2010.671233, 2024.120218),
+        ("MAJU00MHL", (-0.001004803, -0.000469438, 0.000000759), 3.353826, 2015.441096, 2020.997267),
+        ("CPVG00CPV", (0.000651877, -0.001013427, -0.000729831), 0.214481, 2023.635616, 2024.136612),
+        ("URUM00CHN", (0.000981005, 0.000920497, 0.002439989), 0.211749, 2018.767123, 2024.139344),
+        ("WROC00POL", (0.000022002, -0.000243837, 0.000364945), 0.225411, 2012.808743, 2024.125682),
+    )
+    if have(*[row[0] for row in roster]):
+        for sid, xyz, yrs, b0, b1 in roster:
+            st = reg.find(sid)
+            r = sp.resolve_station_coordinate(st, golden, True, False)
+            nop = sp.resolve_station_coordinate(st, golden, False, False)
+            got = tuple(r.ecef[k] - nop.ecef[k] for k in range(3))
+            check(all(golden < b.start_year or golden >= b.end_year for b in st.periodic),
+                  f"{sid}: no periodic window covers the golden epoch (the old rule applied nothing)")
+            check(r.periodic_reach == "after_last" and abs(r.periodic_extrapolation_years - yrs) < 5e-7
+                  and abs(r.periodic_block_start_year - b0) < 5e-7
+                  and abs(r.periodic_block_end_year - b1) < 5e-7,
+                  f"{sid}: after_last, {r.periodic_extrapolation_years:.6f} yr past the last block")
+            check(math.dist(got, xyz) < 5e-9, f"{sid}: seasonal term {got} vs {xyz}")
+        chur = reg.find("CHUR00CAN")
+        mm = lambda sid: 1e3 * math.dist(
+            sp.resolve_station_coordinate(reg.find(sid), golden, True, False).ecef,
+            sp.resolve_station_coordinate(reg.find(sid), golden, False, False).ecef)
+        check(abs(mm("CHUR00CAN") - 6.447) < 0.005 and abs(mm("URUM00CHN") - 2.786) < 0.005,
+              f"CHUR00CAN {mm('CHUR00CAN'):.3f} mm, URUM00CHN {mm('URUM00CHN'):.3f} mm")
+
 
 def main():
     reg = load_registry()
@@ -1017,6 +1211,7 @@ def main():
     test_cli_synthetic()
     if reg is not None:
         test_real_files(reg)
+    test_periodic_synthetic()
     print()
     if _fail:
         print(f"RESULT: FAIL ({_fail} of {_checks} check(s) failed)")

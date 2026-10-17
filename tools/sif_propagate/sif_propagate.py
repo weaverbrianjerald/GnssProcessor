@@ -33,6 +33,11 @@ when the occupation carries none).  When no occupation window covers the epoch,
 the nearest one is still evaluated, and the result is flagged ``extrapolated``
 together with whether an antenna or receiver change lies in the uncovered gap.
 
+The seasonal term is one periodic block, selected by the epoch alone with the NGS
+M-PAGES v1.2 rule: the block whose window covers the epoch; outside every window
+the first block before the first, the last block after the last, and the block that
+ended last inside a gap.  ``periodic_reach`` reports which case applied.
+
 Port fidelity is verified numerically against the C++ engine's own output
 (see ``test_sif_propagate.py``); the two agree to ~1e-9 m.
 
@@ -680,9 +685,25 @@ class ResolvedCoord:
     segment_end_year: float = 0.0
     antenna_change_in_gap: bool = False  # TYPE (radome included) or SERIAL_NUMBER change in the gap
     receiver_change_in_gap: bool = False # TYPE change in the gap (firmware/serial-only do not count)
+    # Periodic (seasonal) block diagnostics.  The seasonal term is one block chosen
+    # by the epoch alone (see _select_periodic_block); these say which case applied.
+    # periodic_reach is one of PERIODIC_REACHES.  The block bounds are set whenever a
+    # block was evaluated (end 9999.0 = open); the years are signed like
+    # extrapolation_years and 0.0 unless the block was evaluated outside its window.
+    periodic_reach: str = "not_evaluated"
+    periodic_extrapolation_years: float = 0.0
+    periodic_block_start_year: float = 0.0
+    periodic_block_end_year: float = 0.0
 
 
 OCCUPATION_MODES = ("covering", "latest")
+
+# How an epoch relates to a station's periodic blocks.  "not_evaluated": the seasonal
+# term was off or the station has no periodic block.  "covered": a block window covers
+# the epoch.  The other three evaluate a block outside its window: "before_first" (the
+# first block), "after_last" (the last block), "in_gap" (the block that ended last).
+PERIODIC_REACHES = ("not_evaluated", "covered", "before_first", "after_last", "in_gap")
+PERIODIC_EXTRAPOLATED = ("before_first", "after_last", "in_gap")
 
 
 def _select_occupation(station: Station, year: float,
@@ -766,6 +787,37 @@ def _set_extrapolation(out: ResolvedCoord, station: Station, occ: Occupation,
     out.receiver_change_in_gap = _equipment_change_in_gap(station.receivers, lo, hi, False)
 
 
+def _select_periodic_block(station: Station, year: float
+                           ) -> Tuple[Optional[PeriodicBlock], str]:
+    """Pick the periodic block that supplies the seasonal term at ``year``.
+
+    Port of ``selectPeriodicBlock`` (the NGS M-PAGES v1.2 rule of
+    ``PeriodicMotion::computeDisplacement``).  The blocks are taken in start order
+    (file order for equal starts: the file order is not chronological for every
+    station).  The first block whose window covers ``year`` (start <= year < end)
+    wins, so overlapping windows are not summed.  With none covering: before the
+    first window the first block, at or after the end of the last window the last
+    block, and inside a gap the last block, in start order, that ended at or before
+    ``year``.  Returns ``(block, reach)``; ``(None, "not_evaluated")`` when the
+    station has no periodic block.
+    """
+    if not station.periodic:
+        return None, "not_evaluated"
+    ordered = sorted(station.periodic, key=lambda b: b.start_year)  # stable
+    last_ended: Optional[PeriodicBlock] = None
+    for b in ordered:
+        if b.start_year <= year < b.end_year:
+            return b, "covered"
+        if b.end_year <= year:
+            last_ended = b
+    if year < ordered[0].start_year:
+        return ordered[0], "before_first"
+    if year >= ordered[-1].end_year:
+        return ordered[-1], "after_last"
+    # Past the first start and covered by nothing: the first block has ended.
+    return last_ended, "in_gap"
+
+
 def _eval_psd_component(comp: PsdComponent, dt: float) -> float:
     d = 0.0
     for a, t in zip(comp.alog, comp.tlog):
@@ -793,6 +845,14 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
     keyed on the epoch, not the occupation, so "latest" does not imply "no
     periodic"; pass ``with_periodic=False`` for that.
 
+    The periodic term is one block's displacement, selected by the epoch alone
+    (``_select_periodic_block``, the NGS M-PAGES v1.2 rule): the first block, in
+    start order, whose window covers the epoch; before the first window the first
+    block; at or after the end of the last window the last block; inside a gap the
+    block that ended last.  Its sinusoids continue past the window with the phase
+    taken from the block's own reference epoch.  ``periodic_reach`` and the
+    ``periodic_*`` fields of the result say which case applied.
+
     When no non-flagged occupation window covers the epoch, the result is
     flagged ``extrapolated`` with the signed years outside the selected segment
     and whether an antenna or receiver change lies in the gap; the coordinate
@@ -817,11 +877,19 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
     y = occ.coordinates[1] + occ.velocity[1] * dt
     z = occ.coordinates[2] + occ.velocity[2] * dt
 
-    # Periodic (seasonal) terms, summed over every block whose window covers the epoch.
+    # Periodic (seasonal) term: one block, chosen by the epoch (the covering block,
+    # else the nearest by the M-PAGES rule), so the term does not vanish where the
+    # linear term goes on.
     if with_periodic:
-        for b in station.periodic:
-            if decimal_year < b.start_year or decimal_year >= b.end_year:
-                continue
+        b, reach = _select_periodic_block(station, decimal_year)
+        if b is not None:
+            out.periodic_reach = reach
+            out.periodic_block_start_year = b.start_year
+            out.periodic_block_end_year = b.end_year
+            if reach == "before_first":
+                out.periodic_extrapolation_years = decimal_year - b.start_year
+            elif reach in ("after_last", "in_gap"):
+                out.periodic_extrapolation_years = decimal_year - b.end_year
             dT = decimal_year - b.reference_epoch_year
             for fr in b.freqs:
                 if fr.period_yr == 0.0:
@@ -935,6 +1003,14 @@ def build_record(key: str, station: Optional[Station], resolved: Optional[Resolv
                                  else resolved.segment_end_year),
             "antenna_change_in_gap": resolved.antenna_change_in_gap,
             "receiver_change_in_gap": resolved.receiver_change_in_gap,
+            "periodic_reach": resolved.periodic_reach,
+            "periodic_extrapolation_years": resolved.periodic_extrapolation_years,
+            # None when no block was evaluated; an open end is None, as segment_end_year.
+            "periodic_block_start_year": (None if resolved.periodic_reach == "not_evaluated"
+                                          else resolved.periodic_block_start_year),
+            "periodic_block_end_year": (None if resolved.periodic_reach == "not_evaluated"
+                                        or resolved.periodic_block_end_year >= _NEAREST_WINDOW_CAP
+                                        else resolved.periodic_block_end_year),
         })
         if resolved.has_covariance and resolved.covariance is not None:
             sx, sy, sz = ecef_sigmas(resolved.covariance)
@@ -963,6 +1039,9 @@ _CSV_COLUMNS = [
     # Extrapolation diagnostics, appended after occupation_mode for the same reason.
     "extrapolated", "extrapolation_years", "segment_start_year", "segment_end_year",
     "antenna_change_in_gap", "receiver_change_in_gap",
+    # Periodic (seasonal) block diagnostics, appended last for the same reason.
+    "periodic_reach", "periodic_extrapolation_years",
+    "periodic_block_start_year", "periodic_block_end_year",
 ]
 
 
@@ -978,6 +1057,8 @@ _CSV_DECIMALS = {
     "epoch_year": 6, "reference_epoch_year": 6,
     "window_start": 6, "window_end": 6,
     "extrapolation_years": 6, "segment_start_year": 6, "segment_end_year": 6,
+    "periodic_extrapolation_years": 6, "periodic_block_start_year": 6,
+    "periodic_block_end_year": 6,
 }
 _CSV_DEFAULT_DECIMALS = 6
 
@@ -1024,6 +1105,32 @@ def format_extrapolation_warning(station_id: str, resolved: ResolvedCoord,
             f"({resolved.occupation_mode}); coordinate extrapolated; "
             f"antenna change in gap: {'yes' if resolved.antenna_change_in_gap else 'no'}; "
             f"receiver change in gap: {'yes' if resolved.receiver_change_in_gap else 'no'}")
+
+
+def format_periodic_warning(station_id: str, resolved: ResolvedCoord,
+                            decimal_year: float) -> str:
+    """One-line description of an extrapolated seasonal term, for a caller's warning.
+
+    Mirrors the C++ ``describePeriodicExtrapolation``: which selection case
+    applied, how many years the epoch lies from the evaluated block, and the
+    block's window.  Returns "" when the periodic block is not extrapolated.
+    """
+    reach = resolved.periodic_reach
+    if reach not in PERIODIC_EXTRAPOLATED:
+        return ""
+    yrs = abs(resolved.periodic_extrapolation_years)
+    window = (f"[{resolved.periodic_block_start_year:.4f}, "
+              f"{resolved.periodic_block_end_year:.4f})")
+    if reach == "before_first":
+        what = (f"epoch is {yrs:.3f} yr before the first periodic block {window}; "
+                "that block's seasonal term is applied")
+    elif reach == "after_last":
+        what = (f"epoch is {yrs:.3f} yr after the last periodic block {window}; "
+                "that block's seasonal term is applied")
+    else:
+        what = (f"epoch is {yrs:.3f} yr after the periodic block {window} and before "
+                "the next one; the earlier block's seasonal term is applied")
+    return f"{station_id}: periodic term at {decimal_year:.6f}: {what}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1186,6 +1293,8 @@ def _run(args: argparse.Namespace, ap: argparse.ArgumentParser) -> int:
         )
         if rc.valid and rc.extrapolated:
             extrapolated.append(format_extrapolation_warning(st.id, rc, decimal_year))
+        if rc.valid and rc.periodic_reach in PERIODIC_EXTRAPOLATED:
+            extrapolated.append(format_periodic_warning(st.id, rc, decimal_year))
         records.append(build_record(key, st, rc, decimal_year,
                                     with_covariance=not args.no_covariance))
 

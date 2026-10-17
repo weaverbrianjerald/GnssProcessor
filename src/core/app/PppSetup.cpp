@@ -119,6 +119,10 @@ bool Application::initializePosition() {
                             rc.segment_start_year, rc.segment_end_year,
                             rc.antenna_change_in_gap ? "yes" : "no",
                             rc.receiver_change_in_gap ? "yes" : "no");
+                    if (rc.periodic.extrapolated())
+                        log_manager_.getLogger("main_log")->warn(
+                            "SIF a-priori for marker '{}' (matched {}) @ {:.3f}: {}",
+                            marker, si->id, year, describePeriodicExtrapolation(rc.periodic));
                     const Eigen::Vector3d rinex_hen = rinex_parser_->getAntennaDeltaHen();
                     const SifArpReduction red = reduceSifCoordinateToArp(
                         *si, rc.ecef, year,

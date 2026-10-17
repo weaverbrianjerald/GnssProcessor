@@ -56,6 +56,18 @@
  * coordinate (for example NIUM00NIU: last segment ends 2024-01-07, antenna
  * model change on 2024-02-27), so the flags report it.
  *
+ * The periodic (seasonal) term follows the same reasoning but is selected on
+ * its own, by the epoch alone.  A station's periodic blocks have their own
+ * windows, which end with the occupation segments they were fitted with, so a
+ * linear term that extrapolates past a closed segment must not lose its
+ * seasonal term at the same moment (a step of up to several millimetres in
+ * the coordinate).  The rule is the one of NGS M-PAGES v1.2
+ * (@c PeriodicMotion::computeDisplacement): the first block, in start order,
+ * whose window covers the epoch; before the first window the first block; at
+ * or after the end of the last window the last block; inside a gap the block
+ * that ended last.  The result reports which of the five cases applied
+ * (@c SifPeriodicEvaluation) and callers log a warning for the last three.
+ *
  * ## Memory
  *
  * The full SIF JSON document (tens of MB for the NCN file) is parsed
@@ -97,6 +109,55 @@ namespace GnssProcessor {
     static constexpr double SIF_GAP_CHANGE_TOLERANCE_YR = 2.0 / 365.25;
 
     /**
+     * @brief How a query epoch relates to a station's periodic (seasonal) blocks.
+     *
+     * The periodic blocks are windowed like the occupation records but selected
+     * separately (see the "Extrapolation" section of the file banner).  Exactly
+     * one block supplies the seasonal term whenever the station has any.
+     */
+    enum class SifPeriodicReach {
+        NotEvaluated,  ///< No seasonal term was evaluated: it was switched off, or the station has no periodic block.
+        Covered,       ///< A block window covers the epoch (start <= t < end); that block is evaluated.
+        BeforeFirst,   ///< The epoch precedes every block window; the first block (by start) is evaluated.
+        AfterLast,     ///< The epoch is at or past the end of the last block window; the last block (by start) is evaluated.
+        InGap          ///< The epoch lies between two block windows; the block that ended last before it is evaluated.
+    };
+
+    /**
+     * @brief Which periodic block supplied the seasonal term, and how far the
+     *        epoch lies outside it.
+     *
+     * Diagnostics only: the seasonal displacement itself is already in
+     * @c ResolvedStationCoord::ecef.  The block bounds are filled whenever a
+     * block was evaluated, covered or not.
+     */
+    struct SifPeriodicEvaluation {
+        SifPeriodicReach reach{ SifPeriodicReach::NotEvaluated }; ///< Which of the selection cases applied.
+        double extrapolation_years{ 0.0 };  ///< Signed reach outside the evaluated block [yr]: t - end (AfterLast, InGap, so >= 0), t - start (BeforeFirst, so < 0), 0 otherwise.
+        double block_start_year{ 0.0 };     ///< Evaluated block's window start [decimal year] (0 when none).
+        double block_end_year{ 0.0 };       ///< Evaluated block's window end [decimal year] (9999.0 = open-ended; 0 when none).
+
+        /// True iff a block was evaluated outside its window (BeforeFirst, AfterLast or InGap).
+        bool extrapolated() const {
+            return reach == SifPeriodicReach::BeforeFirst || reach == SifPeriodicReach::AfterLast
+                || reach == SifPeriodicReach::InGap;
+        }
+    };
+
+    /**
+     * @brief One-line description of an extrapolated seasonal term, for a caller's warning.
+     *
+     * States which case applied, how many years the epoch lies from the
+     * evaluated block, and the block's window, for example
+     * "epoch is 0.221 yr after the last periodic block [2020.1203, 2024.1288);
+     * that block's seasonal term is applied".
+     *
+     * @param p Periodic evaluation of a resolved coordinate.
+     * @return The description, or an empty string when @p p is not extrapolated.
+     */
+    std::string describePeriodicExtrapolation(const SifPeriodicEvaluation& p);
+
+    /**
      * @brief A station coordinate resolved to a specific observation epoch.
      *
      * The position is the full SIF coordinate function evaluated at the query
@@ -126,6 +187,7 @@ namespace GnssProcessor {
         double segment_end_year{ 0.0 };      ///< Selected occupation's window end [decimal year] (9999.0 = open-ended).
         bool antenna_change_in_gap{ false }; ///< An antenna window starting in the gap differs from its predecessor in TYPE (model + radome) or serial number.
         bool receiver_change_in_gap{ false };///< A receiver window starting in the gap differs from its predecessor in TYPE (firmware-only and serial-only updates do not count).
+        SifPeriodicEvaluation periodic;      ///< Which periodic block supplied the seasonal term and whether the epoch lies outside it (see @c SifPeriodicReach).
     };
 
     /**
@@ -141,10 +203,23 @@ namespace GnssProcessor {
      * propagated over the same @f$ t - t_{ref} @f$.  The periodic phase
      * reference and the post-seismic relaxation models match the SIF generator.
      *
+     * The periodic term is one block's displacement, chosen by the epoch alone
+     * and not by the occupation: the first block, in start order, whose window
+     * covers @p decimal_year; otherwise the first block when the epoch precedes
+     * all of them, the last block when it is at or past the end of the last,
+     * and in a gap the block that ended last (NGS M-PAGES v1.2 rule).  The
+     * block's sinusoids continue past its window with the phase measured from
+     * its own reference epoch, so the seasonal term does not drop to zero at a
+     * block boundary while the linear term goes on.  Blocks that overlap are
+     * not summed: only the first, in start order, applies.  The case that
+     * applied is reported in @c ResolvedStationCoord::periodic.
+     *
      * When no window covers the epoch the nearest record is extrapolated as
      * before, and the result says so (@c ResolvedStationCoord::extrapolated,
      * @c extrapolation_years, and the antenna / receiver change flags over the
-     * gap).  Callers that consume the coordinate log a warning in that case.
+     * gap).  Callers that consume the coordinate log a warning in that case,
+     * and another when the periodic block is extrapolated
+     * (@ref describePeriodicExtrapolation).
      *
      * Equipment-change rule over the gap: the antenna (respectively receiver)
      * windows are ordered by start; a window other than the first whose start
@@ -157,7 +232,7 @@ namespace GnssProcessor {
      * @param s              Station record.
      * @param decimal_year   Observation epoch as a decimal year.
      * @param with_periodic  Include the periodic (seasonal) terms, typically annual
-     *                       and semiannual.
+     *                       and semiannual (the single block selected for the epoch).
      * @param with_psd       Include post-seismic deformation terms.
      * @return Resolved coordinate with its extrapolation diagnostics; @c valid is
      *         false if @p s has no usable occupation, in which case the caller
@@ -267,6 +342,7 @@ namespace GnssProcessor {
         double segment_end_year{ 0.0 };         ///< Selected occupation's window end [decimal year] (9999.0 = open-ended).
         bool   antenna_change_in_gap{ false };  ///< Antenna TYPE or serial change inside the extrapolation gap.
         bool   receiver_change_in_gap{ false }; ///< Receiver TYPE change inside the extrapolation gap.
+        SifPeriodicEvaluation periodic;         ///< Which periodic block supplied the seasonal term and whether @ref epoch_year lies outside it (see @c ResolvedStationCoord::periodic).
     };
 
     /**

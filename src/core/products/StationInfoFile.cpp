@@ -6,6 +6,7 @@
 #include "products/StationInfoFile.hpp"
 #include "math/Coordinates.hpp"
 
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <fstream>
 #include <utility>
+#include <vector>
 
 namespace GnssProcessor {
 
@@ -424,7 +426,81 @@ namespace {
         return false;
     }
 
+    /// The periodic block that supplies the seasonal term at one epoch, and the
+    /// selection case that chose it.  @c block is null (and @c reach
+    /// NotEvaluated) when the station has no periodic block.
+    struct PeriodicChoice {
+        const SifPeriodicBlock* block{ nullptr };
+        SifPeriodicReach reach{ SifPeriodicReach::NotEvaluated };
+    };
+
+    /// Choose the periodic block for @p year, following NGS M-PAGES v1.2
+    /// (PeriodicMotion::computeDisplacement).  The blocks are taken in start
+    /// order (file order for equal starts; the file order itself is not
+    /// chronological for every station).  The first block whose window covers
+    /// the year (start <= year < end) wins, so overlapping windows are not
+    /// summed.  With none covering: before the first window the first block,
+    /// at or after the end of the last window the last block, and inside a gap
+    /// the last block, in start order, that ended at or before the year.
+    PeriodicChoice selectPeriodicBlock(const StationInfo& s, double year) {
+        PeriodicChoice out;
+        if (s.periodic.empty()) return out;
+
+        std::vector<const SifPeriodicBlock*> by_start;
+        by_start.reserve(s.periodic.size());
+        for (const auto& b : s.periodic) by_start.push_back(&b);
+        std::stable_sort(by_start.begin(), by_start.end(),
+                         [](const SifPeriodicBlock* a, const SifPeriodicBlock* b) {
+                             return a->start_year < b->start_year;
+                         });
+
+        const SifPeriodicBlock* last_ended = nullptr;  // last block, in start order, with end <= year
+        for (const SifPeriodicBlock* b : by_start) {
+            if (year >= b->start_year && year < b->end_year) {
+                out.block = b;
+                out.reach = SifPeriodicReach::Covered;
+                return out;
+            }
+            if (b->end_year <= year) last_ended = b;
+        }
+
+        if (year < by_start.front()->start_year) {
+            out.block = by_start.front();
+            out.reach = SifPeriodicReach::BeforeFirst;
+        } else if (year >= by_start.back()->end_year) {
+            out.block = by_start.back();
+            out.reach = SifPeriodicReach::AfterLast;
+        } else {
+            // Past the first start and covered by nothing: the first block has
+            // ended, so last_ended is set.
+            out.block = last_ended;
+            out.reach = SifPeriodicReach::InGap;
+        }
+        return out;
+    }
+
 } // namespace
+
+std::string describePeriodicExtrapolation(const SifPeriodicEvaluation& p) {
+    if (!p.extrapolated()) return {};
+    const double yrs = std::abs(p.extrapolation_years);
+    switch (p.reach) {
+    case SifPeriodicReach::BeforeFirst:
+        return fmt::format("epoch is {:.3f} yr before the first periodic block [{:.4f}, {:.4f}); "
+                           "that block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    case SifPeriodicReach::AfterLast:
+        return fmt::format("epoch is {:.3f} yr after the last periodic block [{:.4f}, {:.4f}); "
+                           "that block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    case SifPeriodicReach::InGap:
+        return fmt::format("epoch is {:.3f} yr after the periodic block [{:.4f}, {:.4f}) and "
+                           "before the next one; the earlier block's seasonal term is applied",
+                           yrs, p.block_start_year, p.block_end_year);
+    default:
+        return {};
+    }
+}
 
 ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
                                               double decimal_year,
@@ -473,12 +549,23 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
     const double dt = decimal_year - occ->reference_epoch_year;
     out.ecef = occ->coordinates + occ->velocity * dt;
 
-    // Periodic (seasonal) terms: sum over every block whose window covers the
-    // epoch.  d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/period,
+    // Periodic (seasonal) term: one block, chosen by the epoch (the covering
+    // block, else the nearest by the M-PAGES rule; see selectPeriodicBlock), so
+    // the term does not vanish where the linear term goes on.
+    // d = A_cos*cos(w*dT) + A_sin*sin(w*dT), w = 2*pi/period,
     // dT = (t - block ref epoch) in years (NGS / M-PAGES convention).
     if (with_periodic) {
-        for (const auto& b : s.periodic) {
-            if (decimal_year < b.start_year || decimal_year >= b.end_year) continue;
+        const PeriodicChoice pc = selectPeriodicBlock(s, decimal_year);
+        if (pc.block != nullptr) {
+            const SifPeriodicBlock& b = *pc.block;
+            out.periodic.reach            = pc.reach;
+            out.periodic.block_start_year = b.start_year;
+            out.periodic.block_end_year   = b.end_year;
+            if (pc.reach == SifPeriodicReach::BeforeFirst)
+                out.periodic.extrapolation_years = decimal_year - b.start_year;  // negative
+            else if (pc.reach == SifPeriodicReach::AfterLast || pc.reach == SifPeriodicReach::InGap)
+                out.periodic.extrapolation_years = decimal_year - b.end_year;
+
             const double dT = decimal_year - b.reference_epoch_year;
             for (const auto& f : b.freqs) {
                 if (f.period_yr == 0.0) continue;
@@ -563,6 +650,7 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     out.segment_end_year       = rc.segment_end_year;
     out.antenna_change_in_gap  = rc.antenna_change_in_gap;
     out.receiver_change_in_gap = rc.receiver_change_in_gap;
+    out.periodic               = rc.periodic;
     return out;
 }
 
