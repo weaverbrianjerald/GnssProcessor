@@ -220,4 +220,4 @@ Time structure of G25 (2 min bins, rms off to on): 08:40 12.0 to 3.3 mm, 08:42 1
 
 ### 8.8 Verdict of the check
 
-Pass. The beta sign is validated against two independent computations; the wind-up consumes `SatAttitude`; the knob off is identical to main on both golden 2 h arms (one declared log line) and on the noon windows; the goldens contain no noon turn and the knob on is inert there; the graded windows ran to completion and the turning satellites move in the expected direction. UNVALIDATED, not armed, `config/golden/` untouched.
+Pass. The beta sign is validated against two independent computations; the wind-up consumes `SatAttitude`; the knob off is identical to main on both golden 2 h arms (one declared log line) and on the noon windows; the goldens contain no noon turn and the knob on is inert there; the graded windows ran to completion and the turning satellites move in the expected direction; the full Debug suite on the branch (the existing `build/x64-Debug` exe, source unchanged apart from a header comment) ran 3167 cases in 422 suites, 3143 passed, 24 skipped (fixture-gated), none failed. UNVALIDATED, not armed, `config/golden/` untouched.
