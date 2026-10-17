@@ -13,8 +13,10 @@ Lanes:
   GAL  SWL (E5b,E5)  lam 19.54 m  (AltBOC luxury rung)
   GAL  SWL (E5,E5a)  lam 19.54 m
 """
-import glob, math, os, statistics as st
+import glob, math, os, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 N_EP = 30
@@ -91,7 +93,7 @@ def parse_station(path):
             sysc = line[0]
             if sysc not in ('G', 'E'):
                 continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             for label, d in out.items():
                 if d['sys'] != sysc:
                     continue

@@ -6,8 +6,10 @@ epochs of  y_slant_tecu - m(el)*GIM_h(IPP), then the fleet mean/median/std per h
 Receiver thermal drift => station-specific slow curves; GIM/satellite-side error drift
 => common-mode moves.  EL_CUT and station subsample match the 00:00 verdict script.
 """
-import csv, glob, math, statistics as st
+import csv, glob, math, os, sys, statistics as st
 from math import sin, cos, asin, radians, degrees, pi, sqrt
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 OMEGA_E = 7.2921151467e-5
@@ -131,7 +133,7 @@ def read_rnx(path):
                 if s.strip():
                     try: rec[ot] = float(s)
                     except ValueError: pass
-            data[(cur, line[0:3])] = rec
+            data[(cur, norm_sat(line[0:3]))] = rec
     return data
 
 def unit(v):

@@ -32,6 +32,9 @@ import sys
 
 import numpy as np
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # constants
 # ---------------------------------------------------------------------------
@@ -174,7 +177,7 @@ def read_station(path, priorities, hours, sats):
                 continue
             if ep < 0 or line[0] != "G":
                 continue
-            sat = line[:3]
+            sat = norm_sat(line[:3])
             if sat not in want:
                 continue
             pad = line.rstrip("\n").ljust(width)

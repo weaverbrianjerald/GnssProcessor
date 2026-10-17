@@ -13,8 +13,10 @@ DDs are built between geographically near station pairs (nearest neighbor), buck
 by baseline length, plus a far-pair control bucket. The locality of the iono term
 (0.5 cyc per meter of DD iono) is the open spec question §11 Q2.
 """
-import glob, math, os, random, statistics as st
+import glob, math, os, random, sys, statistics as st
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 F1, F2, F5 = 1575.42e6, 1227.60e6, 1176.45e6
@@ -67,7 +69,7 @@ def parse_station(path):
                 continue
             if ep == 0 or not line.startswith('G'):
                 continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             def field(i):
                 s = line[3 + 16*i: 3 + 16*i + 14].strip()
                 try:

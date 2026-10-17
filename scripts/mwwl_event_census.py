@@ -38,6 +38,9 @@ import sys
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
+
 C = 299792458.0
 F1, F2, F5 = 1575.42e6, 1227.60e6, 1176.45e6
 LAM1, LAM2, LAM5 = C / F1, C / F2, C / F5
@@ -139,7 +142,7 @@ def parse_station(args):
                 continue
             if not in_win or not line.startswith("G"):
                 continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
 
             def fld(i):
                 s = line[3 + 16 * i: 3 + 16 * i + 14].strip()
