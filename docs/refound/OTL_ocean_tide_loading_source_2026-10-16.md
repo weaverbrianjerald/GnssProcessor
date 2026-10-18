@@ -5,20 +5,20 @@
 - **id:** OTL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. The 6 h field arm and the 16-site census are owed.
+- **summary:** BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. CHECKED 2026-10-17 (section 8): knob off is identical to a main `4318fe3` control on the field and sim golden 2 h arms; with the keys on the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (its estimate shifts by the applied loading) and the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and ARHT worse by 2 to 9 mm). The arming decision is open.
 - **source:** `docs/status/OPEN_ITEMS.md` queued build 2; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` section 4 (no nodal corrections, GMST from GPS time); NGS M-PAGES v1.2 `Lib/IersHardisp`, `Lib/Station/OceanTideLoad.cpp`, `Lib/Station/StationInfoFile.cpp`, `Lib/OtlGrid/get_otl_grid.f`; IERS Conventions (2010) section 7.1.2
 - **knobs / posture:** `model_corrections.otl_from_sif`, `model_corrections.otl_nodal_corrections` (ledger rows UNVALIDATED; both goldens keep `enable_ocean_tide_loading` false, so both are unaffected); the loader default of `enable_ocean_tide_loading` stays true
-- **dates in the text:** 2026-10-16
-- **hashes / run dirs:** branch `mpg/otl`; gate and probe output `D:/GnssProcessorSupport/gates/otl/` (`gate_result.txt`, `gate_result.json`, `residual_attribution.txt`, `station_handling.txt`); harness `scripts/otl_compare/`; tool `gnss_otl_diag` (`src/tools/otl_diag.cpp`)
+- **dates in the text:** 2026-10-16, 2026-10-17
+- **hashes / run dirs:** branch `mpg/otl`; gate and probe output `D:/GnssProcessorSupport/gates/otl/` (`gate_result.txt`, `gate_result.json`, `residual_attribution.txt`, `station_handling.txt`); check output `D:/GnssProcessorSupport/gates/otl/chk/`, arms `D:/GnssProcessorSupport/runs_nom/_rap_otlchk_*` and `_rap_otlc_*`, control worktree `otl_ctl` at main `4318fe3`; harness `scripts/otl_compare/`; tool `gnss_otl_diag` (`src/tools/otl_diag.cpp`)
 
-**Outcome.** Ocean tide loading was off on both goldens, and the only SIF route to it
-(`enable_station_info`) also replaced the a-priori position and the ocean pole tide source. A dedicated
-key now takes the loading block from the SIF alone. The gate against HARDISP showed that the existing SIF
-conversion adds 180 degrees to the horizontal phases, which reverses the horizontal vector (up to 32 mm
-against the reference at Brest); the new key reads the SIF columns as the BLQ west and south rows, as
-M-PAGES does and as 98 % of 568 stations confirm physically. With the nodal factors the model stays within
-2.5 mm radial and 0.9 mm horizontal of HARDISP at three stations; the floor is the minor diurnal and
-semidiurnal constituents. The field and census checks are owed; nothing is armed.
+**Outcome.** Question: can ocean tide loading be taken from the SIF registry alone, and does it help the field
+golden? Two default-off keys (`otl_from_sif`, `otl_nodal_corrections`) were built. The gate against HARDISP found the
+`enable_station_info` reading of the SIF horizontal columns reversed (up to 32 mm); the new reading agrees to 0.4 to
+1.5 mm horizontal and 2.5 mm radial. Check of 2026-10-17: knob off is identical to a main `4318fe3` control (field and
+sim, 2 h). Keys on, the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (13.2 to 19.7 mm), because its
+estimate shifts by the applied displacement; the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and
+ARHT worse by 2 to 9 mm). No fail bar is crossed; five of the six ocean sites gain (4 to 18 mm) and HARB does not.
+Nothing is armed ([section 8](#8-check-results-2026-10-17)).
 
 ## 1. What was built
 
@@ -239,3 +239,143 @@ exit 0 in 150 to 170 s.
   epoch); it is worth building only if the check shows the radial residual matters at the consumer.
 - The 11 stations without a SIF block (section 4) are served by nothing under `otl_from_sif`; the EOT20 arm
   shows whether a radial-only fallback helps or hurts them.
+
+## 8. Check results, 2026-10-17
+
+Separate stage from the build. Nothing in the source, the goldens or the manifest changed; nothing is armed.
+
+**Executables.** Candidate: `gnss_processor_otl.exe` from `mpg/otl` at `565eb1c` (md5 `308ad036fc32`; the incremental
+build of the clean worktree reported no work to do). Control: `gnss_processor_otl_ctl.exe` from a detached worktree
+`otl_ctl` at main `4318fe3`, Release, built with `scripts/wt_build.ps1` (md5 `d7126aba788f`). Both under
+`D:/GnssProcessorSupport/gates/exe/x64-Release/`. Arms under `D:/GnssProcessorSupport/runs_nom/_rap_otlchk_*` and
+`_rap_otlc_*`; scripts and outputs under `D:/GnssProcessorSupport/gates/otl/chk/` (`gate_g0_field.txt`,
+`gate_g0_sim.txt`, `gate_negctl_off_on.txt`, `grade_consumer.txt`, `census_grade.txt`, `census_grade_hybrid.txt`,
+`census_table.txt`, `census_signal.txt`). All seven 6 h and 2 h producer runs and all 85 census replays exited 0.
+
+### 8.1 G0, off path: identical
+
+Field golden and sim golden (`network.start_offset_hours` 0.504167), 2 h arms, the golden as it stands (no key set),
+control exe against candidate exe, `python scripts/nom_td_gate.py --whole` with `NOM_GATE_DROP_POSTURE=1`:
+
+| bed | arm.json | products and 34 traces, row order | manifest, 12 records | stdout.txt | main_log (rotation set) | rt_engine.log | result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| field | 928 / 928 lines | identical (products.txt 113,888 lines) | identical | 3,185 / 3,185 | 2,422 / 2,422 | 620 / 620 | IDENTICAL |
+| sim | 946 / 946 lines | identical (products.txt 80,690 lines) | identical | 2,923 / 2,923 | 2,159 / 2,159 | 621 / 621 | IDENTICAL |
+
+The products hash of the field arm (`0f9f2e42c5346186`) equals the one the seasonal-term control produced from the same
+main commit. Negative control: the 6 h knob-off arm against the 6 h knob-on arm (below) with `--no-arm-check` reads
+DIFFERENT (32 items, among them products, `closed_loop_trace.csv`, `network_epoch_status.csv`, `network_solution.csv`
+and the config summary line `otl=off` against `otl=on`), so the gate sees the keys. There is no declared intent to
+name: the off path moves nothing.
+
+### 8.2 G1, field 6 h, held-out consumer WTZZ00DEU
+
+Arms: `otlchk_off_f` (golden as it stands) and `otlchk_on_f` (the golden plus `enable_ocean_tide_loading`,
+`otl_from_sif`, `otl_nodal_corrections` true), both on the candidate exe, fresh start. Run-start source table of the
+knob-on arm: 52 stations served by the SIF (51 roster stations and the consumer), 7 "none, zero displacement" (GAMB,
+NYA200NOR, WARK00NZL, WTZS, GOP6, LEIJ00DEU, FFMJ00DEU), as in section 4. All 720 epochs emitted in both arms.
+
+Median 3D error by hour (mm; hours from 00:00, hour 1 is ignition) and the mean change of the signed error of the
+consumer (arm minus control; East, North, Up), beside the mean of the loading displacement that the keys apply at
+WTZZ00DEU in the same hour (production model, `gnss_otl_diag`, blq mapping with nodal factors):
+
+| hour | p50 3D off | p50 3D on | change | mean change E / N / U | applied loading E / N / U |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 58.1 | 58.1 | 0.0 | -1.9 / +3.9 / -0.3 | +2.2 / -4.2 / +0.6 |
+| 2 | 11.3 | 14.0 | +2.7 | -1.6 / +6.3 / +4.1 | +1.3 / -6.4 / -3.8 |
+| 3 | 18.3 | 26.8 | +8.5 | -0.6 / +8.0 / +7.3 | +0.4 / -8.0 / -6.8 |
+| 4 | 10.3 | 18.3 | +8.0 | +0.1 / +8.7 / +8.2 | -0.2 / -8.8 / -7.9 |
+| 5 | 15.5 | 22.7 | +7.2 | +0.4 / +8.6 / +7.2 | -0.4 / -8.7 / -6.9 |
+| 6 | 10.5 | 16.6 | +6.1 | +0.1 / +7.7 / +4.6 | 0.0 / -7.8 / -4.3 |
+
+Hours 2 to 6, mean of the hourly p50: 3D 13.2 mm off, 19.7 mm on (+6.5 mm); horizontal +6.4 mm; |Up| +2.3 mm. Every
+settled hour is worse. The bar (a worsening beyond 1 cm in the hour 2 to 6 mean fails) is not crossed; the sign is
+against the keys. The EOT20 arm gives the same consumer numbers to the millimetre (WTZZ00DEU is served by the SIF).
+
+Reading. The change of the consumer's mean error equals minus the applied loading within 0.5 mm in every component and
+hour, including its hour-to-hour variation, and the consumer-only replay of section 8.3 reproduces the full arm (the
+wire alone moves WTZZ00DEU by less than 1 mm per hour). The keys therefore act on the consumer exactly as designed:
+the loading is removed from its observations and its estimate shifts by the opposite of the displacement. The error
+falls only where the estimate without loading was displaced along the loading. Here the north error of the
+consumer with loading modelled is +15 to +19 mm in hours 3 to 6 (+7 to +11 mm without it), and the omitted
+loading (-8 mm north, -6 mm up on average over hours 2 to 6) had partly cancelled it. This is a reading of the
+numbers under the assumption that the reference coordinate is the unloaded position; the check does not measure that
+cancellation. A window that spans whole tidal days would measure it, since the daily mean of the loading is near zero.
+
+Postfit sigma0 of the network (a datum-invariant fit measure), mean over the day, off to on: phase 0.3080 to 0.3072,
+code 0.2690 to 0.2689, all rows 0.2631 to 0.2628 (hours 2 to 6: phase 0.3281 to 0.3271). The direction is the expected
+one for a better model; the size, 0.3 %, is small.
+
+### 8.3 G2, the 16-site census
+
+`gcensus.py make otlc_ctl _rap_otlchk_off_f _rap_otlchk_off_f <exe>` (control), the same with `otlc_on` /
+`_rap_otlchk_on_f`, then `grade otlc_ctl otlc_on`. Two attribution keys split the census: `otlc_conly` (consumer
+knobs of the knob-on arm replaying the knob-off wire) and `otlc_wonly` (knob-off consumer replaying the knob-on wire).
+Median site p50 by hour (mm), hours 1 to 6: control 136 54 41 36 40 37; knob on 141 51 39 30 33 34; consumer only
+142 50 39 30 33 33; wire only 135 54 40 35 40 37.
+
+Paired change of each site's mean hourly p50 over hours 2 to 6 (mm; negative is better), with the mean loading
+displacement at the site over the same hours (mm; East / North / Up):
+
+| site | SIF block | mean loading E / N / U | full arm | consumer only | wire only | EOT20 arm |
+| --- | --- | --- | --- | --- | --- | --- |
+| CHTI | yes | -3.8 / -12.0 / -1.4 | -7.8 | -7.9 | +0.1 | -7.8 |
+| SCRZ | yes | +5.7 / -6.5 / +10.1 | +7.5 | +7.6 | -0.1 | +7.5 |
+| ANMG | no | none | 0.0 | 0.0 | 0.0 | +9.0 |
+| QUIN | yes | +0.7 / -7.1 / -19.6 | -8.9 | -9.1 | 0.0 | -8.9 |
+| HARB | yes | -0.4 / -5.2 / -5.9 | +2.4 | +3.6 | -1.3 | +2.3 |
+| POHN | yes | +1.1 / -5.4 / -9.1 | -4.4 | -4.5 | +0.1 | -4.4 |
+| DAV1 | yes | -2.9 / +2.9 / -7.2 | -6.3 | -2.8 | -3.3 | -6.2 |
+| BADG | yes | -6.4 / -6.0 / +0.7 | +5.0 | +5.1 | 0.0 | +5.0 |
+| STPM | yes | +5.3 / -4.5 / +2.6 | -4.0 | -3.8 | -0.1 | -4.0 |
+| ASCG | yes | +6.7 / -7.1 / -4.2 | -4.4 | -4.5 | 0.0 | -4.4 |
+| CEDU | yes | -9.4 / -9.9 / -7.5 | -5.2 | -5.6 | +0.5 | -5.2 |
+| KOKB | yes | -0.4 / -7.2 / -35.2 | -17.6 | -17.6 | 0.0 | -17.6 |
+| UTQI | no | none | 0.0 | 0.0 | 0.0 | -2.0 |
+| ARHT | no | none | +8.7 | 0.0 | +8.7 | +5.2 |
+| WUH2 | no | none | 0.0 | 0.0 | 0.0 | 0.0 |
+| BAKE | yes | +4.0 / +0.3 / -2.8 | +0.9 | +1.1 | -0.2 | +0.9 |
+| median | | | -2.0 | -1.4 | 0.0 | -3.0 |
+
+Against the bars of section 5:
+
+- **Median paired change not positive:** met, -2.0 mm (-1.4 mm consumer only; hour 1 paired median +1.8 mm, 4 sites
+  worse at 1 cm, ignition not claimed).
+- **No site worse by more than 1 cm:** met. The worst is ARHT00ATA at +8.7 mm; it is a wire effect at a site that
+  carries no loading in either arm (consumer only 0.0) and whose own p50 is 0.13 to 0.37 m. Next are SCRZ +7.5, BADG
+  +5.0, HARB +2.4 and BAKE +0.9 mm, all consumer effects.
+- **Ocean sites gain 0.5 to 1.5 cm at the p50 (an expectation, not a fail bar):** the direction holds at five of six and
+  fails at HARB (+2.4 mm). KOKB -17.6 mm exceeds the stated range and CHTI -7.8 mm is inside it; ASCG -4.4, POHN -4.4
+  and STPM -4.0 mm are just under 0.5 cm.
+- At the 12 sites with a SIF block, 8 are better and 3 worse (SCRZ, BADG, HARB) at 1 mm, BAKE unchanged within 1 mm;
+  the three sites without a block and without a wire effect (ANMG, UTQI, WUH2) do not move.
+
+Attribution. The consumer-only replay reproduces the full arm within 1.3 mm at every site except DAV1 and ARHT (where
+the wire adds -3.5 and +8.7 mm), and the wire-only replay moves the census median by 0.0 mm with no site beyond 1.3 mm
+other than DAV1 (-3.3) and ARHT (+8.7). The census result is the consumer's own loading; the loading in the network
+products does not reach users at the millimetre level. The change is zero where no loading is applied and 1 to 18 mm where the mean displacement is 7 to 36 mm. The
+direction of each change depends on the unloaded error of the site, the same limit as at WTZZ00DEU (section 8.2): one
+5 h window of one day.
+
+### 8.4 Second arm, EOT20 for the stations the SIF does not serve
+
+`otlchk_eot_f`: the knob-on arm plus `data_download.nc_path` set to `C:/GnssProcessor/data/static/nc/EOT20_load.nc`.
+The run-start table shows the 7 roster stations served by "EOT20 grid (radial only)" in place of none, the other 52
+unchanged. The consumer WTZZ00DEU is identical to the first arm. In the census the arm differs from the first by 0.1 mm
+or less at the twelve sites with a block and otherwise only at the four sites the SIF does not serve: ANMG +9.0 mm (worse; M2 radial 11.9 mm applied as radial only), UTQI -2.0 mm,
+ARHT +5.2 mm (3.5 mm less than in the first arm), WUH2 0.0 mm; census median -3.0 mm. No site crosses
+1 cm. The radial-only fallback is neutral to harmful for the one site where it matters (ANMG) and is not recommended
+as a default on this evidence.
+
+### 8.5 Standing
+
+- **Verdict against the bars:** the off path is identical; G1 does not fail (+6.5 mm, bar 1 cm) but the sign is
+  worse; G2 meets both fail bars, and the ocean-site expectation holds in direction at five of six sites and in size at two.
+  The keys act as designed.
+- **What the check cannot show:** whether the worse sign at WTZZ00DEU and at SCRZ, BADG, HARB is loading removing a
+  cancellation (section 8.2) or an error in the loading coefficients at those sites. The HARDISP gate bounds the error of
+  the evaluation (2.5 mm radial and 0.9 mm horizontal at three stations), which is far below the 6 to 8 mm shifts, but
+  it takes the SIF coefficients as given; how well FES2014b describes the true loading at these sites is not tested
+  here. A window of whole tidal days at the consumer would separate the two readings; it was not run.
+- **Open for the author:** arming (nothing is armed, no ledger verdict beyond UNVALIDATED is set); a whole-day arm
+  before any adoption claim; the 11 stations without a SIF block; the legacy `enable_station_info` mapping.
