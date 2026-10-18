@@ -175,7 +175,7 @@ nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default o
 Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
 health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
-Release smoke in; the 6 h check against same-exe controls on the field and sim goldens is owed, bars frozen).
+Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
