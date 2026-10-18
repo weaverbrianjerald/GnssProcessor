@@ -30,8 +30,8 @@ namespace GnssProcessor {
         switch (gate) {
             case BirthGate::PhaseRows:
                 return !(c.isBaselineMode() && c.getBaselineConfig().code_only);
-            case BirthGate::Uncombined:               return c.isUncombinedEnabled();
-            case BirthGate::UncombinedAndIonoRate:    return c.isUncombinedEnabled() && c.enableIonoRate();
+            case BirthGate::Uncombined:               return c.carriesSlantIonosphere();
+            case BirthGate::UncombinedAndIonoRate:    return c.carriesSlantIonosphere() && c.enableIonoRate();
             case BirthGate::UncombinedAndEstimateIfb: return c.isUncombinedEnabled() && c.estimateIfb();
             case BirthGate::EstimateSatBiases:        return c.estimateSatBiases();
             case BirthGate::NetworkSatPhaseBiases:    return c.isNetworkMode() && c.estimateSatPhaseBiases();
@@ -73,25 +73,30 @@ namespace GnssProcessor {
         return "?";
     }
 
+    /// Whether the rule of row @p s is the slant ionosphere's (the level or the rate half):
+    /// the rules whose states exist only on a run that carries them.
+    bool isSlantIonosphereRule(const StateFamilySpec& s) {
+        return s.q_rule == QRule::ObliquityRandomWalk || s.q_rule == QRule::CwnaWithLevel;
+    }
+
     /// Whether the process-noise rule of row @p s gives its states Q on this run.  The
-    /// two ionosphere rules apply only in PPP_RTK mode (StateManager::addIonosphereQ_);
-    /// every other rule applies whenever the family is present.
+    /// two ionosphere rules apply on every run that carries slant-ionosphere states, the
+    /// same predicate StateManager::addIonosphereQ_ tests; every other rule applies
+    /// whenever the family is present.
     bool processNoiseApplied(const StateFamilySpec& s, const GnssConfig& c) {
-        if (s.q_rule == QRule::ObliquityRandomWalk || s.q_rule == QRule::CwnaWithLevel)
-            return c.getProcessingMode() == ProcessingMode::PPP_RTK;
+        if (isSlantIonosphereRule(s)) return c.carriesSlantIonosphere();
         return s.q_rule != QRule::None;
     }
 
     /// The process-noise column of row @p s.
     std::string processNoiseText(const StateFamilySpec& s, const GnssConfig& c) {
         if (s.q_rule == QRule::None) return "none";
-        const bool mode_gated = s.q_rule != QRule::RandomWalk;
         const char* rule = s.q_rule == QRule::RandomWalk          ? "random walk"
-                         : s.q_rule == QRule::ObliquityRandomWalk ? "obliquity random walk (PPP_RTK mode only)"
-                         :                                          "CWNA with the level (PPP_RTK mode only)";
+                         : s.q_rule == QRule::ObliquityRandomWalk ? "obliquity random walk"
+                         :                                          "CWNA with the level";
         return fmt::format("{}, filter.process_noise.{} = {:g}{}", rule, s.q_key,
                            c.getProcessNoise().*s.q_psd,
-                           !mode_gated ? ""
+                           !isSlantIonosphereRule(s) ? ""
                            : processNoiseApplied(s, c) ? ", applied on this run"
                                                        : ", NOT applied on this run");
     }
@@ -123,26 +128,13 @@ namespace GnssProcessor {
                 birthText(s.birth), s.label_prefix, s.snapshot_tag ? s.snapshot_tag : "none",
                 initialStdText(s, config_), processNoiseText(s, config_), eventsText(s)));
         }
-        // A family the configuration creates whose process-noise rule does not apply
-        // on this run: its states are observed and never random-walk.  Stated here so
-        // a reader sees it at run start.
-        for (const StateFamilySpec& s : kStateFamilies) {
-            if (s.q_rule == QRule::None || !birthArmed(s.birth, config_)) continue;
-            if (processNoiseApplied(s, config_)) continue;
-            lines.push_back(fmt::format(
-                "WARNING: {} states are born on this run ({}) but get no process noise: "
-                "the rule applies in PPP_RTK mode only and this run's mode is not PPP_RTK",
-                s.name, birthText(s.birth)));
-        }
         return lines;
     }
 
     void StateManager::logFamiliesAsArmed() const {
         auto logger = log_manager_.getLogger("state_manager");
-        for (const std::string& line : familiesAsArmed()) {
-            if (line.rfind("WARNING: ", 0) == 0) logger->warn("{}", line.substr(9));
-            else                                 logger->info("{}", line);
-        }
+        for (const std::string& line : familiesAsArmed())
+            logger->info("{}", line);
     }
 
 } // namespace GnssProcessor

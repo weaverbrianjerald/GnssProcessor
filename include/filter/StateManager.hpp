@@ -880,7 +880,8 @@ namespace GnssProcessor {
          *
          * Copies position, clock, ZWD and, when present, velocity, phase clock and
          * troposphere gradients; the inter-system time offsets; the ambiguities; and
-         * in PPP-RTK mode the slant-iono and iono-rate states into \p ppp_state.
+         * on a run that carries them (GnssConfig::carriesSlantIonosphere) the
+         * slant-iono and iono-rate states into \p ppp_state.
          * A lightweight translator that exposes the internal state to higher-level
          * models; it copies values only, not covariance.
          *
@@ -896,10 +897,10 @@ namespace GnssProcessor {
          * @brief Synchronize values from a PppState into the internal state vector.
          *
          * Writes the position, the clock (when allocated), the ZWD and, when
-         * present, the velocity, phase clock and troposphere gradients; in
-         * @c ProcessingMode::PPP_RTK also the slant-iono and iono-rate values of
-         * satellites that have a state; and the inter-system time offsets.  Values
-         * only: the ambiguities and the covariance are not written.
+         * present, the velocity, phase clock and troposphere gradients; on a run that
+         * carries them (GnssConfig::carriesSlantIonosphere) also the slant-iono and
+         * iono-rate values of satellites that have a state; and the inter-system time
+         * offsets.  Values only: the ambiguities and the covariance are not written.
          *
          * @param ppp_state Source PppState containing updated values.
          */
@@ -1744,7 +1745,8 @@ namespace GnssProcessor {
         /**
          * @brief Q block of the slant ionosphere and its rate.
          *
-         * Applied only in @c ProcessingMode::PPP_RTK.  Per
+         * Applied on every run that carries slant-ionosphere states
+         * (GnssConfig::carriesSlantIonosphere).  Per
          * satellite: the zenith spectral density (or its adaptive override) over
          * max(sin^2 el, 0.01), as a random walk, or as the CWNA level/rate pair when
          * the rate state exists.  Frozen pivots get none.

@@ -466,8 +466,8 @@ namespace GnssProcessor {
                 P(idx, idx) = isb_var;
         }
 
-        // Per-satellite ionosphere states (PPP-RTK)
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+        // Per-satellite ionosphere states (every run that carries them)
+        if (config_.carriesSlantIonosphere()) {
             const double iono_var = initial_std.ionosphere * initial_std.ionosphere;
             for (const auto& [sat, idx] : state_manager_.getIonosphereStates()) {
                 if (idx < static_cast<size_t>(P.rows()))
@@ -513,7 +513,7 @@ namespace GnssProcessor {
         }
 
         // Freeze BSSD pivot ionosphere states after reset.
-        if (bssd_active && config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+        if (bssd_active && config_.carriesSlantIonosphere()) {
             for (const auto& [sat, idx] : state_manager_.getIonosphereStates()) {
                 if (idx >= static_cast<size_t>(P.rows())) continue;
                 const std::string cons = PppUtils::getSystemString(sat);

@@ -104,8 +104,9 @@ namespace GnssProcessor {
         None,                 ///< No process noise (the network owns the family's prior).
         RandomWalk,           ///< q * dt on the diagonal.
         ObliquityRandomWalk,  ///< q / max(sin^2 el, 0.01) * dt, or the CWNA pair with the rate
-                              ///< state; applied in ProcessingMode::PPP_RTK only.
-        CwnaWithLevel,        ///< The rate half of the ionosphere CWNA pair (PPP_RTK only).
+                              ///< state; applied on every run that carries slant-ionosphere
+                              ///< states (GnssConfig::carriesSlantIonosphere).
+        CwnaWithLevel,        ///< The rate half of the ionosphere CWNA pair (same condition).
     };
 
     /**

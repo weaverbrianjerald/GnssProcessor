@@ -446,8 +446,13 @@ namespace GnssProcessor {
         // spliceAndPropagate so aided-predict assembly is testable without a full
         // KalmanFilter. Defined only in gnss_tests.
         friend struct KalmanFilterTestAccess;
+        // Test seam: KalmanFilterResetTestAccess (tests/test_kalman_complete_reset.cpp)
+        // reaches resetFilterCovariance, so the diagonals the complete reset restores are
+        // testable without driving a post-fit screen to its backstop. Defined only in
+        // gnss_tests.
+        friend struct KalmanFilterResetTestAccess;
 
-        StateManager& state_manager_;         //!< Owns the state vector and covariance.
+        StateManager& state_manager_;        //!< Owns the state vector and covariance.
         const GnssConfig& config_;            //!< Runtime configuration (read-only).
         LogManager& log_manager_;             //!< Diagnostic logging.
         const PppModel& ppp_model_;           //!< PPP measurement modelling.

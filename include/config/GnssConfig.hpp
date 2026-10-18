@@ -447,6 +447,28 @@ namespace GnssProcessor {
         bool isUncombinedEnabled() const { return uncombined_enabled_; }
 
         /**
+         * @brief Whether this run carries per-satellite slant-ionosphere states.
+         *
+         * The one answer to "do slant-ionosphere states exist on this run". The
+         * measurement model creates them (and the companion rate states under
+         * @c enable_iono_rate) for every run with uncombined processing, in every mode
+         * except the baseline modes, whose state vector holds only the position, the
+         * optional differential troposphere and the double-difference ambiguities. The
+         * loader forces uncombined processing on in the PPP-RTK family and in the
+         * baseline modes, so the PPP-RTK modes always carry the states, @c ProcessingMode::PPP
+         * carries them when @c processing.uncombined_enabled is set, and the baseline
+         * modes never do.
+         *
+         * The slant-ionosphere process noise, the export of the states into
+         * @c PppState, the complete reset of the filter covariance and the run-start
+         * state-family table all ask this predicate, so the mode and the flag cannot
+         * disagree between them.
+         *
+         * @return True when uncombined processing is on and the mode is not a baseline mode.
+         */
+        bool carriesSlantIonosphere() const { return uncombined_enabled_ && !isBaselineMode(); }
+
+        /**
          * @brief Gets the elevation mask in degrees.
          * @return Elevation mask value.
          */
