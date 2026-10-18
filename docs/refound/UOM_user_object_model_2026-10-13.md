@@ -322,3 +322,27 @@ T1 to T7 still hold on `ff7766a`. `docs/onboarding/README.md` names the tour's n
 | G-US | 3,100 passed, 24 skipped, 0 failed |
 
 Not in this landing: wave C's identity migration (`uom/u8-helpers` built and gated; `uom/u8-c1`, `uom/u8-c2`, `uom/u8-c3` part-built on the pre-merge base) and the five behaviour fixes of section 11 (separate branches; adoption is the author's).
+
+## 16. 2026-10-18: step UB2 built (branch `fix/ppp-iono-q`, `f3b8f2c`)
+
+Defect S1 of section 3 is fixed: PPP with uncombined processing created the slant-ionosphere states and gave them no process noise (the Q gate tested `ProcessingMode::PPP_RTK`; the states exist whenever uncombined processing is on outside the baseline modes). One predicate, `GnssConfig::carriesSlantIonosphere()`, now answers for the Q block, the `PppState` export and write-back, the complete reset (ionosphere and rate variances, pivot freeze) and the run-start table. In PPP mode the complete reset had left every ionosphere variance at zero, the value read as a frozen pivot. `PPP_RTK_User` is covered with the rest (no shipped config uses it); baseline modes create no ionosphere states and the network producer never reaches the filter's predict, export or reset. No knob: one behaviour is right. The warning of section 13 is removed with its premise; the Q column of the two ionosphere rows of the table drops "(PPP_RTK mode only)". The reading of section 13 stays as the record of how the defect was made visible.
+
+**Declaration** (effective mode and uncombined flag as the loader leaves them; 1,332 files under `config/` read, `extends` followed):
+
+| class | configs | what moves |
+| --- | --- | --- |
+| PPP, uncombined true | `test_suite/_pppar_algo_static_gps_l1l2`, `_nlwl_guarded`, `_nlwl_unguarded`; archived `_nlwl_guarded2`, `_nlwl_unguarded2`; arms `u_ppp_unc_ar`, `u_nlwl` (quick), `UA3` (full) | the numbers |
+| PPP-RTK-User | none | would move alike |
+| PPP-RTK (12), PPP ionosphere-free (8, among them `ppp_internal.json` and `_rtseam_sbf*.json`), baselines (7); the other 14 quick and 15 full arms | no number moves | two table rows (log text) |
+| PPP-RTK-Network (1,234, both goldens) | unchanged | nothing |
+
+| gate (control `gnss_processor_algo.exe`, main `30ca49e`; candidate `gnss_processor_ub2.exe`; Release) | result |
+| --- | --- |
+| G-UEP user arms, quick (16) and full (16) | quick: 14 IDENTICAL once the two table rows are masked (unmasked: all 16 differ in exactly those rows of `state_manager.log` and `stdout.txt`, in no CSV); `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared. Full: 15 IDENTICAL, `UA3` DIFFERENT, as declared |
+| G-UEP network, both 2 h goldens (`prm_ab.py cmp --all-csv`) | IDENTICAL on every file |
+| G-US, Debug | 3,345 run, 3,315 passed, 30 skipped (fixture data), 0 failed; the new cases fail on the base |
+| ALGO00CAN 24 h as shipped, 3D RMS hours 2 to 6 / 7 to 24 (m), control then fixed | `_pppar_algo_static_gps_l1l2` 2.7225 / 2.8899 then 0.0134 / 0.0093; `_nlwl_guarded` 14.96 / 10.37 then 0.0665 / 0.0254; `_nlwl_unguarded` 2,906 / 2,241 then 0.141 / 0.052 |
+
+The fixed exe reproduces the one-line proof of the defect row byte for byte in `state_trace.csv` (ALGO00CAN 24 h, GCGO00USA 6 h) and matches the PPP-RTK-mode run of the same arm. The tests are `SlantIonospherePresenceTest` (every mode agrees across Q, table and export), `KalmanCompleteResetTest` (through a friend shim) and the rewritten family-table case. Evidence and run directories: the defect row in `docs/status/OPEN_ITEMS_CODE_DEFECTS.md`.
+
+Owed: section 11's UB7 line said the `_nlwl` configs were to be graded again after UB2; the figures above are a first reading, not that grade. The fix-and-hold tables of 2026-10-17 were taken on the displaced vehicle. Adoption is the author's, as for every shipped-config move.
