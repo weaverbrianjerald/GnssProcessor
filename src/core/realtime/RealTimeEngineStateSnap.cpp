@@ -272,16 +272,28 @@ void RealTimeEngine::applyStagedStateSnapshot_(RtEpochContext& ctx) {
     }
 
     // --- Exact-layout rebuild (ascending, gapless; enforced by the parser) ---
-    std::size_t n_amb = 0, n_ion = 0, n_rxcb = 0;
+    // Every kind is resolved before the first row is restored. The replay appends
+    // to the manager row by row, so a kind this build does not know (a newer
+    // writer) has to be refused while the manager is still untouched; found in the
+    // middle of the replay it would leave a partly restored layout behind the
+    // cold start.
+    std::vector<StateFamily> families;
+    families.reserve(snap->dyn.size());
     for (const auto& d : snap->dyn) {
         const std::optional<StateFamily> family = stateFamilyFromSnapshotTag(d.kind);
         if (!family)
             return cold(fmt::format("unknown dynamic state kind '{}' (a newer writer?)",
                                     d.kind));
-        if (*family == StateFamily::Ionosphere)       ++n_ion;
-        if (*family == StateFamily::Ambiguity)        ++n_amb;
-        if (*family == StateFamily::ReceiverCodeBias) ++n_rxcb;
-        if (!sm.restoreDynamicState(*family, d.key,
+        families.push_back(*family);
+    }
+    std::size_t n_amb = 0, n_ion = 0, n_rxcb = 0;
+    for (std::size_t i = 0; i < snap->dyn.size(); ++i) {
+        const auto& d = snap->dyn[i];
+        const StateFamily family = families[i];
+        if (family == StateFamily::Ionosphere)       ++n_ion;
+        if (family == StateFamily::Ambiguity)        ++n_amb;
+        if (family == StateFamily::ReceiverCodeBias) ++n_rxcb;
+        if (!sm.restoreDynamicState(family, d.key,
                                     snap->x(static_cast<Eigen::Index>(d.idx)), d.idx)) {
             // Unreachable on a parse-clean file against a verified-empty manager.
             // If it fires, the manager is partly mutated: log an error and stop

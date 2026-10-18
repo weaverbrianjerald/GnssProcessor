@@ -303,9 +303,10 @@ after construction, so a skewed host clock or a race at a week rollover
 cannot move an established stream to another week.  Each successful
 MSM or SSR epoch advances the tracker (\texttt{updateTimeAnchor}).  The
 Keplerian broadcast-nav decoders read the tracker for their week but do
-not advance it.  The anchor below is the tracker's current value.  One
-exception: the 1020 GLONASS ephemeris \textsc{toe} is anchored on the
-host clock at every message (see the GLONASS item below).
+not advance it.  The anchor below is the tracker's current value.  The
+1020 GLONASS ephemeris \textsc{toe} is dated from the same tracker; a
+1020 that arrives before any MSM or SSR frame has set it is held and
+dated by the first such frame (see the GLONASS item below).
 \begin{itemize}[leftmargin=*, itemsep=0pt]
 \item \textbf{Flat ms-of-week systems} (GPS/GAL/QZS/SBAS/BDS MSM):
       the 30-bit epoch is milliseconds of week.  BeiDou adds the
@@ -331,10 +332,13 @@ t_{\text{GPS}} =
       nearest match ($\pm\SI{12}{\hour}$).  The 3-bit day-of-week is
       read but not used, since the anchor resolves the day.  The same
       conversion promotes any GLONASS SSR epoch against the tracker.  It
-      also promotes the 1020 ephemeris \texttt{toe}, but there the
-      anchor is the host clock, read at each message, rather than the
-      stream tracker.  On a live stream the two agree to well within
-      \SI{12}{\hour}; on a file replay of historical data they do not.
+      also promotes the 1020 ephemeris \texttt{toe} against the same
+      tracker, so a file replay of historical data keeps each GLONASS
+      ephemeris on the day of its observations.  A 1020 that arrives
+      before any MSM or SSR frame has set the tracker has no stream
+      epoch to be dated from.  It is held (at most 48 records) and dated
+      by the first such frame; an input that carries navigation messages
+      only fills the hold, which is then dated from the host clock.
 \item \textbf{GLONASS FDMA wavelength.}  GLONASS L1/L2 are
       frequency-division: each slot transmits on
       $f = f_{\text{base}} + k\,\Delta f$ with channel
@@ -517,8 +521,12 @@ step spans the actual outage.  In order:
       is skipped with the state untouched.  Folding it in would
       double-count the measurements and pass $\dt = 0$ to the
       process-noise build, which throws.  A $\dt$ above the gap
-      tolerance (\texttt{processing.data\_gap\_tolerance\_s},
-      \SI{1}{\second} when unset) flags a gap.
+      tolerance flags a gap.  The tolerance is
+      \texttt{processing.data\_gap\_tolerance\_s} when set.  When unset
+      it is 1.5 times the median spacing of the epochs accepted so far
+      (\texttt{EpochCadence}), as in post-processing, but never below
+      \SI{1}{\second}: that is also the value until a first spacing has
+      been measured, and a stream of \SI{1.5}{\hertz} or faster keeps it.
 \item \textbf{Models and startup gate} (the fourth gate,
       \texttt{gateCorrectionsReady}).  Observations
       are filtered to the active systems and run through

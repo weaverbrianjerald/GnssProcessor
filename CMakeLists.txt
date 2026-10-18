@@ -607,6 +607,10 @@ add_executable(gnss_tests
     tests/test_transforms.cpp
     tests/test_filter_core.cpp
     tests/test_rtcm.cpp
+    tests/test_rtcm_stream_dating.cpp
+    tests/test_epoch_cadence.cpp
+    tests/test_realtime_defects.cpp
+    tests/test_tcp_client_silence.cpp
     tests/network/test_network_streaming.cpp
     tests/test_rtcm_logger_lifetime.cpp
     tests/test_safe_logger.cpp

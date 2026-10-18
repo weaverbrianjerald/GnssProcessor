@@ -33,6 +33,13 @@ namespace GnssProcessor::RtcmNav {
 /// Result of a single broadcast-ephemeris decode.
 struct DecodeResult {
     bool ok{false};   ///< False on truncated payload or unsupported message type.
+
+    /// For a GLONASS 1020 message: the broadcast reference time tb as seconds of
+    /// the GLONASS day (UTC(SU) + 3 h), the undated time of day behind
+    /// @c GlonassEphemeris::toe.  A caller that decoded without an anchor (toe left
+    /// at {0, 0}) promotes it later with @c TimeUtils::glonassTodToGpsTime.
+    /// Negative for every other message type and for a failed decode.
+    double glonass_tod_s{-1.0};
 };
 
 /// True for the broadcast-ephemeris message types this decoder handles.
@@ -44,13 +51,21 @@ bool isBroadcastEphemerisType(uint16_t msg_type);
  * @param payload          Message payload (DF002 included; first 12 bits skipped).
  * @param len_bytes        Payload length in bytes.
  * @param msg_type         The 12-bit DF002 value (1019/1020/1042/1044/1046).
- * @param current_gps_week Current full GPS week, used to resolve the truncated
- *                         10-bit (GPS, QZSS) and 12-bit (Galileo) week fields
- *                         into an unambiguous epoch.  Pass 0 to leave the week
- *                         as the raw (un-rolled) value; Galileo still adds the
- *                         1024-week GST offset.  BeiDou (13-bit BDT week, kept
- *                         raw) and GLONASS (toe anchored on the host clock)
- *                         ignore it.
+ * @param anchor_gps_seconds Continuous GPS seconds (week·604800 + tow) of a known
+ *                         nearby epoch, the stream time of the caller.  Its full
+ *                         GPS week resolves the truncated 10-bit (GPS, QZSS) and
+ *                         12-bit (Galileo) week fields into an unambiguous epoch;
+ *                         it also anchors the day of the GLONASS time-of-day
+ *                         reference time (@c TimeUtils::glonassTodToGpsTime,
+ *                         nearest match within ±12 h).  The caller
+ *                         (@c RtcmParser) passes its stream-time tracker, never
+ *                         the host clock, so a replay of historical data places
+ *                         every ephemeris on the day of its observations.  Pass
+ *                         ≤ 0 to leave the week as the raw (un-rolled) value
+ *                         (Galileo still adds the 1024-week GST offset) and the
+ *                         GLONASS @c toe at {0, 0} with the time of day in
+ *                         @c DecodeResult::glonass_tod_s.  BeiDou (13-bit BDT
+ *                         week, kept raw) ignores it.
  * @param out              Destination vector; one record appended on success.
  * @return @c ok = true when the message decoded cleanly.
  */
@@ -58,7 +73,7 @@ DecodeResult decodeBroadcast(
     const uint8_t* payload,
     std::size_t    len_bytes,
     uint16_t       msg_type,
-    int            current_gps_week,
+    double         anchor_gps_seconds,
     std::vector<BroadcastEphemeris>& out);
 
 } // namespace GnssProcessor::RtcmNav

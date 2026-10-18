@@ -18,6 +18,7 @@
 
 #include "rtcm/RtcmSsrDecoder.hpp"
 #include "rtcm/RtcmBitReader.hpp"
+#include "rtcm/RtcmSatId.hpp"
 #include "rtcm/RtcmSignalMap.hpp"
 #include "math/TimeUtils.hpp"
 #include <chrono>
@@ -92,14 +93,12 @@ LegacyClassification classify(uint16_t msg_type) {
 }
 
 // Format an SVN-style satellite identifier from a system and the raw
-// per-satellite ID field.  SBAS PRNs are offset by 119 (PRN 120 = id 1).
+// per-satellite ID field.  SBAS identifier 1 is PRN 120, which RINEX and the rest
+// of the project name "S20" (PRN - 100; see rtcm/RtcmSatId.hpp).
 std::string formatSat(const SystemDescriptor& sys, int raw_id) {
+    if (sys.system == System::SBAS) return RtcmSatId::sbas(raw_id);
     char buf[8];
-    if (sys.system == System::SBAS) {
-        std::snprintf(buf, sizeof(buf), "S%02d", raw_id + 119);
-    } else {
-        std::snprintf(buf, sizeof(buf), "%c%02d", sys.sat_prefix, raw_id);
-    }
+    std::snprintf(buf, sizeof(buf), "%c%02d", sys.sat_prefix, raw_id);
     return std::string(buf);
 }
 

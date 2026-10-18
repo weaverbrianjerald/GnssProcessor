@@ -493,11 +493,17 @@ namespace GnssProcessor {
          * threshold the filter treats the gap as a data outage and
          * re-seeds the receiver clock from WLS.
          *
-         * A value of 0 (the default) means "use the measurement rate",
-         * i.e. any epoch spacing larger than the nominal interval is
-         * treated as a gap.
+         * A value of 0 (the default) means 1.5 times the nominal epoch
+         * interval.  Post-processing takes the interval from the RINEX
+         * header (the decimated rate when @c processing.gnss_rate_s is
+         * larger).  The real-time engine has no header, so it takes the
+         * median spacing of the epochs it has accepted; its threshold never
+         * falls below 1 s (the fixed value it used before the spacing was
+         * measured), and is 1 s until the first spacing has been measured.
+         * Baseline mode ignores the nominal interval and uses 60 s.
          *
-         * @return Gap tolerance in seconds (0 = measurement-rate default).
+         * @return Gap tolerance in seconds (0 = 1.5 nominal intervals; see
+         *         above for the real-time floor and the baseline default).
          */
         double getDataGapTolerance() const { return data_gap_tolerance_s_; }
 
@@ -8273,7 +8279,7 @@ namespace GnssProcessor {
         double elevation_mask_deg_;                    ///< Elevation mask in degrees.
         bool exclude_eclipsing_satellites_;           ///< Drop satellites in Earth's umbral shadow at the geometry stage. Default off (legacy behavior); enable to avoid unmodelled yaw manoeuvres during eclipse and recovery.
         double eclipse_shadow_scale_;                   ///< Multiplier on Earth's radius for the cylindrical shadow test. 1.0 = pure geometric umbra; >1.0 widens the exclusion margin.
-        double data_gap_tolerance_s_;                     ///< Data gap tolerance (s); 0 = use measurement rate.
+        double data_gap_tolerance_s_;                     ///< Data gap tolerance (s); 0 = 1.5 nominal epoch intervals.
         double long_gap_tolerance_s_;                   ///< Long-gap threshold (s); separates short vs long gap policy in handleGap.
         double gnss_rate_s_;                              ///< Effective processing rate (s); 0 = process every RINEX epoch.
         double max_duration_s_;                           ///< Max data-time span to process (s); 0 = unlimited. Measured as epoch GPS time relative to the first processed obs.

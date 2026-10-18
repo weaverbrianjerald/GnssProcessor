@@ -41,6 +41,17 @@ namespace GnssProcessor {
  * one parser instance per stream or engine (as @c RealTimeEngine does).  A caller
  * that constructs a parser per frame falls back to the legacy behaviour of
  * anchoring every frame on the host clock.
+ *
+ * @par GLONASS ephemeris dates
+ * A GLONASS 1020 message carries only a time of day.  It is dated from the same
+ * tracker as the observations (nearest match within ±12 h), so a replay of
+ * historical data keeps every GLONASS ephemeris on the day of its observations.
+ * A 1020 that arrives before any observation or SSR frame has set the tracker
+ * has no stream epoch to be dated from; it is held (at most
+ * @c kMaxDeferredGlonass records) and dated, then appended to the decoded
+ * ephemerides, by the frame that sets the tracker.  A stream that carries no
+ * time-bearing frame at all (navigation messages only) would never release
+ * them, so a full hold is dated from the host clock instead.
  */
 class RtcmParser {
 public:
@@ -78,7 +89,8 @@ public:
     bool parse();
 
     /// Drop all accumulated decoded outputs and reset lastMessageType().  The
-    /// stream-time tracker and the last SSR header are kept.
+    /// stream-time tracker, the last SSR header and the GLONASS ephemerides still
+    /// waiting for a stream epoch are kept.
     void clear();
 
     // ---------------------------------------------------------------------
@@ -105,6 +117,11 @@ public:
 
     /// The message type of the most recently decoded frame, or -1 if none.
     int lastMessageType() const { return last_msg_type_; }
+
+    /// Most GLONASS 1020 records held before a stream epoch is known (see the class
+    /// documentation).  Twice the 24-slot constellation: a navigation-only input
+    /// fills it within the first broadcast cycles.
+    static constexpr std::size_t kMaxDeferredGlonass = 48;
 
     /**
      * @brief The per-parser stream-time tracker (continuous GPS seconds).
@@ -168,8 +185,24 @@ private:
     double anchorGpsSeconds();
 
     /// Advance the tracker to a freshly decoded stream epoch (ignored unless
-    /// the epoch carries a resolved week, i.e. week > 0).
+    /// the epoch carries a resolved week, i.e. week > 0).  The first such epoch
+    /// also dates and releases the GLONASS ephemerides held so far.
     void updateTimeAnchor(const GnssTime& epoch);
+
+    /**
+     * @brief Hold a GLONASS 1020 record until the stream time is known.
+     *
+     * Decodes the message without a date (the payload is validated now), keeps the
+     * record with its time of day, and when the hold is full dates the whole hold
+     * from the host clock (see the class documentation).
+     *
+     * @return true when the message decoded cleanly.
+     */
+    bool deferGlonassEphemeris(const uint8_t* payload, std::size_t len);
+
+    /// Date every held GLONASS record from @p anchor_gps_seconds, append the
+    /// records to the decoded ephemerides and empty the hold.
+    void releaseDeferredGlonass(double anchor_gps_seconds);
 
     std::filesystem::path file_path_;
     int last_msg_type_{-1};
@@ -179,6 +212,18 @@ private:
     /// < 0 until the first time-bearing frame.  Kept across clear() (see the class
     /// documentation; RTB-1(a)).
     double time_anchor_gps_s_{-1.0};
+
+    /// True once the tracker has been set from a decoded stream epoch (an MSM or
+    /// SSR frame), not merely seeded from the host clock at cold start.
+    bool time_anchor_from_stream_{false};
+
+    /// A GLONASS 1020 record decoded before the stream time was known, with its
+    /// undated time of day.  Kept across clear() like the tracker.
+    struct DeferredGlonass {
+        BroadcastEphemeris eph;     ///< Record with @c glonass.toe still {0, 0}.
+        double             tod_s;   ///< Reference time as seconds of the GLONASS day.
+    };
+    std::vector<DeferredGlonass> deferred_glonass_;
 
     bool logged_1033_{false};  ///< 1033 content logged once per parser at info (RTB-2(d)).
     bool logged_1230_{false};  ///< 1230 content logged once per parser at info (RTB-2(d)).

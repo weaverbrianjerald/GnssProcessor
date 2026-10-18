@@ -49,6 +49,7 @@
 #include "realtime/PbStepTranslateLedger.hpp"  // Every-step ambiguity translation ledger
 #include "realtime/PbHoldLedger.hpp"         // Held phase-bias generation ledger
 #include "realtime/ConsumerSatTrace.hpp"     // Per-satellite consumer readout row
+#include "realtime/EpochCadence.hpp"         // Measured epoch spacing, source of the default data-gap threshold
 #include <Eigen/Dense>
 #include <chrono>
 #include <filesystem>
@@ -601,6 +602,7 @@ public:
 private:
     friend struct AmbLevelArcTestAccess;  ///< Exercises the ALC seam after real reseed/update recovery.
     friend struct PbHoldPresenceTestAccess;  ///< Drives the phase-bias reactions across a held key's presence edges.
+    friend struct RealtimeDefectTestAccess;  ///< Drives the gap detection and the staged snapshot restore.
     /// Convert GPS-scale time to UTC-scale time.
     static GnssTime gpsToUtcTime(const GnssTime& gps_time);
 
@@ -747,7 +749,10 @@ private:
 
     /// Time step / gap detection; fills @c ctx.dt, @c ctx.gap_detected and the
     /// aiding capture, and advances @c prev_tow_ / @c prev_epoch_time_.
-    /// Returns false on a non-advancing TOW (duplicate epoch).
+    /// Returns false on a non-advancing TOW (duplicate epoch).  The gap threshold is
+    /// @c processing.data_gap_tolerance_s when positive, else 1.5 times the median
+    /// spacing of the accepted epochs (@ref EpochCadence), but at least 1 s (also
+    /// the value until a spacing has been measured).
     bool stepTimeAndDetectGap(RtEpochContext& ctx);
 
     /// Corrections-ready startup gate: defers all estimation until the modeled
@@ -1213,6 +1218,10 @@ private:
     std::optional<NetworkProducerStatus::State> last_producer_status_;
     double    prev_tow_{ 0.0 };
     GnssTime  prev_epoch_time_{ 0, 0.0 };
+    /// Spacings of the epochs accepted so far.  With @c processing.data_gap_tolerance_s
+    /// at 0 the data-gap threshold is 1.5 times their median, at least 1 s; see
+    /// @ref stepTimeAndDetectGap.
+    EpochCadence epoch_cadence_;
     uint64_t  backlog_warn_ctr_{ 0 };          ///< Throttle counter for the obs-backlog warning (every Nth lagging epoch).
 
     /// Persistent RTCM parser (RTB-1(a)): one per engine, reused for every

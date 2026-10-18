@@ -32,6 +32,16 @@ struct TcpConfig {
     std::string host;                   ///< Hostname or IP (e.g. "rooftop.example.com" or "10.0.0.5").
     int         port{ 28784 };          ///< TCP port the receiver is listening on.
     int         reconnect_delay_s{ 5 }; ///< Wait before reconnecting after a connection loss.
+
+    /// Seconds without a received byte after which a connected peer is treated as
+    /// lost: the socket is closed and redialed after @c reconnect_delay_s, the same
+    /// path as a closed connection.  A receiver that stops sending without closing
+    /// the socket (a hung output task, a dropped route that leaves no reset) would
+    /// otherwise keep the stream silent for good.  0 (default) is off and keeps the
+    /// socket open for as long as the peer does.  Set it above the longest interval
+    /// between messages of the stream, which for an ephemeris-only stream can be a
+    /// minute or more.
+    double      silent_timeout_s{ 0.0 };
 };
 
 /**
@@ -54,6 +64,13 @@ public:
 
     /// True while the connection is established.
     bool isConnected() const { return connected_.load(); }
+
+    /// Connections dropped because the peer sent nothing for
+    /// @c TcpConfig::silent_timeout_s.  Always 0 with the timeout off.
+    std::uint64_t silentDrops() const { return silent_drops_.load(); }
+
+    /// Connections established since start(), the first one included.
+    std::uint64_t connectionCount() const { return connections_.load(); }
 
     /// True from start() until stop(): the client's intent to run, independent of
     /// the momentary connection state.  The realtime poll loop treats a socket
@@ -80,6 +97,8 @@ private:
     std::thread        thread_;
     std::atomic<bool>  running_{ false };
     std::atomic<bool>  connected_{ false };
+    std::atomic<std::uint64_t> silent_drops_{ 0 };
+    std::atomic<std::uint64_t> connections_{ 0 };
 
     std::mutex              buf_mutex_;
     std::condition_variable buf_cv_;

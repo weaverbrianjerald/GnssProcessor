@@ -102,9 +102,10 @@ reference. The classes are:
   the carry driver do not check. Whether a chordless block reaches it is unknown.
 - [ ] VMF3 mapping with a standard-atmosphere a priori takes the ZHD pressure from GPT3
   silently (`Troposphere.cpp`). Confirm whether the mix is intended.
-- [ ] `applyStagedStateSnapshot_` with scope "full" detects an unknown dynamic state kind in
+- [x] `applyStagedStateSnapshot_` with scope "full" detects an unknown dynamic state kind in
   the middle of the replay and cold-starts after a partial mutation
-  (`RealTimeEngineStateSnap.cpp`). Validate before mutating.
+  (`RealTimeEngineStateSnap.cpp`). Validate before mutating. Fixed in `ff1c464`
+  (branch fix/realtime): every kind is resolved before the first row is restored.
 - [ ] `NetworkProductIO` `checkContract` compares 6 of the 8 emitter parameters (`cbjump` and
   `clkset` are not compared). Confirm whether the omission is intended.
 - [ ] Gross-LOS reason bits in the arc ledger may be cleared by `kArcReasonLateMask` at the
@@ -122,10 +123,14 @@ reference. The classes are:
 - [ ] `NetworkRawObservables.cpp:92` orders same-band signals with `std::sort` on the band
   digit only; lexical order holds in practice for short lists, but only `std::stable_sort`
   guarantees it.
-- [ ] `RtcmMsmDecoder` SBAS `formatSat` may produce `S120` where `S20` is expected.
+- [x] `RtcmMsmDecoder` SBAS `formatSat` may produce `S120` where `S20` is expected.
+  Confirmed, and the legacy SSR decoder had the same format. Fixed in `ff1c464`
+  (branch fix/realtime): both go through `RtcmSatId::sbas`.
 - [ ] `ApplicationNetworkSetup.cpp:1506` hard-codes `pending_contract.orbit_ref = "CoM"` in
   every a-priori mode; the reasoning covers SP3 only, `brdc_rts` is unchecked.
-- [ ] `TcpClient`'s receive timeout bounds shutdown only; it does not detect a silent peer.
+- [x] `TcpClient`'s receive timeout bounds shutdown only; it does not detect a silent peer.
+  Fixed in `ff1c464` (branch fix/realtime): `TcpConfig::silent_timeout_s`, set from
+  `realtime.tcp_silent_timeout_s` (default 0, off).
 - [ ] `ApplicationBaseline.cpp` early abort (near the `n_geom_ok` check) can never fire,
   because `n_geom_ok` is incremented together with `n_with_dd`.
 - [ ] `TimeUtils` leap-second lookup compares a GPS Julian date against UTC entries, so the
@@ -227,10 +232,14 @@ The prose pass over `docs/report/` (slip_detection, ambiguity_resolution, imu_ai
 ssr_corrections, realtime_engine) checked the report's claims against the code and
 corrected the report. What it found in the code or the mathematics:
 
-- [ ] **Verified defect: GLONASS ephemeris time anchored on the host clock.**
+- [x] **Verified defect: GLONASS ephemeris time anchored on the host clock.**
   `decodeGlonass1020` promotes `toe` with `TimeUtils::nowContinuousGpsSeconds()`
   (`src/core/rtcm/RtcmNavDecoder.cpp:327`), so a file replay of historical data puts the
   ephemeris on the wrong day and GLONASS broadcast orbits are propagated across days.
+  Fixed in `ff1c464` (branch fix/realtime): the decoder takes the parser's stream-time
+  tracker as its anchor; a 1020 that arrives before the first MSM or SSR epoch is held and
+  dated by it. `LiveEphemerisStore` keeps the freshest `toe`, so an ephemeris dated on the
+  host's day would otherwise shadow every correct one in a replay.
 - [ ] **Author check: `eq:imu-tc-jac` (docs/report/imu_aiding.tex).** The Doppler (m/s)
   partials with respect to attitude and accelerometer bias carry acceleration units; an
   interval factor appears missing. The code implements the same expression.
