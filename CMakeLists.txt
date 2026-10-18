@@ -646,6 +646,7 @@ add_executable(gnss_tests
     tests/test_station_info_guards.cpp
     tests/test_station_info_seasonal.cpp
     tests/test_otl_sif_source.cpp
+    tests/test_otl_translation.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp

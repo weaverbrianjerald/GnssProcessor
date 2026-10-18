@@ -188,16 +188,21 @@ namespace GnssProcessor {
                 if (const auto sif = config_.getStationInfo()) {
                     const StationInfo* si = sif->find(station_name, &station_ecef);
                     if (si && si->has_otl) {
-                        const OtlStationCoefficients coeffs = otlCoefficientsFromSif(
+                        OtlStationCoefficients coeffs = otlCoefficientsFromSif(
                             *si, otl_from_sif ? SifOtlHorizontal::BlqRows
                                               : SifOtlHorizontal::LegacyShifted);
+                        // Loading in the frame of the products: the net translation of the
+                        // diurnal field is not part of what the consumer sees (default off).
+                        const bool drop_translation = otl_from_sif
+                            && config_.getModelCorrections().otl_remove_diurnal_translation;
+                        if (drop_translation) removeOtlDiurnalTranslation(coeffs, station_ecef);
                         corrections_.setOceanTideCoefficients(coeffs);
                         log->info("OTL: loaded 3-component FES2014b coefficients from SIF for "
                                   "marker '{}' (matched {}); M2 up-amp={:.4f} m",
                                   station_name, si->id, coeffs.constituents[0].amp_up);
                         log_manager_.getLogger("main_log")->info(
                             "Ocean tide loading source: SIF 3-component FES2014b{} (marker '{}' -> {})",
-                            otl_from_sif ? ", BLQ rows" : "",
+                            otl_from_sif ? (drop_translation ? ", BLQ rows, diurnal translation removed" : ", BLQ rows") : "",
                             otl_from_sif ? marker_trim : station_name, si->id);
                         loaded = true;
                     } else if (otl_from_sif) {
