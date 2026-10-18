@@ -438,7 +438,7 @@ namespace GnssProcessor {
             ppp_state.tropo_gradient_east  = current_state(state_manager.getTropoGradientEastIndex());
         }
 
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+        if (config_.carriesSlantIonosphere()) {
             ppp_state.slant_ionosphere.clear();
             for (const auto& [sat, idx] : ionosphere_indices_)
                 if (idx < static_cast<size_t>(current_state.size()))
@@ -478,7 +478,7 @@ namespace GnssProcessor {
             sv(getTropoGradientEastIndex())  = ppp_state.tropo_gradient_east;
         }
 
-        if (config_.getProcessingMode() == ProcessingMode::PPP_RTK) {
+        if (config_.carriesSlantIonosphere()) {
             for (const auto& [sat, value] : ppp_state.slant_ionosphere) {
                 auto it = ionosphere_indices_.find(sat);
                 if (it != ionosphere_indices_.end() && it->second < static_cast<size_t>(sv.size()))

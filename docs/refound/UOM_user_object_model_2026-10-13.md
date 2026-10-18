@@ -322,3 +322,54 @@ T1 to T7 still hold on `ff7766a`. `docs/onboarding/README.md` names the tour's n
 | G-US | 3,100 passed, 24 skipped, 0 failed |
 
 Not in this landing: wave C's identity migration (`uom/u8-helpers` built and gated; `uom/u8-c1`, `uom/u8-c2`, `uom/u8-c3` part-built on the pre-merge base) and the five behaviour fixes of section 11 (separate branches; adoption is the author's).
+
+## 16. 2026-10-18: step UB2 built (branch `fix/ppp-iono-q`, `f3b8f2c`)
+
+Defect S1 of section 3 is fixed: PPP with uncombined processing created the slant-ionosphere states and gave them no process noise (the Q gate tested `ProcessingMode::PPP_RTK`; the states exist whenever uncombined processing is on outside the baseline modes). One predicate, `GnssConfig::carriesSlantIonosphere()`, now answers for the Q block, the `PppState` export and write-back, the complete reset (ionosphere and rate variances, pivot freeze) and the run-start table. In PPP mode the complete reset had left every ionosphere variance at zero, the value read as a frozen pivot. `PPP_RTK_User` is covered with the rest (no shipped config uses it); baseline modes create no ionosphere states and the network producer never reaches the filter's predict, export or reset. No knob: one behaviour is right. The warning of section 13 is removed with its premise; the Q column of the two ionosphere rows of the table drops "(PPP_RTK mode only)". The reading of section 13 stays as the record of how the defect was made visible.
+
+**Declaration** (effective mode and uncombined flag as the loader leaves them; 1,332 files under `config/` read, `extends` followed):
+
+| class | configs | what moves |
+| --- | --- | --- |
+| PPP, uncombined true | `test_suite/_pppar_algo_static_gps_l1l2`, `_nlwl_guarded`, `_nlwl_unguarded`; archived `_nlwl_guarded2`, `_nlwl_unguarded2`; arms `u_ppp_unc_ar`, `u_nlwl` (quick), `UA3` (full) | the numbers |
+| PPP-RTK-User | none | would move alike |
+| PPP-RTK (12), PPP ionosphere-free (8, among them `ppp_internal.json` and `_rtseam_sbf*.json`), baselines (7); the other 14 quick and 15 full arms | no number moves | two table rows (log text) |
+| PPP-RTK-Network (1,234, both goldens) | unchanged | nothing |
+
+| gate (control `gnss_processor_algo.exe`, main `30ca49e`; candidate `gnss_processor_ub2.exe`; Release) | result |
+| --- | --- |
+| G-UEP user arms, quick (16) and full (16) | quick: 14 IDENTICAL once the two table rows are masked (unmasked: all 16 differ in exactly those rows of `state_manager.log` and `stdout.txt`, in no CSV); `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared. Full: 15 IDENTICAL, `UA3` DIFFERENT, as declared |
+| G-UEP network, both 2 h goldens (`prm_ab.py cmp --all-csv`) | IDENTICAL on every file |
+| G-US, Debug | 3,345 run, 3,315 passed, 30 skipped (fixture data), 0 failed; the new cases fail on the base |
+| ALGO00CAN 24 h as shipped, 3D RMS hours 2 to 6 / 7 to 24 (m), control then fixed | `_pppar_algo_static_gps_l1l2` 2.7225 / 2.8899 then 0.0134 / 0.0093; `_nlwl_guarded` 14.96 / 10.37 then 0.0665 / 0.0254; `_nlwl_unguarded` 2,906 / 2,241 then 0.141 / 0.052 |
+
+The fixed exe reproduces the one-line proof of the defect row byte for byte in `state_trace.csv` (ALGO00CAN 24 h, GCGO00USA 6 h) and matches the PPP-RTK-mode run of the same arm. The tests are `SlantIonospherePresenceTest` (every mode agrees across Q, table and export), `KalmanCompleteResetTest` (through a friend shim) and the rewritten family-table case. Evidence and run directories: the defect row in `docs/status/OPEN_ITEMS_CODE_DEFECTS.md`.
+
+Owed: section 11's UB7 line said the `_nlwl` configs were to be graded again after UB2; the figures above are a first reading, not that grade. The fix-and-hold tables of 2026-10-17 were taken on the displaced vehicle. Adoption is the author's, as for every shipped-config move.
+
+## 17. 2026-10-18: step UB2 gated against the main control and graded (branch `fix/ppp-iono-q`, `da97f3b`)
+
+Control `gnss_processor_w3base.exe` (main `30ca49e`), candidate `gnss_processor_w3ionoq.exe`, both Release. The candidate is the Release build of the committed tree: a second build from `da97f3b` matches it in `.text`, `.data`, `.pdata` and `.reloc` byte for byte and in all but 13 bytes of the file (link timestamp and debug directory).
+
+| gate | result |
+| --- | --- |
+| G-EP network (the G5 arm set against side w3base: 23 arms and the snapshot bytes) | all 23 arms and the snapshot bytes IDENTICAL, every CSV included |
+| G-UEP user, full set (16 arms) | 15 IDENTICAL with the two table rows masked; `UA3` DIFFERENT, as declared; all exit 0 |
+| G-UEP user, quick set (16 arms) | 14 IDENTICAL with the two table rows masked; `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared; all exit 0. Unmasked, the arms without an ionosphere row (`UA15` to `UA17`, `u_sbf`, `u_sbf_te`) are IDENTICAL and every other arm differs in the two table rows alone |
+| real time, SBF replay (3 arms, 99 artifacts) and network closed loop (1 arm, 39 artifacts) | every CSV and log IDENTICAL except wall-clock figures in `console.log` and `main_log.log`, which a second run of the control also moves |
+
+The declaration of section 16 holds: only the PPP uncombined arms move; no other arm or replay moves in a number.
+
+Grade of every moved config against the SSC marker (3D RMS in m, control then fixed; DELTA H removed from up; ALGO00CAN unless stated; 24 h):
+
+| config (ALGO00CAN unless stated), 24 h | hour 1 | hours 2 to 6 | hours 7 to 24 | mean east / north / up, hours 7 to 24 |
+| --- | --- | --- | --- | --- |
+| `_pppar_algo_static_gps_l1l2` (AR mode 1) | 2.701 then 0.395 | 2.722 then 0.0134 | 2.890 then 0.0093 | -0.681 / -0.215 / -2.800 then +0.004 / +0.005 / +0.004 |
+| `_nlwl_guarded` | 6.088 then 0.473 | 14.965 then 0.0665 | 10.365 then 0.0254 | -1.927 / -0.041 / +1.063 then -0.020 / +0.002 / +0.011 |
+| `_nlwl_unguarded` | 5.213 then 0.557 | 2,906 then 0.141 | 2,241 then 0.0522 | +93.6 / +91.9 / -1,992.7 then +0.051 / +0.001 / +0.007 |
+| `_nlwl_guarded2`, `_nlwl_unguarded2` (archived) | as `_nlwl_guarded`, `_nlwl_unguarded` | the same | the same | the same (`state_trace.csv` byte-identical to the unarchived pair, both exes) |
+| `_pppar_algo_static_gps_l1l2` at AR mode 0 | 2.701 then 0.395 | 2.755 then 0.0133 | 2.881 then 0.0092 | -0.437 / -0.291 / -2.833 then +0.004 / +0.005 / +0.004 |
+| GCGO00USA, same config at AR mode 0 | 7.046 then 0.248 | 6.731 then 0.0568 | 6.483 then 0.0658 | +0.973 / -0.322 / -6.375 then +0.032 / -0.048 / -0.011 |
+| GCGO00USA, same config at AR mode 1 | 7.046 then 0.248 | 6.691 then 0.0565 | 6.558 then 0.0657 | +0.908 / -0.293 / -6.467 then +0.032 / -0.048 / -0.011 |
+
+Every moved config improves in each of the 24 hours. After hour 1 the worst hour of a fixed run is 0.025 m (`_pppar_algo_static_gps_l1l2`), 0.100 m (`_nlwl_guarded`), 0.262 m (`_nlwl_unguarded`) and 0.093 m (GCGO00USA). Hourly rows: `D:/GnssProcessorSupport/gates/algo/w3/grade_tables.txt`. This is the grade that section 16's last paragraph owed for the `_nlwl` configs on the corrected vehicle; the fix-and-hold hour tables of 2026-10-17 remain to be repeated on it. Adoption is the author's.
