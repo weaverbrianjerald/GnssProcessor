@@ -5,13 +5,13 @@
 - **id:** NETCOST
 - **topic:** perf
 - **status:** open
-- **summary:** MEASURED and one change BUILT 2026-10-18. The GPS + Galileo epoch loop is 5.3 times the GPS-only loop on the field golden and 3.7 times on the sim golden (above-normal priority on a shared machine; a second round agrees within 0.1 on the ratio). Four sections carry 73 % of the field excess (assembly wall, covariance consumers, frame-diagnostic observers, reduce): dense algebra on the shared border, whose dimension doubles (214 to 418). `network.sparse_station_normals` (default off, UNVALIDATED, not armed) forms the station normals from the nonzero products in Eigen's own summation order: the field loop is 13.3 % shorter and the sim loop 10.6 %, identical on the 2 h runs and on the 23-arm gate with the knob on in every arm (24 of 24 identical). Optimizations 2 and 3 (estimates 12 to 13 % and 8 to 12 %) and the arming decision are owed.
+- **summary:** MEASURED and one change BUILT 2026-10-18. The GPS + Galileo epoch loop is 5.3 times the GPS-only loop on the field golden and 3.7 times on the sim golden (above-normal priority on a shared machine; a second round agrees within 0.1 on the ratio). Four sections carry 73 % of the field excess (assembly wall, covariance consumers, frame-diagnostic observers, reduce): dense algebra on the shared border, whose dimension doubles (214 to 418). `network.sparse_station_normals` (default off, UNVALIDATED, not armed) forms the station normals from the nonzero products in Eigen's own summation order: the field loop is 13.3 % shorter and the sim loop 10.6 %, identical on the 2 h runs and on the 23-arm gate with the knob on in every arm (24 of 24 identical). Optimizations 2 and 3 (estimates 12 to 13 % and 8 to 12 %) and the arming decision are owed. CHECKED 2026-10-18 (section 11, a separate rebuild): knob off identical to main on the 23-arm gate (24 of 24), the user side (16 of 16) and real time (wall-clock text only); knob on identical on the same 23 arms (24 of 24) and on four full 2 h pairs; the section shares reproduce (four sections 73.1 % on the field bed) while the wall ratio moves with the load (4.5 and 2.9 at a lighter load); the gain reproduces (field -13.3 %, sim -9.8 %). Correction: the goldens set `processing.eigen_threads` 20, and the sparse formation runs because the parallel network loop pins Eigen to one thread.
 - **source:** [GAD](GAD_galileo_adoption_2026-10-13.md) section 5 (cost row: field 2.9 and sim 2.0 times, a wall-time mean, per-section attribution owed); [NOM4](NOM4_network_object_model_finish_2026-10-15.md) section "the cost pair" (sim +3.3 %, field +0.7 %); the register item "GPS + Galileo cost" ([OPEN_ITEMS](../status/OPEN_ITEMS.md)).
 - **knobs / posture:** new `network.sparse_station_normals` (bool, default false, ledger UNVALIDATED, unarmed in both goldens); no other knob changed.
 - **dates in the text:** 2026-10-18
 - **hashes / run dirs:** base main `30ca49e`; branch `perf/netcost`; base exe `gnss_processor_netcost_base.exe` and candidate exe `gnss_processor_netcost_cand.exe` under `D:/GnssProcessorSupport/gates/exe/x64-Release`; scripts, tables, logs and gate summaries `D:/GnssProcessorSupport/gates/netcost/`; runs `D:/GnssProcessorSupport/runs_nom/_rap_nc_*`; tools `scripts/cost_attrib/`.
 
-**Outcome.** Question: where does the GPS + Galileo epoch time go, and can part of it be removed without moving a bit of output? Result: the loop is 5.3 times (field) and 3.7 times (sim) the GPS-only loop under this machine's load; 73 % of the field excess is four sections doing dense algebra on the shared border. The first of three optimizations (station normals from the nonzero entries, in Eigen's summation order) shortens the field loop 13.3 % and the sim loop 10.6 %, with no output byte moved (bars: identical, more than 5 % on the field golden: met). Standing: built default off, ledger UNVALIDATED, unarmed; the other two optimizations are owed (section 5), and the NOM4 sim cost of +3.3 % did not reproduce (section 10).
+**Outcome.** Question: where does the GPS + Galileo epoch time go, and can part of it be removed without moving a bit of output? Result: the loop is 5.3 times (field) and 3.7 times (sim) the GPS-only loop under this machine's load; 73 % of the field excess is four sections doing dense algebra on the shared border. The first of three optimizations (station normals from the nonzero entries, in Eigen's summation order) shortens the field loop 13.3 % and the sim loop 10.6 %, with no output byte moved (bars: identical, more than 5 % on the field golden: met). Standing: built default off, ledger UNVALIDATED, unarmed; the other two optimizations are owed (section 5), and the NOM4 sim cost of +3.3 % did not reproduce (section 10). A separate rebuild reproduced the identity, the gain and the section shares (section 11).
 
 ## 1. Question and method
 
@@ -407,3 +407,118 @@ The loops differ by 5 ms per epoch (0.5 %), inside the spread of the repeats (15
 - Quiet-machine ratios: the ratios of section 2 are read at 17 to 18 logical processors of foreign load. The GPS-only loop is the more serial one and is stretched more, so an idle machine reads lower than 5.3 and 3.7. A dated idle-machine pair (the same four arms) is owed.
 - Settled-state decomposition of the sparse formation (section 7): the formation that remains was not decomposed after the packed accumulation. The Eigen thread count other than one and the full-covariance weight path keep the dense products by construction.
 - NOM4 sim cost: section 10 (an idle-machine pair of the same executables, and the step ladder, if the difference is to be attributed).
+
+## 11. Independent check of 2026-10-18 (gate w3netcost)
+
+A second check of sections 2 and 6 to 8 by a separate rebuild and separate arms, run after the card was written.
+Executable under test: Release build of `perf/netcost` at `4075b6b` (the code is commit `1e3e857`) in worktree
+`netcost_chk` (branch `chk/netcost`, a clean checkout, target `gnss_processor`, no build errors), `gnss_processor_netcost_chk.exe` under
+`D:/GnssProcessorSupport/gates/exe/x64-Release` (sha256 `d0ae77f149fb947f`..., 21 326 848 bytes: the size of the
+executable of section 7 and other bytes). The gate sides `w3netcost` and `w3ncon` run byte copies of it. Control: side
+`w3base` (the executable of main `30ca49e`). Evidence and scratch: `D:/GnssProcessorSupport/gates/netcost_chk/`; arms
+`D:/GnssProcessorSupport/runs_nom/_rap_nc_ck1_*` (attribution rounds), `_rap_nc_ck2_*` (knob pairs), `_rap_nc_ck3a_*`
+and `_rap_nc_ck3b_*` (the NOM4 pair of section 10); the G5 sides `_rap_g5_w3netcost_*` (knob absent) and
+`_rap_g5_w3ncon_*` (knob on).
+
+### 11.1 Knob off, identical (gate)
+
+- **G5, 23 arms against `w3base`:** 24 IDENTICAL lines (23 arms and the snapshot bytes), summary
+  `D:/GnssProcessorSupport/gates/g7/summary_w3netcost.txt`, detail `D:/GnssProcessorSupport/gates/g5/gate_w3netcost/`.
+  The 2 h arms `f2` and `s2` are in it (`products.txt` 113 902 lines on the field bed). The four arms that exit 1
+  (`zero`, `joint`, `a4`, `gate`) exit 1 on `w3base`, `w3netcost` and `w3ncon`.
+- **User side (`uom_gate.py`, quick set, 16 arms against `w3base`):** 16 of 16 IDENTICAL.
+- **Real time against `w3base`:** every artifact identical except wall-clock text. Dr arms (`sbf`, `sbf_bssd`,
+  `sbf_te`): 96 identical artifact lines; the one differing line per arm is the "Real-time session ended" line of
+  `console.log` (ms wall: 1677, 2263, 3741 on the control and 4706, 2944, 7011 here). Cl arm: 37 identical artifact
+  lines; four lines each in `console.log` and `main_log.log` differ (RINEX ingestion seconds, the ARC LEDGER cost
+  line, the round-trip self-check seconds, the epoch-loop wall), and with those four masked both files are identical.
+  These are the lines the control itself shows against a rerun of its own executable.
+- **Debug build of the same tree:** the five tests of `NeqSparseStationNormalsTest` pass (38 s on this machine's load;
+  section 8 gives 9 s); the full suite is 3343 tests in 450 suites, 3313 passed, 30 skipped (fixture-gated), 0 failed.
+- **Scripts on the checked tree:** `docs_index_check.py`, `ledger_render.py --check`, `make_golden_config.py --verify`
+  (76 recommended knobs armed, 2 documented exceptions, 0 failures), `config_posture_check.py --verify-loader`
+  (0 coverage gaps), `nom_epoch_lint.py` and `nom_n4_verify.py --whole` pass.
+
+### 11.2 Knob on, identical
+
+- **G5 with `network.sparse_station_normals` true in every candidate arm, against `w3base` (key absent):** 24 IDENTICAL
+  lines (`D:/GnssProcessorSupport/gates/netcost_chk/summary_w3ncon.txt`). The arm configurations of the two sides
+  differ by that one key in all 24 arm directories (`armdiff_w3ncon.txt`); the comparison is the G5 comparison without
+  its arm-configuration part.
+- **The sparse formation ran in every arm.** Summed thread time of `est.addStation` (run-end D0 line), knob absent
+  against knob on, the two sides run at the same time: `f2` 350 to 218 s, `s2` 221 to 151 s, `bcl` 132 to 33 s,
+  `wcff` 51 to 2.0 s, `trc` 40 to 1.3 s, `gate` 11.2 to 0.3 s; the add counts are equal on the three sides in all 22 arms
+  that add stations (`zero` adds none). An identical result that came from the dense fallback would show no fall.
+- **Four full 2 h pairs** (section 11.4), each pair run at the same time on the checked executable, knob absent against
+  knob on, and the eight pair runs recorded in section 7 re-compared: `scripts/nom_td_gate.py --whole --no-arm-check`
+  gives RESULT IDENTICAL for all twelve comparisons.
+
+### 11.3 The attribution reproduces
+
+The four arms of section 1 in the order `ge g g ge` on each bed, one run at a time, on the checked executable
+(`abba.sh`, label `ck1`), with 5.5 to 11.0 (field) and 5.8 to 14.7 (sim) logical processors of foreign load, against
+17 to 18 in section 2. Share of the total excess, check against section 2:
+
+| section | field check | field card | sim check | sim card |
+| --- | --- | --- | --- | --- |
+| assembly wall | 27.8 % | 28.0 % | 29.9 % | 25.9 % |
+| covariance consumers | 21.9 % | 22.3 % | 15.4 % | 17.3 % |
+| frame-diagnostic observers | 13.2 % | 12.1 % | 15.3 % | 16.4 % |
+| reduce | 10.2 % | 11.1 % | 11.1 % | 12.4 % |
+| solve glue | 10.4 % | 10.8 % | 6.5 % | 7.4 % |
+| leveling harvest | 6.1 % | 6.1 % | 8.1 % | 8.3 % |
+| the four sections of section 2 | 73.1 % | 73.5 % | 71.7 % | 72.0 % |
+
+The shares of the six largest field sections agree within 1.2 points and the sim shares within 2 points except the
+assembly wall (+4.0). Several section ratios repeat on the field bed: covariance consumers 10.5 (10.65 in section 2),
+covariance inverse 7.6 (7.15), solve glue 6.16 (6.11), leveling harvest 3.68 (3.66); others move with the load:
+assembly wall 4.31 (6.21), reduce 5.33 (5.92). The wall ratios do not repeat, since section 1 gives them as ratios
+under that load: field 4.53 (330 and 1 492 ms per epoch) against 5.31, sim 2.95 (276 and 815) against 3.67. Both are
+lower at the lighter foreign load, the direction section 2 predicts for an idle machine. The two `ge` runs of the sim
+bed differ by 25 % (726 and 905 ms per epoch, at 5.8 and 12.7 foreign processors), so a single sim ratio is not a
+usable figure; the wall figures of the cost row are a function of the machine's load. Tables:
+`table_ck1_field.txt`, `table_ck1_sim.txt`.
+
+### 11.4 The gain reproduces
+
+Four pairs of 2 h goldens, knob absent against knob on, each pair run at the same time (`abba.sh`, label `ck2`, the
+launch order swapped in the second pair of each bed); 17.3 to 18.0 foreign logical processors throughout, the load of
+section 7. Mean loop ms per epoch, repeats in brackets:
+
+| bed | knob on | knob absent | loop |
+| --- | --- | --- | --- |
+| field | 1 870 (1 874, 1 866) | 2 158 (2 160, 2 156) | -13.3 % (section 7: -13.3 %) |
+| sim from 00:30:15 | 976 (978, 973) | 1 082 (1 088, 1 076) | -9.8 % (section 7: -10.6 %) |
+
+The assembly wall falls from 581 to 302 ms (field) and from 266 to 156 ms (sim); every other section differs by
+3 ms or less (inside its repeat spread in most cases), except the field leveling harvest, which reads 147.5 against
+139.7 ms (7.8 ms, 0.4 % of the loop, against repeat spreads of 2.3 and 3.4 ms). The bar of more than 5 % on the field golden is met; the sim
+figure is 0.8 points under section 7's. Tables:
+`table_ck2_field_on.txt`, `table_ck2_sim_on.txt`.
+
+### 11.5 The NOM4 pair (section 10)
+
+The executables of cards EP1 and N5 (`gnss_processor_ep1main.exe`, `gnss_processor_n5final.exe`) as two concurrent
+pairs on the sim golden from 00:30:15 (label `ck3a` for EP1, `ck3b` for N5; 5.3 to 6.1 foreign logical processors):
+loop 721 and 722 ms per epoch, ratio 1.00, repeats within 1 ms. Section 10's reading holds: the +3.3 % of card NOM4
+is not seen in the loop. Two things differ from section 10. The section mix moves by more than the loop does (assembly
+wall 231 to 198 ms, frame-diagnostic observers 101 to 117, stash status 5.2 to 11.7, leveling 53 to 57, roster 11 to
+15), so the section pair of section 10 is a load-dependent reading. The process CPU time of the N5 build is 6 % higher
+in both pairs (790 and 808 s against 750 and 758 s; kernel time 293 against 262 s), where section 10 read 1.00. Table:
+`table_ck3_n5_vs_ep1.txt`. The ladder over the kept step builds stays owed.
+
+### 11.6 Corrections and reading
+
+- **`processing.eigen_threads` is 20 in both goldens, not 1** (`config/golden/golden_field_refound.json` line 38, the
+  sim golden line 37), contrary to the statement in section 6. The sparse formation runs because the network driver
+  pins Eigen to one thread for the whole epoch loop when the stations run in parallel (`ApplicationNetwork.cpp`;
+  `setup.parallel_on` is `network.parallel_stations` with more stations than `network.parallel_min_stations` and more
+  than one OpenMP thread, and both goldens set `network.parallel_stations` true), so `Eigen::nbThreads()` reads 1
+  inside `addStation`. In an arm without parallel stations, `processing.eigen_threads` other than 1 (or 0 with more
+  than one OpenMP thread) keeps the dense path silently and the knob measures as no change. The identity results above
+  are unaffected; a serial arm of the knob needs `processing.eigen_threads` 1 to exercise it.
+- **Identical off and identical on.** The gain reproduces at the load of section 7 (13.3 % field, 9.8 % sim), the
+  attribution shares reproduce at a lighter load, and the wall ratio of the cost row is load-dependent (field 4.5 to
+  5.3, sim 2.9 to 3.7 across the rounds of section 2 and of this section).
+- **Nothing was armed, no golden was edited, no source was changed.** The arming decision and optimizations 2 and 3
+  stay owed as listed above.
