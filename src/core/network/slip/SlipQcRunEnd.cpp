@@ -269,9 +269,9 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
         log->info("Network (wind-up gap bridge): {} gap(s) in the bridged range [{:.0f}, {:.0f}) s "
                   "at {} station(s): {} BRIDGED ({} of them over a nonzero whole-cycle count, "
                   "the integer step a restart would have applied), {} refused (no satellite state "
-                  "{}, umbra {}, noon turn {}, step of half a cycle or more {}, closure with the "
-                  "epoch's own angle {}); {} gap(s) at or beyond the horizon restarted as before; "
-                  "{} virtual epoch(s) evaluated.",
+                  "{}, umbra {}, noon turn {}, half step of a quarter cycle or more {}, "
+                  "closure with the epoch's own angle {}); {} gap(s) at or beyond the horizon "
+                  "restarted as before; {} virtual epoch(s) evaluated.",
                   b.attempts, config_.phaseWindUpMaxGapS(), config_.phaseWindUpBridgeMaxGapS(),
                   n_sta, b.bridged, b.bridged_stepped, b.refused(), b.refused_no_state,
                   b.refused_umbra, b.refused_noon_turn, b.refused_step, b.refused_closure,

@@ -69,7 +69,7 @@ enum class Outcome {
     NoState,       ///< A virtual epoch had no satellite state, or a degenerate geometry.
     Umbra,         ///< The satellite was in the Earth's umbra at a virtual epoch.
     NoonTurn,      ///< The satellite was in a noon-turn window at a virtual epoch.
-    StepTooLarge,  ///< The angle moved by half a cycle or more over one step.
+    StepTooLarge,  ///< The angle moved by a quarter of a cycle or more over half a step.
     Closure        ///< The walk ended far from the raw angle of the current epoch.
 };
 

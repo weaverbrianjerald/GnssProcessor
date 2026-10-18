@@ -1605,9 +1605,9 @@ namespace GnssProcessor {
          * with the satellite state from the orbit products, unwrapping each step,
          * so the accumulated angle stays continuous and no restart is recorded.
          * The walk gives up, and the restart happens as before, in the Earth's
-         * umbra, in a GPS noon-turn window, when the angle moves half a cycle or
-         * more in one step, and when the walk disagrees with the epoch's own
-         * angle by a quarter of a cycle or more.  Configured via
+         * umbra, in a GPS noon-turn window, when the angle moves a quarter of a
+         * cycle or more over half a step, and when the walk disagrees with the
+         * epoch's own angle by a quarter of a cycle or more.  Configured via
          * @c estimation.phase_windup_gap_bridge.  Needs
          * @c estimation.accumulate_phase_windup: the loader switches it off, with
          * a warning, otherwise.
@@ -1631,8 +1631,10 @@ namespace GnssProcessor {
         /**
          * @brief Largest spacing of the virtual epochs of the wind-up gap bridge (seconds).
          *
-         * Default 30.0.  Each step is also evaluated at its middle, so the wind-up
-         * may move up to half a cycle per half step.  Configured via
+         * Default 30.0.  Each step is also evaluated at its middle, and the walk is
+         * refused when the angle moves a quarter of a cycle or more over either half
+         * step (a bridged step therefore moves less than half a cycle), so a larger
+         * spacing refuses the walk at a lower angle rate.  Configured via
          * @c estimation.phase_windup_bridge_step_s; accepted in (0, 120].
          *
          * @return Virtual epoch spacing in seconds.
