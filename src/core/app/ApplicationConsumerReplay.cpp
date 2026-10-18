@@ -181,17 +181,20 @@ int Application::runConsumerReplay() {
                                                        "default emitter parameters)");
     if (file_contract.present)
         log->info("Consumer replay: contract — datum receiver '{}', apriori '{}', "
-                  "disc threshold {:.4f} m, cbjump {}, clock_disc {}.",
+                  "disc threshold {:.4f} m, cbjump {}, clock_disc {}, wind-up mode {}.",
                   file_contract.decl.reference_receiver_id,
                   file_contract.apriori_product_id, file_contract.disc_threshold_m,
                   file_contract.code_bias_jump_test ? "on" : "off",
-                  file_contract.emit_clock_disc ? "on" : "off");
+                  file_contract.emit_clock_disc ? "on" : "off",
+                  file_contract.windup_mode.empty() ? "undeclared"
+                                                    : "'" + file_contract.windup_mode + "'");
 
     // Contract interlock (mirrors ApplicationRealtime's checkConsumerContract).
     // The expectation takes the file's own contract with the clock pivot cleared,
-    // then pins the wind-up model revision to the one this binary implements.
-    // The comparison therefore checks only the convention the code fixes, not the
-    // ones the operator chooses.  This driver grades already-written product
+    // then pins the wind-up model revision to the one this binary implements and
+    // the wind-up mode to the one this consumer runs.  The comparison therefore
+    // checks only the conventions the code and the consumer's configuration fix,
+    // not the ones the operator chooses.  This driver grades already-written product
     // streams, so it is the path most exposed to products written before the
     // wind-up sign fix (windup_id "nominal": satellite clocks and phase biases
     // that absorbed +2*phi_wu).  Replaying one into a corrected consumer is a
@@ -199,15 +202,30 @@ int Application::runConsumerReplay() {
     // misattributed to product quality unless it is named here.  A mismatch
     // warns and does not abort, so a legacy leg can still be graded on purpose,
     // but not silently.  See docs/SPEC_phase_windup_sign.md §8 item 2.
+    //
+    // The wind-up mode (off, fractional, accumulated) is a second, independent
+    // convention: the same construction applied in another mode is another phase
+    // frame, by whole cycles per satellite and signal, which the consumer's float
+    // ambiguities absorb with no residual trace.  The consumer's mode is read from
+    // its own configuration; the closed-loop derivation below copies that
+    // configuration, so the derived consumer runs the same mode.  A wire written
+    // before the product declared its mode cannot be verified and is reported as
+    // such, not refused.
     if (file_contract.present) {
         SbasisContract replay_expectation = file_contract;
         replay_expectation.decl.clock_pivot_sat.clear();   // pivots evolve
         replay_expectation.decl.windup_yaw_model_id = kWindUpYawModelId;
+        replay_expectation.windup_mode = windUpModeOf(config_);
         std::vector<std::string> mismatches;
         if (NetworkProductReader::checkContract(file_contract, replay_expectation,
                                                 &mismatches)) {
-            log->info("Consumer replay: S-basis contract verified (windup model '{}').",
-                      file_contract.decl.windup_yaw_model_id);
+            log->info("Consumer replay: S-basis contract verified (windup model '{}', "
+                      "wind-up mode {}).",
+                      file_contract.decl.windup_yaw_model_id,
+                      file_contract.windup_mode.empty()
+                          ? "undeclared by the wire, unverified; this consumer runs '" +
+                                replay_expectation.windup_mode + "'"
+                          : "'" + file_contract.windup_mode + "'");
         } else {
             std::string joined;
             for (const auto& m : mismatches) {
