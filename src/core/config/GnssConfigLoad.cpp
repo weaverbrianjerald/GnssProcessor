@@ -2329,6 +2329,7 @@ namespace GnssProcessor {
             model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
             model_corrections_.otl_from_sif                     = mc.value("otl_from_sif", false);
             model_corrections_.otl_nodal_corrections            = mc.value("otl_nodal_corrections", false);
+            model_corrections_.otl_remove_diurnal_translation   = mc.value("otl_remove_diurnal_translation", false);
             model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
             model_corrections_.enable_ocean_pole_tide           = mc.value("enable_ocean_pole_tide", false);
             model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", false);
@@ -2372,13 +2373,19 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            ? "on" : "off",
             model_corrections_.enable_code_phase_bias        ? "on" : "off",
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
-        if (model_corrections_.otl_from_sif || model_corrections_.otl_nodal_corrections) {
-            log->info("Ocean tide loading options: otl_from_sif={}, otl_nodal_corrections={}",
-                model_corrections_.otl_from_sif          ? "on" : "off",
-                model_corrections_.otl_nodal_corrections ? "on" : "off");
+        if (model_corrections_.otl_from_sif || model_corrections_.otl_nodal_corrections
+            || model_corrections_.otl_remove_diurnal_translation) {
+            log->info("Ocean tide loading options: otl_from_sif={}, otl_nodal_corrections={}, "
+                "otl_remove_diurnal_translation={}",
+                model_corrections_.otl_from_sif                   ? "on" : "off",
+                model_corrections_.otl_nodal_corrections          ? "on" : "off",
+                model_corrections_.otl_remove_diurnal_translation ? "on" : "off");
             if (!model_corrections_.enable_ocean_tide_loading)
-                log->warn("model_corrections.otl_from_sif / otl_nodal_corrections have no effect: "
-                    "enable_ocean_tide_loading is off.");
+                log->warn("model_corrections.otl_from_sif / otl_nodal_corrections / "
+                    "otl_remove_diurnal_translation have no effect: enable_ocean_tide_loading is off.");
+            if (model_corrections_.otl_remove_diurnal_translation && !model_corrections_.otl_from_sif)
+                log->warn("model_corrections.otl_remove_diurnal_translation has no effect without "
+                    "otl_from_sif: the translation table belongs to the SIF coefficients.");
         }
         log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
             model_corrections_.refine_emission_time ? "ENABLED" : "disabled");

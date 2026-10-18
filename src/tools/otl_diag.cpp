@@ -20,7 +20,7 @@
  * Usage:
  *   gnss_otl_diag series --sif <json> [--sif <json>] --station <key> [--ecef x y z]
  *                        --date YYYY-DDD [--hours 24] [--step 30]
- *                        [--mapping blq|legacy] [--nodal] [--out file.csv]
+ *                        [--mapping blq|legacy] [--nodal] [--drop-translation] [--out file.csv]
  *   gnss_otl_diag lookup --sif <json> [--sif <json>] --list <file> [--eot20 <nc>]
  *   gnss_otl_diag coeffs --sif <json> [--sif <json>] --station <key> [--ecef x y z]
  */
@@ -64,6 +64,7 @@ namespace {
         double step{ 30.0 };
         bool legacy{ false };
         bool nodal{ false };
+        bool drop_translation{ false };
     };
 
     bool parseArgs(int argc, char** argv, Args& a) {
@@ -84,6 +85,7 @@ namespace {
             else if (k == "--hours") a.hours = std::atof(next("--hours"));
             else if (k == "--step") a.step = std::atof(next("--step"));
             else if (k == "--nodal") a.nodal = true;
+            else if (k == "--drop-translation") a.drop_translation = true;
             else if (k == "--mapping") {
                 const std::string m = next("--mapping");
                 if (m == "legacy") a.legacy = true;
@@ -162,8 +164,10 @@ namespace {
         const Eigen::Vector3d pos = a.has_ecef ? a.ecef : si->approximate_coordinates;
 
         OceanTideModel model(lm);
-        model.setStationCoefficients(otlCoefficientsFromSif(
-            *si, a.legacy ? SifOtlHorizontal::LegacyShifted : SifOtlHorizontal::BlqRows));
+        OtlStationCoefficients coeffs = otlCoefficientsFromSif(
+            *si, a.legacy ? SifOtlHorizontal::LegacyShifted : SifOtlHorizontal::BlqRows);
+        if (a.drop_translation) removeOtlDiurnalTranslation(coeffs, pos);
+        model.setStationCoefficients(coeffs);
         model.setNodalCorrections(a.nodal);
         const Coordinates::Llh llh = Coordinates::ecefToLlh(pos);
 
@@ -226,7 +230,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr,
                      "usage: gnss_otl_diag series|lookup|coeffs --sif <json> [--sif <json>] ...\n"
                      "  series --station <key> [--ecef x y z] --date YYYY-DDD [--hours 24] [--step 30]\n"
-                     "         [--mapping blq|legacy] [--nodal]\n"
+                     "         [--mapping blq|legacy] [--nodal] [--drop-translation]\n"
                      "  every mode: [--out file] writes the CSV to a file (the library logs to stdout)\n"
                      "  lookup --list <file of 'x y z marker'> [--eot20 <nc>]\n"
                      "  coeffs --station <key> [--ecef x y z]\n");
