@@ -102,7 +102,7 @@ Arming or disarming the census in the goldens is the author's decision; the gold
 
 ## 7. Owed
 
-- The 2 h check above, on both beds.
+- The 2 h check above, on both beds. (Done on 2026-10-18; the result is section 8. The two items below remain owed.)
 - A positive control for the block tier: a fault of the kind it can see (opposite-sign cycle slips, code multipath), injected with `rapid_arm.py` ops, graded against the row tier, so the block-only fraction can be read against a known answer.
 - The ignition population: the first sweep flags most of the sim (623 of 891). A sweep is read from the epoch at which sigma0 is warm; a guard that withholds events before then is an output change and is not part of this card.
 
