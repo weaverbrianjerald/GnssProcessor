@@ -452,6 +452,11 @@ target_link_libraries(gnss_meas3_xcheck PRIVATE gnss_core)
 add_executable(gnss_atx_diag src/tools/atx_diag.cpp)
 target_link_libraries(gnss_atx_diag PRIVATE gnss_core)
 
+# Ocean tide loading inspector - SIF lookup, coefficient table and ENU displacement
+# series from the production OceanTideModel (input of scripts/otl_compare/otl_gate.py).
+add_executable(gnss_otl_diag src/tools/otl_diag.cpp)
+target_link_libraries(gnss_otl_diag PRIVATE gnss_core)
+
 # GNSS exam dataset simulator — synthesizes a multi-GNSS RINEX-3.04 observation
 # file (+ truth answer key, in later milestones) for the GNSS/Geodesy qualifying
 # exam, then verifies the processor recovers the injected truth.  Links
@@ -632,6 +637,7 @@ add_executable(gnss_tests
     tests/test_station_info.cpp
     tests/test_station_info_guards.cpp
     tests/test_station_info_seasonal.cpp
+    tests/test_otl_sif_source.cpp
     tests/test_antenna_radome_fallback.cpp
     tests/test_antenna_eccentricity.cpp
     tests/test_station_marker_to_arp.cpp

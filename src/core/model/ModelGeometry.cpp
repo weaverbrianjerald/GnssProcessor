@@ -98,8 +98,10 @@ namespace GnssProcessor {
             log_manager_.getLogger("geometry")->info("Built orbit index for {} satellites", orbit_index_.size());
 
             // Ocean tidal loading source precedence: SIF → BLQ → EOT20 grid → zero.
-            //   1. If station info is enabled and the SIF entry for the marker
-            //      carries OTL, use its 3-component FES2014b coefficients.
+            //   1. If station info is enabled (or model_corrections.otl_from_sif is
+            //      on, which loads the SIF registry for this alone) and the SIF entry
+            //      for the marker carries OTL, use its 3-component FES2014b
+            //      coefficients.
             //   2. Else, if a BLQ file is configured and the station name is
             //      found in it, use the station-specific Onsala coefficients
             //      (includes horizontal components).
@@ -151,7 +153,20 @@ namespace GnssProcessor {
             const std::string station_name = rinex_parser_.getHeader().marker_name;
             const Eigen::Vector3d station_ecef = rinex_parser_.getApproxPositionXyz();
 
+            // Nodal factors and the UTC Greenwich argument (default off: the original
+            // evaluation, bit for bit).
+            // The RINEX marker field is fixed width; the run-start lines of otl_from_sif
+            // print it without the padding.
+            const std::size_t mk_b = station_name.find_first_not_of(' ');
+            const std::string marker_trim = (mk_b == std::string::npos)
+                ? std::string() : station_name.substr(mk_b, station_name.find_last_not_of(' ') - mk_b + 1);
+            const bool nodal = config_.getModelCorrections().otl_nodal_corrections;
+            corrections_.setOceanTideNodalCorrections(nodal);
+            if (nodal)
+                log->info("OTL: nodal corrections and UTC Greenwich argument on");
+
             bool loaded = false;
+            const char* source = "SIF";   // names the source of the run-start line under otl_from_sif
 
             // Highest fidelity: per-station FES2014b coefficients from a SIF.
             // Unlike the EOT20 grid (radial only), the SIF carries all three
@@ -162,35 +177,44 @@ namespace GnssProcessor {
             // confirms a 4-char prefix match (find() ignores it when unusable), so
             // a marker missing from the SIF never borrows a distant station's
             // coefficients.
-            if (config_.enableStationInfo()) {
+            //
+            // Horizontal mapping: otl_from_sif reads the SIF east and north columns as
+            // the BLQ west and south rows (the NGS M-PAGES reading), which is what the
+            // file holds.  The station-info subsystem alone keeps its original reading
+            // (true east and north, phases + 180 degrees), which reverses the
+            // horizontal vector, so that runs that armed it stay unchanged.
+            const bool otl_from_sif = config_.getModelCorrections().otl_from_sif;
+            if (config_.enableStationInfo() || otl_from_sif) {
                 if (const auto sif = config_.getStationInfo()) {
                     const StationInfo* si = sif->find(station_name, &station_ecef);
                     if (si && si->has_otl) {
-                        OtlStationCoefficients coeffs;
-                        coeffs.station_name = si->id;
-                        for (std::size_t k = 0; k < 11; ++k) {
-                            const SifOtlConstituent& c = si->otl[k];
-                            OtlConstituentCoeffs& d = coeffs.constituents[k];
-                            d.amp_up    = c.up_amp;     d.phase_up    = c.up_phase;
-                            d.amp_west  = c.east_amp;   d.phase_west  = c.east_phase  + 180.0;
-                            d.amp_south = c.north_amp;  d.phase_south = c.north_phase + 180.0;
-                        }
-                        coeffs.valid = true;
+                        const OtlStationCoefficients coeffs = otlCoefficientsFromSif(
+                            *si, otl_from_sif ? SifOtlHorizontal::BlqRows
+                                              : SifOtlHorizontal::LegacyShifted);
                         corrections_.setOceanTideCoefficients(coeffs);
                         log->info("OTL: loaded 3-component FES2014b coefficients from SIF for "
                                   "marker '{}' (matched {}); M2 up-amp={:.4f} m",
                                   station_name, si->id, coeffs.constituents[0].amp_up);
                         log_manager_.getLogger("main_log")->info(
-                            "Ocean tide loading source: SIF 3-component FES2014b (marker '{}' -> {})",
-                            station_name, si->id);
+                            "Ocean tide loading source: SIF 3-component FES2014b{} (marker '{}' -> {})",
+                            otl_from_sif ? ", BLQ rows" : "",
+                            otl_from_sif ? marker_trim : station_name, si->id);
                         loaded = true;
+                    } else if (otl_from_sif) {
+                        log->warn("OTL: SIF has no ocean tide loading block for marker '{}'{}; "
+                                  "trying BLQ, then EOT20", station_name,
+                                  si ? " (matched a record without one)" : " (no record matched)");
                     }
+                } else if (otl_from_sif) {
+                    log->warn("OTL: otl_from_sif is on but no SIF registry is loaded "
+                              "(files.station_info_path(s) or <data>/static/sif/); trying BLQ, then EOT20");
                 }
             }
 
             if (!loaded && !otl_blq_path.empty() && !station_name.empty()) {
                 if (corrections_.loadOceanTideFromBLQ(otl_blq_path.string(), station_name)) {
                     log->info("OTL: loaded BLQ coefficients for station '{}'", station_name);
+                    source = "BLQ";
                     loaded = true;
                 } else {
                     log->warn("OTL: BLQ '{}' had no entry for station '{}'; trying EOT20 fallback",
@@ -204,6 +228,7 @@ namespace GnssProcessor {
                 && station_ecef.allFinite() && station_ecef.norm() > 1e6) {
                 if (corrections_.loadOceanTideFromEot20(eot20_path.string(), station_ecef)) {
                     log->info("OTL: synthesized coefficients from EOT20 grid '{}'", eot20_path.string());
+                    source = "EOT20 grid (radial only)";
                     loaded = true;
                 } else {
                     log->warn("OTL: EOT20 synthesis failed for '{}'; OTL displacement will be zero",
@@ -213,6 +238,14 @@ namespace GnssProcessor {
 
             if (!loaded) {
                 log->info("OTL: no BLQ or EOT20 source available; ocean tidal loading disabled (zero displacement)");
+            }
+
+            // Under otl_from_sif the run start lists every station's source, so a station
+            // the SIF does not serve is visible in the main log as well.
+            if (otl_from_sif && !(loaded && std::string(source) == "SIF")) {
+                log_manager_.getLogger("main_log")->info(
+                    "Ocean tide loading source: {} (marker '{}')",
+                    loaded ? source : "none, zero displacement", marker_trim);
             }
         }
 

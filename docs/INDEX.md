@@ -168,6 +168,10 @@ Standing documents (not split this pass):
 - [SPEC_pd_safe_dd_fold.md](SPEC_pd_safe_dd_fold.md)
 - [network_ambiguity_resolution_design.md](network_ambiguity_resolution_design.md)
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[OTL](refound/OTL_ocean_tide_loading_source_2026-10-16.md), ocean tide loading from the SIF registry alone and the
+nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default off and checked, identical off, consumer +6.5 mm, census median -2.0 mm; arming open).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

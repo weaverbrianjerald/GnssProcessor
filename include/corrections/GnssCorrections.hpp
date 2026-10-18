@@ -509,6 +509,14 @@ namespace GnssProcessor {
         void setOceanTideCoefficients(const OtlStationCoefficients& coeffs);
 
         /**
+         * @brief Switch the ocean tide nodal corrections and the UTC Greenwich argument.
+         * @param on True to apply the nodal factors and take the Greenwich argument from
+         *           UTC (see @c OceanTideModel::setNodalCorrections); false keeps the
+         *           original evaluation bit for bit.
+         */
+        void setOceanTideNodalCorrections(bool on);
+
+        /**
          * @brief Load OTL coefficients from a BLQ file for a station.
          * @param blq_path Path to the BLQ file.
          * @param station_name Station name to search for.

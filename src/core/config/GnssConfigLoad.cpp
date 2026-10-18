@@ -2251,6 +2251,8 @@ namespace GnssProcessor {
             model_corrections_.enable_shapiro_delay             = mc.value("enable_shapiro_delay", true);
             model_corrections_.enable_solid_earth_tide          = mc.value("enable_solid_earth_tide", true);
             model_corrections_.enable_ocean_tide_loading        = mc.value("enable_ocean_tide_loading", true);
+            model_corrections_.otl_from_sif                     = mc.value("otl_from_sif", false);
+            model_corrections_.otl_nodal_corrections            = mc.value("otl_nodal_corrections", false);
             model_corrections_.enable_pole_tide                 = mc.value("enable_pole_tide", true);
             model_corrections_.enable_ocean_pole_tide           = mc.value("enable_ocean_pole_tide", false);
             model_corrections_.enable_atmospheric_loading       = mc.value("enable_atmospheric_loading", false);
@@ -2294,6 +2296,14 @@ namespace GnssProcessor {
             model_corrections_.enable_phase_windup            ? "on" : "off",
             model_corrections_.enable_code_phase_bias        ? "on" : "off",
             model_corrections_.enable_atx_frequency_fallback  ? "on" : "off");
+        if (model_corrections_.otl_from_sif || model_corrections_.otl_nodal_corrections) {
+            log->info("Ocean tide loading options: otl_from_sif={}, otl_nodal_corrections={}",
+                model_corrections_.otl_from_sif          ? "on" : "off",
+                model_corrections_.otl_nodal_corrections ? "on" : "off");
+            if (!model_corrections_.enable_ocean_tide_loading)
+                log->warn("model_corrections.otl_from_sif / otl_nodal_corrections have no effect: "
+                    "enable_ocean_tide_loading is off.");
+        }
         log->info("Emission-time refinement: {} (second-pass slant-ZHD + IF-ATX subtraction in geometry pipeline)",
             model_corrections_.refine_emission_time ? "ENABLED" : "disabled");
         // With the wind-up correction modeled but not accumulated, the raw atan2
@@ -2644,7 +2654,12 @@ namespace GnssProcessor {
                 jval<std::string>(json, "files.station_info_path", "station_info_path", "");
             if (!single.empty()) station_info_paths_.emplace_back(single);
 
-            if (enable_station_info_) {
+            // The registry is also loaded for model_corrections.otl_from_sif (while
+            // ocean tide loading is on), which takes the ocean tide loading block from
+            // it without arming the rest of the station-info subsystem (a-priori
+            // position, ocean pole tide).
+            if (enable_station_info_
+                || (model_corrections_.otl_from_sif && model_corrections_.enable_ocean_tide_loading)) {
                 // Auto-discovery: glob <internal_data_root>/static/sif/*.json.
                 // SIFs are date-independent static assets (like the ATX and
                 // opole grid), so they don't go through PathResolver's
@@ -2673,8 +2688,9 @@ namespace GnssProcessor {
                     log->info("Station info: loaded {} stations from {} SIF file(s)",
                               total, station_info_paths_.size());
                 } else {
-                    log->warn("enable_station_info=true but no SIF stations were loaded "
+                    log->warn("{}=true but no SIF stations were loaded "
                               "(checked {} path(s) under {})",
+                              enable_station_info_ ? "enable_station_info" : "otl_from_sif",
                               station_info_paths_.size(),
                               (internal_data_root_ / "static" / "sif").string());
                 }
