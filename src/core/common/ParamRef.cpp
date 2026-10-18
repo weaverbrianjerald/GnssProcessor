@@ -92,6 +92,15 @@ bool operator<(const ParamClass& a, const ParamClass& b) {
     return a.signal_b < b.signal_b;
 }
 
+bool operator==(const ParamClass& a, const ParamClass& b) {
+    return a.kind == b.kind && a.form == b.form && a.sys == b.sys && a.signal == b.signal
+        && a.signal_b == b.signal_b && a.band == b.band && a.band_b == b.band_b;
+}
+
+bool operator==(const ParamInstanceId& a, const ParamInstanceId& b) {
+    return a.cls == b.cls && a.sat == b.sat && a.glo_slot == b.glo_slot && a.station == b.station;
+}
+
 bool operator<(const RxCbKey& a, const RxCbKey& b) {
     // The state key is "<system name>_<rest>": the name decides first (no name is a prefix
     // of another, so the text after the name is compared only for one constellation).
@@ -296,6 +305,126 @@ ParamRef phaseColourRef(SatId sat) {
     r.kind = NetworkParamKind::PhaseColour;
     r.sat  = sat;
     return r;
+}
+
+// =======================================================================
+// Reference and instance
+// =======================================================================
+
+ParamRef paramRefOf(const ParamInstanceId& id, std::uint8_t axis) {
+    using PK = NetworkParamKind;
+    const ParamClass& c = id.cls;
+    switch (c.kind) {
+        case PK::RxPosition:   return rxPositionRef(axis);
+        case PK::Zwd:          return zwdRef();
+        case PK::RxClock:      return c.form == ParamForm::Isb ? isbRef(c.sys) : rxClockRef();
+        case PK::SlantIono:    return slantIonoRef(id.sat);
+        case PK::PhaseColour:  return phaseColourRef(id.sat);
+        case PK::SatClock:     return satClockRef(id.sat);
+        case PK::SatPhaseBias: return satPhaseBiasRef(id.sat, c.signal);
+        case PK::SatCodeBias:
+            return c.form == ParamForm::IfPair
+                       ? satCodeBiasIfRef(id.sat, SignalPair{c.signal, c.signal_b})
+                       : satCodeBiasRef(id.sat, c.signal);
+        case PK::RxPhaseBias:  return rxPhaseBiasRef(c.sys, c.signal);
+        case PK::RxCodeBias: {
+            RxCbKey key;
+            key.sys      = c.sys;
+            key.form     = c.form;
+            key.band     = c.band;
+            key.signal   = c.signal;
+            key.glo_slot = id.glo_slot;
+            return rxCodeBiasRef(key);
+        }
+        case PK::Ambiguity:
+            switch (c.form) {
+                case ParamForm::IfPair:     return ambiguityIfRef(id.sat, SignalPair{c.signal, c.signal_b});
+                case ParamForm::NarrowLane: return narrowLaneRef(id.sat, c.band);
+                case ParamForm::WideLane:   return wideLaneRef(id.sat, c.band, c.band_b);
+                default:                    return ambiguityRef(id.sat, c.signal);
+            }
+        case PK::VtecSh:
+            break;
+    }
+    return ParamRef{};
+}
+
+ParamInstanceId paramInstanceOf(const ParamRef& ref, StationId station) {
+    using PK = NetworkParamKind;
+    ParamInstanceId id;
+    id.station = station;
+    ParamClass& c = id.cls;
+    c.kind = ref.kind;
+    c.form = ref.form;
+    // A satellite-keyed kind carries its constellation in the satellite.
+    auto satellite = [&]() {
+        id.sat = ref.sat;
+        c.sys  = ref.sat.sys;
+    };
+    switch (ref.kind) {
+        case PK::RxPosition:
+        case PK::Zwd:
+        case PK::VtecSh:
+            break;
+        case PK::RxClock:
+            if (ref.form == ParamForm::Isb) c.sys = ref.sys;
+            break;
+        case PK::SlantIono:
+        case PK::PhaseColour:
+        case PK::SatClock:
+            satellite();
+            break;
+        case PK::SatPhaseBias:
+            satellite();
+            c.signal = ref.signal;
+            break;
+        case PK::SatCodeBias:
+            satellite();
+            c.signal = ref.signal;
+            if (ref.form == ParamForm::IfPair) c.signal_b = ref.signal_b;
+            break;
+        case PK::Ambiguity:
+            satellite();
+            switch (ref.form) {
+                case ParamForm::IfPair:
+                    c.signal   = ref.signal;
+                    c.signal_b = ref.signal_b;
+                    break;
+                case ParamForm::NarrowLane:
+                    c.band = ref.band;
+                    break;
+                case ParamForm::WideLane:
+                    c.band   = ref.band;
+                    c.band_b = ref.band_b;
+                    break;
+                default:
+                    c.signal = ref.signal;
+                    break;
+            }
+            break;
+        case PK::RxPhaseBias:
+            c.sys    = ref.sys;
+            c.signal = ref.signal;
+            break;
+        case PK::RxCodeBias:
+            c.sys = ref.sys;
+            switch (ref.form) {
+                case ParamForm::GloSlotIfb:
+                    id.glo_slot = ref.glo_slot;
+                    c.band      = ref.band;
+                    break;
+                case ParamForm::Ifb:
+                    c.band = ref.band;
+                    break;
+                case ParamForm::Isc:
+                    c.signal = ref.signal;
+                    break;
+                default:
+                    break;
+            }
+            break;
+    }
+    return id;
 }
 
 } // namespace GnssProcessor

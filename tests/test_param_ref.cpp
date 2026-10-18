@@ -29,6 +29,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "network/assembly/ParamInventory.hpp"   // classifyStateColumn
+#include "measurement/UserParamView.hpp"          // userKey
 
 #include <algorithm>
 #include <filesystem>
@@ -429,4 +430,85 @@ TEST(ParamRefTest, TheKindsAndFormsKeepTheirTableNames) {
     EXPECT_EQ(static_cast<std::size_t>(NetworkParamKind::RxPosition) + 1, kNetworkParamKindCount);
     EXPECT_STREQ(paramFormName(ParamForm::None), "");
     EXPECT_STREQ(paramFormName(ParamForm::GloSlotIfb), "slot");
+}
+
+// ---------------------------------------------------------------------------
+// Reference and instance
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// A key of the station's state manager, classified, converted to a reference and back, and
+/// rendered as the key it came from.
+void expectConverts(StateContainer container, const std::string& key, bool renders_back = true,
+                    std::uint8_t axis = 0) {
+    const auto id = classifyStateColumn(container, key);
+    ASSERT_TRUE(id.has_value()) << key;
+    const ParamRef ref = paramRefOf(*id, axis);
+    EXPECT_EQ(ref.kind, id->cls.kind) << key;
+    EXPECT_EQ(paramInstanceOf(ref), *id) << key << " -> " << describe(ref);
+    if (renders_back) EXPECT_EQ(userKey(ref), key) << describe(ref);
+}
+
+} // namespace
+
+TEST(ParamRefTest, AClassifiedInstanceConvertsToItsReferenceAndBack) {
+    using SC = StateContainer;
+    const SignalUniverse u = classifiedUniverse();
+    for (const auto& [sys, signals] : u) {
+        for (const int prn : {5, 17}) {
+            const SatId sat{sys, prn};
+            const std::string s = sat.str();
+            expectConverts(SC::IonosphereStates, K::makeIonosphereKey(s));
+            expectConverts(SC::PhaseColourStates, s);
+            expectConverts(SC::SatClockStates, K::makeSatClockKey(s));
+            for (const SignalId& sig : signals) {
+                expectConverts(SC::Ambiguities, K::makeAmbiguityKey(s, sig.obsCode(ObsType::Phase)));
+                expectConverts(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey(s, sig.obsCode(ObsType::Phase)));
+                expectConverts(SC::SatBiasStates, K::makeSatBiasKey(s, sig.obsCode(ObsType::Code)));
+            }
+            for (std::size_t i = 0; i + 1 < signals.size(); i += 2) {
+                const SignalPair pair{signals[i], signals[i + 1]};
+                expectConverts(SC::Ambiguities, K::makeAmbiguityKey(s, pair.str(ObsType::Phase)));
+            }
+            const std::vector<FrequencyBand> bands = keyBands(sys);
+            for (const FrequencyBand a : bands) {
+                expectConverts(SC::Ambiguities, K::makeNlAmbiguityKey(s, digitFor(sys, a)));
+                for (const FrequencyBand b : bands)
+                    if (a < b)
+                        expectConverts(SC::Ambiguities,
+                                       K::makeWlAmbiguityKey(s, digitFor(sys, a), digitFor(sys, b)));
+            }
+        }
+        expectConverts(SC::SystemTimeOffsetStates, K::makeSystemTimeOffsetKey(systemName(sys)), false);
+        for (const SignalId& sig : signals)
+            expectConverts(SC::ReceiverPhaseBiasStates,
+                           K::makeReceiverPhaseBiasKey(systemName(sys), sig.obsCode(ObsType::Phase)));
+    }
+    for (const RxCbKey& k : rxCbKeys(u)) {
+        expectConverts(SC::CodeBiasStates, renderRxCb(k));
+        // The typed key is the reference's own fields.
+        const auto id = classifyStateColumn(SC::CodeBiasStates, renderRxCb(k));
+        ASSERT_TRUE(id.has_value());
+        EXPECT_EQ(rxCbKeyOf(paramRefOf(*id)), k) << renderRxCb(k);
+    }
+    for (std::uint8_t axis = 0; axis < 3; ++axis) {
+        expectConverts(SC::PositionIndex, "", false, axis);
+        EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::PositionIndex, ""), axis), rxPositionRef(axis));
+    }
+    expectConverts(SC::ClockIndex, "", false);
+    expectConverts(SC::TropoIndex, "", false);
+    EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::ClockIndex, "")), rxClockRef());
+    EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::TropoIndex, "")), zwdRef());
+}
+
+TEST(ParamRefTest, TheStationOfAnInstanceTakesPartInItsEquality) {
+    const ParamRef r = ambiguityRef(*SatId::parse("G05"), SignalId{System::GPS, '1', 'C'});
+    const ParamInstanceId a = paramInstanceOf(r, StationId{3});
+    ParamInstanceId b = a;
+    EXPECT_EQ(a, b);
+    b.station = StationId{4};
+    EXPECT_FALSE(a == b);
+    EXPECT_EQ(paramInstanceOf(r).station.index, -1);
+    EXPECT_TRUE(a.cls == paramInstanceOf(r).cls);
 }

@@ -180,6 +180,14 @@ struct ParamClass {
 bool operator<(const ParamClass& a, const ParamClass& b);
 
 /**
+ * @brief Equality of two classes (all fields).
+ * @param a First class.
+ * @param b Second class.
+ * @return True when every field is equal.
+ */
+bool operator==(const ParamClass& a, const ParamClass& b);
+
+/**
  * @brief The identity of one parameter instance: its class plus the subject fields
  *        that a table line sums over.
  *
@@ -195,6 +203,14 @@ struct ParamInstanceId {
     int        glo_slot{0};  ///< The GLONASS FDMA slot (form GloSlotIfb).
     StationId  station{};    ///< The station.
 };
+
+/**
+ * @brief Equality of two instances (all fields, the station included).
+ * @param a First instance.
+ * @param b Second instance.
+ * @return True when the class, satellite, GLONASS slot and station are equal.
+ */
+bool operator==(const ParamInstanceId& a, const ParamInstanceId& b);
 
 // =======================================================================
 // The order of the station-local state keys
@@ -510,5 +526,36 @@ ParamRef wideLaneRef(SatId sat, FrequencyBand ref_band, FrequencyBand band);
  * @return The reference (kind phase_colour).
  */
 ParamRef phaseColourRef(SatId sat);
+
+/**
+ * @brief The reference of a classified instance: the identity the observation equation and
+ *        the station's parameter set name it by.
+ *
+ * Fills the fields the instance's (kind, form) carries (the table of @ref ParamRef) and
+ * leaves the others at their defaults.  The station of @p id is dropped.  The receiver
+ * code-bias forms and the satellite-keyed forms with no typed reference (a kind with no
+ * form here) convert as their form says; a class the table does not list (kind
+ * @c VtecSh) gives the default reference.
+ *
+ * @param id   The instance (as @c classifyStateColumn reads it).
+ * @param axis Component of the receiver position (kind rx_position only: the classifier
+ *             reads the three position columns alike).
+ * @return The reference.
+ */
+ParamRef paramRefOf(const ParamInstanceId& id, std::uint8_t axis = 0);
+
+/**
+ * @brief The instance of a reference: the class, satellite and GLONASS slot a table line
+ *        and a record are made of.
+ *
+ * The inverse of @ref paramRefOf for every reference the factories above build and a
+ * classified instance converts to: the constellation of the class is the satellite's for a
+ * satellite-keyed kind and the reference's own otherwise.
+ *
+ * @param ref     The reference.
+ * @param station The instance's station.
+ * @return The instance.
+ */
+ParamInstanceId paramInstanceOf(const ParamRef& ref, StationId station = StationId{});
 
 } // namespace GnssProcessor
