@@ -627,6 +627,7 @@ add_executable(gnss_tests
     tests/test_planetary_cio.cpp
     tests/test_planetary_sun_frame.cpp
     tests/test_orbit_enhancements.cpp
+    tests/test_noon_turn_attitude.cpp
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
     tests/test_station_info_guards.cpp

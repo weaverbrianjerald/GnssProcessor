@@ -179,3 +179,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   6.4 mm, covered stations bit-identical; tools/sif_propagate and pyviz SifTruth moved in step. Same-build golden
   identity PASSED 2026-10-17 (field and sim 2 h arms identical to a main 4318fe3 control in every product, trace
   and log); the merge is owed.
+- [NTA](NTA_noon_turn_attitude_2026-10-16.md): open, 2026-10-16: one satellite attitude model for the PCO and the
+  wind-up (the wind-up consumes `SatAttitude`, bit-identical off); `computeBeta`'s sign validated against an
+  independent computation and against cssrlib (336 rows, seven satellites, both signs, 0.010 deg, no sign mismatch); GPS Block IIF and IIR
+  noon turns (Kouba 2009) behind `processing.enable_noon_turn_attitude`, BUILT default off, UNVALIDATED; the goldens
+  (00 to 06 UT) hold no GPS noon turn (smallest |beta| 5.74 deg). CHECKED 2026-10-17: beta sign re-derived (two references, 1536 rows each, no sign error); knob off identical to main on both golden 2 h arms; graded 2 h windows, knob on against off: G25 phase residual 7.09 to 4.86 mm, held-out consumer hour-2 p50 17.8 to 15.6 mm, G26 and G01 within 0.2 mm; still UNVALIDATED, not armed.
