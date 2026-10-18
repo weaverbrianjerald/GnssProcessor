@@ -242,6 +242,7 @@ add_library(gnss_core STATIC
     src/core/network/solve/Estimator.cpp
     src/core/network/carry/InvariantCarryDriver.cpp
     src/core/network/solve/Sbasis.cpp
+    src/core/network/solve/PivotElection.cpp
     src/core/network/assembly/ExtraBandScope.cpp
     src/core/network/assembly/SecondCodeScope.cpp
     src/core/network/assembly/SecondPhaseScope.cpp
@@ -564,6 +565,7 @@ add_executable(gnss_tests
     tests/network/test_network_bias_admission.cpp
     tests/network/test_network_rank_gate.cpp
     tests/network/test_network_sbasis_complete.cpp
+    tests/network/test_pivot_election.cpp
     tests/test_datum_graph_census.cpp
     tests/network/test_station_block_audit.cpp
     tests/test_card4_emit_rebase.cpp

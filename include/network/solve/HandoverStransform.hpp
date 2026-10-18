@@ -357,11 +357,12 @@ void networkHandoverStransform(NetworkRunContext& ctx,
 struct NetworkRunEndView;
 
 /**
- * @brief Run-end report: satellite health (HLT) and clock-pivot handovers with their S-transform.
+ * @brief Run-end report: satellite health (HLT), the pivot election and clock-pivot handovers with their S-transform.
  *
  * The subsystem's one row of kNetworkRunEndReports.  Its sections, defined
  * beside it in HandoverStransform.cpp, print in this order, each gated on its own knob:
  *   - networkSatHealthRunEnd: broadcast satellite health (HLT).
+ *   - networkPivotElectionRunEnd: the clock pivot election by predicted coverage.
  *   - networkPivotHandoverRunEnd: clock-pivot handovers and their S-transform.
  *
  * @param v The run at its end (network/runend/RunEnd.hpp).

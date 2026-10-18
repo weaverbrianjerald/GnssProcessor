@@ -747,6 +747,11 @@ namespace GnssProcessor {
         // --- Broadcast satellite health on the network path.  SOLVE-AFFECTING and
         // FINGERPRINTED.
         int    sat_health{};         ///< network.sat_health: 0 off, 1 "pivot" (the election passes over an unhealthy satellite), 2 "exclude" (the setup door removed its observations)
+        // --- Clock pivot election by predicted station coverage.  SOLVE-AFFECTING and
+        // FINGERPRINTED.
+        int    pivot_election{};              ///< network.pivot_election: 0 off, 1 "coverage" (ignition and forced handovers elect by predicted roster coverage)
+        double pivot_election_horizon_s{};    ///< network.pivot_election_horizon_s: look-ahead of the coverage count and the umbra test (s)
+        double pivot_election_step_s{};       ///< network.pivot_election_step_s: sample step inside the horizon (s)
         /// network.clock_model: the two-state (offset and drift) oscillator clock model.  When
         /// on, the satellite clock is carried through the Allan-derived Q model in
         /// NetworkCarryState::clock_osc instead of the scalar prev_carry random walk, and a

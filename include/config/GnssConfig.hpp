@@ -4995,6 +4995,32 @@ namespace GnssProcessor {
         int    networkSatHealth() const { return network_sat_health_; }
 
         /**
+         * @brief Clock pivot election by predicted station coverage
+         *        (@c network.pivot_election).
+         *
+         * "off" (the default): the pivot is the declared satellite, else the sticky incumbent,
+         * else the lexically first registered satellite. "coverage": at a constellation's first
+         * epoch and at a forced handover (the incumbent left the registered set or is flagged
+         * unhealthy) the pivot is the registered, healthy satellite that the orbit product
+         * predicts above the elevation mask at the most roster stations over
+         * @ref networkPivotElectionHorizonS, passing over a satellite that enters the Earth's
+         * umbra inside that horizon; an incumbent that stays registered and healthy is kept.
+         * Needs @c network.sticky_pivot, the pinned-pivot clock datum, a broadcast navigation
+         * file (the health series) and precise orbit nodes in the product cache. SOLVE-AFFECTING
+         * and FINGERPRINTED.
+         * @return 0 off, 1 "coverage".
+         */
+        int    networkPivotElection() const { return network_pivot_election_; }
+
+        /// @brief Look-ahead (s) of the coverage election's station count and umbra test
+        ///        (@c network.pivot_election_horizon_s). Inert unless @ref networkPivotElection.
+        double networkPivotElectionHorizonS() const { return network_pivot_election_horizon_s_; }
+
+        /// @brief Sample step (s) inside that horizon (@c network.pivot_election_step_s).
+        ///        Inert unless @ref networkPivotElection.
+        double networkPivotElectionStepS() const { return network_pivot_election_step_s_; }
+
+        /**
          * @brief Coverage-ranking elevation preference (deg) for the prioritized
          *        phase-bias anchor (@c network.phase_datum_pref_elev_deg).
          *
@@ -8674,6 +8700,9 @@ namespace GnssProcessor {
         bool   network_clock_level_restore_raise_{false};    ///< Raise the restored border along each satellite's level to its code-only variance at the first leg epoch.
         int    network_clock_level_restore_credit_ep_{0};     ///< Epochs of code information the restored level is credited with; 0 = all.
         int    network_sat_health_{0};                     ///< Broadcast satellite health on the network path: 0 off, 1 "pivot" (the clock-pivot election passes over an unhealthy satellite), 2 "exclude" (an unhealthy satellite's observations are removed at the synced-epoch door). OFF = byte-identical.
+        int    network_pivot_election_{0};                 ///< Clock pivot election: 0 off, 1 "coverage" (at ignition and a forced handover the registered healthy satellite with the most predicted roster coverage over the horizon that stays out of the umbra). OFF = byte-identical.
+        double network_pivot_election_horizon_s_{7200.0};  ///< Look-ahead (s) of the coverage count and the umbra test. Inert unless network_pivot_election_.
+        double network_pivot_election_step_s_{300.0};      ///< Sample step (s) inside the horizon. Inert unless network_pivot_election_.
         NetworkClockAnchorStat network_clock_anchor_gauge_free_stat_{NetworkClockAnchorStat::Auto};  ///< Bisection knob: which denominator the guard (and the census's clk family) standardizes by, independently of which prior the fold applied. The gauge-free arm moves the fold and the denominator together, so without this knob its 65 → 3 trip collapse cannot be apportioned. `Auto` = follow the fold (byte-identical to runs made before the knob); `Raw`/`Post`/`Proj` force one. Solve-affecting through the trip population; appended to the fingerprint only when it is not `Auto`. Inert unless network_clock_temporal_anchor_.
         bool   network_clock_anchor_resolve_{true};        ///< Adapt-and-emit: on a trip, withdraw the offending clock prior from the shared system and re-solve the epoch before emission, so the trip epoch publishes the data's value instead of the stale anchor's. Cheap: a shared-border information delta carries through the Schur reduction unchanged, so the re-solve is one datum + factorization of the reduced K×K system (no re-reduction, no re-assembly). Deliberately placed before the within-epoch RAIM adaptation: a prior fault must be resolved before the measurement-fault machinery attributes it to a satellite's or a station's data. Off degrades to detect+mark+decouple-next-epoch. Inert unless network_clock_temporal_anchor_.
         double network_phase_datum_pref_elev_deg_{15.0};   ///< Elevation (deg) above which a satellite counts toward a receiver's per-constellation coverage rank when ordering prioritized anchor candidates; does not mask the pin. Inert unless network_phase_datum_prioritized_.
