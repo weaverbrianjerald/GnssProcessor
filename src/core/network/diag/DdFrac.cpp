@@ -15,7 +15,7 @@
 #include "network/solve/PivotHandover.hpp"
 #include "network/solve/PhaseDatum.hpp"      // networkIsGaugePinned
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 
 #include <spdlog/spdlog.h>
@@ -82,18 +82,18 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
     // files together cover the gauge, each ambiguity in one of them.
     if (traces.phase_anchor_trace.is_open()) {
         for (std::size_t i = 0; i < stations.size(); ++i) {
-            if (est_index_of[i] < 0 || !stations[i].sm) continue;
-            for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
-                (void)sidx;
-                const auto parts = StateKeys::parseAmbiguityKey(key);
-                if (!parts) continue;
+            if (est_index_of[i] < 0) continue;
+            for (const auto& [amb, slot_idx] : stations[i].params.amb) {
+                (void)slot_idx;
+                const std::string satellite = amb.sat.str();
+                const std::string signal = amb.signal.obsCode(ObsType::Phase);
                 if (!networkIsGaugePinned(stations, phase_datum_prioritized,
-                                          i, parts->satellite, parts->signal))
+                                          i, satellite, signal))
                     continue;
-                const std::string cst = constellationKey(systemOfSat(parts->satellite));
+                const std::string cst = constellationKey(amb.sat.sys);
                 traces.phase_anchor_trace
                     << se.time.week << ',' << fmt::format("{:.3f}", se.time.tow) << ','
-                    << cst << ',' << parts->signal << ',' << parts->satellite << ','
+                    << cst << ',' << signal << ',' << satellite << ','
                     << stations[i].name << '\n';
             }
         }
@@ -136,24 +136,23 @@ void networkDdFrac(NetworkRun& run, const NetworkEpoch& ep) {
                     static_cast<std::size_t>(est_index_of[i]), x_s);
             } catch (...) { continue; }
             const auto& h2l = asm_res[i].h2local;
-            const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
-            for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(key);
-                if (!parts) continue;
+            const StationParams& params = stations[i].params;
+            for (const auto& [amb, amb_idx] : params.amb) {
+                const std::string satellite = amb.sat.str();
+                const std::string signal = amb.signal.obsCode(ObsType::Phase);
                 if (networkIsGaugePinned(stations, phase_datum_prioritized,
-                                         i, parts->satellite, parts->signal))
+                                         i, satellite, signal))
                     continue;   // anchored (pinned to 0) → degenerate DD
-                const System sys = systemOfSat(parts->satellite);
+                const System sys = amb.sat.sys;
                 if (sys == System::GLONASS) continue;   // GLONASS FDMA: excluded (no common λ / integer DD)
-                const int amb_idx = static_cast<int>(sidx);
-                if (amb_idx < 0 || amb_idx >= x_lin.size()) continue;
                 const auto hit = h2l.find(amb_idx);
                 if (hit == h2l.end()) continue;   // ambiguity column not in A_r this epoch
                 if (hit->second < 0
                     || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                const double value_m = x_lin(amb_idx) + x_r(hit->second);
+                const double value_m =
+                    params.slots[static_cast<std::size_t>(amb_idx)].x_lin + x_r(hit->second);
                 if (!std::isfinite(value_m)) continue;
-                pool[{constellationKey(sys), parts->signal}][parts->satellite][i] =
+                pool[{constellationKey(sys), signal}][satellite][i] =
                     AmbAbs{value_m, static_cast<std::size_t>(est_index_of[i]),
                            static_cast<Eigen::Index>(hit->second)};
             }

@@ -23,6 +23,9 @@
 #include "config/GnssConfig.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/driver/RunTypes.hpp"   // StationAssembly (the drain's input)
+#include "network/state/StateColumns.hpp"
+#include "network/state/StationParams.hpp"
+#include "network/state/StationParamsShadow.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
@@ -56,6 +59,28 @@ ParamInstanceId classify(SC container, const std::string& key) {
 }
 
 SignalId sig(System s, const char* code) { return *SignalId::fromObsCode(s, code); }
+
+/// A station's inventory slot as the split's seam writes it: the set built from the state
+/// manager, then recorded from the set.  Also checked against the slot the state manager alone
+/// gives.
+void record(const StateManager& sm, int station, const std::vector<ParamDisposition>& disp,
+            const StationAbsorbed& absorbed, StationParamSlot& slot) {
+    StationParams set;
+    buildStationParams(sm, disp, absorbed, set);
+    recordStationParams(set, station, slot);
+    StationParamSlot reference;
+    recordStationParamsFromState(sm, station, disp, absorbed, reference);
+    EXPECT_EQ(slot.filled, reference.filled);
+    EXPECT_EQ(slot.unclassified, reference.unclassified);
+    EXPECT_EQ(slot.no_disposition, reference.no_disposition);
+    EXPECT_EQ(slot.absorbed_no_absorber, reference.absorbed_no_absorber);
+    ASSERT_EQ(slot.records.size(), reference.records.size());
+    for (std::size_t k = 0; k < slot.records.size(); ++k) {
+        EXPECT_TRUE(slot.records[k].id == reference.records[k].id) << k;
+        EXPECT_EQ(slot.records[k].disp, reference.records[k].disp) << k;
+        EXPECT_EQ(slot.records[k].reason, reference.records[k].reason) << k;
+    }
+}
 
 /// A temp config under a name no other test process or test case uses: the tag, a random
 /// draw per process and a counter per call.
@@ -332,7 +357,7 @@ TEST(NetworkParamInventoryTest, EveryColumnOfAStationIsListedOnceAndClassified) 
     std::vector<ParamDisposition> disp(sm.getStateSize(), PD::EstimatedLocal);
     for (std::size_t k = 0; k < 3; ++k) disp[sm.getPositionIndex() + k] = PD::Pinned;
     StationParamSlot slot;
-    recordStationParams(sm, 7, disp, StationAbsorbed{}, slot);
+    record(sm, 7, disp, StationAbsorbed{}, slot);
     EXPECT_TRUE(slot.filled);
     EXPECT_TRUE(slot.unclassified.empty());
     EXPECT_EQ(slot.no_disposition, 0);
@@ -350,7 +375,7 @@ TEST(NetworkParamInventoryTest, EveryColumnOfAStationIsListedOnceAndClassified) 
     // A disposition vector shorter than the state: the columns past its end are counted,
     // never given a disposition by default.
     disp.resize(sm.getStateSize() - 2);
-    recordStationParams(sm, 7, disp, StationAbsorbed{}, slot);
+    record(sm, 7, disp, StationAbsorbed{}, slot);
     EXPECT_EQ(slot.no_disposition, 2);
     EXPECT_EQ(slot.records.size(), sm.getStateSize() - 2);
     ParamInventoryTally t;
@@ -663,7 +688,7 @@ TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbing
 
     std::vector<ParamDisposition> disp(sm.getStateSize(), PD::EstimatedLocal);
     StationParamSlot slot;
-    recordStationParams(sm, 4, disp, a, slot);
+    record(sm, 4, disp, a, slot);
     EXPECT_EQ(slot.records.size(), sm.getStateSize() + 2u);
     EXPECT_EQ(slot.absorbed_no_absorber, 1);
     long long absorbed = 0;

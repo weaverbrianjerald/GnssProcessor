@@ -28,7 +28,8 @@
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
-#include "network/assembly/ParamInventory.hpp"   // classifyStateColumn
+#include "network/assembly/ParamInventory.hpp"
+#include "network/state/StateColumns.hpp"        // classifyStateColumn
 #include "measurement/UserParamView.hpp"          // userKey
 
 #include <algorithm>

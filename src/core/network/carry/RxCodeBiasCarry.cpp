@@ -21,6 +21,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/state/StateColumns.hpp"   // classifyStateColumn (the receiver IFB rule)
 #include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>

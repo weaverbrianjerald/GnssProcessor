@@ -33,6 +33,8 @@
 #include "common/EpochMeasurement.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/assembly/StationSplit.hpp"   // rxIfbExcludedRows
+#include "network/state/StateColumns.hpp"      // classifyStateColumn
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"

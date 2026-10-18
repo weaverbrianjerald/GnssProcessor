@@ -32,14 +32,14 @@
  *    sums over (satellite, GLONASS slot, station).
  *  - @c StateContainer: where a column sits in the station's @c StateManager, the
  *    classifier's input (not a second kind enum; see its documentation in
- *    measurement/AbsorbedSharedStates.hpp).
+ *    measurement/AbsorbedSharedStates.hpp; the classifier is network/state/StateColumns.hpp).
  *  - @ref RxIfbRule: the declared rule behind the receiver IFB drop.
  *  - @c AbsorbedReason: why a gate withheld a shared satellite state from a station, one
  *    value per gate, with its row in the reason table @ref absorbedReasonSpec (the rule,
  *    the code site, what takes the withheld state up).  @c StationAbsorbed is a station's
  *    list of the gates' notes for one epoch (measurement/AbsorbedSharedStates.hpp, kept
  *    apart so that the user-side measurement header includes no network header);
- *    @ref AbsorbedInstance is one note classified.
+ *    @c AbsorbedInstance is one note classified (network/state/StateColumns.hpp).
  *
  * ### The pieces, in the order a column passes through them
  *
@@ -49,7 +49,7 @@
  *     the state's (container, key, reason) to the station's @c StationAbsorbed list, kept
  *     for the epoch on the station's @c MeasurementModel
  *     (@c MeasurementModel::absorbedSharedStates); step 5 classifies each note with the
- *     one classifier (step 3, @ref classifyAbsorbed).  The gates, in the order they run
+ *     one classifier (step 3, @c classifyAbsorbed).  The gates, in the order they run
  *     in an epoch:
  *      - PASS A, per station, @c MeasurementModel::ensureNetworkSharedStates (which clears
  *        the list at its start): the GLONASS code-only scope, the unmatched receiver
@@ -58,22 +58,25 @@
  *      - serial, after the screens that remove observations: the anchored-union coverage
  *        gate (@c networkBuildPhaseDatumCandidates) and the eq34 hygiene block
  *        (@c networkAnchorHygiene), through @c MeasurementModel::noteAbsorbedSharedState.
- *  2. @ref listStateColumns lists every column of a station's state manager with the
+ *  2. @c listStateColumns lists every column of a station's state manager with the
  *     container that holds it and its key; a column in no known container is listed as
  *     @c StateContainer::Unlisted with the state manager's own label.
- *  3. @ref classifyStateColumn, the one classifier, turns (container, key) into a
+ *  3. @c classifyStateColumn, the one classifier, turns (container, key) into a
  *     @ref ParamInstanceId through the @c StateKeySchema parsers and the identity types
  *     of common/GnssIdentity.hpp; it returns nothing for a key it does not know, and
- *     the caller counts that column "unclassified" and prints it, never drops it.
+ *     the caller counts that column "unclassified" and prints it, never drops it.  Steps
+ *     2 and 3 are the bridge in network/state/StateColumns.hpp, run once per station and
+ *     epoch by the build of the station's parameter set (step 5).
  *  4. @c Application::networkSplitStation_ decides each column's @ref ParamDisposition
  *     (border, local block, held coordinate, held at its seed by the run's
  *     @ref RxIfbRule, all-zero H) and reports it.
- *  5. @ref recordStationParams joins the two inside the parallel produce phase (PASS B),
- *     writing only the station's own @ref StationParamSlot, and adds the station's
- *     absorbed instances from step 1 with disposition @c Absorbed and their reason.  An
- *     instance is kept only when the station still holds the column that takes it up
- *     (@ref absorberPresent); one whose observation left before the split is counted on
- *     an integrity line instead.
+ *  5. The station's parameter set (network/state/StationParams.hpp) is built from steps 2
+ *     and 3 and the split's dispositions; @ref recordStationParams reads it inside the
+ *     parallel produce phase (PASS B), writing only the station's own
+ *     @ref StationParamSlot, and adds the station's absorbed instances from step 1 with
+ *     disposition @c Absorbed and their reason.  An instance is kept only when the
+ *     station still holds the column that takes it up (@c absorberPresent); one whose
+ *     observation left before the split is counted on an integrity line instead.
  *  6. @ref networkParamInventoryDrain folds the slots serially after PASS B into the
  *     epoch's and the run's @ref ParamInventoryTally; a station the produce phase
  *     rejected after its split, and a roster station that never reached its split (no
@@ -127,12 +130,11 @@ namespace GnssProcessor {
 
     class GnssConfig;
     enum class FrequencyMode;   // config/GnssConfigTypes.hpp
-    struct EpochMeasurement;    // common/EpochMeasurement.hpp
-    class StateManager;
     struct NetworkConfig;
     struct NetworkRunContext;
     struct NetworkRunTraces;
     struct StationAssembly;
+    struct StationParams;       // network/state/StationParams.hpp
     struct SyncedEpoch;
 
     // =======================================================================
@@ -179,66 +181,6 @@ namespace GnssProcessor {
      * @return The label.
      */
     std::string paramClassLabel(const ParamClass& c);
-
-    // =======================================================================
-    // The station's state manager, listed and classified
-    // =======================================================================
-
-    // StateContainer (where a column sits in a station's StateManager, the classifier's
-    // input) is declared in measurement/AbsorbedSharedStates.hpp, beside the absorbed-state
-    // record that uses it, so that the user-side measurement header includes no network
-    // header.
-
-    /**
-     * @brief The name of a container, used in the unclassified labels ("<container>:<key>").
-     * @param c The container.
-     * @return The accessor's name in snake case ("ionosphere_states", ...; "unlisted").
-     */
-    const char* stateContainerName(StateContainer c);
-
-    /**
-     * @brief One column of a station's state manager.
-     */
-    struct StateColumn {
-        std::size_t    index{0};                           ///< State index (the H column).
-        StateContainer container{StateContainer::Unlisted};  ///< The container that holds it.
-        std::string    key;                                ///< Its key (empty for the fixed core).
-    };
-
-    /**
-     * @brief List every column of a station's state manager.
-     *
-     * Walks the fixed core (position, receiver clock, wet delay) and every index map the
-     * network can populate; each state index in [0, @c getStateSize()) appears exactly
-     * once, an index in no known container as @c Unlisted with its
-     * @c StateManager::getStateLabels label, so a family added to the state manager
-     * later is listed (and counted unclassified) rather than missed.
-     *
-     * @param sm The station's state manager.
-     * @return The columns in ascending state-index order.
-     */
-    std::vector<StateColumn> listStateColumns(const StateManager& sm);
-
-    /**
-     * @brief The one classifier: (container, key) to a parameter instance.
-     *
-     * Every key is read through its @c StateKeySchema parser and the identity types; the
-     * instance's station is left unset.  The refusal policy: a key is refused when any
-     * of its parts fails to parse, with one exception.  The receiver code-bias
-     * forms that carry no signal (DCB, IFB, slot IFB) are decided by the key's shape, and
-     * a system name that is not a known constellation gives @c System::Unknown rather
-     * than a refusal, so that the IFB rule names exactly the columns the former substring
-     * test on "_IFB" named (StateInitializer produces no such key).  An ISC's signal is a
-     * part like any other: it needs a known system.
-     *
-     * @param container The container the key is held in.
-     * @param key       The key (ignored for the fixed core).
-     * @return The instance, or @c std::nullopt for a key it does not know: the container
-     *         @c Unlisted, a double-difference ambiguity key (the baseline mode's, which
-     *         no network station holds), or a malformed key.
-     */
-    std::optional<ParamInstanceId> classifyStateColumn(StateContainer container,
-                                                       std::string_view key);
 
     // =======================================================================
     // Absorbed instances: shared states a gate withheld from a station
@@ -289,49 +231,6 @@ namespace GnssProcessor {
      * @return The reason table's @c by_phase or @c by_code text; "" for any other kind.
      */
     const char* absorbedBy(AbsorbedReason r, NetworkParamKind kind);
-
-    /**
-     * @brief One shared satellite state a gate withheld from a station this epoch, classified.
-     */
-    struct AbsorbedInstance {
-        /// The instance: kind @c SatPhaseBias or @c SatCodeBias, its constellation, satellite
-        /// and signal, as @ref classifyStateColumn reads the key the state would have had.
-        /// The station is set by @ref recordStationParams.
-        ParamInstanceId id{};
-        AbsorbedReason  reason{AbsorbedReason::GlonassCodeOnlyScope};  ///< The gate.
-    };
-
-    /**
-     * @brief Classify one withheld state a gate noted (@c noteAbsorbed): its key read by the
-     *        one classifier, @ref classifyStateColumn.
-     *
-     * @param note The gate's note (container, key, reason).
-     * @return The instance with the note's reason, or @c std::nullopt for a key the
-     *         classifier refuses (the caller counts it unclassified under
-     *         @ref absorbedNoteLabel, never drops it).
-     */
-    std::optional<AbsorbedInstance> classifyAbsorbed(const AbsorbedNote& note);
-
-    /**
-     * @brief The label of a note in the unclassified list: "<container>:<key>".
-     * @param note The gate's note.
-     * @return @ref stateContainerName of the container, a colon and the key.
-     */
-    std::string absorbedNoteLabel(const AbsorbedNote& note);
-
-    /**
-     * @brief Does the station still hold the column that takes a withheld state up?
-     *
-     * The test that the instance's observation reached the split: for a satellite phase bias
-     * the station's float ambiguity of the same satellite and signal
-     * (@c StateKeys::makeAmbiguityKey, the per-band key the network uses), for a satellite
-     * code bias the satellite's clock column (the code row's shared column).
-     *
-     * @param sm The station's state manager after its measurement pre-pass.
-     * @param a  The withheld state.
-     * @return True when the column is in @p sm.
-     */
-    bool absorberPresent(const StateManager& sm, const AbsorbedInstance& a);
 
     // =======================================================================
     // The receiver IFB rule
@@ -473,7 +372,7 @@ namespace GnssProcessor {
         /// per-station view the zero-fold warning needs; the run's totals are the
         /// inventory's, which also leaves out station-epochs rejected after the split).
         long long est_epochs{0};
-        /// Extra-band code rows excluded (zero weight, @ref rxIfbExcludedRows): the row's
+        /// Extra-band code rows excluded (zero weight, @c rxIfbExcludedRows): the row's
         /// satellite code bias has no shared column this epoch (held by fewer than two
         /// stations and pruned, or a CB-ADM sponge), so the row carries an unmodelled
         /// satellite bias of metres.
@@ -508,43 +407,6 @@ namespace GnssProcessor {
         /// Governed key -> the loop epoch of its latest estimate in the local block.
         std::map<std::string, long long> last_est_epoch;
     };
-
-    /**
-     * @brief The extra-band code rows of a station that the split excludes (zero weight)
-     *        because the knob estimates the receiver IFB, with the station's
-     *        counts and edge state kept.
-     *
-     * An extra-band code row carries the satellite's extra-band code bias.  When that bias
-     * is a shared column this epoch the column takes it, and the row informs the receiver
-     * IFB.  When it is not (the satellite's key is held by fewer than two stations, so
-     * PASS A pruned it, or CB-ADM keeps it as a station-local sponge) the row carries the
-     * whole satellite bias, metres, with nothing to take it up: an estimated, carried IFB
-     * would integrate a share of it and push it onto the station's other extra-band rows
-     * and their ionosphere, and with the IFB term held instead the row closes the
-     * station's geometry-free level direction with that bias (the ionosphere, the receiver
-     * DCB and the ambiguities move with it).  Neither is information, so the row is
-     * excluded: the split sets its weight to zero, and a local column that then has no
-     * weighted row (the IFB itself, a sponge) is left out of the block.  A zero weight is
-     * a defined case for every reader of the row weights (the block cofactor check counts
-     * such a block as not checkable; the standardized residuals read zero).
-     *
-     * Called by @c Application::networkSplitStation_ only when
-     * @ref RxIfbRule::estimated_by_knob, inside the parallel produce phase: it reads the
-     * station's state manager and measurement update and writes only the station's own
-     * @p s (the rows excluded, the governed columns left with no weighted row, the
-     * registration edges, and the family signals).
-     *
-     * @param s           The station's band-5 receiver-delay state (written).
-     * @param sm          The station's state manager (governed columns, satellite code-bias
-     *                    columns).
-     * @param em          The station's measurement update (H and the row identities
-     *                    @c satellite_ids / @c signal_types).
-     * @param shared_cols The H columns the split scattered into the shared border.
-     * @return The data rows to exclude, ascending.
-     */
-    std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
-                                       const EpochMeasurement& em,
-                                       const std::set<int>& shared_cols);
 
     /**
      * @brief Did the satellite sum-to-zero of the family a station's receiver IFB column
@@ -590,31 +452,29 @@ namespace GnssProcessor {
         /// shorter than the state): a defect, counted and printed, never filled in.
         long long                       no_disposition{0};
         /// Withheld states whose absorbing column the station no longer holds at the split
-        /// (@ref absorberPresent false: the observation left before PASS B).  Counted and
+        /// (@c absorberPresent false: the observation left before PASS B).  Counted and
         /// printed, not in the classes.
         long long                       absorbed_no_absorber{0};
     };
 
     /**
-     * @brief Record a station's inventory after its split.
+     * @brief Record a station's inventory after its split, from the station's parameter set.
      *
-     * Classifies every column of @p sm and pairs it with the split's disposition, then adds
-     * each withheld state of @p absorbed whose absorbing column @p sm holds as a record
-     * with disposition @c Absorbed and its reason.  Pure per-station work: reads @p sm,
-     * @p col_disp and @p absorbed, writes only @p slot (safe inside the parallel PASS B).
+     * One record per named slot of @p set with the disposition the split gave it, in column
+     * order, then one per withheld shared state (@ref StationShared::absorbed) with disposition
+     * @c Absorbed and its reason.  The slot's counters are the set's: the columns no typed
+     * identity names (@ref StationParams::unclassified, listed, never dropped), the named
+     * columns past the end of the split's dispositions (counted in @c no_disposition, never
+     * given a disposition by default) and the withheld states whose absorbing column the
+     * station no longer holds (@ref StationShared::absorbed_no_absorber).  Pure per-station
+     * work: reads @p set, writes only @p slot (safe inside the parallel PASS B).
      *
-     * @param sm       The station's state manager.
-     * @param station  The station's roster index.
-     * @param col_disp The split's disposition per state index (expected size: the state
-     *                 size; a shorter vector is counted in @c slot.no_disposition).
-     * @param absorbed The station's withheld shared states of this epoch
-     *                 (@c MeasurementModel::absorbedSharedStates).
-     * @param slot     The station's slot (overwritten).
+     * @param set     The station's parameter set, built after its split
+     *                (network/state/StationParamsShadow.hpp).
+     * @param station The station's roster index.
+     * @param slot    The station's slot (overwritten).
      */
-    void recordStationParams(const StateManager& sm, int station,
-                             const std::vector<ParamDisposition>& col_disp,
-                             const StationAbsorbed& absorbed,
-                             StationParamSlot& slot);
+    void recordStationParams(const StationParams& set, int station, StationParamSlot& slot);
 
     // =======================================================================
     // Tallies and the table

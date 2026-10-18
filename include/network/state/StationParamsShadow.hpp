@@ -1,24 +1,28 @@
 #pragma once
 /**
  * @file StationParamsShadow.hpp
- * @brief Temporary: a station's parameter set built from its state manager and checked
- *        against it, so that the set can be proved right on every run before any code reads it.
+ * @brief Temporary: a station's parameter set built from its state manager, the inventory
+ *        recorded from it, and both checked against the state manager, so that the readers of
+ *        the set can be proved right on every run.
  *
  * ### What it does
  *
- * After a station's measurement pre-pass and split, @ref networkShadowStationParams builds
- * the station's @ref StationParams from the state manager through the one classifier
- * (@c listStateColumns, @c classifyStateColumn) and the split's dispositions, and then checks
- * the set against the state manager and the inventory (@ref SetMismatch):
+ * After a station's measurement pre-pass and split, @ref networkShadowStationParams builds the
+ * station's @ref StationParams from the state manager through the one classifier
+ * (network/state/StateColumns.hpp) and the split's dispositions, records the parameter
+ * inventory's slot from the set (@c recordStationParams), and then checks the set and the
+ * record against the state manager (@ref SetMismatch):
  *  - the set has one slot per state column;
  *  - each slot's parameter resolves, through the single-receiver lookup
  *    (@c UserParamView), to its own column, and the slot's linearization point is the state's
- *    value there, bit for bit;
+ *    value there, bit for bit; a column the classifier refused is an unnamed slot with the
+ *    state's value;
  *  - each slot's disposition is the split's, and an ambiguity's re-seed mark is the state
  *    manager's;
  *  - the set's own typed lookup (@ref findParam) finds each slot at its own index;
- *  - the parameter inventory's record of each column and of each withheld state is the set's
- *    slot, converted back to an instance;
+ *  - the inventory recorded from the set is the inventory the state manager alone gives
+ *    (@ref recordStationParamsFromState: every record, the unclassified list and the two
+ *    counters);
  *  - each typed map holds the keys of the state manager's map of its family, in the same
  *    order and at the same columns (the comparators of the identity types reproduce the
  *    string order).
@@ -45,6 +49,8 @@ namespace GnssProcessor {
 
 class StateManager;
 struct NetStation;
+struct StationAbsorbed;
+struct StationParamSlot;
 
 /**
  * @brief What a check of the set against the state manager can find.
@@ -56,7 +62,7 @@ enum class SetMismatch : std::uint8_t {
     Disposition,  ///< A slot's disposition is not the split's for its column.
     Reseed,       ///< An ambiguity's re-seed mark differs from the state manager's.
     Lookup,       ///< The set's typed lookup does not find a slot at its own index.
-    Inventory,    ///< The inventory's record of a column or a withheld state differs from the set's.
+    Inventory,    ///< The inventory recorded from the set differs from the one the state manager alone gives.
     TypedCount,   ///< A typed map holds a different number of keys than the state manager's map of its family.
     TypedOrder,   ///< A typed map iterates in a different order, or to a different column, than the state manager's map.
 };
@@ -77,14 +83,14 @@ const char* setMismatchName(SetMismatch m);
  *        by the station's own build inside the parallel produce phase.
  */
 struct StationParamsCheck {
-    long long builds{0};      ///< Station-epochs the set was built and checked.
-    long long incomplete{0};  ///< Station-epochs with a column the classifier refused: no set was built.
-    long long failed{0};      ///< Station-epochs whose build or check threw (the set is not trusted).
-    long long slots{0};       ///< Slots checked, summed over the builds.
-    long long wall_ns{0};      ///< Wall time of the builds and checks, summed over the station-epochs (ns): what the shadow costs.
+    long long builds{0};        ///< Station-epochs the set was built, recorded and checked.
+    long long unclassified{0};  ///< Of those, the station-epochs with a column or a withheld state the classifier refused.
+    long long failed{0};        ///< Station-epochs whose build or check threw (the set is not trusted).
+    long long slots{0};         ///< Slots checked, summed over the builds.
+    long long wall_ns{0};       ///< Wall time of the builds and checks, summed over the station-epochs (ns): what the shadow costs.
     /// Findings per kind (see @ref SetMismatch).
     std::array<long long, kSetMismatches> mismatch{};
-    std::string first;        ///< The first finding, "TOW <tow>: <kind>: <detail>"; empty when none.
+    std::string first;          ///< The first finding, "TOW <tow>: <kind>: <detail>"; empty when none.
 
     /**
      * @brief Every finding of every kind.
@@ -94,80 +100,91 @@ struct StationParamsCheck {
 };
 
 /**
- * @brief What the build found besides the set.
- */
-struct ShadowBuild {
-    /// Every column was classified: the set holds one slot per column.  False leaves the set empty.
-    bool complete{true};
-    /// "<container>:<key>" of every column the classifier refused.
-    std::vector<std::string> unclassified;
-    /// Columns past the end of the disposition vector (given @c Unobserved in the set).
-    long long no_disposition{0};
-};
-
-/**
  * @brief Build a station's parameter set from its state manager.
  *
- * Lists the columns (@c listStateColumns), classifies each (@c classifyStateColumn), and
- * appends a slot per column in column order with the value of the state vector, the split's
- * disposition and the ambiguity's re-seed mark; the withheld shared states that the inventory
- * keeps (a classifiable key whose absorbing column the station holds) become
- * @ref StationShared::absorbed.  A column the classifier refuses leaves the set empty and
- * is listed in the result.
+ * Lists the columns (@c listStateColumns) and appends a slot per column in column order with
+ * the value of the state vector, the split's disposition and the ambiguity's re-seed mark.  A
+ * column the classifier refuses (@c classifyStateColumn) becomes an unnamed slot and its
+ * "<container>:<key>" is listed in @ref StationParams::unclassified.  The withheld shared
+ * states that the inventory keeps (a classifiable key whose absorbing column the station holds)
+ * become @ref StationShared::absorbed; one whose absorbing column is gone is counted in
+ * @ref StationShared::absorbed_no_absorber, one whose key the classifier refuses is listed
+ * after the columns' own as "absorbed <container>:<key>".
  *
  * @param sm       The station's state manager, after its pre-pass.
  * @param col_disp The split's disposition per state index.
  * @param absorbed The shared states the gates withheld from the station this epoch.
- * @param out      The set (overwritten).
- * @return What the build found.
+ * @param out      The set (overwritten; left as it was when the build throws).
  */
-ShadowBuild buildStationParams(const StateManager& sm, const std::vector<ParamDisposition>& col_disp,
-                               const StationAbsorbed& absorbed, StationParams& out);
+void buildStationParams(const StateManager& sm, const std::vector<ParamDisposition>& col_disp,
+                        const StationAbsorbed& absorbed, StationParams& out);
 
 /**
- * @brief Check a station's set against its state manager and the inventory's record, adding
- *        to a tally.
+ * @brief The parameter inventory's slot of a station, recorded from its state manager alone.
+ *
+ * The record the inventory made before it read the set: every column of @p sm classified and
+ * paired with the split's disposition, then each withheld state whose absorbing column
+ * @p sm holds.  Kept as the reference the recorded-from-the-set inventory is checked against
+ * and as the fallback when the set cannot be built.  Pure per-station work: writes only
+ * @p slot.
+ *
+ * @param sm       The station's state manager.
+ * @param station  The station's roster index.
+ * @param col_disp The split's disposition per state index (a shorter vector than the state is
+ *                 counted in @c slot.no_disposition).
+ * @param absorbed The station's withheld shared states of this epoch.
+ * @param slot     The station's slot (overwritten).
+ */
+void recordStationParamsFromState(const StateManager& sm, int station,
+                                  const std::vector<ParamDisposition>& col_disp,
+                                  const StationAbsorbed& absorbed, StationParamSlot& slot);
+
+/**
+ * @brief Check a station's set and its recorded inventory against its state manager, adding to
+ *        a tally.
  *
  * @param set       The set (built from @p sm by @ref buildStationParams).
  * @param sm        The station's state manager.
  * @param col_disp  The split's disposition per state index.
- * @param inventory The station's slot of the parameter inventory for the epoch
- *                  (@c recordStationParams), complete.
+ * @param absorbed  The shared states the gates withheld from the station this epoch.
+ * @param inventory The station's slot of the parameter inventory for the epoch, recorded from
+ *                  @p set (@c recordStationParams).
  * @param station   The station's roster index (the inventory's records carry it).
  * @param tow       GPS time of week of the epoch (s), for the message of a first finding.
  * @param out       The tally (added to).
  */
 void checkStationParams(const StationParams& set, const StateManager& sm,
-                        const std::vector<ParamDisposition>& col_disp,
+                        const std::vector<ParamDisposition>& col_disp, const StationAbsorbed& absorbed,
                         const StationParamSlot& inventory, int station, double tow,
                         StationParamsCheck& out);
 
 /**
- * @brief Build and check a station's parameter set after its split (inside the parallel produce
- *        phase).
+ * @brief Build a station's parameter set after its split, record the inventory from it and
+ *        check both (inside the parallel produce phase).
  *
- * Writes only the station's own @c params and @c params_check, and reads its state manager,
- * its measurement model's withheld-state list and the inventory slot of the epoch.  Never
- * throws: a failure is counted in @c StationParamsCheck::failed so that the shadow cannot
- * change what the station does.
+ * Writes only the station's own @c params, @c params_check and @p inventory, and reads its
+ * state manager and its measurement model's withheld-state list.  Never throws: a failure is
+ * counted in @c StationParamsCheck::failed, the set is left empty, and the inventory is then
+ * recorded from the state manager (@ref recordStationParamsFromState), so that the shadow
+ * cannot change what the station does.
  *
  * @param st        The station (@c params and @c params_check written).
  * @param station   The station's roster index.
  * @param col_disp  The split's disposition per state index.
- * @param inventory The station's inventory slot of the epoch (@c recordStationParams has run).
+ * @param inventory The station's inventory slot of the epoch (written).
  * @param tow       GPS time of week of the epoch (s).
  */
 void networkShadowStationParams(NetStation& st, int station,
                                 const std::vector<ParamDisposition>& col_disp,
-                                const StationParamSlot& inventory, double tow);
+                                StationParamSlot& inventory, double tow);
 
 /**
  * @brief The run-end table of the stations' parameter sets.
  *
  * A title, the station and build counts, one line per parameter family (what it is, where the
  * set holds it, the order of its key, its slots and stations in each station's last build),
- * the findings of the checks, the builds that did not happen (a refused column, an error), and
- * one WARNING per station with a finding (its first), at most five.
+ * the findings of the checks, the builds with a refused column or an error, and one WARNING
+ * per station with a finding (its first), at most five.
  *
  * @param stations The run's stations.
  * @return The lines, without trailing newlines and without the log prefix.

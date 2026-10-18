@@ -16,7 +16,7 @@
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch (INC-5)
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 
 #include <spdlog/spdlog.h>
@@ -207,12 +207,12 @@ void networkShHealth(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& event
                                      std::make_pair(o.elevation, o.sat_pos));
                 const auto& h2l = asm_res[i].h2local;
                 bool sta_present = false, sta_gt3 = false;
-                for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                    if (kv.first.empty() || systemOfSat(kv.first) == System::GLONASS) continue;  // SH excludes GLONASS
-                    const auto gt = geom.find(kv.first);
+                for (const auto& [sat, slot_idx] : stations[i].params.iono) {
+                    if (sat.sys == System::GLONASS) continue;  // SH excludes GLONASS
+                    const auto gt = geom.find(sat.str());
                     if (gt == geom.end()) continue;
                     if (gt->second.first < iw.elevation_cutoff_deg) continue;
-                    const auto hit = h2l.find(static_cast<int>(kv.second));
+                    const auto hit = h2l.find(slot_idx);
                     if (hit == h2l.end() || hit->second < 0
                         || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
                     const IppGeometry g =

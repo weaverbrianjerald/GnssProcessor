@@ -10,9 +10,8 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/assembly/RowClassify.hpp"   // rowClassOfKind, rowTagAt
-#include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
+#include "network/state/StationParams.hpp"
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -183,72 +182,50 @@ Eigen::VectorXd redundancy(const Spectrum& sp, const Eigen::MatrixXd& A_r,
 
 namespace {
 
-/// One local column's kind label for the span field.  Built from the station's
-/// StateManager key maps through the assembly's H-column -> A_r-column map, so
-/// the labels are correct under both vehicles (nothing here is carry-gated).
-///
-/// Every state kind the manager exposes is covered, because an unlabelled column
-/// appears in a span as `col<k>`, which names no state and so no mechanism.
-/// Kinds: the audit's `clk`, `zwd`, `rxcb:<sig>`, `iono:<sat>`,
-/// `amb:<sat>:<sig>`, plus `pos:<xyz>`, `vel:<xyz>`, `clkrate`, `phclk`,
-/// `grdn` / `grde`, `dzwd`, `iono` (the single-LOS state), `ionorate:<sat>`,
-/// `isb:<sys>`, `satbias:<key>`, `satpb:<key>`, `rxpb:<key>` and
-/// `satclk:<sat>`.  The `col<k>` fallback survives only for a local column no
-/// state map claims at all.
-std::vector<std::string> buildLocalLabels(const StationAssembly& R,
-                                          const StateManager& sm,
-                                          Eigen::Index n_local) {
-    std::vector<std::string> labels(static_cast<std::size_t>(n_local));
-    const auto& h2l = R.h2local;
-    auto put = [&](std::size_t state_idx, std::string label) {
-        const auto hit = h2l.find(static_cast<int>(state_idx));
-        if (hit == h2l.end() || hit->second < 0) return;
-        const Eigen::Index c = static_cast<Eigen::Index>(hit->second);
-        if (c >= n_local) return;
-        labels[static_cast<std::size_t>(c)] = std::move(label);
-    };
-
-    const std::size_t kNone = std::numeric_limits<std::size_t>::max();
-    auto putScalar = [&](std::size_t idx, const char* label) {
-        if (idx != kNone) put(idx, label);
-    };
-    // Core block (index-stable by construction).
-    if (sm.getPositionIndex() != kNone) {
-        const std::size_t p = sm.getPositionIndex();
-        put(p + 0, "pos:x"); put(p + 1, "pos:y"); put(p + 2, "pos:z");
+/// The span label of one parameter (see @ref stationBlockLabels); empty when the audit names
+/// no such kind.
+std::string blockLabel(const ParamRef& r) {
+    using PK = NetworkParamKind;
+    switch (r.kind) {
+        case PK::RxPosition:
+            return r.axis == 0 ? "pos:x" : (r.axis == 1 ? "pos:y" : "pos:z");
+        case PK::RxClock:
+            if (r.core != UserCore::None) return {};
+            return r.form == ParamForm::Isb ? "isb:" + keyText(r) : std::string("clk");
+        case PK::Zwd:          return r.core == UserCore::None ? "zwd" : std::string();
+        case PK::SlantIono:    return "iono:" + keyText(r);
+        case PK::RxCodeBias:   return "rxcb:" + keyText(r);
+        case PK::SatCodeBias:  return "satbias:" + keyText(r);
+        case PK::SatPhaseBias: return "satpb:" + keyText(r);
+        case PK::RxPhaseBias:  return "rxpb:" + keyText(r);
+        case PK::SatClock:     return "satclk:" + keyText(r);
+        case PK::Ambiguity:
+            // "amb:<sat>:<signal>" for the per-signal form, the raw key for any other.
+            if (r.form != ParamForm::None) return "amb:" + keyText(r);
+            return "amb:" + r.sat.str() + ':' + r.signal.obsCode(ObsType::Phase);
+        case PK::PhaseColour:
+        case PK::VtecSh:       break;
     }
-    if (sm.getVelocityIndex() != kNone) {
-        const std::size_t v = sm.getVelocityIndex();
-        put(v + 0, "vel:x"); put(v + 1, "vel:y"); put(v + 2, "vel:z");
-    }
-    putScalar(sm.getClockIndex(), "clk");
-    putScalar(sm.getClockRateIndex(), "clkrate");
-    putScalar(sm.getPhaseClockIndex(), "phclk");
-    putScalar(sm.getTropoIndex(), "zwd");
-    putScalar(sm.getDifferentialTropoIndex(), "dzwd");
-    putScalar(sm.getTropoGradientNorthIndex(), "grdn");
-    putScalar(sm.getTropoGradientEastIndex(), "grde");
-    putScalar(sm.getIonoIndex(), "iono");
-    // Dynamic key -> index maps.
-    for (const auto& [key, idx] : sm.getCodeBiasStates())         put(idx, "rxcb:" + key);
-    for (const auto& [sat, idx] : sm.getIonosphereStates())       put(idx, "iono:" + sat);
-    for (const auto& [sat, idx] : sm.getIonosphereRateStates())   put(idx, "ionorate:" + sat);
-    for (const auto& [sys, idx] : sm.getSystemTimeOffsetStates()) put(idx, "isb:" + sys);
-    for (const auto& [key, idx] : sm.getSatBiasStates())          put(idx, "satbias:" + key);
-    for (const auto& [key, idx] : sm.getSatPhaseBiasStates())     put(idx, "satpb:" + key);
-    for (const auto& [key, idx] : sm.getReceiverPhaseBiasStates())put(idx, "rxpb:" + key);
-    for (const auto& [sat, idx] : sm.getSatClockStates())         put(idx, "satclk:" + sat);
-    for (const auto& [key, idx] : sm.getAmbiguities()) {
-        // "<sat>_<signal>" -> "amb:<sat>:<signal>"; an unparseable key is labelled
-        // "amb:<raw key>" rather than dropped, so the column is still named.
-        const auto parts = StateKeys::parseAmbiguityKey(key);
-        put(idx,
-            parts ? ("amb:" + parts->satellite + ':' + parts->signal) : ("amb:" + key));
-    }
-    return labels;
+    return {};
 }
 
 }  // namespace
+
+std::vector<std::string> stationBlockLabels(const StationAssembly& R, const StationParams& set,
+                                            Eigen::Index n_local) {
+    std::vector<std::string> labels(static_cast<std::size_t>(n_local));
+    for (std::size_t k = 0; k < set.slots.size(); ++k) {
+        const LocalSlot& s = set.slots[k];
+        if (s.unnamed) continue;
+        const auto hit = R.h2local.find(static_cast<int>(k));
+        if (hit == R.h2local.end() || hit->second < 0) continue;
+        const Eigen::Index c = static_cast<Eigen::Index>(hit->second);
+        if (c >= n_local) continue;
+        const std::string label = blockLabel(s.ref);
+        if (!label.empty()) labels[static_cast<std::size_t>(c)] = label;
+    }
+    return labels;
+}
 
 void networkStationBlock(NetworkRun& run, const NetworkEpoch& ep) {
     // ---- From the run and the epoch (generated by scripts/nom_ep1_cut.py,
@@ -315,8 +292,7 @@ void networkStationBlock(NetworkRun& run, const NetworkEpoch& ep) {
         }
 
         const std::vector<std::string> labels =
-            stations[i].sm ? buildLocalLabels(R, *stations[i].sm, Nrr.rows())
-                           : std::vector<std::string>{};
+            stationBlockLabels(R, stations[i].params, Nrr.rows());
 
         const StationBlockAudit::Spectrum sp = StationBlockAudit::spectrum(Nrr, labels);
         if (!sp.ok) { ++ctx.counters.sb_decomp_failed; continue; }
@@ -324,14 +300,11 @@ void networkStationBlock(NetworkRun& run, const NetworkEpoch& ep) {
         // The ZWD column, located through getTropoIndex + h2local rather than a
         // carry-gated flag (see networkIonoDiag's L7 block for the same reason).
         Eigen::Index zcol = -1;
-        if (stations[i].sm) {
-            const std::size_t tropo_sz = stations[i].sm->getTropoIndex();
-            if (tropo_sz != std::numeric_limits<std::size_t>::max()) {
-                const auto zhit = R.h2local.find(static_cast<int>(tropo_sz));
-                if (zhit != R.h2local.end() && zhit->second >= 0
-                    && static_cast<Eigen::Index>(zhit->second) < Nrr.rows())
-                    zcol = static_cast<Eigen::Index>(zhit->second);
-            }
+        if (stations[i].params.zwd >= 0) {
+            const auto zhit = R.h2local.find(stations[i].params.zwd);
+            if (zhit != R.h2local.end() && zhit->second >= 0
+                && static_cast<Eigen::Index>(zhit->second) < Nrr.rows())
+                zcol = static_cast<Eigen::Index>(zhit->second);
         }
         const double zwd_raw = (zcol >= 0) ? Nrr(zcol, zcol) : 0.0;
         const double zwd_eff = (zcol >= 0)

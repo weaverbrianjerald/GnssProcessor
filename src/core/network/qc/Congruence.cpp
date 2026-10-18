@@ -575,8 +575,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     // A mis-rotated Jacobian would attribute a real offset to the wrong
     // direction.
     if (!(congruence_rows && em.H.rows() > 0 && st.ecef.norm() > 1.0)) return StationStep::Next;
-    const Eigen::Index pos_i =
-        static_cast<Eigen::Index>(st.sm->getPositionIndex());
+    const Eigen::Index pos_i = static_cast<Eigen::Index>(st.params.position[0]);
     if (pos_i >= 0 && pos_i + 2 < em.H.cols()) {
         const Coordinates::Llh llh = Coordinates::ecefToLlh(st.ecef);
         const Eigen::Matrix3d R_enu2ecef =

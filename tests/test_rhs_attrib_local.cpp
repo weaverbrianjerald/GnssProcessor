@@ -50,6 +50,7 @@
 #include "network/qc/RhsAttrib.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParamsShadow.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
@@ -116,6 +117,9 @@ void buildStateManager(Fixture& f, NetStation& st, StationAssembly& R) {
     put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G01", "L2W"), 0.0), kN2a);
     put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G02", "L1C"), 0.0), kN1b);
     put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G02", "L2W"), 0.0), kN2b);
+    // The station's parameter set, as the split's seam builds it.
+    buildStationParams(sm, std::vector<ParamDisposition>(sm.getStateSize(), ParamDisposition::EstimatedLocal),
+                       StationAbsorbed{}, st.params);
 }
 
 /// One station's rows: per satellite P1, P2, L1, L2; the first station pins its four
@@ -491,14 +495,19 @@ TEST(RhsAttribLocalTest, SharesCloseOnTheSolvedIncrementAndMatchADenseSolve) {
     ASSERT_EQ(frame.local_names.size(), 3u);
     ASSERT_EQ(frame.local_parts.size(), 3u);
 
-    // The names are the state manager's, through h2local.
+    // The names are the state manager's labels, read from the station's parameter set through
+    // h2local.
     const std::vector<std::string>& nm = frame.local_names[1];
     ASSERT_EQ(nm.size(), static_cast<std::size_t>(kNLocal));
     EXPECT_EQ(nm[kClk], "CLK");
     EXPECT_EQ(nm[kDcb], "CBIAS:GPS_DCB");
     EXPECT_EQ(nm[kIon2], "IONO:G02");
     EXPECT_EQ(nm[kN1a], "AMB:" + StateKeys::makeAmbiguityKey("G01", "L1C"));
-    EXPECT_EQ(rhsAttribLocalColumnNames(f.asm_res[1], *f.stations[1].sm), nm);
+    EXPECT_EQ(rhsAttribLocalColumnNames(f.asm_res[1], f.stations[1].params), nm);
+    // ... and are exactly the labels the state manager gives the same columns.
+    const std::vector<std::string> sm_labels = f.stations[1].sm->getStateLabels();
+    for (const auto& [sidx, col] : f.asm_res[1].h2local)
+        EXPECT_EQ(nm[static_cast<std::size_t>(col)], sm_labels[static_cast<std::size_t>(sidx)]) << sidx;
 
     // The kernel's parts sum to its reconstruction.
     for (std::size_t k = 0; k < 3; ++k) {

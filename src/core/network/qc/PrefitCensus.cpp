@@ -546,20 +546,16 @@ void networkPrefitCensus(NetworkRunContext& ctx, const GnssConfig& config_,
                     if (!seeds.empty()) seeds += ";";
                     seeds += fmt::format("amb[{}]={:.6g}", pa.signal, pa.x_lin);
                 }
-                if (stations[i].sm) {
-                    try {
-                        const auto& iono = stations[i].sm->getIonosphereStates();
-                        const auto it = iono.find(key.first);
-                        if (it != iono.end()) {
-                            const Eigen::VectorXd x = stations[i].sm->getStateVector();
-                            const auto idx = static_cast<Eigen::Index>(it->second);
-                            if (idx >= 0 && idx < x.size()) {
-                                if (!seeds.empty()) seeds += ";";
-                                seeds += fmt::format("slant={:.6g}", x(idx));
-                            }
-                        }
-                    } catch (...) { /* diagnostics degrade, never abort the run */ }
-                }
+                try {
+                    const StationParams& params = stations[i].params;
+                    const auto sat_id = SatId::parse(key.first);
+                    const int idx = sat_id ? findParam(params, slantIonoRef(*sat_id)) : -1;
+                    if (idx >= 0) {
+                        if (!seeds.empty()) seeds += ";";
+                        seeds += fmt::format("slant={:.6g}",
+                                             params.slots[static_cast<std::size_t>(idx)].x_lin);
+                    }
+                } catch (...) { /* diagnostics degrade, never abort the run */ }
                 traces.emitEvent(se.time, "PREFIT", "seed_birth_exceedance", key.first,
                                  sname, cw.s, birth_sigma, "flag",
                                  fmt::format("class={} row={} y={:.6g} m={:.6g} "

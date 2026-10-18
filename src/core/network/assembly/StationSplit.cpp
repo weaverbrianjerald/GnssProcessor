@@ -17,6 +17,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/state/StateColumns.hpp"   // classifyStateColumn (the receiver IFB rule)
 #include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
@@ -126,14 +127,12 @@ StationStep networkStationDataRows(StationBuild& build) {
     networkSplitStation(config_, st, est, em, ctx.param_inventory.rx_ifb,
                          R.A_s, R.A_r, R.w, R.y, h2local, col_disp, R.row_tags);
     R.n_data_rows = R.A_s.rows();
-    // The parameter inventory: every column of this station's state
-    // manager as a parameter instance with the disposition the split just gave it,
-    // and every shared state a gate withheld from the station this epoch as an
-    // absorbed instance (N1b), into this station's own slot (no shared write;
-    // drained serially below).  Trace class.
-    recordStationParams(*st.sm, i, col_disp, st.mm->absorbedSharedStates(), R.param_inv);
-    // The station's own parameter set, built beside the state manager it mirrors and
-    // checked against it and against the inventory's record (own station only; trace class).
+    // The station's parameter set: every column of its state manager as a typed parameter
+    // with the disposition the split just gave it, and every shared state a gate withheld
+    // from the station this epoch.  The parameter inventory records it into this station's
+    // own slot (no shared write; drained serially below), and the set is checked against
+    // the state manager and against the inventory the state manager alone gives (own
+    // station only; trace class).
     networkShadowStationParams(st, i, col_disp, R.param_inv, em.time.tow);
     return StationStep::Next;
 }
@@ -567,6 +566,50 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         st.spc_rows += n_sp;
     }
     y = em.innovations;
+}
+
+std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
+                                   const EpochMeasurement& em, const std::set<int>& shared_cols) {
+    std::set<int> excluded;
+    const Eigen::Index nstate = em.H.cols();
+    const Eigen::Index mr = std::min<Eigen::Index>(
+        em.H.rows(), static_cast<Eigen::Index>(
+            std::min(em.satellite_ids.size(), em.signal_types.size())));
+    std::map<std::string, bool> registered_now;
+    for (const auto& [key, sidx] : sm.getCodeBiasStates()) {
+        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
+        if (!id || !RxIfbRule::governs(id->cls)) continue;
+        const int c = static_cast<int>(sidx);
+        if (c < 0 || c >= nstate) continue;
+        std::set<std::string> signals;
+        long long n_rows = 0, n_excluded = 0;
+        for (Eigen::Index r = 0; r < mr; ++r) {
+            if (em.H(r, c) == 0.0) continue;
+            ++n_rows;
+            const std::string& sat = em.satellite_ids[static_cast<std::size_t>(r)];
+            const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
+            signals.insert(sig);
+            const std::string row_key = StateKeys::makeSatBiasKey(sat, sig);
+            const int hc = sm.getSatBiasIndex(row_key);
+            const bool registered = hc >= 0 && shared_cols.count(hc) != 0;
+            // The edges of invariant #7: the row joins or leaves the solve with its
+            // satellite column (a row seen for the first time is neither).
+            const auto pit = s.row_registered.find(row_key);
+            if (pit != s.row_registered.end() && pit->second != registered)
+                ++(registered ? s.reg_edges : s.dereg_edges);
+            registered_now[row_key] = registered;
+            if (!registered) {
+                excluded.insert(static_cast<int>(r));
+                ++n_excluded;
+            }
+        }
+        if (n_rows == 0) continue;
+        s.signals[key] = std::move(signals);
+        s.rows_unregistered += n_excluded;
+        if (n_excluded == n_rows) ++s.cols_unregistered;
+    }
+    s.row_registered.swap(registered_now);
+    return std::vector<int>(excluded.begin(), excluded.end());
 }
 
 // ---- End of the PASS B station steps ----

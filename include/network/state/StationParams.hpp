@@ -30,7 +30,15 @@
  *
  * The set is built from the station's state manager, one slot per state column (slot k is
  * column k), after the station's measurement pre-pass and split, and checked against it
- * (network/state/StationParamsShadow.hpp).  Nothing reads the set yet.
+ * (network/state/StationParamsShadow.hpp).  The parameter inventory, the trace labels and the
+ * diagnostics read it; the columns are still born in the state manager, so the writers of a
+ * column (births, prunes, the re-seed marks) are the state manager's, and a reader that needs
+ * what a later stage of the epoch changes (a re-seed mark set by a screen after the split)
+ * still asks the state manager.  The set holds the values of the split: the linearization
+ * points and the dispositions as they were when the station's rows were built.  It is rebuilt
+ * only when a station reaches its split, so a reader uses a station's set only in an epoch in
+ * which the station was assembled (an entry of the epoch's estimator index); for any other
+ * station it is the last build.
  *
  * Plain value types and free functions; no behaviour classes.
  */
@@ -40,7 +48,9 @@
 #include "network/assembly/ParamInventory.hpp"   // ParamDisposition, AbsorbedReason
 
 #include <array>
+#include <cstddef>
 #include <map>
+#include <string>
 #include <vector>
 
 namespace GnssProcessor {
@@ -53,6 +63,12 @@ struct LocalSlot {
     double           x_lin{0.0};                                ///< Its linearization point: the value the epoch's rows are evaluated at.
     ParamDisposition disp{ParamDisposition::Unobserved};        ///< What the split did with it this epoch.
     bool             pending_reseed{false};                     ///< An ambiguity marked to be re-seeded at its next use.
+    /// The state manager holds a column here that no typed identity names (a layout column of
+    /// the single-receiver filter, or a key the classifier refuses).  @ref ref is left at its
+    /// default and means nothing (it would read as the receiver clock); the slot is in no typed
+    /// map, so no reader of a family sees it, and the inventory lists it as unclassified.  It
+    /// keeps slot k the column k.
+    bool             unnamed{false};
 };
 
 /**
@@ -76,6 +92,9 @@ struct StationShared {
     std::map<SatSignalId, int> sat_phase_bias;  ///< Satellite phase biases, in the order of "G05|L1C|PB".
     std::map<SatSignalId, int> sat_code_bias;   ///< Satellite code biases, in the order of "G05|C1C".
     std::vector<AbsorbedParam> absorbed;        ///< Withheld this epoch whose absorbing column the station holds, in the gates' order.
+    /// Withheld this epoch whose absorbing column the station no longer holds at the split (the
+    /// observation left before it): counted, not in @ref absorbed.
+    long long                  absorbed_no_absorber{0};
 };
 
 /**
@@ -103,6 +122,16 @@ struct StationParams {
     StationShared shared;   ///< The border parameters.
 
     int untyped{0};         ///< Slots no typed map holds.
+
+    /// Slots below this index have a disposition from the split.  A named slot at or above it
+    /// (the split's vector is shorter than the state: a defect) keeps @c Unobserved and is
+    /// counted by the inventory, never recorded.
+    std::size_t decided{0};
+
+    /// "<container>:<key>" of each state column the classifier refused (held as an unnamed
+    /// slot), then "absorbed <container>:<key>" of each withheld state it refused.  Empty on a
+    /// sound run; printed by the inventory as its integrity line.
+    std::vector<std::string> unclassified;
 };
 
 /**
@@ -127,5 +156,36 @@ bool addParam(StationParams& set, const LocalSlot& slot);
  * @return Its slot index, or -1 when the set does not hold it or holds it in no typed map.
  */
 int findParam(const StationParams& set, const ParamRef& ref);
+
+/**
+ * @brief The state-key text of a parameter, as the traces print it.
+ *
+ * The text the single-receiver state manager keys the column by, so that a trace column that
+ * has always carried a state key keeps its bytes: "G05" (slant ionosphere, phase colour),
+ * "G05_L1C" (ambiguity), "GPS_DCB", "GPS_IFB5", "GPS_ISC_C1W" (receiver code bias), "Galileo"
+ * (inter-system bias), "GPS_RPB_L1C" (receiver phase bias), "G05|C1C" (satellite code bias),
+ * "G05|L1C|PB" (satellite phase bias), "G05|SC" (satellite clock).
+ *
+ * @param ref The parameter.
+ * @return The key; empty for a parameter with no text key (the fixed core) and for an identity
+ *         the key formats cannot render.
+ */
+std::string keyText(const ParamRef& ref);
+
+/**
+ * @brief The label the state manager gives a column (@c StateManager::getStateLabels), for a
+ *        slot of the set.
+ *
+ * "POS_X", "CLK", "ZWD", "ISB_Galileo" for the core and the inter-system biases; the family's
+ * prefix and the key for the dynamic families ("AMB:G05_L1C", "IONO:G05", "CBIAS:GPS_DCB",
+ * "SATB:G05|C1C", "SATPB:G05|L1C|PB", "RPB:GPS_RPB_L1C", "PCOL:G05", "SATCLK:G05|SC"; the
+ * prefixes are the rows of @c kStateFamilies, a trace contract).  A column no family names has
+ * the state manager's own "STATE_<index>".
+ *
+ * @param slot  The slot.
+ * @param index The slot's index, which is its state column.
+ * @return The label.
+ */
+std::string stateLabel(const LocalSlot& slot, std::size_t index);
 
 } // namespace GnssProcessor

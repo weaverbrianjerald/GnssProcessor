@@ -180,6 +180,24 @@ Eigen::VectorXd redundancy(const Spectrum& sp, const Eigen::MatrixXd& A_r,
 
 }  // namespace StationBlockAudit
 
+/**
+ * @brief The kind label of every local column of a station's block, for the span field.
+ *
+ * Read from the station's parameter set through the assembly's state-index to local-column
+ * map, so the labels are correct under both vehicles (nothing here is carry-gated).  The
+ * labels: the audit's @c clk, @c zwd, @c rxcb:<key>, @c iono:<sat>, @c amb:<sat>:<signal>, plus
+ * @c pos:<xyz>, @c isb:<system>, @c satbias:<key>, @c satpb:<key>, @c rxpb:<key> and
+ * @c satclk:<key>.  The phase colour has no label: its column appears in a span as
+ * @c col<k>, and an unnamed slot (a layout column of the single-receiver filter) the same.
+ *
+ * @param R       The station's assembly of the epoch (its @c h2local).
+ * @param set     The station's parameter set, built at the same epoch's split.
+ * @param n_local Number of local columns (the width of the block).
+ * @return One label per local column; empty for a column nothing names.
+ */
+std::vector<std::string> stationBlockLabels(const StationAssembly& R, const StationParams& set,
+                                            Eigen::Index n_local);
+
 struct NetworkRun;              // network/driver/Run.hpp
 struct NetworkEpoch;            // network/driver/Epoch.hpp
 

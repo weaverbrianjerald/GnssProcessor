@@ -340,6 +340,7 @@ add_library(gnss_core STATIC
     src/core/network/carry/Inject.cpp
     src/core/network/assembly/CanonicalPairAdmission.cpp
     src/core/network/state/ArcLedger.cpp
+    src/core/network/state/StateColumns.cpp
     src/core/network/state/StationParams.cpp
     src/core/network/state/StationParamsShadow.cpp
     src/core/network/solve/AnchorReentry.cpp

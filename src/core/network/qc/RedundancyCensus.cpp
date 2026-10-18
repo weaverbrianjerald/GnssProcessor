@@ -149,48 +149,48 @@ std::vector<Eigen::Index> unobservableLocalColumns(const Eigen::VectorXd& pivots
     return out;
 }
 
+namespace {
+
+/**
+ * @brief The label of one parameter in a census (see @ref localColumnLabels); empty when the
+ *        census names no such kind.
+ */
+std::string censusLabel(const ParamRef& r) {
+    using PK = NetworkParamKind;
+    switch (r.kind) {
+        case PK::SlantIono:   return "iono:" + keyText(r);
+        case PK::Ambiguity:   return "amb:" + keyText(r);
+        case PK::RxCodeBias:  return "rxcb:" + keyText(r);
+        case PK::RxPhaseBias: return "rpb:" + keyText(r);
+        case PK::Zwd:         return r.core == UserCore::None ? "zwd" : std::string();
+        case PK::RxClock:
+            return r.core == UserCore::None && r.form == ParamForm::None ? "rx_clock" : std::string();
+        default:              break;
+    }
+    return {};
+}
+
+}  // namespace
+
+std::map<Eigen::Index, std::string> localColumnLabels(const StationAssembly& R,
+                                                      const StationParams& set) {
+    std::map<Eigen::Index, std::string> out;
+    for (std::size_t k = 0; k < set.slots.size(); ++k) {
+        const LocalSlot& s = set.slots[k];
+        if (s.unnamed) continue;
+        const auto hit = R.h2local.find(static_cast<int>(k));
+        if (hit == R.h2local.end() || hit->second < 0) continue;
+        std::string label = censusLabel(s.ref);
+        if (!label.empty()) out.emplace(static_cast<Eigen::Index>(hit->second), std::move(label));
+    }
+    return out;
+}
+
 // ===========================================================================
 //  File-local helpers
 // ===========================================================================
 
 namespace {
-
-/// Sentinel StateManager returns for "this state does not exist".
-constexpr std::size_t kNoState = std::numeric_limits<std::size_t>::max();
-
-/**
- * @brief Local A_r column → human state label, via @c h2local and the station's
- *        StateManager key maps.
- *
- * @c h2local maps H (state-vector) column → A_r column, so the label pass walks
- * the StateManager's key maps forward and installs each key on the A_r column
- * its state index maps to.  A column no map claims gets the positional
- * fallback @c "loc<col>" (see localLabel): the census still counts and reports
- * a column it cannot name.
- */
-std::map<Eigen::Index, std::string> localColumnLabels(const StationAssembly& R,
-                                                      const StateManager* sm) {
-    std::map<Eigen::Index, std::string> out;
-    if (sm == nullptr) return out;
-    auto put = [&](std::size_t state_idx, const std::string& label) {
-        if (state_idx == kNoState) return;
-        const auto hit = R.h2local.find(static_cast<int>(state_idx));
-        if (hit == R.h2local.end() || hit->second < 0) return;
-        out.emplace(static_cast<Eigen::Index>(hit->second), label);
-    };
-    for (const auto& kv : sm->getIonosphereStates())        put(kv.second, "iono:" + kv.first);
-    for (const auto& kv : sm->getIonosphereRateStates())    put(kv.second, "ionorate:" + kv.first);
-    for (const auto& kv : sm->getAmbiguities())             put(kv.second, "amb:" + kv.first);
-    for (const auto& kv : sm->getCodeBiasStates())          put(kv.second, "rxcb:" + kv.first);
-    for (const auto& kv : sm->getReceiverPhaseBiasStates()) put(kv.second, "rpb:" + kv.first);
-    put(sm->getTropoIndex(),              "zwd");
-    put(sm->getTropoGradientNorthIndex(), "grad_n");
-    put(sm->getTropoGradientEastIndex(),  "grad_e");
-    put(sm->getClockIndex(),              "rx_clock");
-    put(sm->getClockRateIndex(),          "rx_clock_rate");
-    put(sm->getPhaseClockIndex(),         "rx_phase_clock");
-    return out;
-}
 
 /// Label of local column @p col, or the positional fallback.
 std::string localLabel(const std::map<Eigen::Index, std::string>& labels,
@@ -516,6 +516,10 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
                 // RESPONDED ladder against the CLEAN one) would be circular and
                 // could not fail.
                 //
+                // The marks are read from the state manager, not from the station's
+                // parameter set: the screens write them after the split, and the set
+                // holds them as they were when it was built.
+                //
                 // This depends on seam order.  SB_LEVELING's carry harvest clears
                 // the pending-reseed set (LevelingCarry.cpp,
                 // clearPendingReseed), and SB_RAIM then marks this epoch's
@@ -568,7 +572,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
             counters.redun_pivot_flagged += static_cast<long long>(bad.size());
             std::set<std::string> now;
             std::map<Eigen::Index, std::string> labels;
-            if (!bad.empty()) labels = localColumnLabels(R, stations[i].sm.get());
+            if (!bad.empty()) labels = localColumnLabels(R, stations[i].params);
             for (Eigen::Index col : bad) now.insert(localLabel(labels, col));
             // Both edges (invariant #7): entry into the set (the decoupling edge)
             // emits an event with the column's identity; exit (the re-coupling

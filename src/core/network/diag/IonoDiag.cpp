@@ -14,9 +14,8 @@
 #include "common/PppUtils.hpp"
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
-#include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
+#include "network/state/StationParams.hpp"
 
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
@@ -87,13 +86,15 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
             for (const auto& o : modeled[i])
                 elaz.emplace(o.satellite, std::make_pair(o.elevation, o.azimuth));
             const auto& h2l = asm_res[i].h2local;
-            for (const auto& kv : stations[i].sm->getIonosphereStates()) {
-                const auto hit = h2l.find(static_cast<int>(kv.second));
+            const StationParams& params = stations[i].params;
+            for (const auto& [sat, slot_idx] : params.iono) {
+                const auto hit = h2l.find(slot_idx);
                 if (hit == h2l.end()) continue;
                 if (hit->second < 0
                     || static_cast<Eigen::Index>(hit->second) >= x_r.size())
                     continue;
-                const auto e = elaz.find(kv.first);
+                const std::string sat_text = sat.str();
+                const auto e = elaz.find(sat_text);
                 if (e == elaz.end()) continue;
                 // Frame of the columns (SPEC_t3_null_derivation §7.8).  `iono_m` is the
                 // reconstructed correction x_r alone.  The per-LOS iono state is seeded
@@ -103,12 +104,11 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
                 // is appended after it, on the ZWD block's pattern below: x_lin from
                 // the station's own state vector, iono_total_m = x_lin + x_r.  Grade
                 // `iono_total_m`, not `iono_m`.
-                const double x_lin =
-                    stations[i].sm->getStateVector()(static_cast<Eigen::Index>(kv.second));
+                const double x_lin = params.slots[static_cast<std::size_t>(slot_idx)].x_lin;
                 const double iono_total = x_lin + x_r(hit->second);
                 iono_trace << se.time.week << ','
                            << fmt::format("{:.3f}", se.time.tow) << ','
-                           << stations[i].name << ',' << kv.first << ','
+                           << stations[i].name << ',' << sat_text << ','
                            << fmt::format("{:.4f}", x_r(hit->second)) << ','
                            << fmt::format("{:.2f}", e->second.first) << ','
                            << fmt::format("{:.2f}", e->second.second) << ','
@@ -121,15 +121,15 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
     // --- Per-station ZWD trace (L7) -------------------------------------
     // One row per present station each emitted epoch: the estimated ZWD (a-priori state +
     // reconstructed correction) and its datum-conditioned formal σ (the V7 border-sharpening
-    // instrument).  Independent of the carry: the ZWD column is located via getTropoIndex /
-    // h2local, not R.pl_zwd_present, which is set only under carry_warm && zwd_on (a lookup
-    // through it would emit no rows in run A of the V7 A/B or during warmup).
+    // instrument).  Independent of the carry: the ZWD column is located via the station's
+    // parameter set and h2local, not R.pl_zwd_present, which is set only under carry_warm &&
+    // zwd_on (a lookup through it would emit no rows in run A of the V7 A/B or during warmup).
     if (zwd_trace.is_open()) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (est_index_of[i] < 0) continue;               // not in this epoch's solve
-            const size_t tropo_idx_sz = stations[i].sm->getTropoIndex();
-            if (tropo_idx_sz == std::numeric_limits<size_t>::max()) continue;  // no ZWD state
-            const int tropo_idx = static_cast<int>(tropo_idx_sz);
+            const StationParams& params = stations[i].params;
+            if (params.zwd < 0) continue;                    // no ZWD state
+            const int tropo_idx = params.zwd;
             const auto& h2l = asm_res[i].h2local;
             const auto zhit = h2l.find(tropo_idx);
             if (zhit == h2l.end() || zhit->second < 0) continue;   // ZWD not in A_r this epoch
@@ -141,7 +141,7 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
                     static_cast<std::size_t>(est_index_of[i]), {zcol}, plan.shared_datum);
             } catch (...) { continue; }
             if (zcol >= x_r.size()) continue;
-            const double x_lin = stations[i].sm->getStateVector()(tropo_idx);  // ≡0.0 today; kept for robustness
+            const double x_lin = params.slots[static_cast<std::size_t>(tropo_idx)].x_lin;  // ≡0.0 today; kept for robustness
             const double zwd_m = x_lin + x_r(zcol);
             const double var   = (vard.size() > 0) ? vard(0) : -1.0;
             if (!(var > 0.0) || !std::isfinite(var) || !std::isfinite(zwd_m)) continue;
@@ -165,9 +165,9 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
     //
     // Same construction as the ZWD block above (the pattern the SPEC names):
     // reconstructStation for the value, conditionalLocalVarianceDiag for the
-    // datum-conditioned σ, and the column located via getClockIndex / getCodeBiasStates
-    // + h2local rather than any carry-gated flag.  A carry-gated lookup would emit no
-    // rows on a cold run, which would read as "the states do not exist".
+    // datum-conditioned σ, and the column located via the parameter set's clock and receiver
+    // code biases + h2local rather than any carry-gated flag.  A carry-gated lookup would emit
+    // no rows on a cold run, which would read as "the states do not exist".
     //
     // One conditionalLocalVarianceDiag call per station covers all of that station's
     // receiver columns: the cost is in the conditioning, and the returned diagonal is
@@ -179,27 +179,26 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
             // Collect (kind, key, state_index, local_column) for the clock + every rx CB.
             struct RxCol { const char* kind; std::string key; int sidx; Eigen::Index col; };
             std::vector<RxCol> want;
-            const size_t clk_sz = stations[i].sm->getClockIndex();
-            if (clk_sz != std::numeric_limits<size_t>::max()) {
-                const auto hit = h2l.find(static_cast<int>(clk_sz));
+            const StationParams& params = stations[i].params;
+            if (params.clock >= 0) {
+                const auto hit = h2l.find(params.clock);
                 if (hit != h2l.end() && hit->second >= 0)
-                    want.push_back({ "CLK", std::string(), static_cast<int>(clk_sz),
+                    want.push_back({ "CLK", std::string(), params.clock,
                                      static_cast<Eigen::Index>(hit->second) });
             }
-            for (const auto& [key, idx] : stations[i].sm->getCodeBiasStates()) {
-                const auto hit = h2l.find(static_cast<int>(idx));
+            for (const auto& [cb, idx] : params.rx_cb) {
+                const auto hit = h2l.find(idx);
                 if (hit == h2l.end() || hit->second < 0) continue;
-                want.push_back({ "CB", key, static_cast<int>(idx),
+                want.push_back({ "CB", keyText(params.slots[static_cast<std::size_t>(idx)].ref), idx,
                                  static_cast<Eigen::Index>(hit->second) });
             }
             // The receiver inter-system bias: one row per non-GPS system whose column
             // is in this station's block this epoch (kind ISB, key = the system name).
             // A GPS-only run allocates no such state and writes no such row.
-            for (const auto& [sys, idx] : stations[i].sm->getSystemTimeOffsetStates()) {
-                if (idx == std::numeric_limits<size_t>::max()) continue;
-                const auto hit = h2l.find(static_cast<int>(idx));
+            for (const auto& [sys, idx] : params.isb) {
+                const auto hit = h2l.find(idx);
                 if (hit == h2l.end() || hit->second < 0) continue;
-                want.push_back({ "ISB", sys, static_cast<int>(idx),
+                want.push_back({ "ISB", systemName(sys), idx,
                                  static_cast<Eigen::Index>(hit->second) });
             }
             if (want.empty()) continue;
@@ -215,7 +214,7 @@ void networkIonoDiag(NetworkRun& run, const NetworkEpoch& ep) {
             for (size_t k = 0; k < want.size(); ++k) {
                 const auto& w = want[k];
                 if (w.col >= x_r.size()) continue;
-                const double x_lin = stations[i].sm->getStateVector()(w.sidx);
+                const double x_lin = params.slots[static_cast<std::size_t>(w.sidx)].x_lin;
                 const double value  = x_lin + x_r(w.col);
                 const double var    = (static_cast<Eigen::Index>(k) < vard.size())
                                           ? vard(static_cast<Eigen::Index>(k)) : -1.0;

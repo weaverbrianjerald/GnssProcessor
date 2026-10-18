@@ -6,25 +6,23 @@
 
 #include "network/state/StationParamsShadow.hpp"
 
-#include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "measurement/UserParamView.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StateColumns.hpp"
 
 #include <fmt/format.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
-#include <exception>
 #include <map>
-#include <set>
+#include <utility>
 
 namespace GnssProcessor {
 
 namespace {
-
-namespace K = StateKeys;
 
 /// Equality of two doubles in every bit (a NaN equals the same NaN).
 bool sameBits(double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0; }
@@ -47,13 +45,6 @@ private:
     double              tow_;
 };
 
-/// The key a slot's parameter has in the state manager's map of its family.
-std::string keyOfSlot(const LocalSlot& s) {
-    if (s.ref.kind == NetworkParamKind::RxClock && s.ref.form == ParamForm::Isb)
-        return K::makeSystemTimeOffsetKey(systemName(s.ref.sys));
-    return userKey(s.ref);
-}
-
 /// A typed map against the state manager's map of its family: the same keys in the same order
 /// at the same columns.
 template <class Typed>
@@ -70,7 +61,7 @@ void checkMap(const char* family, const std::map<std::string, std::size_t>& text
     for (const auto& entry : typed) {
         const int index = entry.second;
         const bool in_range = index >= 0 && static_cast<std::size_t>(index) < slots.size();
-        const std::string want = in_range ? keyOfSlot(slots[static_cast<std::size_t>(index)]) : std::string();
+        const std::string want = in_range ? keyText(slots[static_cast<std::size_t>(index)].ref) : std::string();
         if (t->first != want || t->second != static_cast<std::size_t>(index)) {
             f.note(SetMismatch::TypedOrder, [&] {
                 return fmt::format("{}: the state manager has '{}' at column {}, the typed map has "
@@ -83,35 +74,33 @@ void checkMap(const char* family, const std::map<std::string, std::size_t>& text
     }
 }
 
-/// The inventory's record of each column and of each withheld state against the set's slots.
-void checkInventory(const StationParams& set, const StationParamSlot& inv, int station, Findings& f) {
-    const std::size_t n = set.slots.size();
-    const std::size_t absorbed = set.shared.absorbed.size();
-    if (inv.records.size() != n + absorbed) {
+/// The inventory recorded from the set against the one the state manager alone gives: every
+/// record, the unclassified list and the two counters.
+void checkInventory(const StationParamSlot& got, const StationParamSlot& want, Findings& f) {
+    if (got.filled != want.filled || got.unclassified != want.unclassified
+        || got.no_disposition != want.no_disposition
+        || got.absorbed_no_absorber != want.absorbed_no_absorber) {
         f.note(SetMismatch::Inventory, [&] {
-            return fmt::format("the inventory has {} records, the set {} slots and {} withheld",
-                               inv.records.size(), n, absorbed);
+            return fmt::format("the counters differ: {} unclassified, {} without a disposition, {} "
+                               "without an absorber against the state manager's {}, {}, {}",
+                               got.unclassified.size(), got.no_disposition, got.absorbed_no_absorber,
+                               want.unclassified.size(), want.no_disposition, want.absorbed_no_absorber);
+        });
+    }
+    if (got.records.size() != want.records.size()) {
+        f.note(SetMismatch::Inventory, [&] {
+            return fmt::format("{} records against the state manager's {}", got.records.size(),
+                               want.records.size());
         });
         return;
     }
-    const StationId id{station};
-    for (std::size_t k = 0; k < n; ++k) {
-        const StationParamRecord& rec = inv.records[k];
-        const LocalSlot&          s   = set.slots[k];
-        if (!(rec.id == paramInstanceOf(s.ref, id)) || rec.disp != s.disp || rec.reason.has_value()) {
+    for (std::size_t k = 0; k < got.records.size(); ++k) {
+        const StationParamRecord& g = got.records[k];
+        const StationParamRecord& w = want.records[k];
+        if (!(g.id == w.id) || g.disp != w.disp || g.reason != w.reason) {
             f.note(SetMismatch::Inventory, [&] {
-                return fmt::format("record {} is not the set's slot ({})", k, describe(s.ref));
-            });
-        }
-    }
-    for (std::size_t j = 0; j < absorbed; ++j) {
-        const StationParamRecord& rec = inv.records[n + j];
-        const AbsorbedParam&      a   = set.shared.absorbed[j];
-        if (!(rec.id == paramInstanceOf(a.ref, id)) || rec.disp != ParamDisposition::Absorbed
-            || !rec.reason.has_value() || *rec.reason != a.reason) {
-            f.note(SetMismatch::Inventory, [&] {
-                return fmt::format("record {} is not the withheld parameter ({})", n + j,
-                                   describe(a.ref));
+                return fmt::format("record {} differs from the state manager's ({} against {})", k,
+                                   paramDispositionName(g.disp), paramDispositionName(w.disp));
             });
         }
     }
@@ -143,9 +132,11 @@ constexpr Family kFamilies[] = {
 constexpr std::size_t kFamilyCount = sizeof(kFamilies) / sizeof(kFamilies[0]);
 constexpr std::size_t kUntypedFamily = kFamilyCount - 1;
 
-/// The row of @ref kFamilies a parameter belongs to.
-std::size_t familyOf(const ParamRef& r) {
+/// The row of @ref kFamilies a slot belongs to.
+std::size_t familyOf(const LocalSlot& s) {
     using PK = NetworkParamKind;
+    if (s.unnamed) return kUntypedFamily;
+    const ParamRef& r = s.ref;
     switch (r.kind) {
         case PK::RxPosition:   return 0;
         case PK::RxClock:
@@ -165,7 +156,7 @@ std::size_t familyOf(const ParamRef& r) {
     return kUntypedFamily;
 }
 
-} // namespace
+}  // namespace
 
 const char* setMismatchName(SetMismatch m) {
     switch (m) {
@@ -188,50 +179,100 @@ long long StationParamsCheck::mismatches() const {
     return total;
 }
 
-ShadowBuild buildStationParams(const StateManager& sm, const std::vector<ParamDisposition>& col_disp,
-                               const StationAbsorbed& absorbed, StationParams& out) {
-    out = StationParams{};
-    ShadowBuild result;
+void buildStationParams(const StateManager& sm, const std::vector<ParamDisposition>& col_disp,
+                        const StationAbsorbed& absorbed, StationParams& out) {
+    StationParams set;   // built apart, so that a throw leaves `out` as it was
     const std::vector<StateColumn> columns = listStateColumns(sm);
-    std::vector<ParamInstanceId> ids;
-    ids.reserve(columns.size());
-    for (const StateColumn& col : columns) {
-        const auto id = classifyStateColumn(col.container, col.key);
-        if (!id) {
-            result.complete = false;
-            result.unclassified.push_back(std::string(stateContainerName(col.container)) + ":" + col.key);
-            continue;
-        }
-        ids.push_back(*id);
-    }
-    if (!result.complete) return result;
-
     const Eigen::VectorXd x = sm.getStateVector();
-    out.slots.reserve(columns.size());
-    for (std::size_t k = 0; k < columns.size(); ++k) {
-        const StateColumn& col = columns[k];
-        std::uint8_t axis = 0;
-        if (col.container == StateContainer::PositionIndex)
-            axis = static_cast<std::uint8_t>(col.index - sm.getPositionIndex());
+    set.slots.reserve(columns.size());
+    set.decided = std::min(col_disp.size(), columns.size());
+    for (const StateColumn& col : columns) {
         LocalSlot slot;
-        slot.ref = paramRefOf(ids[k], axis);
         slot.x_lin = x(static_cast<Eigen::Index>(col.index));
         if (col.index < col_disp.size()) slot.disp = col_disp[col.index];
-        else                             ++result.no_disposition;
-        slot.pending_reseed = col.container == StateContainer::Ambiguities
-                           && sm.isAmbiguityPendingReseed(col.key);
-        addParam(out, slot);
+        if (const auto id = classifyStateColumn(col.container, col.key)) {
+            std::uint8_t axis = 0;
+            if (col.container == StateContainer::PositionIndex)
+                axis = static_cast<std::uint8_t>(col.index - sm.getPositionIndex());
+            slot.ref = paramRefOf(*id, axis);
+            slot.pending_reseed = col.container == StateContainer::Ambiguities
+                               && sm.isAmbiguityPendingReseed(col.key);
+        } else {
+            slot.unnamed = true;
+            set.unclassified.push_back(std::string(stateContainerName(col.container)) + ":" + col.key);
+        }
+        addParam(set, slot);
     }
+    std::vector<std::string> absorbed_unclassified;
     for (const AbsorbedNote& note : absorbed.notes) {
         const auto a = classifyAbsorbed(note);
-        if (!a || !absorberPresent(sm, *a)) continue;
-        out.shared.absorbed.push_back(AbsorbedParam{paramRefOf(a->id), a->reason});
+        if (!a) {
+            absorbed_unclassified.push_back("absorbed " + absorbedNoteLabel(note));
+            continue;
+        }
+        if (!absorberPresent(sm, *a)) {
+            ++set.shared.absorbed_no_absorber;
+            continue;
+        }
+        set.shared.absorbed.push_back(AbsorbedParam{paramRefOf(a->id), a->reason});
     }
-    return result;
+    for (std::string& label : absorbed_unclassified) set.unclassified.push_back(std::move(label));
+    out = std::move(set);
+}
+
+void recordStationParamsFromState(const StateManager& sm, int station,
+                                  const std::vector<ParamDisposition>& col_disp,
+                                  const StationAbsorbed& absorbed, StationParamSlot& slot) {
+    slot.records.clear();
+    slot.unclassified.clear();
+    slot.no_disposition       = 0;
+    slot.absorbed_no_absorber = 0;
+    slot.filled = true;
+    // The columns of the station's state manager, with the split's dispositions.
+    for (const StateColumn& col : listStateColumns(sm)) {
+        const auto id = classifyStateColumn(col.container, col.key);
+        if (!id) {
+            slot.unclassified.push_back(std::string(stateContainerName(col.container)) + ":" + col.key);
+            continue;
+        }
+        if (col.index >= col_disp.size()) {   // the split did not decide this column
+            ++slot.no_disposition;
+            continue;
+        }
+        StationParamRecord rec;
+        rec.id         = *id;
+        rec.id.station = StationId{station};
+        rec.disp       = col_disp[col.index];
+        slot.records.push_back(rec);
+    }
+    // The shared states the gates withheld from it (no column), each absorbed by a column
+    // the station still holds; one whose observation left before the split has nothing
+    // to absorb it and is counted apart.  A note whose key the classifier refuses is
+    // listed unclassified after the columns' own, in note order.
+    std::vector<std::string> absorbed_unclassified;
+    for (const AbsorbedNote& note : absorbed.notes) {
+        const auto a = classifyAbsorbed(note);
+        if (!a) {
+            absorbed_unclassified.push_back("absorbed " + absorbedNoteLabel(note));
+            continue;
+        }
+        if (!absorberPresent(sm, *a)) {
+            ++slot.absorbed_no_absorber;
+            continue;
+        }
+        StationParamRecord rec;
+        rec.id         = a->id;
+        rec.id.station = StationId{station};
+        rec.disp       = ParamDisposition::Absorbed;
+        rec.reason     = a->reason;
+        slot.records.push_back(rec);
+    }
+    for (std::string& label : absorbed_unclassified)
+        slot.unclassified.push_back(std::move(label));
 }
 
 void checkStationParams(const StationParams& set, const StateManager& sm,
-                        const std::vector<ParamDisposition>& col_disp,
+                        const std::vector<ParamDisposition>& col_disp, const StationAbsorbed& absorbed,
                         const StationParamSlot& inventory, int station, double tow,
                         StationParamsCheck& out) {
     Findings f(out, tow);
@@ -248,40 +289,52 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
     const UserParamView view(sm, x, n);
     for (std::size_t k = 0; k < n; ++k) {
         const LocalSlot& s = set.slots[k];
-        const ParamSlot at = view.find(s.ref);
-        if (at.column != static_cast<int>(k)) {
-            f.note(SetMismatch::Identity, [&] {
-                return fmt::format("slot {} ({}) resolves to column {}", k, describe(s.ref), at.column);
-            });
-        } else if (!sameBits(at.x, s.x_lin)) {
-            f.note(SetMismatch::XLin, [&] {
-                return fmt::format("slot {} ({}): {:.17g} against the state's {:.17g}", k,
-                                   describe(s.ref), s.x_lin, at.x);
-            });
+        if (s.unnamed) {
+            // No identity to resolve: the slot still carries its column's value.
+            if (!sameBits(x(static_cast<Eigen::Index>(k)), s.x_lin)) {
+                f.note(SetMismatch::XLin, [&] {
+                    return fmt::format("unnamed slot {}: {:.17g} against the state's {:.17g}", k,
+                                       s.x_lin, x(static_cast<Eigen::Index>(k)));
+                });
+            }
+        } else {
+            const ParamSlot at = view.find(s.ref);
+            if (at.column != static_cast<int>(k)) {
+                f.note(SetMismatch::Identity, [&] {
+                    return fmt::format("slot {} ({}) resolves to column {}", k, describe(s.ref), at.column);
+                });
+            } else if (!sameBits(at.x, s.x_lin)) {
+                f.note(SetMismatch::XLin, [&] {
+                    return fmt::format("slot {} ({}): {:.17g} against the state's {:.17g}", k,
+                                       describe(s.ref), s.x_lin, at.x);
+                });
+            }
+            const bool reseed = s.ref.kind == NetworkParamKind::Ambiguity
+                             && sm.isAmbiguityPendingReseed(userKey(s.ref));
+            if (s.pending_reseed != reseed) {
+                f.note(SetMismatch::Reseed, [&] {
+                    return fmt::format("slot {} ({}): mark {} against the state manager's {}", k,
+                                       describe(s.ref), s.pending_reseed, reseed);
+                });
+            }
+            if (findParam(set, s.ref) != static_cast<int>(k)) {
+                f.note(SetMismatch::Lookup, [&] {
+                    return fmt::format("slot {} ({}) is found at slot {}", k, describe(s.ref),
+                                       findParam(set, s.ref));
+                });
+            }
         }
         const ParamDisposition want = k < col_disp.size() ? col_disp[k] : ParamDisposition::Unobserved;
         if (s.disp != want) {
             f.note(SetMismatch::Disposition, [&] {
-                return fmt::format("slot {} ({}): {} against the split's {}", k, describe(s.ref),
+                return fmt::format("slot {}: {} against the split's {}", k,
                                    paramDispositionName(s.disp), paramDispositionName(want));
             });
         }
-        const bool reseed = s.ref.kind == NetworkParamKind::Ambiguity
-                         && sm.isAmbiguityPendingReseed(userKey(s.ref));
-        if (s.pending_reseed != reseed) {
-            f.note(SetMismatch::Reseed, [&] {
-                return fmt::format("slot {} ({}): mark {} against the state manager's {}", k,
-                                   describe(s.ref), s.pending_reseed, reseed);
-            });
-        }
-        if (findParam(set, s.ref) != static_cast<int>(k)) {
-            f.note(SetMismatch::Lookup, [&] {
-                return fmt::format("slot {} ({}) is found at slot {}", k, describe(s.ref),
-                                   findParam(set, s.ref));
-            });
-        }
     }
-    checkInventory(set, inventory, station, f);
+    StationParamSlot reference;
+    recordStationParamsFromState(sm, station, col_disp, absorbed, reference);
+    checkInventory(inventory, reference, f);
     checkMap("inter-system bias", sm.getSystemTimeOffsetStates(), set.isb, set.slots, f);
     checkMap("slant ionosphere", sm.getIonosphereStates(), set.iono, set.slots, f);
     checkMap("phase colour", sm.getPhaseColourStates(), set.colour, set.slots, f);
@@ -295,21 +348,31 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
 
 void networkShadowStationParams(NetStation& st, int station,
                                 const std::vector<ParamDisposition>& col_disp,
-                                const StationParamSlot& inventory, double tow) {
+                                StationParamSlot& inventory, double tow) {
     const auto started = std::chrono::steady_clock::now();
+    const StationAbsorbed& absorbed = st.mm->absorbedSharedStates();
+    bool built = false;
     try {
-        const ShadowBuild built =
-            buildStationParams(*st.sm, col_disp, st.mm->absorbedSharedStates(), st.params);
-        if (built.complete) {
-            ++st.params_check.builds;
-            checkStationParams(st.params, *st.sm, col_disp, inventory, station, tow, st.params_check);
-        } else {
-            ++st.params_check.incomplete;
-        }
-    } catch (const std::exception&) {
-        ++st.params_check.failed;
+        buildStationParams(*st.sm, col_disp, absorbed, st.params);
+        recordStationParams(st.params, station, inventory);
+        ++st.params_check.builds;
+        if (!st.params.unclassified.empty()) ++st.params_check.unclassified;
+        built = true;
     } catch (...) {
         ++st.params_check.failed;
+        st.params = StationParams{};
+        try {
+            recordStationParamsFromState(*st.sm, station, col_disp, absorbed, inventory);
+        } catch (...) {
+        }
+    }
+    if (built) {
+        try {
+            checkStationParams(st.params, *st.sm, col_disp, absorbed, inventory, station, tow,
+                               st.params_check);
+        } catch (...) {
+            ++st.params_check.failed;
+        }
     }
     st.params_check.wall_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
                                    std::chrono::steady_clock::now() - started).count();
@@ -324,7 +387,7 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
     for (const NetStation& st : stations) {
         const StationParamsCheck& c = st.params_check;
         total.builds += c.builds;
-        total.incomplete += c.incomplete;
+        total.unclassified += c.unclassified;
         total.failed += c.failed;
         total.slots += c.slots;
         total.wall_ns += c.wall_ns;
@@ -332,7 +395,7 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
         if (c.builds == 0) continue;
         ++built_stations;
         std::array<long long, kFamilyCount> mine{};
-        for (const LocalSlot& s : st.params.slots) ++mine[familyOf(s.ref)];
+        for (const LocalSlot& s : st.params.slots) ++mine[familyOf(s)];
         for (std::size_t i = 0; i < kFamilyCount; ++i) {
             slots[i] += mine[i];
             if (mine[i] > 0) ++held_by[i];
@@ -356,10 +419,10 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
         findings += fmt::format("{} {}", setMismatchName(static_cast<SetMismatch>(m)), total.mismatch[m]);
     }
     lines.push_back("checks against the state managers, findings: " + findings);
-    lines.push_back(fmt::format("station-epochs with no set: {} with a column the classifier refused, "
-                                "{} with an error",
-                                total.incomplete, total.failed));
-    const long long attempts = total.builds + total.incomplete + total.failed;
+    lines.push_back(fmt::format("station-epochs with a column or a withheld state the classifier "
+                                "refused: {}; with a build or check error (no set): {}",
+                                total.unclassified, total.failed));
+    const long long attempts = total.builds + total.failed;
     lines.push_back(fmt::format("wall of the builds and checks, summed over the station-epochs: "
                                 "{:.1f} ms ({:.1f} us per station-epoch)",
                                 static_cast<double>(total.wall_ns) * 1e-6,

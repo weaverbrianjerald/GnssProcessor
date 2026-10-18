@@ -14,7 +14,7 @@
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 
 #include <spdlog/spdlog.h>
@@ -125,12 +125,13 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
                         static_cast<std::size_t>(est_index_of[i]), x_s);
                 } catch (...) { continue; }
                 const auto& h2l = asm_res[i].h2local;
-                const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
+                const StationParams& params = stations[i].params;
                 for (const auto& o : modeled[i]) {
                     if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
                     if (o.elevation < iwh.elevation_cutoff_deg) continue;
-                    const int iono_idx = stations[i].sm->getIonosphereIndex(o.satellite);
-                    if (iono_idx < 0 || iono_idx >= static_cast<int>(x_lin.size())) continue;
+                    const auto sat_id = SatId::parse(o.satellite);
+                    const int iono_idx = sat_id ? findParam(params, slantIonoRef(*sat_id)) : -1;
+                    if (iono_idx < 0) continue;
                     const auto hit = h2l.find(iono_idx);
                     if (hit == h2l.end()) continue;
                     if (hit->second < 0
@@ -159,7 +160,8 @@ void networkShDevVtec(NetworkRun& run, const NetworkEpoch& ep) {
                             vrow(cj) += mlt * bv[j];
                         }
                     }
-                    const double iono_hat = x_lin(iono_idx) + x_r(hit->second);
+                    const double iono_hat =
+                        params.slots[static_cast<std::size_t>(iono_idx)].x_lin + x_r(hit->second);
                     const double u_hat = iono_hat - sh_hat;
                     NetworkNormalEquations::StationRegression reg;
                     try {
