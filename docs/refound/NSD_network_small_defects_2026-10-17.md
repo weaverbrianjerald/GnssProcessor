@@ -9,7 +9,7 @@
 - **source:** `docs/status/OPEN_ITEMS.md` rows "Hard clock refloat uncounted", "Stash-status mirrors (suspected)" and "Mixed-system clock step"; [PRM3](PRM3_responses_2026-10-02.md) section 5; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` sections 4 and 5
 - **knobs / posture:** `network.readmit_seed_mirrors` (ledger row UNVALIDATED, default false, not fingerprinted, unarmed in both goldens); no key for items 1 and 3
 - **dates in the text:** 2026-10-17
-- **hashes / run dirs:** branch `fix/netsmall` (worktree `D:/GnssProcessorSupport/worktrees/netsmall`); tests `tests/network/test_net_small_defects.cpp` (suites `PbHoldDecommonedStepTest`, `StashHardRefloatTest`, `StashStatusSeedMirrorTest`); smoke output `D:/GnssProcessorSupport/gates/netsmall/`
+- **hashes / run dirs:** branch `fix/netsmall`, commit `d84f695` (worktree `D:/GnssProcessorSupport/worktrees/netsmall`); Release exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_netsmall.exe` md5 `72ec1b10103493b73ca3f546d3f1eb02` (the sources of that commit; docs and tests excluded); tests `tests/network/test_net_small_defects.cpp` (suites `PbHoldDecommonedStepTest`, `StashHardRefloatTest`, `StashStatusSeedMirrorTest`); smoke output `D:/GnssProcessorSupport/gates/netsmall/`
 
 **Outcome.** Question: are three small open defects of the network producer real, and can each be fixed without
 moving a number? All three are real in the code. The hard refloat left out three kinds of border entry with no count;
