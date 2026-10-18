@@ -5,18 +5,19 @@
 - **id:** NSD
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-17 on branch `fix/netsmall`. (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a new READMIT line, and taken as rows behind the default-off key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key; item 2's key is unarmed. The same-build check (CHECK) is owed.
+- **summary:** BUILT 2026-10-17 on branch `fix/netsmall`. (1) The hard clock refloat (`clock_monitor_reinit_sigma_m` <= 0) is counted in the response registry by three new sites (`clk_hard_refloat`, `pb_hard_refloat`, `cb_hard_refloat`). (2) The stash-status mirrors (the carry LS-VCE monitor snapshot and the prior-residual census snapshot) skip every parked entry, a readmit seed the D2 fold applied included: confirmed in code, counted at run end by a new READMIT line, and taken as rows behind the default-off key `network.readmit_seed_mirrors`. (3) The de-commoned clock step of the coupled-mark census takes one median per constellation. Items 1 and 3 are measure-only and carry no key; item 2's key is unarmed. The same-build check of 2026-10-18 (section 7) found the declared lines and no others.
 - **source:** `docs/status/OPEN_ITEMS.md` rows "Hard clock refloat uncounted", "Stash-status mirrors (suspected)" and "Mixed-system clock step"; [PRM3](PRM3_responses_2026-10-02.md) section 5; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` sections 4 and 5
 - **knobs / posture:** `network.readmit_seed_mirrors` (ledger row UNVALIDATED, default false, not fingerprinted, unarmed in both goldens); no key for items 1 and 3
 - **dates in the text:** 2026-10-17
-- **hashes / run dirs:** branch `fix/netsmall`, commit `d84f695` (worktree `D:/GnssProcessorSupport/worktrees/netsmall`); Release exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_netsmall.exe` md5 `72ec1b10103493b73ca3f546d3f1eb02` (the sources of that commit; docs and tests excluded); tests `tests/network/test_net_small_defects.cpp` (suites `PbHoldDecommonedStepTest`, `StashHardRefloatTest`, `StashStatusSeedMirrorTest`); smoke output `D:/GnssProcessorSupport/gates/netsmall/`
+- **hashes / run dirs:** branch `fix/netsmall`, commit `d84f695` (worktree `D:/GnssProcessorSupport/worktrees/netsmall`); Release exe `D:/GnssProcessorSupport/gates/exe/x64-Release/gnss_processor_netsmall.exe` md5 `72ec1b10103493b73ca3f546d3f1eb02` (the sources of that commit; docs and tests excluded); tests `tests/network/test_net_small_defects.cpp` (suites `PbHoldDecommonedStepTest`, `StashHardRefloatTest`, `StashStatusSeedMirrorTest`); smoke and check output `D:/GnssProcessorSupport/gates/netsmall/` and `D:/GnssProcessorSupport/gates/g7/summary_w3netsmall_masked.txt`, arms `_rap_g5_w3netsmall_*` under `D:/GnssProcessorSupport/runs_nom`
 
 **Outcome.** Question: are three small open defects of the network producer real, and can each be fixed without
 moving a number? All three are real in the code. The hard refloat left out three kinds of border entry with no count;
 now each is a site of the response table. The two stash-status mirrors never saw a readmit seed although the fold
 applies it; a counter states how many, and one default-off key takes them as rows. The coupled-mark census read one
 median across GPS and Galileo where the hold's own transfer is per constellation; it is per constellation now. Every
-output difference with the key off is declared line by line in section 4. The same-build check is owed
+output difference with the key off is declared line by line in section 4. The same-build check
+([section 7](#7-same-build-check-2026-10-18)) found those lines and no others; the 6 h seed counts stay owed
 ([section 6](#6-what-remains)).
 
 ## 1. Hard clock refloat uncounted
@@ -123,3 +124,62 @@ Owed to the check stage: the same-build golden comparison (field and sim, 2 h, a
 `30ca49e`) confirming that only the lines of section 4 differ, and the seed counts of section 2 on a 6 h field golden arm
 (how many code-bias seeds the monitor and the census skip over the run). Arming `network.readmit_seed_mirrors` is not
 proposed: it needs a graded arm with `carry_vce_apply` on the code-bias family, and the census effect is a trace.
+
+## 7. Same-build check (2026-10-18)
+
+**Sides.** Control: main `30ca49e`, Release exe `gnss_processor_w3base.exe` (sha256 `50ca2ea5...`). Candidate:
+`gnss_processor_w3netsmall.exe`, a byte copy of `gnss_processor_netsmall.exe` (md5 `72ec1b10103493b73ca3f546d3f1eb02`, the
+sources of `d84f695`). Both sides ran on one box at 100 % CPU from other sessions, so wall-clock lines are not graded.
+`network.readmit_seed_mirrors` is off on every arm.
+
+**Network, 23 G5 arms** (field and sim golden variants, 2 h, `D:/GnssProcessorSupport/runs_nom/_rap_g5_w3netsmall_*` against
+`_rap_g5_w3base_*`). The arms are cloned from the same configs as the control. Every arm exits as the control does (zero,
+joint, a4 and gate exit 1 on both sides; the other 19 exit 0).
+
+- Raw comparison (`summary_w3netsmall.txt`): 23 of 23 arms DIFFERENT, as section 4 predicts; only the snapshot bytes of the
+  snapw arm are IDENTICAL.
+- After the three declared changes are reversed on the candidate's text outputs (`norm_declared.py`; the raw files are kept
+  under `D:/GnssProcessorSupport/gates/netsmall/raw_text/`), with the new READMIT line dropped from both sides by
+  `NOM_GATE_DROP_RE` (`summary_w3netsmall_masked.txt`): 24 of 24 IDENTICAL (23 arms and the snapw `snap.txt`). That covers the
+  arm configs, every CSV under `logs/` in row order, the products, the manifest record by record, `stdout.txt` and the whole
+  `main_log` rotation set.
+- The reversal is exact, not a mask: the site-count line reads `N of 68 ... M not armed` on all 23 arms, rewritten to
+  `N of 65 ... M-3`; the manifest `param_responses` record loses exactly three objects, each `armed:false,count:0`, on all 23
+  arms; 0 declaration errors on all 23. Any other difference would have survived.
+- The READMIT seed-mirror line prints on the 18 arms with `readmit_seed_horizon_s` 3900 and on none of the 5 whose arm config
+  sets no horizon (raw, shd, trc, wcff, wkroci). It sits directly after the READMIT continuity line.
+
+**Seed counts, 2 h arms, key off** (the line's own figures: seeds the D2 fold applied, seeds each snapshot met and skipped).
+Field golden f2: 1 clock + 6 code-bias applied; the monitor met 6 code-bias, the census 6 code-bias + 0 clock. Sim golden s2:
+2 clock + 4 code-bias; monitor 4, census 4. Arm bcl: 1 + 2, met 2 and 2. Arm snapw: 0 + 3, met 3 and 3. Fourteen further arms
+apply 0 or 1 code-bias seed and no clock seed; every code-bias seed is met by both snapshots, except arm vce where the monitor
+reads 0 of 1 (a seed counts only where the mirror is armed for the kind). The coverage gap of section 2 is therefore live on
+both beds at 2 h. The 6 h counts of section 6 are still owed.
+
+**What the network gate does not exercise.**
+
+- Item 1: no arm arms the hard refloat (all three sites read `armed:false,count:0` in the 23 manifests), so the per-site counts
+  are covered by the unit cases only.
+- Item 3: the two GPS + Galileo beds (f2, s2) read 0 coupled-mark samples on both sides. Arm bcl is GPS only with
+  `emit_pb_hold` on and reads 4 samples (p50 0.0125, p90 0.0436, max 0.0436 m) and 4 `PB_HOLD coupled_mark` event rows on both
+  sides: the one-constellation equality of section 3 holds on field data. The two-constellation change is covered by the unit
+  cases only.
+
+**User side** (`scripts/uom_gate.py`, set quick, 16 arms of 600 s, 4 jobs; `runs/_uom_w3netsmall` against `_uom_w3base`): 16 of 16
+IDENTICAL, all exit 0. These arms do not run the network producer, so they certify the shared code only.
+
+**Real time** (`runs/rtseam_goldens/w3netsmall_dr` and `w3netsmall_cl` against `w3base_dr` and `w3base_cl`; the records are
+`D:/GnssProcessorSupport/gates/netsmall/rt_cmp_dr.log` and `rt_cmp_cl.log`):
+
+- dr set (sbf, sbf_bssd, sbf_te), all exit 0: every CSV and log IDENTICAL. Only `console.log` differs, in the line
+  `Real-time session ended: 76 epochs, N ms wall`.
+- cl arm (network closed-loop replay), exit 0 in 782.9 s: every CSV, `network_products.txt`, `network_solution.csv`,
+  `network_events.csv` and `network_epoch_status.csv` IDENTICAL. `console.log` and `main_log.log` differ in four wall-clock
+  lines (RINEX ingestion time, epoch-loop wall, the B6 round-trip time, the ARC LEDGER COST figures) and in the declared line
+  `13 of 65 declared site(s) armed ..., 52 not armed` which now reads `13 of 68 ..., 55`. `network_run_manifest.json` differs
+  in `written_utc`, `compiled` and `loop_ms` (masked keys) and in the three declared `param_responses` objects. The cl config has
+  READMIT off, so no seed-mirror line prints. The comparator's OVERALL FAIL comes from these lines only.
+
+**Verdict.** Pass: with the key off, every difference from main `30ca49e` is a declared line of section 4, and no
+CSV, product or wire file moved on any of the 23 network arms, the 16 user arms or the four real-time arms. Owed, unchanged:
+the 6 h seed counts; arming `network.readmit_seed_mirrors` is not proposed.
