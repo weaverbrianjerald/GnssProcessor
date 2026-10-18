@@ -661,6 +661,7 @@ int Application::runConsumerReplay() {
     // declaration and with the 5b knob off, so a legacy replay's log is unchanged.
     consumer.logRosterConsumerSummary("end of replay");
     consumer.logPbHoldPresenceSummary("end of replay");   // held-key presence edges, silent unless armed
+    consumer.logInnovationScreenSummary("end of replay");   // pre-update innovation screen, silent unless armed
     consumer.logReinflateSummary("end of replay");   // re-inflation summary
 
     // Hourly level bands, the summary this series supports (handoff §4.1: a single

@@ -759,6 +759,76 @@ namespace GnssProcessor {
                       "spanning a product step can never trip.",
                       amb_level_check_mode_, amb_level_check_window_ep_, amb_level_check_k_);
         }
+        // Pre-update innovation screen.  Default false measures and writes nothing
+        // (byte-identical).  The closed-loop harness derives it from
+        // network.closed_loop.innovation_screen (deriveClosedLoopConsumerConfig); a
+        // standalone consumer sets it here.
+        innovation_screen_ = jval<bool>(json,
+            "processing.innovation_screen", "innovation_screen", false);
+        innovation_screen_k_ = jval<double>(json,
+            "processing.innovation_screen_k", "innovation_screen_k", 6.0);
+        innovation_screen_mode_ = jval<std::string>(json,
+            "processing.innovation_screen_mode", "innovation_screen_mode", std::string("act"));
+        innovation_screen_rows_ = jval<std::string>(json,
+            "processing.innovation_screen_rows", "innovation_screen_rows", std::string("all"));
+        innovation_screen_max_fraction_ = jval<double>(json,
+            "processing.innovation_screen_max_fraction", "innovation_screen_max_fraction", 0.25);
+        innovation_screen_refloat_ep_ = jval<int>(json,
+            "processing.innovation_screen_refloat_ep", "innovation_screen_refloat_ep", 3);
+        innovation_screen_phase_floor_m_ = jval<double>(json,
+            "processing.innovation_screen_phase_floor_m", "innovation_screen_phase_floor_m", 0.3);
+        innovation_screen_code_floor_m_ = jval<double>(json,
+            "processing.innovation_screen_code_floor_m", "innovation_screen_code_floor_m", 1.0);
+        if (!(innovation_screen_k_ > 0.0)) {
+            log->warn("Non-positive innovation_screen_k ({:.3f}) ignored; using 6.0",
+                      innovation_screen_k_);
+            innovation_screen_k_ = 6.0;
+        }
+        if (innovation_screen_mode_ != "act" && innovation_screen_mode_ != "observe") {
+            log->warn("Unknown innovation_screen_mode '{}' (expected \"act\" or \"observe\"); "
+                      "using \"act\"", innovation_screen_mode_);
+            innovation_screen_mode_ = "act";
+        }
+        if (innovation_screen_rows_ != "all" && innovation_screen_rows_ != "phase"
+            && innovation_screen_rows_ != "code") {
+            log->warn("Unknown innovation_screen_rows '{}' (expected \"all\", \"phase\" or "
+                      "\"code\"); using \"all\"", innovation_screen_rows_);
+            innovation_screen_rows_ = "all";
+        }
+        if (!(innovation_screen_max_fraction_ > 0.0 && innovation_screen_max_fraction_ <= 1.0)) {
+            log->warn("innovation_screen_max_fraction ({:.3f}) is outside (0, 1]; using 0.25",
+                      innovation_screen_max_fraction_);
+            innovation_screen_max_fraction_ = 0.25;
+        }
+        if (innovation_screen_refloat_ep_ < 1) {
+            log->warn("innovation_screen_refloat_ep ({}) is below 1; using 3",
+                      innovation_screen_refloat_ep_);
+            innovation_screen_refloat_ep_ = 3;
+        }
+        if (!(innovation_screen_phase_floor_m_ >= 0.0)) {
+            log->warn("Negative innovation_screen_phase_floor_m ({:.3f}) ignored; using 0.3",
+                      innovation_screen_phase_floor_m_);
+            innovation_screen_phase_floor_m_ = 0.3;
+        }
+        if (!(innovation_screen_code_floor_m_ >= 0.0)) {
+            log->warn("Negative innovation_screen_code_floor_m ({:.3f}) ignored; using 1.0",
+                      innovation_screen_code_floor_m_);
+            innovation_screen_code_floor_m_ = 1.0;
+        }
+        if (innovation_screen_) {
+            log->info("Consumer INNOVATION SCREEN ON (mode '{}', rows '{}'): before each "
+                      "measurement update every undifferenced row's innovation is tested "
+                      "against the predicted state (conditional normalized innovation, flag "
+                      "above {:.2f}); a flagged row is held out of that epoch's update and "
+                      "re-tested every epoch, and a phase row flagged on {} consecutive "
+                      "epochs has its ambiguity re-floated.  The screen abstains when more "
+                      "than {:.0f} % of an epoch's rows are flagged.  The test's innovation "
+                      "covariance carries a model-error floor of {:.2f} m on phase rows and "
+                      "{:.2f} m on code rows.",
+                      innovation_screen_mode_, innovation_screen_rows_, innovation_screen_k_,
+                      innovation_screen_refloat_ep_, 100.0 * innovation_screen_max_fraction_,
+                      innovation_screen_phase_floor_m_, innovation_screen_code_floor_m_);
+        }
         // Clock stale-hold rung (RTA-9(b)).  0 (default) is off: the two-state gate
         // (fresh / rejected) is byte-identical.  A factor above 1 opens a middle
         // rung: a clock aged in (ssr_max_age, factor x ssr_max_age] is still applied

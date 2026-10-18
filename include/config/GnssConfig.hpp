@@ -782,6 +782,62 @@ namespace GnssProcessor {
         ///        nothing written).  @c processing.amb_level_check_mode, default @c "act".
         const std::string& getAmbLevelCheckMode() const { return amb_level_check_mode_; }
 
+        /// @brief Screen the consumer's innovations against the predicted state before
+        ///        the measurement update
+        ///        (@c processing.innovation_screen, default false = nothing is measured
+        ///        and nothing is written, byte-identical).
+        ///
+        /// One gross row (a 92 m phase step on one satellite) moves the first update pass
+        /// by hundreds of metres, and the post-fit peel then resets innocent satellites,
+        /// because the post-fit residuals are computed after the state absorbed the error.
+        /// Armed, each undifferenced code and phase row is tested before the update with
+        /// the conditional normalized innovation (the row's innovation against what the
+        /// other rows imply for it, in units of its predicted standard deviation); a row
+        /// above @ref getInnovationScreenK is held out of that epoch's update as an event
+        /// with counters.  Every epoch re-tests the excluded rows; a phase row flagged on
+        /// @ref getInnovationScreenRefloatEp consecutive epochs has its ambiguity
+        /// re-floated.  The closed-loop harness derives it from
+        /// @c network.closed_loop.innovation_screen.
+        /// See @c RealTimeEngine::screenInnovations_ and @ref InnovationScreen.
+        bool innovationScreen() const { return innovation_screen_; }
+
+        /// @brief Flag threshold on the conditional normalized innovation |w|
+        ///        (@c processing.innovation_screen_k, default 6.0; non-positive reads as 6.0).
+        double getInnovationScreenK() const { return innovation_screen_k_; }
+
+        /// @brief Action on a flagged row: @c "act" (hold the row out of the update,
+        ///        re-float a persistent phase row) or @c "observe" (count only, nothing
+        ///        written).  @c processing.innovation_screen_mode, default @c "act".
+        const std::string& getInnovationScreenMode() const { return innovation_screen_mode_; }
+
+        /// @brief Which rows may be excluded: @c "all", @c "phase" or @c "code"
+        ///        (@c processing.innovation_screen_rows, default @c "all").  Rows of the
+        ///        other kind take no part in the screen.
+        const std::string& getInnovationScreenRows() const { return innovation_screen_rows_; }
+
+        /// @brief Abstain when more than this fraction of an epoch's rows is flagged
+        ///        (@c processing.innovation_screen_max_fraction, default 0.25): a screen
+        ///        that excludes most of an epoch has found the prior wrong, not the rows.
+        double getInnovationScreenMaxFraction() const { return innovation_screen_max_fraction_; }
+
+        /// @brief Consecutive flagged epochs after which a phase row's ambiguity is
+        ///        re-floated (@c processing.innovation_screen_refloat_ep, default 3;
+        ///        values below 1 read as 3).
+        int getInnovationScreenRefloatEp() const { return innovation_screen_refloat_ep_; }
+
+        /// @brief Model-error floor added to the carrier-phase rows' noise in the screen's
+        ///        innovation covariance (m; @c processing.innovation_screen_phase_floor_m,
+        ///        default 0.3; negative reads as 0.3, 0 turns the floor off).  The filter's
+        ///        formal phase noise is millimetres, while the epoch-to-epoch innovations of
+        ///        a healthy consumer spread over decimetres (product clock and orbit error,
+        ///        ionosphere, multipath), so the formal statistic flags ordinary rows; the
+        ///        floor puts the unmodelled error budget into S for the screen only.
+        double getInnovationScreenPhaseFloorM() const { return innovation_screen_phase_floor_m_; }
+
+        /// @brief The same floor for the code rows (m;
+        ///        @c processing.innovation_screen_code_floor_m, default 1.0).
+        double getInnovationScreenCodeFloorM() const { return innovation_screen_code_floor_m_; }
+
         /**
          * @brief obs↔SSR sync master toggle (real-time, live-SSR source only).
          *
@@ -8301,6 +8357,14 @@ namespace GnssProcessor {
         int    amb_level_check_window_ep_{ 20 };          ///< Samples per satellite before the level test may run (20 = 10 min at 30 s).  processing.amb_level_check_window_ep.
         double amb_level_check_k_{ 4.0 };                 ///< Level-test trip at |state − level| > k · σ_level.  processing.amb_level_check_k.
         std::string amb_level_check_mode_{ "act" };       ///< Level-test action: "act" (refloat both bands) or "observe" (count only).  processing.amb_level_check_mode.
+        bool   innovation_screen_{ false };               ///< Screen each undifferenced row's innovation against the predicted state before the measurement update and hold flagged rows out of that epoch's update; off = nothing measured, nothing written (byte-identical).  processing.innovation_screen / network.closed_loop.innovation_screen.
+        double innovation_screen_k_{ 6.0 };               ///< Flag threshold on the conditional normalized innovation |w|.  processing.innovation_screen_k.
+        std::string innovation_screen_mode_{ "act" };     ///< "act" (exclude, re-float) or "observe" (count only).  processing.innovation_screen_mode.
+        std::string innovation_screen_rows_{ "all" };     ///< Rows that may be excluded: "all", "phase" or "code".  processing.innovation_screen_rows.
+        double innovation_screen_max_fraction_{ 0.25 };   ///< The screen abstains when more than this fraction of an epoch's rows is flagged.  processing.innovation_screen_max_fraction.
+        int    innovation_screen_refloat_ep_{ 3 };        ///< Consecutive flagged epochs after which a phase row's ambiguity is re-floated.  processing.innovation_screen_refloat_ep.
+        double innovation_screen_phase_floor_m_{ 0.3 };   ///< Model-error floor added to the carrier-phase rows' noise in the screen's S (m); 0 = formal noise only.  processing.innovation_screen_phase_floor_m.
+        double innovation_screen_code_floor_m_{ 1.0 };    ///< The same floor for the code rows (m).  processing.innovation_screen_code_floor_m.
         double ssr_clock_stale_hold_factor_{ 0.0 };       ///< Clock stale-hold rung (RTA-9(b)): a clock aged in (ssr_max_age, factor × ssr_max_age] is still applied with URA-staleness R inflation; 0 (default) = off (byte-identical two-state gate); (0,1] clamps to 1.
         bool   ssr_bias_band_fallback_{ false };          ///< Code-domain band-wise bias fallback (RTA-13, opt-in): an exact-attribute miss consumes the same-band sibling code bias; phase never falls back.  Default off = store lookups byte-identical.
         bool   enable_obs_ssr_sync_{ false };             ///< RT-only: hold obs ahead of the SSR coverage horizon (obs↔SSR sync) instead of processing against absent SSR.

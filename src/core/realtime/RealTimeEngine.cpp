@@ -376,6 +376,8 @@ void RealTimeEngine::flush() {
     logPbHoldPresenceSummary("end of run");
     // The ambiguity level-check counters.
     logAmbLevelCheckSummary_("end of run");
+    // The innovation screen's counters, silent unless armed.
+    logInnovationScreenSummary("end of run");
     // The declared-roster census, silent unless a declaration was seen or the
     // 5b knob is armed.  The closed-loop harness and the
     // replay driver never call flush(), so both call this directly at their

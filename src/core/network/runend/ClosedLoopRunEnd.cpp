@@ -408,6 +408,7 @@ int networkClosedLoopRunEnd(const NetworkRunEndView& v) {
     // carries no declaration.
     consumer->logRosterConsumerSummary("closed loop");
     consumer->logPbHoldPresenceSummary("closed loop");   // held-key presence edges, silent unless armed
+    consumer->logInnovationScreenSummary("closed loop");   // pre-update innovation screen, silent unless armed
     consumer->logReinflateSummary("closed loop");   // consumer re-inflation summary
     // Consumer snapshots written beside the network history copies;
     // 0 written on an armed seed means no warm start is on offer.
