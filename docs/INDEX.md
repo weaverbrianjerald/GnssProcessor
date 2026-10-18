@@ -172,6 +172,10 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [OTL](refound/OTL_ocean_tide_loading_source_2026-10-16.md), ocean tide loading from the SIF registry alone and the
 nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default off and checked, identical off, consumer +6.5 mm, census median -2.0 mm; diagnosed, no sign defect, diurnal net translation removable behind a default-off key, consumer +2.0 mm; arming open).
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
+golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: pre-registered, no run read; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
