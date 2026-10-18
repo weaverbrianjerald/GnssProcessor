@@ -70,16 +70,20 @@ Three run-start tables describe a parameter; each needs a row.
   route `NotCarried`.
 - **Inventory class** ("Network (parameters as armed)"): a `StateContainer` value
   (`include\measurement\AbsorbedSharedStates.hpp`; the ZWD's is `TropoIndex`), then in
-  `src\core\network\assembly\ParamInventory.cpp` a `put` line in `listStateColumns`, a case in
-  `classifyStateColumn` (`case SC::TropoIndex: c.kind = PK::Zwd;`) and lines in
-  `paramClassLabel` and `stateContainerName`. Otherwise the column is `Unlisted` (the enum
-  comment names gradients) and lands on the "unclassified" integrity line, which must read
-  0. Two components can be two `ParamForm` values of one kind.
+  `src\core\network\state\StateColumns.cpp` a `put` line in `listStateColumns`, a case in
+  `classifyStateColumn` (`case SC::TropoIndex: c.kind = PK::Zwd;`) and a line in
+  `stateContainerName`, and in `src\core\network\assembly\ParamInventory.cpp` a line in
+  `paramClassLabel`. Otherwise the column is `Unlisted` (the enum comment names gradients), is
+  held by the station's set as an unnamed slot and lands on the "unclassified" integrity line,
+  which must read 0. Two components can be two `ParamForm` values of one kind. The set holds the
+  column once the classifier names it: `addParam` (`StationParams.cpp`) puts it in the typed map
+  of its kind, and a new kind needs a map there.
 - **Contribution sets** ("Network (contributions as armed)"): the kind in `kCodeRow` and
   `kPhaseRow` of `src\core\network\assembly\Contributions.cpp`, where the ZWD is in both.
 
-Trace labels: `buildLocalLabels` (`StationBlock.cpp`) and `localColumnLabels`
-(`RedundancyCensus.cpp`); an unlabelled column prints positional names.
+Trace labels: `blockLabel` (`StationBlock.cpp`), `censusLabel` (`RedundancyCensus.cpp`) and
+`stateLabel` (`StationParams.cpp`, the state manager's own labels, read by the RHS attribution
+and the station-drop event), each a case per kind; an unlabelled column prints positional names.
 
 ## 3. The station split and the local block column (REQUIRED, no edit by default)
 
@@ -214,7 +218,8 @@ tables of step 2 print it.
   flag changes the network layout with no network key and no ledger row
   (`estimation.estimate_tropo_gradients` has neither). A separate future step, in which the
   network owns its parameter set, removes this; the set exists as a shadow of the state
-  manager (`StationParams`, page 7), checked on every run, and nothing reads it yet.
+  manager (`StationParams`, page 7), checked on every run, and the inventory, the trace labels
+  and the diagnostics read it. Columns are still born and pruned in the state manager.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
   census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,
   the last estimated kind in the enum, is a second template for steps 2 to 4.

@@ -256,12 +256,19 @@ binds for writing has its row in `net::kEntityWriters`.
 A station's own parameter set is a fourth home that is still being built.
 `StationParams` (`include\network\state\StationParams.hpp`) lists a station's columns in column
 order, each as a typed `ParamRef` with its linearization point and the split's disposition, and
-looks a parameter up by satellite, signal or constellation without parsing a state key. Today it
-is a shadow of the station's `StateManager`: `networkShadowStationParams`
-(`network\state\StationParamsShadow.cpp`) builds it after each station's split and checks it
-against the state manager and against the parameter inventory, and the run end prints the table
-`Network (station parameter set)` under the parameter inventory, with the findings of the checks
-(all zero on a sound run). Nothing reads the set yet.
+looks a parameter up by satellite, signal or constellation without parsing a state key. Today the
+columns are still born in the station's `StateManager`, and `networkShadowStationParams`
+(`network\state\StationParamsShadow.cpp`) builds the set from it after each station's split. The
+parameter inventory records from the set (`recordStationParams`), and so do the trace labels (the
+station-block span and the redundancy census, the RHS attribution's local columns, the names in
+the station-drop event), the ionosphere, wet-delay and receiver-state traces, the DD-fractional
+and phase-anchor traces, the SH diagnostics and the pre-fit census's birth seeds. The state
+manager is still read where a value changes after the split (the re-seed marks) and by the split
+itself. The shadow checks the set and the inventory recorded from it against the state manager
+on every station-epoch, and the run end prints the table `Network (station parameter set)` under
+the parameter inventory, with the findings (all zero on a sound run). The classifier that names a
+state manager's columns (`network\state\StateColumns.cpp`) is the bridge between the two and
+goes when the network allocates its own columns.
 
 ## The run end
 
