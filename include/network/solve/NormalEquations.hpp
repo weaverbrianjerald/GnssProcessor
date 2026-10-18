@@ -288,6 +288,73 @@ public:
                                        const Eigen::VectorXd& y,
                                        const StationPrior& prior = StationPrior{});
 
+    /// What @ref formStationNormalsSparse reports about a station's shared block @f$N_{ss}@f$.
+    struct SparseBorder {
+        std::vector<Eigen::Index> active;   ///< ascending: the shared columns that any row of @f$A_s@f$ touches; @f$N_{ss}@f$ is exactly zero outside the square of these
+        double asymmetry{0.0};              ///< the largest |N_ss(i,j) - N_ss(j,i)|
+        double magnitude{0.0};              ///< the largest |N_ss(i,j)|
+    };
+
+    /**
+     * @brief Form a station's normal blocks from the nonzero entries of its rows only, with the
+     *        summation order and rounding of Eigen's dense products
+     *        (@c network.sparse_station_normals).
+     *
+     * A station's design rows touch a handful of the @c n_shared columns (its satellites' clocks and
+     * biases) and of its own locals, so the dense products
+     * @f$N_{ss}=A_s^\top (WA_s)@f$, @f$N_{sr}=A_s^\top (WA_r)@f$ and @f$N_{rr}=A_r^\top (WA_r)@f$ spend
+     * almost all of their work on zeros.  This function adds the products of the nonzero pairs only.
+     * It is bit-identical to the dense products because each result element is summed in the order
+     * Eigen's blocked product sums it: the terms in ascending row order from +0, except that an element
+     * in the 2-row tile of its row panel and in a 4-column block keeps two accumulators (even and odd
+     * row index below @c m & ~7), adds them and continues with the remaining rows.  A skipped term is
+     * an exact zero.  The tile geometry, the panel sizes and the order are read from Eigen's blocking
+     * heuristic and checked against Eigen's own product in
+     * @c tests/network/test_neq_sparse_station_normals.cpp.
+     *
+     * It reports @c false, and writes nothing, whenever that equality is not guaranteed, and the
+     * caller then forms the products densely:
+     *  - the build contracts multiply and add (FMA enabled), or the kernel geometry differs from the
+     *    one described;
+     *  - Eigen runs with more than one thread (the rows are partitioned and the tiles restart in each
+     *    part);
+     *  - a result is a vector (matrix-vector kernel), or the three sizes are so small that Eigen
+     *    evaluates the product coefficient by coefficient;
+     *  - the row count exceeds the panel depth Eigen's blocking heuristic picks for the shape (partial
+     *    sums would be added afterwards);
+     *  - an input, a weight or a weighted entry is not finite (a dense product spreads @c 0*inf to NaN;
+     *    this one would not).
+     *
+     * @param A_s    Jacobian wrt the shared parameters (@c m × @c n_shared).
+     * @param A_r    Jacobian wrt the station's locals (@c m × @c n_local).
+     * @param w      Diagonal weights (length @c m); the weighted factors are the single products
+     *               @c w(k)*A(k,j), as @c w.asDiagonal()*A makes them.
+     * @param N_ss   Out: must be @c n_shared × @c n_shared and all zero on entry (it is not cleared
+     *               here); on success it holds the station's @f$N_{ss}@f$.
+     * @param N_sr   Out: resized and filled (@c n_shared × @c n_local).
+     * @param N_rr   Out: resized and filled (@c n_local × @c n_local).
+     * @param border Out: the shared columns @p N_ss is nonzero on and the two numbers of its symmetry check.
+     * @return true when the blocks were formed; false when the dense products must be used.
+     */
+    static bool formStationNormalsSparse(const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r,
+                                         const Eigen::VectorXd& w, Eigen::MatrixXd& N_ss,
+                                         Eigen::MatrixXd& N_sr, Eigen::MatrixXd& N_rr,
+                                         SparseBorder& border);
+
+    /**
+     * @brief Form the diagonal-weight station normals of @ref addStationObservations from the
+     *        nonzero entries only (@ref formStationNormalsSparse), at the same bits and with the
+     *        same exceptions, and commit the station's shared-border contribution entry by entry.
+     *
+     * On the dense path the station's @f$N_{ss}@f$ is an @c n_shared × @c n_shared matrix that is
+     * formed by a product, checked for symmetry and added to the border, three passes of
+     * @f$O(n_{shared}^2)@f$ work (and, from about 500 KB, a fresh allocation) per station and epoch.
+     * With this on, a station costs the work of its nonzero entries.  A shape the sparse formation
+     * does not cover takes the dense path for that station.  Configuration level: set once; it
+     * survives @ref reset.  Default off: the dense products, byte-identical.
+     */
+    void setSparseStationNormals(bool on) { sparse_station_normals_ = on; }
+
     /**
      * @brief Fold a diagonal information increment into one station's local
      *        block @f$N_{rr}^r / u_r^r@f$ (the per-station analogue of
@@ -1533,6 +1600,17 @@ private:
         Eigen::Index n_local{0};               ///< local dimension
     };
 
+    /// The body of @ref addStation.  @p N_ss_dense is the station's dense @f$N_{ss}@f$, or null
+    /// when the sparse formation (@ref formStationNormalsSparse) supplied it in @ref sparse_nss_,
+    /// with @p border naming the shared columns it is nonzero on; the symmetry check then uses the
+    /// numbers the formation took and the border update visits the square of those columns only, with
+    /// the same values, messages and order of checks as on the dense matrix.
+    std::size_t addStationImpl_(const Eigen::MatrixXd* N_ss_dense,
+                                const SparseBorder* border,
+                                const Eigen::MatrixXd& N_sr_r, const Eigen::MatrixXd& N_rr_r,
+                                const Eigen::VectorXd& u_s_r, const Eigen::VectorXd& u_r_r,
+                                const StationPrior& prior);
+
     Eigen::Index n_shared_;       ///< shared-block dimension
     Eigen::MatrixXd N_ss_;        ///< Σ_r N_ss^r + priors (pre-reduction)
     Eigen::VectorXd u_s_;         ///< Σ_r u_s^r + priors (pre-reduction)
@@ -1645,6 +1723,9 @@ private:
     mutable CarryCovStats carry_cov_stats_;  ///< run-cumulative readback telemetry (survives reset(), like @ref timers_)
     bool ddprior_folded_{false};             ///< guards double-folding the DD priors within one reduce
     std::size_t reduce_recompute_count_{0}; ///< #full reduce() recomputes since reset() (reduce-once invariant)
+    bool sparse_station_normals_{false};    ///< form a station's normals from its nonzero entries (network.sparse_station_normals); survives reset()
+    Eigen::MatrixXd sparse_nss_;            ///< the sparse formation's @f$N_{ss}@f$ scratch; all zero between stations (only the square of the columns in @ref sparse_border_ is ever nonzero, and each station restores that)
+    SparseBorder sparse_border_;            ///< the touched columns of @ref sparse_nss_ for the station in hand
     bool station_pd_median_scale_{false};   ///< pin-aware addStation PD test (median-|pivot| reference scale); survives reset()
     bool station_pd_null_trace_{false};     ///< eigen-read the rejected local block's null direction (RF-PD); survives reset()
     StationPdFailure last_pd_failure_;      ///< the last PD rejection's spectral record (RF-PD; see @ref lastStationPdFailure)

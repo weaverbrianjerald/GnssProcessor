@@ -1779,6 +1779,9 @@ void networkEstimatorConfigure(NetworkRun& run, const NetworkEngineSpec& engine_
     // reference scale for the local-block rank test.  Without it, the prioritized
     // datum's in-block 1e10 anchor pins eject marginal stations every epoch.
     est.setStationPdMedianScale(config_.networkStationPdPinAware());
+    // Each station's normal blocks from the nonzero entries of its rows (network.sparse_station_normals):
+    // bit-identical to the dense products, a fraction of their work at GPS + Galileo size.
+    est.setSparseStationNormals(config_.getNetworkConfig().sparse_station_normals);
     // Null-direction read (network.trace_station_pd_null): an eigen-read of
     // the null direction of a block the PD test rejects, so the drop names a parameter
     // instead of a pivot magnitude.  Measure-only; it runs only on an already-rejected
