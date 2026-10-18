@@ -346,3 +346,30 @@ Defect S1 of section 3 is fixed: PPP with uncombined processing created the slan
 The fixed exe reproduces the one-line proof of the defect row byte for byte in `state_trace.csv` (ALGO00CAN 24 h, GCGO00USA 6 h) and matches the PPP-RTK-mode run of the same arm. The tests are `SlantIonospherePresenceTest` (every mode agrees across Q, table and export), `KalmanCompleteResetTest` (through a friend shim) and the rewritten family-table case. Evidence and run directories: the defect row in `docs/status/OPEN_ITEMS_CODE_DEFECTS.md`.
 
 Owed: section 11's UB7 line said the `_nlwl` configs were to be graded again after UB2; the figures above are a first reading, not that grade. The fix-and-hold tables of 2026-10-17 were taken on the displaced vehicle. Adoption is the author's, as for every shipped-config move.
+
+## 17. 2026-10-18: step UB2 gated against the main control and graded (branch `fix/ppp-iono-q`, `da97f3b`)
+
+Control `gnss_processor_w3base.exe` (main `30ca49e`), candidate `gnss_processor_w3ionoq.exe`, both Release. The candidate is the Release build of the committed tree: a second build from `da97f3b` matches it in `.text`, `.data`, `.pdata` and `.reloc` byte for byte and in all but 13 bytes of the file (link timestamp and debug directory).
+
+| gate | result |
+| --- | --- |
+| G-EP network (the G5 arm set against side w3base: 23 arms and the snapshot bytes) | all 23 arms and the snapshot bytes IDENTICAL, every CSV included |
+| G-UEP user, full set (16 arms) | 15 IDENTICAL with the two table rows masked; `UA3` DIFFERENT, as declared; all exit 0 |
+| G-UEP user, quick set (16 arms) | 14 IDENTICAL with the two table rows masked; `u_ppp_unc_ar` and `u_nlwl` DIFFERENT, as declared; all exit 0. Unmasked, the arms without an ionosphere row (`UA15` to `UA17`, `u_sbf`, `u_sbf_te`) are IDENTICAL and every other arm differs in the two table rows alone |
+| real time, SBF replay (3 arms, 99 artifacts) and network closed loop (1 arm, 39 artifacts) | every CSV and log IDENTICAL except wall-clock figures in `console.log` and `main_log.log`, which a second run of the control also moves |
+
+The declaration of section 16 holds: only the PPP uncombined arms move; no other arm or replay moves in a number.
+
+Grade of every moved config against the SSC marker (3D RMS in m, control then fixed; DELTA H removed from up; ALGO00CAN unless stated; 24 h):
+
+| config (ALGO00CAN unless stated), 24 h | hour 1 | hours 2 to 6 | hours 7 to 24 | mean east / north / up, hours 7 to 24 |
+| --- | --- | --- | --- | --- |
+| `_pppar_algo_static_gps_l1l2` (AR mode 1) | 2.701 then 0.395 | 2.722 then 0.0134 | 2.890 then 0.0093 | -0.681 / -0.215 / -2.800 then +0.004 / +0.005 / +0.004 |
+| `_nlwl_guarded` | 6.088 then 0.473 | 14.965 then 0.0665 | 10.365 then 0.0254 | -1.927 / -0.041 / +1.063 then -0.020 / +0.002 / +0.011 |
+| `_nlwl_unguarded` | 5.213 then 0.557 | 2,906 then 0.141 | 2,241 then 0.0522 | +93.6 / +91.9 / -1,992.7 then +0.051 / +0.001 / +0.007 |
+| `_nlwl_guarded2`, `_nlwl_unguarded2` (archived) | as `_nlwl_guarded`, `_nlwl_unguarded` | the same | the same | the same (`state_trace.csv` byte-identical to the unarchived pair, both exes) |
+| `_pppar_algo_static_gps_l1l2` at AR mode 0 | 2.701 then 0.395 | 2.755 then 0.0133 | 2.881 then 0.0092 | -0.437 / -0.291 / -2.833 then +0.004 / +0.005 / +0.004 |
+| GCGO00USA, same config at AR mode 0 | 7.046 then 0.248 | 6.731 then 0.0568 | 6.483 then 0.0658 | +0.973 / -0.322 / -6.375 then +0.032 / -0.048 / -0.011 |
+| GCGO00USA, same config at AR mode 1 | 7.046 then 0.248 | 6.691 then 0.0565 | 6.558 then 0.0657 | +0.908 / -0.293 / -6.467 then +0.032 / -0.048 / -0.011 |
+
+Every moved config improves in each of the 24 hours. After hour 1 the worst hour of a fixed run is 0.025 m (`_pppar_algo_static_gps_l1l2`), 0.100 m (`_nlwl_guarded`), 0.262 m (`_nlwl_unguarded`) and 0.093 m (GCGO00USA). Hourly rows: `D:/GnssProcessorSupport/gates/algo/w3/grade_tables.txt`. This is the grade that section 16's last paragraph owed for the `_nlwl` configs on the corrected vehicle; the fix-and-hold hour tables of 2026-10-17 remain to be repeated on it. Adoption is the author's.
