@@ -246,10 +246,9 @@ void Application::buildGlobalIonosphereMap_() {
                 need_gim_for_higher_order ? "higher_order_ionosphere" : "");
         } else if (need_gim_for_higher_order) {
             // PppModel needs the pointer to evaluate the I₂+I₃ correction
-            // each epoch.  The pointer is non-owning.  gim_ is declared after
-            // ppp_model_ in Application.hpp, so it is destroyed first: during
-            // Application teardown PppModel's pointer dangles until ppp_model_
-            // is destroyed, and must not be dereferenced in that window.
+            // each epoch.  The pointer is non-owning.  gim_ is declared before
+            // ppp_model_ in Application.hpp, so it is destroyed after the model
+            // and the pointer never dangles during Application teardown.
             ppp_model_->setGim(gim_.get());
         }
     }

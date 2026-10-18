@@ -3706,6 +3706,28 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief Human-readable name of a processing mode, as printed in the log.
+     *
+     * One label per enumerator, in the spelling @c processing.mode accepts
+     * (hyphenated, any case).  The loader's "Processing mode" line and the
+     * configuration summary both print it, so the two cannot disagree.
+     *
+     * @param mode Processing mode.
+     * @return Static NUL-terminated name, e.g. "PPP-RTK-Network".
+     */
+    inline const char* processingModeLabel(ProcessingMode mode) {
+        switch (mode) {
+            case ProcessingMode::PPP:             return "PPP";
+            case ProcessingMode::PPP_RTK:         return "PPP-RTK";
+            case ProcessingMode::BaselineSingle:  return "Baseline-Single";
+            case ProcessingMode::BaselineMulti:   return "Baseline-Multi";
+            case ProcessingMode::PPP_RTK_Network: return "PPP-RTK-Network";
+            case ProcessingMode::PPP_RTK_User:    return "PPP-RTK-User";
+        }
+        return "unknown";
+    }
+
+    /**
      * @brief Frequency bands the Kalman filter estimates.
      *
      * Formerly @c SignalMode.  "Frequency" names what this enum controls (band
@@ -4283,6 +4305,17 @@ namespace GnssProcessor {
         double turbo_edit_sigma_multiplier = 6.0;  ///< TurboEdit GF-only (MW blind-spot) gate.
         double graphic_sigma_multiplier    = 6.0;  ///< GRAPHIC code+phase gate.
         double ewl_sigma_multiplier        = 5.0;  ///< Extra-wide-lane gate.
+
+        /// Statistic the GRAPHIC detector tests (effective only with @c graphic).
+        /// False (default): |dG|, the between-epoch GRAPHIC difference, which holds
+        /// the range rate times the epoch spacing, so for a moving satellite it
+        /// exceeds the threshold at the first epoch the window gives one (arc epoch 6)
+        /// and the arc is reset there.  True: the change of dG from one epoch to the
+        /// next minus its median over the arc's recent window, which a constant range
+        /// rate does not move; the first possible detection is one epoch later.  The
+        /// GRAPHIC trace gains a trailing @c resid_m column.  Via
+        /// @c estimation.cycle_slip.graphic_trend_centred.
+        bool graphic_trend_centred = false;
 
         // --- MW detection-reference selection (see MwDetectReference doc) ---
         /// Reference the MW slip deviation is measured against.

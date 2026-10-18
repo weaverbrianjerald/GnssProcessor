@@ -286,12 +286,13 @@ def _load_slip_events(ctx) -> pd.DataFrame:
                              "utc": pd.Series(dtype="datetime64[ns]"),
                              "kind": pd.Series(dtype=str)})
     ev = pd.concat(frames, ignore_index=True)
-    # A (satellite, utc) flagged both ways keeps the kind that sorts first.
-    # "lli" sorts before "slip", so the soft kind is kept, although the intent
-    # is to keep the hard kind; a slip coinciding with an LLI flag is then
-    # treated as bridge-eligible.
-    ev = ev.sort_values(["satellite", "utc", "kind"], kind="mergesort")
-    return ev.drop_duplicates(subset=["satellite", "utc"]).reset_index(drop=True)
+    # A (satellite, utc) flagged both ways keeps the hard kind: a detector slip
+    # coinciding with a receiver LLI flag is a slip (never bridge-eligible), so
+    # "slip" is ranked ahead of "lli" and the first row per key is kept.
+    ev["_rank"] = (ev["kind"] != "slip").astype(int)
+    ev = ev.sort_values(["satellite", "utc", "_rank"], kind="mergesort")
+    ev = ev.drop_duplicates(subset=["satellite", "utc"])
+    return ev.drop(columns="_rank").reset_index(drop=True)
 
 
 def build_ambiguity_locktime(

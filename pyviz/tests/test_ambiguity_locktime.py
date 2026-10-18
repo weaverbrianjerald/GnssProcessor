@@ -157,3 +157,42 @@ def test_load_slip_events_kinds(tmp_path):
     ev = _load_slip_events(TraceContext(str(tmp_path)))
     assert set(ev.columns) >= {"satellite", "utc", "kind"}
     assert (ev["kind"] == "slip").all() and len(ev) == 2
+
+
+def test_load_slip_events_slip_wins_over_coincident_lli(tmp_path):
+    # A detector slip and a receiver LLI flag on the same epoch: the hard kind
+    # is kept (a slip is never bridge-eligible); an LLI-only epoch stays soft.
+    week, tow0 = 2313, 522000.0
+    tow = tow0 + np.arange(6) * _DT
+    pd.DataFrame({
+        "week": week, "tow_s": tow, "satellite": "G10",
+        "is_slip": [0, 0, 1, 0, 0, 0],
+        "is_lli":  [0, 1, 1, 0, 0, 0],
+    }).to_csv(tmp_path / "mwwl_trace.csv", index=False)
+    ev = _load_slip_events(TraceContext(str(tmp_path)))
+    assert len(ev) == 2                            # one row per (satellite, epoch)
+    kinds = dict(zip(ev["utc"], ev["kind"]))
+    assert kinds[ev["utc"].iloc[0]] == "lli"       # epoch 1: LLI only
+    assert kinds[ev["utc"].iloc[1]] == "slip"      # epoch 2: slip + LLI
+    assert list(ev.columns) == ["satellite", "utc", "kind"]
+
+
+def test_builder_coincident_slip_and_lli_is_a_reset_not_a_bridge(tmp_path):
+    # The parked-sigma hold-and-restore signature would bridge on an LLI flag
+    # alone.  With a detector slip on the same epoch it has to be a reset.
+    n = 10
+    week, tow0 = 2313, 522000.0
+    tow = tow0 + np.arange(n) * _DT
+    std = np.full(n, 0.03)
+    std[5] = 1000.0
+    pd.DataFrame({"week": week, "tow_s": tow, "key": "G10_L1C_L2W",
+                  "value_m": 100.0, "std_m": std}
+                 ).to_csv(tmp_path / "ambiguity_trace.csv", index=False)
+    flag = np.zeros(n, int)
+    flag[5] = 1
+    pd.DataFrame({"week": week, "tow_s": tow, "satellite": "G10",
+                  "is_slip": flag, "is_lli": flag}
+                 ).to_csv(tmp_path / "mwwl_trace.csv", index=False)
+    res = build_ambiguity_locktime(TraceContext(str(tmp_path)))
+    assert "In-arc resets: 1 total" in res.summary
+    assert "slip-driven 1" in res.summary
