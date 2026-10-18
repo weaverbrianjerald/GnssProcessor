@@ -39,11 +39,14 @@ EpochAdmission networkFastForward(NetworkRun& run, const SyncedEpoch& se_raw) {
     // the solve cold-starts there.  Skipped epochs are not counted, modeled, solved or
     // stashed, so the carry begins empty at the offset.  This reproduces an externally
     // driven late-hour event (for example the ~4.3 h lock-in) after a fresh warm-up,
-    // not the exact accumulated history.
+    // not the exact accumulated history.  The elapsed span is compared with the offset on
+    // the millisecond grid (TimeUtils::offsetReached), so an offset that lies on an epoch
+    // starts the run on that epoch whatever the residue of the epoch times.
     if (start_offset_s > 0.0) {
         const double now_s = TimeUtils::continuousGpsSeconds(se_raw.time);
         if (start_anchor_s < 0.0) start_anchor_s = now_s;
-        if (now_s - start_anchor_s < start_offset_s) return EpochAdmission::Skip;
+        if (!TimeUtils::offsetReached(now_s, start_anchor_s, start_offset_s))
+            return EpochAdmission::Skip;
     }
     return EpochAdmission::Process;
 }

@@ -55,12 +55,12 @@ namespace GnssProcessor {
 
     // Each entry: { JD of 0h UTC on the insertion date, GPS-UTC offset from then on }.
     // The GPS epoch (1980-01-06) has GPS-UTC = 0.  Source: IERS Bulletin C.
-    // leapSecondsGpsUtc() compares a GPS-scale JD against these entries, so on the
-    // GPS scale the new offset takes effect that many seconds (the new GPS-UTC)
-    // before the actual insertion.
+    // The dates are UTC.  A UTC-scale JD compares with them directly; a GPS-scale JD is
+    // first moved onto UTC, because the new offset takes effect when UTC reaches the
+    // date, which is that many seconds (the new GPS-UTC) after 0 h on the GPS clock.
     struct LeapSecondEntry {
-        double gps_jd;
-        double gps_utc;
+        double utc_jd;       ///< JD of 0 h UTC on the day the offset takes effect.
+        double gps_utc;      ///< GPS - UTC in seconds from then on.
     };
 
     static constexpr LeapSecondEntry LEAP_TABLE[] = {
@@ -80,16 +80,28 @@ namespace GnssProcessor {
         { 2451179.5, 13.0 },   // 1999-01-01
         { 2453736.5, 14.0 },   // 2006-01-01
         { 2454832.5, 15.0 },   // 2009-01-01
-        { 2455927.5, 16.0 },   // 2012-07-01
+        { 2456109.5, 16.0 },   // 2012-07-01
         { 2457204.5, 17.0 },   // 2015-07-01
         { 2457754.5, 18.0 },   // 2017-01-01
     };
     static constexpr size_t LEAP_TABLE_SIZE = sizeof(LEAP_TABLE) / sizeof(LEAP_TABLE[0]);
 
-    double TimeUtils::leapSecondsGpsUtc(double gps_jd) {
+    double TimeUtils::leapSecondsAtUtcJd(double utc_jd) {
         for (size_t i = LEAP_TABLE_SIZE; i > 0; --i)
-            if (gps_jd >= LEAP_TABLE[i - 1].gps_jd)
+            if (utc_jd >= LEAP_TABLE[i - 1].utc_jd)
                 return LEAP_TABLE[i - 1].gps_utc;
+        return 0.0;
+    }
+
+    double TimeUtils::leapSecondsGpsUtc(double gps_jd) {
+        // An entry applies once UTC has reached its date.  The same instant on the GPS
+        // scale is the entry's own GPS-UTC later, so the GPS JD is moved back by that
+        // offset before the comparison.
+        for (size_t i = LEAP_TABLE_SIZE; i > 0; --i) {
+            const LeapSecondEntry& e = LEAP_TABLE[i - 1];
+            if (gps_jd - e.gps_utc / static_cast<double>(SECONDS_IN_DAY) >= e.utc_jd)
+                return e.gps_utc;
+        }
         return 0.0;
     }
 
@@ -192,7 +204,7 @@ namespace GnssProcessor {
 
         double jd_utc = gregorianToJulianDay(year, month, day, hour, minute, second);
         double utc_since_epoch = (jd_utc - GPS_EPOCH_JD) * SECONDS_IN_DAY;
-        double ls = leapSecondsGpsUtc(jd_utc);
+        double ls = leapSecondsAtUtcJd(jd_utc);
         return gpsSecondsToGnssTime(utc_since_epoch + ls);
     }
 
@@ -291,6 +303,16 @@ namespace GnssProcessor {
 
     double TimeUtils::continuousGpsSeconds(const GnssTime& t) {
         return static_cast<double>(t.week) * static_cast<double>(SECONDS_IN_WEEK) + t.tow;
+    }
+
+    long long TimeUtils::elapsedMs(double later_s, double earlier_s) {
+        return std::llround((later_s - earlier_s) * 1.0e3);
+    }
+
+    bool TimeUtils::offsetReached(double now_s, double anchor_s, double offset_s) {
+        // The comparison stays in double so an offset beyond the range of the integer
+        // grid (never reachable by data) is a plain false instead of an overflow.
+        return std::round((now_s - anchor_s) * 1.0e3) >= std::round(offset_s * 1.0e3);
     }
 
     double TimeUtils::nowContinuousGpsSeconds() {

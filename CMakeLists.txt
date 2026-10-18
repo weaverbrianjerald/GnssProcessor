@@ -474,6 +474,8 @@ target_link_libraries(gnss_simulator PRIVATE gnss_core)
 enable_testing()
 add_executable(gnss_tests
     tests/test_math_core.cpp
+    tests/test_epoch_seek.cpp
+    tests/test_leap_second_scale.cpp
     tests/test_atmosphere_models.cpp
     tests/test_gpt3_load_path.cpp
     tests/test_site_displacement.cpp

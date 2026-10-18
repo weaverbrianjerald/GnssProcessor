@@ -160,7 +160,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                 const double anchor_s = TimeUtils::continuousGpsSeconds(synced.front().time);
                 for (const auto& sf : synced) {
                     const double t_s = TimeUtils::continuousGpsSeconds(sf.time);
-                    if (start_offset_s <= 0.0 || (t_s - anchor_s) >= start_offset_s) {
+                    if (start_offset_s <= 0.0
+                        || TimeUtils::offsetReached(t_s, anchor_s, start_offset_s)) {
                         first_live_s = t_s;
                         break;
                     }

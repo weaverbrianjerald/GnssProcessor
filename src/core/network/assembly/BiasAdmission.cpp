@@ -325,8 +325,9 @@ void networkCbAdmissionCensus(NetworkRun& run) {
             const double anchor_s =
                 TimeUtils::continuousGpsSeconds(synced.front().time);
             while (i0 < synced.size()
-                   && TimeUtils::continuousGpsSeconds(synced[i0].time) - anchor_s
-                          < start_offset_s)
+                   && !TimeUtils::offsetReached(
+                          TimeUtils::continuousGpsSeconds(synced[i0].time), anchor_s,
+                          start_offset_s))
                 ++i0;
         }
         ctx.admission = NetworkBiasAdmission::runCensus(
