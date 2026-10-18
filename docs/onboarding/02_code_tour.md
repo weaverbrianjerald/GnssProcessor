@@ -97,7 +97,8 @@ Three steps do more than their names say:
 
 - **`computeMeasurementUpdate()` changes the state layout.** Before it builds a row it
   seeds the first-epoch inter-system biases, phase clock and receiver code biases
-  (`StateInitializer`), runs the BSSD pivot handover, births and prunes the dynamic states
+  (values from `Seeds.cpp`, applied in `MeasurementModelSeeds.cpp`, latched by
+  `StateInitializer`), runs the BSSD pivot handover, births and prunes the dynamic states
   of the epoch (`ensureRequiredStates()`), and freezes the pivot covariances.
 - **`KalmanFilter::update()` acts on what it finds.** Its post-fit screen may exclude a
   row, reset an ambiguity, queue an **R** inflation for the next pass, request a BSSD
@@ -171,6 +172,8 @@ built by the observation equation's files beside them:
 | --- | --- |
 | `MeasurementModel.cpp` | `computeMeasurementUpdate()`: the order of the epoch's steps (first-epoch seeds, pivot handover, the state pre-pass, pivot freeze) and the row loop. |
 | `MeasurementModelStates.cpp` | The state pre-pass: `ensureRequiredStates()`, a 30-line driver over 13 members called in a fixed order (the keep sets, slant ionosphere, phase colour, the network's cold clock seed, the BSSD pivot seeds, per-band or NL/WL ambiguities, then, after the ambiguity prune, the AR eligibility marks and the receiver and satellite code biases). The order is a dependency chain. |
+| `MeasurementModelSeeds.cpp` | The first-epoch seeding of the single-receiver state and the ambiguity seed: `initializeInterSystemBiases()`, `initializePhaseClockOffset()`, `initializeCodeBiases()`, `preseedColdReceiverClock()` and `ambiguitySeed()`. Each asks `Seeds.cpp` for the values and writes them to the `StateManager`. |
+| `Seeds.cpp` | The seeds as pure functions of the observation equation (`include\measurement\Seeds.hpp`): the residual a seed is formed from (the equation less the terms already known, two masks), and the seeds of the inter-system biases, cold clock, phase clock, receiver code biases, slant ionosphere and ambiguities. They read a lookup and return values; nothing is written. |
 | `MeasurementModelRow.cpp` | One row: `buildJacobianRow()`, which builds the term list of the observation equation over the state (`ObservationEquation.cpp`, `UserParamView.cpp`), sums it for the predicted observable and scatters the partials; the Doppler row; and the definitions of the free functions `isUsableMeasurement()` and the product coverage checks (declared in `include\measurement\RowRules.hpp`). |
 | `ObservationEquation.cpp` | The observation equation of a code or phase row as a list of terms in the order of the sum: one function per effect (clock, troposphere, ionosphere, biases, ambiguity), `evaluate()` for the predicted observable and `scatterDense()` for the Jacobian row. Parameters are named by `ParamRef` (`include\common\ParamRef.hpp`) and found through a lookup the caller supplies. |
 | `UserParamView.cpp` | The single-receiver lookup: where a `ParamRef` sits in a `StateManager` and a state vector, and the one place a typed identity becomes a user-side state key (`userKey()`). |
@@ -421,7 +424,8 @@ Each kind of change has one place. The driver functions stay lists of calls.
 - **A new term of the observation equation**: an `ObsEffect` and its function in
   `observationEquation()` (`ObservationEquation.cpp`), at its place in the order of the sum;
   the column is named by a `ParamRef` (`include\common\ParamRef.hpp`) and found by
-  `UserParamView::find()`; a rule for whether a row enters: `isUsableMeasurement()`.
+  `UserParamView::find()`; a rule for whether a row enters: `isUsableMeasurement()`. Whether
+  a seed knows the term: the masks `kLegacySeedMask` (`Seeds.hpp`).
 - **A new variance term**: `rowVariance()` (`MeasurementModelVariance.cpp`), at its place
   in the composition; a new weighting model: `model\StochasticModel`
   ([worked example](03_worked_example.md)).
