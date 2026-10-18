@@ -6812,6 +6812,12 @@ namespace GnssProcessor {
             bnc.block_baarda_corroborate =
                 jval<bool>(json, "network.block_baarda_corroborate",
                            "block_baarda_corroborate", false);
+            bnc.block_baarda_estimable =
+                jval<bool>(json, "network.block_baarda_estimable",
+                           "block_baarda_estimable", false);
+            bnc.block_baarda_estimable_eps =
+                jval<double>(json, "network.block_baarda_estimable_eps",
+                             "block_baarda_estimable_eps", 0.05);
 
             // Invariant #4 tripwire: a corroboration arm without the census produces
             // nothing.  A hard error rather than a silent disarm, as in the
@@ -6821,6 +6827,11 @@ namespace GnssProcessor {
                     "network.block_baarda_corroborate requires network.block_baarda = true "
                     "(the corroboration join runs inside the block sweep; arming it alone "
                     "produces no blocks, no contingency table and no warning at run time).");
+            if (bnc.block_baarda_estimable && !bnc.block_baarda)
+                throw std::runtime_error(
+                    "network.block_baarda_estimable requires network.block_baarda = true "
+                    "(it changes how the block sweep forms its statistic; armed alone it "
+                    "changes nothing and says nothing).");
 
             if (bnc.block_baarda) {
                 // A hard error, not a silent disarm.  SPEC §6: the block sweep has no
@@ -6878,6 +6889,16 @@ namespace GnssProcessor {
                     bnc.block_baarda_report_sigma = 4.0;
                 }
                 if (bnc.block_baarda_min_blocks < 0) bnc.block_baarda_min_blocks = 0;
+                if (bnc.block_baarda_estimable
+                    && (!(bnc.block_baarda_estimable_eps > 0.0)
+                        || bnc.block_baarda_estimable_eps >= 1.0)) {
+                    log->warn("Network (block-Baarda census): "
+                              "network.block_baarda_estimable_eps = {:g} is outside (0, 1): a "
+                              "redundancy number cannot pass it, so every block would be "
+                              "refused or every direction kept.  Restoring the 0.05 default.",
+                              bnc.block_baarda_estimable_eps);
+                    bnc.block_baarda_estimable_eps = 0.05;
+                }
                 if (bnc.block_baarda_event_holdoff_ep < 0)
                     bnc.block_baarda_event_holdoff_ep = 0;
 
@@ -6941,6 +6962,18 @@ namespace GnssProcessor {
                           bnc.block_baarda_families, bnc.block_baarda_window_epochs,
                           bnc.block_baarda_min_blocks, bnc.block_baarda_report_sigma,
                           bnc.block_baarda_corroborate ? "on" : "off");
+                if (bnc.block_baarda_estimable)
+                    log->info("Network producer (block-Baarda census, estimable form): each "
+                              "block is tested over the directions of its whitened residual "
+                              "cofactor whose redundancy number is at least {:g}, with their "
+                              "count as the degrees of freedom, instead of being refused "
+                              "whole when the cofactor is rank-deficient.  A free slant "
+                              "ionosphere absorbs one direction per line of sight; a fault "
+                              "that lies wholly in an absorbed direction cannot be seen by "
+                              "any test of the block.  The row tier of the block-only "
+                              "comparison reads only the rows whose own redundancy number "
+                              "passes the same floor.  MEASURE-ONLY.",
+                              bnc.block_baarda_estimable_eps);
             }
         }
 

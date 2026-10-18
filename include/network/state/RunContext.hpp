@@ -932,6 +932,8 @@ namespace GnssProcessor {
         // (ctx.knobs is const thereafter).
         bool   bb_on{};               ///< Master: network.block_baarda and a live redundancy-census sweep.
         bool   bb_corrob{};           ///< Raw-observable corroboration join armed (implies @ref bb_on; INC-2).
+        bool   bb_estimable{};        ///< The sweep tests the estimable part of each block (implies @ref bb_on); network.block_baarda_estimable.
+        double bb_estimable_eps{};    ///< Floor on a kept direction's redundancy number; read only with @ref bb_estimable.
         double bb_report_sigma{};     ///< Trace/event threshold on t_B.  A variance ratio (E = 1 under H0), not σ units; see BlockBaarda.hpp.
         long long bb_event_holdoff{}; ///< Per-(station, satellite) BLOCKBAARDA event rate limit, in census epochs.
         // --- Station congruence screen ---

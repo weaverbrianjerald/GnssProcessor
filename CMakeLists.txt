@@ -371,6 +371,9 @@ if(MSVC)
     # there and tipped it over, C1128).
     set_source_files_properties(tests/network/test_block_baarda.cpp
         PROPERTIES COMPILE_FLAGS "/bigobj")
+    # tests/network/test_block_baarda_estimable.cpp includes the same run-context headers.
+    set_source_files_properties(tests/network/test_block_baarda_estimable.cpp
+        PROPERTIES COMPILE_FLAGS "/bigobj")
     # tests/network/test_coupling_exact_update.cpp: card WSX's generalized eigen-solve of the border
     # covariance against the batch tipped it over the Debug section limit (C1128).
     set_source_files_properties(tests/network/test_coupling_exact_update.cpp
@@ -555,6 +558,7 @@ add_executable(gnss_tests
     tests/network/test_redundancy_census.cpp
     tests/network/test_network_mdb.cpp
     tests/network/test_block_baarda.cpp
+    tests/network/test_block_baarda_estimable.cpp
     tests/network/test_network_gross_los.cpp
     tests/network/test_network_gross_los_cold_bound.cpp
     tests/network/test_station_congruence.cpp

@@ -221,3 +221,6 @@ code multipath, expect ≈ 0 and the honest close §10.8 already licenses.
 
 ---
 
+## Appended 2026-10-18: the float vehicle (card BBE)
+
+On the float vehicle the whole-block test refuses every block (field 60279 of 60302, sim all), and this card's deviation 3 (drop, never pseudo-invert) is the reason it saw nothing: the line of sight's free slant ionosphere absorbs one direction of every block exactly. [BBE](../../refound/BBE_block_baarda_estimable_2026-10-18.md) measures that and adds `network.block_baarda_estimable`, which tests the other directions with their count as the degrees of freedom (default off, never armed). The same-sign half-cycle slip of the pre-registered prediction above is mostly absorbed by the free ionosphere on this vehicle.

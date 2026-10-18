@@ -55,7 +55,7 @@ product). These items are its replacement and the level's open edges.
 
 ## QC, slip and carry responses
 
-- **block_baarda is blind on the float vehicle.** Armed in both goldens, it finds every LOS block singular (field 60279 of 60302, sim all) at 5 % of loop wall; disarm or re-block. [REDUNDANCY-CENSUS](../cards/raim-qc/REDUNDANCY-CENSUS.md)
+- **block_baarda is blind on the float vehicle.** Armed in both goldens, it finds every LOS block singular (field 60279 of 60302, sim all) at 5 % of loop wall: each line of sight's free slant ionosphere absorbs one direction of the block exactly. `network.block_baarda_estimable` (default off, UNVALIDATED) tests the other directions; the 2 h check on both beds is owed, and whether the goldens arm it or disarm the census is the author's. [BBE](../refound/BBE_block_baarda_estimable_2026-10-18.md)
 - **Carried-prior RAIM channel.** Carried-prior rows owe their own test channel, attributed to their own column, so a prior residual answers its carry without diluting the observation pool. [RPA](../refound/RPA_raim_pool_data_rows_2026-10-08.md)
 - **Prefit census phase column.** It read 1e5 sigma on clean pre-refound data; re-read it on the golden, then fix or drop it before phase joins prefit_event_classes or the fuse. [SPEC_prefit §17](../SPEC_prefit_census_observability.md)
 - **Stash-status mirrors (suspected).** StashStatus's VCE and census mirrors skip parked readmit seeds that the D2 inject folds; confirm the coverage gap and count those seeds. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)

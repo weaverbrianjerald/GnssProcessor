@@ -96,8 +96,110 @@ bool blockCofactorIsCheckable(const Eigen::MatrixXd& Q, double rcond_eps,
 }
 
 // ===========================================================================
+//  The estimable form (network.block_baarda_estimable)
+// ===========================================================================
+
+BlockEstimableForm blockEstimableForm(const Eigen::MatrixXd& Q, const Eigen::VectorXd& w,
+                                      const Eigen::VectorXd& e, double eps) {
+    BlockEstimableForm out;
+    const Eigen::Index b = Q.rows();
+    if (b <= 0 || Q.cols() != b || w.size() != b || e.size() != b
+        || !Q.allFinite() || !w.allFinite() || !e.allFinite() || !(w.minCoeff() > 0.0)) {
+        out.nonfinite = true;
+        return out;
+    }
+    // Whiten with the row weights.  The whitened cofactor is I - H_BB, so its
+    // eigenvalues are redundancy numbers in [0, 1] on one scale for code and phase
+    // rows; the unwhitened cofactor spans four decades between them, and no single
+    // floor means the same thing on both.
+    const Eigen::VectorXd s = w.cwiseSqrt();
+    const Eigen::MatrixXd Qw = s.asDiagonal() * Q * s.asDiagonal();
+    const Eigen::VectorXd ew = s.cwiseProduct(e);
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Qw);
+    if (es.info() != Eigen::Success) { out.nonfinite = true; return out; }
+    const Eigen::VectorXd& lam = es.eigenvalues();   // ascending
+    const Eigen::MatrixXd& V = es.eigenvectors();
+
+    out.n_lambda = static_cast<int>(std::min<Eigen::Index>(b, kBlockBaardaMaxB));
+    for (int k = 0; k < out.n_lambda; ++k) out.lambda[static_cast<std::size_t>(k)] = lam(k);
+    for (Eigen::Index k = 0; k < b; ++k) {
+        if (!(lam(k) >= eps)) continue;
+        const double c = V.col(k).dot(ew);
+        out.quad += c * c / lam(k);
+        ++out.dof;
+    }
+    // The row tier of the comparison: only a row with a redundancy number above the
+    // floor is one a row test can test, so a row the block absorbed does not stand
+    // for the row tier here.
+    for (Eigen::Index i = 0; i < b; ++i) {
+        if (!(w(i) * Q(i, i) >= eps)) continue;
+        ++out.rows_testable;
+        out.max_row_T = std::max(out.max_row_T, e(i) * e(i) / Q(i, i));
+    }
+    return out;
+}
+
+// ===========================================================================
 //  Per-station block sweep (INC-1)
 // ===========================================================================
+
+namespace {
+
+/// Whether a block yielded a statistic, and if not, why not.
+struct BlockOutcome {
+    bool checkable = false;   ///< @c in.T and @c in.max_row_T are set.
+    bool singular  = false;   ///< no statistic: the cofactor cannot be inverted (whole-block form) or no direction passes the floor (estimable form).
+    bool nonfinite = false;   ///< no statistic: a non-finite entry.
+};
+
+/// The whole-block form: invert the cofactor, and refuse the block when it cannot be
+/// inverted.  @p in receives @c T and @c max_row_T.
+BlockOutcome wholeBlockForm(const Eigen::MatrixXd& Q, const Eigen::VectorXd& be,
+                            NetworkBlockBaarda::Input& in) {
+    BlockOutcome out;
+    if (!blockCofactorIsCheckable(Q, kBlockCofactorRcondEps, &out.singular, &out.nonfinite))
+        return out;
+    // T_B = e' Q^-1 e / b, plus the row tier's statistic on the same rows in
+    // the same units (the b = 1 case), so the block-only comparison applies one
+    // threshold on one scale.
+    const Eigen::Index b = Q.rows();
+    const Eigen::VectorXd z = Q.ldlt().solve(be);
+    const double quad = be.dot(z);
+    if (!(quad >= 0.0) || !std::isfinite(quad)) {
+        out.singular = true;
+        return out;
+    }
+    in.T = quad / static_cast<double>(b);
+    double row_max = 0.0;
+    for (Eigen::Index i = 0; i < b; ++i) {
+        const double qii = Q(i, i);
+        if (!(qii > 0.0) || !std::isfinite(qii)) continue;
+        row_max = std::max(row_max, be(i) * be(i) / qii);
+    }
+    in.max_row_T = row_max;
+    out.checkable = true;
+    return out;
+}
+
+/// The estimable form: test the directions of the block the data constrain, and refuse
+/// it only when there are none.  @p in receives @c T, @c max_row_T, @c dof and the spectrum.
+BlockOutcome estimableBlockForm(const Eigen::MatrixXd& Q, const Eigen::VectorXd& bw,
+                                const Eigen::VectorXd& be, double eps,
+                                NetworkBlockBaarda::Input& in) {
+    BlockOutcome out;
+    const BlockEstimableForm f = blockEstimableForm(Q, bw, be, eps);
+    if (f.nonfinite) { out.nonfinite = true; return out; }
+    in.n_lambda = f.n_lambda;
+    in.lambda   = f.lambda;
+    in.dof      = f.dof;
+    if (f.dof == 0) { out.singular = true; return out; }
+    in.T         = f.quad / static_cast<double>(f.dof);
+    in.max_row_T = f.max_row_T;
+    out.checkable = true;
+    return out;
+}
+
+}  // namespace
 
 void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
                                     const NetworkNormalEquations& kernel,
@@ -179,36 +281,18 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
         catch (...) { continue; }
         if (Q.rows() != b) continue;
 
-        bool sing = false, nonfin = false;
-        if (!blockCofactorIsCheckable(Q, kBlockCofactorRcondEps, &sing, &nonfin)) {
+        const BlockOutcome form = acc.estimable()
+            ? estimableBlockForm(Q, bw, be, acc.estimableEps(), in)
+            : wholeBlockForm(Q, be, in);
+        if (!form.checkable) {
             // Uncheckable: counted with its identity, never inverted.
             in.uncheckable = true;
             acc.addBlock(in);
             ++tallies.blocks; tallies.rows += b; ++tallies.uncheckable;
-            if (sing)   ++tallies.singular;
-            if (nonfin) ++tallies.nonfinite;
+            if (form.singular)  ++tallies.singular;
+            if (form.nonfinite) ++tallies.nonfinite;
             continue;
         }
-
-        // T_B = e' Q^-1 e / b, plus the row tier's statistic on the same rows in
-        // the same units (the b = 1 case), so the INC-3 comparison applies one
-        // threshold on one scale.
-        const Eigen::VectorXd z = Q.ldlt().solve(be);
-        const double quad = be.dot(z);
-        if (!(quad >= 0.0) || !std::isfinite(quad)) {
-            in.uncheckable = true;
-            acc.addBlock(in);
-            ++tallies.blocks; tallies.rows += b; ++tallies.uncheckable; ++tallies.singular;
-            continue;
-        }
-        in.T = quad / static_cast<double>(b);
-        double row_max = 0.0;
-        for (Eigen::Index i = 0; i < b; ++i) {
-            const double qii = Q(i, i);
-            if (!(qii > 0.0) || !std::isfinite(qii)) continue;
-            row_max = std::max(row_max, be(i) * be(i) / qii);
-        }
-        in.max_row_T = row_max;
 
         const NetworkBlockBaarda::BlockStat st = acc.addBlock(in);
         if (!st.accepted) continue;
@@ -218,6 +302,7 @@ void networkBlockBaardaSweepStation(NetworkBlockBaarda& acc,
             if (st.block_only) ++tallies.block_only;
             BlockBaardaHit h;
             h.station = station_index; h.sat = s; h.b = static_cast<int>(b);
+            h.dof = in.dof;
             h.t = st.t; h.row_t = st.row_t; h.T = in.T; h.sigma0 = st.sigma0;
             h.n_code = in.n_code; h.n_phase = in.n_phase;
             h.block_only = st.block_only; h.raw_formal = st.raw_formal;
@@ -341,7 +426,9 @@ void networkBlockBaardaEmit(NetworkRun& run, const NetworkEpoch& ep) {
                                      h.t, h.T, h.row_t, h.b, h.n_code, h.n_phase,
                                      h.sigma0, priorResidualLabelName(h.label),
                                      priorResidualCorrobName(h.corrob),
-                                     h.raw_formal ? 1 : 0));
+                                     h.raw_formal ? 1 : 0)
+                             // The estimable form names the directions it tested.
+                             + (h.dof > 0 ? fmt::format(";dof={}", h.dof) : std::string()));
         ++t.events;
     }
 
@@ -404,6 +491,43 @@ void networkBlockBaardaRunEnd(const NetworkRunContext& ctx,
                   "against this line.",
                   hist.empty() ? "(none)" : hist, acc.runMixedBlocks(),
                   acc.runCodeOnlyBlocks(), acc.runPhaseOnlyBlocks());
+    }
+
+    // The estimable form's own denominators: how many directions each block size kept, and
+    // the typical spectrum behind that.  A block that lost a direction is not a block that
+    // failed a test; the lost direction is the one a free column of the line of sight absorbs.
+    if (acc.estimable()) {
+        std::string kept, spectra;
+        long long lost = 0, none = 0, total = 0;
+        for (int b = 1; b <= kBlockBaardaMaxB + 1; ++b) {
+            std::string cells;
+            for (int d = kBlockBaardaMaxB; d >= 0; --d) {
+                const long long n = acc.rankHistogram(b, d);
+                if (n == 0) continue;
+                cells += fmt::format("{}{} kept: {}", cells.empty() ? "" : ", ", d, n);
+                total += n;
+                if (d < std::min(b, kBlockBaardaMaxB)) lost += n;
+                if (d == 0) none += n;
+            }
+            if (cells.empty()) continue;
+            const std::string label = (b > kBlockBaardaMaxB) ? fmt::format(">{}", kBlockBaardaMaxB)
+                                                             : fmt::format("{}", b);
+            kept += fmt::format("{}b={} ({})", kept.empty() ? "" : "  |  ", label, cells);
+            if (acc.spectrumCount(b) <= 0) continue;
+            std::string lam;
+            for (int k = 0; k < std::min(b, kBlockBaardaMaxB); ++k)
+                lam += fmt::format("{}{:.3g}", k ? " " : "", acc.spectrumMean(b, k));
+            spectra += fmt::format("{}b={} [{}]", spectra.empty() ? "" : "  |  ", label, lam);
+        }
+        log->info("Network (block-Baarda census): estimable form, a direction is kept at a "
+                  "redundancy number of at least {:g}.  Blocks by size and directions kept: "
+                  "{}.  {} of {} block(s) lost at least one direction, {} kept none.",
+                  acc.estimableEps(), kept.empty() ? "(none)" : kept, lost, total, none);
+        log->info("Network (block-Baarda census): estimable form, mean redundancy numbers of "
+                  "the whitened block cofactor, smallest first: {}.  A value near 0 is a "
+                  "direction a free column of the line of sight absorbs; near 1 is a direction "
+                  "the rest of the network checks.",
+                  spectra.empty() ? "(none)" : spectra);
     }
 
     const auto& fams = acc.families();
@@ -547,7 +671,8 @@ void networkBlockBaardaArm(NetworkRun& run) {
             NetworkCarryVce::parseComponents(nc.block_baarda_families),
             static_cast<double>(nc.block_baarda_window_epochs),
             static_cast<double>(std::max(0, nc.block_baarda_min_blocks)),
-            ctx.knobs.bb_report_sigma, ctx.knobs.bb_corrob);
+            ctx.knobs.bb_report_sigma, ctx.knobs.bb_corrob,
+            ctx.knobs.bb_estimable ? ctx.knobs.bb_estimable_eps : 0.0);
         // Corroboration resolver.  A block is a (station, satellite) pair, the key
         // RawSlipEpoch::verdict is stored under, so unlike the prior-residual
         // resolver this needs no OR-fold over stations or satellites, and the

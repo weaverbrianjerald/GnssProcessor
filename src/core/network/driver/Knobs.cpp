@@ -505,6 +505,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     {
         k.bb_on     = nc.block_baarda && k.redun_census_on;
         k.bb_corrob = k.bb_on && nc.block_baarda_corroborate;
+        k.bb_estimable = k.bb_on && nc.block_baarda_estimable;
+        k.bb_estimable_eps = (nc.block_baarda_estimable_eps > 0.0
+                              && nc.block_baarda_estimable_eps < 1.0)
+                                 ? nc.block_baarda_estimable_eps : 0.05;
         k.bb_report_sigma = (nc.block_baarda_report_sigma > 0.0)
                             ? nc.block_baarda_report_sigma : 4.0;
         k.bb_event_holdoff =
