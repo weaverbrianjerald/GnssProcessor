@@ -13,7 +13,6 @@
 #include "common/PppUtils.hpp"
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 
@@ -311,18 +310,18 @@ void networkShDevCarryAge(NetworkRun& run, const NetworkEpoch& ep) {
     std::set<std::string> raw_los;       // the raw-detector-confirmed subset (v3k)
     for (const auto& sk : carry_slipped_ambs) {
         if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
-        const auto parts = StateKeys::parseAmbiguityKey(sk.second);
-        if (!parts) continue;
+        const auto arc = net::satSignalKey(sk.second);
+        if (!arc) continue;
         slipped_los.insert(stations[static_cast<std::size_t>(sk.first)].name
-                           + "|" + parts->satellite);
+                           + "|" + net::satKey(arc->sat));
     }
     if (sh_dev_d5_keep) {
         for (const auto& sk : carry_slipped_raw) {
             if (sk.first < 0 || sk.first >= static_cast<int>(stations.size())) continue;
-            const auto parts = StateKeys::parseAmbiguityKey(sk.second);
-            if (!parts) continue;
+            const auto arc = net::satSignalKey(sk.second);
+            if (!arc) continue;
             raw_los.insert(stations[static_cast<std::size_t>(sk.first)].name
-                           + "|" + parts->satellite);
+                           + "|" + net::satKey(arc->sat));
         }
     }
     const double now_s = se.time.week * 604800.0 + se.time.tow;
