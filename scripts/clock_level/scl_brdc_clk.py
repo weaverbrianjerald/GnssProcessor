@@ -16,7 +16,10 @@ a priori is continuous and its error is the within-ephemeris drift plus a change
 Ephemeris rule: ttom (default) = the latest record whose transmission time is <= t (the
 real-time rule); toc = the record with the nearest toc.
 """
-import argparse, math, statistics, sys
+import argparse, math, os, statistics, sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 
@@ -53,7 +56,7 @@ def parse_nav(path):
             continue
         rec = lines[i:i + 8]
         i += 8
-        sat = ln[0:3]
+        sat = norm_sat(ln[0:3])
         y, mo, d, h, mi, s = int(ln[4:8]), int(ln[9:11]), int(ln[12:14]), int(ln[15:17]), int(ln[18:20]), int(ln[21:23])
         wk, toc = gps_sow(y, mo, d, h, mi, s)
         af0, af1, af2 = fnum(ln[23:42]), fnum(ln[42:61]), fnum(ln[61:80])

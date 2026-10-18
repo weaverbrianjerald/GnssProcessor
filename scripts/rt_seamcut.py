@@ -11,6 +11,9 @@ bodies and the verifier manifest, so the two cannot disagree about what moved.
 
 Line ranges are inclusive and 1-based, into runs/rtseam_goldens/pre/src/
 RealTimeEngine.cpp.frozen, captured before any edit and never regenerated.
+
+A record of the 2026-08-01 cut, not a tool to run again: it rewrites the seam files from the
+frozen source, and eight of those bodies have been extended since (see rt_seam_verify.py).
 """
 import argparse
 import json

@@ -720,9 +720,11 @@ local names. Cross-seam per-epoch values travel in `RtEpochContext`, which owns
 nothing that outlives the epoch — **a value that must survive to the next epoch
 is a member, and putting it in the context silently cold-starts it every epoch.**
 
-Gate: `scripts/rt_seamcut.py` (generator, one canonical seam table),
-`scripts/rt_seam_verify.py` (proves each relocated body character-exact against
-the frozen pre-cut source — 30/30 verbatim), `scripts/rt_seam_gate.ps1` +
-`scripts/rt_seam_compare.py` (4-arm same-build byte-identity A/B, all PASS).
-Re-run the verifier after touching a seam body; see `docs/rt_seam_decomposition.md`
-for the coverage the A/B does and does NOT certify.
+Gate: `scripts/rt_seam_gate.ps1` + `scripts/rt_seam_compare.py` (4-arm same-build
+byte-identity A/B, all PASS at the 2026-08-01 cut). The cut's verbatim verifier,
+`scripts/rt_seam_verify.py` (30/30 at the cut), was retired on 2026-10-17: eight seam
+bodies have been extended since, so against the pre-cut source it could only fail.
+`scripts/rt_seamcut.py` (the generator) is a record, not a tool: re-running it rewrites the
+seams from the frozen source. A seam edit is gated like any other code (the unit suite, the
+A/B above, and a test of its own for a reaction the arms do not drive); see
+`docs/rt_seam_decomposition.md` for the coverage the A/B does and does NOT certify.

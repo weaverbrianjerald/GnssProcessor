@@ -62,6 +62,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
+
 GPS_EPOCH = datetime(1980, 1, 6)
 TOOL = 'rinex_edit.py'
 
@@ -258,7 +261,7 @@ def iter_records(fh, hdr: Header):
             if rec.is_obs:
                 for _ in range(n):
                     sl = next(it)
-                    rec.sats.append((sl[:3], [sl]))
+                    rec.sats.append((norm_sat(sl[:3]), [sl]))
             else:
                 rec.body = [next(it) for _ in range(n)]
         else:

@@ -5,8 +5,10 @@ station-median removed (rx clock), then per-sat median over stations/epochs.
 If e_IF(s) reproduces the loose-arm CLK residual pattern -> modeled-chain defect.
 If e_IF(s) ~ 0 -> the +-4.5 m clock states are estimator redistribution.
 """
-import csv, glob, math, statistics as st
+import csv, glob, math, os, sys, statistics as st
 from datetime import datetime, timezone
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from rinex_ids import norm_sat  # noqa: E402
 
 C = 299792458.0
 OMEGA_E = 7.2921151467e-5
@@ -131,7 +133,7 @@ def read_rnx(path, want_sods):
                 if sod > max(want_sods): break
                 continue
             if cur is None or not line.startswith("G"): continue
-            sat = line[0:3]
+            sat = norm_sat(line[0:3])
             rec = {}
             for i, ot in enumerate(obs_types):
                 s = line[3 + 16 * i: 3 + 16 * i + 14]

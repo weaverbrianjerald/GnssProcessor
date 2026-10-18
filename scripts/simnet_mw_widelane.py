@@ -30,6 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import simnet_producer_ar_grade as g  # noqa: E402
+from rinex_ids import norm_sat  # noqa: E402
 from simnet_amb_integer import load_truth, n_at  # noqa: E402
 
 C = 299792458.0
@@ -60,7 +61,7 @@ def read_rinex_mw(path):
                 continue
             if not line.startswith("G") or tow is None:
                 continue
-            sat = line[:3]
+            sat = norm_sat(line[:3])
 
             def val(t):
                 k = ix[t]

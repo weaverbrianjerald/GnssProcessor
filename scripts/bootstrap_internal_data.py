@@ -26,8 +26,17 @@ free NASA Earthdata Login account, plus a ``.netrc`` entry::
 
 (On Windows the file is ``%USERPROFILE%\\_netrc``; on Unix it is
 ``~/.netrc``.)  Without it, downloads from ``cddis.nasa.gov`` return
-HTTP 401.  Note that ``download_file`` below opens URLs with plain
-urllib, which does not read ``.netrc`` itself (see its docstring).
+HTTP 401.
+
+urllib does not read ``.netrc`` itself, so the script does: ``--netrc`` (or
+``~/.netrc``, then ``~/_netrc``) is parsed with the standard ``netrc``
+module and fed to an ``HTTPBasicAuthHandler``.  CDDIS answers a request
+with a redirect to ``urs.earthdata.nasa.gov``; that host asks for Basic
+credentials and redirects back with a session cookie, which a cookie jar in
+the same opener carries.  A credential is offered only to the hosts it is
+filed under in the netrc file (``urs.earthdata.nasa.gov``, and
+``cddis.nasa.gov`` when it has an entry of its own), never to the other
+servers the script contacts.
 
 The IGS file server (``files.igs.org``) and DGFI-TUM (``oceantide.dgfi.tum.de``)
 do not require authentication.
@@ -48,6 +57,9 @@ Usage
     # Override the repo root (default: parent of this script's dir)
     python scripts/bootstrap_internal_data.py --repo /path/to/GnssProcessor
 
+    # Read the Earthdata credentials from a particular netrc file
+    python scripts/bootstrap_internal_data.py --netrc /path/to/netrc
+
 ============================================================
 Adding more fixtures
 ============================================================
@@ -65,6 +77,8 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import http.cookiejar
+import netrc
 import os
 import shutil
 import sys
@@ -175,31 +189,111 @@ def shifted_doy(year: int, doy: int, shift: int) -> tuple[int, int]:
 # Download primitives
 # ---------------------------------------------------------------------
 
-def download_file(url: str, dest: Path, *, log_prefix: str = "") -> bool:
+#: Hosts of the NASA Earthdata single sign-on that CDDIS redirects to, and of CDDIS itself.
+EARTHDATA_HOST = "urs.earthdata.nasa.gov"
+CDDIS_HOST = "cddis.nasa.gov"
+CDDIS_NETRC_GUIDE = "https://cddis.nasa.gov/Data_and_Derived_Products/CreateNetrcFile.html"
+
+#: The opener ``download_file`` uses when none is passed; set by ``install_cddis_auth``.
+_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def resolve_netrc_path(explicit: Path | None = None, home: Path | None = None) -> Path | None:
+    """The netrc file to read: ``explicit`` when given and present, else ``~/.netrc``, else
+    ``~/_netrc`` (the Windows convention), else None.  The same order as the C++
+    ``DataDownloader``.  ``home`` replaces the user's home directory (for tests)."""
+    if explicit is not None:
+        return explicit if explicit.is_file() else None
+    home = home if home is not None else Path.home()
+    for name in (".netrc", "_netrc"):
+        if (home / name).is_file():
+            return home / name
+    return None
+
+
+def netrc_logins(path: Path, hosts: Iterable[str]) -> dict[str, tuple[str, str]]:
+    """``{host: (login, password)}`` for the ``hosts`` that the netrc file at ``path`` has an
+    entry of their own for.  The file's ``default`` entry is ignored on purpose: it would
+    hand one credential to every host.  An unreadable or malformed file gives ``{}``."""
+    try:
+        entries = netrc.netrc(str(path))
+    except (OSError, netrc.NetrcParseError) as e:
+        print(f"  auth: cannot read {path}: {e}", file=sys.stderr)
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for host in hosts:
+        if host in entries.hosts:
+            login, _account, password = entries.hosts[host]
+            if login and password:
+                out[host] = (login, password)
+    return out
+
+
+def build_auth_opener(logins: dict[str, tuple[str, str]],
+                      scheme: str = "https") -> urllib.request.OpenerDirector:
+    """An opener that answers a Basic challenge from a host in ``logins`` with its credentials,
+    follows redirects, and keeps cookies (the Earthdata login hands CDDIS a session cookie).
+
+    ``logins`` maps a host (``host`` or ``host:port``) to ``(login, password)``.  The
+    credentials are sent only in reply to a 401 from that host, and not carried along a
+    redirect to another one; a host not in ``logins`` is never offered any.
+    """
+    manager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+    for host, (login, password) in logins.items():
+        manager.add_password(None, f"{scheme}://{host}/", login, password)
+    return urllib.request.build_opener(
+        urllib.request.HTTPBasicAuthHandler(manager),
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+    )
+
+
+def install_cddis_auth(explicit: Path | None = None) -> None:
+    """Make ``download_file`` authenticate to CDDIS from the netrc file.  Prints the file used
+    (never the credentials), or a warning when there is none or it holds no Earthdata entry."""
+    global _OPENER
+    path = resolve_netrc_path(explicit)
+    if path is None:
+        where = f"{explicit}" if explicit is not None else "~/.netrc or ~/_netrc"
+        print(f"  auth: no netrc file found ({where}); CDDIS downloads will answer HTTP 401.  "
+              f"See {CDDIS_NETRC_GUIDE}", file=sys.stderr)
+        return
+    logins = netrc_logins(path, (EARTHDATA_HOST, CDDIS_HOST))
+    if not logins:
+        print(f"  auth: {path} has no entry for {EARTHDATA_HOST} or {CDDIS_HOST}; CDDIS downloads "
+              f"will answer HTTP 401.  See {CDDIS_NETRC_GUIDE}", file=sys.stderr)
+        return
+    print(f"  auth: using {path} for {', '.join(sorted(logins))}")
+    _OPENER = build_auth_opener(logins)
+
+
+def download_file(url: str, dest: Path, *, log_prefix: str = "",
+                  opener: urllib.request.OpenerDirector | None = None) -> bool:
     """Download ``url`` to ``dest``; skip if dest already exists and is non-empty.
 
-    Uses plain ``urllib.request.urlopen`` with no authentication handler;
-    urllib does not read ``.netrc``, so a server that requires Basic auth
-    (CDDIS) answers with an HTTP error and the call returns False.
-    Returns True on success or when already cached, False on any
-    network/HTTP error, after removing a partial ``dest`` (the caller
-    decides whether to fail).
+    Opens the URL with ``opener``, else with the one ``install_cddis_auth`` set up
+    (Basic credentials from the netrc file, redirects and cookies for the Earthdata
+    login), else with plain urllib.  Returns True on success or when already
+    cached, False on any network/HTTP error, after removing a partial ``dest``
+    (the caller decides whether to fail).
     """
+    opener = opener if opener is not None else _OPENER
     if dest.exists() and dest.stat().st_size > 0:
         print(f"  {log_prefix}cached  {dest.relative_to(dest.parents[3]) if len(dest.parents) >= 4 else dest}")
         return True
     dest.parent.mkdir(parents=True, exist_ok=True)
     print(f"  {log_prefix}fetch   {url}")
     try:
-        # urllib uses .netrc credentials only if they are passed in as
-        # Authorization headers or through an opener with
-        # HTTPBasicAuthHandler.  Neither is set up here: the request is
-        # sent without credentials.
-        with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as out:
+        opened = (opener.open(url, timeout=120) if opener is not None
+                  else urllib.request.urlopen(url, timeout=120))
+        with opened as resp, open(dest, "wb") as out:
             shutil.copyfileobj(resp, out)
         return True
     except urllib.error.HTTPError as e:
         print(f"  {log_prefix}HTTP {e.code} {url}", file=sys.stderr)
+        if e.code in (401, 403) and CDDIS_HOST in url:
+            print(f"  {log_prefix}hint: check the Earthdata entry of the netrc file "
+                  f"(--netrc).  See {CDDIS_NETRC_GUIDE}", file=sys.stderr)
+        e.close()
     except urllib.error.URLError as e:
         print(f"  {log_prefix}network error: {e.reason} for {url}", file=sys.stderr)
     except Exception as e:
@@ -658,6 +752,13 @@ def main(argv: Iterable[str] | None = None) -> int:
              "lookup and the well-known fallback locations.  Used to "
              "convert CDDIS-downloaded Hatanaka files to standard RINEX.",
     )
+    parser.add_argument(
+        "--netrc",
+        type=Path,
+        default=None,
+        help="netrc file holding the NASA Earthdata login (machine "
+             "urs.earthdata.nasa.gov).  Default: ~/.netrc, then ~/_netrc.",
+    )
     args = parser.parse_args(argv)
 
     repo = args.repo.resolve()
@@ -668,6 +769,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     data_root = repo / "data"
 
     print(f"Bootstrap target: {data_root} (date-first layout)")
+    install_cddis_auth(args.netrc)
 
     print("\n[1/3] IGS products (SP3, CLK, BIA, ERP, BRDC) per fixture date")
     for (year, doy) in FIXTURE_DATES:

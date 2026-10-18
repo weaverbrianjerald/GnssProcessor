@@ -9,11 +9,18 @@ process, a drift).  This tool turns a one-line spec into a runnable arm, runs a 
 in parallel, and prints one scorecard.
 
   make   --base <arm.json> --tag <name> [--hours H] [--set key.path=value ...]
-         [--drop-station NAME ...] [--rinex "OP;key=val;..." ...]
+         [--drop-station NAME ...] [--rinex "OP;key=val;..." ...] [--allow-unread KEY ...]
   run    --tags a b c [--jobs 4] [--exe <gnss_processor exe>]      (Release exe only)
   score  <tag or run_dir> ... [--pf]
   draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
   selftest
+
+`make` refuses a --set key that the config loader does not read (scripts/loader_keys.py):
+the loader ignores an unknown key without a word, so such an arm would run as its base and
+the comparison would measure nothing.  The check finds a key the loader spells whole, in
+pieces, through a prefix constant, as a class of the process-noise table or as a logger name.
+A key the loader reads by a route it cannot see is let through by naming it with
+--allow-unread KEY; the arm record (rapid.json) then lists the key under `allow_unread`.
 
 RINEX ops (GPS by default, `sys=` to change).  Common selectors:
   stations = all | A,B,C | family:Q | family:X | every:N | first:N     (default all)
@@ -110,11 +117,13 @@ name list.
 """
 import argparse
 import concurrent.futures as cf
+import contextlib
 import copy
 import csv
 import datetime
 import fnmatch
 import hashlib
+import io
 import json
 import math
 import os
@@ -124,6 +133,10 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))     # also under python -I
+import loader_keys  # noqa: E402
+from rinex_ids import norm_sat  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
 # The arm directories live under RUNS.  RAPID_RUNS_ROOT moves them (for example to a data
@@ -256,18 +269,13 @@ def match_types(codes, patterns):
     return [k for k, c in enumerate(codes) if any(fnmatch.fnmatchcase(c, p) for p in pats)]
 
 
-def norm_sat(sat):
-    """Canonical satellite id for a RINEX record (card RXP).
-
-    A RINEX 3 record may write its number blank-padded ("G 7" for "G07"), and 16 of
-    the 310 observation files of 2024-129 do.  Every id this tool compares against
-    (the `sats=` selectors, IIF / III, the draw keys) is zero-padded, so a raw slice
-    would skip those records: an op asked for on G03 would not reach a station that
-    writes "G 3".  Only comparisons and dictionary keys are normalized; the record's
-    own three bytes are written back untouched, because re-padding the file would
-    make the arm a second change.
-    """
-    return sat[:1] + "0" + sat[2:3] if len(sat) >= 3 and sat[1] == " " else sat
+# norm_sat (scripts/rinex_ids.py) gives the canonical satellite id of a RINEX record.  A RINEX 3
+# record may write its number blank-padded ("G 7" for "G07"), and 16 of the 310 observation
+# files of 2024-129 do.  Every id this tool compares against (the `sats=` selectors, IIF / III,
+# the draw keys) is zero-padded, so a raw slice would skip those records: an op asked for on G03
+# would not reach a station that writes "G 3".  Only comparisons and dictionary keys are
+# normalized; the record's own three bytes are written back untouched, because re-padding the
+# file would make the arm a second change.
 
 
 def sat_selected(sat, sel):
@@ -616,6 +624,8 @@ def set_key(cfg, dotted, value):
 
 
 def cmd_make(a):
+    allow = getattr(a, "allow_unread", None) or []
+    loader_keys.refuse_unread([kv.split("=", 1)[0] for kv in a.set or []], allow=allow)
     base = json.load(open(a.base))
     arm, rd = copy.deepcopy(base), f"{RUNS}/_rap_{a.tag}"
     net = arm["network"]
@@ -677,6 +687,8 @@ def cmd_make(a):
             "hours": a.hours, "set": a.set or [], "drop_station": a.drop_station or [], "rinex": a.rinex or [],
             "rinex_touched": touched, "holes_records_deleted": n_holes,
             "ecc_moved": [{"station": s, "hen": list(h)} for s, h in moved]}
+    if allow:
+        prov["allow_unread"] = list(allow)
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
     print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
           + (f", {n_holes} record(s) deleted by holes" if n_holes else "")
@@ -1179,6 +1191,58 @@ def cmd_selftest(_):
     chk(not file_selected(cons_op, 2, "S03000SIM", []), "a consumer op does not reach a roster station")
     chk(file_selected(every2, 2, "S03000SIM", []) and not file_selected(every2, 29, "S30000SIM", []),
         "every:2 selects the even roster indices")
+    # `make` refuses a --set key the config loader does not read, before it writes any file
+    # (a key it ignores would make the arm its base), and applies the keys it reads, among them
+    # the closed-loop consumer station that the census scripts set.
+    global RUNS
+    runs0, RUNS = RUNS, d + "/runs"
+    try:
+        base = d + "/base.json"
+        json.dump({"network": {"stations": [], "start_offset_hours": 0.0}}, open(base, "w"))
+
+        def make(tag, sets, allow=None):
+            a = argparse.Namespace(base=base, tag=tag, hours=None, set=sets, drop_station=None, rinex=None,
+                                   allow_unread=allow)
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_make(a)
+        try:
+            make("bad", ["network.start_offset_hours=1", "network.no_such_knob_xyz=true"])
+            chk(False, "make must refuse a key the loader does not read")
+        except SystemExit as ex:
+            chk("network.no_such_knob_xyz" in str(ex) and "start_offset_hours" not in str(ex),
+                f"the refusal names only the unread key: {ex}")
+            chk("--allow-unread" in str(ex), "the refusal says how to let a key through")
+        chk(not os.path.exists(RUNS + "/_rap_bad"), "a refused arm writes no directory")
+        make("good", ["network.start_offset_hours=1", "network.closed_loop.station.name=ABCD00XYZ"])
+        arm = json.load(open(RUNS + "/_rap_good/arm.json"))
+        chk(arm["network"]["start_offset_hours"] == 1 and arm["network"]["closed_loop"]["station"]["name"]
+            == "ABCD00XYZ", "make applies the keys the loader reads")
+        chk("allow_unread" not in json.load(open(RUNS + "/_rap_good/rapid.json")),
+            "an arm made without the flag has the record it always had")
+        # The keys the loader reads without a whole literal: the fixed-cycle block (a prefix
+        # constant, the live case of the network gate set), a process-noise class (a class
+        # table) and a logger name (a free-form table).
+        make("tables", ["network.ambiguity_resolution.fixed_cycles.fold=emit",
+                        "network.ambiguity_resolution.fixed_cycles.source=epoch",
+                        "network.process_noise.sat_clock=0.02", "logging.levels.kalman_filter=debug"])
+        arm = json.load(open(RUNS + "/_rap_tables/arm.json"))
+        chk(arm["network"]["ambiguity_resolution"]["fixed_cycles"]["fold"] == "emit"
+            and arm["network"]["process_noise"]["sat_clock"] == 0.02
+            and arm["logging"]["levels"]["kalman_filter"] == "debug",
+            "make applies the fixed-cycle, process-noise and logger-level keys")
+        # A key the check cannot see is let through by name, and only that key; the record lists it.
+        try:
+            make("two", ["network.no_such_knob_xyz=true", "network.no_such_knob_abc=true"],
+                 allow=["network.no_such_knob_xyz"])
+            chk(False, "a key that is not allowed must still be refused")
+        except SystemExit as ex:
+            chk("network.no_such_knob_abc" in str(ex) and "network.no_such_knob_xyz" not in str(ex),
+                f"--allow-unread lets through only the key it names: {ex}")
+        make("allowed", ["network.no_such_knob_xyz=true"], allow=["network.no_such_knob_xyz"])
+        rec = json.load(open(RUNS + "/_rap_allowed/rapid.json"))
+        chk(rec["allow_unread"] == ["network.no_such_knob_xyz"], "the record lists the key that was allowed")
+    finally:
+        RUNS = runs0
     print(f"rapid_arm selftest: {n}/{n} PASS")
 
 
@@ -1192,6 +1256,9 @@ def main():
     m.add_argument("--set", action="append")
     m.add_argument("--drop-station", action="append")
     m.add_argument("--rinex", action="append")
+    m.add_argument("--allow-unread", action="append", metavar="KEY",
+                   help="let a --set key through that the loader check cannot find (repeatable); "
+                        "the key must still be one the loader reads")
     m.set_defaults(fn=cmd_make)
     r = sub.add_parser("run")
     r.add_argument("--tags", nargs="+", required=True)
