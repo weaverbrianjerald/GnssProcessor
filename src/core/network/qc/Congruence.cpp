@@ -57,7 +57,6 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>

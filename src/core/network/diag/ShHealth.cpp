@@ -15,7 +15,6 @@
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/PivotHandover.hpp"
 #include "network/qc/RhsAttrib.hpp"   // flight-recorder trip latch (INC-5)
-#include "filter/StateKeySchema.hpp"
 #include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 

@@ -22,7 +22,6 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/solve/Estimator.hpp"
-#include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
 
 // The run-end reports at the end of this file:

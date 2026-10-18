@@ -14,7 +14,6 @@
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "network/solve/PhaseDatum.hpp"      // networkIsGaugePinned
-#include "filter/StateKeySchema.hpp"
 #include "network/state/StationParams.hpp"
 #include "math/Coordinates.hpp"
 

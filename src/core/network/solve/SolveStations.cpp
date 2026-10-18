@@ -104,7 +104,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                               if (fa != fb) return fa > fb;
                               return a < b;              // determinism on ties
                           });
-        // DIR-row style: FAMILY|SAT|SIG=weight.  The StateManager key delimiters
+        // DIR-row style: FAMILY|SAT|SIG=weight.  The state labels' key delimiters
         // (':' after the family tag, the first '_' inside the key) become '|'; an
         // iono-free signal combo keeps its own underscore (AMB|G01|L1C_L5Q).
         auto dirName = [](std::string s) {
