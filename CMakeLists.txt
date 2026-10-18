@@ -532,6 +532,7 @@ add_executable(gnss_tests
     tests/network/test_signal_roster_plan.cpp
     tests/network/test_signal_roster_always_on.cpp
     tests/network/test_n3c_switches.cpp
+    tests/network/test_net_small_defects.cpp
     tests/network/test_signal_roster_sites.cpp
     tests/network/test_arc_ledger.cpp
     tests/network/test_ledger_anchor.cpp

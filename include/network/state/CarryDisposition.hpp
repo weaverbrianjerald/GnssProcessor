@@ -46,6 +46,30 @@ inline bool carryDispositionFolds(CarryDisposition d) {
 }
 
 /**
+ * @brief Whether @p cp is a parked readmit seed that this epoch's D2 fold applied.
+ *
+ * A parked entry (@c t_park_s > 0) whose column returned inside the seed horizon is
+ * folded as @c Seeded, at its variance plus q over the gap since the park; any other
+ * parked entry does not fold. The fold records its outcome on the entry
+ * (@ref CarryPrior::fold), so after the fold a seed that was retired, screened or left
+ * parked reads as such and only an applied seed reads @c Seeded.
+ */
+inline bool carryFoldedSeed(const CarryPrior& cp) {
+    return cp.t_park_s > 0.0 && cp.fold.disposition == CarryDisposition::Seeded;
+}
+
+/**
+ * @brief The interval (s) the epoch-tail mirrors (the carry LS-VCE monitor's snapshot and
+ *        the prior-residual census) form an entry's fold variance over.
+ *
+ * The gap since the park for an applied seed (@ref carryFoldedSeed), else the driver's step
+ * @p dt clamped at 0, which is what the mirrors used for every ordinary entry.
+ */
+inline double carryMirrorGapS(const CarryPrior& cp, double dt) {
+    return carryFoldedSeed(cp) ? cp.fold.seed_gap_s : (dt > 0.0 ? dt : 0.0);
+}
+
+/**
  * @brief Whether a carried border entry's shared column is in this epoch's layout (a
  *        satellite clock, phase bias or code bias; false for any other kind).
  *

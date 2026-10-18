@@ -13,6 +13,7 @@
 #include "common/GnssIdentity.hpp"   // letterOfSat
 #include "common/PppUtils.hpp"
 #include "network/carry/CarryVce.hpp"
+#include "network/state/CarryDisposition.hpp"   // carryFoldedSeed, carryMirrorGapS
 #include "network/solve/ClockAnchor.hpp"     // gauge projection shared with the guard (§2.1 of the clock anchor design)
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/PivotHandover.hpp"
@@ -103,6 +104,8 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     const bool   carry_vce     = ctx.knobs.carry_vce;
     const bool   vce_wants_cb  = ctx.knobs.vce_wants_cb;   // the monitor lists "cb" (was a parameter)
     const bool   vce_wants_pb  = ctx.knobs.vce_wants_pb;   // the monitor lists "pb"
+    // network.readmit_seed_mirrors: the monitor and the census take a parked seed the fold applied.
+    const bool   seed_mirrors  = ctx.knobs.readmit_seed_mirrors;
     auto& prev_tow = ctx.counters.prev_tow;
     auto& prev_week = ctx.counters.prev_week;
     auto& n_emitted = ctx.counters.n_emitted;
@@ -132,10 +135,18 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     // mirrored so only ordinary (non-reinit, non-held, non-retired,
     // non-re-referenced) carries qualify.
     std::map<std::string, std::pair<double, double>> vce_shared_prior;  // key -> (prior value, var)
+    std::map<std::string, double> vce_seed_gap;   // key -> gap since the park, for the seeds among them
     if (carry_vce && (vce_wants_pb || vce_wants_cb)) {
         for (const CarryPrior& cp : prev_carry) {
             if (cp.inflate_q) continue;                       // clock-monitor reinit, not an ordinary carry
-            if (cp.t_park_s > 0.0) continue;                  // parked: not an ordinary carry (a readmit seed included)
+            // Parked: not an ordinary carry.  The one parked entry the fold applies is a readmit
+            // seed, which the monitor takes as a row only under network.readmit_seed_mirrors.
+            if (cp.t_park_s > 0.0) {
+                if (!carryFoldedSeed(cp)) continue;
+                if (cp.kind == SharedParamKind::CodeBias && vce_wants_cb)
+                    ++ctx.counters.n_readmit_mirror_seed_vce_cb;
+                if (!seed_mirrors) continue;
+            }
             if (cp.kind == SharedParamKind::PhaseBias) {
                 if (!vce_wants_pb) continue;
                 if (eq34_reref.count({cp.sat, cp.signal})) continue;         // marginalized (eq34 D4)
@@ -146,8 +157,9 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
                 continue;                                     // Clock / VtecSh out of scope (own models)
             }
             if (handover_affects(cp.sat) && !sts_released(cp.sat)) continue;  // retired datum, scoped mode (RTA-2); re-expressed keys fold (queue 1(b))
-            vce_shared_prior.emplace(sharedCarryKey(cp.kind, cp.sat, cp.signal),
-                                     std::make_pair(cp.value, cp.var));
+            const std::string vce_key = sharedCarryKey(cp.kind, cp.sat, cp.signal);
+            vce_shared_prior.emplace(vce_key, std::make_pair(cp.value, cp.var));
+            if (carryFoldedSeed(cp)) vce_seed_gap.emplace(vce_key, carryMirrorGapS(cp, dt));
         }
     }
 
@@ -174,6 +186,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
     //    mechanism never used.
     struct PriresSharedPrior {
         double value = 0.0, var = 0.0, fold_var = 0.0;
+        double gap_s = 0.0;   // the interval the fold variance covers (the seed gap for a seed)
         bool   folded = false, hold = false;
         PriorResidualLabel label = PriorResidualLabel::Clean;
         const char* mech = "";
@@ -199,10 +212,17 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
         const bool outer_gate = (!datum_changed || scoped_handover_k)
                              && !prev_carry.empty();
         for (const CarryPrior& cp : prev_carry) {
-            if (cp.t_park_s > 0.0) continue;   // parked: skipped, even a readmit seed that folded
             const bool is_pb  = (cp.kind == SharedParamKind::PhaseBias) && prires_pb;
             const bool is_cb  = (cp.kind == SharedParamKind::CodeBias)  && prires_cb;
             const bool is_clk = (cp.kind == SharedParamKind::Clock)     && prires_clk;
+            // Parked: skipped, except a readmit seed the fold applied under
+            // network.readmit_seed_mirrors (counted either way).
+            if (cp.t_park_s > 0.0) {
+                if (!carryFoldedSeed(cp)) continue;
+                if (is_cb) ++ctx.counters.n_readmit_mirror_seed_census_cb;
+                if (is_clk && !ctx.knobs.clk_model_on) ++ctx.counters.n_readmit_mirror_seed_census_clk;
+                if (!seed_mirrors) continue;
+            }
             if (!is_pb && !is_cb && !is_clk) continue;   // VtecSh out of scope (own model)
             if (is_clk && ctx.knobs.clk_model_on) continue;  // clock is on clock_osc, never stashed
             PriresSharedPrior p;
@@ -213,8 +233,9 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             // var_eff as the injector forms it: the reinit variance on a
             // clock-monitor-flagged key (a soft large-q reinitialization, not the
             // nominal q recompute), else q·Δt inflation with the B4 floor.
+            p.gap_s = carryMirrorGapS(cp, dt);
             double var_eff = cp.inflate_q ? clk_mon_reinit_var
-                                          : cp.var + q * std::max(0.0, dt);
+                                          : cp.var + q * p.gap_s;
             if (!cp.inflate_q && floor > 0.0) var_eff = std::max(var_eff, floor);
             // The census standardizes by the fold variance as used (M2 v2,
             // SPEC_carry_vce_apply.md §3), so its s absorbs α², and the census's
@@ -311,7 +332,10 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
             const double var_prev = it->second.second;
             const double q     = is_cb ? q_cb : q_pb;
             const double floor = is_cb ? cb_var_floor : pb_var_floor;
-            double fold_var_hand = var_prev + q * std::max(0.0, dt);
+            // A seed's interval is the gap since its park; an ordinary entry's is the step.
+            const auto   sg    = vce_seed_gap.find(it->first);
+            const double gap_s = (sg != vce_seed_gap.end()) ? sg->second : dt;
+            double fold_var_hand = var_prev + q * std::max(0.0, gap_s);
             if (floor > 0.0) fold_var_hand = std::max(fold_var_hand, floor);
             // The D2 injector multiplied this same hand value by α² before folding
             // (M2 v2; networkInjectD2CarryPrior's vce_scale_shared), and the factor
@@ -324,7 +348,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
                                           : NetworkCarryVceApply::kPb, cp.sat);
             carry_vce_est.addRow(is_cb ? "cb" : "pb", cp.sat,
                                  it->second.first - cp.value,   // carried − solved
-                                 dt, cp.var, fold_var, fold_var_hand);
+                                 gap_s, cp.var, fold_var, fold_var_hand);
         }
     }
 
@@ -451,7 +475,7 @@ void networkStashStatus(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& ev
                     in.post_var = pvv;
                 }
             }
-            in.gap_s    = std::max(0.0, dt);
+            in.gap_s    = p.gap_s;
             in.folded   = p.folded;
             in.label    = p.label;
             in.mech     = p.mech;

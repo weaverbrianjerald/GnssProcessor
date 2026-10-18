@@ -32,6 +32,13 @@ struct BorderCounters {
     long long n_readmit_seed_check    = 0;  ///< stash-side seed-vs-solve checks run (all seeded kinds)
     long long n_readmit_seed_outlier  = 0;  ///< ...of which |e|/sqrt(S) > kReadmitSeedK
     long long n_readmit_marg_windows  = 0;  ///< coupling marginalization windows opened
+    // Parked seeds the D2 fold applied, met by the epoch-tail snapshots of the carry LS-VCE
+    // monitor and the prior-residual census (network.readmit_seed_mirrors).  Off, the
+    // snapshots skip every parked entry, so each count is a row the mirror did not take;
+    // on, it is a row the mirror took.  Counted only where the mirror is armed for the kind.
+    long long n_readmit_mirror_seed_vce_cb    = 0;  ///< code-bias seeds met by the monitor's snapshot
+    long long n_readmit_mirror_seed_census_cb = 0;  ///< code-bias seeds met by the census snapshot
+    long long n_readmit_mirror_seed_census_clk = 0; ///< clock seeds met by the census snapshot
     long long cxu_epochs = 0, cxu_epochs_built = 0, cxu_epochs_unfactored = 0,
               cxu_epochs_nostash = 0;
     long long cxu_keys_s = 0, cxu_keys_d[kCouplingExactRoutes]{};

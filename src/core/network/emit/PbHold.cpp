@@ -32,19 +32,16 @@ namespace GnssProcessor {
 
 namespace {
 
-/// The epoch's de-commoned clock step per satellite, in metres.
-///
-/// `d_s = (c_s(k) - c_s(k-1)) - median_s(c_s(k) - c_s(k-1))`.  The median is taken
-/// over the satellites with a clock at both epochs, across all constellations at
-/// once.  It removes the common mode a clock datum re-realization injects, which a
-/// consumer's own receiver clock absorbs; the remainder is the satellite-specific
-/// step, the quantity a coupled frame move would have to transfer.  Satellites
-/// without a previous clock are absent from the result (no step is defined).
-std::map<std::string, double> decommonedClockStep(
+/// A held emission counts as moved by the transfer above this (m).
+constexpr double kFrzMovedM = 1e-6;
+
+}  // namespace
+
+std::map<std::string, double> pbHoldDecommonedClockStep(
     const NetworkSolutionEpoch& sol,
     const std::map<std::string, double>& prev_clock_m) {
-    std::map<std::string, double> raw;
-    std::vector<double>           pop;
+    std::map<std::string, double>              raw;
+    std::map<char, std::vector<double>>        pop;   // the step of each satellite, per constellation
     for (const auto& s : sol.sats) {
         if (!s.has_clock || s.sat.empty()) continue;
         const auto it = prev_clock_m.find(s.sat);
@@ -52,20 +49,17 @@ std::map<std::string, double> decommonedClockStep(
         const double d = s.clock_c0_m - it->second;
         if (!std::isfinite(d)) continue;
         raw[s.sat] = d;
-        pop.push_back(d);
+        pop[letterOfSat(s.sat)].push_back(d);
     }
-    if (pop.empty()) return raw;
-    std::sort(pop.begin(), pop.end());
-    const std::size_t n = pop.size();
-    const double med = (n % 2 == 1) ? pop[n / 2] : 0.5 * (pop[n / 2 - 1] + pop[n / 2]);
-    for (auto& [sat, d] : raw) { (void)sat; d -= med; }
+    std::map<char, double> med;
+    for (auto& [cc, v] : pop) {
+        std::sort(v.begin(), v.end());
+        const std::size_t n = v.size();
+        med[cc] = (n % 2 == 1) ? v[n / 2] : 0.5 * (v[n / 2 - 1] + v[n / 2]);
+    }
+    for (auto& [sat, d] : raw) d -= med[letterOfSat(sat)];
     return raw;
 }
-
-/// A held emission counts as moved by the transfer above this (m).
-constexpr double kFrzMovedM = 1e-6;
-
-}  // namespace
 
 bool pbHoldCommonClockStep(const NetworkSolutionEpoch& sol,
                            const std::map<std::string, double>& prev_clock_m,
@@ -116,7 +110,7 @@ void networkPbHold(NetworkRunContext& ctx,
     // was not transferred.  The marks pending at this point are the complete set:
     // every marking site has run, and emitToStore, which consumes them, follows.
     const std::map<std::string, double> clk_step =
-        decommonedClockStep(sol, net::satMap(ctx.entities.sats, &net::SatelliteState::pb_hold_prev_clock_m));
+        pbHoldDecommonedClockStep(sol, net::satMap(ctx.entities.sats, &net::SatelliteState::pb_hold_prev_clock_m));
 
     bool logged_arm = ctx.counters.n_pbh_held_emissions > 0
                       || ctx.counters.n_pbh_gen_first > 0;

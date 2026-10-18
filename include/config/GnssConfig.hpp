@@ -3160,6 +3160,26 @@ namespace GnssProcessor {
          */
         bool networkReadmitSeedCodeBias() const { return network_readmit_seed_code_bias_; }
         /**
+         * @brief Re-admission continuity (READMIT): the carry LS-VCE monitor and the
+         *        prior-residual census take a parked seed the D2 fold folded
+         *        (@c network.readmit_seed_mirrors; inert without
+         *        @ref networkReadmitSeedHorizonS).
+         *
+         * The epoch-tail snapshots that pair each folded border prior with its re-stashed
+         * solved value skip every parked entry, a seed included, although the fold applies a
+         * seed (a parked code bias or clock whose column returned inside the horizon) at its
+         * variance plus q over the gap since the park. Armed, a seed that the fold applied is
+         * a row of the monitor (code-bias family) and of the census (code-bias and clock
+         * families) like any other folded prior, with the seed gap as its interval and the
+         * variance the fold used. The run-end READMIT report counts the seeds either way.
+         *
+         * Default false = byte-identical. Solution-affecting only where the monitor's output
+         * feeds the fold (@c network.carry_vce_apply); the census is a trace and a
+         * calibration, not a fold input. Not fingerprinted: neither accumulator is part of a
+         * state snapshot. Network mode only.
+         */
+        bool networkReadmitSeedMirrors() const { return network_readmit_seed_mirrors_; }
+        /**
          * @brief Canonical-pair admission (@c network.canonical_pair_admission,
          *        network producer only).
          *
@@ -8504,6 +8524,7 @@ namespace GnssProcessor {
         double network_readmit_seed_horizon_s_{0.0};       ///< Re-admission continuity (READMIT, E2 seed-first re-admission): park a departed satellite's D2 clock + code-bias carry for this many seconds and seed its re-registered columns at var + q·gap (the Q3 anchor folds anchored over the true gap up to this bound; its guard is the mark-if-moved).  0 = off (byte-identical).  Not fingerprinted.
         int    network_readmit_coupling_marg_ep_{0};       ///< Re-admission re-coupling edge (READMIT): epochs after a satellite's re-admission during which every coupling term on its shared columns takes the departed route (block/row edge).  0 = off.
         bool   network_readmit_seed_code_bias_{true};      ///< Re-admission seed sub-knob (READMIT): also park + seed the departing satellite's per-signal code-bias columns (true) or the clock alone (false; FALSIFIED as an improvement).  Inert without readmit_seed_horizon_s.
+        bool   network_readmit_seed_mirrors_{false};       ///< The carry LS-VCE monitor and the prior-residual census take a parked seed the D2 fold folded, as a row at the seed gap (network.readmit_seed_mirrors); off = they skip every parked entry (byte-identical).  Inert without readmit_seed_horizon_s.  Not fingerprinted.  Network mode only.
         bool   network_canonical_pair_admission_{false};   ///< Canonical-pair admission (docs/refound/CPA_canonical_pair_admission_2026-09-20.md; ledger KEEP_OFF): a (station, satellite) record enters the network path only while the station holds its canonical phase and code on band digits 1 and 2 (its own PppModel latch decides them), or the last good processed epoch is within canonical_pair_keep_epochs; a withheld record is absent downstream exactly as if the RINEX record were missing, so the row-level gap re-entry tier sees the return as a re-entry.  A constellation with no canonical pair decided on those digits is left untouched.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
         int    network_canonical_pair_keep_epochs_{3};     ///< Canonical-pair admission tolerance, in processed epochs: a record without its canonical pair is still admitted while the last good epoch is at most this many epochs back.  Clamped at 0 (0 admits only the epochs that hold the pair).  Inert without canonical_pair_admission.
         int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed and the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.

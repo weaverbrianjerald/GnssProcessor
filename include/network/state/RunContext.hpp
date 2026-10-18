@@ -534,6 +534,11 @@ namespace GnssProcessor {
         /// too (true, the default) or the clock alone (false).  Inert without
         /// readmit_seed_horizon_s.
         bool   readmit_seed_cb{};
+        /// network.readmit_seed_mirrors: the carry LS-VCE monitor and the prior-residual
+        /// census snapshots take a parked seed the D2 fold applied, instead of skipping
+        /// every parked entry.  Read by networkStashStatus.  Inert without
+        /// readmit_seed_horizon_s.
+        bool   readmit_seed_mirrors{};
         /// network.resume_d5_warmup_ep (RS-2b, SPEC_event_harness §21.6): processed epochs
         /// after a warm resume during which the D5 innovation gate is diagnostic
         /// only: a tripping chord is counted but not re-tapped, not marked slipped, and its
