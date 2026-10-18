@@ -606,12 +606,15 @@ with the same hold variance.  In the baseline path
 ambiguity in the state, including keys excluded from the fix.  In the
 single-receiver path (\texttt{AmbiguityResolver::holdAmbiguities}, called by both
 the post-processing and the real-time engines) the hold
-is inert under the default configuration.  It rebuilds the DD pairs
-with an empty observation list, so every ambiguity is assigned elevation
-0 and the AR elevation mask (default \SI{20}{\degree}) removes every
-pair.  PPP fix-and-hold therefore holds nothing unless the mask is 0 or
-negative; mode 3 then behaves like modes 1 and 2.  Under the NL/WL
-state basis the hold is a no-op by design.
+covers the single-signal DD ambiguities that the accepted fix constrained
+(\texttt{AmbiguityResolution::fixed\_dd\_rows}), so the epoch's candidate
+set, pivots and elevation mask carry into it.  A candidate the fix left
+out (below the mask, outside a partial subset, without a widelane lock)
+stays float, and a widelane-only fix, which constrains no single-signal
+DD, holds nothing.  The callers install the fixed state before the hold,
+so the hold's innovation is zero: it tightens the covariance of the fixed
+pairs a second time and moves no mean.  Under the NL/WL state basis the
+hold is a no-op by design.
 
 \subsection{Network-producer AR (both mechanisms default
 off)}\label{sec:ar-network}

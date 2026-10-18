@@ -84,6 +84,33 @@ struct AmbiguityResolution {
     /// distinguish "fixed by ILS" from "fixed by asserting MW integers", which
     /// @ref ratio alone cannot.
     bool wl_only_fix{ false };
+
+    /**
+     * @brief One single-signal double-difference ambiguity that an accepted fix
+     *        constrained to an integer: the state indices of the non-pivot
+     *        ambiguity and of the pivot it was differenced against.
+     */
+    struct FixedDdRow {
+        int state_idx_i{ -1 };     ///< State index of the non-pivot satellite's ambiguity.
+        int state_idx_ref{ -1 };   ///< State index of the pivot satellite's ambiguity.
+    };
+
+    /**
+     * @brief The single-signal DD ambiguities the accepted fix constrained, one
+     *        row per (non-pivot satellite, signal).
+     *
+     * Filled by the PPP / PPP-RTK paths that fix each signal's DD on its own: the
+     * per-band LAMBDA search and the WL-constrained N_1 search, full set or partial
+     * subset alike (the WL-constrained path adds both signals of each fixed pair).
+     * Empty after a failed resolution, after the WL-only and NlWl paths (they
+     * constrain the widelane combination, not any single-signal DD) and after
+     * @c resolveDd (the baseline hold selects its own keys).  The rows carry the
+     * epoch's candidate set with them: the elevation mask, the pivot election and
+     * the exclusions were applied from the epoch's observations when the fix was
+     * formed, so @ref AmbiguityResolver::holdAmbiguities needs neither the
+     * observations nor a second pair election.
+     */
+    std::vector<FixedDdRow> fixed_dd_rows;
 };
 
 /**
@@ -319,10 +346,15 @@ public:
      * drifting away from their integer values.  Runs only when @p resolution
      * succeeded and @c ar_mode is 3; a no-op under the NlWl basis.
      *
-     * @warning The DD pairs are rebuilt by buildDdPairs() with an empty
-     * observation list, so every ambiguity gets elevation 0 and is removed by
-     * @c elevation_mask_ar whenever that mask is positive.  Under the default
-     * mask of 20 degrees no pair survives and this call applies nothing.
+     * The held set is exactly @c resolution.fixed_dd_rows: the single-signal DD
+     * ambiguities the fix constrained, formed from the epoch's observations with
+     * their elevation mask and pivots.  A candidate the fix left out (below the
+     * mask, outside a partial subset, without a widelane lock) stays float, and a
+     * fix that constrained no single-signal DD (WL-only) holds nothing.
+     *
+     * The PPP callers install @c resolution.fixed_state in the filter before this
+     * call, so the pseudo-observation innovation is zero and the hold tightens the
+     * covariance of the fixed DD ambiguities without moving their means.
      *
      * @param state_manager   Filter state to update (modified in place).
      * @param resolution      Result from a previous successful resolve() call.
