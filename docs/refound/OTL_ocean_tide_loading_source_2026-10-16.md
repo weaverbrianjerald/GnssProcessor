@@ -5,11 +5,11 @@
 - **id:** OTL
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. CHECKED 2026-10-17 (section 8): knob off is identical to a main `4318fe3` control on the field and sim golden 2 h arms; with the keys on the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (its estimate shifts by the applied loading) and the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and ARHT worse by 2 to 9 mm). The arming decision is open.
+- **summary:** BUILT 2026-10-16, default off, never armed: `model_corrections.otl_from_sif` serves ocean tide loading from the SIF registry alone and `model_corrections.otl_nodal_corrections` adds the nodal factors and a UTC Greenwich argument. The gate against IERS HARDISP (NGS M-PAGES v1.2) found the SIF horizontal columns read reversed by `processing.enable_station_info` and closes the radial gap from 4.9 to 2.5 mm at the worst of three stations. CHECKED 2026-10-17 (section 8): knob off is identical to a main `4318fe3` control on the field and sim golden 2 h arms; with the keys on the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (its estimate shifts by the applied loading) and the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and ARHT worse by 2 to 9 mm). DIAGNOSED 2026-10-17 (section 9): no sign or convention defect in the evaluation (0.2 to 1.9 mm to HARDISP over hours 0 to 6 at four stations, the SIF columns are the BLQ rows, the north scale of the model in consumer data is +1.19); the net translation of the diurnal field is absent from the consumer's data (north scale -0.11) and is 5.7 of the 8.0 mm north loading at WTZZ00DEU; the default-off key `model_corrections.otl_remove_diurnal_translation` cuts the WTZZ00DEU cost over hours 2 to 6 from +6.5 to +2.0 mm and is neutral at the census (median -1.3 mm against -2.0 mm). The arming decision is open.
 - **source:** `docs/status/OPEN_ITEMS.md` queued build 2; `docs/cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md` section 4 (no nodal corrections, GMST from GPS time); NGS M-PAGES v1.2 `Lib/IersHardisp`, `Lib/Station/OceanTideLoad.cpp`, `Lib/Station/StationInfoFile.cpp`, `Lib/OtlGrid/get_otl_grid.f`; IERS Conventions (2010) section 7.1.2
 - **knobs / posture:** `model_corrections.otl_from_sif`, `model_corrections.otl_nodal_corrections` (ledger rows UNVALIDATED; both goldens keep `enable_ocean_tide_loading` false, so both are unaffected); the loader default of `enable_ocean_tide_loading` stays true
 - **dates in the text:** 2026-10-16, 2026-10-17
-- **hashes / run dirs:** branch `mpg/otl`; gate and probe output `D:/GnssProcessorSupport/gates/otl/` (`gate_result.txt`, `gate_result.json`, `residual_attribution.txt`, `station_handling.txt`); check output `D:/GnssProcessorSupport/gates/otl/chk/`, arms `D:/GnssProcessorSupport/runs_nom/_rap_otlchk_*` and `_rap_otlc_*`, control worktree `otl_ctl` at main `4318fe3`; harness `scripts/otl_compare/`; tool `gnss_otl_diag` (`src/tools/otl_diag.cpp`)
+- **hashes / run dirs:** branch `mpg/otl`; gate and probe output `D:/GnssProcessorSupport/gates/otl/` (`gate_result.txt`, `gate_result.json`, `residual_attribution.txt`, `station_handling.txt`); check output `D:/GnssProcessorSupport/gates/otl/chk/`, arms `D:/GnssProcessorSupport/runs_nom/_rap_otlchk_*` and `_rap_otlc_*`, control worktree `otl_ctl` at main `4318fe3`; harness `scripts/otl_compare/`; tool `gnss_otl_diag` (`src/tools/otl_diag.cpp`); branch `fix/otl-convention` (section 9): scripts and outputs `D:/GnssProcessorSupport/gates/otl2/` (`results/`), arms `_rap_otl2*`, `_rap_rc_*`, `_rap_cf_*`, exe `gnss_processor_otl2.exe`, `scripts/otl_compare/net_translation.py`, `tests/test_otl_translation.cpp`
 
 **Outcome.** Question: can ocean tide loading be taken from the SIF registry alone, and does it help the field
 golden? Two default-off keys (`otl_from_sif`, `otl_nodal_corrections`) were built. The gate against HARDISP found the
@@ -18,7 +18,11 @@ golden? Two default-off keys (`otl_from_sif`, `otl_nodal_corrections`) were buil
 sim, 2 h). Keys on, the held-out consumer WTZZ00DEU is 6.5 mm worse over hours 2 to 6 (13.2 to 19.7 mm), because its
 estimate shifts by the applied displacement; the 16-site census median is -2.0 mm (KOKB -17.6 mm; SCRZ, BADG, HARB and
 ARHT worse by 2 to 9 mm). No fail bar is crossed; five of the six ocean sites gain (4 to 18 mm) and HARB does not.
-Nothing is armed ([section 8](#8-check-results-2026-10-17)).
+Nothing is armed ([section 8](#8-check-results-2026-10-17)). Diagnosis of 2026-10-17
+([section 9](#9-diagnosis-of-the-consumer-cost-and-the-diurnal-translation-option-2026-10-17)): the evaluation and the
+sign are right (0.2 to 1.9 mm to HARDISP; north scale of the model in consumer data +1.19); the net translation of the
+diurnal field is absent from the data (north -0.11) and is 5.7 of the 8.0 mm north loading at Wettzell; the default-off
+key `otl_remove_diurnal_translation` cuts the consumer cost from +6.5 to +2.0 mm and is census-neutral.
 
 ## 1. What was built
 
@@ -379,3 +383,189 @@ as a default on this evidence.
   here. A window of whole tidal days at the consumer would separate the two readings; it was not run.
 - **Open for the author:** arming (nothing is armed, no ledger verdict beyond UNVALIDATED is set); a whole-day arm
   before any adoption claim; the 11 stations without a SIF block; the legacy `enable_station_info` mapping.
+
+## 9. Diagnosis of the consumer cost, and the diurnal translation option, 2026-10-17
+
+Separate stage (branch `fix/otl-convention`, from main `08c1343`). Question: is the loading that worsens the
+held-out consumer WTZZ00DEU in section 8.2 a sign or convention defect, or a correct model with a real cost? Nothing is
+armed; the goldens and the manifest are unchanged. Scripts and outputs: `D:/GnssProcessorSupport/gates/otl2/`
+(`results/`), arms `D:/GnssProcessorSupport/runs_nom/_rap_otl2*`.
+
+**Diagnosis.** The evaluation, the sign of every component and the reading of the SIF columns are right. What does not
+suit this consumer is one component of the field: the net translation of the diurnal loading (a uniform ECEF
+displacement of K1, O1, P1 and Q1). It is 5.7 of the 8.0 mm mean north loading at Wettzell over the settled window, and
+it is absent from the consumer's data (north scale -0.11, 95 % interval -0.75 to +0.27), whereas the rest of the model is
+present at scale 1.19 (+0.90 to +1.92). Removing it (new default-off key `model_corrections.otl_remove_diurnal_translation`)
+cuts the WTZZ00DEU cost over hours 2 to 6 from +6.5 to +2.0 mm and leaves the census where it was.
+
+### 9.1 Is the applied displacement right? Yes, against HARDISP, in all three components
+
+The gate of section 2 re-run over hours 0 to 6 UTC of 2024-129 (721 epochs at 30 s; `gate06.py`): production
+`gnss_otl_diag series` against the HARDISP port fed the SIF columns as M-PAGES feeds them (up, west and south rows,
+ENU = (-west, -south, up)). Maximum difference in mm, east / north / up:
+
+| station | HARDISP peak E / N / U | `otl_from_sif` + nodal | `otl_from_sif` | `enable_station_info` reading |
+| --- | --- | --- | --- | --- |
+| WTZZ00DEU | 2.5 / 9.3 / 8.2 | 0.30 / 0.40 / 0.21 | 0.42 / 1.06 / 0.30 | 5.1 / 17.5 / 0.30 |
+| KOKB00USA | 3.7 / 9.0 / 45.1 | 0.17 / 0.37 / 1.91 | 0.26 / 0.38 / 3.67 | 7.1 / 18.2 / 3.67 |
+| BRST00FRA | 7.9 / 15.9 / 62.1 | 0.49 / 0.19 / 1.86 | 0.76 / 0.87 / 2.15 | 16.3 / 31.3 / 2.15 |
+| CHTI00NZL | 7.2 / 16.2 / 22.2 | 0.24 / 0.52 / 1.78 | 0.52 / 1.04 / 1.17 | 14.1 / 31.5 / 1.17 |
+
+The remaining differences are the minor constituents that HARDISP interpolates (section 2). The port cannot say by itself
+that the SIF columns are the BLQ rows; four further pieces of evidence do:
+
+- **Data lineage.** `Scripts/stationInfo/convert_sif.py` of M-PAGES v1.2 maps the legacy binary record
+  `oceanloading3D` (`amp_rad`, `amp_tew`, `amp_tns`, "same order as the BLQ format" in `siteinfo.hpp`) one to one onto
+  UP, EAST, NORTH, and the legacy BLQ reader stores BLQ row 2 (west positive) as "East-West" and row 3 (south positive)
+  as "North-South". `StationInfo::parseOtlBlock` and `OceanTideLoad::computeOtlDisplacement` hand the columns to HARDISP
+  as its up, west and south rows.
+- **Two coefficient sets agree.** The v1.1 SIF block of WTZR is Scherneck's FES2004 (OLCMC) and the v1.2 block is FES2014b
+  through CARGA; the north column reads 3.69 and 4.28 mm for K1 and 2.44 and 2.80 mm for O1, and at Onsala 3.32 and
+  3.99 mm for K1. The large diurnal horizontals are in both sets and are not a conversion artefact.
+- **Why they exceed the HARDISP header example.** The v1.1 comment line reads "OLCMC", the centre-of-mass corrected
+  set, and `siteinfo.hpp` gives the BLQ frame as the centre of the solid Earth plus oceans. The CSR4.0 rows printed in the
+  `HARDISP.F` header appear to carry no such term: Onsala K1 south 0.29 mm against 3.99 mm in the SIF, P1 0.10 against
+  1.25 mm, Q1 0.07 against 0.46 mm, a difference in the ratio of the equilibrium tide amplitudes.
+- **The data (section 9.3):** the scale of the semidiurnal and local north component is +1.1, not -1.
+
+### 9.2 Truth, producer and consumer
+
+- **Truth.** `network.closed_loop.station.position_ecef` of WTZZ00DEU is the ITRF2020 coordinate of the SIF propagated
+  linearly to the date: it differs from the SIF record (epoch 2020.0, velocity -15.94, 17.20, 10.06 mm/yr) by 0.0, 0.0 and
+  0.1 mm in east, north and up, and the periodic terms of the record add at most 0.4 mm. ITRF coordinates carry no ocean
+  loading, so a consumer that models the loading correctly converges to this point. The daily mean of the loading is near
+  zero, the mean over a 5 h window is not (-8.0 mm north, -6.0 mm up at Wettzell over hours 2 to 6).
+- **Same model on both sides.** The producer and the closed-loop consumer read the same `model_corrections`; the
+  consumer is served by its own SIF record (`Ocean tide loading source: SIF 3-component FES2014b, BLQ rows (marker
+  'WTZZ' -> WTZZ00DEU)`), the producer by 51 roster stations, and 7 roster stations print "none, zero displacement"
+  (section 4).
+- **No double count or cancellation through the wire.** The knob-on wire moves a knob-off consumer by less than 1 mm per
+  hour at WTZZ00DEU and by a median 0.0 mm over the census (section 8.3). The consumer's response to its own model is
+  exactly the opposite of the applied displacement: on minus off equals minus the loading to 0.01, 0.01 and 0.04 mm
+  (east, north, up; mean absolute deviation over 13 sites, replays of 00 to 06 UT of DOY 131). The products do not depend
+  on the producer's loading at the millimetre level, so the cost is the consumer's own.
+
+### 9.3 Why WTZZ00DEU moves by minus the loading, and what the data say about the loading
+
+The shift is the design: the consumer's position follows the model one for one, so whether it worsens depends on whether
+the loading is in its data. One 5 h window of one day cannot tell (the unloaded error of the consumer is +7 mm north and
+the loading is -8 mm), so the loading was regressed out of knob-off consumer replays on many windows.
+
+Data. Knob-off consumer replays of 11 six-hour windows of wires of the earlier GPS-only golden (card MDR): 00 to 06 UT of
+DOY 128, 129, 130, 131 and 132, and 06 to 12, 12 to 18 and 18 to 24 UT of DOY 129 and 130 (six wires produced here,
+`_rap_otl2w_<doy>_<hh>`; the 18 to 24 UT window of DOY 131 is the geomagnetic storm, with errors up to 0.29 m, and is not
+used); 13 sites with a SIF block; each window contributes the mean signed error over its hours 2 to 6, 143 site-windows.
+Model: site fixed effects, the error regressed on the loading of the production model over the same window, split by part
+(`win_an3.py`, Huber). The scale is 1 where the data contain the loading as modelled, 0 where they do not and -1 where the
+horizontal vector is reversed. The window bootstrap resamples the 11 windows, since the translation varies mainly from
+window to window.
+
+| part of the model | E scale | N scale | U scale |
+| --- | --- | --- | --- |
+| everything except the diurnal translation | +1.06 (0.57) | +1.19 (0.23) | +1.39 (0.23) |
+| window bootstrap 95 % | -0.65 to +3.29 | +0.90 to +1.92 | +0.89 to +1.82 |
+| diurnal translation (area-weighted fit, 9.4) | +0.19 (0.52) | -0.11 (0.18) | +1.13 (0.65) |
+| window bootstrap 95 % | -1.15 to +0.78 | -0.75 to +0.27 | +0.14 to +2.13 |
+
+Reading.
+
+- **No sign defect.** The semidiurnal north component enters at +1.08 (0.26) (`win_an2.py`) and the whole north component of
+  the rest of the model at +1.19, so a reversed vector (-1) is excluded at about 9 sigma. The `enable_station_info` reading
+  is exactly that reversal (section 3), so it is the wrong one. The vertical is present at +1.4 (0.23): at KOKB00USA and
+  QUIN00USA the knob-off error of the field arms equals the loading (-28 and -16 mm against -35 and -20 mm), and at
+  STPM00SPM and ASCG00SHN the within-window slope of the error on the loading is +1.14 and +1.35 with the spread of the
+  error falling from 23.2 to 11.8 mm and from 32.9 to 20.6 mm.
+- **The diurnal translation is not in the data, in the north component.** At the 12 sites the knob-off north error of the
+  five 00 to 06 UT windows averages +1.2 (2.8) mm, while the model's mean north loading there is -5.5 mm and is southward at
+  11 of the 12 (a coherent component, which is what a translation looks like in local coordinates).
+- **East and up are not conclusive for the translation.** East has little variance. The up component of the vector is 0.5
+  to 0.9 mm over these windows, and its scale (+1.13, interval +0.14 to +2.13) does not exclude 1.
+
+The mechanism is not established by this stage. The SIF loading is relative to the centre of mass, and a consumer whose
+orbit and clock products come from a network solution that absorbs a common translation of its stations would not see that
+part. That fits the north result and the products named in the wire (COD0MGXFIN), but the loading settings of those products
+were not verified; a web search made for this section did not find them. The area-weighted translation vector fitted to the
+597 stations of `igs20_SIF.json` carries 45, 40 and 45 % of the east, north and up variance of K1, O1 and P1 against 6 % for
+the semidiurnal species, which is the diurnal degree-1 signature (a species-2 tide has no degree-1 forcing); the semidiurnal
+and long-period vectors were left in.
+
+### 9.4 The option
+
+`model_corrections.otl_remove_diurnal_translation` (default false, ledger row UNVALIDATED; needs `otl_from_sif` and
+`enable_ocean_tide_loading`): after `otlCoefficientsFromSif`, `removeOtlDiurnalTranslation` (`OceanTideModel.cpp`)
+subtracts the table vector of K1, O1, P1 and Q1 from each station's east, north and up phasors (added to the west and
+south rows). The table is generated by `scripts/otl_compare/net_translation.py` (`--emit-cpp`; `--check` compares the
+source with a fresh fit; 10 degree cell area weights; K1 5.87, O1 3.78, P1 1.83 and Q1 0.66 mm) and holds for the IGS20 SIF
+registry only. The run-start line of each station reads "... BLQ rows, diurnal translation removed ...".
+`gnss_otl_diag series` takes `--drop-translation`.
+
+- **Gate.** Production with the option against the HARDISP port fed the same coefficients (numpy removal, same table):
+  maximum difference 0.17 / 0.23 / 0.44 mm at WTZZ00DEU, 0.34 / 0.61 / 1.37 mm at KOKB00USA and 0.17 / 0.33 / 1.89 mm at
+  CHTI00NZL (`gate_free.py`); the removal itself changes the series by up to 2.9 / 6.4 / 4.5 mm at WTZZ00DEU.
+- **Wettzell window mean** (hours 1 to 6 UTC of 2024-129, nodal on), east / north / up: full loading +0.23 / -7.95 /
+  -5.96 mm, translation removed -2.44 / -2.30 / -4.28 mm.
+- **Unit suite** `OtlTranslationTest` (8 cases, `tests/test_otl_translation.cpp`): the key; the SIF columns as BLQ rows
+  against HARDISP at twelve epochs of 2024-129 at Wettzell, east, north and up; the `enable_station_info` reading
+  returning the north component with the opposite sign; the removal changes the four diurnal rows only, subtracts one
+  uniform ECEF displacement at two stations in different places (1e-9 m), reproduces the numpy table values at Wettzell,
+  leaves invalid input alone, and gives the window means above. Full suite on this branch: 3338 cases, 3308 passed, 30
+  skipped (fixture-gated; the worktree holds no `data/`), none failed.
+
+### 9.5 Grade, field golden 6 h
+
+Arms `otl2_off_f` (golden as it stands) and `otl2_free_f` (golden plus `enable_ocean_tide_loading`, `otl_from_sif`,
+`otl_nodal_corrections` and `otl_remove_diurnal_translation`), exe `gnss_processor_otl2.exe` from this branch (md5
+`08055317de6c`; the later comment edit of `GnssConfigTypes.hpp` is not in the binary), `files.internal_data_root`
+`C:/GnssProcessor/data`, fresh start, both exit 0 (2,040 and 2,017 s). The off arm reproduces the control of section 8
+to every digit of the hourly table. Median 3D error of WTZZ00DEU by hour (mm; hour 1 is ignition) and the mean over hours 2
+to 6 (`grade_consumer.py`):
+
+| arm | h1 | h2 | h3 | h4 | h5 | h6 | mean h2 to 6 | horizontal | \|Up\| |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| off (same exe) | 58.1 | 11.3 | 18.3 | 10.3 | 15.5 | 10.5 | 13.2 | 10.7 | 5.0 |
+| keys on (section 8 arm) | 58.1 | 14.0 | 26.8 | 18.3 | 22.7 | 16.6 | 19.7 | 17.1 | 7.3 |
+| keys on, translation removed | 59.7 | 12.3 | 23.1 | 12.2 | 16.5 | 12.0 | 15.2 | 11.8 | 7.1 |
+
+The mean signed change against the off arm is again minus the applied loading: north +2.0, +2.7, +2.7, +2.2 and +1.4 mm in
+hours 2 to 6 (+6.3 to +8.7 mm without the removal). The cost falls from +6.5 to +2.0 mm (3D), from +6.4 to +1.1 mm
+(horizontal) and stays +2.1 mm in up. It does not reach the off arm: what remains is the consumer's own baseline (north
++6.8 mm, up +0.1 mm in the off arm over hours 2 to 6) meeting a remaining loading of -2.3 mm north and -4.3 mm up.
+
+**Census, 16 sites** (consumer replays of the final wires, `gcensus.py`, keys `cf_*`; paired change of each site's mean
+hourly p50 over hours 2 to 6 in mm, negative is better). Median over the 16: keys on -2.0 (this exe; section 8.3 has the
+same), translation removed -1.3. Per site, keys on then translation removed: CHTI -7.8, -7.7; SCRZ +7.5, +6.0; QUIN -8.9,
+-7.4; HARB +2.4, +5.7; POHN -4.4, -5.1; DAV1 -6.3, -2.6; BADG +5.0, +3.2; STPM -4.0, -3.4; ASCG -4.4, -7.9; CEDU -5.2,
+-9.1; KOKB -17.6, -18.9; BAKE +0.9, +0.5; ARHT +8.7, +5.1 (no SIF block, a wire effect); ANMG, UTQI and WUH2 0.0. At the 12
+sites with a block the mean is -3.6 and -3.9 mm. Against the keys-on arm the removal helps at ASCG, CEDU, BADG, SCRZ and
+KOKB (1.3 to 3.9 mm) and hurts at HARB (+3.3 mm), DAV1 (+3.7 mm), QUIN (+1.5 mm) and STPM (+0.6 mm). The option is neutral
+at the census and removes most of the held-out consumer's cost.
+
+### 9.6 Off path: identical
+
+Control: `gnss_processor_otl2_ctl.exe`, Release, built with `scripts/wt_build.ps1` from a detached worktree at main
+`08c1343` (md5 `b0c7b4a02946`); candidate: `gnss_processor_otl2.exe` of this branch. The golden as it stands (no key set), field
+and sim, 2 h arms, `python scripts/nom_td_gate.py --whole` with `NOM_GATE_DROP_POSTURE=1`:
+
+| bed | arm.json | products and traces | manifest | stdout.txt | main_log (rotation set) | rt_engine.log | exit | result |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| field | equal | every CSV, products.txt 113,902 lines | 12 records | 2,947 / 2,947 | 2,422 / 2,422 | 382 / 382 | 0 / 0 | IDENTICAL |
+| sim | equal | every CSV, products.txt 80,780 lines | 12 records | 2,757 / 2,757 | 2,202 / 2,202 | 412 / 412 | 0 / 0 | IDENTICAL |
+
+Negative control: the 6 h off arm against the 6 h translation-removed arm (`--no-arm-check`) reads DIFFERENT, so the gate sees
+the key. The sim fixture has no loading (section 4); its arm shows only that the new code is not on the off path.
+
+### 9.7 Standing
+
+- **Verdict.** No sign or convention defect in the evaluation or in the reading of the SIF columns (sections 9.1 and 9.3).
+  The cost at the held-out consumer is real for the full model on this wire and is mostly one component, the diurnal net
+  translation; the option removes it, the consumer cost falls to +2.0 mm, the census is neutral.
+- **Not established.** The mechanism (a product frame that absorbs a common translation) is an inference; the loading
+  settings of COD0MGXFIN were not verified. The table is a fit to the IGS20 SIF registry (station weights are an
+  estimate: unweighted, density and cell weights give K1 6.8, 5.6 and 5.9 mm). The evidence is the north component; east and
+  up do not decide. The 11 windows come from wires of the earlier GPS-only golden, not from the GPS and Galileo golden of
+  the 6 h arms. The semidiurnal translation (M2 4.0 mm in the fit) and the long-period ones were not removed, since the data
+  do not separate them (scale +0.56, 0.52 in the north).
+- **Open for the author.** Arming (nothing is armed, ledger verdicts stay UNVALIDATED); a whole-tidal-day arm on the
+  current golden; the loading settings of the product series (a CE-frame set from the loading provider would replace the
+  fitted table); the legacy `enable_station_info` mapping (OPEN_ITEMS; the north scale +1.19 excludes the reversed reading
+  it uses); the 11 stations without a SIF block.
