@@ -1012,8 +1012,17 @@ namespace GnssProcessor {
 
         double wind_up_corr = 0.0;
         if (config_.getModelCorrections().enable_phase_windup && is_phase && wavelength > 0.0) {
+            // Gap bridge (default off): a null pointer leaves the accumulator exactly as it was.
+            WindUpBridge::Options bridge_opt;
+            const WindUpBridge::Options* bridge = nullptr;
+            if (config_.phaseWindUpGapBridge()) {
+                bridge_opt.max_gap_s = config_.phaseWindUpBridgeMaxGapS();
+                bridge_opt.step_s = config_.phaseWindUpBridgeStepS();
+                bridge_opt.shadow_scale = config_.getEclipseShadowScale();
+                bridge = &bridge_opt;
+            }
             double wind_up = gnss_corrections_.computePhaseWindUp(satellite, system, rx_pos, sat_pos, wavelength, time, sun_pos, sat_vel, config_.accumulatePhaseWindUp(), config_.phaseWindUpMaxGapS(), config_.enableSunFrameCorrection(),
-                noon_law ? &*noon_law : nullptr);
+                noon_law ? &*noon_law : nullptr, bridge);
             if (std::isfinite(wind_up)) {
                 wind_up_corr = wind_up;
                 correction += wind_up_corr;
@@ -1374,6 +1383,18 @@ namespace GnssProcessor {
 
     const std::map<std::string, GnssCorrections::WuRestart>& Antenna::wuRestarts() const {
         return gnss_corrections_.wuRestarts();
+    }
+
+    void Antenna::setWindUpSatStateProvider(GnssCorrections::SatStateProvider provider) {
+        gnss_corrections_.setSatStateProvider(std::move(provider));
+    }
+
+    const WindUpBridge::Counters& Antenna::windUpBridgeCounters() const {
+        return gnss_corrections_.windUpBridgeCounters();
+    }
+
+    const std::vector<WindUpBridge::Event>& Antenna::windUpBridgeEvents() const {
+        return gnss_corrections_.windUpBridgeEvents();
     }
 
     void Antenna::clearWuRestarts() {

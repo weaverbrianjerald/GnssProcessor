@@ -219,6 +219,15 @@ namespace GnssProcessor {
         }
         /// @brief Clear the restart ledger (the drain's consume edge).
         void clearWuRestarts() { antenna_.clearWuRestarts(); }
+        /// @brief The wind-up gap-bridge counters for this model's receiver (zero unless
+        ///        @c estimation.phase_windup_gap_bridge is on).
+        const WindUpBridge::Counters& windUpBridgeCounters() const {
+            return antenna_.windUpBridgeCounters();
+        }
+        /// @brief The named gap-bridge attempts of this model's receiver (capped).
+        const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const {
+            return antenna_.windUpBridgeEvents();
+        }
 
         /**
          * @brief Whether the BIA product covers this satellite+signal pair.

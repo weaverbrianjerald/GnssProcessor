@@ -212,6 +212,14 @@ namespace GnssProcessor {
 		const std::map<std::string, GnssCorrections::WuRestart>& wuRestarts() const;
 		/// @brief Clear the restart ledger (called when the response consumes it).
 		void clearWuRestarts();
+		/// @brief Install the satellite-state source of the wind-up gap bridge (see
+		///        GnssCorrections::setSatStateProvider); inert unless
+		///        @c estimation.phase_windup_gap_bridge is on.
+		void setWindUpSatStateProvider(GnssCorrections::SatStateProvider provider);
+		/// @brief The gap-bridge counters for this receiver's corrections instance.
+		const WindUpBridge::Counters& windUpBridgeCounters() const;
+		/// @brief The named gap-bridge attempts of this receiver (capped; see WindUpBridge::kMaxEvents).
+		const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const;
 
 		/**
 		 * @brief Dump the receiver antenna model to trace log for ATX comparison.

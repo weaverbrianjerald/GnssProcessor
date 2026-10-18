@@ -1596,6 +1596,50 @@ namespace GnssProcessor {
         bool traceWindUpCensus() const { return trace_windup_census_; }
 
         /**
+         * @brief Whether the wind-up accumulator bridges short data gaps.
+         *
+         * Default false: a gap of @ref phaseWindUpMaxGapS or more restarts the
+         * accumulator from the raw angle, as before.  When true (and accumulated
+         * wind-up is on), a gap shorter than @ref phaseWindUpBridgeMaxGapS is
+         * walked through virtual epochs at most @ref phaseWindUpBridgeStepS apart,
+         * with the satellite state from the orbit products, unwrapping each step,
+         * so the accumulated angle stays continuous and no restart is recorded.
+         * The walk gives up, and the restart happens as before, in the Earth's
+         * umbra, in a GPS noon-turn window, when the angle moves half a cycle or
+         * more in one step, and when the walk disagrees with the epoch's own
+         * angle by a quarter of a cycle or more.  Configured via
+         * @c estimation.phase_windup_gap_bridge.  Needs
+         * @c estimation.accumulate_phase_windup: the loader switches it off, with
+         * a warning, otherwise.
+         *
+         * @return True if the gap bridge is on.
+         */
+        bool phaseWindUpGapBridge() const { return phase_windup_gap_bridge_; }
+
+        /**
+         * @brief Longest gap the wind-up gap bridge walks across (seconds).
+         *
+         * Default 900.0, the phase-leveling carry horizon of the goldens: beyond
+         * it the carried ambiguity is dropped too, so a restart costs nothing
+         * more.  Configured via @c estimation.phase_windup_bridge_max_gap_s.
+         * Only gaps from @ref phaseWindUpMaxGapS up to this value are bridged.
+         *
+         * @return Bridge horizon in seconds (> 0).
+         */
+        double phaseWindUpBridgeMaxGapS() const { return phase_windup_bridge_max_gap_s_; }
+
+        /**
+         * @brief Largest spacing of the virtual epochs of the wind-up gap bridge (seconds).
+         *
+         * Default 30.0.  Each step is also evaluated at its middle, so the wind-up
+         * may move up to half a cycle per half step.  Configured via
+         * @c estimation.phase_windup_bridge_step_s; accepted in (0, 120].
+         *
+         * @return Virtual epoch spacing in seconds.
+         */
+        double phaseWindUpBridgeStepS() const { return phase_windup_bridge_step_s_; }
+
+        /**
          * @brief Check if receiver velocity estimation from Doppler is enabled.
          *
          * When true, three velocity states (Vx, Vy, Vz) are added to the
@@ -8439,6 +8483,9 @@ namespace GnssProcessor {
         bool accumulate_phase_windup_;                ///< Accumulated (unwrapped) phase wind-up for IAR readiness.
         double phase_windup_max_gap_s_{300.0};        ///< Wind-up accumulator continuity horizon (s); see @ref phaseWindUpMaxGapS.
         bool trace_windup_census_{false};             ///< Read-only wind-up step/gap census; see @ref traceWindUpCensus.
+        bool phase_windup_gap_bridge_{false};         ///< Bridge short data gaps in the wind-up accumulator; see @ref phaseWindUpGapBridge.
+        double phase_windup_bridge_max_gap_s_{900.0}; ///< Longest bridged gap (s); see @ref phaseWindUpBridgeMaxGapS.
+        double phase_windup_bridge_step_s_{30.0};     ///< Largest virtual epoch spacing (s); see @ref phaseWindUpBridgeStepS.
         bool enable_between_satellite_sd_;                ///< Between-satellite single-difference operator in measurement model.
         bool enable_glonass_bssd_;                        ///< Allow GLONASS satellites in BSSD (FDMA ICB → off by default).
         bool enable_glonass_ifb_;                         ///< Estimate per-FCN-slot GLONASS receiver code IFB (requires estimate_ifb + uncombined).
