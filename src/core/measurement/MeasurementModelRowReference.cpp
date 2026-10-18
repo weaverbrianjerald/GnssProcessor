@@ -111,7 +111,7 @@ namespace GnssProcessor {
         // Receiver bias: DCB / IFB (code only, uncombined)
         double code_bias_term = 0.0;
         if (config_.estimateIfb() && is_uncombined && !is_phase) {
-            const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
+            const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite, clockRefs());
             if (std::isfinite(bias.coefficient) && !bias.state_key.empty()) {
                 const int cb_idx = state_manager_.getCodeBiasIndex(bias.state_key);
                 if (cb_idx >= 0 && cb_idx < static_cast<int>(state_size)) {

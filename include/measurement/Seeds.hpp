@@ -35,10 +35,14 @@
  *
  * ### Pure
  *
- * The functions read the observations and a @ref ParamLookup and return values; they write no
- * state and log nothing.  The single-receiver filter applies the values to its @c StateManager
- * in its own call order (MeasurementModelSeeds.cpp); the network will apply them to its own
- * parameter set.  A seed for a parameter that does not exist in the lookup is not returned.
+ * The functions read the observations, a @ref ParamLookup and an @ref ObsInput (the
+ * configuration, the model's product tables, the frequency helper, the receiver code-bias
+ * resolver and the .BIA clock-reference observables), and return values; they write no state,
+ * log nothing and read no process-wide cache.  The ionosphere seed also takes the .BIA
+ * presence predicate, the warm resume's code-bias seed the installed linearization points.  The
+ * single-receiver filter applies the values to its @c StateManager in its own call order
+ * (MeasurementModelSeeds.cpp); the network will apply them to its own parameter set.  A seed for
+ * a parameter that does not exist in the lookup is not returned.
  *
  * ### The carrier frequency (open)
  *
@@ -59,6 +63,7 @@
 
 #include <array>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -202,19 +207,31 @@ struct IonosphereSeed {
 };
 
 /**
+ * @brief Whether the loaded .BIA product has an entry for a satellite's signal:
+ *        <tt>(satellite, signal)</tt> gives true when it does.
+ *
+ * The single-receiver filter answers from its model's product tables
+ * (@c PppModel::hasBiasEntry); the process-wide cache behind them is not read by the seed.
+ */
+using BiasPresence = std::function<bool(const std::string& satellite, const std::string& signal)>;
+
+/**
  * @brief The slant ionosphere of a satellite from its dual-frequency code.
  *
- * Only code signals with a .BIA entry (applied, when the configuration requires it) are used:
- * for an uncovered signal the observed minus modeled carries the satellite's raw code bias,
- * which would put tens of metres into the seed.  The first pair of distinct bands whose seed is
- * finite and below 200 m in magnitude is returned.  Reads no state.
+ * Only code signals the .BIA product corrects are used: a signal with an entry (@p has_entry),
+ * and only when the configuration counts an entry as applied (@ref biaEntryApplies).  For any
+ * other signal the observed minus modeled carries the satellite's raw code bias, which would
+ * put tens of metres into the seed.  The first pair of distinct bands whose seed is finite and
+ * below 200 m in magnitude is returned.  Reads no state.
  *
- * @param in  Equation inputs (the residual input: its frequency helper scales the codes).
- * @param obs The satellite's modeled observation.
+ * @param in        Equation inputs (the residual input: its frequency helper scales the codes).
+ * @param obs       The satellite's modeled observation.
+ * @param has_entry Whether the .BIA product has an entry for a signal of the satellite.
  * @return The seed; nothing when no covered pair of distinct bands gives one (the caller seeds
  *         0 with an inflated variance).
  */
-std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObservation& obs);
+std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObservation& obs,
+                                             const BiasPresence& has_entry);
 
 // =======================================================================
 // The inter-system biases
@@ -333,8 +350,9 @@ struct CodeBiasSeeds {
  * difference of the receiver-bias coefficients; the median over satellites per parameter,
  * estimates above 200 m refused.  A key the @p restore map covers takes the map's value when it
  * is finite (the warm resume's linearization point) and no median is formed for it.  Only
- * parameters that exist are returned.  Reads nothing when the configuration does not estimate
- * receiver biases in uncombined mode.
+ * parameters that exist are returned.  The reference band and the parameter of each code come
+ * from the clock-reference observables and the resolver of @p in.  Reads nothing when the
+ * configuration does not estimate receiver biases in uncombined mode.
  *
  * @param in           Equation inputs (the residual input).
  * @param params       The parameters the residuals are formed against.

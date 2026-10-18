@@ -475,6 +475,18 @@ namespace GnssProcessor {
          */
         void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
 
+        /**
+         * @brief Inject the .BIA clock-reference observables the receiver code biases are
+         *        referenced to (the test seam of the receiver code-bias resolver).
+         *
+         * The resolver, the Jacobian row and the code-bias seed read these per constellation
+         * letter; by default they are the process-wide product cache's, which a unit test
+         * cannot fill without loading a product.  @c nullptr (the default) restores the cache.
+         *
+         * @param refs Non-owning map (must outlive this object) or @c nullptr for the cache.
+         */
+        void setClockRefs(const ClockRefMap* refs) { clock_refs_override_ = refs; }
+
     private:
         // -------------------------------------------------------------------
         // Core dependencies (non-owning references)
@@ -515,6 +527,14 @@ namespace GnssProcessor {
         /// Resolve the active SSR store (override when set, else the singleton).
         /// Defined in the .cpp where the full type is visible.
         const SsrCorrectionStore& ssrStore() const;
+
+        /// Non-owning clock-reference override; nullptr -> the product cache's map.
+        /// Set via setClockRefs() (unit tests).
+        const ClockRefMap* clock_refs_override_{ nullptr };
+
+        /// Resolve the active clock-reference observables (override when set, else the
+        /// product cache's).  Defined in the .cpp.
+        const ClockRefMap& clockRefs() const;
 
         // -------------------------------------------------------------------
         // Delegate components

@@ -34,6 +34,7 @@
 #include "common/PppTypes.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/ObservationEquation.hpp"
+#include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <stdexcept>
 #include <cmath>
@@ -85,6 +86,11 @@ namespace GnssProcessor {
     const SsrCorrectionStore& MeasurementModel::ssrStore() const {
         return ssr_store_override_ ? *ssr_store_override_
                                    : SsrCorrectionStore::getInstance();
+    }
+
+    const ClockRefMap& MeasurementModel::clockRefs() const {
+        return clock_refs_override_ ? *clock_refs_override_
+                                    : ProductCache::getInstance().getClockRefSignals();
     }
 
     // ===================================================================

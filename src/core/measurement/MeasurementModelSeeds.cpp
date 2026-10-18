@@ -27,12 +27,12 @@ namespace GnssProcessor {
 
     ObsInput MeasurementModel::residualSeedInput() const {
         return ObsInput{rowProducts(), state_initializer_.frequencyHelper(), &state_initializer_,
-                        nlwl_ref_band_};
+                        nlwl_ref_band_, clockRefs()};
     }
 
     ObsInput MeasurementModel::ambiguitySeedInput() const {
         return ObsInput{rowProducts(), ppp_utils_, &state_initializer_, nlwl_ref_band_,
-                        FdmaChannel::Zero};
+                        clockRefs(), FdmaChannel::Zero};
     }
 
     double MeasurementModel::ambiguitySeed(const PppObservation& obs, const std::string& ref_type,
@@ -188,9 +188,9 @@ namespace GnssProcessor {
             const std::string key = userCodeBiasKey(seed.key);
             if (seed.restored) {
                 state_initializer_.noteCodeBiasRestore(/*applied=*/true);
-                log->info("{}code bias {} seeded from the restored linearization point: "
-                          "{:.6f} m (the one-epoch code median is not used)",
-                          epoch_prefix, key, seed.value_m);
+                log->info("{}RS-9: code bias {} seeded from the RESTORED "
+                          "linearization point: {:.6f} m (the one-epoch code "
+                          "median is NOT used)", epoch_prefix, key, seed.value_m);
             } else {
                 log->info("{}Initialized code bias {}: {:.3f} m from {} satellites",
                           epoch_prefix, key, seed.value_m, seed.n_sats);

@@ -76,10 +76,20 @@ public:
 
     /**
      * @brief Determine the receiver-bias state and coefficient for a signal.
+     *
+     * @param obs_signal  The code signal ("C1W").
+     * @param system      Its constellation.
+     * @param satellite   The satellite (selects the GLONASS channel).
+     * @param clock_refs  The .BIA product's satellite clock-reference observables per
+     *                    constellation letter: the bands the receiver DCB is referenced to.
+     *                    A constellation without an entry has no DCB or IFB key.
+     * @return The state key and coefficient; a NaN coefficient and no key when the signal has
+     *         no receiver-bias state.
      */
     ReceiverBiasEntry resolveReceiverBias(const std::string& obs_signal,
                                            System system,
-                                           const std::string& satellite) const;
+                                           const std::string& satellite,
+                                           const ClockRefMap& clock_refs) const;
 
     // -------------------------------------------------------------------
     // Code-bias linearization point restore (RS-9)

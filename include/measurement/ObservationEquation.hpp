@@ -55,6 +55,7 @@
 #include "common/ParamRef.hpp"
 #include "common/PppObservation.hpp"
 #include "measurement/RowRules.hpp"
+#include "products/ProductTypes.hpp"   // ClockRefMap
 
 #include <Eigen/Dense>
 
@@ -307,6 +308,7 @@ struct ObsInput {
     const PppUtils&                   ppp_utils;      ///< Frequencies and wavelengths (GLONASS slots seeded).
     const StateInitializer*           receiver_bias;  ///< Resolver of the receiver code-bias state of a code signal; null: none.
     const std::map<std::string, char>& nlwl_ref_band; ///< Per satellite, the NL/WL basis' reference band digit.
+    const ClockRefMap&                clock_refs;     ///< The .BIA product's clock-reference observables per constellation letter: the bands the receiver code biases are referenced to (empty: none).
     FdmaChannel                       fdma{FdmaChannel::Satellite};  ///< Channel of the FDMA bands' frequency.
 };
 

@@ -19,8 +19,6 @@
 #include "filter/StateManager.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "measurement/UserParamView.hpp"
-#include "model/PppModel.hpp"
-#include "products/ProductCache.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -116,8 +114,13 @@ double seedAmbiguityOfState(const ObsInput& in, const StateManager& states,
 // The slant ionosphere
 // ===========================================================================
 
-std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObservation& obs) {
-    const GnssConfig& config = in.products.config;
+std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObservation& obs,
+                                             const BiasPresence& has_entry) {
+    // An entry that is loaded but not applied (enable_code_phase_bias off, as it is for the
+    // closed-loop consumer under the spherical-harmonic ionosphere) leaves the raw bias in
+    // the innovation, so no entry counts as coverage; the network producer keeps presence
+    // semantics.
+    if (!biaEntryApplies(in.products.config)) return std::nullopt;
     struct CodeObs { std::string key; double value; double freq; char band; };
     std::vector<CodeObs> codes;
     for (const auto& [key, val] : obs.observed) {
@@ -128,15 +131,7 @@ std::optional<IonosphereSeed> seedIonosphere(const ObsInput& in, const PppObserv
         // modeled value carries the satellite's raw hardware bias, which differenced across
         // bands and divided by (alpha1 - alpha2) puts tens of metres into the seed (BeiDou
         // products ship zero-valued entries for some signals, which count as missing).
-        if (!in.products.ppp_model.hasBiasEntry(obs.satellite, key)) continue;
-        // An entry that is loaded but not applied (enable_code_phase_bias off, as it is for
-        // the closed-loop consumer under the spherical-harmonic ionosphere) leaves the raw bias
-        // in the innovation, so it does not count as coverage when the configuration requires
-        // application.  The network producer keeps presence semantics: its code rows are
-        // handled by the network-estimated code-bias states.
-        if (config.getModelCorrections().bias_coverage_requires_apply
-            && config.getProcessingMode() != ProcessingMode::PPP_RTK_Network
-            && !config.getModelCorrections().enable_code_phase_bias) continue;
+        if (!has_entry(obs.satellite, key)) continue;
         const double freq = in.ppp_utils.getFrequency(key, obs.system, obs.satellite);
         if (freq <= 0.0) continue;
         codes.push_back({key, val, freq, code->signal.digit});
@@ -348,7 +343,7 @@ CodeBiasSeeds seedCodeBias(const ObsInput& in, const ParamLookup& params,
             const double alpha = (f_ref * f_ref) / (freq * freq);
 
             const auto bias = in.receiver_bias->resolveReceiverBias(ref_type, obs.system,
-                                                                    obs.satellite);
+                                                                    obs.satellite, in.clock_refs);
             if (!std::isfinite(bias.coefficient) || !bias.has_key) continue;
 
             const auto residual = rawResidual(in, params, obs, ref_type);
@@ -360,9 +355,8 @@ CodeBiasSeeds seedCodeBias(const ObsInput& in, const ParamLookup& params,
         if (band_residuals.size() < 2) continue;
 
         const char sys_char = StateInitializer::systemToClockRefChar(obs.system);
-        const auto& clock_refs = ProductCache::getInstance().getClockRefSignals();
-        const auto crit = clock_refs.find(sys_char);
-        if (crit == clock_refs.end()) continue;
+        const auto crit = in.clock_refs.find(sys_char);
+        if (crit == in.clock_refs.end()) continue;
         const auto ref1_sig = SignalId::fromObsCode(obs.system, crit->second.sig1);
         if (!ref1_sig) continue;
         const char ref1_band = ref1_sig->digit;   // the first clock-reference band

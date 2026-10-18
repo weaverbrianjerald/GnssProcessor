@@ -268,7 +268,11 @@ namespace GnssProcessor {
                     state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
                 }
 
-                const auto iono_seed_opt = seedIonosphere(residualSeedInput(), obs);
+                const auto iono_seed_opt = seedIonosphere(
+                    residualSeedInput(), obs,
+                    [this](const std::string& satellite, const std::string& signal) {
+                        return ppp_model_.hasBiasEntry(satellite, signal);
+                    });
                 if (iono_seed_opt.has_value())
                     log_manager_.getLogger("state_initializer")->debug(
                         "Iono seed for {} from {}/{}: P1-mod1={:.3f}, P2-mod2={:.3f}, "
@@ -796,7 +800,7 @@ namespace GnssProcessor {
             for (const auto& obs : observations) {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
-                    const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
+                    const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite, clockRefs());
                     if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
                     // GLONASS network producer: allocate only the GLONASS per-FCN-slot
                     // IFB.  GPS/Galileo receiver DCB/IFB states are intentionally absent
@@ -1008,7 +1012,7 @@ namespace GnssProcessor {
                     if (config_.enableGlonassIfb() && config_.estimateIfb()
                         && obs.system == System::GLONASS
                         && !state_initializer_.resolveReceiverBias(
-                                ref_type, obs.system, obs.satellite).state_key.empty())
+                                ref_type, obs.system, obs.satellite, clockRefs()).state_key.empty())
                         continue;
                     // "Already corrected?" consults both bias sources, not only the
                     // static .BIA product.  Real-time has no .BIA, so hasBiasEntry

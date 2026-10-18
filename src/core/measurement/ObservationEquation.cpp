@@ -208,7 +208,7 @@ void addReceiverCodeBias(Row& r) {
     if (!r.wants(ObsEffect::ReceiverCodeBias) || !r.cfg.estimateIfb() || !r.is_uncombined || r.is_phase || r.in.receiver_bias == nullptr)
         return;
     const auto bias = r.in.receiver_bias->resolveReceiverBias(r.ref_type, r.obs.system,
-                                                              r.obs.satellite);
+                                                              r.obs.satellite, r.in.clock_refs);
     if (!std::isfinite(bias.coefficient) || !bias.has_key) return;
     addTerm(r, ObsEffect::ReceiverCodeBias, rxCodeBiasRef(bias.key), bias.coefficient);
 }

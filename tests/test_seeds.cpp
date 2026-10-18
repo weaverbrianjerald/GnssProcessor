@@ -14,9 +14,15 @@
  *  - the inter-system bias, cold clock and phase-clock seeds;
  *  - the effect sets of @c observationEquation.
  *
- * The receiver code-bias seed needs the clock-reference signals of a loaded bias product (a
- * process-wide cache no unit test fills); its guards are tested here and its numbers are
- * covered by the field arms that estimate receiver biases.
+ *  - the receiver code-bias seed (median over satellites, the warm resume's restored
+ *    linearization points taken, refused and counted, the elevation mask, the 200 m limit) and
+ *    the slant ionosphere seed (the bias-product presence gate, the configuration's
+ *    application gate, the pair choice, the 200 m limit).
+ *
+ * Both of those read the .BIA product: the clock-reference observables of the code-bias seed
+ * and the presence of entries for the ionosphere seed.  They are inputs of the functions
+ * (@c ObsInput::clock_refs, the presence predicate), so each case supplies its own and none
+ * depends on the process-wide product cache.
  */
 
 #include <gtest/gtest.h>
@@ -38,6 +44,8 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -119,12 +127,14 @@ double computeMedian(std::vector<double>& values) {
     return values[mid];
 }
 
-/// What the old functions read: the state layout, the configuration and the initializer (whose
-/// own frequency helper was the one computeRawResidual scaled the ionosphere with).
+/// What the old functions read: the state layout, the configuration, the initializer (whose
+/// own frequency helper was the one computeRawResidual scaled the ionosphere with) and the
+/// clock-reference observables (the old code took them from the process-wide product cache).
 struct World {
     const StateManager&     sm;
     const GnssConfig&       config;
     const StateInitializer& init;
+    const ClockRefMap&      clock_refs;   ///< The .BIA clock-reference observables the old code read from the product cache.
 };
 
 /// StateManager::computeAmbiguitySeed, as it was.
@@ -229,7 +239,8 @@ double computeRawResidual(const World& w, const PppObservation& obs, const std::
     double code_bias = 0.0;
     if (w.config.estimateIfb() && w.config.isUncombinedEnabled()
         && !ref_type.empty() && ref_obs_type == ObsType::Code) {
-        const auto bias = w.init.resolveReceiverBias(ref_type, obs.system, obs.satellite);
+        const auto bias = w.init.resolveReceiverBias(ref_type, obs.system, obs.satellite,
+                                                     w.clock_refs);
         if (std::isfinite(bias.coefficient) && !bias.state_key.empty()) {
             const int cb_idx = sm.getCodeBiasIndex(bias.state_key);
             if (cb_idx >= 0 && cb_idx < static_cast<int>(x.size()))
@@ -376,6 +387,186 @@ bool initializePhaseClockOffset(const World& w, const std::vector<PppObservation
     return true;
 }
 
+/// A slant ionosphere seed with the pair it came from.
+struct IonosphereValue {
+    double      value;
+    std::string code_a;
+    std::string code_b;
+    double      range_a;
+    double      range_b;
+    double      alpha_a;
+    double      alpha_b;
+};
+
+/// StateInitializer::computeIonosphereSeed, as it was, with the log line replaced by the pair
+/// it came from and the model's table of .BIA entries replaced by @p has_entry.
+std::optional<IonosphereValue> computeIonosphereSeed(const World& w, const PppObservation& obs,
+                                                     const BiasPresence& has_entry) {
+    const PppUtils& ppp_utils = w.init.frequencyHelper();
+    struct CodeObs { std::string key; double value; double freq; char band; };
+    std::vector<CodeObs> codes;
+    for (const auto& [key, val] : obs.observed) {
+        const auto code = ObservableId::parse(obs.system, key);
+        if (!code || code->type != ObsType::Code) continue;
+        if (!obs.modeled.count(key)) continue;
+        if (!has_entry(obs.satellite, key)) continue;
+        if (w.config.getModelCorrections().bias_coverage_requires_apply
+            && w.config.getProcessingMode() != ProcessingMode::PPP_RTK_Network
+            && !w.config.getModelCorrections().enable_code_phase_bias) continue;
+        const double freq = ppp_utils.getFrequency(key, obs.system, obs.satellite);
+        if (freq <= 0.0) continue;
+        codes.push_back({key, val, freq, code->signal.digit});
+    }
+    if (codes.size() < 2) return std::nullopt;
+
+    for (size_t i = 0; i < codes.size(); ++i) {
+        for (size_t j = i + 1; j < codes.size(); ++j) {
+            if (codes[i].band == codes[j].band) continue;
+            const double f1 = codes[i].freq;
+            const double f2 = codes[j].freq;
+            const double P1 = codes[i].value;
+            const double P2 = codes[j].value;
+            const double mod1 = obs.modeled.at(codes[i].key);
+            const double mod2 = obs.modeled.at(codes[j].key);
+
+            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
+            const double alpha1 = (f_ref * f_ref) / (f1 * f1);
+            const double alpha2 = (f_ref * f_ref) / (f2 * f2);
+            const double denom = alpha1 - alpha2;
+            if (std::abs(denom) < 1e-6) continue;
+
+            const double iono_seed = ((P1 - mod1) - (P2 - mod2)) / denom;
+            if (std::isfinite(iono_seed) && std::abs(iono_seed) < 200.0)
+                return IonosphereValue{iono_seed, codes[i].key, codes[j].key, P1 - mod1,
+                                       P2 - mod2, alpha1, alpha2};
+        }
+    }
+    return std::nullopt;
+}
+
+/// What StateInitializer::initializeCodeBiases wrote and counted.
+struct CodeBiasValues {
+    std::map<std::string, double>      value;      ///< Value written, by state key.
+    std::map<std::string, std::size_t> n_sats;     ///< Satellites in the median (median keys only).
+    std::set<std::string>              restored;   ///< Keys seeded from the installed map.
+    long long                          applied{0};   ///< The applied out-slot's increments.
+    long long                          uncovered{0}; ///< The uncovered out-slot's increments.
+};
+
+/// StateInitializer::initializeCodeBiases, as it was, with the writes into the state and the
+/// out-slots returned, the clock-reference observables taken from @p w instead of the product
+/// cache, and the installed map passed in.
+CodeBiasValues initializeCodeBiases(const World& w, const std::vector<PppObservation>& observations,
+                                    const std::map<std::string, double>& installed) {
+    CodeBiasValues out;
+    if (!w.config.estimateIfb() || !w.config.isUncombinedEnabled()) return out;
+
+    const Eigen::VectorXd x = w.sm.getStateVector();
+    const PppUtils& ppp_utils = w.init.frequencyHelper();
+
+    struct BiasSample {
+        double residual_diff;
+        double iono_diff;
+        double beta_diff;
+    };
+    std::map<std::string, std::vector<BiasSample>> samples;
+
+    for (const auto& obs : observations) {
+        if (obs.elevation < w.config.getElevationMaskDeg()) continue;
+
+        struct BandResidual {
+            double residual;
+            double alpha;
+            StateInitializer::ReceiverBiasEntry bias;
+        };
+        std::map<char, BandResidual> band_residuals;
+        for (const auto& [ref_type, val] : obs.observed) {
+            const auto code = ObservableId::parse(obs.system, ref_type);
+            if (!code || code->type != ObsType::Code) continue;
+            if (!obs.modeled.count(ref_type)) continue;
+
+            const double freq = ppp_utils.getFrequency(ref_type, obs.system, obs.satellite);
+            if (freq <= 0.0) continue;
+            const double f_ref = nominalCarrierFrequencyHz(FrequencyBand::GpsL1);
+            const double alpha = (f_ref * f_ref) / (freq * freq);
+
+            const auto bias = w.init.resolveReceiverBias(ref_type, obs.system, obs.satellite,
+                                                         w.clock_refs);
+            if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
+
+            const double residual = computeRawResidual(w, obs, ref_type, x);
+            if (!std::isfinite(residual)) continue;
+
+            band_residuals[code->signal.digit] = {residual, alpha, bias};
+        }
+
+        if (band_residuals.size() < 2) continue;
+
+        const char sys_char = StateInitializer::systemToClockRefChar(obs.system);
+        auto crit = w.clock_refs.find(sys_char);
+        if (crit == w.clock_refs.end()) continue;
+        const auto ref1_sig = SignalId::fromObsCode(obs.system, crit->second.sig1);
+        if (!ref1_sig) continue;
+        const char ref1_band = ref1_sig->digit;
+
+        auto ref1_it = band_residuals.find(ref1_band);
+        if (ref1_it == band_residuals.end()) continue;
+        const auto& ref1 = ref1_it->second;
+
+        double iono_est = 0.0;
+        {
+            const int iono_idx = w.sm.getIonosphereIndex(obs.satellite);
+            if (iono_idx >= 0 && iono_idx < static_cast<int>(x.size()))
+                iono_est = x(iono_idx);
+        }
+
+        for (const auto& [band_digit, br] : band_residuals) {
+            if (band_digit == ref1_band) continue;
+            const double r_diff = br.residual - ref1.residual;
+            const double iono_diff = (br.alpha - ref1.alpha) * iono_est;
+            const double beta_diff = br.bias.coefficient - ref1.bias.coefficient;
+            if (std::abs(beta_diff) < 1e-12) continue;
+            samples[br.bias.state_key].push_back({r_diff, iono_diff, beta_diff});
+        }
+    }
+
+    if (samples.empty()) return out;
+
+    for (const auto& [key, sv] : samples) {
+        if (StateInitializer::codeBiasSeedOverrideCovers(installed, key)) {
+            bool seeded = false;
+            const auto ovr = StateInitializer::resolveCodeBiasSeedOverride(installed, key);
+            if (ovr.has_value()) {
+                const int ov_idx = w.sm.getCodeBiasIndex(key);
+                if (ov_idx >= 0 && ov_idx < static_cast<int>(x.size())) {
+                    out.value[key] = *ovr;
+                    out.restored.insert(key);
+                    ++out.applied;
+                    seeded = true;
+                }
+            }
+            if (seeded) continue;
+            ++out.uncovered;
+        }
+        std::vector<double> estimates;
+        estimates.reserve(sv.size());
+        for (const auto& s : sv) {
+            const double est = (s.residual_diff - s.iono_diff) / s.beta_diff;
+            if (std::isfinite(est) && std::abs(est) < 200.0)
+                estimates.push_back(est);
+        }
+        if (estimates.empty()) continue;
+
+        const double seed = computeMedian(estimates);
+        const int cb_idx = w.sm.getCodeBiasIndex(key);
+        if (cb_idx >= 0 && cb_idx < static_cast<int>(x.size())) {
+            out.value[key] = seed;
+            out.n_sats[key] = estimates.size();
+        }
+    }
+    return out;
+}
+
 } // namespace legacy
 
 /// Every (digit, attribute) the classifier maps to a known band for @p sys.
@@ -411,15 +602,22 @@ protected:
     gnss_test::ModelStack stack;
     int epoch = 0;
 
+    /// The .BIA clock-reference observables of the posture (empty: no product).  The model
+    /// reads this map instead of the process-wide product cache, so no case depends on what
+    /// another case loaded.
+    ClockRefMap clock_refs;
+
     GnssConfig& config() { return stack.config; }
     StateManager& states() { return *stack.states; }
     MeasurementModel& model() { return *stack.model; }
 
     void load(const std::string& mode, const std::string& processing = "",
-              const std::string& estimation = "", bool bssd = false) {
+              const std::string& estimation = "", bool bssd = false,
+              const std::string& top = "") {
         ASSERT_TRUE(stack.load(
             log, std::string("seeds_") + ::testing::UnitTest::GetInstance()->current_test_info()->name(),
-            mode, processing, estimation, bssd, /*check=*/false));
+            mode, processing, estimation, bssd, /*check=*/false, top));
+        model().setClockRefs(&clock_refs);
     }
 
     PppObservation observation(const std::string& sat, System sys,
@@ -434,7 +632,9 @@ protected:
         return model().computeMeasurementUpdate(obs, states().getStateVector());
     }
 
-    legacy::World world() { return legacy::World{states(), config(), model().getStateInitializer()}; }
+    legacy::World world() {
+        return legacy::World{states(), config(), model().getStateInitializer(), clock_refs};
+    }
 
     /// The new functions' lookup over the current state.
     struct View {
@@ -502,7 +702,7 @@ TEST_F(SeedsTest, TheAmbiguitySeedFrequencyIsTheHelpersOutsideGlonassFdmaBands) 
 
             for (const FdmaChannel rule : {FdmaChannel::Satellite, FdmaChannel::Zero}) {
                 const ObsInput in{RowProducts{stack.config, *stack.ppp, stack.store}, utils, nullptr,
-                                  no_nlwl, rule};
+                                  no_nlwl, clock_refs, rule};
                 const ObservationEquation eq =
                     observationEquation(in, obs, text, ParamLookup(IonosphereOnly{}),
                                         effectsOf({ObsEffect::Modeled, ObsEffect::Ionosphere}));
@@ -527,7 +727,7 @@ TEST_F(SeedsTest, AGlonassFdmaBandOnAnotherChannelDiffersFromChannelZero) {
     const PppObservation obs = observation("R05", System::GLONASS, {"L1C", "L3I"});
     const RowProducts products{stack.config, *stack.ppp, stack.store};
     const auto partial = [&](const char* signal, FdmaChannel rule) {
-        const ObsInput in{products, utils, nullptr, no_nlwl, rule};
+        const ObsInput in{products, utils, nullptr, no_nlwl, clock_refs, rule};
         return findTerm(observationEquation(in, obs, signal, ParamLookup(IonosphereOnly{}),
                                             effectsOf({ObsEffect::Modeled, ObsEffect::Ionosphere})),
                         ObsEffect::Ionosphere)->part[0].partial;
@@ -909,6 +1109,438 @@ TEST_F(SeedsTest, WithoutAResolverThereAreNoCodeBiasSeeds) {
     ObsInput in = model().residualSeedInput();
     in.receiver_bias = nullptr;
     EXPECT_TRUE(seedCodeBias(in, v.lookup(), sats, {}).seeds.empty());
+}
+
+
+// ===========================================================================
+// The receiver code biases, against a .BIA clock reference
+// ===========================================================================
+
+/// The posture of the code-bias cases: uncombined, receiver biases estimated, and a .BIA that
+/// references GPS to C1W and C2W and Galileo to C1C and C5Q (so band 5 of GPS and band 7 of
+/// Galileo are the independent IFB parameters).
+class CodeBiasSeedsTest : public SeedsTest {
+protected:
+    void fillClockRefs() {
+        clock_refs['G'] = ClockRefSignals{"C1W", "C2W"};
+        clock_refs['E'] = ClockRefSignals{"C1C", "C5Q"};
+    }
+
+    void estimateBiases() {
+        load("ppp-rtk", "", R"(, "estimate_ifb": true)");
+        ASSERT_TRUE(config().estimateIfb());
+        fillClockRefs();
+    }
+
+    /// The state key text of a receiver code-bias parameter.
+    static std::string keyText(System sys, ParamForm form, char band_digit = '0') {
+        RxCbKey key;
+        key.sys  = sys;
+        key.form = form;
+        if (form == ParamForm::Ifb) key.band = bandOfDigit(sys, band_digit);
+        return userCodeBiasKey(key);
+    }
+
+    /// Three GPS and three Galileo satellites on three bands each: the states are born from them.
+    std::vector<PppObservation> biasSatellites() const {
+        const std::vector<std::string> gps = {"C1W", "L1W", "C2W", "L2W", "C5X", "L5X"};
+        const std::vector<std::string> gal = {"C1C", "L1C", "C5Q", "L5Q", "C7Q", "L7Q"};
+        return {
+            observation("G12", System::GPS, gps),
+            observation("G15", System::GPS, gps, 200.0, 60.0),
+            observation("G20", System::GPS, gps, 300.0, 40.0),
+            observation("E05", System::Galileo, gal, 120.0, 33.0),
+            observation("E09", System::Galileo, gal, 310.0, 21.0),
+            observation("E11", System::Galileo, gal, 75.0, 50.0),
+        };
+    }
+
+    /// Code that differs by satellite and band, so that no median is zero.
+    static void spreadCodes(std::vector<PppObservation>& sats) {
+        double k = 0.0;
+        for (PppObservation& o : sats) {
+            k += 1.0;
+            for (auto& [signal, value] : o.observed)
+                if (signal[0] == 'C') {
+                    const double band = static_cast<double>(signal[1] - '0');
+                    value += 0.8 * k + 1.3 * band + 0.05 * k * band;
+                }
+        }
+    }
+
+    /// The epoch the seeds are formed from: the born satellites and five that have no states,
+    /// each left out of a median for its own reason.
+    /// @param g24_offset_deg Elevation of G24 relative to the elevation mask (negative: below).
+    std::vector<PppObservation> seedEpoch(double g24_offset_deg = -1.0) {
+        const double mask = config().getElevationMaskDeg();
+        std::vector<PppObservation> sats = biasSatellites();
+        const std::vector<std::string> gps = {"C1W", "C2W", "C5X"};
+        sats.push_back(observation("G24", System::GPS, gps, 80.0, mask + g24_offset_deg));
+        sats.push_back(observation("G28", System::GPS, gps, 20.0, 35.0));
+        sats.push_back(observation("G30", System::GPS, {"C2W", "C5X"}, 250.0, 45.0));   // no first reference band
+        sats.push_back(observation("G32", System::GPS, {"C1W"}, 150.0, 55.0));          // one band
+        sats.push_back(observation("C06", System::BeiDou, {"C2I", "C7I", "C6I"}, 10.0, 40.0));   // no clock reference
+        spreadCodes(sats);
+        for (PppObservation& o : sats)
+            if (o.satellite == "G28") o.observed["C2W"] += 500.0;   // its DCB estimate is beyond 200 m
+        return sats;
+    }
+
+    /// The new seeds over the states as they are.
+    CodeBiasSeeds seeds(const std::vector<PppObservation>& obs,
+                        const std::map<std::string, double>& installed = {}) {
+        const View v(states());
+        return seedCodeBias(model().residualSeedInput(), v.lookup(), obs, installed);
+    }
+
+    /// The seed of one parameter, or null.
+    static const CodeBiasSeed* find(const CodeBiasSeeds& s, const std::string& text) {
+        for (const CodeBiasSeed& seed : s.seeds)
+            if (userCodeBiasKey(seed.key) == text) return &seed;
+        return nullptr;
+    }
+
+    /// The new seeds against what the old function wrote and counted, bit for bit.
+    static void expectSameAsOldCode(const CodeBiasSeeds& now, const legacy::CodeBiasValues& old) {
+        EXPECT_EQ(now.seeds.size(), old.value.size());
+        std::vector<std::string> texts;
+        long long restored = 0;
+        for (const CodeBiasSeed& seed : now.seeds) {
+            const std::string text = userCodeBiasKey(seed.key);
+            texts.push_back(text);
+            const auto it = old.value.find(text);
+            ASSERT_NE(it, old.value.end()) << text;
+            EXPECT_TRUE(sameBits(seed.value_m, it->second)) << text;
+            EXPECT_EQ(seed.restored, old.restored.count(text) == 1) << text;
+            if (seed.restored) {
+                ++restored;
+                EXPECT_EQ(seed.n_sats, 0u) << text;
+            } else {
+                EXPECT_EQ(seed.n_sats, old.n_sats.at(text)) << text;
+            }
+        }
+        EXPECT_TRUE(std::is_sorted(texts.begin(), texts.end())) << "applied in the order of the keys";
+        EXPECT_EQ(restored, old.applied);
+        EXPECT_EQ(static_cast<long long>(now.refused), old.uncovered);
+    }
+};
+
+TEST_F(CodeBiasSeedsTest, TheMedianSeedsMatchTheOldCodeAndLeaveOutTheRightSatellites) {
+    estimateBiases();
+    run(biasSatellites());
+    ASSERT_EQ(states().getCodeBiasStates().size(), 4u);   // GPS DCB, GPS IFB5, Galileo DCB, Galileo IFB7
+
+    const std::vector<PppObservation> epoch_obs = seedEpoch();
+    const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, {});
+    ASSERT_EQ(old.value.size(), 4u);
+    const CodeBiasSeeds now = seeds(epoch_obs);
+    expectSameAsOldCode(now, old);
+    EXPECT_EQ(now.refused, 0u);
+
+    // GPS DCB: G12, G15, G20.  Left out: G24 (below the elevation mask), G28 (its estimate is
+    // beyond 200 m), G30 (no first reference band), G32 (one band).  IFB5 also takes G28, whose
+    // band 5 is sound.  C06 has no clock reference and enters nothing.
+    const CodeBiasSeed* dcb  = find(now, keyText(System::GPS, ParamForm::Dcb));
+    const CodeBiasSeed* ifb5 = find(now, keyText(System::GPS, ParamForm::Ifb, '5'));
+    ASSERT_NE(dcb, nullptr);
+    ASSERT_NE(ifb5, nullptr);
+    EXPECT_EQ(dcb->n_sats, 3u);
+    EXPECT_EQ(ifb5->n_sats, 4u);
+    EXPECT_NE(find(now, keyText(System::Galileo, ParamForm::Dcb)), nullptr);
+    EXPECT_NE(find(now, keyText(System::Galileo, ParamForm::Ifb, '7')), nullptr);
+}
+
+TEST_F(CodeBiasSeedsTest, TheElevationMaskDecidesWhichSatellitesEnterTheMedian) {
+    estimateBiases();
+    run(biasSatellites());
+    const std::string dcb = keyText(System::GPS, ParamForm::Dcb);
+
+    const std::vector<PppObservation> below = seedEpoch(-1.0);
+    const std::vector<PppObservation> above = seedEpoch(+1.0);
+    const CodeBiasSeeds now_below = seeds(below);
+    const CodeBiasSeeds now_above = seeds(above);
+    expectSameAsOldCode(now_below, legacy::initializeCodeBiases(world(), below, {}));
+    expectSameAsOldCode(now_above, legacy::initializeCodeBiases(world(), above, {}));
+
+    const CodeBiasSeed* b = find(now_below, dcb);
+    const CodeBiasSeed* a = find(now_above, dcb);
+    ASSERT_NE(b, nullptr);
+    ASSERT_NE(a, nullptr);
+    EXPECT_EQ(a->n_sats, b->n_sats + 1);          // G24 joins once it is above the mask
+    EXPECT_FALSE(sameBits(a->value_m, b->value_m));
+}
+
+TEST_F(CodeBiasSeedsTest, ARestoredKeyTakesTheInstalledValueAndFormsNoMedian) {
+    estimateBiases();
+    run(biasSatellites());
+    const std::string dcb = keyText(System::GPS, ParamForm::Dcb);
+    // The second entry names a parameter no satellite samples: it is neither used nor counted.
+    const std::map<std::string, double> installed = {{dcb, 1.5}, {"GLONASS_DCB", 9.0}};
+
+    const std::vector<PppObservation> epoch_obs = seedEpoch();
+    const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, installed);
+    ASSERT_EQ(old.applied, 1);
+    ASSERT_EQ(old.uncovered, 0);
+    const CodeBiasSeeds now = seeds(epoch_obs, installed);
+    expectSameAsOldCode(now, old);
+
+    const CodeBiasSeed* restored = find(now, dcb);
+    ASSERT_NE(restored, nullptr);
+    EXPECT_TRUE(restored->restored);
+    EXPECT_EQ(restored->value_m, 1.5);
+    EXPECT_EQ(now.refused, 0u);
+    // Every other parameter keeps its median, equal to the one formed with nothing installed.
+    const CodeBiasSeeds plain = seeds(epoch_obs);
+    for (const CodeBiasSeed& seed : now.seeds) {
+        if (seed.restored) continue;
+        const CodeBiasSeed* same = find(plain, userCodeBiasKey(seed.key));
+        ASSERT_NE(same, nullptr);
+        EXPECT_TRUE(sameBits(seed.value_m, same->value_m));
+    }
+}
+
+TEST_F(CodeBiasSeedsTest, ACoveredKeyWithAnUnusableValueIsRefusedAndTakesTheMedian) {
+    estimateBiases();
+    run(biasSatellites());
+    const std::string dcb = keyText(System::GPS, ParamForm::Dcb);
+    const std::map<std::string, double> installed = {{dcb, std::numeric_limits<double>::quiet_NaN()}};
+
+    const std::vector<PppObservation> epoch_obs = seedEpoch();
+    const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, installed);
+    ASSERT_EQ(old.applied, 0);
+    ASSERT_EQ(old.uncovered, 1);
+    const CodeBiasSeeds now = seeds(epoch_obs, installed);
+    expectSameAsOldCode(now, old);
+    EXPECT_EQ(now.refused, 1u);
+
+    const CodeBiasSeeds plain = seeds(epoch_obs);
+    const CodeBiasSeed* refused = find(now, dcb);
+    const CodeBiasSeed* median  = find(plain, dcb);
+    ASSERT_NE(refused, nullptr);
+    ASSERT_NE(median, nullptr);
+    EXPECT_FALSE(refused->restored);
+    EXPECT_TRUE(sameBits(refused->value_m, median->value_m));
+}
+
+TEST_F(CodeBiasSeedsTest, ACoveredKeyWhoseParameterDoesNotExistIsRefusedAndNotSeeded) {
+    estimateBiases();
+    run(biasSatellites());
+    const std::string ifb5 = keyText(System::GPS, ParamForm::Ifb, '5');
+    std::set<std::string> keep;
+    for (const auto& [text, index] : states().getCodeBiasStates())
+        if (text != ifb5) keep.insert(text);
+    states().pruneCodeBiasStatesExcept(keep);
+    ASSERT_LT(states().getCodeBiasIndex(ifb5), 0);
+
+    const std::vector<PppObservation> epoch_obs = seedEpoch();
+    // Installed: counted, and the parameter still gets nothing.  Not installed: nothing either.
+    for (const bool install : {true, false}) {
+        const std::map<std::string, double> installed =
+            install ? std::map<std::string, double>{{ifb5, 4.0}} : std::map<std::string, double>{};
+        const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, installed);
+        const CodeBiasSeeds now = seeds(epoch_obs, installed);
+        expectSameAsOldCode(now, old);
+        EXPECT_EQ(find(now, ifb5), nullptr);
+        EXPECT_EQ(now.refused, install ? 1u : 0u);
+        EXPECT_EQ(now.seeds.size(), 3u);
+    }
+}
+
+TEST_F(CodeBiasSeedsTest, WithoutAClockReferenceAConstellationHasNoSeeds) {
+    estimateBiases();
+    run(biasSatellites());
+    const std::vector<PppObservation> epoch_obs = seedEpoch();
+
+    clock_refs.erase('E');
+    {
+        const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, {});
+        const CodeBiasSeeds now = seeds(epoch_obs);
+        expectSameAsOldCode(now, old);
+        EXPECT_EQ(now.seeds.size(), 2u);   // GPS only
+        EXPECT_EQ(find(now, keyText(System::Galileo, ParamForm::Dcb)), nullptr);
+    }
+    clock_refs.clear();
+    {
+        const legacy::CodeBiasValues old = legacy::initializeCodeBiases(world(), epoch_obs, {});
+        const CodeBiasSeeds now = seeds(epoch_obs);
+        expectSameAsOldCode(now, old);
+        EXPECT_TRUE(now.seeds.empty());
+    }
+}
+
+TEST_F(CodeBiasSeedsTest, TheModelWritesTheSeedsAndCountsTheRestoreOnTheInitializersSlots) {
+    fillClockRefs();
+    const std::string dcb  = keyText(System::GPS, ParamForm::Dcb);
+    const std::string ifb5 = keyText(System::GPS, ParamForm::Ifb, '5');
+    // One key restored, one covered with an unusable value, one that nothing samples.
+    const std::map<std::string, double> installed = {
+        {dcb, 1.5}, {ifb5, std::numeric_limits<double>::quiet_NaN()}, {"GLONASS_DCB", 9.0}};
+
+    struct FirstEpoch {
+        std::map<std::string, double> code_bias;   ///< The code-bias states after the first epoch, by key.
+        long long applied{0};
+        long long uncovered{0};
+    };
+    // The first epoch of a model: the states are born, then seeded behind the one-shot latch.
+    const auto first_epoch = [&](const std::string& tag, const std::map<std::string, double>& restore) {
+        FirstEpoch out;
+        gnss_test::ModelStack s;
+        EXPECT_TRUE(s.load(log, tag, "ppp-rtk", "", R"(, "estimate_ifb": true)", false, false));
+        s.model->setClockRefs(&clock_refs);
+        if (!restore.empty())
+            s.model->getStateInitializer().setCodeBiasSeedOverride(restore, &out.applied,
+                                                                   &out.uncovered);
+        std::vector<PppObservation> sats = biasSatellites();
+        spreadCodes(sats);
+        s.model->computeMeasurementUpdate(sats, s.states->getStateVector());
+        const Eigen::VectorXd x = s.states->getStateVector();
+        for (const auto& [key, index] : s.states->getCodeBiasStates())
+            out.code_bias[key] = x(static_cast<Eigen::Index>(index));
+        return out;
+    };
+
+    const FirstEpoch plain    = first_epoch("seeds_model_plain", {});
+    const FirstEpoch restored = first_epoch("seeds_model_restored", installed);
+    ASSERT_EQ(plain.code_bias.size(), 4u);
+    ASSERT_EQ(restored.code_bias.size(), 4u);
+    EXPECT_EQ(plain.applied, 0);
+    EXPECT_EQ(plain.uncovered, 0);
+
+    // The restored key holds the installed value; the refused key and the two uncovered ones
+    // hold the median the plain run formed; the counters read one applied and one refused.
+    EXPECT_EQ(restored.applied, 1);
+    EXPECT_EQ(restored.uncovered, 1);
+    EXPECT_EQ(restored.code_bias.at(dcb), 1.5);
+    for (const auto& [key, value] : restored.code_bias)
+        if (key != dcb) EXPECT_TRUE(sameBits(value, plain.code_bias.at(key))) << key;
+    EXPECT_NE(plain.code_bias.at(dcb), 1.5);
+}
+
+// ===========================================================================
+// The slant ionosphere seed
+// ===========================================================================
+
+/// A .BIA presence predicate that holds the listed signals, for every satellite.
+BiasPresence presenceOf(std::set<std::string> signals) {
+    return [signals = std::move(signals)](const std::string&, const std::string& signal) {
+        return signals.count(signal) != 0;
+    };
+}
+
+void expectSameIonosphereSeed(const std::optional<IonosphereSeed>& now,
+                              const std::optional<legacy::IonosphereValue>& old) {
+    ASSERT_EQ(now.has_value(), old.has_value());
+    if (!now) return;
+    EXPECT_TRUE(sameBits(now->value_m, old->value));
+    EXPECT_EQ(now->code_a, old->code_a);
+    EXPECT_EQ(now->code_b, old->code_b);
+    EXPECT_TRUE(sameBits(now->range_a_m, old->range_a));
+    EXPECT_TRUE(sameBits(now->range_b_m, old->range_b));
+    EXPECT_TRUE(sameBits(now->alpha_a, old->alpha_a));
+    EXPECT_TRUE(sameBits(now->alpha_b, old->alpha_b));
+}
+
+class IonosphereSeedTest : public SeedsTest {
+protected:
+    /// A GPS satellite on three bands whose code differs from the model by the given offsets (m).
+    PppObservation satellite(double c1w, double c2w, double c5x) const {
+        PppObservation o = observation(kSat, System::GPS, {"C1W", "C2W", "C5X"});
+        o.observed["C1W"] += c1w;
+        o.observed["C2W"] += c2w;
+        o.observed["C5X"] += c5x;
+        return o;
+    }
+
+    /// The new seed against the old code with the same presence; returns the new one.
+    std::optional<IonosphereSeed> bothFor(const PppObservation& o, const BiasPresence& has_entry) {
+        const auto now = seedIonosphere(model().residualSeedInput(), o, has_entry);
+        expectSameIonosphereSeed(now, legacy::computeIonosphereSeed(world(), o, has_entry));
+        return now;
+    }
+};
+
+TEST_F(IonosphereSeedTest, TheFirstCoveredPairOfDistinctBandsGivesTheSeed) {
+    load("ppp-rtk");
+    const PppObservation o = satellite(0.0, 4.0, 6.5);
+
+    const auto all = bothFor(o, presenceOf({"C1W", "C2W", "C5X"}));
+    ASSERT_TRUE(all.has_value());
+    EXPECT_EQ(all->code_a, "C1W");
+    EXPECT_EQ(all->code_b, "C2W");
+    EXPECT_EQ(all->range_a_m, 0.0);
+    EXPECT_EQ(all->range_b_m, 4.0);
+    EXPECT_GT(all->value_m, 0.0);     // L2 is delayed more than L1, so (0 - 4) / (1 - alpha2) > 0
+
+    // The bias product decides which codes are used: without C2W the pair is C1W and C5X.
+    const auto no_l2 = bothFor(o, presenceOf({"C1W", "C5X"}));
+    ASSERT_TRUE(no_l2.has_value());
+    EXPECT_EQ(no_l2->code_a, "C1W");
+    EXPECT_EQ(no_l2->code_b, "C5X");
+    EXPECT_NE(no_l2->value_m, all->value_m);
+
+    // One covered code, or none, gives no seed (the caller then seeds 0 with an inflated variance).
+    EXPECT_FALSE(bothFor(o, presenceOf({"C1W"})).has_value());
+    EXPECT_FALSE(bothFor(o, presenceOf({})).has_value());
+}
+
+TEST_F(IonosphereSeedTest, TwoCodesOfOneBandMakeNoPair) {
+    load("ppp-rtk");
+    PppObservation o = observation(kSat, System::GPS, {"C1C", "C1W", "C2W"});
+    o.observed["C1W"] += 0.5;
+    o.observed["C2W"] += 4.0;
+
+    // C1C and C1W share band 1: the pair is C1C with C2W.
+    const auto pair = bothFor(o, presenceOf({"C1C", "C1W", "C2W"}));
+    ASSERT_TRUE(pair.has_value());
+    EXPECT_EQ(pair->code_a, "C1C");
+    EXPECT_EQ(pair->code_b, "C2W");
+    // Only the two band-1 codes: no pair at all.
+    EXPECT_FALSE(bothFor(o, presenceOf({"C1C", "C1W"})).has_value());
+}
+
+TEST_F(IonosphereSeedTest, APairBeyond200MetresIsSkippedAndNonFiniteOnesToo) {
+    load("ppp-rtk");
+    const BiasPresence all = presenceOf({"C1W", "C2W", "C5X"});
+
+    // (C1W, C2W) would give about 460 m: skipped, so (C1W, C5X) is returned.
+    const auto next = bothFor(satellite(0.0, 300.0, 0.0), all);
+    ASSERT_TRUE(next.has_value());
+    EXPECT_EQ(next->code_a, "C1W");
+    EXPECT_EQ(next->code_b, "C5X");
+    EXPECT_LT(std::abs(next->value_m), 200.0);
+
+    // Every pair beyond the limit: no seed.
+    EXPECT_FALSE(bothFor(satellite(0.0, 300.0, -300.0), all).has_value());
+    // A non-finite observation: its pairs give no seed.
+    EXPECT_FALSE(bothFor(satellite(0.0, std::numeric_limits<double>::quiet_NaN(),
+                                   std::numeric_limits<double>::infinity()), all).has_value());
+}
+
+TEST_F(IonosphereSeedTest, AnEntryThatIsLoadedButNotAppliedCountsOnlyWhereTheRuleIsOff) {
+    // bias_coverage_requires_apply on and the entries not applied: no entry counts, so the seed
+    // is absent although every code has an entry.  Off, or applied, the entries count.
+    struct Posture { bool requires_apply; bool applied; };
+    int index = 0;
+    for (const Posture p : {Posture{false, false}, Posture{false, true}, Posture{true, true},
+                            Posture{true, false}}) {
+        gnss_test::ModelStack s;
+        const std::string top = std::string(R"(, "model_corrections": {"bias_coverage_requires_apply": )")
+            + (p.requires_apply ? "true" : "false") + R"(, "enable_code_phase_bias": )"
+            + (p.applied ? "true" : "false") + "}";
+        ASSERT_TRUE(s.load(log, "seeds_apply_" + std::to_string(index++), "ppp-rtk", "", "", false,
+                           /*check=*/false, top));
+        s.model->setClockRefs(&clock_refs);
+        const PppObservation o = satellite(0.0, 4.0, 6.5);
+        const BiasPresence all = presenceOf({"C1W", "C2W", "C5X"});
+        const legacy::World w{*s.states, s.config, s.model->getStateInitializer(), clock_refs};
+
+        const auto now = seedIonosphere(s.model->residualSeedInput(), o, all);
+        expectSameIonosphereSeed(now, legacy::computeIonosphereSeed(w, o, all));
+        const bool counts = !p.requires_apply || p.applied;
+        EXPECT_EQ(now.has_value(), counts) << "requires_apply " << p.requires_apply
+                                           << " applied " << p.applied;
+        EXPECT_EQ(biaEntryApplies(s.config), counts);
+    }
 }
 
 }  // namespace

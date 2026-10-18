@@ -165,7 +165,8 @@ struct ModelStack {
         const Eigen::VectorXd x = states->getStateVector();
         const UserParamView view(*states, x, states->getStateSize());
         const PppUtils utils(log);
-        const ObsInput in{RowProducts{config, *ppp, store}, utils, nullptr, nlwl};
+        const ClockRefMap no_clock_refs;
+        const ObsInput in{RowProducts{config, *ppp, store}, utils, nullptr, nlwl, no_clock_refs};
         return observationEquation(in, o, signal, ParamLookup(view));
     }
 };

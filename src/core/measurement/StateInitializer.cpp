@@ -6,7 +6,6 @@
 
 #include "measurement/StateInitializer.hpp"
 #include "model/PppModel.hpp"
-#include "products/ProductCache.hpp"
 #include "common/Constants.hpp"
 #include "common/GnssIdentity.hpp"
 #include "measurement/UserParamView.hpp"   // userCodeBiasKey
@@ -64,7 +63,8 @@ void setKey(StateInitializer::ReceiverBiasEntry& entry, const RxCbKey& key) {
 StateInitializer::ReceiverBiasEntry
 StateInitializer::resolveReceiverBias(const std::string& obs_signal,
                                        System system,
-                                       const std::string& satellite) const {
+                                       const std::string& satellite,
+                                       const ClockRefMap& clock_refs) const {
     constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
     ReceiverBiasEntry result{ {}, NaN };
 
@@ -189,7 +189,6 @@ StateInitializer::resolveReceiverBias(const std::string& obs_signal,
         return result;  // GLONASS fully handled here (per-slot, or none for CDMA/k=0)
     }
 
-    const auto& clock_refs = ProductCache::getInstance().getClockRefSignals();
     auto it = clock_refs.find(sys_char);
     if (it == clock_refs.end()) return result;
 

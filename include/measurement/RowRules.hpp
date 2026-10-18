@@ -132,6 +132,20 @@ bool ssrCoversCodeSignal(const RowProducts& products, const std::string& satelli
                          const std::string& signal, const GnssTime& obs_time);
 
 /**
+ * @brief Whether a loaded .BIA entry counts as correcting a signal under this configuration.
+ *
+ * True, except when @c model_corrections.bias_coverage_requires_apply is on, the mode is not
+ * the network producer's and @c enable_code_phase_bias is off, so that the entry is loaded but
+ * not folded into @c obs.modeled.  The half of @ref biaCoversSignal that reads the
+ * configuration; a caller that has the presence of the entries by other means (the slant
+ * ionosphere seed) applies it directly.
+ *
+ * @param config Processing configuration.
+ * @return True when a present entry is also applied (or the rule is off or exempt).
+ */
+bool biaEntryApplies(const GnssConfig& config);
+
+/**
  * @brief Whether a .BIA entry counts as bias coverage for the "already corrected?" gates:
  *        code rows (sat-bias absorber allocation, no-BIA code downweight) and phase rows (AR
  *        eligibility via @ref phaseBiasCoveredForAr).

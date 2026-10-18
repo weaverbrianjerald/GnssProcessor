@@ -66,15 +66,19 @@ namespace GnssProcessor {
         return products.ssr.hasCodeBias(satellite, signal);
     }
 
-    bool biaCoversSignal(const RowProducts& products, const std::string& satellite,
-                         const std::string& signal) {
-        if (!products.ppp_model.hasBiasEntry(satellite, signal)) return false;
-        if (!products.config.getModelCorrections().bias_coverage_requires_apply) return true;
+    bool biaEntryApplies(const GnssConfig& config) {
+        if (!config.getModelCorrections().bias_coverage_requires_apply) return true;
         // Producer exemption: the network's code rows are corrected by the
         // network-estimated shared code-bias states, not by the .BIA, so its
         // coverage semantics stay legacy under either flag value.
-        if (products.config.getProcessingMode() == ProcessingMode::PPP_RTK_Network) return true;
-        return products.config.getModelCorrections().enable_code_phase_bias;
+        if (config.getProcessingMode() == ProcessingMode::PPP_RTK_Network) return true;
+        return config.getModelCorrections().enable_code_phase_bias;
+    }
+
+    bool biaCoversSignal(const RowProducts& products, const std::string& satellite,
+                         const std::string& signal) {
+        if (!products.ppp_model.hasBiasEntry(satellite, signal)) return false;
+        return biaEntryApplies(products.config);
     }
 
     bool ssrCoversPhaseSignal(const RowProducts& products, const std::string& satellite,
@@ -218,7 +222,8 @@ namespace GnssProcessor {
     // ===================================================================
 
     ObsInput MeasurementModel::obsInput() const {
-        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_, nlwl_ref_band_};
+        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_, nlwl_ref_band_,
+                        clockRefs()};
     }
 
     bool MeasurementModel::buildJacobianRow(const PppObservation& obs,
