@@ -103,4 +103,31 @@ Added arm **GEC-s** (tags `bds_gecs2`, `bds_gecs6`): GEC plus a RINEX subtractio
 
 ## 5. Results
 
-Not yet run.
+### 5.1 Stage 1, 2 h (2026-10-18)
+
+All arms on `gnss_processor_w3base.exe`, run root `D:/GnssProcessorSupport/runs_nom`, tags `_rap_bds_{g2,gp2,ge2,gec2,gecs2}`; the five arms ran concurrently, and four runs of another session shared the box, so wall times are inflated and ordered only roughly.
+
+| gate | reading | verdict |
+| --- | --- | --- |
+| B0 | `rapid.json` and a flattened diff of `arm.json` against the golden (`gates/bds/B0_armdiff.txt`): GE differs in the output path and the duration only; GEC adds `processing.active_systems` `["GPS","Galileo","BeiDou"]` and `processing.signal_priorities.BeiDou`; G has `["GPS"]` and no Galileo entry; G-probe adds the four package keys at their defaults; GEC-s has the GEC keys and three rewritten RINEX paths. Exe sha256 as in the STATUS block. | PASS |
+| H0 | G against G-probe, 240 epochs: products 2afe85364ed90d24 (59,198 lines), closed-loop trace 345f24129e48cd17, epoch status 13a21dec8df94f68, all IDENTICAL. The four Galileo-package keys are inert in a GPS-only run; G stands as the GPS-only arm. | PASS |
+| H1 | Every arm exits 0 and emits 240 of 240 epochs; 0 skipped, 0 withheld by the observability gate, the A4 ceiling or the rank gate (UNDER or OVER-specified, 0 and 0). Wall: G 1,016 s, G-probe 1,027 s, GE 1,549 s, GEC 3,160 s, GEC-s 2,281 s. | PASS (all five) |
+| H2 | Emitted BeiDou clock `c0` (the `C,C##` lines): GEC median 3.83 m, p99 5.73 m, maximum 14.65 m (C20, epoch 159); GEC-s median 3.82 m, maximum 13.88 m (the same satellite and epoch). None reaches 50 m, none 1 km: the metre class, not failure mode A. The maximum is a declared step: at TOW 263910 a per-signal gap with a slip at DARW00AUS (L2I, 7 epochs, LLI) tripped the clock-anchor test, C20 was withdrawn and the epoch re-solved, and the C20 clock steps by 4.7 m with the discontinuity marked (events `cta_decouple`, `gross_los_emit_disc`, `retro_bump`). | PASS |
+| H3 | GPS and Galileo clocks, GEC against GE, the same epochs, the per-epoch rms of the change after removing the per-epoch median: GEC GPS at most 0.128 m, Galileo at most 0.079 m; GEC-s GPS at most 0.043 m, Galileo at most 0.059 m (bar 1.0 m; mode A was 5,283 m and the leak 3,200 and 6,100 times the baseline). Maximum \|`c0`\| GPS 2.14 m, Galileo 4.37 m (GEC) and 1.79 m, 4.44 m (GEC-s); the GE wire reads 1.77 m and 4.42 m. The constellation-common level (the median of the change) moves with GEC by -0.357 m (GPS) and +0.080 m (Galileo) and with GEC-s by -0.018 m and +0.010 m. | PASS (both) |
+| H4 | The wire of GEC and GEC-s carries 38 BeiDou satellites per epoch (median 38, minimum 37 for GEC and 38 for GEC-s; the COD MGX SP3 holds 38) each with a clock line, two code-bias lines (C2I, C6I) and two phase-bias lines (L2I, L6I); the S line names the BeiDou pivot (`C:C06`) and the code-bias pin (`cbpin=C:C2I-C6I`). Counters by `C##` satellite over the run (GEC-s): 5,499 prior-residual rows, 609 per-signal resumptions (453 at BSHM00ISR, mostly on L6I), 142 MDB exceedances, 101 T4 arc attributions, 94 retro bumps, 90 gross-LOS emit discontinuities, 76 phase-bias hold generations. The measurement admission rejected one channel at birth, the same GPS channel as GE (BSHM00ISR G17), none of BeiDou; no `GATE` tier event in GEC-s. RAIM (armed, adapt and emit) acts on BeiDou: 312 rows of `network_raim.csv` name a `C##` satellite (188 spiked, 202 refloated; YKRO00CIV 46, KIT300UZB 24, GUAM00GUM 23, MAC100AUS 22, PARK00AUS 21) against 64 GPS and 74 Galileo rows in the same arm and 39 and 41 in GE. | PASS |
+
+**Piece rule.** No arm withheld an epoch and the rank gate never failed, so none of the pieces of section 3 is armed: `network.cb_admission`, `network.rank_gate_tol` (stays 1e-11) and `network.cb_kaula_prior` (stays off). The phase-anchor heal, already armed in the golden, is the one that acted in GEC (below). Failure mode A did not occur at 58 stations: no BeiDou clock above 15 m.
+
+**The three single-band stations (the amendment of section 4a).** In GEC the addStation guard dropped WARK00NZL, MAJU00MHL and SCTB00ATA at all 240 epochs (`n_sta_pd_dropped` 720 = 3.0 per epoch; stations in the solve: median 55, minimum 54). The null eigenvector of a rejected station is 76.0 % ambiguity, 19.5 % slant ionosphere and 3.7 % BeiDou inter-system bias: a satellite seen on B1I alone leaves those three local columns collinear. The loss of three stations made some GPS and Galileo satellites single-station for the phase-bias columns: the drop-and-heal fired on 240 of 240 epochs and soft-anchored 2,598 near-null phase-bias columns (all recovered; 1,837 GPS and 761 Galileo `phase_heal` events), the observed near-null count at the gate was 7 to 21 against a declared 3, and the S-basis completion constrained 293 extra directions on 171 epochs (2,509 skipped to the heal). With the three stations' band-2 BeiDou stripped (GEC-s) none of it occurs: the observed near-null count is 3 at every epoch, the S-basis completion and the heal do nothing, and no station is dropped, as in GE (observed 2, declared 2).
+
+**Consumer, WTZZ00DEU, 3D p50 by hour (hours 1 and 2 only; epochs below a decimetre of 240).**
+
+| arm | systems used by the consumer | hour 1 | hour 2 | below 0.1 m |
+| --- | --- | --- | --- | --- |
+| G | GPS | 0.113 | 0.023 | 175 |
+| GE | GPS, Galileo | 0.058 | 0.011 | 208 |
+| GEC | GPS, Galileo, BeiDou | 0.033 | 0.017 | 209 |
+| GEC-s | GPS, Galileo, BeiDou | 0.030 | 0.015 | 209 |
+
+G and GE reproduce the first two hours of card GAD's pair (0.113 0.023 and 0.058 0.011 on `gnss_processor_galp2.exe`). The stage 1 verdict is health only; the quality gates are stage 2.
+
