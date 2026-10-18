@@ -9,6 +9,7 @@
 #include "common/EpochMeasurement.hpp"   // rxIfbExcludedRows
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"    // StationAssembly::param_inv, ok, threw
+#include "network/state/StationParamsShadow.hpp"   // stationParamsReport (run-end section)
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"  // appendRunManifestRecord
@@ -1213,12 +1214,34 @@ static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
+    /**
+     * @brief Run-end section: the stations' parameter sets, built beside their state managers.
+     *
+     * The table of @ref stationParamsReport: the families and their slots at each station's
+     * last build, the findings of the checks against the state managers and the inventory
+     * (all zero on a sound run), and the builds that did not happen.  Every line carries the
+     * prefix "Network (station parameter set)".
+     *
+     * Gate: none; the checks run on every network run.
+     *
+     * @param v The run at its end (network/runend/RunEnd.hpp).
+     * @return 0 (this report does not set the exit code).
+     */
+static int networkStationParamsTableRunEnd(const NetworkRunEndView& v) {
+    for (const std::string& line : stationParamsReport(v.setup.stations)) {
+        if (line.rfind("WARNING", 0) == 0) v.log->warn("Network (station parameter set): {}", line);
+        else                                v.log->info("Network (station parameter set): {}", line);
+    }
+    return 0;
+}
+
 // Run-end report of this subsystem: its sections in print order (
 // declared in network/assembly/ParamInventory.hpp).
 int networkParamInventoryRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRxExtraBandDelayRunEnd,
-        networkParamInventoryTableRunEnd
+        networkParamInventoryTableRunEnd,
+        networkStationParamsTableRunEnd
     });
 }
 

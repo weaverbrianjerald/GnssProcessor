@@ -132,6 +132,9 @@ StationStep networkStationDataRows(StationBuild& build) {
     // absorbed instance (N1b), into this station's own slot (no shared write;
     // drained serially below).  Trace class.
     recordStationParams(*st.sm, i, col_disp, st.mm->absorbedSharedStates(), R.param_inv);
+    // The station's own parameter set, built beside the state manager it mirrors and
+    // checked against it and against the inventory's record (own station only; trace class).
+    networkShadowStationParams(st, i, col_disp, R.param_inv, em.time.tow);
     return StationStep::Next;
 }
 

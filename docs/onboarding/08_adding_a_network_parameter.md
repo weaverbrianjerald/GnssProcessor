@@ -213,7 +213,8 @@ tables of step 2 print it.
   begins as a user-side state; the network classifies and labels it afterwards. A user-side
   flag changes the network layout with no network key and no ledger row
   (`estimation.estimate_tropo_gradients` has neither). A separate future step, in which the
-  network owns its parameter set, removes this.
+  network owns its parameter set, removes this; the set exists as a shadow of the state
+  manager (`StationParams`, page 7), checked on every run, and nothing reads it yet.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
   census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,
   the last estimated kind in the enum, is a second template for steps 2 to 4.

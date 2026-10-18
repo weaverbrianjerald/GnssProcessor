@@ -884,6 +884,8 @@ namespace GnssProcessor {
      * beside it in ParamInventory.cpp, print in this order, each gated on its own knob:
      *   - networkRxExtraBandDelayRunEnd: the receiver extra-band code delay.
      *   - networkParamInventoryTableRunEnd: parameters as armed (NOM N1).
+     *   - networkStationParamsTableRunEnd: the stations' parameter sets and the checks
+     *     against their state managers (network/state/StationParamsShadow.hpp).
      *
      * @param v The run at its end (network/runend/RunEnd.hpp).
      * @return 0, or the last non-zero verdict of its sections.

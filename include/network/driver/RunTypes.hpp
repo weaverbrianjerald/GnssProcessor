@@ -16,6 +16,8 @@
 #include "network/carry/CouplingExact.hpp"  // CouplingExactCounters (StationAssembly)
 #include "network/assembly/ParamInventory.hpp" // StationParamSlot (StationAssembly)
 #include "network/assembly/Contributions.hpp" // RowTag, GimRowsOutcome (StationAssembly)
+#include "network/state/StationParams.hpp"      // StationParams (NetStation::params)
+#include "network/state/StationParamsShadow.hpp"  // StationParamsCheck (NetStation::params_check)
 #include "network/qc/WithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits)
 #include "model/PppModel.hpp"
 #include "measurement/MeasurementModel.hpp"
@@ -53,6 +55,12 @@ struct NetStation {
     std::unique_ptr<StateManager>     sm;
     std::unique_ptr<PppModel>         model;
     std::unique_ptr<MeasurementModel> mm;
+    /// The station's own parameter set, rebuilt from its state manager after each split and
+    /// checked against it (network/state/StationParamsShadow.hpp).  Written only inside the
+    /// parallel produce phase by the station's own build; nothing reads it yet.
+    StationParams                     params;
+    /// The tally of those checks over the run, summed into the run-end table.
+    StationParamsCheck                params_check;
     PppState                          pstate;
     // MW cycle-slip arc state, persistent per station.  Built when
     // network.phase_leveling and (network.cycle_slip.turbo_edit or

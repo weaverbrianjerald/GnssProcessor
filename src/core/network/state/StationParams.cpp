@@ -1,0 +1,119 @@
+/**
+ * @file StationParams.cpp
+ * @brief Registration and lookup of the parameters of a station's set (see
+ *        network/state/StationParams.hpp).
+ */
+
+#include "network/state/StationParams.hpp"
+
+namespace GnssProcessor {
+
+namespace {
+
+/// Insert a key into a typed map; true when the key was free.
+template <class Map, class Key>
+bool place(Map& map, const Key& key, int index) {
+    return map.emplace(key, index).second;
+}
+
+/// Set a single-slot index; true when it was free.
+bool placeOnce(int& holder, int index) {
+    if (holder >= 0) return false;
+    holder = index;
+    return true;
+}
+
+/// The slot a key maps to, or -1.
+template <class Map, class Key>
+int slotOf(const Map& map, const Key& key) {
+    const auto it = map.find(key);
+    return it == map.end() ? -1 : it->second;
+}
+
+} // namespace
+
+bool addParam(StationParams& set, const LocalSlot& slot) {
+    const int index = static_cast<int>(set.slots.size());
+    set.slots.push_back(slot);
+    const ParamRef& r = slot.ref;
+    bool placed = false;
+    using PK = NetworkParamKind;
+    switch (r.kind) {
+        case PK::RxPosition:
+            placed = r.axis < set.position.size() && placeOnce(set.position[r.axis], index);
+            break;
+        case PK::Zwd:
+            placed = r.core == UserCore::None && placeOnce(set.zwd, index);
+            break;
+        case PK::RxClock:
+            if (r.core != UserCore::None) break;
+            placed = r.form == ParamForm::Isb ? place(set.isb, r.sys, index)
+                                              : placeOnce(set.clock, index);
+            break;
+        case PK::SlantIono:
+            placed = place(set.iono, r.sat, index);
+            break;
+        case PK::PhaseColour:
+            placed = place(set.colour, r.sat, index);
+            break;
+        case PK::Ambiguity:
+            placed = r.form == ParamForm::None && place(set.amb, SatSignalId{r.sat, r.signal}, index);
+            break;
+        case PK::RxPhaseBias:
+            placed = place(set.rx_pb, r.signal, index);
+            break;
+        case PK::RxCodeBias:
+            placed = place(set.rx_cb, rxCbKeyOf(r), index);
+            break;
+        case PK::SatClock:
+            placed = place(set.shared.sat_clock, r.sat, index);
+            break;
+        case PK::SatPhaseBias:
+            placed = place(set.shared.sat_phase_bias, SatSignalId{r.sat, r.signal}, index);
+            break;
+        case PK::SatCodeBias:
+            placed = r.form == ParamForm::None
+                  && place(set.shared.sat_code_bias, SatSignalId{r.sat, r.signal}, index);
+            break;
+        case PK::VtecSh:
+            break;
+    }
+    if (!placed) ++set.untyped;
+    return placed;
+}
+
+int findParam(const StationParams& set, const ParamRef& r) {
+    using PK = NetworkParamKind;
+    switch (r.kind) {
+        case PK::RxPosition:
+            return r.axis < set.position.size() ? set.position[r.axis] : -1;
+        case PK::Zwd:
+            return r.core == UserCore::None ? set.zwd : -1;
+        case PK::RxClock:
+            if (r.core != UserCore::None) return -1;
+            return r.form == ParamForm::Isb ? slotOf(set.isb, r.sys) : set.clock;
+        case PK::SlantIono:
+            return slotOf(set.iono, r.sat);
+        case PK::PhaseColour:
+            return slotOf(set.colour, r.sat);
+        case PK::Ambiguity:
+            return r.form == ParamForm::None ? slotOf(set.amb, SatSignalId{r.sat, r.signal}) : -1;
+        case PK::RxPhaseBias:
+            return slotOf(set.rx_pb, r.signal);
+        case PK::RxCodeBias:
+            return slotOf(set.rx_cb, rxCbKeyOf(r));
+        case PK::SatClock:
+            return slotOf(set.shared.sat_clock, r.sat);
+        case PK::SatPhaseBias:
+            return slotOf(set.shared.sat_phase_bias, SatSignalId{r.sat, r.signal});
+        case PK::SatCodeBias:
+            return r.form == ParamForm::None
+                       ? slotOf(set.shared.sat_code_bias, SatSignalId{r.sat, r.signal})
+                       : -1;
+        case PK::VtecSh:
+            break;
+    }
+    return -1;
+}
+
+} // namespace GnssProcessor

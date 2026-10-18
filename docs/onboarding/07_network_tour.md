@@ -253,6 +253,16 @@ one epoch and read at the next, hand-offs a later stage drains, run counters) is
 names what it writes: an events group arrives as an output parameter, and an entity table it
 binds for writing has its row in `net::kEntityWriters`.
 
+A station's own parameter set is a fourth home that is still being built.
+`StationParams` (`include\network\state\StationParams.hpp`) lists a station's columns in column
+order, each as a typed `ParamRef` with its linearization point and the split's disposition, and
+looks a parameter up by satellite, signal or constellation without parsing a state key. Today it
+is a shadow of the station's `StateManager`: `networkShadowStationParams`
+(`network\state\StationParamsShadow.cpp`) builds it after each station's split and checks it
+against the state manager and against the parameter inventory, and the run end prints the table
+`Network (station parameter set)` under the parameter inventory, with the findings of the checks
+(all zero on a sound run). Nothing reads the set yet.
+
 ## The run end
 
 After the last epoch, every mechanism prints what it did over the run: counters, verdicts,
