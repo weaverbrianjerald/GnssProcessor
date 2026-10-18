@@ -92,7 +92,7 @@ with the dry-gas constant and standard gravity.  The denominator
 $f(\phi,h)$ accounts for the variation of gravity with latitude and
 height.
 
-When neither a surface met sensor nor the GPT3 grid (below) is available,
+Unless the a priori source is set to GPT3 and the grid (below) loads,
 $P$ is taken from a standard-atmosphere barometric reduction of a
 configured sea-level pressure $P_0$ and temperature $T_0$
 (\texttt{Troposphere.cpp}, \texttt{pressureFromHeightStdAtm}):
@@ -194,7 +194,9 @@ stop the run.
 The GPT3 $5^\circ$ grid \cite{landskron2018vmf3} supplies, per cell, the
 five harmonic coefficients of pressure, temperature, temperature lapse
 rate, geoid undulation, and the VMF3 hydrostatic and wet $a$-coefficients
-(\texttt{Gpt3::load}, in \texttt{atmosphere/Gpt3}).  Each quantity is the
+(\texttt{Gpt3::load}, in \texttt{atmosphere/Gpt3}).  The file stores the
+$a$-coefficients multiplied by 1000 ($a_{\mathrm h}$ near 1.2 for a physical
+$1.2\times10^{-3}$), and the load converts them.  Each quantity is the
 same annual-plus-semiannual harmonic as \eqref{eq:atmos-seasonal-harmonic}
 evaluated per cell (\texttt{Gpt3::harmonic}):
 \begin{equation}
@@ -224,7 +226,8 @@ The exponent $5.225$ is the same $g/(RL)$ ratio as
 \eqref{eq:atmos-barometric}, rounded for the grid.  Four corners are read
 and combined by bilinear interpolation in latitude and (wrapped) longitude
 (also \texttt{Gpt3::query}); the resulting $P_{\mathrm{stn}}$ drives
-the Saastamoinen $\zhd$ of \eqref{eq:atmos-zhd}, and the interpolated
+the Saastamoinen $\zhd$ of \eqref{eq:atmos-zhd} when the a priori source is
+GPT3 (the VMF3 mapping alone does not select it), and the interpolated
 $a_{\mathrm h},a_{\mathrm w}$ drive the VMF3 mapping.
 
 \subsubsection{The gradient mapping and a degenerate fallback}

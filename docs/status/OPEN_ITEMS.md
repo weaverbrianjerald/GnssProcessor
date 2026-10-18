@@ -146,9 +146,57 @@ The five fixes of branch nom/defects (c9e7f31, 77f1494, 110d5f2, 7b0c38a, 66498e
 - **Loader messages that misstate behaviour (fixed in 110d5f2, branch nom/defects).** The eq34 "INERT under carry_invariant" warnings fire on the float vehicle (IRD finding C5); the sd_ewl.enable line denies fixing; a comment calls emit_pb_hold fingerprinted. [GnssConfigLoadNetwork.cpp](../../src/core/config/GnssConfigLoadNetwork.cpp)
 - **Redundancy census mask (fixed in 66498e4, branch nom/defects).** It recomputes the prefit census's centred statistic without its phase-excluding mask, so every cross-flag event is obs_phase (field 93, sim 437); reuse the census's own. [REDUNDANCY-CENSUS](../cards/raim-qc/REDUNDANCY-CENSUS.md)
 - **Start-offset seek.** It compares floating GPS seconds, so bare-hour offsets need a half-epoch back-off; round to the epoch grid, drop the ritual, and bundle the leap-table fix. [QPR item 6](../cards/queues/QPR-ITEMS-5-8.md)
-- **VMF3 path.** Gpt3::load keeps loaded_ true after a failed reload; suspected: a standard-atmosphere a priori silently takes ZHD pressure from GPT3. Settle both with the VMF3 fix. [CAF](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+- **VMF3 path (fixed in e728fdc, branch fix/vmf3).** Three defects in the GPT3 load and use path. The grid file stores the VMF3 a_h and a_w multiplied by 1000 and `Gpt3::load` returned them unscaled, so the VMF3 mapping fell below 1 at every elevation under 90 degrees (0.446 at 14.4 degrees in a 300 s Release smoke, against 3.95 after the fix) and was clamped to 1 (the open mapping defect of the VMF3 note; a regenerated JPLM `tropo_vmf3_tight` run is owed before VMF3 is trusted). `Gpt3::load` kept `loaded_` true with the cells cleared after a failed reload, so the next query indexed an empty vector. The suspicion was confirmed: with a standard-atmosphere a priori and the VMF3 mapping, `computeSaastamoinenZHD` took its pressure from GPT3 because the grid was loaded, which also made the GMF-versus-VMF3 cells of the `tropo` suite differ in pressure source as well as mapping; the configured a priori source now decides, as the config getter and the run-start log already stated. Intended behaviour, so no knob. Reach: only runs that select `vmf3` or `gpt3` (`ppp_rtk_internal_AR`, `realtime_ppp_rtk_AR`, the `vmf3` cells of the test-suite manifests); no golden and no quick-set arm does. Gate numbers: the 2026-10-17 heading below. [test](../../tests/test_gpt3_load_path.cpp)
 - **Minor verified defects.** GRAPHIC threshold not trend-centred, gim_ destroyed before ppp_model_, the PPP-RTK summary label, no Klobuchar size check, pyviz conftest's 14-column truth_atmo fixture. [CAF §2, §6](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
 - **Minor suspicions.** Unstable same-band signal sort, a leap-second lookup 18 s early, pyviz LLI precedence over a coincident detector slip. [CAF §4](../cards/queues/CAF-COMMENT-AUDIT-FINDINGS.md)
+
+### VMF3 path gate (2026-10-17)
+
+Same-build comparison of branch fix/vmf3 (904f029, Release, SHA-256 prefix 7fe467de) against main
+4318fe3 (Release, prefix ecd463d4), each built in its own worktree; both builds reported no work to do
+before the executables were copied. Runs: `runs_nom/_rap_vmf3chk_{f2,s2}_{ctl,new}` and the fix
+worktree's `runs/_uom_vmf3chk_*`, both on D:. Result: identical wherever neither VMF3 nor GPT3 is
+selected; every difference where one is selected is one of the three declared fixes.
+
+| Arm | Wall, control / candidate | Whole-run gate (`nom_td_gate.py --whole`, `uom_gate.py cmp`) |
+|---|---|---|
+| Field golden, 2 h, 58 stations, consumer WTZZ00DEU | 2389 s / 2415 s, exit 0 | IDENTICAL: 34 trace CSVs in row order, products.txt (113,902 lines), run manifest (12 records), stdout (3,185 lines), main_log (2,422), rt_engine.log (620) |
+| Sim golden, 2 h from 00:30:15, 60 stations, consumer SZZ000SIM | 2012 s / 2022 s, exit 0 | IDENTICAL: 34 trace CSVs, products.txt (80,704), manifest (12), stdout (2,923), main_log (2,159), rt_engine.log (621) |
+| UOM quick set, 16 arms of 600 s | exit 0 on all 16, both sides | 16 of 16 IDENTICAL, every CSV in row order |
+
+Held-out consumer, median 3D error by hour: field 0.058 and 0.011 m (hours 1 and 2, the digits of the
+pinned baseline), sim 0.099 and 0.033 m (hour 3 holds one epoch, 0.055 m); the same digits on both
+executables. The 16-site census was not run: it replays a 6 h wire, this wire is byte-identical, and
+the consumer path is the unchanged gmf and standard-atmosphere one (all 16 user-side arms identical).
+
+Reach. Neither golden, nor any quick-set base with its `extends` chain, names a `troposphere_*` or
+`gpt3_grid_path` key, and all 16 UOM arms print `Troposphere a priori: source=standard_atmosphere,
+mapping=gmf` on both sides, so no arm of the identical set exercises the changed code. The UOM script
+was the fix worktree's copy (scripts unchanged against main), which puts the run directories on D:.
+
+Where VMF3 or GPT3 is selected: three more arms of the same gate (the `u_rtk_bssd_ar` arm, 600 s) and a
+120 s smoke at ppp_model trace (`ppp_internal` base).
+
+| Selection | Gate | Control (main) | Candidate |
+|---|---|---|---|
+| gmf mapping, gpt3 a priori | IDENTICAL | grid pressure, 344 ZHD calls, 971.1 to 971.2 mbar | same |
+| vmf3 mapping, standard atmosphere | DIFFERENT | ZHD pressure tagged gpt3 on 484 of 484 calls (970.3 to 971.2 mbar); at 10.06 degrees a_h 1.212, a_w 0.510, mf_d = mf_w = 1.000, "Invalid VMF3 mappings" on 484 calls (1,502 in the 600 s arm) | tagged stdatm on 344 of 344 calls (975.4 to 975.5 mbar, as under gmf); a_h 1.212e-3, a_w 5.104e-4, mf_d 5.526, mf_w 5.635, no warning |
+| vmf3 mapping, gpt3 a priori | DIFFERENT | grid pressure; mapping clamped to 1 as above | grid pressure (971.1 to 971.2 mbar); mapping as above, no warning |
+
+The differing lines are the declared fixes: the x1000 coefficient scale (the mapping leaves the clamp
+and the warnings stop), and the pressure source under vmf3 with the standard atmosphere (gpt3 becomes
+stdatm, the value gmf reads). The failed reload is reached by no run (one load per process) and rests
+on the unit tests. The control makes more ZHD queries than the candidate in the same 120 s (484 against
+344); not traced. The candidate's mapping is plausible against 1/sin(elevation) (5.72 at 10.06 degrees)
+but is still unchecked against vmf3.m, so the regenerated JPLM `tropo_vmf3_tight` run stays owed.
+
+Unit tests. `tests/test_gpt3_load_path.cpp` holds 11 cases (6 + 3 + 2); 20 focused cases (those, the
+existing Vmf3 and troposphere suites) pass on the Debug build of HEAD, none skipped. Against the old
+source, 5 of the 8 cases tried fail (the two failed-reload cases report `isLoaded()` true and then a
+vector-subscript assertion, both real-grid cases and the standard-atmosphere pressure case fail); the
+other three pass as guards (successful reload, grid pressure under the gpt3 source, missing-grid
+fallback). The shipped grid's a_h a0 spans 1.13551 to 1.27987 and a_w a0 0.38275 to 0.65722 over 2,592
+rows, inside the new refusal bounds [0.8, 1.8] and [0.2, 1.2].
 
 ## Queued after NOM
 

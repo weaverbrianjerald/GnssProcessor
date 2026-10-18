@@ -68,20 +68,22 @@ namespace GnssProcessor {
         /**
          * @brief Compute Saastamoinen zenith hydrostatic delay (ZHD).
          *
-         * Without a loaded GPT3 grid, station pressure is reduced from the
-         * configured sea-level pair via the standard-atmosphere lapse
-         * formula.  When the GPT3 grid is loaded, which happens when the a
-         * priori source is @c TroposphereAprioriSource::Gpt3 or the mapping
-         * function is @c TroposphereMappingFunction::Vmf3, station pressure is
-         * queried from the grid at the receiver lat/lon/h/doy (temperature is
-         * not used).  On a failed query the call falls back to the
-         * standard-atmosphere value without a log line, so a single bad query
-         * does not abort the run.
+         * Station pressure is reduced from the configured sea-level pair via
+         * the standard-atmosphere lapse formula, unless the a priori source is
+         * @c TroposphereAprioriSource::Gpt3 and the GPT3 grid loaded: then it
+         * is queried from the grid at the receiver lat/lon/h/doy (temperature
+         * is not used).  The mapping function does not choose the pressure
+         * source: with @c TroposphereMappingFunction::Vmf3 and the a priori
+         * source left at @c StandardAtmosphere the grid is loaded for the
+         * mapping coefficients only, and the standard atmosphere still applies.
+         * On a failed query the call falls back to the standard-atmosphere
+         * value without a log line, so a single bad query does not abort the
+         * run.
          *
          * @param receiver_pos Receiver position in ECEF coordinates (meters).
          * @param time         GNSS epoch (used to derive day-of-year for the
-         *                     GPT3 harmonics; ignored when no GPT3 grid is
-         *                     loaded).
+         *                     GPT3 harmonics; ignored when the pressure comes
+         *                     from the standard atmosphere).
          * @return Zenith hydrostatic delay (ZHD) in meters.
          */
         double computeSaastamoinenZHD(const Eigen::Vector3d& receiver_pos,
