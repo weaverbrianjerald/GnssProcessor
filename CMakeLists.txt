@@ -94,11 +94,13 @@ add_library(gnss_core STATIC
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/MeasurementModelStates.cpp
+    src/core/measurement/MeasurementModelSeeds.cpp
     src/core/measurement/MeasurementModelRow.cpp
     src/core/measurement/MeasurementModelRowReference.cpp
     src/core/measurement/ObservationEquation.cpp
     src/core/measurement/ObservationEquationCheck.cpp
     src/core/measurement/UserParamView.cpp
+    src/core/measurement/Seeds.cpp
     src/core/measurement/MeasurementModelVariance.cpp
     src/core/measurement/MeasurementModelDd.cpp
     src/core/measurement/MeasurementModelNetwork.cpp
@@ -645,6 +647,7 @@ add_executable(gnss_tests
     tests/test_gnss_identity.cpp
     tests/test_param_ref.cpp
     tests/test_observation_equation.cpp
+    tests/test_seeds.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp

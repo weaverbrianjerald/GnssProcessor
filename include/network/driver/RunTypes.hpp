@@ -1742,7 +1742,7 @@ inline constexpr double kRxCbMaxGapS = 900.0;
 ///
 /// The innovation test is frame-dependent.  @p innov_m is @c value_abs − x_lin(cb),
 /// and x_lin is a frozen linearization point (seeded once by
-/// @c StateInitializer::initializeCodeBiases, never written back from the solve), so
+/// @c MeasurementModel::initializeCodeBiases, never written back from the solve), so
 /// the statistic measures how far the carried value sits from an arbitrary frame, not
 /// whether anything happened.  @p innov_test = false disables it and leaves the
 /// frame-free gap and variance sanity checks; the in-block route passes false, and its

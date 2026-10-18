@@ -6,7 +6,7 @@
  *
  * MeasurementModel is split by concern (the pre-pass, the row, the variance,
  * the DD build, the network surface).  These cases pin what a reader of the split
- * relies on: the ambiguity seed (StateManager::computeAmbiguitySeed) and the
+ * relies on: the ambiguity seed (MeasurementModel::ambiguitySeed) and the
  * Jacobian row (buildJacobianRow) are two copies of the observation equation
  * that agree at birth, so a phase row's first innovation is zero; the prune
  * follows the observed signals and spares a hold-protected key; the NL/WL

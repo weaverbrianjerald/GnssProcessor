@@ -35,6 +35,8 @@
 
 namespace GnssProcessor {
 
+struct ObsInput;
+
 /**
  * @class PivotManager
  * @brief Manages BSSD pivot satellite selection, handover, and state re-referencing.
@@ -62,6 +64,10 @@ public:
      *
      * @param observations   Modeled observations for this epoch.
      * @param state_manager  Filter state (modified on handover).
+     * @param seed_input     Equation inputs of the ambiguity seed
+     *                       (@c MeasurementModel::ambiguitySeedInput): a disturbed
+     *                       outgoing pivot's ambiguities are re-seeded from
+     *                       observations against the new pivot.
      * @param epoch_prefix   Log prefix string.
      * @param forced_only    When true, the implicit @c isPivotDisturbed
      *                       branch is skipped and only constellations
@@ -76,6 +82,7 @@ public:
     void handlePivotHandover(
         const std::vector<PppObservation>& observations,
         StateManager& state_manager,
+        const ObsInput& seed_input,
         const std::string& epoch_prefix,
         bool forced_only = false,
         const std::set<std::string>& exclude_sats = {});

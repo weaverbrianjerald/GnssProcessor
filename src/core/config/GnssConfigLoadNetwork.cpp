@@ -3171,7 +3171,7 @@ namespace GnssProcessor {
         // (syncPppStateToStateVector, the PPP-path writer of x(clock), never runs
         // from ApplicationNetwork), so a free-running receiver's whole clock offset
         // leaks uniformly into every cold ambiguity seed through
-        // computeAmbiguitySeed's clk_term = x(clock) = 0.  When on, the state
+        // the ambiguity seed's clock term, x(clock) = 0.  When on, the state
         // pre-pass writes the median GPS code residual into x(clock) once per
         // station.  Default off => the seeder is never called (byte-identical).
         network_cold_clock_seed_ = jval<bool>(

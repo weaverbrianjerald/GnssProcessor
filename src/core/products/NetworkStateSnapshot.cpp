@@ -712,7 +712,7 @@ bool NetworkStateSnapshotIO::parse(std::istream& is, NetworkStateSnapshot& out,
             // Refused on the same ground as RC: this value becomes the station's
             // code-bias linearization point for the whole run, so a nan/inf (which
             // strtod accepts) would make every later innovation of that (station,
-            // family) non-finite and, through computeRawResidual, corrupt the first
+            // family) non-finite and, through the raw residual, corrupt the first
             // epoch's iono and ambiguity seeds.  No sign or magnitude screen: a
             // receiver DCB can have either sign, and the seed path's |est| < 200 m
             // sanity bound applies to the median estimator, not to a value the writer

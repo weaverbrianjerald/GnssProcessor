@@ -13,10 +13,11 @@
  * counters are process-wide and atomic because the network producer builds the rows of its
  * stations in parallel and the closed-loop consumer builds its own in the same process.
  *
- * The check also lists where the carrier frequency sources of the three copies of the
- * equation differ (the row builder's @c PppUtils, the ambiguity seed's table and the identity
- * layer's), per band and constellation, so that one frequency rule can be chosen with the
- * differences in front of the reader.
+ * The check also lists where the carrier frequency sources differ (the row builder's
+ * @c PppUtils and the identity layer's), per band and constellation, so that one frequency
+ * rule for the seeds can be chosen with the differences in front of the reader.  The seeds
+ * read the same equation (measurement/Seeds.hpp); only GLONASS FDMA bands differ between
+ * their sources.
  *
  * Temporary: it is deleted with the reference row builder.
  */
@@ -82,12 +83,11 @@ struct ObsFrequencyRow {
     char   digit{'\0'};           ///< The RINEX band digit.
     double ppp_utils_hz{0.0};     ///< @c PppUtils::getFrequency (slot 0 for a FDMA band); 0 when it knows no such band.
     double slot_spread_hz{0.0};   ///< Largest distance of any slot's @c PppUtils frequency from slot 0 (FDMA bands).
-    double seed_hz{0.0};          ///< The ambiguity seed's table (@c StateManager::ambiguitySeedFrequencyHz).
     double identity_hz{0.0};      ///< The identity layer's nominal frequency (@ref nominalCarrierFrequencyHz).
 };
 
 /**
- * @brief The carrier frequency of every band of every constellation from the three sources.
+ * @brief The carrier frequency of every band of every constellation from the two sources.
  * @param log The log manager the temporary frequency helper logs through.
  * @return One row per (constellation, band digit) of the identity layer's tables, in table order.
  */
@@ -96,7 +96,7 @@ std::vector<ObsFrequencyRow> obsFrequencyAudit(LogManager& log);
 /**
  * @brief The audit rows that disagree between sources, as report lines.
  * @param rows The audit.
- * @return One line per row whose three frequencies are not equal (to 1 mHz) or whose FDMA
+ * @return One line per row whose two frequencies are not equal (to 1 mHz) or whose FDMA
  *         slots spread; empty when the sources agree everywhere.
  */
 std::vector<std::string> obsFrequencyDifferences(const std::vector<ObsFrequencyRow>& rows);

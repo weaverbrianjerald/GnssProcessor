@@ -173,12 +173,12 @@ namespace GnssProcessor {
                 if (obs.satellite != pivot_sat) continue;
                 // Try exact match first, then band match.
                 if (obs.observed.count(outlier_sig)) {
-                    pivot_abs_seed = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                    pivot_abs_seed = measurement_model_.ambiguitySeed(obs, outlier_sig, x);
                     pivot_band_sig = outlier_sig;
                 } else {
                     for (const auto& [sig, val] : obs.observed) {
                         if (sig.size() >= 2 && sig.substr(0, 2) == outlier_band) {
-                            pivot_abs_seed = state_manager_.computeAmbiguitySeed(obs, sig, x);
+                            pivot_abs_seed = measurement_model_.ambiguitySeed(obs, sig, x);
                             pivot_band_sig = sig;
                             break;
                         }
@@ -226,7 +226,7 @@ namespace GnssProcessor {
             double abs_seed = 0.0;
             for (const auto& obs : measurement.observations) {
                 if (obs.satellite != sat) continue;
-                abs_seed = state_manager_.computeAmbiguitySeed(obs, outlier_sig, x);
+                abs_seed = measurement_model_.ambiguitySeed(obs, outlier_sig, x);
                 break;
             }
             if (bssd_active && !pivot_sat.empty()) {

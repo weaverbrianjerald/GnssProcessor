@@ -115,7 +115,6 @@ std::vector<ObsFrequencyRow> obsFrequencyAudit(LogManager& log) {
             row.sys         = sys;
             row.digit       = t.bands[i].digit;
             row.identity_hz = nominalCarrierFrequencyHz(t.bands[i].band);
-            row.seed_hz     = StateManager::ambiguitySeedFrequencyHz(row.digit, sys);
             const std::string text = signalText(row.digit);
             if (sys != System::GLONASS) {
                 row.ppp_utils_hz = slot0.getFrequency(text, sys, std::string(1, t.letter) + "01");
@@ -142,17 +141,16 @@ std::vector<std::string> obsFrequencyDifferences(const std::vector<ObsFrequencyR
     std::vector<std::string> lines;
     for (const ObsFrequencyRow& r : rows) {
         const bool differs = std::abs(r.ppp_utils_hz - r.identity_hz) > 1e-3
-                          || std::abs(r.seed_hz - r.identity_hz) > 1e-3
-                          || std::abs(r.ppp_utils_hz - r.seed_hz) > 1e-3
                           || r.slot_spread_hz > 1e-3;
         if (!differs) continue;
         lines.push_back(fmt::format(
-            "frequency {} band {}: PppUtils {:.3f} Hz, ambiguity seed {:.3f} Hz, identity {:.3f} Hz"
-            "{}",
-            systemName(r.sys), r.digit, r.ppp_utils_hz, r.seed_hz, r.identity_hz,
+            "frequency {} band {}: PppUtils {:.3f} Hz, identity {:.3f} Hz{}",
+            systemName(r.sys), r.digit, r.ppp_utils_hz, r.identity_hz,
             r.slot_spread_hz > 1e-3
-                ? fmt::format(" (PppUtils varies over FDMA slots by up to {:.1f} Hz; the seed and"
-                              " the identity layer use slot 0)", r.slot_spread_hz)
+                ? fmt::format(" (PppUtils varies over FDMA slots by up to {:.1f} Hz; the row builder"
+                              " takes each satellite's slot, the ambiguity seed and the identity"
+                              " layer slot 0, the other seeds the default channel table)",
+                              r.slot_spread_hz)
                 : std::string()));
     }
     return lines;

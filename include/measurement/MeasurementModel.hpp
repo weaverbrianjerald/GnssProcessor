@@ -39,7 +39,8 @@ namespace GnssProcessor {
      * design matrix H and noise R, and offers outlier/quality validation helpers.
      *
      * Heavy sub-tasks are delegated:
-     *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
+     *  - StateInitializer:  the first-epoch seeding latches and the receiver code-bias resolver
+     *                       (the seed values are measurement/Seeds.hpp).
      *  - PivotManager:  pivot selection, handover, and state re-referencing.
      *  - BssdTransform:     between-satellite single-difference S-transformation.
      *
@@ -54,6 +55,10 @@ namespace GnssProcessor {
      *    measurement/UserParamView.hpp); also the definitions of the row rules
      *    isUsableMeasurement and the product coverage checks (free functions,
      *    measurement/RowRules.hpp).
+     *  - MeasurementModelSeeds.cpp: the first-epoch seeding of the single-receiver
+     *    state (inter-system biases, phase clock, receiver code biases, the cold
+     *    receiver clock) and the ambiguity seed: the values come from
+     *    measurement/Seeds.hpp, this file applies them to the @c StateManager.
      *  - MeasurementModelRowReference.cpp: the row builder as it was before the term
      *    list, and the comparison with it (processing.obs_equation_check).  Temporary.
      *  - MeasurementModelVariance.cpp: the definition of rowVariance, the
@@ -416,6 +421,44 @@ namespace GnssProcessor {
         const StateInitializer& getStateInitializer() const { return state_initializer_; }
 
         /**
+         * @brief The float ambiguity a phase signal of a satellite is born at (m): its
+         *        observation less the terms the ambiguity seed knows, at state vector @p x.
+         *
+         * The seed @c ensureRequiredStates births and re-seeds with, and that the
+         * Kalman filter's outlier response, the cycle-slip repair and the pivot
+         * handover re-seed with.  Absolute (an undifferenced ambiguity): the caller makes
+         * it relative to a pivot or divides it by a wavelength.  See measurement/Seeds.hpp.
+         *
+         * @param obs      The satellite's modeled observation.
+         * @param ref_type The phase signal, or an iono-free pair of phase signals.
+         * @param x        The state vector to evaluate the terms at.
+         * @return The seed (m); 0 when the signal has no observed or modeled value.
+         */
+        double ambiguitySeed(const PppObservation& obs, const std::string& ref_type,
+                             const Eigen::VectorXd& x) const;
+
+        /**
+         * @brief The equation inputs of an ambiguity seed: this model's row inputs with
+         *        the GLONASS FDMA bands taken at channel 0, the number the ambiguity seed
+         *        has always used.
+         *
+         * For a caller that re-seeds an ambiguity without holding the model (the pivot
+         * handover); pass it to @c seedAmbiguityOfState.
+         *
+         * @return Non-owning references into this model.
+         */
+        ObsInput ambiguitySeedInput() const;
+
+        /**
+         * @brief The equation inputs of the residual seeds (inter-system bias, cold clock,
+         *        phase clock, receiver code biases, slant ionosphere): this model's row
+         *        inputs with the frequency helper of the state initializer, whose GLONASS
+         *        channels are the default table, the number those seeds have always used.
+         * @return Non-owning references into this model.
+         */
+        ObsInput residualSeedInput() const;
+
+        /**
          * @brief Inject a non-owning SSR-correction store override (DI seam for
          *        the PPP-RTK closed-loop harness).
          *
@@ -580,6 +623,52 @@ namespace GnssProcessor {
         RowProducts rowProducts() const { return RowProducts{config_, ppp_model_, ssrStore()}; }
 
         // -------------------------------------------------------------------
+        // First-epoch seeding (MeasurementModelSeeds.cpp)
+        //
+        // Each member asks measurement/Seeds.hpp for the values from the first
+        // epoch's observations and applies them to the state manager.  The
+        // callers latch them (StateInitializer).
+        // -------------------------------------------------------------------
+
+        /**
+         * @brief Seed the inter-system biases from the first epoch's code residuals.
+         *
+         * The median code residual of each constellation less the time reference's.
+         * Logs the warning that the time reference has no code observation.
+         *
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @return True when the time reference had code (the seeds are final); false
+         *         to retry next epoch.  Latch on true only: latching on false would
+         *         leave every non-reference bias at 0 when the reference joins later.
+         */
+        bool initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+                                         const std::string& epoch_prefix);
+
+        /**
+         * @brief Seed the phase-clock offset from the code-minus-phase residual
+         *        difference, and tighten its covariance to the seed's accuracy.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         */
+        void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
+                                        const std::string& epoch_prefix);
+
+        /**
+         * @brief Seed the receiver DCB and IFB states from the cross-band code residual
+         *        differences, or from the warm resume's restored linearization points.
+         *
+         * Must run after @ref ensureRequiredStates has created the states and seeded the
+         * slant ionosphere.  Counts each covered key of the restore on the state
+         * initializer's out-slots.
+         *
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         */
+        void initializeCodeBiases(const std::vector<PppObservation>& observations,
+                                  const std::string& epoch_prefix);
+
+        // -------------------------------------------------------------------
         // State pre-pass (MeasurementModelStates.cpp)
         // -------------------------------------------------------------------
 
@@ -608,16 +697,16 @@ namespace GnssProcessor {
          * | 1 | collectRequiredStates         | keep sets (no state)            | a code or phase signal the BSSD pivot tracks (a)            |                                                        |                                                    |
          * | 2 | addHoldProtectedKeys          | keep sets (no state)            | a key the soft-LLI / gap bridge holds                       |                                                        |                                                    |
          * | 3 | collectNlWlKeys               | NL/WL keys (no state)           | NL/WL basis                                                 |                                                        |                                                    |
-         * | 4 | ensureIonosphereStates        | slant ionosphere                | uncombined; a code or phase row of the satellite            | StateInitializer::computeIonosphereSeed, else 0 (b)    | (initial_std.ionosphere x s)^2 / sin^2(el) (c)     |
+         * | 4 | ensureIonosphereStates        | slant ionosphere                | uncombined; a code or phase row of the satellite            | seedIonosphere (Seeds.hpp), else 0 (b)                 | (initial_std.ionosphere x s)^2 / sin^2(el) (c)     |
          * | 5 | ensurePhaseColourStates       | phase colour (network)          | network.phase_colour_state; an uncombined phase row         | 0                                                      | network.phase_colour_sigma_zen_m^2                 |
-         * | 6 | preseedColdReceiverClock      | receiver clock (network)        | network.cold_clock_seed, until a seed succeeds (no birth)   | median GPS code residual (seedColdReceiverClock)       | unchanged                                          |
-         * | 7 | computePivotSeeds             | BSSD pivot seeds (no state)     | BSSD                                                        | StateManager::computeAmbiguitySeed per pivot signal    |                                                    |
-         * | 8 | ensurePerBandAmbiguities      | ambiguity, per band             | per-band basis; a phase key, new or pending reseed          | computeAmbiguitySeed, pivot-relative under BSSD (d)    | substituted-ATX override, else 1000 m (e)          |
-         * | 9 | ensureNlWlAmbiguities         | ambiguity, NL and WL            | NL/WL basis; as row 8                                       | computeAmbiguitySeed / wavelength, in cycles (d)       | as row 8 (the same number, on a state in cycles)   |
+         * | 6 | preseedColdReceiverClock      | receiver clock (network)        | network.cold_clock_seed, until a seed succeeds (no birth)   | median GPS code residual (seedColdClock)               | unchanged                                          |
+         * | 7 | computePivotSeeds             | BSSD pivot seeds (no state)     | BSSD                                                        | ambiguitySeed per pivot signal                         |                                                    |
+         * | 8 | ensurePerBandAmbiguities      | ambiguity, per band             | per-band basis; a phase key, new or pending reseed          | ambiguitySeed, pivot-relative under BSSD (d)           | substituted-ATX override, else 1000 m (e)          |
+         * | 9 | ensureNlWlAmbiguities         | ambiguity, NL and WL            | NL/WL basis; as row 8                                       | ambiguitySeed / wavelength, in cycles (d)              | as row 8 (the same number, on a state in cycles)   |
          * | - | pruneAmbiguitiesExcept        | ambiguity prune (in the driver) | a key not in the keep set (rows 1 to 3)                     |                                                        |                                                    |
          * |10 | warnAmbiguityBandCount        | band count (no state)           | per-band basis; Dual or Triple                              |                                                        |                                                    |
          * |11 | markUnresolvableAmbiguities   | AR eligibility flags            | per-band basis (f)                                          |                                                        |                                                    |
-         * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then StateInitializer::initializeCodeBiases once    | initial_std.code_bias^2                            |
+         * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then initializeCodeBiases once (seedCodeBias)       | initial_std.code_bias^2                            |
          * |13 | ensureSatCodeBiasStates       | satellite code bias (user path) | estimate_sat_biases, not the network; uncovered code (h)    | the sat-bias cache, else the row's innovation (i)      | the cached variance, else initial_std.sat_bias^2   |
          *
          * Notes.  (a) GLONASS is skipped under BSSD unless enable_glonass_bssd.
@@ -686,7 +775,7 @@ namespace GnssProcessor {
         /**
          * @brief Slant ionosphere (uncombined): born for each satellite with a
          *        code or phase row; seeded from the geometry-free code pair
-         *        (@c StateInitializer::computeIonosphereSeed, reframed by the
+         *        (@c seedIonosphere, reframed by the
          *        network's LV-1 seed frame when installed), else 0 with ten times
          *        the initial std; pruned to the keep set.
          * @param observations This epoch's modeled observations.
@@ -710,7 +799,7 @@ namespace GnssProcessor {
          * @brief Cold receiver-clock pre-seed (network only:
          *        network.cold_clock_seed, once per station): no birth; seeds the
          *        receiver clock from the median GPS code residual
-         *        (@c StateInitializer::seedColdReceiverClock) before any
+         *        (@c seedColdClock) before any
          *        ambiguity is seeded.
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix.
@@ -720,7 +809,7 @@ namespace GnssProcessor {
 
         /**
          * @brief BSSD pivot seeds (no state written): each pivot's absolute
-         *        ambiguity seed per signal (@c StateManager::computeAmbiguitySeed),
+         *        ambiguity seed per signal (@ref ambiguitySeed),
          *        in cycles as NL and WL on the NL/WL basis; the non-pivot
          *        ambiguities are seeded relative to them.
          * @param observations This epoch's modeled observations.
@@ -732,7 +821,7 @@ namespace GnssProcessor {
         /**
          * @brief Per-band ambiguities: born for each phase key of the keep set,
          *        or re-seeded when pending reseed; seeded from
-         *        @c StateManager::computeAmbiguitySeed (minus the pivot's seed
+         *        @ref ambiguitySeed (minus the pivot's seed
          *        under BSSD, 0 for the pivot); initial std from the substituted-ATX
          *        override, else the StateManager default.
          * @param observations This epoch's modeled observations.
@@ -747,7 +836,7 @@ namespace GnssProcessor {
          * @brief NL/WL ambiguities (NL/WL basis): one NL (cycles on the reference
          *        band) and one WL per other band, born or re-seeded as the
          *        per-band ambiguities; seeded from
-         *        @c StateManager::computeAmbiguitySeed over the wavelengths
+         *        @ref ambiguitySeed over the wavelengths
          *        (pivot-relative under BSSD).
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix.

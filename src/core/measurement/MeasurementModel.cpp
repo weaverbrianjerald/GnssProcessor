@@ -33,6 +33,7 @@
 #include "model/PppModel.hpp"
 #include "common/PppTypes.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/ObservationEquation.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <stdexcept>
 #include <cmath>
@@ -59,7 +60,7 @@ namespace GnssProcessor {
     MeasurementModel::MeasurementModel(StateManager& state_manager, const PppModel& ppp_model,
         const GnssConfig& config, LogManager& log_manager)
         : state_manager_(state_manager), ppp_model_(ppp_model), config_(config), log_manager_(log_manager),
-          state_initializer_(config, ppp_model, state_manager, log_manager),
+          state_initializer_(config, ppp_model, log_manager),
           pivot_manager_(config, log_manager),
           bssd_transform_(config, state_manager, pivot_manager_, log_manager),
           dd_pivot_manager_(config, log_manager),
@@ -194,11 +195,11 @@ namespace GnssProcessor {
         // would freeze every non-GPS ISB at 0 for the whole session once GPS joins
         // later.  The seed is retried each epoch until GPS is present.
         if (!state_initializer_.isIsbInitialized()) {
-            if (state_initializer_.initializeInterSystemBiases(observations, epoch_prefix))
+            if (initializeInterSystemBiases(observations, epoch_prefix))
                 state_initializer_.markIsbInitialized();
         }
         if (!state_initializer_.isPhaseClockInitialized() && config_.estimatePhaseClock()) {
-            state_initializer_.initializePhaseClockOffset(observations, epoch_prefix);
+            initializePhaseClockOffset(observations, epoch_prefix);
             state_initializer_.markPhaseClockInitialized();
         }
 
@@ -218,7 +219,7 @@ namespace GnssProcessor {
 
         // --- First-epoch code bias seeding ---
         if (!state_initializer_.isCodeBiasInitialized() && config_.estimateIfb()) {
-            state_initializer_.initializeCodeBiases(observations, epoch_prefix);
+            initializeCodeBiases(observations, epoch_prefix);
             state_initializer_.markCodeBiasInitialized();
         }
 
@@ -401,7 +402,8 @@ namespace GnssProcessor {
         const std::string& epoch_prefix,
         bool forced_only)
     {
-        pivot_manager_.handlePivotHandover(observations, state_manager_, epoch_prefix, forced_only);
+        pivot_manager_.handlePivotHandover(observations, state_manager_, ambiguitySeedInput(),
+                                           epoch_prefix, forced_only);
     }
 
     // -------------------------------------------------------------------

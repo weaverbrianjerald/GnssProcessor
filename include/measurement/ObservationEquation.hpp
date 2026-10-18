@@ -61,6 +61,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <map>
 #include <string>
 
@@ -121,6 +122,45 @@ enum class ObsEffect : std::uint8_t {
 
 /// Number of @ref ObsEffect enumerators.
 inline constexpr std::size_t kObsEffectCount = 15;
+
+/**
+ * @brief A set of effects: the terms a caller asks @ref observationEquation to build.
+ *
+ * A plain bit set, one bit per @ref ObsEffect.  A row that enters the update asks for every
+ * effect; a seed asks for the effects it knows (measurement/Seeds.hpp), so a term it leaves
+ * out is neither looked up nor required (a seed for an ambiguity is formed before the
+ * ambiguity exists).
+ */
+struct ObsEffects {
+    std::uint32_t bits{0};  ///< Bit @c k set when the effect with value @c k is in the set.
+
+    /// @return True when @p effect is in the set.
+    constexpr bool has(ObsEffect effect) const {
+        return ((bits >> static_cast<unsigned>(effect)) & 1u) != 0u;
+    }
+    /// @return The set with @p effect added.
+    constexpr ObsEffects with(ObsEffect effect) const {
+        return ObsEffects{bits | (1u << static_cast<unsigned>(effect))};
+    }
+    /// @return The set with @p effect removed.
+    constexpr ObsEffects without(ObsEffect effect) const {
+        return ObsEffects{bits & ~(1u << static_cast<unsigned>(effect))};
+    }
+};
+
+/**
+ * @brief The set of the listed effects.
+ * @param list The effects.
+ * @return The set.
+ */
+constexpr ObsEffects effectsOf(std::initializer_list<ObsEffect> list) {
+    ObsEffects set;
+    for (const ObsEffect effect : list) set = set.with(effect);
+    return set;
+}
+
+/// Every effect: what a row that enters the update asks for.
+inline constexpr ObsEffects kAllEffects{(1u << kObsEffectCount) - 1u};
 
 /**
  * @brief The name of an effect, as the traces and the check report print it.
@@ -245,6 +285,19 @@ struct ObsTermValues {
 // =======================================================================
 
 /**
+ * @brief The GLONASS channel at which the carrier frequency of an FDMA band (G1, G2) is taken.
+ *
+ * Only the slant ionosphere term scales by a carrier frequency.  The row builder takes the
+ * frequency of each satellite's own channel from the frequency helper.  The ambiguity seed has
+ * always taken channel 0 for every satellite; @ref Zero keeps that number until the seeds'
+ * frequency rule is decided.  Every other band has one frequency and does not depend on the rule.
+ */
+enum class FdmaChannel : std::uint8_t {
+    Satellite = 0,  ///< The satellite's channel, from @ref ObsInput::ppp_utils.
+    Zero,           ///< Channel 0, whatever the satellite's channel.
+};
+
+/**
  * @brief What the equation reads besides the observation and the parameters.
  *
  * Non-owning references built per call by the owner of the model.
@@ -254,6 +307,7 @@ struct ObsInput {
     const PppUtils&                   ppp_utils;      ///< Frequencies and wavelengths (GLONASS slots seeded).
     const StateInitializer*           receiver_bias;  ///< Resolver of the receiver code-bias state of a code signal; null: none.
     const std::map<std::string, char>& nlwl_ref_band; ///< Per satellite, the NL/WL basis' reference band digit.
+    FdmaChannel                       fdma{FdmaChannel::Satellite};  ///< Channel of the FDMA bands' frequency.
 };
 
 /**
@@ -270,14 +324,36 @@ struct ObsInput {
  * Throws @c std::out_of_range when the observation has no modeled value for @p ref_type, as
  * the row builder always has; the row loop catches it.
  *
+ * With @p effects set to fewer than all effects the equation holds only those terms, and a
+ * term left out is neither looked up nor able to make the row unusable.  A seed uses this
+ * (measurement/Seeds.hpp).
+ *
  * @param in       Configuration, tables, SSR store, frequency helper, receiver-bias resolver.
  * @param obs      The satellite's modeled observation.
  * @param ref_type The signal (a RINEX code, or an iono-free pair "a_b").
  * @param params   The caller's parameters.
+ * @param effects  The terms to build (default: all).
  * @return The equation; @c usable is false (and @c fault says why) when the row cannot be built.
  */
 ObservationEquation observationEquation(const ObsInput& in, const PppObservation& obs,
-                                        const std::string& ref_type, const ParamLookup& params);
+                                        const std::string& ref_type, const ParamLookup& params,
+                                        ObsEffects effects = kAllEffects);
+
+/**
+ * @brief The term of one effect.
+ * @param eq     The equation.
+ * @param effect The effect.
+ * @return The term, or null when the row has none (the effect is not in the equation).
+ */
+const ObsAddend* findTerm(const ObservationEquation& eq, ObsEffect effect);
+
+/**
+ * @brief The value of one term of an equation.
+ * @param eq   The equation the term belongs to.
+ * @param term One of its terms.
+ * @return The term's value (m): its constant, or its factor times the sum of its parts.
+ */
+double termValue(const ObservationEquation& eq, const ObsAddend& term);
 
 /**
  * @brief The predicted observable: the terms added left to right.

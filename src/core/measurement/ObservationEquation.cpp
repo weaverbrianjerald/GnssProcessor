@@ -68,6 +68,10 @@ struct Row {
     bool                    is_uncombined;
     bool                    is_pair;   ///< The signal is an iono-free pair "a_b".
     std::optional<SatId>    sat;       ///< The canonical satellite, when the text is one.
+    ObsEffects              effects;   ///< The terms the caller asked for.
+
+    /// Whether the caller asked for the term of @p effect.
+    bool wants(ObsEffect effect) const { return effects.has(effect); }
 
     /// Ends the row as unusable.
     bool fail(ObsFault fault) const {
@@ -111,12 +115,14 @@ bool addTerm(Row& r, ObsEffect effect, const ParamRef& ref, double partial) {
 
 /// The a-priori model value.  Throws when the observation has none.
 void addModeled(Row& r) {
+    if (!r.wants(ObsEffect::Modeled)) return;
     ObsAddend& a = open(r.eq, ObsEffect::Modeled);
     a.constant = r.obs.modeled.at(r.ref_type);
 }
 
 /// Minus the line of sight dotted with the position's offset from the linearization point.
 void addRangeCorrection(Row& r) {
+    if (!r.wants(ObsEffect::RangeCorrection)) return;
     std::array<ParamSlot, 3> slot;
     for (std::uint8_t axis = 0; axis < 3; ++axis) {
         slot[axis] = r.params.find(rxPositionRef(axis));
@@ -130,17 +136,20 @@ void addRangeCorrection(Row& r) {
 
 /// The receiver clock and, on phase rows, the phase-clock offset (+1 each).
 void addClocks(Row& r) {
-    addTerm(r, ObsEffect::ReceiverClock, rxClockRef(), 1.0);
-    if (r.is_phase) addTerm(r, ObsEffect::PhaseClock, phaseClockRef(), 1.0);
+    if (r.wants(ObsEffect::ReceiverClock)) addTerm(r, ObsEffect::ReceiverClock, rxClockRef(), 1.0);
+    if (r.is_phase && r.wants(ObsEffect::PhaseClock))
+        addTerm(r, ObsEffect::PhaseClock, phaseClockRef(), 1.0);
 }
 
 /// The zenith wet delay times the wet mapping function.
 void addTroposphere(Row& r) {
+    if (!r.wants(ObsEffect::Troposphere)) return;
     addTerm(r, ObsEffect::Troposphere, zwdRef(), r.obs.mf_w);
 }
 
 /// The horizontal gradients: mf_grad * (cos(az) * g_north + sin(az) * g_east).
 void addGradients(Row& r) {
+    if (!r.wants(ObsEffect::TropoGradient)) return;
     const ParamRef north = gradientRef(true);
     const ParamRef east  = gradientRef(false);
     const ParamSlot sn = r.params.find(north);
@@ -163,19 +172,29 @@ void addGradients(Row& r) {
 
 /// The inter-system bias of a constellation other than the time reference (+1).
 void addSystemTimeOffset(Row& r) {
-    if (!hasInterSystemBias(r.obs.system)) return;
+    if (!r.wants(ObsEffect::SystemTimeOffset) || !hasInterSystemBias(r.obs.system)) return;
     addTerm(r, ObsEffect::SystemTimeOffset, isbRef(r.obs.system), 1.0);
+}
+
+/// The carrier frequency of the row's signal under the input's FDMA rule: the frequency
+/// helper's, except that a GLONASS FDMA band under @ref FdmaChannel::Zero is taken at channel 0.
+/// @return The frequency (Hz); zero or negative when the helper does not know the signal.
+double carrierFrequency(const Row& r) {
+    if (r.in.fdma == FdmaChannel::Zero && r.obs.system == System::GLONASS
+        && r.ref_type.size() >= 2 && (r.ref_type[1] == '1' || r.ref_type[1] == '2'))
+        return nominalCarrierFrequencyOfDigitHz(System::GLONASS, r.ref_type[1]);
+    return r.in.ppp_utils.getFrequency(r.ref_type, r.obs.system, r.obs.satellite);
 }
 
 /// The per-satellite slant ionosphere: +alpha on code, -alpha on phase, alpha the squared
 /// frequency ratio against GPS L1.
 bool addIonosphere(Row& r) {
-    if (!r.is_uncombined) return true;
+    if (!r.wants(ObsEffect::Ionosphere) || !r.is_uncombined) return true;
     if (!r.needSat()) return false;
     const ParamRef ref = slantIonoRef(*r.sat);
     const ParamSlot slot = r.params.find(ref);
     if (slot.column < 0) return true;
-    const double freq = r.in.ppp_utils.getFrequency(r.ref_type, r.obs.system, r.obs.satellite);
+    const double freq = carrierFrequency(r);
     if (!(freq > 0.0)) return true;
     const double f_ref = Constants::GPS_L1_FREQ;
     const double alpha = (f_ref * f_ref) / (freq * freq);
@@ -186,7 +205,7 @@ bool addIonosphere(Row& r) {
 /// The receiver code bias (uncombined code rows): the state and coefficient the resolver
 /// names for the signal.
 void addReceiverCodeBias(Row& r) {
-    if (!r.cfg.estimateIfb() || !r.is_uncombined || r.is_phase || r.in.receiver_bias == nullptr)
+    if (!r.wants(ObsEffect::ReceiverCodeBias) || !r.cfg.estimateIfb() || !r.is_uncombined || r.is_phase || r.in.receiver_bias == nullptr)
         return;
     const auto bias = r.in.receiver_bias->resolveReceiverBias(r.ref_type, r.obs.system,
                                                               r.obs.satellite);
@@ -197,7 +216,8 @@ void addReceiverCodeBias(Row& r) {
 /// The per-satellite signal code bias (code rows; phase ambiguities absorb the satellite
 /// phase bias): a raw code in uncombined mode, an iono-free pair of codes otherwise.
 bool addSatelliteCodeBias(Row& r) {
-    if (!r.cfg.estimateSatBiases() || r.is_phase) return true;
+    if (!r.wants(ObsEffect::SatelliteCodeBias) || !r.cfg.estimateSatBiases() || r.is_phase)
+        return true;
     if (r.is_uncombined == r.is_pair) return true;   // uncombined: raw only; combined: pair only
     if (!r.needSat()) return false;
     ParamRef ref;
@@ -219,7 +239,8 @@ bool addSatelliteCodeBias(Row& r) {
 /// appears on exactly the rows whose satellite phase bias exists, with the sign of the
 /// ambiguity column it splits, so it is part of the same term.
 bool addSatellitePhaseBias(Row& r) {
-    if (!r.cfg.estimateSatPhaseBiases() || !r.is_phase || !r.is_uncombined || r.is_pair)
+    if (!r.wants(ObsEffect::SatellitePhaseBias) || !r.cfg.estimateSatPhaseBiases()
+        || !r.is_phase || !r.is_uncombined || r.is_pair)
         return true;
     if (!r.needSat()) return false;
     const auto phase = canonicalSignal(r.sat->sys, r.ref_type);
@@ -241,7 +262,8 @@ bool addSatellitePhaseBias(Row& r) {
 /// The per-satellite clock (uncombined rows, network producer): one clock per satellite,
 /// shared by all signals.
 bool addSatelliteClock(Row& r) {
-    if (!r.cfg.estimateSatClocks() || !r.is_uncombined) return true;
+    if (!r.wants(ObsEffect::SatelliteClock) || !r.cfg.estimateSatClocks() || !r.is_uncombined)
+        return true;
     if (!r.needSat()) return false;
     addTerm(r, ObsEffect::SatelliteClock, satClockRef(*r.sat), kSatClockPartial);
     return true;
@@ -250,6 +272,7 @@ bool addSatelliteClock(Row& r) {
 /// The SSR satellite bias as a known term (no parameter).  The network producer estimates
 /// the biases as states, so it takes none: importing the same quantity would double-count it.
 void addSsrBias(Row& r) {
+    if (!r.wants(ObsEffect::SsrBias)) return;
     if (r.cfg.getProcessingMode() == ProcessingMode::PPP_RTK_Network) return;
     const SsrCorrectionStore& ssr = r.in.products.ssr;
     const bool   gate    = r.cfg.enableSsrBiasMaxAge();   // reject stale biases by obs-vs-record age
@@ -269,28 +292,32 @@ void addSsrBias(Row& r) {
 }
 
 /// The phase-colour state of the line of sight (+1 on every phase row of the satellite).
-void addPhaseColour(Row& r) {
-    if (!r.cfg.getNetworkConfig().phase_colour_state) return;
+bool addPhaseColour(Row& r) {
+    if (!r.wants(ObsEffect::PhaseColour) || !r.cfg.getNetworkConfig().phase_colour_state)
+        return true;
+    if (!r.needSat()) return false;
     addTerm(r, ObsEffect::PhaseColour, phaseColourRef(*r.sat), 1.0);
+    return true;
 }
 
-/// The ambiguity of a per-band row: +1 on its own state.
+/// The ambiguity of a per-band row: +1 on its own state; then the line of sight's phase
+/// colour, which sits on every phase row of the satellite on both bands.
 bool addPerBandAmbiguity(Row& r) {
-    if (!r.needSat()) return false;
-    ParamRef ref;
-    if (r.is_pair) {
-        const auto pair = canonicalPair(r.sat->sys, r.ref_type);
-        if (!pair) return r.fail(ObsFault::UnmappedIdentity);
-        ref = ambiguityIfRef(*r.sat, *pair);
-    } else {
-        const auto phase = canonicalSignal(r.sat->sys, r.ref_type);
-        if (!phase) return r.fail(ObsFault::UnmappedIdentity);
-        ref = ambiguityRef(*r.sat, *phase);
+    if (r.wants(ObsEffect::Ambiguity)) {
+        if (!r.needSat()) return false;
+        ParamRef ref;
+        if (r.is_pair) {
+            const auto pair = canonicalPair(r.sat->sys, r.ref_type);
+            if (!pair) return r.fail(ObsFault::UnmappedIdentity);
+            ref = ambiguityIfRef(*r.sat, *pair);
+        } else {
+            const auto phase = canonicalSignal(r.sat->sys, r.ref_type);
+            if (!phase) return r.fail(ObsFault::UnmappedIdentity);
+            ref = ambiguityRef(*r.sat, *phase);
+        }
+        if (!addTerm(r, ObsEffect::Ambiguity, ref, 1.0)) return r.fail(ObsFault::NoAmbiguity);
     }
-    if (!addTerm(r, ObsEffect::Ambiguity, ref, 1.0)) return r.fail(ObsFault::NoAmbiguity);
-    // The line of sight's phase colour: +1 on every phase row of the satellite, both bands.
-    addPhaseColour(r);
-    return true;
+    return addPhaseColour(r);
 }
 
 /// The ambiguity of an NL/WL-basis row.  The state holds NL_ref (cycles, the carrier
@@ -300,6 +327,7 @@ bool addPerBandAmbiguity(Row& r) {
 ///     N_b = NL_ref - s * WL_<a>_<z>      (b != ref)
 /// s = +1 when the reference band is the lower of the pair, -1 when it is the higher.
 bool addNlWlAmbiguity(Row& r) {
+    if (!r.wants(ObsEffect::Ambiguity)) return true;
     if (r.ref_type.size() < 2) return r.fail(ObsFault::NlWlReference);
     const auto rb_it = r.in.nlwl_ref_band.find(r.obs.satellite);
     if (rb_it == r.in.nlwl_ref_band.end()) return r.fail(ObsFault::NlWlReference);
@@ -338,21 +366,6 @@ bool addAmbiguity(Row& r) {
                                                                        : addPerBandAmbiguity(r);
 }
 
-/// The value of one term.
-double addendValue(const ObservationEquation& eq, const ObsAddend& a) {
-    if (a.effect == ObsEffect::RangeCorrection) {
-        // The dot product of the line of sight and the offset, as the filter has always
-        // formed it (its partials are minus the line of sight).
-        const Eigen::Vector3d los(-a.part[0].partial, -a.part[1].partial, -a.part[2].partial);
-        const Eigen::Vector3d pos(a.part[0].x, a.part[1].x, a.part[2].x);
-        return -los.dot(pos - eq.range_origin);
-    }
-    if (a.n_part == 0) return a.constant;
-    double sum = a.part[0].partial * a.part[0].x;
-    for (std::uint8_t k = 1; k < a.n_part; ++k) sum += a.part[k].partial * a.part[k].x;
-    return a.scale * sum;
-}
-
 } // namespace
 
 // =======================================================================
@@ -381,14 +394,16 @@ const char* obsEffectName(ObsEffect effect) {
 }
 
 ObservationEquation observationEquation(const ObsInput& in, const PppObservation& obs,
-                                        const std::string& ref_type, const ParamLookup& params) {
+                                        const std::string& ref_type, const ParamLookup& params,
+                                        ObsEffects effects) {
     ObservationEquation eq;
     const MeasurementType type = classifyMeasurement(ref_type);
     Row r{in, in.products.config, obs, ref_type, params, eq,
           /*is_phase=*/type == MeasurementType::Phase,
           /*is_uncombined=*/in.products.config.isUncombinedEnabled(),
           /*is_pair=*/ref_type.find('_') != std::string::npos,
-          canonicalSat(obs.satellite)};
+          canonicalSat(obs.satellite),
+          effects};
     if (type == MeasurementType::Doppler) {
         r.fail(ObsFault::NotCodeOrPhase);
         return eq;
@@ -409,11 +424,31 @@ ObservationEquation observationEquation(const ObsInput& in, const PppObservation
     return eq;
 }
 
+const ObsAddend* findTerm(const ObservationEquation& eq, ObsEffect effect) {
+    for (std::uint8_t i = 0; i < eq.n; ++i)
+        if (eq.addend[i].effect == effect) return &eq.addend[i];
+    return nullptr;
+}
+
+double termValue(const ObservationEquation& eq, const ObsAddend& a) {
+    if (a.effect == ObsEffect::RangeCorrection) {
+        // The dot product of the line of sight and the offset, as the filter has always
+        // formed it (its partials are minus the line of sight).
+        const Eigen::Vector3d los(-a.part[0].partial, -a.part[1].partial, -a.part[2].partial);
+        const Eigen::Vector3d pos(a.part[0].x, a.part[1].x, a.part[2].x);
+        return -los.dot(pos - eq.range_origin);
+    }
+    if (a.n_part == 0) return a.constant;
+    double sum = a.part[0].partial * a.part[0].x;
+    for (std::uint8_t k = 1; k < a.n_part; ++k) sum += a.part[k].partial * a.part[k].x;
+    return a.scale * sum;
+}
+
 double evaluate(const ObservationEquation& eq, ObsTermValues* terms) {
     double predicted = 0.0;
     for (std::uint8_t i = 0; i < eq.n; ++i) {
         const ObsAddend& a = eq.addend[i];
-        const double v = addendValue(eq, a);
+        const double v = termValue(eq, a);
         if (terms != nullptr) terms->value[static_cast<std::size_t>(a.effect)] = v;
         if (i == 0) predicted = v;
         else        predicted += v;

@@ -3,29 +3,28 @@
 
 /**
  * @file StateInitializer.hpp
- * @brief First-epoch state seeding for inter-system biases, phase clock, code
- *        biases, and the (network) cold receiver clock.
+ * @brief The one-shot latches of the first-epoch state seeding, the receiver code-bias
+ *        resolver, and the warm resume's code-bias restore.
  *
- * StateInitializer holds the one-shot initialization logic that runs on the
- * first epoch and seeds, from code and phase observation residuals, the ISB,
- * the phase clock offset, the receiver DCB/IFB and (on the network path, opt-in)
- * the cold receiver clock.  Keeping it out of MeasurementModel keeps the
- * per-epoch hot path readable and gathers the initialization helpers
- * (computeRawResidual, resolveReceiverBias, computeIonosphereSeed,
- * computeMedian) in one place.
+ * The values of the seeds (inter-system biases, phase clock, receiver DCB/IFB, the cold
+ * receiver clock, the slant ionosphere, the ambiguities) are pure functions of the observation
+ * equation in measurement/Seeds.hpp; the single-receiver model applies them to its
+ * @c StateManager (MeasurementModelSeeds.cpp).  StateInitializer keeps what is not a function
+ * of the observations and the parameters: which seeds have run (the latches), which receiver
+ * code-bias state and coefficient a signal maps to (@ref resolveReceiverBias), the
+ * linearization points a warm resume installs in place of the median code-bias seed, and the
+ * frequency helper the seeds scale the ionosphere by.  It holds no state vector.
  */
 
 #include "config/GnssConfig.hpp"
-#include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 #include "common/ParamRef.hpp"
 #include "common/PppTypes.hpp"
-#include <Eigen/Dense>
+#include "common/PppUtils.hpp"
 #include <cmath>
 #include <map>
 #include <optional>
 #include <string>
-#include <vector>
 
 // Forward declarations
 namespace GnssProcessor {
@@ -36,85 +35,16 @@ namespace GnssProcessor {
 
 /**
  * @class StateInitializer
- * @brief Seeds first-epoch filter states from observation residuals.
+ * @brief The latches of the first-epoch seeding and the receiver code-bias resolver.
  *
- * Owns the initialization flags and provides four entry points:
- *   - initializeInterSystemBiases()
- *   - initializePhaseClockOffset()
- *   - initializeCodeBiases()
- *   - seedColdReceiverClock()   (network cold-start clock leak; opt-in)
- *
- * Also exposes helpers used by MeasurementModel during the state pre-pass
- * and Jacobian assembly (computeIonosphereSeed, resolveReceiverBias,
- * computeRawResidual).
+ * Owns the initialization flags, the resolver used by the Jacobian row and the code-bias seed,
+ * the code-bias restore of a warm resume, and the frequency helper of the seeds.
  */
 class StateInitializer {
 public:
     StateInitializer(const GnssConfig& config,
                      const PppModel& ppp_model,
-                     StateManager& state_manager,
                      LogManager& log_manager);
-
-    // -------------------------------------------------------------------
-    // First-epoch initialization entry points
-    // -------------------------------------------------------------------
-
-    /**
-     * @brief Initialize inter-system biases from first-epoch code observations.
-     *
-     * Computes the median code residual per system relative to GPS.
-     *
-     * @return @c true if initialization completed (GPS reference present, so the
-     *         ISB seeds are final); @c false if no GPS code observation was
-     *         available this epoch.  Latch "ISB initialized" on @c true only.
-     *         Latching on @c false would mark the bias done without a seed when
-     *         GPS joins after the first estimating epoch, and every non-GPS ISB
-     *         would then stay at 0 for the session.
-     */
-    bool initializeInterSystemBiases(const std::vector<PppObservation>& observations,
-                                      const std::string& epoch_prefix);
-
-    /**
-     * @brief Seed the phase clock offset from the code-minus-phase residual difference.
-     */
-    void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
-                                     const std::string& epoch_prefix);
-
-    /**
-     * @brief Seed DCB/IFB states from cross-band code residual differences.
-     *
-     * Must be called after ensureRequiredStates() has created the code-bias
-     * states and after ionosphere states have been seeded.
-     */
-    void initializeCodeBiases(const std::vector<PppObservation>& observations,
-                               const std::string& epoch_prefix);
-
-    /**
-     * @brief Pre-seed a cold receiver clock from GPS code residuals.
-     *
-     * Writes the median GPS code residual, which is the GPS-referenced receiver
-     * clock, into @c x(getClockIndex()).  GPS alone is the correct datum because
-     * the ISB states carry the inter-system offsets.  On the PPP-RTK network path
-     * nothing else pre-solves the receiver clock before @c ensureRequiredStates
-     * first seeds ambiguities; without this seed the whole free-running clock
-     * offset enters every cold ambiguity seed uniformly (see
-     * @c GnssConfig::networkColdClockSeed).  Call it once per station, before the
-     * ambiguity-seed loop and after the iono seed (so @c computeRawResidual can
-     * remove the seeded slant iono from the code residual).
-     *
-     * Acts only while the clock is cold (|state| at most 1e-6 m), so it never
-     * overwrites a clock already seeded by the PPP path's
-     * @c StateManager::syncPppStateToStateVector.
-     *
-     * @return @c true when the pre-seed is settled and the caller should latch it
-     *         (clock seeded from GPS code, or already not cold, or no clock state
-     *         in this configuration); @c false when the clock is cold and no GPS
-     *         code observation was available this epoch.  On @c false, do not
-     *         latch; retry next epoch (the same contract as
-     *         @ref initializeInterSystemBiases).
-     */
-    bool seedColdReceiverClock(const std::vector<PppObservation>& observations,
-                                const std::string& epoch_prefix);
 
     // -------------------------------------------------------------------
     // Initialization flags (queried/set by MeasurementModel orchestrator)
@@ -151,29 +81,6 @@ public:
                                            System system,
                                            const std::string& satellite) const;
 
-    /**
-     * @brief Compute a "raw" residual for an observation/ref_type pair.
-     *
-     * residual = observed - modeled - rx_clk - mf_w*zwd - isb - tropo_grad
-     *          - iono - code_bias - sat_bias
-     */
-    double computeRawResidual(const PppObservation& obs,
-                               const std::string& ref_type,
-                               const Eigen::VectorXd& x) const;
-
-    /**
-     * @brief Compute ionosphere seed from dual-frequency code pseudoranges.
-     *
-     * Only code signals with valid (non-zero, in-product) BIA coverage are
-     * used.  `(P - mod)` for an uncovered signal carries the raw satellite
-     * code bias, which would bias the iono seed by tens of metres.
-     * Returns the first seed from a pair of distinct bands that is finite and
-     * below 200 m in magnitude, or std::nullopt when no such pair exists.  On
-     * std::nullopt the caller falls back to seed = 0 with an inflated initial
-     * variance, so the filter does not weight the zero too tightly.
-     */
-    std::optional<double> computeIonosphereSeed(const PppObservation& obs) const;
-
     // -------------------------------------------------------------------
     // Code-bias linearization point restore (RS-9)
     // (docs/SPEC_event_harness.md §21.18)
@@ -181,10 +88,11 @@ public:
 
     /**
      * @brief Install the writer's code-bias linearization points for this
-     *        station, used in place of @ref initializeCodeBiases' one-shot
-     *        median seed on the station's first processed epoch.
+     *        station, used in place of the one-shot median seed
+     *        (@c seedCodeBias) on the station's first processed epoch.
      *
-     * Rationale.  @ref initializeCodeBiases seeds @c x(cb) once, from one epoch
+     * Rationale.  The code-bias seed (@c MeasurementModel::initializeCodeBiases)
+     * seeds @c x(cb) once, from one epoch
      * of code, behind the one-shot @c isCodeBiasInitialized() latch, and nothing
      * writes it back.  For the solve that value is only a linearization point (a
      * code bias enters linearly, so shifting it is an exact solve no-op;
@@ -234,13 +142,43 @@ public:
     /// Entries installed by @ref setCodeBiasSeedOverride (0 = nothing restored).
     std::size_t codeBiasSeedOverrideSize() const { return code_bias_seed_override_.size(); }
 
+    /// The installed linearization points by key text (empty: none).
+    const std::map<std::string, double>& codeBiasSeedOverride() const {
+        return code_bias_seed_override_;
+    }
+
+    /**
+     * @brief Counts the outcome of one covered key of the restore.
+     *
+     * The seeding function decides which keys the installed map applies to
+     * (@c seedCodeBias); the model reports each to the station's out-slots here.
+     *
+     * @param applied True when the key was seeded from the map, false when the map covered
+     *                it but its value could not be used.
+     */
+    void noteCodeBiasRestore(bool applied) {
+        long long* slot = applied ? cb_seed_override_applied_ : cb_seed_override_uncovered_;
+        if (slot != nullptr) ++*slot;
+    }
+
+    /**
+     * @brief The frequency helper the seeds scale the slant ionosphere by.
+     *
+     * Its GLONASS channels are the default table, never the receiver's (nothing seeds
+     * them), which is the number the seeds have always used; the model's own helper
+     * (seeded from the RINEX header) belongs to the Jacobian row.
+     *
+     * @return The helper.
+     */
+    const PppUtils& frequencyHelper() const { return ppp_utils_; }
+
     /**
      * @brief The RS-9 seed decision for one code-bias key.
      *
      * Static and free of member state so that a unit test can pin the rule:
      * constructing a @c StateInitializer requires @c PppModel, which pulls in
      * @c ProductParser and @c RinexParser, and no test at this tier builds that
-     * chain.  @ref initializeCodeBiases calls this function.
+     * chain.  @c seedCodeBias calls this function.
      *
      * @param overrides  The installed map (empty ⇒ always @c std::nullopt, which
      *                   is the path taken when RS-9 is not armed).
@@ -288,8 +226,6 @@ public:
 private:
     const GnssConfig& config_;
     const PppModel& ppp_model_;
-    StateManager& state_manager_;
-    LogManager& log_manager_;
     PppUtils ppp_utils_;
 
     bool isb_initialized_ = false;

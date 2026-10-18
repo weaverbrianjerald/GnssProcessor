@@ -6,6 +6,7 @@
 
 #include "filter/PivotManager.hpp"
 #include "filter/CovarianceReReference.hpp"
+#include "measurement/Seeds.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -563,6 +564,7 @@ void PivotManager::requestForcedHandover(const std::string& constellation,
 void PivotManager::handlePivotHandover(
     const std::vector<PppObservation>& observations,
     StateManager& state_manager,
+    const ObsInput& seed_input,
     const std::string& epoch_prefix,
     bool forced_only,
     const std::set<std::string>& exclude_sats) {
@@ -786,8 +788,8 @@ void PivotManager::handlePivotHandover(
                             }
                         }
                     }
-                    sd_seed = state_manager.computeAmbiguitySeed(*obs_old, sig, x)
-                            - state_manager.computeAmbiguitySeed(*obs_new, new_sig, x);
+                    sd_seed = seedAmbiguityOfState(seed_input, state_manager, x, *obs_old, sig)
+                            - seedAmbiguityOfState(seed_input, state_manager, x, *obs_new, new_sig);
                 }
 
                 log->info("{}  Re-seed disturbed {}: {:.4f} -> {:.4f} (std={:.1f})",

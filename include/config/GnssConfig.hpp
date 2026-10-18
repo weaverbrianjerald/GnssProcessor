@@ -1777,13 +1777,13 @@ namespace GnssProcessor {
          * @c StateManager::syncPppStateToStateVector (the PPP/user-path writer of
          * @c x(clockIndex) from a code clock) is not called from
          * @c ApplicationNetwork, so the clock state is 0 at the first epoch.
-         * @c StateManager::computeAmbiguitySeed subtracts @c clk_term=x(clock)=0,
+         * the ambiguity seed (@c seedAmbiguity) subtracts the clock term x(clock)=0,
          * so a free-running receiver's entire clock offset (e.g. 0.856 ms →
          * 2.6e5 m) enters every cold ambiguity seed uniformly: the cold-start clock
          * leak into the ambiguity seeds.
          *
          * When on, @c MeasurementModel::ensureRequiredStates calls
-         * @c StateInitializer::seedColdReceiverClock once per station (before the
+         * @c seedColdClock once per station (before the
          * ambiguity-seed loop, after the iono seed) to write the median GPS code
          * residual (the GPS-referenced receiver clock) into @c x(clockIndex);
          * the existing @c clk_term subtraction then removes it from every seed.
@@ -2966,7 +2966,7 @@ namespace GnssProcessor {
          * @c last_seen_s, the @c RC rows) and leaves its reference cold.  The gate's only
          * statistic is @f$|value\_abs - x\_lin(cb)|@f$ against a fixed 5.13 m bar (k = 10,
          * guard 0.25 m², @c var_eff p50 1.3e-2 m²), and @c x_lin(cb) is the one-shot seed
-         * @c StateInitializer::initializeCodeBiases writes on the station's first processed
+         * @c MeasurementModel::initializeCodeBiases writes on the station's first processed
          * epoch; on a resumed leg that comes from the resume epoch's code instead of the
          * writer's start of day.  Without this knob, stations whose seed differs fall
          * outside the bar every epoch of the leg: their carry is refreshed and refused

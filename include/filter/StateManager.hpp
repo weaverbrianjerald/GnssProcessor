@@ -851,46 +851,6 @@ namespace GnssProcessor {
                                  double value, size_t expect_idx);
 
         /**
-         * @brief Compute an approximate ambiguity seed value from an observation.
-         *
-         * The seed is computed as:
-         *   seed = observed - modeled - rx_clock - (mf_w * zwd) - isb - tropo_grad - iono
-         *
-         * where rx_clock (plus the phase-clock offset when estimated), zwd, the
-         * inter-system time offset (isb) and the tropospheric gradient contribution
-         * are read from the supplied state vector at the standard core-state
-         * indices.  In uncombined mode, for a phase key of a satellite with a
-         * slant-iono state I_s, iono = −α·I_s with α = (f_L1/f)² for the key's
-         * band; otherwise iono = 0.  This centralizes the formula used when creating new
-         * ambiguities and when re-seeding ambiguities after cycle-slip or outlier
-         * detection.
-         *
-         * @param obs        The PppObservation containing observed/modeled values and wet mapping factor.
-         * @param ref_type   The key into obs.observed / obs.modeled: an iono-free pair
-         *                   (e.g. "L1C_L2W"), or a single signal in uncombined mode (e.g. "L1C").
-         * @param x          State vector from which rx clock, ZWD, ISB, gradients and iono are read.
-         * @return Approximate ambiguity value in meters, or 0.0 on failure.
-         */
-        double computeAmbiguitySeed(const PppObservation& obs,
-                                    const std::string& ref_type,
-                                    const Eigen::VectorXd& x) const;
-
-        /**
-         * @brief The carrier frequency (Hz) of a band digit that @ref computeAmbiguitySeed
-         *        scales the slant ionosphere with.
-         *
-         * Read-only access to the seed's own frequency table, so that the observation-equation
-         * check can report where it differs from the frequency source of the row builder
-         * (@c PppUtils::getFrequency) and from the identity layer.  The GLONASS FDMA bands
-         * return the slot-0 frequency; a band the system does not use returns its band 1.
-         *
-         * @param band   The RINEX band digit ('1', '2', '5', ...).
-         * @param system The constellation.
-         * @return The frequency (Hz).
-         */
-        static double ambiguitySeedFrequencyHz(char band, System system);
-
-        /**
          * @brief Update a PppState object from a raw state-vector representation.
          *
          * Copies position, clock, ZWD and, when present, velocity, phase clock and

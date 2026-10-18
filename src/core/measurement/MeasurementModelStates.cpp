@@ -6,8 +6,9 @@
  * Owns the births, seeds and prunes of the dynamic states a single-receiver
  * epoch requires (slant ionosphere, phase colour, per-band or NL/WL
  * ambiguities with the BSSD pivot-relative seeds, receiver and satellite code
- * biases), the network cold receiver-clock pre-seed, the marks that keep an
- * ambiguity out of AR, and the band-count warning.  ensureRequiredStates calls
+ * biases), the marks that keep an ambiguity out of AR, and the band-count
+ * warning; the network cold receiver-clock pre-seed it calls is in
+ * MeasurementModelSeeds.cpp with the other seeds.  ensureRequiredStates calls
  * one member per category in a fixed order; the order is a dependency chain
  * (the ionosphere is seeded before the clock pre-seed and the ambiguities, the
  * pivot seeds before the non-pivot seeds, the satellite code-bias seed reads
@@ -19,6 +20,7 @@
  */
 
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/Seeds.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
@@ -266,7 +268,14 @@ namespace GnssProcessor {
                     state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
                 }
 
-                const auto iono_seed_opt = state_initializer_.computeIonosphereSeed(obs);
+                const auto iono_seed_opt = seedIonosphere(residualSeedInput(), obs);
+                if (iono_seed_opt.has_value())
+                    log_manager_.getLogger("state_initializer")->debug(
+                        "Iono seed for {} from {}/{}: P1-mod1={:.3f}, P2-mod2={:.3f}, "
+                        "alpha1={:.4f}, alpha2={:.4f}, seed={:.3f} m",
+                        obs.satellite, iono_seed_opt->code_a, iono_seed_opt->code_b,
+                        iono_seed_opt->range_a_m, iono_seed_opt->range_b_m,
+                        iono_seed_opt->alpha_a, iono_seed_opt->alpha_b, iono_seed_opt->value_m);
                 // When no BIA-covered code pair is available, the seed
                 // would otherwise inherit raw differential code biases
                 // (e.g. BeiDou with placeholder zero-valued BIA entries).
@@ -274,7 +283,7 @@ namespace GnssProcessor {
                 // filter freely converges to the true iono via subsequent
                 // measurements rather than trusting the zero too tightly.
                 constexpr double kUnseededIonoStdScale = 10.0;
-                const double iono_seed = iono_seed_opt.value_or(0.0);
+                const double iono_seed = iono_seed_opt ? iono_seed_opt->value_m : 0.0;
                 const double std_scale = iono_seed_opt.has_value() ? 1.0 : kUnseededIonoStdScale;
                 state_manager_.addIonosphereState(obs.satellite, iono_seed, std_scale);
                 log_manager_.getLogger("measurement_model")->debug(
@@ -315,26 +324,6 @@ namespace GnssProcessor {
         state_manager_.prunePhaseColourStatesExcept(keep);
     }
 
-    void MeasurementModel::preseedColdReceiverClock(const std::vector<PppObservation>& observations,
-                                                    const std::string& epoch_prefix) {
-        // --- Cold-start receiver-clock pre-seed (network.cold_clock_seed) ---
-        // Runs after the iono seed (so computeRawResidual removes the seeded
-        // slant iono from the code residual) and before the ambiguity seeds of
-        // the members called after it, once per station.  On the network path
-        // nothing else solves the
-        // receiver clock before the ambiguities are first seeded, so without
-        // this step a free-running receiver's full clock offset (1 ms is about
-        // 3e5 m) enters every cold ambiguity seed equally, through
-        // computeAmbiguitySeed's clk_term = x(clock) = 0.  The latch is set only
-        // on success, as for the ISB initialization.  With the knob off the
-        // seeder is never called and the output is byte-identical.
-        if (config_.networkColdClockSeed()
-            && !state_initializer_.isClockSeedInitialized()) {
-            if (state_initializer_.seedColdReceiverClock(observations, epoch_prefix))
-                state_initializer_.markClockSeedInitialized();
-        }
-    }
-
     void MeasurementModel::computePivotSeeds(const std::vector<PppObservation>& observations,
                                              RequiredStates& need) const {
         const bool nlwl = need.nlwl;
@@ -367,7 +356,7 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'L') continue;
                     const std::string pkey = cons + "|" + ref_type;
                     pivot_abs_seeds[pkey] =
-                        state_manager_.computeAmbiguitySeed(obs, ref_type, x_seed);
+                        ambiguitySeed(obs, ref_type, x_seed);
                 }
             }
         }
@@ -389,7 +378,7 @@ namespace GnssProcessor {
                 if (!std::isfinite(lambda_ref) || lambda_ref <= 0.0) continue;
 
                 const double nl_seed_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, ref_sig, x_seed)
+                    ambiguitySeed(obs, ref_sig, x_seed)
                     / lambda_ref;
                 pivot_abs_seeds[cons + "|NL"] = nl_seed_cyc;
 
@@ -399,7 +388,7 @@ namespace GnssProcessor {
                         obs.system, b_sig, obs.satellite);
                     if (!std::isfinite(lambda_b) || lambda_b <= 0.0) continue;
                     const double n_b_cyc =
-                        state_manager_.computeAmbiguitySeed(obs, b_sig, x_seed)
+                        ambiguitySeed(obs, b_sig, x_seed)
                         / lambda_b;
                     // WL canonical = N_low_band - N_high_band.  ref_band is the
                     // lowest observed band, so it is the lower of the pair and
@@ -442,7 +431,7 @@ namespace GnssProcessor {
 
                 if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
-                    double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
+                    double seed = ambiguitySeed(obs, ref_type, x_now);
 
                     if (bssd_active) {
                         const std::string cons = PppUtils::getSystemString(obs.satellite);
@@ -575,7 +564,7 @@ namespace GnssProcessor {
                 if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
                     double nl_seed_cyc =
-                        state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                        ambiguitySeed(obs, ref_sig, x_now)
                         / lambda_ref;
                     if (bssd_active) {
                         if (is_pivot) {
@@ -624,10 +613,10 @@ namespace GnssProcessor {
 
                 const Eigen::VectorXd x_now = state_manager_.getStateVector();
                 const double nl_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                    ambiguitySeed(obs, ref_sig, x_now)
                     / lambda_ref;
                 const double n_b_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, b_sig, x_now)
+                    ambiguitySeed(obs, b_sig, x_now)
                     / lambda_b;
                 // Canonical sign: WL_<low>_<high> stores N_low - N_high.
                 const char a = std::min(ref_band, b);

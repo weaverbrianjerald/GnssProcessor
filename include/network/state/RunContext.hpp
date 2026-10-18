@@ -470,7 +470,7 @@ namespace GnssProcessor {
         /// network.resume_rxcb_lin_restore (RS-9, SPEC_event_harness §21.18): at a warm
         /// resume, stash the snapshot's @c RL rows (the writer's code-bias @c x_lin per
         /// (station roster index, CB state key)) and seed each station's code-bias state
-        /// from them at its first-epoch @c StateInitializer::initializeCodeBiases, instead
+        /// from them at its first-epoch @c MeasurementModel::initializeCodeBiases, instead
         /// of from one epoch of the resume epoch's code.  RS-6 restores the rx-CB carry's
         /// numerator; this restores the reference its inject gate differences against, the
         /// other edge of the same seam (invariant #7).  Solve-invariant by construction: an

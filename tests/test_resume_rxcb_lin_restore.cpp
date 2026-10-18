@@ -12,7 +12,7 @@
  * @c last_seen_s).  The gate that decides whether that prior is folded tests it
  * against the station's code-bias linearization point:
  * @c cb_innov = @c value_abs − @c x_lin(cb), against a fixed 5.13 m bar.
- * @c x_lin is a one-shot seed that @c StateInitializer::initializeCodeBiases
+ * @c x_lin is a one-shot seed that @c MeasurementModel::initializeCodeBiases
  * writes on the station's first processed epoch and never revises.  On a warm
  * resume with the restore off, that reference is re-derived from the resume
  * epoch's code while the numerator comes from the snapshot, so more stations sit
@@ -263,7 +263,7 @@ TEST(ResumeRxCbLinRestore, RlRowsRoundTripThroughTheSnapshotText) {
 }
 
 /// A non-finite x_lin would corrupt more than one fold: through
-/// computeRawResidual it also reaches the first epoch's iono and ambiguity seeds.
+/// the raw residual it also reaches the first epoch's iono and ambiguity seeds.
 /// It is therefore a hard parse failure (the caller's documented cold-start
 /// signal), never a silent partial restore (the RC / ER / CBP precedent).
 TEST(ResumeRxCbLinRestore, MalformedOrNonFiniteRlRowIsAHardParseFailure) {
@@ -303,7 +303,7 @@ TEST(ResumeRxCbLinRestore, MalformedOrNonFiniteRlRowIsAHardParseFailure) {
 // (d) the seed-override rule
 // ---------------------------------------------------------------------------
 
-/// The decision @c StateInitializer::initializeCodeBiases makes per key inside
+/// The decision @c seedCodeBias makes per key inside
 /// its `samples` loop: a key the map carries a finite reference for is seeded to
 /// the writer's x_lin, and the one-epoch code median is not computed.
 TEST(ResumeRxCbLinRestore, SeedOverrideResolvesOnlyFiniteCarriedKeys) {
