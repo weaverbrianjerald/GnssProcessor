@@ -95,6 +95,12 @@ Stage 2 runs only if G, GE and GEC pass H0 to H4 (with the pieces of section 3, 
 
 The census uses the 16 sites of `scripts/clock_level/site_list.json`; better and worse are counted at 1 cm. Of the 16, ten carry the B1I + B3I pair, so a GEC consumer uses BeiDou at ten sites, a single band at two, and none at four (section 2): the census change is read separately for those groups. A failed bar is recorded with its reading and reported; it does not reverse anything silently. Arming BeiDou in the goldens is the author's decision through a ledger row and the generator, never this card's.
 
+## 4a. Amendment 2026-10-18 (before any 2 h result was read)
+
+The startup log of the 2 h GEC run (epochs 1 to 4, no gate read) shows the addStation positive-definiteness guard rejecting WARK00NZL, MAJU00MHL and SCTB00ATA at every epoch ("N_rr_r is not positive-definite ... dropping it this epoch"). The three are the stations of section 2 that track BeiDou on B1I alone (17, 8 and 16 satellites at the first epoch, canonical signals C2I / L2I only, no B3I). Each is dropped as a whole station, GPS and Galileo rows included, so GEC as pre-registered runs on 55 stations and its comparison with GE mixes BeiDou with the loss of three stations.
+
+Added arm **GEC-s** (tags `bds_gecs2`, `bds_gecs6`): GEC plus a RINEX subtraction at those three stations, the band-2 BeiDou types removed (`rapid_arm.py --rinex "strip;sys=C;stations=WARK00NZL,MAJU00MHL,SCTB00ATA;types=?2?"`), so they stay GPS + Galileo stations. It is graded under the same gates H1 to H4 and S1 to S7 beside GEC; GEC keeps every gate as frozen above, and both rows are reported. Gate H3 and the clock-class bars apply to both. This arm is a data subtraction, not a loader key, and does not enter the piece rule.
+
 ## 5. Results
 
 Not yet run.
