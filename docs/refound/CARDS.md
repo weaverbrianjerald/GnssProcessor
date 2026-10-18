@@ -172,3 +172,10 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
 - [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: card NOM's standard on the user side; waves A and B LANDED 2026-10-15 (KalmanFilter, CycleSlipManager, MeasurementModel, the MW, TurboEdit and IF detectors, StateManager, the PPP pipeline: identical on 16 user arms and both goldens, run-start and run-end tables added, the BSSD smoother crash fixed); wave C and five behaviour fixes open.
+- [SEA](SEA_seasonal_term_outside_window_2026-10-16.md): open, 2026-10-16: the seasonal term of a SIF coordinate
+  outside its block windows follows the NGS M-PAGES v1.2 rule (the covering block; the first block before all
+  windows, the last after all, the block that ended last inside a gap) instead of dropping to zero while the linear
+  term extrapolates; BUILT without a knob (no golden evaluates the function); 8 field-roster stations gain 0.4 to
+  6.4 mm, covered stations bit-identical; tools/sif_propagate and pyviz SifTruth moved in step. Same-build golden
+  identity PASSED 2026-10-17 (field and sim 2 h arms identical to a main 4318fe3 control in every product, trace
+  and log); the merge is owed.

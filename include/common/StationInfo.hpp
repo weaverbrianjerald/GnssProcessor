@@ -160,6 +160,12 @@ namespace GnssProcessor {
 
     /**
      * @brief Time-windowed block of periodic frequencies.
+     *
+     * The window says where the block was fitted, not where it may be
+     * evaluated: @c resolveStationCoordinate continues the first block before
+     * its window and the last block after it, and carries the block that ended
+     * last across a gap (see @c SifPeriodicReach).  The blocks of a station
+     * are kept in file order, which is not guaranteed to be chronological.
      */
     struct SifPeriodicBlock {
         double start_year{ 0.0 };           ///< Window start [decimal year].

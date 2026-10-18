@@ -1151,6 +1151,9 @@ namespace GnssProcessor {
                               rc->segment_start_year, rc->segment_end_year,
                               rc->antenna_change_in_gap ? "yes" : "no",
                               rc->receiver_change_in_gap ? "yes" : "no");
+                if (rc->periodic.extrapolated())
+                    log->warn("Network roster: station '{}' SIF coordinate at {:.4f}: {}",
+                              s.name, *run_year, describePeriodicExtrapolation(rc->periodic));
                 s.position_ecef     = { rc->ecef.x(), rc->ecef.y(), rc->ecef.z() };
                 s.has_position      = true;
                 s.position_from_sif = true;

@@ -503,6 +503,14 @@ class SifTruth(TruthSource):
     ``extrapolated=True``, the years outside the segment and whether an antenna
     or receiver change starts in that gap, and :meth:`resolve` warns
     (:class:`SifExtrapolationWarning`).
+
+    The periodic (seasonal) term is one block's displacement chosen by the epoch
+    alone (:meth:`_select_periodic`, the NGS M-PAGES v1.2 rule): the block whose
+    window covers the epoch, else the first block before the first window, the last
+    block after the last, and the block that ended last inside a gap.  The sinusoids
+    continue past the window on the block's own phase reference, so the term does
+    not drop to zero where the linear term goes on; the other cases warn with
+    :class:`SifExtrapolationWarning`.
     """
 
     def __init__(self, paths, with_periodic: bool = True, with_psd: bool = True):
@@ -756,6 +764,35 @@ class SifTruth(TruthSource):
                 cls._change_in_gap(st.antennas, lo, hi, compare_serial=True),
                 cls._change_in_gap(st.receivers, lo, hi, compare_serial=False))
 
+    @staticmethod
+    def _select_periodic(st: "_SifStation", year: float
+                         ) -> Tuple[Optional["_SifPeriodicBlock"], str]:
+        """The periodic block that supplies the seasonal term at ``year``, and the case.
+
+        Port of ``selectPeriodicBlock`` in ``StationInfoFile.cpp`` (the NGS M-PAGES
+        v1.2 rule).  Blocks are taken in start order (file order for equal starts).
+        The first block whose window covers ``year`` (start <= year < end) wins, so
+        overlapping windows are not summed.  With none covering: before the first
+        window the first block (``"before_first"``), at or after the end of the last
+        window the last block (``"after_last"``), inside a gap the last block, in
+        start order, that ended at or before ``year`` (``"in_gap"``).  A station
+        without a periodic block returns ``(None, "not_evaluated")``.
+        """
+        if not st.periodic:
+            return None, "not_evaluated"
+        ordered = sorted(st.periodic, key=lambda b: b.start_year)  # stable
+        last_ended = None
+        for b in ordered:
+            if b.start_year <= year < b.end_year:
+                return b, "covered"
+            if b.end_year <= year:
+                last_ended = b
+        if year < ordered[0].start_year:
+            return ordered[0], "before_first"
+        if year >= ordered[-1].end_year:
+            return ordered[-1], "after_last"
+        return last_ended, "in_gap"
+
     def resolve(self, station: str, decimal_year: float, *,
                 approx_ecef: Optional[Sequence[float]] = None) -> Optional[TruthCoord]:
         """Return the SIF coordinate of ``station`` at ``decimal_year``.
@@ -787,11 +824,16 @@ class SifTruth(TruthSource):
         ecef = occ.coords + occ.velocity * dt
 
         if self.with_periodic:
-            for b in st.periodic:
-                if decimal_year < b.start_year or decimal_year >= b.end_year:
-                    continue
-                dT = decimal_year - b.ref_epoch
-                for f in b.freqs:
+            blk, reach = self._select_periodic(st, decimal_year)
+            if blk is not None:
+                if reach != "covered":
+                    warnings.warn(
+                        f"SIF: {st.sid} at {decimal_year:.4f} is outside every periodic "
+                        f"window ({reach.replace('_', ' ')}); continuing the seasonal term "
+                        f"of block [{blk.start_year:.4f}, {blk.end_year:.4f})",
+                        SifExtrapolationWarning, stacklevel=2)
+                dT = decimal_year - blk.ref_epoch
+                for f in blk.freqs:
                     if f.period_yr == 0.0:
                         continue
                     w = 2.0 * math.pi / f.period_yr

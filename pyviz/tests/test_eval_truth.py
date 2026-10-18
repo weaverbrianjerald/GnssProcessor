@@ -583,6 +583,50 @@ def test_sif_periodic_terms_keep_the_file_epoch(tmp_path):
     assert abs(expected_x - wrong_x) > 1e-3
 
 
+def _periodic_block(start, end, mm):
+    """One annual periodic block, X_COS = ``mm`` millimetres, ``end`` None = open."""
+    return {"START": f"{start}-01-01T00:00:00 GPS",
+            "END": "9999-12-31T00:00:00 GPS" if end is None else f"{end}-01-01T00:00:00 GPS",
+            "FREQUENCIES": [{"PERIOD": 1.0, "X_COS": mm, "X_SIN": 0.0, "Y_COS": 0.0,
+                             "Y_SIN": 0.0, "Z_COS": 0.0, "Z_SIN": 0.0}]}
+
+
+@pytest.mark.parametrize("t, block_mm, warns", [
+    (2008.5, 1.0, True),    # before the first window: the first block
+    (2012.0, 1.0, False),   # covered
+    (2014.6, 1.0, True),    # in the gap: the block that ended last
+    (2016.0, 2.0, False),   # covered by the second block
+    (2023.25, 3.0, True),   # past the last window: the last block
+])
+def test_sif_periodic_block_outside_its_window_follows_the_mpages_rule(tmp_path, t, block_mm, warns):
+    """The seasonal term is one block chosen by the epoch (NGS M-PAGES v1.2): it does
+    not fall to zero outside the windows while the linear term goes on.  The blocks are
+    listed out of start order to show that the file order is irrelevant."""
+    blocks = [_periodic_block(2015, 2019, 2.0), _periodic_block(2019, 2022, 3.0),
+              _periodic_block(2010, 2014, 1.0)]
+    sif = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=2020.0)], NONLINEAR_TERMS={"PERIODIC_TERMS": blocks})],
+        meta_epoch=2020.0), with_periodic=True, with_psd=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        tc = sif.resolve("TEST00DEU", t)
+    periodic_warned = any("periodic window" in str(w.message) for w in caught)
+    assert periodic_warned is warns
+    expected_x = _REF[0] + 1e-3 * block_mm * math.cos(2.0 * math.pi * (t - 2020.0))
+    assert tc.ecef[0] == pytest.approx(expected_x, abs=1e-9)
+
+
+def test_sif_periodic_overlapping_windows_are_not_summed(tmp_path):
+    blocks = [_periodic_block(2010, 2014, 1.0), _periodic_block(2012, 2018, 2.0)]
+    sif = SifTruth(_sif_file(tmp_path, [_station(
+        occupations=[_occ(ref_epoch=2020.0)], NONLINEAR_TERMS={"PERIODIC_TERMS": blocks})],
+        meta_epoch=2020.0), with_periodic=True, with_psd=False)
+    t = 2013.0
+    tc = sif.resolve("TEST00DEU", t)
+    assert tc.ecef[0] == pytest.approx(
+        _REF[0] + 1e-3 * 1.0 * math.cos(2.0 * math.pi * (t - 2020.0)), abs=1e-9)
+
+
 # -- real-file checks (skipped when data/static/sif is not populated) --------
 
 _SIF_DIR = Path(__file__).resolve().parents[2] / "data" / "static" / "sif"
@@ -644,8 +688,13 @@ def test_real_sif_azaz00usa_uses_its_2010_epoch(real_sif, tmp_path):
 
 @_needs_real_sif
 def test_real_sif_nium00niu_extrapolated_across_an_antenna_change(real_sif):
-    with pytest.warns(SifExtrapolationWarning, match="NIUM00NIU.*antenna change in gap: yes"):
+    # Two warnings: the occupation segment (antenna change in the gap) and, because
+    # the last periodic window ended 0.33 yr earlier, the seasonal block continued.
+    with pytest.warns(SifExtrapolationWarning) as rec:
         tc = real_sif.resolve("NIUM00NIU", 2024.35)
+    texts = [str(w.message) for w in rec]
+    assert any("NIUM00NIU" in t and "antenna change in gap: yes" in t for t in texts)
+    assert any("NIUM00NIU" in t and "periodic window (after last)" in t for t in texts)
     assert tc.extrapolated is True and tc.extrapolation_years > 0.3
     assert tc.segment_end_year < 2024.35
     assert tc.antenna_change_in_gap is True and tc.receiver_change_in_gap is False
