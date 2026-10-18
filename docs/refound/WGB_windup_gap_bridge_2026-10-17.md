@@ -5,13 +5,13 @@
 - **id:** WGB
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** BUILT 2026-10-17, default off, UNVALIDATED, not armed. `estimation.phase_windup_gap_bridge` carries the accumulated wind-up angle across a data gap of 300 s or more, up to 900 s, by walking it through virtual epochs at most 30 s apart from the orbit products and unwrapping each step, so the accumulator does not restart and the stepped arcs are not refloated. The walk is refused, and the restart happens as before, in the Earth's umbra, in a GPS noon-turn window, at a quarter-cycle half step and when the walk ends a quarter of a cycle or more from the epoch's own angle. The simulator injects wind-up through the same function, so no simulated data can grade it. Build stage passed (section 7): knob off identical to a main control (10-epoch smoke and a 0.5 h arm with 135 real restarts), the bridge reproduces a continuous accumulation exactly in a single-receiver gap run (16 of 16 satellites, 2 of which a restart steps by a cycle), 135 of 135 gaps bridged in the network gap arm. The 6 h field check is owed (section 6).
+- **summary:** BUILT 2026-10-17, default off, UNVALIDATED, not armed. `estimation.phase_windup_gap_bridge` carries the accumulated wind-up angle across a data gap of 300 s or more, up to 900 s, by walking it through virtual epochs at most 30 s apart from the orbit products and unwrapping each step, so the accumulator does not restart and the stepped arcs are not refloated. The walk is refused, and the restart happens as before, in the Earth's umbra, in a GPS noon-turn window, at a quarter-cycle half step and when the walk ends a quarter of a cycle or more from the epoch's own angle. The simulator injects wind-up through the same function, so no simulated data can grade it. Build stage passed (section 7): knob off identical to a main control (10-epoch smoke and a 0.5 h arm with 135 real restarts), the bridge reproduces a continuous accumulation exactly in a single-receiver gap run (16 of 16 satellites, 2 of which a restart steps by a cycle), 135 of 135 gaps bridged in the network gap arm. CHECKED 2026-10-18 (section 9): knob off identical to main on 23 G5 arms, 16 user-side arms and 4 real-time arms except the declared Toggles line (`, wu_bridge=off`); field golden 6 h, knob on against off on the same exe: restarts 139 to 91, arcs refloated 116 to 23, 48 of 61 in-range gaps bridged and 13 refused in the umbra (one G20 event), held-out consumer within 0.3 mm in every hour, 16-site census median 0.0 mm with no site beyond 0.2 mm; bars G0 to G3 hold, no benefit shown, still UNVALIDATED and not armed.
 - **source:** the queued M-PAGES build 4 ([OPEN_ITEMS](../status/OPEN_ITEMS.md), "Queued after NOM"); card [WUP](WUP_windup_accumulated_promotion_2026-10-01.md) (the 28 in-horizon restarts per 6 h and their refloat); card [NTA](NTA_noon_turn_attitude_2026-10-16.md) (the noon-turn model the guard uses); `docs/archive/SPEC_phase_windup_sign.md` section 10
 - **knobs / posture:** `estimation.phase_windup_gap_bridge` (ledger row UNVALIDATED, default false), `estimation.phase_windup_bridge_max_gap_s` (900) and `estimation.phase_windup_bridge_step_s` (30), both PARAM rows; both goldens leave the bridge off
 - **dates in the text:** 2026-10-17, 2026-10-18
-- **hashes / run dirs:** branch `mpg/windupgap` from main `30ca49e`; control exe `gnss_processor_windupgap_ctl.exe` (main `30ca49e`, built in worktree `windupgap_ctl`); candidate exe `gnss_processor_windupgap.exe` (sha256[:16] `9006af796b89e4e1`, the exe of the commit); arms `D:/GnssProcessorSupport/runs_nom/_rap_wgb_{s,g}_{ctl,off,on}`; single-receiver gap runs and scripts `D:/GnssProcessorSupport/gates/windupgap/` (`ppp_final/`, `ppp_compare.py`, `make_hole.py`, `mk_ppp_cfg.py`)
+- **hashes / run dirs:** branch `mpg/windupgap` from main `30ca49e`; control exe `gnss_processor_windupgap_ctl.exe` (main `30ca49e`, built in worktree `windupgap_ctl`); candidate exe `gnss_processor_windupgap.exe` (sha256[:16] `9006af796b89e4e1`, the exe of the commit); arms `D:/GnssProcessorSupport/runs_nom/_rap_wgb_{s,g}_{ctl,off,on}`; single-receiver gap runs and scripts `D:/GnssProcessorSupport/gates/windupgap/` (`ppp_final/`, `ppp_compare.py`, `make_hole.py`, `mk_ppp_cfg.py`); check (section 9): control side `w3base` (main `30ca49e`, exe `gnss_processor_w3base.exe`, sha256[:16] `50ca2ea5fbbc540c`), G5 `D:/GnssProcessorSupport/gates/g5/gate_w3windupgap/`, 6 h arms `D:/GnssProcessorSupport/runs_nom/_rap_wgbchk_{ctl,on}_f`, census `_rap_wgbc_{ctl,on}_<site>`, scripts and logs `D:/GnssProcessorSupport/gates/windupgap_chk/`
 
-**Outcome.** Question: can the wind-up accumulator stay continuous across a gap inside the leveling-carry horizon, so that a restart (an exact integer-cycle step on every signal of the satellite) and the refloat that answers it are avoided? Built as a default-off walk through virtual epochs with refusal guards. Unit gate passes; knob off is identical to a main control in a 10-epoch smoke and in a 0.5 h arm with a 660 s outage of 11 satellites (135 restarts, 242 arcs refloated); with the knob on the same arm bridges all 135 gaps with no restart and no refloat. A single-receiver gap run shows the bridged angle equal to the continuous one for all 16 returning satellites, where the restart is off by a cycle for 2. No simulated bed can grade it. Standing: UNVALIDATED, not armed; section 6 holds the check and its bars, written before any 6 h arm ran.
+**Outcome.** Question: can the wind-up accumulator stay continuous across a gap inside the leveling-carry horizon, so that a restart (an exact integer-cycle step on every signal of the satellite) and the refloat that answers it are avoided? Built as a default-off walk through virtual epochs with refusal guards. Unit gate passes; knob off is identical to a main control in a 10-epoch smoke and in a 0.5 h arm with a 660 s outage of 11 satellites (135 restarts, 242 arcs refloated); with the knob on the same arm bridges all 135 gaps with no restart and no refloat. A single-receiver gap run shows the bridged angle equal to the continuous one for all 16 returning satellites, where the restart is off by a cycle for 2. No simulated bed can grade it. Check (section 9, 2026-10-18): the bars of section 6 hold. On the field golden for 6 h the bridge keeps 48 of 61 in-range restarts (139 to 91; arcs refloated 116 to 23), refusing 13 in the umbra, and moves neither the held-out consumer (0.3 mm at most in any hour) nor the 16-site census (median 0.0 mm). Standing: UNVALIDATED, not armed; no benefit shown.
 
 ## 1. What was built
 
@@ -99,3 +99,71 @@ Control against knob off with 135 real restarts and the response acting: identic
 - The warm-resume re-derivation of the accumulator (a resumed run seeds each satellite from its raw angle; the walk could re-derive the integer from the snapshot epoch). Not built.
 - A satellite-state provider test with orbit products in the unit suite.
 - The author's arming decision; none is made here.
+
+## 9. Check (2026-10-18)
+
+Independent stage on `5a66773` of branch `mpg/windupgap`; no source file was edited. Candidate exe `gnss_processor_windupgap.exe` (sha256[:16] `9006af796b89e4e1`; an incremental Release build of the commit reported nothing to do), copied as `gnss_processor_w3windupgap.exe` for the G5 gate. Control side `w3base`: main `30ca49e`, exe `gnss_processor_w3base.exe` (sha256[:16] `50ca2ea5fbbc540c`). Other sessions kept the box at full CPU throughout, so the wall times below are not timings.
+
+### 9.1 G0, the off path
+
+One difference is declared: the Toggles log line ends with `, wu_bridge=off`. A raw comparison therefore reads DIFFERENT, and each was repeated with that line dropped from both sides (`NOM_GATE_DROP_RE='\[gnss_config\] \[info\] Toggles:'`). In every arm of every gate the candidate's Toggles line equals the control's with the suffix removed (scripted, line by line).
+
+| gate | arms | raw | declared line dropped |
+| --- | --- | --- | --- |
+| G5 (`gate_step.sh`, reference `w3base`; field and sim golden 2 h arms `f2`, `s2` and 21 others) | 23 | 23 DIFFERENT, each in one line of `stdout.txt` and nowhere else: products, every CSV trace, manifest, main log rotation set, `rt_engine.log` identical; exit codes equal to the reference on all 23 (`zero`, `joint`, `a4`, `gate` exit 1 on both sides) | 23 of 23 `RESULT IDENTICAL`, `snapw` snapshot bytes identical: 24 identical lines |
+| user side (`uom_gate.py cmp w3base w3windupgap`, quick set, exit 0 on all) | 16 | 0 of 16: `logs/gnss_config.log` and `stdout.txt`, one line each (32 files) | 16 of 16 IDENTICAL |
+| real time, dr set (`sbf`, `sbf_bssd`, `sbf_te`) | 3 | the Toggles line in `console.log` and `gnss_config.log`, and the session wall-time line of `console.log`; 93 comparator lines IDENTICAL | none other |
+| real time, `cl` arm | 1 | the Toggles line, and wall-clock figures only (RINEX ingestion seconds, epoch-loop wall, round-trip self-check seconds, build and audit milliseconds of the arc ledger) in `console.log` and `main_log.log`; 36 comparator lines IDENTICAL | none other |
+
+G0 holds: knob off moves nothing but the declared line. Records: `D:/GnssProcessorSupport/gates/g5/gate_w3windupgap/` (raw), `gate_w3windupgap_droptoggles/` (dropped), `gates/g7/summary_w3windupgap*.txt`, `C:/GnssProcessor/runs/_uom_w3windupgap`, `C:/GnssProcessor/runs/rtseam_goldens/w3windupgap_{dr,cl}`, logs and scripts in `D:/GnssProcessorSupport/gates/windupgap_chk/`.
+
+### 9.2 The 6 h field arms (G1)
+
+Arms `_rap_wgbchk_{ctl,on}_f` under `D:/GnssProcessorSupport/runs_nom`: the field golden for 6 h with `estimation.trace_windup_census` true in both, and `estimation.phase_windup_gap_bridge` true in the second only (the other two keys at their defaults, 900 and 30). Same exe, made with the worktree `rapid_arm.py` so that the loader check knows the new key. Both exit 0 with 720 epochs emitted (7112 s and 7100 s). The control reproduces the consumer p50 by hour of the baseline run `_rf0hv15_field6` to five digits.
+
+| | control | bridge |
+| --- | --- | --- |
+| forward transitions, in horizon | 600755, 600616 | the same |
+| out-of-horizon transitions (between the horizons, beyond both) | 139 (61, 78) | 139 (61, 78) |
+| accumulator restarts | 139 | 91 |
+| transitions stepped by 0.9 cycle or more (max) | 2 (0.994) | 0 (0.832) |
+| restart events responded | 60 | 12 |
+| arcs refloated | 116 | 23 |
+| inside the carry horizon with no arc to free / beyond the carry horizon | 1 / 78 | 1 / 78 |
+| bridge attempts (stations) | | 61 (33) |
+| bridged / refused | | 48 / 13 (umbra 13; no state, noon turn, step and closure 0) |
+| bridged over a nonzero whole-cycle count | | 2 |
+| virtual epochs evaluated | | 1869 |
+
+The attempts (61) equal the gaps the census counts between the two horizons (61), and attempts equal bridged plus refused. The restarts fall by the bridged count (139 to 91, minus 48), as do the restart events answered (60 to 12); the arcs refloated fall from 116 to 23. By hour of the run the control's answered restarts are 4, 16, 8, 4, 11 and 17; the bridge arm keeps 12, all in hour 2.
+
+What was kept: 28 of the 48 bridged gaps are the Galileo satellites E14 (13, at WARK00NZL and SCTB00ATA, gaps of 300 s to 870 s recurring every 900 s) and E18 (15, at SCTB00ATA, GOPE00CZE and BOR100POL); the rest are 20 GPS and Galileo gaps at 10 stations. Two of them kept a whole cycle (-1): SGOC00LKA G14, gap 570 s at TOW 278100, and KIT300UZB G22, gap 480 s at TOW 279690; they are the two transitions the control stepped by 0.9 cycle or more. The 13 refusals are one event: G20 at TOW 262920 (01:02 UT), a gap of 720 s at 13 stations with the satellite in the umbra at a virtual epoch; it restarts as before and is the 12 answered restarts left in the bridge arm. The expectation of card WUP (28 in-horizon restarts per 6 h, about 8 of them holding a carry) was a GPS-only count; with Galileo armed the golden has 61 restarts between the horizons and 60 answered, and the bridge keeps 48 of the 61.
+
+### 9.3 Consumer and census (G2, G3)
+
+Held-out consumer WTZZ00DEU, 3D error, p50 by hour 1 to 6:
+
+| | h1 | h2 | h3 | h4 | h5 | h6 | mean h2 to h6 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| control | 0.0581 | 0.0113 | 0.0183 | 0.0103 | 0.0155 | 0.0105 | 0.0132 |
+| bridge | 0.0581 | 0.0112 | 0.0186 | 0.0103 | 0.0155 | 0.0105 | 0.0132 |
+| change (m) | +0.0000 | -0.0001 | +0.0003 | +0.0000 | +0.0000 | -0.0000 | +0.0000 |
+
+688 of 720 epochs below a decimetre in both arms. Epoch by epoch the two 3D errors differ by 0.3 mm at most at the median of an hour and 0.5 mm at most anywhere (hour 3). The mean and the p95 of an hour move by 0.1 mm or less except hour 3 (mean +0.3 mm, p95 +0.4 mm).
+
+Census (`gcensus.py make wgbc_{ctl,on}`, 17 consumers each, replays of the arm's own wire with the arm's own consumer knobs, all exit 0; `grade wgbc_ctl wgbc_on`): paired change of the mean hourly p50 over hours 2 to 6, median -0.0000 m, 0 sites better and 0 worse at 1 cm; the largest single change is ARHT +0.2 mm, the next KOKB and CEDU at +0.1 mm and QUIN, HARB, DAV1 and BAKE at -0.1 mm. Hour 1 paired median +0.0000 m. The median site p50 by hour is 0.136 0.054 0.041 0.036 0.040 0.037 m for the control and 0.136 0.055 0.041 0.036 0.040 0.037 m with the bridge. Per-site rows: `D:/GnssProcessorSupport/gates/windupgap_chk/census_grade.txt`.
+
+Network side, a datum-invariant check: the post-fit phase residual of the bridged (station, satellite) arcs over the 10 minutes after the gap is 1.910 mm rms in the control and 1.912 mm with the bridge (1093 rows, the same rows); the two arcs that kept a whole cycle read 1.92 mm and 1.92 mm (SGOC00LKA G14, 40 rows) and 0.02 mm and 0.19 mm (KIT300UZB G22, 18 rows). The G20 arcs, refused in both, are identical (1.062 mm).
+
+### 9.4 Bars and standing
+
+| bar | result |
+| --- | --- |
+| G0, off path | holds, apart from the declared Toggles line (9.1) |
+| G1, on path | holds: attempts equal bridged plus refused and equal the census gaps between the horizons; restarts 139 to 91; arcs refloated 116 to 23; the only refusals are the umbra ones of one event |
+| G2, consumer | holds: no hour worse by more than 0.3 mm (bar 10 mm) |
+| G3, census | holds: median change 0.0 mm (bar +5 mm), no site worse by 2 cm (bar 3 sites) |
+
+The option keeps the leveling carry across 48 of the 61 in-range gaps and moves neither the held-out consumer nor the census by more than 0.3 mm. No benefit is shown: the refloats it removes cost the consumer nothing measurable in these 6 h, and the removed events are mostly two recurring Galileo gaps. Standing: UNVALIDATED, not armed. The arming decision is the author's, through a ledger row and the generator.
+
+Limits of this check. One day (DOY 129, 00 to 06 UT) of static stations. The closed-loop consumer shares the producer's wind-up model, so it measures the consistency of the pair, not the model against the sky. The whole-cycle count of the two nonzero bridged gaps has no external reference on this bed: the post-fit residual shows no excess, which a wrong integer would not be guaranteed to show, since the gap re-entry handling armed in the golden (`gap_reentry_relevel`) also acts on arcs that return after a gap. The simulator cannot grade the option (section 3). A day with GPS noon turns and Galileo manoeuvres inside a gap would exercise the refusals that this window did not (noon turn, step, closure: 0 events).
