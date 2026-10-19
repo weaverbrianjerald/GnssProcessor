@@ -179,6 +179,10 @@ namespace GnssProcessor {
      *
      * Displacement = sum_i ALOG_i * log(1 + dt/TLOG_i) + sum_k AEXP_k * (1 - exp(-dt/TEXP_k)),
      * with dt = (t - event) in years.  Amplitudes in metres, decay times in years.
+     * This is the displacement accumulated since the event; the coordinate
+     * function applies its change since the occupation's reference epoch (see
+     * @c resolveStationCoordinate), because the reference coordinate already
+     * holds the displacement accumulated by then.
      */
     struct SifPsdComponent {
         std::vector<double> aexp;  ///< Exponential amplitudes [m].

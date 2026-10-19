@@ -48,9 +48,36 @@ records derived from site logs (AZAZ00USA, AZOR00USA, AZPL00USA, FLSI00USA) at
 selection rule below gives them no coordinate; the per-occupation epoch applies
 as soon as such a record is usable.
 
-The periodic phase reference stays the METADATA reference epoch of the block;
-post-seismic terms are summed in the local ENU frame for events before `t`, then
-rotated to ECEF. Toggle the nonlinear terms with `--no-periodic` / `--no-psd`
+The periodic phase reference stays the METADATA reference epoch of the block.
+The post-seismic term is the change since `t_ref`, summed in the local ENU frame
+over the earthquakes and rotated to ECEF:
+
+```
+psd(t) - psd(t_ref),    psd(t) = Σ_events [ Σ A_log·ln(1 + Δ/τ_log) + Σ A_exp·(1 − exp(−Δ/τ_exp)) ],  Δ = t − t_event
+```
+
+with a term that is zero before its event (`Δ ≤ 0`). The reference coordinate of
+an occupation is the model position at `t_ref` with the post-seismic displacement
+already included, so it differs from the secular position of the ITRF2020 IGS SSC
+by `psd(t_ref)` (MIZU00JPN 1.37 m east and 0.56 m south, GCGO00USA 30 mm east and
+46 mm south at 2020.0), for occupations before an event as well. Adding `psd(t)`
+in full counted that displacement twice. Against the IGS weekly combined SINEX of
+2024-05-08, the change since `t_ref` agrees to 3.1 mm per horizontal component at
+seven of the eight roster stations with an active term (GCGO00USA, SOLO00SLB,
+CUSV00THA, MAC100AUS, COCO00AUS, REYK00ISL, MIZU00JPN) and to 8.8 mm at NIUM00NIU
+(extrapolated 0.33 yr across an antenna change); the full term was off by 9 mm to
+1.37 m. Over the 43 stations with a block that the SINEX holds, the horizontal
+difference has a median of 2.3 mm (32.5 mm before), a 90th percentile of 5.1 mm
+(340 mm) and a largest value of 16.9 mm (1.48 m).
+
+The vertical component follows the same rule for the occupations derived from the
+IGb20 epoch-2020 solution (ANTC00CHL, TSKB00JPN, USUD00JPN, ASPA00ASM and others:
+Up errors of 23 to 178 mm before, below 10 mm after). Five stations whose occupation
+derives from the `ITRF2020-u2023-wo-IGb20` solution (IQQE00CHL, MTKA00JPN,
+SAMO00WSM, TSK200JPN, WGTT00NZL) have a reference Up coordinate without the
+post-seismic Up displacement, and their Up now differs from the SINEX by 35 to 96 mm
+where the full term agreed to below 10 mm; their horizontal components improved the
+same way as the others. Toggle the nonlinear terms with `--no-periodic` / `--no-psd`
 (both on by default, matching the C++ network-roster path).
 
 ### Seasonal term outside its block windows
@@ -320,13 +347,15 @@ evaluated outside its window.
 
 ## Validation
 
-`test_sif_propagate.py` checks the port in ten sections and exits non-zero on
+`test_sif_propagate.py` checks the port in twelve sections and exits non-zero on
 any failure:
 
 1. **Oracle**: full resolved ECEF + propagated 3×3 covariance for 12
    (station, epoch) cases captured directly from the C++
    `resolveStationCoordinate`. Covers seasonal-only (CIT100USA), heavy
-   post-seismic (ANTC00CHL, ~0.5 m nonlinear term), multi-occupation with a
+   post-seismic (ANTC00CHL, 29 to 69 mm change since 2020.0; its rows were
+   regenerated with the reference-epoch rule and are pinned by
+   `tests/test_station_info_psd.cpp`), multi-occupation with a
    zero-cross-covariance window (AB0200USA), and an epoch before the first
    periodic window (AMC400USA at 2018.5, where the first block's seasonal term is
    continued; `tests/test_station_info_seasonal.cpp` pins the same numbers).
@@ -368,9 +397,17 @@ any failure:
    no block or the term off, continuity where the last window ends, the warning
    text; the CLI warning, the appended CSV / JSON cells and `--no-periodic`
    (section 8).
+11. **Post-seismic** (synthetic SIF): the term is exactly zero at the reference
+    epoch, the change since it after and before it, minus the carried
+    displacement before the event, the full relaxation of an event after the
+    reference epoch, the occupation's own reference epoch, and the term off.
+12. **SINEX** (real files): the eight roster stations with an active term
+    against the IGS weekly SINEX of 2024-05-08 (8 mm per horizontal component,
+    12 mm for the extrapolated NIUM00NIU), the MIZU00JPN term (0.10 to 0.20 m)
+    and the ANTC00CHL term (0.05 to 0.09 m at 2024.36).
 
 ```bash
-python test_sif_propagate.py     # sections 1-4 and 9 need data/static/sif/*.json (or $SIF_PATHS)
+python test_sif_propagate.py     # sections 1-4, 9 and 12 need data/static/sif/*.json (or $SIF_PATHS)
 ```
 
 ## Source of truth

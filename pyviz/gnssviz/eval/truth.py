@@ -486,6 +486,14 @@ class SifTruth(TruthSource):
     (11-15 cm).  The periodic terms keep the file-level epoch as their phase
     reference.
 
+    The post-seismic term is the change of the log/exp relaxation since the
+    occupation's reference epoch, ``psd(t) - psd(ref_epoch)``, summed over the
+    station's earthquakes.  The reference coordinate is the model position at
+    ``ref_epoch`` with the post-seismic displacement already in it (it exceeds the
+    secular SSC position by ``psd(ref_epoch)``), so adding ``psd(t)`` in full
+    counted the deformation accumulated before ``ref_epoch`` twice: 1.48 m at
+    ``MIZU00JPN`` and about 5 cm at ``GCGO00USA`` and ``MAC100AUS`` in 2024.
+
     Lookup (:meth:`_find`) tries the full 9-char ID, then the DOMES number, then
     the 4-char station prefix.  An exact ID or DOMES match is returned as is.  A
     prefix match is only a *candidate*: with an approximate position it must lie
@@ -793,6 +801,33 @@ class SifTruth(TruthSource):
             return ordered[-1], "after_last"
         return last_ended, "in_gap"
 
+    @staticmethod
+    def _psd_enu(st: "_SifStation", year: float) -> np.ndarray:
+        """Post-seismic displacement (E, N, U) in metres accumulated by ``year``.
+
+        The sum over the station's earthquakes of the log/exp relaxation since
+        each event; an event at or after ``year`` contributes nothing.
+        """
+        def eval_comp(c: _SifPsdComp, dT: float) -> float:
+            d = 0.0
+            for a, t in zip(c.alog, c.tlog):
+                if t > 0.0:
+                    d += a * math.log(1.0 + dT / t)
+            for a, t in zip(c.aexp, c.texp):
+                if t > 0.0:
+                    d += a * (1.0 - math.exp(-dT / t))
+            return d
+
+        enu = np.zeros(3, dtype=float)
+        for pb in st.psd:
+            dT = year - pb.event_year
+            if dT <= 0.0:
+                continue  # event has not happened yet at this epoch
+            enu[0] += eval_comp(pb.east, dT)
+            enu[1] += eval_comp(pb.north, dT)
+            enu[2] += eval_comp(pb.up, dT)
+        return enu
+
     def resolve(self, station: str, decimal_year: float, *,
                 approx_ecef: Optional[Sequence[float]] = None) -> Optional[TruthCoord]:
         """Return the SIF coordinate of ``station`` at ``decimal_year``.
@@ -840,24 +875,9 @@ class SifTruth(TruthSource):
                     ecef = ecef + f.cos * math.cos(w * dT) + f.sin * math.sin(w * dT)
 
         if self.with_psd and st.psd:
-            def eval_comp(c: _SifPsdComp, dT: float) -> float:
-                d = 0.0
-                for a, t in zip(c.alog, c.tlog):
-                    if t > 0.0:
-                        d += a * math.log(1.0 + dT / t)
-                for a, t in zip(c.aexp, c.texp):
-                    if t > 0.0:
-                        d += a * (1.0 - math.exp(-dT / t))
-                return d
-
-            enu = np.zeros(3, dtype=float)
-            for pb in st.psd:
-                dT = decimal_year - pb.event_year
-                if dT <= 0.0:
-                    continue
-                enu[0] += eval_comp(pb.east, dT)
-                enu[1] += eval_comp(pb.north, dT)
-                enu[2] += eval_comp(pb.up, dT)
+            # The change since the occupation's reference epoch: the reference
+            # coordinate already holds the displacement accumulated by then.
+            enu = self._psd_enu(st, decimal_year) - self._psd_enu(st, occ.ref_epoch)
             if float(enu @ enu) > 0.0:
                 lat, lon = _ecef_to_llh_rad(ecef)
                 ecef = ecef + _enu_delta_to_ecef(enu[0], enu[1], enu[2], lat, lon)
