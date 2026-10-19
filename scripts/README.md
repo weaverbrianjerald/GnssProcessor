@@ -80,7 +80,7 @@ Fetching, converting and laying out inputs.
 | script | purpose | refs |
 | --- | --- | --- |
 | `bootstrap_internal_data.py` | bootstrap_internal_data.py Populate ``data/`` for internal-mode GnssProcessor runs. Internal mode (``data_source = "internal"`` in the JSON config) e… | 5 |
-| `test_bootstrap_auth.py` | Tests of the Earthdata login in `bootstrap_internal_data.py` (netrc resolution, Basic credentials, the redirect and the session cookie) against loopback servers; no network. | - |
+| `test_bootstrap_auth.py` | Tests of the Earthdata login and the download check in `bootstrap_internal_data.py` (netrc resolution, Basic credentials sent up front to the login host only, the redirect and the session cookie, the refusal of an HTML page or of a `.gz` that is not gzip data) against loopback servers; no network. | - |
 | `rinex_ids.py` | The canonical satellite id of a RINEX 3 record (`G 7` is `G07`, as `RinexParser.cpp` reads it). The raw-observation readers (`mw_census.py`, `ewl_census.py`, `extcb_gim_verdict.py` and ten more) key on `norm_sat(line[0:3])`. `lint` lists the readers that still slice the id raw; `selftest`. | 14 |
 | `decimate_rinex3_obs.py` | Decimate a RINEX 3 OBSERVATION file to a coarser epoch interval. Why this exists: `processing.gnss_rate_s` is applied ONLY in `Application::run` (src… | 3 |
 | `extract_vmf3_coeffs.py` | Extract VMF3 spherical harmonic coefficients from vmf3.m and emit a C++ header. The TU Wien VMF3 reference implementation (https://vmf.geo.tuwien.ac.… | 2 |
