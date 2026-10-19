@@ -31,7 +31,7 @@
 #include "atmosphere/SphericalHarmonicIonosphere.hpp"
 #include "network/state/CarryDisposition.hpp" // carryColumnPresent
 #include "network/solve/Sbasis.hpp"          // NetworkSbasis::Plan
-#include "filter/StateKeySchema.hpp"         // StateKeys::parseSatPhaseBiasKey / makeAmbiguityKey
+#include "network/state/Entities.hpp"        // net::satPhaseBiasKey, net::satKey, net::signalKey, net::ambKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 
 #include <fmt/format.h>
@@ -193,8 +193,10 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         ctx.knobs.pin_bridge_on || ctx.knobs.sbasis_complete_on;
     if (harvest_pb_levels) net::dropAll(entities.sat_signals, &net::SatSignalState::pb_level_prev);
     for (const auto& pk : shared_phase_keys) {
-        const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
-        if (!parts) continue;
+        const std::optional<SatSignalId> border = net::satPhaseBiasKey(pk);
+        if (!border) continue;
+        const std::string sat = net::satKey(border->sat);
+        const std::string sig = net::signalKey(border->signal);
         // Datum-station slip re-reference (§9.7.10,
         // network.cycle_slip.datum_station_detect): a slip at the gauge-pinned datum
         // receiver moved the level that every phase bias of this satellite references.
@@ -204,17 +206,16 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // level, in lock-step with the network-wide ambiguity reseed that the slip drain
         // defers until this skip has been consumed.  The set is empty unless the toggle
         // is armed ⇒ byte-identical.
-        if (net::hasSat(ctx.entities.sats, parts->satellite, &net::SatelliteState::datum_reref_pb)) continue;
+        if (net::hasSat(ctx.entities.sats, sat, &net::SatelliteState::datum_reref_pb)) continue;
         if (harvest_pb_levels) {
             // Guarded: this runs before the carry_invariant skip below, so it is the one
             // site that queries a phase-bias column for every shared key on a path that
             // otherwise would not.  A key without a column is not harvested (a bridge
             // then cannot open on it); the stash does not throw.
             try {
-                const double v =
-                    x_s(est.phaseBiasColumn(parts->satellite, parts->signal));
+                const double v = x_s(est.phaseBiasColumn(sat, sig));
                 if (std::isfinite(v))
-                    net::putSig(entities, StateKeys::makeAmbiguityKey(parts->satellite, parts->signal),
+                    net::putSig(entities, net::ambKey(*border),
                                 &net::SatSignalState::pb_level_prev) = v;
             } catch (...) {}
         }
@@ -222,11 +223,10 @@ void networkStashCarry(NetworkRunContext& ctx, const GnssConfig& config_,
         // PhaseBias carry is not stashed as well (it would double-count in next epoch's
         // D2 / dense fold).  Clock / code / SH / ZWD carries are unaffected.
         if (carry_invariant) continue;
-        const bool flagged = clock_refloat_sats.count(parts->satellite) > 0;
+        const bool flagged = clock_refloat_sats.count(sat) > 0;
         if (flagged && full_refloat) continue;
-        const Eigen::Index col =
-            est.phaseBiasColumn(parts->satellite, parts->signal);
-        stash(SharedParamKind::PhaseBias, parts->satellite, parts->signal, col, flagged);
+        const Eigen::Index col = est.phaseBiasColumn(sat, sig);
+        stash(SharedParamKind::PhaseBias, sat, sig, col, flagged);
     }
     // The datum re-reference skip-stash queue (§9.7.10) is consumed exactly once per
     // kept epoch (a withheld epoch never reaches this stash, so the queue, and the

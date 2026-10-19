@@ -34,7 +34,6 @@
 #include "network/carry/InvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "network/emit/ClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, restored on warm resume (RS-5, §21.10)
-#include "filter/StateKeySchema.hpp"         // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
