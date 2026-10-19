@@ -654,6 +654,7 @@ add_executable(gnss_tests
     tests/test_neq_accumulator.cpp
     tests/test_station_info.cpp
     tests/test_station_info_guards.cpp
+    tests/test_station_info_psd.cpp
     tests/test_station_info_seasonal.cpp
     tests/test_otl_sif_source.cpp
     tests/test_otl_translation.cpp

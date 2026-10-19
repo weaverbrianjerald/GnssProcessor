@@ -197,11 +197,23 @@ namespace GnssProcessor {
      * @p decimal_year, or, when none covers it, the non-flagged record whose
      * window midpoint is nearest (an open END is capped at 9000 for the
      * midpoint).  Then forms
-     * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
-     * following the NGS / M-PAGES convention, with @f$ t_{ref} @f$ the selected
-     * record's own @c SifOccupation::reference_epoch_year; the covariance is
-     * propagated over the same @f$ t - t_{ref} @f$.  The periodic phase
-     * reference and the post-seismic relaxation models match the SIF generator.
+     * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum [\text{PSD}(t) - \text{PSD}(t_{ref})] @f$
+     * with @f$ t_{ref} @f$ the selected record's own
+     * @c SifOccupation::reference_epoch_year; the covariance is propagated over
+     * the same @f$ t - t_{ref} @f$.  The periodic phase reference and the
+     * post-seismic relaxation models match the SIF generator.
+     *
+     * The post-seismic term is the change since the reference epoch.  The
+     * reference coordinate is the model position at @f$ t_{ref} @f$ with the
+     * displacement accumulated by then already in it (it differs from the
+     * secular position of the ITRF2020 IGS SSC by @f$ \text{PSD}(t_{ref}) @f$),
+     * so adding @f$ \text{PSD}(t) @f$ in full counted that displacement twice:
+     * 1.48 m at MIZU00JPN and about 5 cm at GCGO00USA and MAC100AUS in 2024.
+     * @f$ \text{PSD}(t) @f$ is the sum over earthquakes of the log/exp
+     * relaxation since each event, zero before it, so the term is zero at
+     * @f$ t_{ref} @f$, negative back in time, and an event after @f$ t_{ref} @f$
+     * enters in full.  tests/test_station_info_psd.cpp pins the term against the
+     * IGS weekly combined SINEX at the golden roster stations that carry one.
      *
      * The periodic term is one block's displacement, chosen by the epoch alone
      * and not by the occupation: the first block, in start order, whose window
@@ -351,7 +363,7 @@ namespace GnssProcessor {
      * Composes @c StationInfoFile::find (9-char ID / DOMES / 4-char prefix,
      * case-insensitive) with @ref resolveStationCoordinate, periodic and
      * post-seismic terms enabled, which evaluates the full SIF coordinate function
-     * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum \text{PSD}(t) @f$
+     * @f$ x(t) = x_{ref} + v\,(t - t_{ref}) + \sum \text{periodic}(t) + \sum [\text{PSD}(t) - \text{PSD}(t_{ref})] @f$
      * at @p decimal_year.  The config loader calls it when
      * @c network.use_sif_coordinates fills roster stations whose @c position_ecef
      * is absent from the JSON; it is a separate function so the resolution can be

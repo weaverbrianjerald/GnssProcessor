@@ -21,7 +21,8 @@ held-fixed network-station coordinates::
 
     x(t) = x_ref + v * (t - t_ref)
                  + SUM periodic(t)            (annual + semiannual seasonal terms)
-                 + SUM post-seismic(t)        (log/exp relaxation per E/N/U, ENU->ECEF)
+                 + SUM [psd(t) - psd(t_ref)]  (post-seismic change since t_ref,
+                                               log/exp relaxation per E/N/U, ENU->ECEF)
 
 and the position covariance is propagated from the occupation's 6x6
 coordinate/velocity covariance::
@@ -32,6 +33,14 @@ coordinate/velocity covariance::
 when the occupation carries none).  When no occupation window covers the epoch,
 the nearest one is still evaluated, and the result is flagged ``extrapolated``
 together with whether an antenna or receiver change lies in the uncovered gap.
+
+The post-seismic term psd(t) is the sum over earthquakes of the log/exp
+relaxation since each event (zero before it).  The reference coordinate x_ref
+is the model position at t_ref with the post-seismic displacement included: it
+differs from the secular position of the ITRF2020 SSC by psd(t_ref).  Only the
+change of the term since t_ref is therefore added.  Adding psd(t) in full
+counts the deformation accumulated before t_ref twice, which at 2024.35 is
+1.48 m at MIZU00JPN and about 5 cm at GCGO00USA and MAC100AUS.
 
 The seasonal term is one periodic block, selected by the epoch alone with the NGS
 M-PAGES v1.2 rule: the block whose window covers the epoch; outside every window
@@ -829,6 +838,23 @@ def _eval_psd_component(comp: PsdComponent, dt: float) -> float:
     return d
 
 
+def _psd_enu(station: Station, year: float) -> Tuple[float, float, float]:
+    """Post-seismic displacement (E, N, U) in metres accumulated by ``year``.
+
+    The sum over the station's earthquakes of the log/exp relaxation since each
+    event; an event at or after ``year`` contributes nothing.
+    """
+    e = n = u = 0.0
+    for pb in station.psd:
+        dT = year - pb.event_year
+        if dT <= 0.0:
+            continue  # event has not happened yet at this epoch
+        e += _eval_psd_component(pb.east, dT)
+        n += _eval_psd_component(pb.north, dT)
+        u += _eval_psd_component(pb.up, dT)
+    return e, n, u
+
+
 def resolve_station_coordinate(station: Station, decimal_year: float,
                                with_periodic: bool = True,
                                with_psd: bool = True,
@@ -900,16 +926,14 @@ def resolve_station_coordinate(station: Station, decimal_year: float,
                 y += fr.y_cos * c + fr.y_sin * sn
                 z += fr.z_cos * c + fr.z_sin * sn
 
-    # Post-seismic deformation: log/exp relaxation per ENU component, ENU->ECEF.
+    # Post-seismic deformation: the change of the log/exp relaxation since the
+    # occupation's reference epoch, per ENU component, ENU->ECEF.  The reference
+    # coordinate already holds the displacement accumulated by t_ref, so psd(t)
+    # alone would count it twice.
     if with_psd and station.psd:
-        e = n = u = 0.0
-        for pb in station.psd:
-            dT = decimal_year - pb.event_year
-            if dT <= 0.0:
-                continue  # event has not happened yet at this epoch
-            e += _eval_psd_component(pb.east, dT)
-            n += _eval_psd_component(pb.north, dT)
-            u += _eval_psd_component(pb.up, dT)
+        e1, n1, u1 = _psd_enu(station, decimal_year)
+        e0, n0, u0 = _psd_enu(station, occ.reference_epoch_year)
+        e, n, u = e1 - e0, n1 - n0, u1 - u0
         if (e * e + n * n + u * u) > 0.0:
             lat, lon, _h = ecef_to_llh(x, y, z)
             R = enu_to_ecef_matrix(lat, lon)

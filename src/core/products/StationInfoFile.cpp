@@ -479,6 +479,32 @@ namespace {
         return out;
     }
 
+    /// Post-seismic displacement (E, N, U) [m] accumulated by @p year: the sum
+    /// over the station's earthquakes of the log/exp relaxation since each event,
+    /// d = sum A_log*log(1 + dT/T_log) + sum A_exp*(1 - exp(-dT/T_exp)) with
+    /// dT = year - event.  An event at or after @p year contributes nothing.
+    Eigen::Vector3d accumulatedPostSeismicEnu(const StationInfo& s, double year) {
+        const auto evalComp = [](const SifPsdComponent& comp, double dT) {
+            double d = 0.0;
+            const std::size_t nlog = std::min(comp.alog.size(), comp.tlog.size());
+            for (std::size_t i = 0; i < nlog; ++i)
+                if (comp.tlog[i] > 0.0) d += comp.alog[i] * std::log(1.0 + dT / comp.tlog[i]);
+            const std::size_t nexp = std::min(comp.aexp.size(), comp.texp.size());
+            for (std::size_t i = 0; i < nexp; ++i)
+                if (comp.texp[i] > 0.0) d += comp.aexp[i] * (1.0 - std::exp(-dT / comp.texp[i]));
+            return d;
+        };
+        Eigen::Vector3d enu = Eigen::Vector3d::Zero();  // (E, N, U)
+        for (const auto& pb : s.psd) {
+            const double dT = year - pb.event_year;
+            if (dT <= 0.0) continue;  // event has not happened yet at this epoch
+            enu.x() += evalComp(pb.east, dT);
+            enu.y() += evalComp(pb.north, dT);
+            enu.z() += evalComp(pb.up, dT);
+        }
+        return enu;
+    }
+
 } // namespace
 
 std::string describePeriodicExtrapolation(const SifPeriodicEvaluation& p) {
@@ -578,28 +604,17 @@ ResolvedStationCoord resolveStationCoordinate(const StationInfo& s,
         }
     }
 
-    // Post-seismic deformation: sum of log/exp relaxation per ENU component,
-    // for events before the epoch.  d = sum A_log*log(1 + dT/T_log)
-    //                                 + sum A_exp*(1 - exp(-dT/T_exp)).
+    // Post-seismic deformation: the change of the log/exp relaxation since the
+    // occupation's reference epoch, per ENU component.  The reference coordinate
+    // is the model position at t_ref with the displacement accumulated by then
+    // already in it (it differs from the secular position of the ITRF2020 SSC by
+    // psd(t_ref)), so psd(t) alone would count that displacement twice.  The term
+    // is zero at t_ref, negative back in time, and an event after t_ref enters in
+    // full.
     if (with_psd && !s.psd.empty()) {
-        const auto evalComp = [](const SifPsdComponent& comp, double dT) {
-            double d = 0.0;
-            const std::size_t nlog = std::min(comp.alog.size(), comp.tlog.size());
-            for (std::size_t i = 0; i < nlog; ++i)
-                if (comp.tlog[i] > 0.0) d += comp.alog[i] * std::log(1.0 + dT / comp.tlog[i]);
-            const std::size_t nexp = std::min(comp.aexp.size(), comp.texp.size());
-            for (std::size_t i = 0; i < nexp; ++i)
-                if (comp.texp[i] > 0.0) d += comp.aexp[i] * (1.0 - std::exp(-dT / comp.texp[i]));
-            return d;
-        };
-        Eigen::Vector3d enu = Eigen::Vector3d::Zero();  // (E, N, U)
-        for (const auto& pb : s.psd) {
-            const double dT = decimal_year - pb.event_year;
-            if (dT <= 0.0) continue;  // event has not happened yet at this epoch
-            enu.x() += evalComp(pb.east, dT);
-            enu.y() += evalComp(pb.north, dT);
-            enu.z() += evalComp(pb.up, dT);
-        }
+        const Eigen::Vector3d enu =
+            accumulatedPostSeismicEnu(s, decimal_year)
+            - accumulatedPostSeismicEnu(s, occ->reference_epoch_year);
         if (enu.squaredNorm() > 0.0) {
             const Coordinates::Llh llh = Coordinates::ecefToLlh(out.ecef);
             out.ecef += Coordinates::enuToEcef(enu, llh);
@@ -632,7 +647,8 @@ std::optional<SifRosterCoordinate> resolveRosterCoordinate(const StationInfoFile
     const StationInfo* s = registry.find(station_name);
     if (s == nullptr) return std::nullopt;
     // Full SIF coordinate function at the run date (see resolveStationCoordinate):
-    //   x(t) = x_ref + v * (t - t_ref) + periodic(t) + post-seismic(t)
+    //   x(t) = x_ref + v * (t - t_ref) + periodic(t)
+    //          + [post-seismic(t) - post-seismic(t_ref)]
     // with x_ref/v the occupation solution at that occupation's own reference
     // epoch (typically ITRF2020 at 2020.0), so the returned ECEF is the
     // survey-grade coordinate propagated to decimal_year, as a fixed-coordinate
