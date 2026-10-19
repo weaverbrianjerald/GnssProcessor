@@ -24,7 +24,6 @@
 #include "network/assembly/Responses.hpp"
 #include <Eigen/Dense>   // LLT in networkWriteWhitenedRows
 #include "network/slip/OraclePin.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "network/qc/Congruence.hpp"
 #include "network/assembly/IonoConstraintRows.hpp"
 #include "network/carry/LevelingCarry.hpp"
@@ -231,7 +230,11 @@ void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd&
 
 const Eigen::VectorXd& StationBuild::postUpdateState() {
     if (!post_state_ready) {
-        post_state = st.sm->getStateVector();
+        // The set was built after the measurement update, from the state vector, and its
+        // slots hold that vector's values bit for bit.
+        post_state.resize(static_cast<Eigen::Index>(st.params.slots.size()));
+        for (std::size_t k = 0; k < st.params.slots.size(); ++k)
+            post_state(static_cast<Eigen::Index>(k)) = st.params.slots[k].x_lin;
         post_state_ready = true;
     }
     return post_state;

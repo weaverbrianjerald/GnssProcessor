@@ -1398,9 +1398,9 @@ namespace GnssProcessor {
             // the row disappearing; otherwise the bit lands on no gap.
             if (ctx.reasons.armed)
                 for (const auto& [sta, amb] : slip_ev.relevel.free_ambs) {
-                    const auto parts = StateKeys::parseAmbiguityKey(amb);
-                    if (!parts) continue;
-                    const ArcLedger::Key k{ sta, parts->satellite, parts->signal };
+                    const auto id = net::satSignalKey(amb);
+                    if (!id) continue;
+                    const ArcLedger::Key k{ sta, net::satKey(id->sat), net::signalKey(id->signal) };
                     arcReasonRecord(ctx.reasons, k, kArcReasonSlip,
                                     ctx.arc_ledger.find(k) != nullptr);
                 }
@@ -1526,10 +1526,10 @@ namespace GnssProcessor {
             if (!stations[i].sm) continue;
             for (const std::string& key : stations[i].sm->takePrunedAmbiguities()) {
                 ++ctr.state_prune_keys;
-                const auto parts = StateKeys::parseAmbiguityKey(key);
-                if (!parts) continue;
-                const ArcLedger::Key ak{ static_cast<int>(i), parts->satellite,
-                                         parts->signal };
+                const auto pruned = net::satSignalKey(key);
+                if (!pruned) continue;
+                const ArcLedger::Key ak{ static_cast<int>(i), net::satKey(pruned->sat),
+                                         net::signalKey(pruned->signal) };
                 const ArcRecord* a = ctx.arc_ledger.find(ak);
                 // Only a column removed while its admitted arc is in a Gap inside
                 // the horizon is the silent death path the design names: past the
@@ -1606,7 +1606,7 @@ namespace GnssProcessor {
             if (a.adm_state == ArcState::Tracking) ++ctr.lc_adm_tracking_no_entry;
         });
 
-        // --- (d) StateManager ambiguity presence against the ledger ------------
+        // --- (d) the stations' ambiguity columns against the ledger -------------
         // The prune is not touched: the comparison reads the surviving key set and
         // looks up each arc in the ledger, and separately counts the gapped arcs
         // inside the horizon that have lost their state.  The SID audit names that
@@ -1618,17 +1618,13 @@ namespace GnssProcessor {
             // the observatory inside its cost bar at 305 stations.
             const auto& arcs = ctx.entities.arcs;   // the records' rows (N4f2)
             for (std::size_t i = 0; i < stations.size(); ++i) {
-                const StateManager* sm = stations[i].sm.get();
-                if (sm == nullptr) continue;
                 const int si = static_cast<int>(i);
-                std::set<std::string> live;
-                for (const auto& [k, idx] : sm->getAmbiguities()) {
-                    (void)idx;
-                    live.insert(k);
+                std::set<SatSignalId> live;
+                for (const auto& [arc, slot] : stations[i].params.amb) {
+                    (void)slot;
+                    live.insert(arc);
                     ++ctr.amb_states;
-                    const auto parts = StateKeys::parseAmbiguityKey(k);
-                    if (!parts) continue;
-                    const ArcLedger::Key ak{ si, parts->satellite, parts->signal };
+                    const ArcLedger::Key ak{ si, net::satKey(arc.sat), net::signalKey(arc.signal) };
                     const ArcRecord* a = ctx.arc_ledger.find(ak);
                     if (a == nullptr) {
                         ++ctr.amb_arc_unknown;
@@ -1645,8 +1641,7 @@ namespace GnssProcessor {
                     const ArcRecord& a = *it->second.ledger;
                     if (!a.modelled) continue;
                     const bool alive =
-                        live.count(StateKeys::makeAmbiguityKey(net::satKey(it->first.sat),
-                                                               net::signalKey(it->first.signal))) > 0;
+                        live.count(SatSignalId{it->first.sat, it->first.signal}) > 0;
                     if (alive) continue;
                     if (a.state == ArcState::Gap)     ++ctr.amb_destroyed_in_gap;
                     if (a.adm_state == ArcState::Gap) ++ctr.amb_adm_destroyed_in_gap;
@@ -1668,10 +1663,10 @@ namespace GnssProcessor {
                 now.insert(amb);
                 if (rs.anchor_prev.count(amb)) return;
                 ++ctr.anchor_first_sightings;
-                const auto parts = StateKeys::parseAmbiguityKey(amb);
-                if (!parts) return;
-                const std::string& sat = parts->satellite;
-                const std::string& sig = parts->signal;
+                const auto first = net::satSignalKey(amb);
+                if (!first) return;
+                const std::string sat = net::satKey(first->sat);
+                const std::string sig = net::signalKey(first->signal);
                 bool returned = false;
                 const std::optional<ArcId> want = net::arcKey(ArcLedger::Key{0, sat, sig});
                 if (want)

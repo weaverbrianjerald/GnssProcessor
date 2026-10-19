@@ -12,6 +12,7 @@
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: whether an ambiguity column exists
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
 
@@ -361,7 +362,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                     if (carry_slipped_ambs.count({si, amb})
                         || sm.isAmbiguityPendingReseed(amb))
                         any_marked = true;
-                    if (sm.getAmbiguityIndex(amb) >= 0) any_state = true;
+                    if (findAmbiguity(st.params, amb) >= 0) any_state = true;
                 }
 
                 if (state == SignalIntegrityState::Reentry && !amb_keys.empty()) {
@@ -425,8 +426,8 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
         if (prune_pb) {
             std::set<std::string> keep_pb;
             for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (p && withheld_pb.count(p->satellite + "|" + p->signal)) {
+                const auto p = net::satPhaseBiasKey(kv.first);
+                if (p && withheld_pb.count(net::holdKey(*p))) {
                     ++ctr.withheld_pb_pruned;
                     continue;
                 }

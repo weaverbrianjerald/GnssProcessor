@@ -10,7 +10,7 @@
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the stations' parameter sets: the receiver inter-signal biases
 #include "model/PppModel.hpp"
 
 #include <algorithm>
@@ -133,14 +133,13 @@ void networkChannelAllEpoch(NetworkRun& run, const NetworkEpoch& ep) {
             if (n.second > 1) ++C.xchan_code_cells;
         }
         // The receiver inter-signal code states this station holds.
-        if (stations[i].sm) {
+        {
             bool any = false;
-            for (const auto& [key, idx] : stations[i].sm->getCodeBiasStates()) {
-                (void)idx;
-                if (const auto p = StateKeys::parseReceiverIscKey(key)) {
-                    isc_signals.insert(p->signal);
-                    any = true;
-                }
+            for (const auto& [cb, slot] : stations[i].params.rx_cb) {
+                (void)slot;
+                if (cb.form != ParamForm::Isc) continue;
+                isc_signals.insert(cb.signal.obsCode(ObsType::Code));
+                any = true;
             }
             if (any) ++isc_stations;
         }

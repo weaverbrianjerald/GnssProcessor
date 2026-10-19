@@ -8,7 +8,6 @@
 
 #include "network/state/RunContext.hpp"   // NetworkKnobs, NetworkServiceCounters, the carry
 #include "config/GnssConfig.hpp"
-#include "filter/StateKeySchema.hpp"
 
 #include <array>
 #include <cstddef>
@@ -425,10 +424,10 @@ void networkResponseLatchTally(NetworkRunContext& ctx, const EpochEvents& events
     auto& C = ctx.counters;
     ++C.prm_latch_epochs;
     for (const auto& key : lat.free_ambs) {
-        const auto parts = StateKeys::parseAmbiguityKey(key.second);
-        const bool carried = parts
-            && (net::getArc(ctx.entities.arcs, std::make_tuple(key.first, parts->satellite,
-                                                           parts->signal), &net::ArcState::amb) != nullptr) > 0;
+        const auto id = net::satSignalKey(key.second);
+        const bool carried = id
+            && net::get(ctx.entities.arcs, ArcId{StationId{key.first}, id->sat, id->signal},
+                        &net::ArcState::amb) != nullptr;
         const auto c = lat.free_cause.find(key);
         const unsigned cause = (c != lat.free_cause.end()) ? c->second : 0u;
         ++C.prm_latch_unique;
