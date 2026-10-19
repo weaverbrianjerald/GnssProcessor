@@ -496,8 +496,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // reset.
             if (ctx.knobs.pd_held_basis)
                 for (const auto& h : handovers) {
-                    const auto pk = StateKeys::parseAmbiguityKey(h.amb);
+                    const auto pk = net::satSignalKey(h.amb);
                     if (!pk) continue;
+                    const std::string pk_sat = net::satKey(pk->sat);
                     const PhaseBasisEntry* be =
                         net::getSig(ctx.entities.sat_signals, h.amb, &SG::phase_basis);
                     const double dlt = be ? (be->value - be->prev_value) : 0.0;
@@ -514,7 +515,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        net::markSat(entities, pk->satellite, net::Disc::UraRetro);
+                        net::markSat(entities, pk_sat, net::Disc::UraRetro);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }
@@ -636,10 +637,10 @@ void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep)
             std::set<std::string> need_rpb;
             for (const auto& kv : sm.getSatPhaseBiasStates()) {
                 if (!shared_phase_keys.count(kv.first)) continue;   // gated → legacy lump
-                const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (!p || p->satellite.empty()) continue;
+                const auto p = net::satPhaseBiasKey(kv.first);
+                if (!p || p->sat == SatId{}) continue;
                 need_rpb.insert(StateKeys::makeReceiverPhaseBiasKey(
-                    systemName(systemOfSat(p->satellite)), p->signal));
+                    systemName(p->sat.sys), net::signalKey(p->signal)));
             }
             for (const auto& rk : need_rpb)
                 if (sm.getReceiverPhaseBiasIndex(rk) < 0)

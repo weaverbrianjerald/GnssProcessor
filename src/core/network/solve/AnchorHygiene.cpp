@@ -10,7 +10,6 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/assembly/Responses.hpp"   // prmRespond / ResponseSite
-#include "filter/StateKeySchema.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
 
@@ -74,8 +73,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                          action, detail);
     };
     auto satOf = [](const std::string& amb) {
-        const auto a = StateKeys::parseAmbiguityKey(amb);
-        return a ? a->satellite : amb;
+        const auto a = net::satSignalKey(amb);
+        return a ? net::satKey(a->sat) : amb;
     };
 
     // --- (1) Age this epoch's anchorable arcs -----------------------------
@@ -123,10 +122,11 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
                 : std::min(*prev + 1, kArcAgeCap);
             new_age[{si, amb}] = counted;
             if (!sid_age_read) continue;
-            const auto a = StateKeys::parseAmbiguityKey(amb);
+            const auto a = net::satSignalKey(amb);
             if (!a) continue;
             const long long led_age = anchorLedgerArcAge(
-                ctx.arc_ledger, ArcLedger::Key{ si, a->satellite, a->signal }, sid_now_ep);
+                ctx.arc_ledger, ArcLedger::Key{ si, net::satKey(a->sat), net::signalKey(a->signal) },
+                sid_now_ep);
             if (led_age < 0) { ++sid_ctr.age_no_ledger; continue; }
             ++sid_ctr.age_compared;
             const int led_clamped = static_cast<int>(
@@ -368,8 +368,8 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             std::set<std::string> keep_pb;
             bool drop_any = false;
             for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (p && blocked.count(StateKeys::makeAmbiguityKey(p->satellite, p->signal))) {
+                const auto p = net::satPhaseBiasKey(kv.first);
+                if (p && blocked.count(net::ambKey(*p))) {
                     drop_any = true;
                     // The parameter inventory's absorbed instance.
                     if (stations[i].mm)

@@ -14,10 +14,10 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/Estimator.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: the slant ionosphere columns
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -48,7 +48,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -159,7 +158,6 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
     if (!gim_ || !gim_->isLoaded()) return GimRowsOutcome::NoGim;
     const auto& iw = config_.getIonosphereWeightingConfig();
     if (!iw.enabled) return GimRowsOutcome::WeightingOff;
-    const Eigen::VectorXd x = st.sm->getStateVector();
 
     struct GRow { int col; double innov; double var; std::string sat; };
     std::map<char, std::vector<GRow>> by_const;   // constellation char -> rows
@@ -167,8 +165,8 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
         // Every system but GLONASS.
         if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
         if (o.elevation < iw.elevation_cutoff_deg) continue;
-        const int iono_idx = st.sm->getIonosphereIndex(o.satellite);
-        if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
+        const int iono_idx = findSlantIono(st.params, o.satellite);
+        if (iono_idx < 0) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
         const GimQuery q =
@@ -177,7 +175,8 @@ GimRowsOutcome networkAppendGimIonoRows(const GnssConfig& config_,
         if (!q.valid) continue;
         const double sigma = std::max(iw.floor_m, iw.std_scale * q.std_m);
         by_const[letterOfSat(o.satellite)].push_back(
-            GRow{hit->second, q.delay_m - x(iono_idx), sigma * sigma, o.satellite});
+            GRow{hit->second, q.delay_m - slotAt(st.params, iono_idx).x_lin, sigma * sigma,
+                 o.satellite});
     }
 
     int total = 0;
@@ -238,7 +237,6 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
     if (!sh_model) return;
     const auto& iw = config_.getIonosphereWeightingConfig();
     if (!iw.enabled) return;
-    const Eigen::VectorXd x = st.sm->getStateVector();
     const double Re = shc.earth_radius_km * 1000.0;
     const double tecu_to_L1m =
         ionoDelayMetresPerTecu(nominalCarrierFrequencyHz(FrequencyBand::GpsL1));
@@ -267,8 +265,8 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
         // Every system but GLONASS.
         if (o.satellite.empty() || systemOfSat(o.satellite) == System::GLONASS) continue;
         if (o.elevation < iw.elevation_cutoff_deg) continue;
-        const int iono_idx = st.sm->getIonosphereIndex(o.satellite);
-        if (iono_idx < 0 || iono_idx >= static_cast<int>(x.size())) continue;
+        const int iono_idx = findSlantIono(st.params, o.satellite);
+        if (iono_idx < 0) continue;
         const auto hit = h2local.find(iono_idx);
         if (hit == h2local.end()) continue;   // iono not in this station's local block this epoch
         const IppGeometry g0 =
@@ -283,7 +281,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
         SRow r;
         r.local_col = hit->second;
         r.sat       = o.satellite;
-        r.innov     = -x(iono_idx);
+        r.innov     = -slotAt(st.params, iono_idx).x_lin;
         r.var       = sigma * sigma;
         r.map_tecu.resize(n_lay, 0.0);
         r.basis.resize(n_lay);
@@ -315,7 +313,7 @@ void networkAppendShIonoRows(const GnssConfig& config_, NetStation& st, const Ne
                 dev_pred_slant = dit->dev * m0_tecu;
                 var_pred_slant = dit->var * m0_tecu * m0_tecu;
             }
-            r.innov = -x(iono_idx) + dev_pred_slant;
+            r.innov = -slotAt(st.params, iono_idx).x_lin + dev_pred_slant;
             r.var   = iw.floor_m * iw.floor_m + var_pred_slant;
         }
         by_const[letterOfSat(o.satellite)].push_back(std::move(r));

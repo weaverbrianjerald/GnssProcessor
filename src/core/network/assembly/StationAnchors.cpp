@@ -14,10 +14,11 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/Estimator.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: the GLONASS anchor columns
+#include "network/state/Entities.hpp"   // net::satKey
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -48,7 +49,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -128,20 +128,20 @@ StationStep networkGlonassAnchorRows(StationBuild& build) {
     if (!(config_.enableGlonassNetwork())) return StationStep::Next;
     std::vector<int> anchor_cols;
     std::vector<RowTag> anchor_tag;   // one contribution tag per anchor row
-    for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
-        if (!StateKeys::isGlonassPerSlotIfbKey(key)) continue;
-        const auto hit = h2local.find(static_cast<int>(sidx));
+    for (const auto& [cb, sidx] : st.params.rx_cb) {
+        if (cb.form != ParamForm::GloSlotIfb) continue;
+        const auto hit = h2local.find(sidx);
         if (hit != h2local.end()) {
             anchor_cols.push_back(hit->second);
             anchor_tag.push_back(RowTag{ContributionKind::GloIfbAnchor, {}, {}});
         }
     }
-    for (const auto& [sat, sidx] : st.sm->getIonosphereStates()) {
-        if (systemOfSat(sat) != System::GLONASS) continue;  // GLONASS iono only
-        const auto hit = h2local.find(static_cast<int>(sidx));
+    for (const auto& [sat, sidx] : st.params.iono) {
+        if (sat.sys != System::GLONASS) continue;  // GLONASS iono only
+        const auto hit = h2local.find(sidx);
         if (hit != h2local.end()) {
             anchor_cols.push_back(hit->second);
-            anchor_tag.push_back(makeRowTag(ContributionKind::GloIonoAnchor, sat));
+            anchor_tag.push_back(makeRowTag(ContributionKind::GloIonoAnchor, net::satKey(sat)));
         }
     }
     const int ni = static_cast<int>(anchor_cols.size());
@@ -179,14 +179,13 @@ StationStep networkSimZeroIonoRows(StationBuild& build) {
     std::vector<int> zi_cols;
     std::vector<double> zi_y;
     std::vector<RowTag> zi_tag;
-    for (const auto& [sat, sidx] : st.sm->getIonosphereStates()) {
-        const auto hit = h2local.find(static_cast<int>(sidx));
+    for (const auto& [sat, si] : st.params.iono) {
+        const auto hit = h2local.find(si);
         if (hit == h2local.end()) continue;
-        const int si = static_cast<int>(sidx);
-        if (si < 0 || si >= zi_xlin.size() || !std::isfinite(zi_xlin(si))) continue;
+        if (si >= zi_xlin.size() || !std::isfinite(zi_xlin(si))) continue;
         zi_cols.push_back(hit->second);
         zi_y.push_back(-zi_xlin(si));
-        zi_tag.push_back(makeRowTag(ContributionKind::SimZeroIono, sat));
+        zi_tag.push_back(makeRowTag(ContributionKind::SimZeroIono, net::satKey(sat)));
     }
     const int nz = static_cast<int>(zi_cols.size());
     if (nz > 0) {
