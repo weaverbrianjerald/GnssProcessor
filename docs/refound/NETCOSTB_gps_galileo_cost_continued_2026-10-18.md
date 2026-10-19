@@ -86,14 +86,17 @@ optimizations 2 and 3, and a quiet-machine sim pair.
 
 A fourth build of the code, a fresh set of gate arms and fresh timing rounds, run after the commit of this card
 (`df73700`). Tree under test: `perf/netcost` at `df73700`, checked out clean in worktree `netcost_chk3` (branch
-`chk/netcost3`); `git diff 6b52c23 df73700` touches four Markdown files and no other path, and `git diff 1e3e857 df73700`
-touches only `docs/` and `scripts/cost_attrib/`, so the code is that of card NETCOST sections 8, 11 and 12. Release
-and Debug builds from scratch (862 steps each) finished with no error. Executable `gnss_processor_netcost_chk3.exe` under
-`D:/GnssProcessorSupport/gates/exe/x64-Release` (sha256 `02a342b392b485c4`..., 21 326 848 bytes, the size of every
-earlier build and other bytes; the gate side `w3netcost3` runs a byte copy). Control: side `w3base` (the executable of
-main `30ca49e`, still the tip of `main`; the four real-time arm configs print no difference against it). New labels so
-that earlier output stays where it is cited: G5 sides `w3netcost3` (key absent) and `w3ncon3` (key true in every arm),
-user-side tag `w3netcost3`, real-time labels `w3netcost3_dr` and `w3netcost3_cl`. Scratch, logs and tables:
+`chk/netcost3`); `git diff 6b52c23 df73700` touches four Markdown files and no other path, and `git diff 1e3e857
+df73700` touches only `docs/` and `scripts/cost_attrib/`, so the code is that of card NETCOST sections 8, 11 and 12.
+Release and Debug builds from scratch (862 steps each) finished with no error. Executable
+`gnss_processor_netcost_chk3.exe` under `D:/GnssProcessorSupport/gates/exe/x64-Release` (sha256 `02a342b392b485c4`...,
+21 326 848 bytes, the size of every earlier build and other bytes; the gate side `w3netcost3` runs a byte copy).
+Control: side `w3base` (the executable of main `30ca49e`, the tip of `main` when this check began; `main` moved to
+`1902e62` at 16:39, before the gates started: 14 files of filter and state-manager code, their tests and documents,
+none a config or a gate script, so the control stands and the four real-time arm configs print no difference against
+`30ca49e`). The branch has not been merged or tried against the new tip of `main`. New labels so that earlier output
+stays where it is cited: G5 sides `w3netcost3` (key absent) and `w3ncon3` (key true in every arm), user-side tag
+`w3netcost3`, real-time labels `w3netcost3_dr` and `w3netcost3_cl`. Scratch, logs and tables:
 `D:/GnssProcessorSupport/gates/netcost_chk3/`; arms `_rap_g5_w3netcost3_*`, `_rap_g5_w3ncon3_*`, `_rap_nc_cc1_*`
 (attribution), `_rap_nc_cc3_*` (knob pairs) and `_rap_nc_cc4_*` (sub-sections).
 
