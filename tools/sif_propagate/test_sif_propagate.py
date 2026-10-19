@@ -85,7 +85,7 @@ PERIODIC_CSV_COLUMNS = [
 # (station, epoch, full_xyz, lin_xyz, cov3x3_or_None)
 # The ANTC00CHL full_xyz rows were regenerated when the post-seismic term became the
 # change since the reference epoch (they had carried the displacement accumulated by
-# 2020.0 a second time, 0.5 m); tests/test_station_info_psd.cpp pins the same numbers on
+# 2020.0 a second time, 0.66 m); tests/test_station_info_psd.cpp pins the same numbers on
 # the C++ side.  Every other column is as captured.
 ORACLE = [
     ("CIT100USA", 2022.0,

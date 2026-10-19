@@ -321,7 +321,7 @@ TEST_F(SifPostSeismicRealTest, Mizu00jpnTermIsTheChangeSince2020NotTheWholeRelax
 }
 
 // Captured from the Python twin tools/sif_propagate (test_sif_propagate.py, ORACLE), which
-// agrees with this evaluator to 1e-9 m; the pre-fix numbers carried 0.5 m of post-seismic
+// agrees with this evaluator to 1e-9 m; the pre-fix numbers carried 0.66 m of post-seismic
 // displacement a second time.
 TEST_F(SifPostSeismicRealTest, Antc00chlMatchesThePythonTwin) {
     REQUIRE_REAL_SIF();
