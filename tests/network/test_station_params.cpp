@@ -758,7 +758,7 @@ TEST(StationParamsTest, TheTextLookupsFindTheColumnsTheStateManagerIndexes) {
     EXPECT_FALSE(receiverPhaseBiasSignal("Nowhere_RPB_L1C").has_value());
 }
 
-TEST(StationParamsTest, TheBorderKeyConvertersReadWhatTheKeyParsersRead) {
+TEST(StationParamsTest, ThePhaseBiasKeyConverterReadsWhatTheKeyParserReads) {
     Station st;
     StationParams set;
     buildStationParams(*st.sm, st.disp, st.absorbed, set);
@@ -769,20 +769,31 @@ TEST(StationParamsTest, TheBorderKeyConvertersReadWhatTheKeyParsersRead) {
         ASSERT_TRUE(id.has_value()) << key;
         EXPECT_EQ(set.shared.sat_phase_bias.at(*id), static_cast<int>(col)) << key;
         EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
-        EXPECT_FALSE(net::satCodeBiasKey(key).has_value()) << key;   // a phase-bias key is no code-bias key
     }
+    // A satellite code-bias key ("G05|C1C") is no phase-bias key.
     ASSERT_FALSE(st.sm->getSatBiasStates().empty());
-    for (const auto& [key, col] : st.sm->getSatBiasStates()) {
-        const auto id = net::satCodeBiasKey(key);
-        ASSERT_TRUE(id.has_value()) << key;
-        EXPECT_EQ(set.shared.sat_code_bias.at(*id), static_cast<int>(col)) << key;
-        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+    for (const auto& [key, col] : st.sm->getSatBiasStates())
         EXPECT_FALSE(net::satPhaseBiasKey(key).has_value()) << key;
-    }
     for (const char* bad : {"", "|PB", "G05|PB", "G05||PB", "G05|L1C", "G05_L1C|PB", "X99|L1C|PB", "G05|??C|PB"})
         EXPECT_FALSE(net::satPhaseBiasKey(bad).has_value()) << bad;
-    for (const char* bad : {"", "G05", "|C1C", "G05|", "G05|C1", "G05|L1C|PB", "X99|C1C"})
-        EXPECT_FALSE(net::satCodeBiasKey(bad).has_value()) << bad;
+}
+
+TEST(StationParamsTest, TheCodeBiasColumnsAreTheStateManagersSatelliteBiasStates) {
+    Station st;
+    StationParams set;
+    buildStationParams(*st.sm, st.disp, st.absorbed, set);
+
+    const std::map<std::string, std::size_t>& states = st.sm->getSatBiasStates();
+    ASSERT_FALSE(states.empty());
+    EXPECT_EQ(set.shared.sat_code_bias.size(), states.size());
+    for (const auto& [key, col] : states)
+        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+    // Every identity the set holds sits on a column the state manager keys the same way.
+    for (const auto& [id, slot] : set.shared.sat_code_bias) {
+        const auto it = states.find(keyText(slotAt(set, slot).ref));
+        ASSERT_NE(it, states.end()) << net::satKey(id.sat);
+        EXPECT_EQ(static_cast<int>(it->second), slot) << net::satKey(id.sat);
+    }
 }
 
 TEST(StationParamsTest, AStaleSetIsCountedAtTheStartOfTheEpochAndRebuiltAfterAnEarlyExit) {

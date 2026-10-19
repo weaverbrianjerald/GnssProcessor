@@ -1082,17 +1082,6 @@ std::optional<SatSignalId> satSignalKey(const std::string& key);
 std::optional<SatSignalId> satPhaseBiasKey(const std::string& key);
 
 /**
- * @brief The satellite and code signal of a satellite code-bias key, "<sat>|<signal>"
- *        ("G05|C1C"), without counting.
- *
- * Read as @ref satPhaseBiasKey reads its key; a phase-bias key ("G05|L1C|PB") is refused.
- *
- * @param key The key.
- * @return The satellite signal, or @c std::nullopt when the key does not read as an identity.
- */
-std::optional<SatSignalId> satCodeBiasKey(const std::string& key);
-
-/**
  * @brief The satellite signal of an old key, counting a failure under
  *        Converter::SatSignal (the writer's converter; serial code).
  * @param e   The entities (the converter tally).

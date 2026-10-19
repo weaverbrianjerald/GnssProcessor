@@ -589,12 +589,6 @@ std::optional<SatSignalId> satPhaseBiasKey(const std::string& key) {
     return satAndSignal(body.substr(0, bar), body.substr(bar + 1));
 }
 
-std::optional<SatSignalId> satCodeBiasKey(const std::string& key) {
-    const std::size_t bar = key.find('|');
-    if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) return std::nullopt;
-    return satAndSignal(key.substr(0, bar), key.substr(bar + 1));
-}
-
 std::optional<SatSignalId> satSignalOf(const NetworkEntities& e, const std::string& key) {
     const std::optional<SatSignalId> id = satSignalKey(key);
     if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::SatSignal)];
