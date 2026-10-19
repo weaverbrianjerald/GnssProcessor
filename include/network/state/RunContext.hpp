@@ -64,6 +64,7 @@
 #include "network/assembly/BiasAdmission.hpp" // latched W6 code-bias admission census, ctx.admission (CB-ADM)
 #include "network/carry/Inject.hpp"        // NetworkInjectState: the event-harness fault schedule and ledger
 #include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission state and counters
+#include "network/assembly/SecondBandAdmission.hpp"    // SecondBandAdmissionCounters
 #include "network/assembly/SignalRoster.hpp"            // SignalRoster and its counters
 #include "network/assembly/ChannelAll.hpp"  // the all-channel census
 #include "network/assembly/MultiGnss.hpp"   // the second-constellation telemetry
@@ -539,6 +540,16 @@ namespace GnssProcessor {
         /// every parked entry.  Read by networkStashStatus.  Inert without
         /// readmit_seed_horizon_s.
         bool   readmit_seed_mirrors{};
+        /// network.second_band_admission: a constellation other than the time reference
+        /// enters the network path at a station only while the station holds it on two
+        /// modelled bands.  Read by networkSecondBandAdmission.
+        bool   second_band_admission{};
+        /// network.second_band_scope: what the rule tests, the constellation at the station
+        /// or each satellite.  Inert without second_band_admission.
+        SecondBandScope second_band_scope{ SecondBandScope::Station };
+        /// network.second_band_min_sats: station scope, the satellites of a constellation
+        /// that must be on two modelled bands for the constellation to be admitted.
+        int    second_band_min_sats{ 1 };
         /// network.resume_d5_warmup_ep (RS-2b, SPEC_event_harness §21.6): processed epochs
         /// after a warm resume during which the D5 innovation gate is diagnostic
         /// only: a tripping chord is counted but not re-tapped, not marked slipped, and its
@@ -2298,6 +2309,7 @@ namespace GnssProcessor {
     ///   ArLatticeRunCounters               network/ar/ArLattice.hpp
     ///   FixedCyclesCounters                network/ar/FixedCycles.hpp
     ///   CanonicalPairAdmissionCounters     network/assembly/CanonicalPairAdmission.hpp
+    ///   SecondBandAdmissionCounters        network/assembly/SecondBandAdmission.hpp
     ///   SignalRosterCounters               network/assembly/SignalRoster.hpp
     ///   LedgerEmitCounters                 network/emit/LedgerEmit.hpp
     ///   DdPriorBuildCounters               network/carry/DdPriorBuild.hpp
@@ -2382,6 +2394,7 @@ namespace GnssProcessor {
           ArLatticeRunCounters,
           FixedCyclesCounters,
           CanonicalPairAdmissionCounters,
+          SecondBandAdmissionCounters,
           SignalRosterCounters,
           LedgerEmitCounters,
           DdPriorBuildCounters,

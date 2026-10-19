@@ -334,6 +334,7 @@ add_library(gnss_core STATIC
     src/core/network/driver/EpochObservers.cpp
     src/core/network/carry/Inject.cpp
     src/core/network/assembly/CanonicalPairAdmission.cpp
+    src/core/network/assembly/SecondBandAdmission.cpp
     src/core/network/state/ArcLedger.cpp
     src/core/network/solve/AnchorReentry.cpp
     src/core/network/slip/OraclePin.cpp
@@ -709,6 +710,7 @@ add_executable(gnss_tests
     tests/network/test_network_we_choice.cpp
     tests/network/test_network_within_epoch_culprits.cpp
     tests/network/test_canonical_pair_admission.cpp
+    tests/network/test_second_band_admission.cpp
     tests/network/test_oracle_pin.cpp
     tests/test_warm_resume_require.cpp
     tests/test_anchor_slip_handover.cpp

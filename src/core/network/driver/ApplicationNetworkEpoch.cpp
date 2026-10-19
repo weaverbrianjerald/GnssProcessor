@@ -85,6 +85,7 @@
 #include "network/ar/FixedCycles.hpp" // the fixed-cycle fold and its ledger of fixed cycles: a detached held solve only the emission reads
 #include "network/carry/Inject.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp" // canonical-pair admission seam
+#include "network/assembly/SecondBandAdmission.hpp"    // second-band admission seam
 #include "network/assembly/SignalRoster.hpp"  // signal roster and arc-ledger observatory
 #include "network/assembly/SecondPhaseScope.hpp"  // second phase channel, epoch tail
 #include "network/assembly/ChannelAll.hpp"      // all-channel census
@@ -213,8 +214,15 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // the held-out closed-loop consumer is untouched.  Disarmed, it returns
     // se_admit itself (no copy, no walk, byte-identical).
     SyncedEpoch se_cpa_scratch;
-    const SyncedEpoch& se = networkCanonicalPairAdmission(ctx, log, traces, stations,
-                                                          se_admit, se_cpa_scratch);
+    const SyncedEpoch& se_cpa = networkCanonicalPairAdmission(ctx, log, traces, stations,
+                                                              se_admit, se_cpa_scratch);
+    // Second-band admission seam (network/assembly/SecondBandAdmission.cpp).  On the same
+    // contract and for the same reason as the canonical-pair admission above: a constellation
+    // withheld at a station is absent from the record everything downstream derives from.
+    // It follows the canonical-pair admission so a record that one rule has removed is not
+    // counted by the other.  Disarmed, it returns se_cpa itself (no copy, no walk).
+    SyncedEpoch se_sba_scratch;
+    const SyncedEpoch& se = networkSecondBandAdmission(run, se_cpa, se_sba_scratch);
     // The epoch: everything the stages below hand each other (network/driver/Epoch.hpp).
     NetworkEpoch ep(se);
 

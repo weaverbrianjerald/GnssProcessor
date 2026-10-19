@@ -3834,6 +3834,27 @@ namespace GnssProcessor {
     };
 
     /**
+     * @brief What the second-band admission tests before it admits a constellation's
+     *        rows at a station (@c network.second_band_scope).
+     *
+     *  - @c Station   : the constellation is admitted at a station while at least
+     *    @c network.second_band_min_sats of its satellites are on two modelled bands at
+     *    that station in the epoch.  Every satellite of the constellation is then
+     *    admitted, on one band or two, so single-band satellites among dual-band peers
+     *    keep their rows.  The default.
+     *  - @c Satellite : each satellite is admitted on its own, while it is on two
+     *    modelled bands in the epoch.  A satellite that loses its second band for a few
+     *    epochs leaves the solve at that station for them.
+     *
+     * Selected by @c network.second_band_scope; inert unless
+     * @c network.second_band_admission is armed.
+     */
+    enum class SecondBandScope {
+        Station,   ///< Test the constellation at the station (default).
+        Satellite  ///< Test each satellite at the station.
+    };
+
+    /**
      * @brief What the ledger-driven gap re-entry response does with an arc that the
      *        raw slip tiers did not see this epoch (@c network.ledger_reentry_no_verdict)
      *        (phase 3).
