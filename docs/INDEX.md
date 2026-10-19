@@ -179,7 +179,7 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
 golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
 single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
-GPS only; nothing armed).
+GPS only; nothing armed; the single-band rule is built behind `network.second_band_admission`, UNVALIDATED).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

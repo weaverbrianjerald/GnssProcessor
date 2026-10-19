@@ -192,5 +192,6 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   720 of 720 epochs, BeiDou clocks metre class (maximum 14.6 m), no failure mode A or B, none of the four pieces needed. Three
   stations that track BeiDou on B1I alone are dropped whole by the addStation guard (heal fires on 551 of 720 epochs); with
   their band-2 BeiDou removed (GEC-s) nothing fires. Census hours 2 to 6: GEC-s -0.0038 m against GPS + Galileo (5 better, 0
-  worse), -0.0267 m against GPS only (12 / 1); WTZZ00DEU within +0.007 m of GE; cost 2 to 3 times GE. Nothing armed; the
-  single-band rule and the arming decision are open.
+  worse), -0.0267 m against GPS only (12 / 1); WTZZ00DEU within +0.007 m of GE; cost 2 to 3 times GE. Nothing armed. The
+  single-band rule is built behind `network.second_band_admission` (2026-10-18, UNVALIDATED; on 2 h arms it reproduces the
+  subtraction: no station dropped, consumer within 1 mm of GEC-s); the arming decision is open.
