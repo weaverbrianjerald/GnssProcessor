@@ -57,6 +57,20 @@ int networkReadmitRunEnd(const NetworkRunEndView& v) {
                       ? "  ⚠ entries were parked but NONE seeded — every return expired or "
                         "was dropped; the horizon is shorter than this bed's absences."
                       : "");
+    // The seeds the epoch-tail snapshots of the carry LS-VCE monitor and the prior-residual
+    // census met: a seed is a parked entry the fold applied, and the snapshots skip parked
+    // entries unless network.readmit_seed_mirrors is armed.  A count is nonzero only where
+    // that mirror is armed for the kind.
+    if (config_.networkReadmitSeedHorizonS() > 0.0)
+        log->info("Network (READMIT seed mirrors): of the {} clock + {} code-bias seed(s) the "
+                  "D2 fold applied, the carry LS-VCE monitor's snapshot met {} code-bias seed(s) "
+                  "and the prior-residual census's {} code-bias + {} clock seed(s), and {} "
+                  "(network.readmit_seed_mirrors {}).",
+                  C.n_readmit_seeded_clk, C.n_readmit_seeded_cb,
+                  C.n_readmit_mirror_seed_vce_cb, C.n_readmit_mirror_seed_census_cb,
+                  C.n_readmit_mirror_seed_census_clk,
+                  config_.networkReadmitSeedMirrors() ? "took them as rows" : "skipped them",
+                  config_.networkReadmitSeedMirrors() ? "ON" : "off");
     return 0;
 }
 

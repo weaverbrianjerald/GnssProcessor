@@ -137,8 +137,10 @@ reference. The classes are:
   switch happens 18 s early at an insertion.
 - [ ] `OceanTideModel` applies no nodal corrections (f, u), and its GMST uses GPS time rather
   than UT1 (about 0.15° on M2).
-- [ ] `NetworkStashStatus`: parked re-admission seeds folded by the D2 inject are skipped by
+- [x] `NetworkStashStatus`: parked re-admission seeds folded by the D2 inject are skipped by
   the VCE and census mirrors (a possible census coverage gap).
+  Confirmed, counted and fixed behind the default-off `network.readmit_seed_mirrors` on branch
+  fix/netsmall (card NSD); the same-build check is owed.
 - [ ] `NetworkAmbFloat`: the drop floor is not elevation-mapped unless the birth floor is
   armed.
 - [ ] `IfPhaseSlipDetector`: the 0.5 m position gate is up to 4.7 ionosphere-free cycles, so
@@ -394,8 +396,10 @@ as the drafting pass reported them.
   says not to arm `gate_v2` on that lineage.
 - [ ] `network.gross_los_sat_min_stations` serves both the emission exclusion and the
   satellite stand-down (not armed); one knob, two meanings.
-- [ ] The coupled-mark census (`decommonedClockStep`) takes one median across all
+- [x] The coupled-mark census (`decommonedClockStep`) takes one median across all
   constellations; the hold's `M_k` is per constellation.
+  Fixed on branch fix/netsmall (card NSD): `pbHoldDecommonedClockStep` takes one median per
+  constellation; the same-build check is owed.
 - [ ] CLAUDE.md, wu93 amendment 3: the exposed wind-up interval is [300, 900] s, not
   (300, 900]: `computePhaseWindUp` restarts at a gap of at least the horizon.
 - [ ] CLAUDE.md gives the network driver as 2,359 lines (2026-08-15); it measures 3,139

@@ -172,6 +172,9 @@ Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
 [OTL](refound/OTL_ocean_tide_loading_source_2026-10-16.md), ocean tide loading from the SIF registry alone and the
 nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default off and checked, identical off, consumer +6.5 mm, census median -2.0 mm; diagnosed, no sign defect, diurnal net translation removable behind a default-off key, consumer +2.0 mm; arming open).
 
+Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md):
+[NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (open, 2026-10-17: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds confirmed, counted and taken behind the default-off `network.readmit_seed_mirrors`; the coupled-mark census median per constellation; same-build check 2026-10-18: declared lines only; the 6 h seed counts owed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

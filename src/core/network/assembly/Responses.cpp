@@ -134,6 +134,8 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      "BorderPrior.cpp READMIT frame drop at a clock-datum change", "parked clocks dropped"},
     {R::ClkReinit, "clk_reinit", K::SatClock, E::Slip, P::Reinit, Src::Disposition,
      dispOf(CarryDisposition::Reinit), "CarryDisposition.cpp carryFoldDecide (Reinit)", "key-epochs folded at the reinit variance"},
+    {R::ClkHardRefloat, "clk_hard_refloat", K::SatClock, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "BorderStash.cpp the stash (reinit sigma <= 0)", "stash entries left out: the flagged clock's column starts the next epoch without a prior"},
     {R::ClkRetire, "clk_retire", K::SatClock, E::Handover, P::Retire, Src::Disposition,
      dispOf(CarryDisposition::Retired), "BorderPrior.cpp the D2 fold (Retired)", "key-epochs not folded"},
     {R::ClkAnchorDecouple, "clk_anchor_decouple", K::SatClock, E::Decouple, P::Loosen, Src::Increment, kNoDisp,
@@ -161,6 +163,8 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      "BorderPrior.cpp READMIT frame drop at a clock-datum change", "parked code biases dropped"},
     {R::CbReinit, "cb_reinit", K::SatCodeBias, E::Slip, P::Reinit, Src::Disposition,
      dispOf(CarryDisposition::Reinit), "CarryDisposition.cpp carryFoldDecide (Reinit)", "key-epochs folded at the reinit variance"},
+    {R::CbHardRefloat, "cb_hard_refloat", K::SatCodeBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "BorderStash.cpp the stash (reinit sigma <= 0)", "stash entries left out: the flagged satellite's code-bias column starts the next epoch without a prior"},
     {R::CbRetire, "cb_retire", K::SatCodeBias, E::Handover, P::Retire, Src::Disposition,
      dispOf(CarryDisposition::Retired), "BorderPrior.cpp the D2 fold (Retired)", "key-epochs not folded"},
     {R::CbTimeLinkReanchor, "cb_time_link_reanchor", K::SatCodeBias, E::Readmit, P::ReanchorAtTarget, Src::Increment, kNoDisp,
@@ -172,6 +176,8 @@ const std::array<ResponseSiteSpec, kResponseSites> kTable{{
      dispOf(CarryDisposition::Reref), "CarryDisposition.cpp carryFoldDecide (Reref)", "key-epochs not folded"},
     {R::PbReinit, "pb_reinit", K::SatPhaseBias, E::Slip, P::Reinit, Src::Disposition,
      dispOf(CarryDisposition::Reinit), "CarryDisposition.cpp carryFoldDecide (Reinit)", "key-epochs folded at the reinit variance"},
+    {R::PbHardRefloat, "pb_hard_refloat", K::SatPhaseBias, E::Slip, P::EraseAndRebirth, Src::Increment, kNoDisp,
+     "BorderStash.cpp the stash (reinit sigma <= 0)", "stash entries left out: the flagged satellite's phase-bias column starts the next epoch without a prior"},
     {R::PbRetire, "pb_retire", K::SatPhaseBias, E::Handover, P::Retire, Src::Disposition,
      dispOf(CarryDisposition::Retired), "BorderPrior.cpp the D2 fold (Retired)", "key-epochs not folded"},
     {R::PbPinBridgeDiscard, "pb_pin_bridge_discard", K::SatPhaseBias, E::Handover, P::Discard, Src::Increment, kNoDisp,
@@ -268,6 +274,12 @@ bool responseSiteArmed(ResponseSite s, const NetworkKnobs& k, const GnssConfig& 
         case R::PbReinit:    return reinitFlags && reinitSoft && pbCarried;
         case R::CbReinit:
             return cbEst && ((reinitFlags && reinitSoft) || nc.cb_excursion_reinit);
+        // The hard refloat (a reinit sigma that is not positive) leaves a flagged satellite's
+        // entries out of the stash, on the same flags and carried kinds as the soft reinit.
+        // The code-bias excursion guard has no hard form.
+        case R::ClkHardRefloat: return k.clk_mon_on && clkCarried && !reinitSoft;
+        case R::PbHardRefloat:  return reinitFlags && !reinitSoft && pbCarried;
+        case R::CbHardRefloat:  return cbEst && reinitFlags && !reinitSoft;
         // The retired datum: a clock-pivot handover whose carry the S-transform did not
         // re-express (scoped mode), or every entry at a handover in legacy (unscoped) mode.
         case R::ClkRetire:   return pivotDatum && clkCarried;

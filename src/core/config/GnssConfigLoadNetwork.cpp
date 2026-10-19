@@ -4833,6 +4833,11 @@ namespace GnssProcessor {
         // the third-frequency C5Q seed at 43 σ while the IF-pair seeds held).
         network_readmit_seed_code_bias_ =
             jval<bool>(json, "network.readmit_seed_code_bias", "readmit_seed_code_bias", true);
+        // Sub-knob of the seed horizon: the epoch-tail monitor and census snapshots take a
+        // parked seed the fold applied (default off = they skip every parked entry).  Not
+        // fingerprinted: neither accumulator is part of a state snapshot.
+        network_readmit_seed_mirrors_ =
+            jval<bool>(json, "network.readmit_seed_mirrors", "readmit_seed_mirrors", false);
         // Canonical-pair admission (
         // docs/refound/CPA_canonical_pair_admission_2026-09-20.md).  Default off =
         // byte-identical; not fingerprinted.  The tolerance is clamped rather than
@@ -9993,6 +9998,21 @@ namespace GnssProcessor {
                             "epochs below a decimetre), where a satellite without its band-2 "
                             "phase is still a two-band satellite."
                           : "");
+        if (network_readmit_seed_mirrors_) {
+            log->info("Network producer (READMIT seed mirrors): the carry LS-VCE monitor and "
+                      "the prior-residual census take a parked seed the D2 fold applied as a "
+                      "row, at the seed gap and the variance the fold used.  Where "
+                      "network.carry_vce_apply is armed the monitor's rows feed the fold, so "
+                      "this is graded as a behaviour change.");
+            if (!(network_readmit_seed_horizon_s_ > 0.0))
+                log->warn("Network producer: network.readmit_seed_mirrors is armed without "
+                          "network.readmit_seed_horizon_s, so no entry is ever parked or "
+                          "seeded: the switch is INERT here.");
+            if (!network_carry_vce_ && !network_config_.prior_residual_census)
+                log->warn("Network producer: network.readmit_seed_mirrors is armed with "
+                          "neither network.carry_vce nor network.prior_residual_census, so "
+                          "no snapshot reads it: the switch is INERT here.");
+        }
         if (network_readmit_coupling_marg_ep_ > 0)
             log->info("Network producer (READMIT re-coupling edge): for {} epoch(s) after a "
                       "satellite's clock column returns from a >= 3-epoch absence, every "

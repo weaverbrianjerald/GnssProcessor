@@ -132,6 +132,7 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.readmit_seed_horizon_s = config_.networkReadmitSeedHorizonS();     // seed-first re-admission (E2)
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
+    k.readmit_seed_mirrors   = config_.networkReadmitSeedMirrors();      // monitor and census take a folded seed
     // Z-row capture is unconditional (SPEC_synthetic_minimum_network §17 finding 3): a run
     // with a snapshot path records and harvests the per-station ZWD posterior, so every
     // snapshot carries Z rows.  The capture is read-only with respect to the solve (no

@@ -109,6 +109,7 @@ enum class ResponseSite : int {
     ClkParkDiscard,        ///< a parked clock whose column returned without consuming it dropped
     ClkParkDiscardDatum,   ///< a parked clock dropped at a clock-datum change
     ClkReinit,             ///< folded at the clock monitor's reinit variance
+    ClkHardRefloat,        ///< a flagged clock left out of the stash (reinit sigma <= 0): its column starts the next epoch without a prior
     ClkRetire,             ///< not folded: a clock-pivot handover retired its datum
     ClkAnchorDecouple,     ///< the temporal clock anchor's guard decoupled the clock from its anchor (folds loose)
     ClkAnchorRecouple,     ///< the temporal clock anchor's guard re-validated the clock (folds anchored again)
@@ -123,12 +124,14 @@ enum class ResponseSite : int {
     CbParkDiscard,         ///< a parked code bias whose column returned without consuming it dropped
     CbParkDiscardDatum,    ///< a parked code bias dropped at a clock-datum change
     CbReinit,              ///< folded at the reinit variance
+    CbHardRefloat,         ///< a flagged satellite's code bias left out of the stash (reinit sigma <= 0): its column starts the next epoch without a prior
     CbRetire,              ///< not folded: a clock-pivot handover retired its datum
     CbTimeLinkReanchor,    ///< the geometry-free time link re-anchored at its target on a return
     // --- Satellite phase bias (prev_carry, pin_bridge) ---------------------------------
     PbDeparted,            ///< folded with its column departed (marginalized)
     PbReref,               ///< not folded: its frame was re-referenced this epoch
     PbReinit,              ///< folded at the reinit variance
+    PbHardRefloat,         ///< a flagged satellite's phase bias left out of the stash (reinit sigma <= 0): its column starts the next epoch without a prior
     PbRetire,              ///< not folded: a clock-pivot handover retired its datum
     PbPinBridgeDiscard,    ///< an open pin bridge's held value dropped at a datum change
     // --- SH coefficient (prev_carry) ---------------------------------------------------
@@ -136,7 +139,7 @@ enum class ResponseSite : int {
 };
 
 /// Number of @ref ResponseSite values (array sizing).
-inline constexpr int kResponseSites = 65;
+inline constexpr int kResponseSites = 68;
 
 static_assert(static_cast<int>(ResponseSite::ShRetire) + 1 == kResponseSites,
               "kResponseSites must follow the ResponseSite enum");
