@@ -8,6 +8,7 @@
 
 #include "common/GnssIdentity.hpp"
 #include "network/solve/PivotHandover.hpp"   // pivotHandoverSignalled
+#include "network/solve/PivotElection.hpp"   // the elections the run-end table lists
 #include "network/solve/ClockDatum.hpp"       // networkClockDatumDeclaration
 #include "math/TimeUtils.hpp"
 
@@ -319,11 +320,13 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
     // which the solve glue's election keeps.
     const SbasisDeclaration decl = networkClockDatumDeclaration(ctx, config_, clk_anchor_sigma);
     std::set<std::string> hlt_ineligible;
-    if (ctx.knobs.sat_health != 0) {
+    const bool health_read = ctx.knobs.sat_health != 0 || ctx.knobs.pivot_election != 0;
+    if (health_read) {
         const double t_s = TimeUtils::continuousGpsSeconds(t);
         for (const std::string& s : registered_clock_sats)
             if (sat_health.unhealthyAt(s, t_s)) hlt_ineligible.insert(s);
     }
+    const NetworkPivotElectionEpoch election(ctx, run.setup, t);
     // The constellation pivots as the election reads them (one-letter key -> satellite).
     const std::map<std::string, std::string> prev_pivot =
         net::letterMap(ctx.entities.constellations, &net::ConstellationState::prev_pivot);
@@ -334,7 +337,8 @@ void networkHandoverStransformBeforeRows(NetworkRun& run, const NetworkEpoch& ep
         NetworkSbasis sb;
         plan = sb.buildSharedDatum(est, registered_clock_sats, decl,
                                    ctx.knobs.sticky_pivot ? &last_pivot : nullptr,
-                                   ctx.knobs.sat_health != 0 ? &hlt_ineligible : nullptr);
+                                   health_read ? &hlt_ineligible : nullptr,
+                                   election.get());
     } catch (const std::exception&) {
         return;   // the solve glue's election fails the same way and skips the epoch
     }
@@ -651,6 +655,47 @@ static int networkSatHealthRunEnd(const NetworkRunEndView& v) {
 }
 
 /**
+ * @brief Run-end section: the clock pivot election by predicted coverage.
+ *
+ * The fresh elections the coverage rule made (each with its pick, mean station count,
+ * runner-up and what it passed over), the picks held through epochs no product had adopted
+ * yet, and the elections that could not rank any candidate.
+ *
+ * Gate: returns 0 at once unless `ctx.knobs.pivot_election != 0`.
+ *
+ * @param v The run at its end (network/runend/RunEnd.hpp).
+ * @return 0 (this report does not set the exit code).
+ */
+static int networkPivotElectionRunEnd(const NetworkRunEndView& v) {
+    const NetworkRunContext& ctx = v.ctx;
+    const std::shared_ptr<spdlog::logger>& log = v.log;
+    const NetworkSetupResult& setup = v.setup;
+
+    // Standing invariant #4: the counters are the evidence the rule acted.
+    if (!(ctx.knobs.pivot_election != 0)) return 0;
+    const auto& c = ctx.counters;
+    log->info("Network: pivot election 'coverage' (look-ahead {:.0f} s in steps of {:.0f} s): "
+              "{} fresh election(s) made a pick, {} (constellation, epoch) pick(s) kept an earlier "
+              "election's satellite that no emitted product had adopted yet, {} election(s) "
+              "could not rank any candidate and left the first one.",
+              ctx.knobs.pivot_election_horizon_s, ctx.knobs.pivot_election_step_s, c.piv_ranked,
+              c.piv_standby_kept, c.piv_rank_failures);
+    if (setup.pivot_coverage) {
+        for (const PivotElectionRecord& e : setup.pivot_coverage->elections())
+            log->info("Network: pivot election at TOW {:.0f}, constellation {}: {}.",
+                      std::fmod(e.ranking.t_gps_s, 604800.0), e.ranking.constellation,
+                      e.ranking.describe());
+    }
+    if (c.piv_ranked + c.piv_rank_failures == 0)
+        log->warn("Network: pivot_election 'coverage' is armed but no election ran (every "
+                  "constellation kept a declared or incumbent pivot): INERT for this run.");
+    if (c.piv_rank_failures > 0)
+        log->warn("Network: {} pivot election(s) found no candidate with an orbit in the "
+                  "product cache; the lexical first stood there.", c.piv_rank_failures);
+    return 0;
+}
+
+/**
  * @brief Run-end section: clock-pivot handovers and their S-transform.
  *
  * The clock-pivot handovers and their S-transform (PRM 2, SCL B2).
@@ -754,6 +799,7 @@ static int networkPivotHandoverRunEnd(const NetworkRunEndView& v) {
 int networkHandoverStransformRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkSatHealthRunEnd,
+        networkPivotElectionRunEnd,
         networkPivotHandoverRunEnd
     });
 }

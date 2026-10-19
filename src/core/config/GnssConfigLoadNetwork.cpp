@@ -8678,6 +8678,53 @@ namespace GnssProcessor {
                               : "the observations of a satellite the broadcast flags unhealthy "
                                 "at an epoch are removed from the synced epochs");
         }
+        {
+            // Clock pivot election by predicted station coverage.
+            const std::string election =
+                jval<std::string>(json, "network.pivot_election", "network_pivot_election",
+                                  std::string("off"));
+            if (election == "off") {
+                network_pivot_election_ = 0;
+            } else if (election == "coverage") {
+                network_pivot_election_ = 1;
+            } else {
+                throw std::runtime_error(
+                    "network.pivot_election = '" + election + "' is not one of off, coverage.");
+            }
+            network_pivot_election_horizon_s_ =
+                jval<double>(json, "network.pivot_election_horizon_s",
+                             "network_pivot_election_horizon_s", 7200.0);
+            network_pivot_election_step_s_ =
+                jval<double>(json, "network.pivot_election_step_s",
+                             "network_pivot_election_step_s", 300.0);
+            if (network_pivot_election_ != 0) {
+                if (!std::isfinite(network_pivot_election_horizon_s_) ||
+                    !std::isfinite(network_pivot_election_step_s_) ||
+                    !(network_pivot_election_step_s_ > 0.0) ||
+                    !(network_pivot_election_horizon_s_ >= network_pivot_election_step_s_))
+                    throw std::runtime_error(
+                        "network.pivot_election needs finite network.pivot_election_step_s > 0 "
+                        "and network.pivot_election_horizon_s >= the step.");
+                log->info("Network producer: clock pivot election by coverage ON: at a "
+                          "constellation's first epoch and at a forced handover the pivot is the "
+                          "registered, healthy satellite the orbit product predicts at the most "
+                          "roster stations over {:.0f} s (samples every {:.0f} s), passing over "
+                          "one that enters the Earth's umbra in that time; an incumbent that "
+                          "stays registered and healthy is kept.  SOLVE-AFFECTING + "
+                          "FINGERPRINTED: fresh convergence only.",
+                          network_pivot_election_horizon_s_, network_pivot_election_step_s_);
+                if (network_clock_datum_sum_to_zero_ || network_clock_datum_broadcast_anchored_)
+                    log->warn("Network: network.pivot_election is INERT under "
+                              "network.clock_datum_sum_to_zero and "
+                              "network.clock_datum_broadcast_anchored (neither datum has a pivot "
+                              "satellite).");
+                if (!network_config_.clock_datum_satellite.empty())
+                    log->warn("Network: network.clock_datum_satellite '{}' is kept ahead of "
+                              "network.pivot_election for its constellation (a declared pin "
+                              "is an explicit choice).",
+                              network_config_.clock_datum_satellite);
+            }
+        }
         network_phase_datum_pref_elev_deg_ =
             jval<double>(json, "network.phase_datum_pref_elev_deg",
                          "network_phase_datum_pref_elev_deg", 15.0);
@@ -10654,6 +10701,14 @@ namespace GnssProcessor {
      */
     bool GnssConfig::validateNetworkCarryPosture_(const nlohmann::json& json,
                                                   const std::shared_ptr<spdlog::logger>& log) {
+        // The pivot election runs at ignition and at a forced handover only; without the sticky
+        // incumbent it would run again every epoch.  Checked here, after the service profile
+        // has had its chance to arm the sticky pivot.
+        if (network_pivot_election_ != 0 && !network_sticky_pivot_)
+            throw std::runtime_error(
+                "network.pivot_election requires network.sticky_pivot = true (the election "
+                "applies at ignition and at a forced handover only; without the sticky "
+                "incumbent it would run again every epoch).");
         if (network_emitter_staleness_horizon_s_ > 0.0)
             log->info("Network producer (RTA-11): emitter staleness horizon {:.0f} s ON — a "
                       "(sat[,signal]) key returning after a longer product-time gap reseeds its "

@@ -177,6 +177,10 @@ Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md)
 
 [WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (open, 2026-10-18: built default off, UNVALIDATED, never armed; the simulator cannot grade it; checked: knob off identical to main, field golden 6 h restarts 139 to 91 and arcs refloated 116 to 23, consumer and census within 0.3 mm, no benefit shown).
 
+[PIV](refound/PIV_pivot_election_coverage_2026-10-17.md), the clock pivot elected by predicted station coverage, broadcast
+health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
+Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

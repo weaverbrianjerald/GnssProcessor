@@ -254,6 +254,10 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.cta_gauge_free     = config_.networkClockAnchorGaugeFree();
     // Broadcast satellite health on the network path.
     k.sat_health         = config_.networkSatHealth();
+    // Clock pivot election by predicted station coverage.
+    k.pivot_election           = config_.networkPivotElection();
+    k.pivot_election_horizon_s = config_.networkPivotElectionHorizonS();
+    k.pivot_election_step_s    = config_.networkPivotElectionStepS();
     // Gauge-free carry downdate: one resolved predicate that every fold, withdraw and
     // replay site reads.  It removes the datum's own direction from the carried
     // information, and is armed through `clock_anchor_gauge_free` with the Q3 anchor on.

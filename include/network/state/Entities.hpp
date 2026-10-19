@@ -232,6 +232,14 @@ struct ConstellationState {
     /// raises datum_changed.  Read only when network.pivot_vanish_return_signal is on
     /// (otherwise inert).  Was @c NetworkCarryState::last_pivot.  Record V.
     std::optional<std::string> last_pivot;
+    /// The pivot the coverage election (network.pivot_election) left in force at the latest
+    /// solved epoch.  An election runs when no incumbent (@c last_pivot, the pivot of the
+    /// last emitted product) is registered and healthy; epochs that are solved but not
+    /// emitted would otherwise elect again at every epoch, so the pick is held here and kept
+    /// while it stays registered and healthy.  Written every solved epoch under the knob,
+    /// never read without it.  Starts empty on every run, warm or cold: a resumed run has
+    /// @c last_pivot from the snapshot.  ColdStart.
+    std::optional<std::string> elected_pivot;
     /// The exact update (network.carry_coupling_exact_update): the pinned clock satellite and its
     /// pinned value at the stash.  Not snapshotted; seeded from the V rows by the warm
     /// resume.  Was @c NetworkCarryState::cxu_pivot.  ResumeSeeded.

@@ -322,14 +322,17 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // epochs at which the broadcast flags it, here beside the constellation door, so every
     // reader downstream sees it absent there (a return is the satellite's re-admission, as
     // after an eclipse).  "pivot": the clock-pivot election reads the series
-    // (NetworkSolveGlue) and the observations stay.
-    if (config_.networkSatHealth() != 0) {
+    // (NetworkSolveGlue) and the observations stay.  The coverage election of the clock
+    // pivot (network.pivot_election) skips an unhealthy satellite through the same series.
+    if (config_.networkSatHealth() != 0 || config_.networkPivotElection() != 0) {
+        const char* health_reader = config_.networkSatHealth() != 0 ? "network.sat_health"
+                                                                    : "network.pivot_election";
         const std::filesystem::path nav_path = config_.getNavigationPath();
         if (nav_path.empty()) {
-            log->error("Network: network.sat_health needs a broadcast navigation "
+            log->error("Network: {} needs a broadcast navigation "
                        "file, but files.navigation_path is empty.  Set it, let PathResolver "
                        "auto-resolve a BRDC / _MN.rnx file covering the day, or set "
-                       "network.sat_health to off.");
+                       "{} to off.", health_reader, health_reader);
             return 1;
         }
         const std::vector<BroadcastEphemeris> nav = RinexNavParser::parse(nav_path.string());
@@ -340,7 +343,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         setup.sat_health = NetworkSbasis::satHealthSeries(nav, gal_mask);
         if (setup.sat_health.sats.empty()) {
             log->error("Network: parsed 0 usable broadcast records from '{}', so "
-                       "network.sat_health has no health to read.", nav_path.string());
+                       "{} has no health to read.", nav_path.string(), health_reader);
             return 1;
         }
         // The satellites flagged at some time inside the window, with the flagged spans.
@@ -376,7 +379,8 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
                   setup.sat_health.records_unhealthy, gal_mask, flagged_sats.size(),
                   std::fmod(t0, 604800.0), std::fmod(t1, 604800.0),
                   flagged.empty() ? "" : ": ", flagged, n_edges,
-                  config_.networkSatHealth() == 1 ? "pivot" : "exclude");
+                  config_.networkSatHealth() == 0 ? "off (read by network.pivot_election)"
+                  : config_.networkSatHealth() == 1 ? "pivot" : "exclude");
         const std::string& declared = config_.getNetworkConfig().clock_datum_satellite;
         if (!declared.empty() && flagged_sats.count(declared))
             log->warn("Network: the declared clock pivot {} "

@@ -360,6 +360,12 @@ void networkSnapshotFingerprint(NetworkRunContext& ctx, const GnssConfig& config
         // state.  Conditional append, so every earlier fingerprint is unchanged.
         if (ctx.knobs.sat_health != 0)
             add(fmt::format("hlt:{}", ctx.knobs.sat_health));
+        // The coverage election changes which satellite is the clock pivot, so a snapshot
+        // written with it armed carries a different datum; the horizon and step change the
+        // ranking. Conditional append, so every earlier fingerprint is unchanged.
+        if (ctx.knobs.pivot_election != 0)
+            add(fmt::format("piv:{}:{:.0f}:{:.0f}", ctx.knobs.pivot_election,
+                            ctx.knobs.pivot_election_horizon_s, ctx.knobs.pivot_election_step_s));
         // Carry VCE apply (M2 v2): the variance factor multiplies every carry fold
         // variance, so a carried (value, var) pair means a different prior with it armed
         // than without.  That makes it a fingerprinted knob, unlike the carry_vce monitor,
