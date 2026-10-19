@@ -337,7 +337,7 @@ Closed-loop consumer of each wire, p50 of the 3D error by hour from 00:00 (m); t
 
 - Change from C, hours 2 to 6 (m). Held truth: S1 -0.0005 +0.0006 -0.0001 -0.0001 -0.0003, S2 -0.0005 +0.0006 -0.0001 -0.0001 -0.0002. SINEX truth: S1 +0.0004 +0.0009 +0.0002 -0.0001 -0.0000, S2 +0.0003 +0.0009 +0.0001 -0.0001 -0.0000. Largest 0.9 mm.
 - Epoch by epoch, the consumer position of S1 differs from C by a median 0.5 mm, 95th percentile 1.2 mm, largest 14.5 mm; for S2 0.4, 1.1 and 6.4 mm. S1 and S2 agree to 0.1 mm per hour: the six stations carry the consumer effect.
-- The truth switch alone (C, SINEX against held): +0.0030 in hour 1, then +0.0003 +0.0019 -0.0005 -0.0010 -0.0020 m; mean over hours 2 to 6 -0.0003 m.
+- The truth switch alone (C, SINEX against held): +0.0030 in hour 1, then +0.0003 +0.0019 -0.0005 -0.0009 -0.0020 m; mean over hours 2 to 6 -0.0002 m. These are differences of the unrounded hourly p50s (+0.00304, +0.00034, +0.00188, -0.00049, -0.00093, -0.00196; mean over hours 2 to 6 -0.00023); the difference of the rounded cells of the table (0.0129 against 0.0132) reads -0.0003 m and is not the figure.
 
 ### 10.4 The 16-site census
 
@@ -423,7 +423,7 @@ The same wires against the CODE clock (`scripts/ftc_step_attrib.py --r3 --system
 | E, all, dm | 0.0220 | 0.0235 | 0.0236 | +0.0015 | +0.0016 |
 | E, trk, dm | 0.0127 | 0.0133 | 0.0131 | +0.0006 | +0.0004 |
 
-Signs are mixed and the changes are at most 2.7 mm. The GPS-only wire-against-CODE read of `scripts/refound_grade.py` (within-arc `clk` rows, hours 2 to 6) moves by at most 0.004 m, in both directions (`rfgrade_*.txt`).
+Signs are mixed and the changes are at most 2.7 mm. The GPS-only wire-against-CODE read of `scripts/refound_grade.py` (within-arc `clk` rows, tracking and declared segmentations, hours 2 to 6) moves in both directions: the p50 and the rms by at most 0.004 m (largest p50 change 0.003 m, largest rms change 0.004 m), the 95th percentile by at most 0.007 m (S1, tracking, hour 3: 0.118 to 0.125 m; S2 at most 0.004 m) (`rfgrade_*.txt`).
 
 ### 10.7 Against the bars of section 8.4
 
@@ -443,7 +443,7 @@ None of the bars is a result; they were proposed for the author to set. Read as 
 
 - **What changes.** The emitted satellite clocks, by a per-satellite level of up to 13 mm (5 mm RMS) that the six stations of S1 carry almost entirely. Whether S1 or S2 sits closer to the true clocks is not resolved by the wire-against-CODE rows: they move by up to 2.7 mm with mixed signs, and the de-commoned GPS rows improve.
 - **What does not.** The consumers: WTZZ00DEU and the 16 census sites follow none of the clock change (paired census change, median 0.00001 to 0.00005 m, largest site 2.4 mm). Why the consumer is insensitive to a per-satellite clock level of this size was not examined. This is a statement about 17 consumers and 6 h of one day.
-- **What the coordinates are worth to the grade.** The truth switch changes the census median by -1.35 mm and the worst site by 11.5 mm, against 0.05 mm and 2.4 mm for the roster. The held-out consumer's own figure moves by 0.3 mm in the mean of hours 2 to 6. The case for phase 2 (section 8.2) therefore rests on the truth and on the stations that break, as section 8.4 anticipated, and a coordinate source for the roster alone changes the wire by millimetres without changing any consumer.
+- **What the coordinates are worth to the grade.** The truth switch changes the census median by -1.35 mm and the worst site by 11.5 mm, against 0.05 mm and 2.4 mm for the roster. The held-out consumer's own figure moves by 0.2 mm in the mean of hours 2 to 6. The case for phase 2 (section 8.2) therefore rests on the truth and on the stations that break, as section 8.4 anticipated, and a coordinate source for the roster alone changes the wire by millimetres without changing any consumer.
 - **Not covered.** S3 (MIZU00JPN restored, the post-seismic case); the four roster stations absent from the file; a second day or network; the sim bed (known positions).
 - **Decision for the author.** Phase 2 (a loader key) is not built. Nothing here arms a source: the generator, the arm option and the SINEX site list are tooling, default unchanged.
 
