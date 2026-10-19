@@ -22,6 +22,7 @@
 #include "products/SsrCorrectionStore.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include "products/BrdcClockApriori.hpp"   // native broadcast clock a priori
+#include "model/Planetary.hpp"
 #include "model/SatAttitude.hpp"
 #include <algorithm>
 #include <array>
@@ -1878,18 +1879,15 @@ namespace GnssProcessor {
     // Phase wind-up
     // =================================================================
 
-    double GnssCorrections::computePhaseWindUp(const std::string& satellite,
+    bool GnssCorrections::windUpGeometry(const std::string& satellite,
         System system,
         const Eigen::Vector3d& rx_pos,
         const Eigen::Vector3d& sat_pos,
-        double wavelength,
-        const GnssTime& time,
         const Eigen::Vector3d& sun_pos,
         const Eigen::Vector3d& sat_vel,
-        bool accumulate,
-        double max_gap_s,
         bool correct_velocity_frame,
-        const SatAttitude::NoonTurnLaw* noon_turn_law) const {
+        const SatAttitude::NoonTurnLaw* noon_turn_law,
+        WindUpGeometry& out) const {
 
         // Wu et al. (1993), stated in this function's variables.  k = sat->rx.
         //
@@ -1915,7 +1913,7 @@ namespace GnssProcessor {
         double k_raw_norm = k_raw.norm();
         if (k_raw_norm < 1e-3) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate LOS", satellite);
-            return 0.0;
+            return false;
         }
         Eigen::Vector3d k = k_raw / k_raw_norm;
 
@@ -1946,7 +1944,7 @@ namespace GnssProcessor {
         const Eigen::Vector3d& y_s = att.j_s;
 
         // --- Receiver local frame (North / East) ---
-        if (rx_pos.norm() < 1e3) return 0.0;
+        if (rx_pos.norm() < 1e3) return false;
         Coordinates::Llh rx_llh = Coordinates::ecefToLlh(rx_pos);
         double phi = rx_llh.lat_rad, lam = rx_llh.lon_rad;
         Eigen::Vector3d x_r(-std::sin(phi)*std::cos(lam), -std::sin(phi)*std::sin(lam), std::cos(phi));
@@ -1960,14 +1958,43 @@ namespace GnssProcessor {
         double Ds_norm = Ds.norm(), Dr_norm = Dr.norm();
         if (Ds_norm < 1e-10 || Dr_norm < 1e-10) {
             log_manager_.getLogger("ppp_model")->trace("Phase wind-up for {}: degenerate dipole", satellite);
-            return 0.0;
+            return false;
         }
 
         // Compute signed angle between effective dipoles using atan2 for
         // full (-π, π] range.  This avoids the acos + sign approach which
         // loses information near 0 and π.
         Eigen::Vector3d Ds_hat = Ds / Ds_norm, Dr_hat = Dr / Dr_norm;
-        double windUp_c = std::atan2(k.dot(Ds_hat.cross(Dr_hat)), Ds_hat.dot(Dr_hat));
+        out.angle_rad = std::atan2(k.dot(Ds_hat.cross(Dr_hat)), Ds_hat.dot(Dr_hat));
+        out.k = k;
+        out.x_r = x_r;
+        out.y_r = y_r;
+        out.lat_rad = phi;
+        out.lon_rad = lam;
+        return true;
+    }
+
+    double GnssCorrections::computePhaseWindUp(const std::string& satellite,
+        System system,
+        const Eigen::Vector3d& rx_pos,
+        const Eigen::Vector3d& sat_pos,
+        double wavelength,
+        const GnssTime& time,
+        const Eigen::Vector3d& sun_pos,
+        const Eigen::Vector3d& sat_vel,
+        bool accumulate,
+        double max_gap_s,
+        bool correct_velocity_frame,
+        const SatAttitude::NoonTurnLaw* noon_turn_law,
+        const WindUpBridge::Options* gap_bridge) const {
+
+        // The angle itself, with the Wu et al. (1993) sign rule, is windUpGeometry():
+        // the gap bridge evaluates the same routine at virtual epochs.
+        WindUpGeometry geo;
+        if (!windUpGeometry(satellite, system, rx_pos, sat_pos, sun_pos, sat_vel,
+                            correct_velocity_frame, noon_turn_law, geo))
+            return 0.0;
+        double windUp_c = geo.angle_rad;
         const double wrapped_c = windUp_c;  // raw atan2 angle, pre-accumulation
 
         // Accumulated mode: unwrap relative to previous epoch for continuity.
@@ -2006,7 +2033,16 @@ namespace GnssProcessor {
                     double diff = windUp_c - pw_it->second.angle;
                     diff -= TWO_PI * std::round(diff / TWO_PI);
                     windUp_c = pw_it->second.angle + diff;
+                } else if (gap_bridge != nullptr && gap >= kMaxGapSeconds && gap < gap_bridge->max_gap_s
+                           && bridgeWindUpGap(satellite, system, rx_pos, correct_velocity_frame,
+                                              noon_turn_law, *gap_bridge, pw_it->second.epoch_s,
+                                              epoch_s, pw_it->second.angle, windUp_c, windUp_c)) {
+                    // The gap is inside the bridge range and the walk through
+                    // virtual epochs kept the accumulated angle continuous: no
+                    // restart, so no ledger entry and no step in the model.
                 } else {
+                    if (gap_bridge != nullptr && gap >= gap_bridge->max_gap_s)
+                        ++wu_bridge_counters_.beyond_horizon;
                     // Gap exceeds the continuity threshold (or epochs ran
                     // backwards): the unwrap reference is not reliable, so
                     // restart accumulation from the raw atan2 angle.
@@ -2099,7 +2135,10 @@ namespace GnssProcessor {
             double& last_traced = windup_trace_epoch_[satellite];
             if (last_traced != epoch_s) {
                 last_traced = epoch_s;
-                const Eigen::Vector3d los = -k;  // receiver -> satellite
+                const Eigen::Vector3d& x_r = geo.x_r;
+                const Eigen::Vector3d& y_r = geo.y_r;
+                const double phi = geo.lat_rad, lam = geo.lon_rad;
+                const Eigen::Vector3d los = -geo.k;  // receiver -> satellite
                 const Eigen::Vector3d up(std::cos(phi) * std::cos(lam),
                                          std::cos(phi) * std::sin(lam),
                                          std::sin(phi));
@@ -2123,6 +2162,56 @@ namespace GnssProcessor {
             }
         }
         return phi_m;
+    }
+
+    bool GnssCorrections::bridgeWindUpGap(const std::string& satellite, System system,
+        const Eigen::Vector3d& rx_pos, bool correct_velocity_frame,
+        const SatAttitude::NoonTurnLaw* noon_turn_law, const WindUpBridge::Options& opt,
+        double t_prev_s, double t_now_s, double angle_prev_rad, double angle_now_rad,
+        double& angle_out) const {
+
+        WindUpBridge::Result res;
+        if (!sat_state_provider_) {
+            // Nothing to walk with: counted as a refusal so that an armed run
+            // without a provider shows up in the run-end line.
+            res.outcome = WindUpBridge::Outcome::NoState;
+        } else {
+            // One virtual epoch: the satellite state the receiver would have
+            // used, the angle it gives and the two attitude hazards.  The noon-turn
+            // test is widened by one step of orbit motion so that a short turn near
+            // |beta| = beta0 cannot fall between two samples.
+            auto sampler = [&](double t_s) -> WindUpBridge::Sample {
+                WindUpBridge::Sample s;
+                GnssTime tk;
+                tk.week = static_cast<int>(std::floor(t_s / TimeUtils::SECONDS_IN_WEEK));
+                tk.tow = t_s - static_cast<double>(tk.week) * TimeUtils::SECONDS_IN_WEEK;
+                Eigen::Vector3d pos, vel, sun;
+                if (!sat_state_provider_(satellite, tk, rx_pos, pos, vel, sun)) return s;
+                WindUpGeometry g;
+                if (!windUpGeometry(satellite, system, rx_pos, pos, sun, vel,
+                                    correct_velocity_frame, noon_turn_law, g))
+                    return s;
+                s.ok = true;
+                s.angle_rad = g.angle_rad;
+                s.umbra = Planetary::isSatelliteEclipsing(pos, sun, opt.shadow_scale);
+                s.noon_turn = SatAttitude::inNoonTurnWindow(system, pos, vel, sun, opt.step_s);
+                return s;
+            };
+            res = WindUpBridge::walk(t_prev_s, t_now_s, angle_prev_rad, angle_now_rad, opt, sampler);
+        }
+        wu_bridge_counters_.record(res);
+        if (wu_bridge_events_.size() < WindUpBridge::kMaxEvents)
+            wu_bridge_events_.push_back({ satellite, t_now_s, t_now_s - t_prev_s, res.outcome, res.cycles });
+
+        log_manager_.getLogger("ppp_model")->debug(
+            "Phase wind-up gap {:.0f}s for {}: bridge {} ({} virtual epochs{})",
+            t_now_s - t_prev_s, satellite, WindUpBridge::outcomeName(res.outcome), res.samples,
+            res.outcome == WindUpBridge::Outcome::Bridged
+                ? fmt::format(", {} whole cycle(s) kept", res.cycles) : std::string{});
+
+        if (res.outcome != WindUpBridge::Outcome::Bridged) return false;
+        angle_out = res.angle_rad;
+        return true;
     }
 
     bool GnssCorrections::enableWindUpTracing(const std::filesystem::path& log_dir) {

@@ -175,6 +175,8 @@ nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default o
 Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md):
 [NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (open, 2026-10-17: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds confirmed, counted and taken behind the default-off `network.readmit_seed_mirrors`; the coupled-mark census median per constellation; same-build check 2026-10-18: declared lines only; the 6 h seed counts owed).
 
+[WGB](refound/WGB_windup_gap_bridge_2026-10-17.md), the phase wind-up accumulator through data gaps inside the leveling-carry horizon (open, 2026-10-18: built default off, UNVALIDATED, never armed; the simulator cannot grade it; checked: knob off identical to main, field golden 6 h restarts 139 to 91 and arcs refloated 116 to 23, consumer and census within 0.3 mm, no benefit shown).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

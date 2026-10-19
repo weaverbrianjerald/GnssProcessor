@@ -23,6 +23,7 @@
 #include "network/slip/SlipQc.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <fmt/format.h>
 #include <map>
@@ -112,11 +113,13 @@ static int networkSlipMwRelevelRunEnd(const NetworkRunEndView& v) {
 /**
  * @brief Run-end section: slip QC: wind-up census and restart, anchor-slip handover, MW admission and scope.
  *
- * Slip QC: the phase wind-up census, the wind-up restart response, the anchor-slip
- * handovers, the MW detect-only admission (every run) and the MW pair scope.
+ * Slip QC: the phase wind-up census, the wind-up restart response, the wind-up gap
+ * bridge, the anchor-slip handovers, the MW detect-only admission (every run) and
+ * the MW pair scope.
  *
  * Gate: each section under its own condition, as in the teardown:
  * `config_.traceWindUpCensus()`; `config_.networkCycleSlipWindupRestartRefloat()`;
+ * `config_.phaseWindUpGapBridge()`;
  * `config_.networkCycleSlipAnchorSlipHandover()`; always (a block);
  * `config_.networkCycleSlipMwDetectPairs() == NetworkMwDetectPairs::Primary`.
  *
@@ -249,6 +252,50 @@ static int networkSlipWindupMwRunEnd(const NetworkRunEndView& v) {
                       "horizon and ZERO arcs refloated — the response did not act on this "
                       "run (invariant #4).",
                       qcc.wu_restart_refloated + qcc.wu_restart_no_arc);
+    }
+
+    // ---- Wind-up gap bridge (estimation.phase_windup_gap_bridge) -------------
+    // Roster sum of the per-station counters.  A gap the bridge carried across
+    // leaves no restart and no ledger entry, so it also leaves no response above.
+    if (config_.phaseWindUpGapBridge()) {
+        WindUpBridge::Counters b;
+        int n_sta = 0;
+        for (const auto& st : stations) {
+            if (!st.model) continue;
+            const auto& sc = st.model->windUpBridgeCounters();
+            if (sc.attempts > 0 || sc.beyond_horizon > 0) ++n_sta;
+            b.add(sc);
+        }
+        log->info("Network (wind-up gap bridge): {} gap(s) in the bridged range [{:.0f}, {:.0f}) s "
+                  "at {} station(s): {} BRIDGED ({} of them over a nonzero whole-cycle count, "
+                  "the integer step a restart would have applied), {} refused (no satellite state "
+                  "{}, umbra {}, noon turn {}, half step of a quarter cycle or more {}, "
+                  "closure with the epoch's own angle {}); {} gap(s) at or beyond the horizon "
+                  "restarted as before; {} virtual epoch(s) evaluated.",
+                  b.attempts, config_.phaseWindUpMaxGapS(), config_.phaseWindUpBridgeMaxGapS(),
+                  n_sta, b.bridged, b.bridged_stepped, b.refused(), b.refused_no_state,
+                  b.refused_umbra, b.refused_noon_turn, b.refused_step, b.refused_closure,
+                  b.beyond_horizon, b.samples);
+        if (b.attempts > 0 && b.refused_no_state == b.attempts)
+            log->warn("Network (wind-up gap bridge): every attempt found no satellite state; "
+                      "the bridge did not act on this run (invariant #4).");
+        // The attempts by name (station, satellite, epoch), the first 100 of the roster.
+        constexpr int kMaxEventLines = 100;
+        int printed = 0;
+        for (const auto& st : stations) {
+            if (!st.model) continue;
+            for (const auto& ev : st.model->windUpBridgeEvents()) {
+                if (printed >= kMaxEventLines) break;
+                ++printed;
+                log->info("Network (wind-up gap bridge) attempt: {} {} at TOW {:.0f} s, gap {:.0f} s: {}{}",
+                          st.name, ev.satellite, std::fmod(ev.t_now_s, 604800.0), ev.gap_s,
+                          WindUpBridge::outcomeName(ev.outcome),
+                          ev.outcome == WindUpBridge::Outcome::Bridged
+                              ? fmt::format(", {} whole cycle(s) kept", ev.cycles) : std::string{});
+            }
+        }
+        if (b.attempts > printed)
+            log->info("Network (wind-up gap bridge): {} further attempt(s) not listed.", b.attempts - printed);
     }
 
     // ---- Anchor-slip handover (docs/SPEC_event_harness.md §12.7) ------------

@@ -329,6 +329,35 @@ public:
         const Eigen::Vector3d& sat_pos,
         const Eigen::Vector3d& sat_vel,
         const Eigen::Vector3d& sun_pos);
+
+    /**
+     * @brief Whether a satellite is in, or within a margin of, a noon turn.
+     *
+     * A time-continuity predicate for callers that bridge across epochs with the
+     * nominal yaw and must not do so through a turn.  It does not need the block
+     * of the satellite: it uses the Block IIF law (0.11 deg/s), whose turn
+     * window contains the Block IIR window (0.20 deg/s) at every beta, so the
+     * answer is conservative for both.  Systems without a noon-turn law here
+     * (everything but GPS) always give false.
+     *
+     * The window is the orbit-angle interval from the start of the turn to the
+     * rejoin of the nominal yaw (noonTurnYaw()), widened on both sides by the
+     * angle the satellite sweeps in @p margin_s seconds, so that a sampling
+     * interval of that length cannot step over a short turn near |beta| = beta0.
+     *
+     * @param[in] system    GNSS constellation.
+     * @param[in] sat_pos   Satellite ECEF position (meters).
+     * @param[in] sat_vel   Satellite ECEF velocity (m/s), as returned by getSatellitePV.
+     * @param[in] sun_pos   Sun ECEF position (meters).
+     * @param[in] margin_s  Widening of the window, in seconds of orbit motion (negative counts as 0).
+     * @return True inside the widened window; false outside it, for |beta| at or
+     *         above beta0, for a degenerate geometry, and for a non-GPS system.
+     */
+    static bool inNoonTurnWindow(System system,
+        const Eigen::Vector3d& sat_pos,
+        const Eigen::Vector3d& sat_vel,
+        const Eigen::Vector3d& sun_pos,
+        double margin_s);
 };
 
 }  // namespace GnssProcessor

@@ -1426,6 +1426,41 @@ namespace GnssProcessor {
         trace_windup_census_      = jval<bool>(json, "estimation.trace_windup_census",
                                                "trace_windup_census", false);
 
+        // Wind-up gap bridge: carry the accumulated angle across a short data gap
+        // by walking it through virtual epochs, instead of restarting the
+        // accumulator.  Default off.  The restart it replaces exists only in
+        // accumulated mode, so on a fractional lineage the knob would be armed and
+        // inert, and is switched off here with a warning.
+        phase_windup_gap_bridge_ = jval<bool>(json, "estimation.phase_windup_gap_bridge",
+                                              "phase_windup_gap_bridge", false);
+        phase_windup_bridge_max_gap_s_ = jval<double>(json, "estimation.phase_windup_bridge_max_gap_s",
+                                                      "phase_windup_bridge_max_gap_s", 900.0);
+        phase_windup_bridge_step_s_ = jval<double>(json, "estimation.phase_windup_bridge_step_s",
+                                                   "phase_windup_bridge_step_s", 30.0);
+        if (!(phase_windup_bridge_max_gap_s_ > 0.0)) {
+            log->warn("estimation.phase_windup_bridge_max_gap_s must be > 0, reset to 900.0 s.");
+            phase_windup_bridge_max_gap_s_ = 900.0;
+        }
+        if (!(phase_windup_bridge_step_s_ > 0.0) || phase_windup_bridge_step_s_ > 120.0) {
+            log->warn("estimation.phase_windup_bridge_step_s must be in (0, 120] s (a longer "
+                      "step lets the wind-up move too far between virtual epochs to unwrap); "
+                      "reset to 30.0 s.");
+            phase_windup_bridge_step_s_ = 30.0;
+        }
+        if (phase_windup_gap_bridge_ && !accumulate_phase_windup_) {
+            log->warn("estimation.phase_windup_gap_bridge needs "
+                      "estimation.accumulate_phase_windup (the restart it replaces exists "
+                      "only in accumulated mode; fractional wind-up wraps instead of "
+                      "restarting); disabled.");
+            phase_windup_gap_bridge_ = false;
+        }
+        if (phase_windup_gap_bridge_ && phase_windup_bridge_max_gap_s_ <= phase_windup_max_gap_s_) {
+            log->warn("estimation.phase_windup_bridge_max_gap_s ({:.0f} s) is not above "
+                      "estimation.phase_windup_max_gap_s ({:.0f} s): no gap lies in the bridged "
+                      "range, so the bridge is inert.",
+                      phase_windup_bridge_max_gap_s_, phase_windup_max_gap_s_);
+        }
+
         // Between-satellite single differencing
         enable_between_satellite_sd_ = jval<bool>(json, "estimation.between_satellite_sd.enabled",
                                                    "enable_between_satellite_sd", false);
@@ -3534,7 +3569,7 @@ namespace GnssProcessor {
         const char* basis_label =
             state_ambiguity_basis_ == StateAmbiguityBasis::NlWl ? "nl_wl" : "per_band";
 
-        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}",
+        log_manager.getLogger("gnss_config")->info("Toggles: tropo_grad={}, relin_geom={}, smoother={}, phase_clk={}, if_slip={}, accum_windup={}, wu_gap={:.0f}s, wu_census={}, bssd={}, velocity={}, iono_rate={}, ifb={}, glonass_ifb={}, lock_clkref={}, req_bia={}, sat_bias={}, no_bia_dw={:.0f}, imu={}, amb_basis={}, adaptive_iono_q={}, eclipse_excl={}, cio_frame={}, sun_frame_fix={}, auto_report={}, nc_bridge={}, var_factor={}, data_snoop={}, full_r={}, neq_export={}, trig_sp3={}, orbit_normal_att={}, noon_turn_att={}, wu_bridge={}",
             estimate_tropo_gradients_ ? "on" : "off",
             relinearize_geometry_     ? "on" : "off",
             run_smoother_             ? "on" : "off",
@@ -3567,7 +3602,8 @@ namespace GnssProcessor {
             enable_neq_export_ ? "on" : "off",
             enable_trig_sp3_interp_ ? "on" : "off",
             enable_orbit_normal_attitude_ ? "on" : "off",
-            enable_noon_turn_attitude_ ? "on" : "off");
+            enable_noon_turn_attitude_ ? "on" : "off",
+            phase_windup_gap_bridge_ ? "on" : "off");
     }
 
 } // namespace GnssProcessor

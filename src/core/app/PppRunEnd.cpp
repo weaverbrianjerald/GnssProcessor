@@ -97,6 +97,28 @@ void Application::reportWindUpCensus_(const PppRunEndView&) {
                                "the path §7's own 43/day figure came from.");
         }
     }
+    // Wind-up gap bridge (estimation.phase_windup_gap_bridge): the single-receiver counters.
+    if (config_.phaseWindUpGapBridge() && ppp_model_) {
+        const auto& b = ppp_model_->windUpBridgeCounters();
+        auto wu_log = log_manager_.getLogger("ppp_model");
+        if (wu_log) {
+            wu_log->info("Wind-up gap bridge: {} gap(s) in the bridged range [{:.0f}, {:.0f}) s: "
+                         "{} BRIDGED ({} over a nonzero whole-cycle count), {} refused (no "
+                         "satellite state {}, umbra {}, noon turn {}, step {}, closure {}); {} "
+                         "gap(s) at or beyond the horizon restarted as before; {} virtual "
+                         "epoch(s) evaluated.",
+                         b.attempts, config_.phaseWindUpMaxGapS(), config_.phaseWindUpBridgeMaxGapS(),
+                         b.bridged, b.bridged_stepped, b.refused(), b.refused_no_state,
+                         b.refused_umbra, b.refused_noon_turn, b.refused_step, b.refused_closure,
+                         b.beyond_horizon, b.samples);
+            for (const auto& ev : ppp_model_->windUpBridgeEvents())
+                wu_log->info("Wind-up gap bridge attempt: {} at TOW {:.0f} s, gap {:.0f} s: {}{}",
+                             ev.satellite, std::fmod(ev.t_now_s, 604800.0), ev.gap_s,
+                             WindUpBridge::outcomeName(ev.outcome),
+                             ev.outcome == WindUpBridge::Outcome::Bridged
+                                 ? fmt::format(", {} whole cycle(s) kept", ev.cycles) : std::string{});
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

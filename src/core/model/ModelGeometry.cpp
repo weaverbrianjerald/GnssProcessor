@@ -262,6 +262,56 @@ namespace GnssProcessor {
             return (sat_pos - rx_pos).norm(); // meters
         }
 
+        bool Geometry::getLookBackState(const std::string& satellite, const GnssTime& time,
+            const Eigen::Vector3d& rx_pos, Eigen::Vector3d& sat_pos,
+            Eigen::Vector3d& sat_vel, Eigen::Vector3d& sun_pos) const
+        {
+            constexpr double kMinSatNorm = 1.9e7;   // as computeEmissionState
+            const double c = Constants::SPEED_OF_LIGHT;
+            const double omegaE = Constants::EARTH_ANGULAR_VELOCITY;
+
+            // getSatellitePV records, with realtime.honor_ssr_reference_point on, whether
+            // the overlay it applied was APC-referenced, and PppModel reads that record
+            // for the epoch being processed.  Put it back after the queries below.
+            const auto apc_it = ssr_orbit_apc_applied_.find(satellite);
+            const bool had_apc_record = apc_it != ssr_orbit_apc_applied_.end();
+            const bool apc_value = had_apc_record && apc_it->second;
+            auto restoreApcRecord = [&]() {
+                if (had_apc_record) ssr_orbit_apc_applied_[satellite] = apc_value;
+                else                ssr_orbit_apc_applied_.erase(satellite);
+            };
+
+            // Light time from the position at reception, then the state at emission.
+            const auto first = getSatellitePV(satellite, time);
+            if (!first.first.allFinite() || first.first.norm() < kMinSatNorm) {
+                restoreApcRecord();
+                return false;
+            }
+            GnssTime emission = time;
+            emission.tow -= (first.first - rx_pos).norm() / c;
+            if (emission.tow < 0.0) {
+                emission.tow += TimeUtils::SECONDS_IN_WEEK;
+                emission.week -= 1;
+            }
+            const auto em = getSatellitePV(satellite, emission);
+            restoreApcRecord();
+            if (!em.first.allFinite() || !em.second.allFinite() || em.first.norm() < kMinSatNorm)
+                return false;
+
+            // Earth rotation during the flight, as computeSatelliteGeometry applies it.
+            const double theta = omegaE * (em.first - rx_pos).norm() / c;
+            Eigen::Matrix3d R_earth;
+            R_earth <<  std::cos(theta), std::sin(theta), 0.0,
+                       -std::sin(theta), std::cos(theta), 0.0,
+                        0.0,             0.0,             1.0;
+            sat_pos = R_earth * em.first;
+            sat_vel = em.second;
+
+            Eigen::Vector3d moon_unused;
+            planetary_.computeSunMoonPosition(time, *erps_, sun_pos, moon_unused);
+            return sun_pos.allFinite();
+        }
+
 
         // =================================================================
         // Private helpers

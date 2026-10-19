@@ -354,4 +354,27 @@ SatAttitude::Frame SatAttitude::applyNoonTurn(const Frame& nominal, const NoonTu
     return out;
 }
 
+bool SatAttitude::inNoonTurnWindow(System system,
+    const Eigen::Vector3d& sat_pos,
+    const Eigen::Vector3d& sat_vel,
+    const Eigen::Vector3d& sun_pos,
+    double margin_s)
+{
+    if (system != System::GPS) return false;
+    const OrbitGeometry g = orbitGeometry(sat_pos, sat_vel, sun_pos);
+    if (!g.valid) return false;
+
+    const NoonTurnLaw law{ kBlockIifYawRateDegS, kGpsOrbitRateDegS };
+    const NoonTurnYaw yaw = noonTurnYaw(g.beta_rad, g.orbit_angle_rad, law);
+    if (yaw.active) return true;
+    // start and end stay 0 when |beta| is at or above beta0: no turn can occur.
+    if (!(yaw.end_angle_deg > yaw.start_angle_deg)) return false;
+
+    const double margin_deg = law.orbit_rate_deg_s * std::max(margin_s, 0.0);
+    double mu_deg = std::fmod(g.orbit_angle_rad / kDegToRad, 360.0);
+    if (mu_deg < 0.0) mu_deg += 360.0;
+    return mu_deg >= yaw.start_angle_deg - margin_deg
+        && mu_deg <= yaw.end_angle_deg + margin_deg;
+}
+
 }  // namespace GnssProcessor

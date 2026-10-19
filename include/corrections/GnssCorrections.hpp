@@ -20,8 +20,10 @@
 #include "math/TimeUtils.hpp"
 #include "common/PppTypes.hpp"
 #include "corrections/OceanTideModel.hpp"
+#include "corrections/WindUpGapBridge.hpp"
 #include "model/SatAttitude.hpp"
 #include <array>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -462,6 +464,13 @@ namespace GnssProcessor {
          *        attitude.  Null reproduces the result without this argument bit
          *        for bit.  The satellite PCO takes the same law, so the two stay
          *        on one attitude.
+         * @param gap_bridge Settings of the gap bridge, or null for none.  With
+         *        settings, and only in accumulated mode, a gap from @p max_gap_s up
+         *        to @c gap_bridge->max_gap_s is walked through virtual epochs
+         *        (WindUpBridge::walk) instead of restarting the accumulator, when a
+         *        satellite-state provider is set (@ref setSatStateProvider).  A gap
+         *        the walk refuses restarts as before.  Null reproduces the result
+         *        without this argument bit for bit.
          * @return Phase wind-up correction in meters (to add to carrier range).
          *
          * Computes the phase bias caused by relative antenna orientation
@@ -476,7 +485,47 @@ namespace GnssProcessor {
             bool accumulate = false,
             double max_gap_s = 300.0,
             bool correct_velocity_frame = false,
-            const SatAttitude::NoonTurnLaw* noon_turn_law = nullptr) const;
+            const SatAttitude::NoonTurnLaw* noon_turn_law = nullptr,
+            const WindUpBridge::Options* gap_bridge = nullptr) const;
+
+        /**
+         * @brief Source of the satellite state at a time other than the epoch being processed.
+         *
+         * Called by the gap bridge for each virtual epoch.  It returns the state the
+         * receiver would have used at @p time: the satellite position in the ECEF
+         * frame of reception (light time and Earth rotation applied), its ECEF
+         * velocity, and the Sun position, for a receiver at @p rx_pos.
+         *
+         * @param[in]  satellite Satellite identifier.
+         * @param[in]  time      Reception epoch of the virtual epoch.
+         * @param[in]  rx_pos    Receiver ECEF position (meters).
+         * @param[out] sat_pos   Satellite ECEF position (meters).
+         * @param[out] sat_vel   Satellite ECEF velocity (m/s).
+         * @param[out] sun_pos   Sun ECEF position (meters).
+         * @return False when the orbit cannot describe @p time.
+         */
+        using SatStateProvider = std::function<bool(const std::string& satellite, const GnssTime& time,
+            const Eigen::Vector3d& rx_pos, Eigen::Vector3d& sat_pos, Eigen::Vector3d& sat_vel,
+            Eigen::Vector3d& sun_pos)>;
+
+        /**
+         * @brief Install the satellite-state provider the gap bridge reads.
+         *
+         * Without one, a bridge request (the @c gap_bridge argument of
+         * computePhaseWindUp) is counted as refused for want of a state and the
+         * accumulator restarts as it always did.  The provider is called from the
+         * const wind-up routine and so must not disturb state its owner reads
+         * for the epoch being processed.
+         *
+         * @param provider The provider, or an empty function to remove it.
+         */
+        void setSatStateProvider(SatStateProvider provider) { sat_state_provider_ = std::move(provider); }
+
+        /// @brief Counters of the gap bridge (all zero unless computePhaseWindUp ran with a bridge).
+        const WindUpBridge::Counters& windUpBridgeCounters() const { return wu_bridge_counters_; }
+
+        /// @brief The first @c WindUpBridge::kMaxEvents bridging attempts, named, in order of occurrence.
+        const std::vector<WindUpBridge::Event>& windUpBridgeEvents() const { return wu_bridge_events_; }
 
         /**
          * @brief Enable CSV tracing of per-satellite phase wind-up diagnostics.
@@ -633,6 +682,70 @@ namespace GnssProcessor {
         // simulator's shared-provider fan-out runs one process per station for
         // this reason.  Re-key to (station, satellite) before sharing an instance.
         mutable std::unordered_map<std::string, WindUpState> prev_windup_;
+
+        /// Satellite-state source of the gap bridge (see @ref setSatStateProvider); empty by default.
+        SatStateProvider sat_state_provider_;
+        /// Gap-bridge counters, written from the const computePhaseWindUp (hence mutable).
+        mutable WindUpBridge::Counters wu_bridge_counters_;
+        /// Named attempts, capped at WindUpBridge::kMaxEvents; written like the counters.
+        mutable std::vector<WindUpBridge::Event> wu_bridge_events_;
+
+        /**
+         * @brief The raw wind-up angle of one geometry, and the receiver frame it was built in.
+         *
+         * Shared by the epoch itself and by the virtual epochs of the gap bridge,
+         * so both take the satellite frame, the dipoles and the sign rule from one place.
+         */
+        struct WindUpGeometry {
+            double          angle_rad{ 0.0 };  ///< Signed angle between the effective dipoles, in (-pi, pi].
+            Eigen::Vector3d k{ Eigen::Vector3d::Zero() };    ///< Unit vector satellite to receiver.
+            Eigen::Vector3d x_r{ Eigen::Vector3d::Zero() };  ///< Receiver north axis (ECEF).
+            Eigen::Vector3d y_r{ Eigen::Vector3d::Zero() };  ///< Receiver east axis (ECEF).
+            double          lat_rad{ 0.0 };    ///< Receiver geodetic latitude.
+            double          lon_rad{ 0.0 };    ///< Receiver longitude.
+        };
+
+        /**
+         * @brief Raw (wrapped) wind-up angle for one satellite and receiver geometry.
+         *
+         * @param[in]  satellite              Satellite identifier.
+         * @param[in]  system                 Satellite system.
+         * @param[in]  rx_pos                 Receiver ECEF position (meters).
+         * @param[in]  sat_pos                Satellite ECEF position (meters).
+         * @param[in]  sun_pos                Sun ECEF position (meters); see computePhaseWindUp.
+         * @param[in]  sat_vel                Satellite ECEF velocity (m/s).
+         * @param[in]  correct_velocity_frame See computePhaseWindUp.
+         * @param[in]  noon_turn_law          See computePhaseWindUp; null for the nominal attitude.
+         * @param[out] out                    The angle and the frame it was built in.
+         * @return False for a degenerate line of sight, receiver or dipole (out is then unset).
+         */
+        bool windUpGeometry(const std::string& satellite, System system,
+            const Eigen::Vector3d& rx_pos, const Eigen::Vector3d& sat_pos,
+            const Eigen::Vector3d& sun_pos, const Eigen::Vector3d& sat_vel,
+            bool correct_velocity_frame, const SatAttitude::NoonTurnLaw* noon_turn_law,
+            WindUpGeometry& out) const;
+
+        /**
+         * @brief Try to carry the accumulated angle across a gap with the bridge.
+         *
+         * @param[in]  satellite              Satellite identifier.
+         * @param[in]  system                 Satellite system.
+         * @param[in]  rx_pos                 Receiver ECEF position (meters).
+         * @param[in]  correct_velocity_frame See computePhaseWindUp.
+         * @param[in]  noon_turn_law          See computePhaseWindUp.
+         * @param[in]  opt                    Bridge settings.
+         * @param[in]  t_prev_s               Continuous GPS seconds of the last accumulated epoch.
+         * @param[in]  t_now_s                Continuous GPS seconds of the current epoch.
+         * @param[in]  angle_prev_rad         Accumulated angle at @p t_prev_s (rad).
+         * @param[in]  angle_now_rad          Raw wrapped angle of the current epoch (rad).
+         * @param[out] angle_out              Accumulated angle at the current epoch when true is returned.
+         * @return True when the walk was accepted; the attempt is counted either way.
+         */
+        bool bridgeWindUpGap(const std::string& satellite, System system,
+            const Eigen::Vector3d& rx_pos, bool correct_velocity_frame,
+            const SatAttitude::NoonTurnLaw* noon_turn_law, const WindUpBridge::Options& opt,
+            double t_prev_s, double t_now_s, double angle_prev_rad, double angle_now_rad,
+            double& angle_out) const;
 
     public:
         /**
