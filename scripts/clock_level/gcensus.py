@@ -13,6 +13,20 @@ grade : python gcensus.py grade <refkey> <key> [<key> ...]
         Per key: the median over sites of the site's hourly p50 (3D, hours from 00:00), and against
         <refkey> the paired change of each site's mean hourly p50 over hours 2 to 6 and of hour 1,
         better / worse at 1 cm, the median change; then the per-site rows.
+
+Day options (either verb; card MDAY, 2026-10-19).  With none of them the tool is the DOY-129, 00:00, 6 h census of
+the cards above, command for command and line for line.
+  --day D          day of year 2024 of the sites' RINEX and of the hour clock (default 129).  The site files
+                   are <obs root>/2024-<D>/obs/<site>/<SITE>_R_2024<D>0000_01D_30S_MO.rnx; the consumer at the
+                   base's own station keeps the path of the base arm.
+  --obs-root R     the root that holds the day's obs/ directories (default C:/GnssProcessor/data; the days
+                   128 and 130 to 132 are under D:/GnssProcessorSupport/data_mday).
+  --start-hour H   the replays start H hours into the day (network.start_offset_hours) and the hours are
+                   counted from there (default 0).
+  --hours N        replay length and number of graded hours (default 6).  Hours 2 to N are the settled ones.
+  --duration-s S   replay length in seconds in place of --hours N for the replays (a day whose products end
+                   short of N hours); N still sets the number of graded hours.
+  --jobs J         replays run at once (default 6).
 """
 import csv, json, os, statistics as st, subprocess, sys
 
@@ -21,8 +35,32 @@ import msc_sites
 ROOT = 'C:/GnssProcessor'
 RUNS = os.environ.get('RAPID_RUNS_ROOT', ROOT + '/runs').replace('\\', '/')   # the runs root rapid_arm.py uses
 T0, NH = 259200.0, 6
+DAY, START_H, OBS_ROOT, DURATION_S, JOBS = 129, 0.0, None, None, 6   # the day options (configure)
 SL = msc_sites.load()
 NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
+
+
+def gps_day_of_week(doy, year=2024):
+    """GPS day of week (Sunday 0) of day-of-year doy of the year (DOY 129 of 2024 is a Wednesday, 3)."""
+    import datetime
+    return (datetime.date(year, 1, 1) + datetime.timedelta(days=doy - 1)).isoweekday() % 7
+
+
+def configure(day=129, start=0.0, hours=6, obs_root=None, duration_s=None, jobs=6):
+    """Set the day options; the defaults are the DOY-129, 00:00, 6 h census.  Also called by graders that import
+    this module (hours() and grade() read the module globals T0 and NH)."""
+    global T0, NH, DAY, START_H, OBS_ROOT, DURATION_S, JOBS
+    DAY, START_H, OBS_ROOT, DURATION_S, JOBS = day, float(start), obs_root, duration_s, jobs
+    NH = int(hours) if float(hours).is_integer() else float(hours)
+    T0 = gps_day_of_week(day) * 86400.0 + START_H * 3600.0
+
+
+def site_path(s):
+    """The RINEX of census site s on the configured day (the site list's own path for DOY 129 under its root)."""
+    if DAY == 129 and OBS_ROOT is None:
+        return s['path']
+    root = (OBS_ROOT or ROOT + '/data').replace('\\', '/').rstrip('/')
+    return f"{root}/2024-{DAY:03d}/obs/{s['name'].lower()}/{s['name']}_R_2024{DAY:03d}0000_01D_30S_MO.rnx"
 
 
 def make(key, base, wire, exe, extra):
@@ -39,7 +77,7 @@ def make(key, base, wire, exe, extra):
         if s4 != 'wtzz':
             s = next(x for x in SL if x['name'][:4].lower() == s4)
             site = [('network.closed_loop.station.name', s['name']),
-                    ('network.closed_loop.station.rinex_path', s['path']),
+                    ('network.closed_loop.station.rinex_path', site_path(s)),
                     ('network.closed_loop.station.position_ecef', s['ecef'])]
         if rinex and site:
             # rapid_arm.py applies RINEX ops before --set, to the base's own consumer: write a per-site base
@@ -55,8 +93,12 @@ def make(key, base, wire, exe, extra):
             json.dump(cfg, open(base_json, 'w'), indent=2)
             site = []
         cmd = [sys.executable, '-I', ROOT + '/scripts/rapid_arm.py', 'make', '--base', base_json,
-               '--tag', tag, '--hours', str(NH),
+               '--tag', tag] + (['--hours', str(NH)] if DURATION_S is None else []) + [
                '--set', f'network.closed_loop.replay_products_path={RUNS}/{wire}/products.txt']
+        if DURATION_S is not None:   # exact seconds: rapid_arm's --hours is hours * 3600 in floating point
+            cmd += ['--set', f'processing.max_duration_s={DURATION_S}', '--set', f'network.max_duration_s={DURATION_S}']
+        if START_H:
+            cmd += ['--set', f'network.start_offset_hours={START_H}']
         for kv in extra:
             cmd += ['--set', kv]
         site_name = s['name'] if s4 != 'wtzz' else json.load(open(f'{RUNS}/{base}/arm.json'))['network']['closed_loop']['station']['name']
@@ -68,7 +110,7 @@ def make(key, base, wire, exe, extra):
         assert r.returncode == 0, (tag, r.stdout[-400:], r.stderr[-400:])
         tags.append(tag)
     r = subprocess.run([sys.executable, '-I', ROOT + '/scripts/rapid_arm.py', 'run', '--tags', *tags,
-                        '--jobs', '6', '--exe', exe], capture_output=True, text=True, cwd=ROOT)
+                        '--jobs', str(JOBS), '--exe', exe], capture_output=True, text=True, cwd=ROOT)
     print(key, len(tags), 'replays;', r.stdout.count('exit 0'), 'exit 0')
     if r.stdout.count('exit 0') != len(tags):
         print(r.stdout)
@@ -114,8 +156,26 @@ def grade(ref, keys):
                   + ' '.join(f'{x:.3f}' for x in K[n]) + f'  d2-6 {st.mean(K[n][1:]) - st.mean(R[n][1:]):+.4f}')
 
 
+def take_options(a):
+    """Strip the day options from the argument list, configure(), and return the rest."""
+    opt = {'--day': ('day', int), '--obs-root': ('obs_root', str), '--start-hour': ('start', float),
+           '--hours': ('hours', float), '--duration-s': ('duration_s', float), '--jobs': ('jobs', int)}
+    kw = {}
+    while True:
+        hit = [i for i, x in enumerate(a) if x in opt]
+        if not hit:
+            break
+        i = hit[0]
+        name, conv = opt[a[i]]
+        kw[name] = conv(a[i + 1])
+        a = a[:i] + a[i + 2:]
+    if kw:
+        configure(**kw)
+    return a
+
+
 if __name__ == '__main__':
-    a = sys.argv[1:]
+    a = take_options(sys.argv[1:])
     if a[0] == 'make':
         make(a[1], a[2], a[3], a[4], a[5:])
     else:
