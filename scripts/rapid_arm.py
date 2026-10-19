@@ -10,10 +10,18 @@ in parallel, and prints one scorecard.
 
   make   --base <arm.json> --tag <name> [--hours H] [--set key.path=value ...]
          [--drop-station NAME ...] [--rinex "OP;key=val;..." ...] [--allow-unread KEY ...]
+         [--roster <roster.json>]
   run    --tags a b c [--jobs 4] [--exe <gnss_processor exe>]      (Release exe only)
   score  <tag or run_dir> ... [--pf]
   draws  --op "OP;..." [--op ...] --ids G01,G02,...                (the constants a bias op draws)
   selftest
+
+`make --roster` replaces `network.stations[].position_ecef` by the `positions` map of a roster
+file (scripts/roster_from_sinex.py writes one): a name to [x, y, z] marker coordinate, one entry
+per station to replace.  Every name must be a station of the arm (or one named by --drop-station),
+and a coordinate more than 1 km from the arm's own is refused.  Stations the file does not name,
+the closed-loop consumer and everything else stay as the base has them; rapid.json records the
+file, its sha256, the stations replaced and the largest shift.
 
 `make` refuses a --set key that the config loader does not read (scripts/loader_keys.py):
 the loader ignores an unknown key without a word, so such an arm would run as its base and
@@ -623,6 +631,32 @@ def set_key(cfg, dotted, value):
         node[keys[-1]] = value
 
 
+ROSTER_REUSE_LIMIT_M = 1000.0
+
+
+def apply_roster(net, path, dropped):
+    """Replace the roster coordinates of `net` (the arm's network section) from a roster file and
+    return the record for rapid.json.  Refuses a name the arm does not have, and a coordinate more
+    than ROSTER_REUSE_LIMIT_M from the arm's own."""
+    raw = open(path, "rb").read()
+    pos = json.loads(raw)["positions"]
+    by = {s["name"]: s for s in net["stations"]}
+    replaced, shifts = [], []
+    for name, ecef in pos.items():
+        if name not in by:
+            assert name in dropped, f"roster names {name}, which is not a station of the arm"
+            continue
+        assert len(ecef) == 3, f"roster position of {name} is not [x, y, z]"
+        old = by[name]["position_ecef"]
+        shift = math.sqrt(sum((p - q) ** 2 for p, q in zip(ecef, old)))
+        assert shift <= ROSTER_REUSE_LIMIT_M, f"roster position of {name} is {shift:.1f} m from the arm's"
+        by[name]["position_ecef"] = [float(v) for v in ecef]
+        replaced.append(name)
+        shifts.append(shift)
+    return {"file": path.replace("\\", "/"), "sha256": hashlib.sha256(raw).hexdigest(), "replaced": replaced,
+            "max_shift_mm": 1000.0 * max(shifts) if shifts else 0.0}
+
+
 def cmd_make(a):
     allow = getattr(a, "allow_unread", None) or []
     loader_keys.refuse_unread([kv.split("=", 1)[0] for kv in a.set or []], allow=allow)
@@ -633,6 +667,7 @@ def cmd_make(a):
         n0 = len(net["stations"])
         net["stations"] = [s for s in net["stations"] if s["name"] != name]
         assert len(net["stations"]) == n0 - 1, f"station {name} not in the roster"
+    roster_rec = apply_roster(net, a.roster, a.drop_station or []) if getattr(a, "roster", None) else None
     ops = [parse_op(t) for t in (a.rinex or [])]
     for op in ops:
         op["_prio"] = base.get("processing", {}).get("signal_priorities", {}).get("GPS", [])
@@ -687,12 +722,16 @@ def cmd_make(a):
             "hours": a.hours, "set": a.set or [], "drop_station": a.drop_station or [], "rinex": a.rinex or [],
             "rinex_touched": touched, "holes_records_deleted": n_holes,
             "ecc_moved": [{"station": s, "hen": list(h)} for s, h in moved]}
+    if roster_rec:
+        prov["roster"] = roster_rec
     if allow:
         prov["allow_unread"] = list(allow)
     json.dump(prov, open(rd + "/rapid.json", "w"), indent=2)
     print(f"{a.tag}: {len(net['stations'])} stations, {len(touched)} RINEX file(s) rewritten"
           + (f", {n_holes} record(s) deleted by holes" if n_holes else "")
           + (", ecc " + " ".join("%s H%.3f/E%.3f/N%.3f" % (s, *h) for s, h in moved) if moved else "")
+          + (f", roster {len(roster_rec['replaced'])} coordinate(s) replaced, largest shift "
+             f"{roster_rec['max_shift_mm']:.1f} mm" if roster_rec else "")
           + f", -> {rd}")
 
 
@@ -1241,6 +1280,36 @@ def cmd_selftest(_):
         make("allowed", ["network.no_such_knob_xyz=true"], allow=["network.no_such_knob_xyz"])
         rec = json.load(open(RUNS + "/_rap_allowed/rapid.json"))
         chk(rec["allow_unread"] == ["network.no_such_knob_xyz"], "the record lists the key that was allowed")
+        # A roster file replaces the coordinates it names and nothing else.
+        rbase = d + "/rbase.json"
+        json.dump({"network": {"stations": [{"name": "AAAA00XXX", "position_ecef": [1.0e6, 2.0e6, 3.0e6]},
+                                            {"name": "BBBB00XXX", "position_ecef": [4.0e6, 5.0e6, 6.0e6]}],
+                               "closed_loop": {"station": {"name": "CCCC00XXX", "position_ecef": [7.0e6, 8.0e6, 9.0e6]}}}},
+                  open(rbase, "w"))
+
+        def rmake(tag, positions):
+            rfile = d + f"/roster_{tag}.json"
+            json.dump({"positions": positions}, open(rfile, "w"))
+            a = argparse.Namespace(base=rbase, tag=tag, hours=None, set=None, drop_station=None, rinex=None,
+                                   allow_unread=None, roster=rfile)
+            with contextlib.redirect_stdout(io.StringIO()):
+                cmd_make(a)
+        rmake("ros", {"BBBB00XXX": [4.0e6 + 0.05, 5.0e6, 6.0e6 - 0.02]})
+        arm = json.load(open(RUNS + "/_rap_ros/arm.json"))["network"]
+        chk(arm["stations"][0]["position_ecef"] == [1.0e6, 2.0e6, 3.0e6]
+            and arm["stations"][1]["position_ecef"] == [4.0e6 + 0.05, 5.0e6, 6.0e6 - 0.02]
+            and arm["closed_loop"]["station"]["position_ecef"] == [7.0e6, 8.0e6, 9.0e6],
+            "a roster replaces the stations it names and leaves the rest and the consumer")
+        rec = json.load(open(RUNS + "/_rap_ros/rapid.json"))["roster"]
+        chk(rec["replaced"] == ["BBBB00XXX"] and abs(rec["max_shift_mm"] - 1000.0 * math.hypot(0.05, 0.02)) < 1e-6
+            and len(rec["sha256"]) == 64, "the record lists the stations replaced, the shift and the hash")
+        for bad, why in (({"ZZZZ00XXX": [1.0, 2.0, 3.0]}, "a name the arm does not have"),
+                         ({"AAAA00XXX": [1.0e6 + 2000.0, 2.0e6, 3.0e6]}, "a coordinate 2 km away")):
+            try:
+                rmake("rbad", bad)
+                chk(False, why + " must be refused")
+            except AssertionError as ex:
+                chk("roster" in str(ex), f"refused: {why}: {ex}")
     finally:
         RUNS = runs0
     print(f"rapid_arm selftest: {n}/{n} PASS")
@@ -1256,6 +1325,8 @@ def main():
     m.add_argument("--set", action="append")
     m.add_argument("--drop-station", action="append")
     m.add_argument("--rinex", action="append")
+    m.add_argument("--roster", metavar="ROSTER.json",
+                   help="replace roster coordinates from the `positions` map of a roster file")
     m.add_argument("--allow-unread", action="append", metavar="KEY",
                    help="let a --set key through that the loader check cannot find (repeatable); "
                         "the key must still be one the loader reads")

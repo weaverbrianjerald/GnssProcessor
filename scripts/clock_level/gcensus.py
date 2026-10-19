@@ -10,6 +10,10 @@ make  : python gcensus.py make <key> <consumer base run> <wire run> <exe> [key.p
         consumer, so an op with consumer=1 edits the site's own RINEX copy; `{SITE}` in an op is replaced by the
         site's name, so stations={SITE};consumer=1 edits the consumer's file alone (card L5B).
 grade : python gcensus.py grade <refkey> <key> [<key> ...]
+sites : `--sites FILE` anywhere on the line (or MSC_SITE_LIST in the environment) reads the site list from FILE
+        instead of site_list.json, for example site_list_sinex.json.  A `consumer` entry of that list replaces the
+        base's own WTZZ00DEU coordinate, so every consumer of a key is scored against the same coordinate source.
+        Default unchanged.
         Per key: the median over sites of the site's hourly p50 (3D, hours from 00:00), and against
         <refkey> the paired change of each site's mean hourly p50 over hours 2 to 6 and of hour 1,
         better / worse at 1 cm, the median change; then the per-site rows.
@@ -18,11 +22,21 @@ import csv, json, os, statistics as st, subprocess, sys
 
 import msc_sites
 
-ROOT = 'C:/GnssProcessor'
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).replace('\\', '/')   # this checkout
 RUNS = os.environ.get('RAPID_RUNS_ROOT', ROOT + '/runs').replace('\\', '/')   # the runs root rapid_arm.py uses
 T0, NH = 259200.0, 6
 SL = msc_sites.load()
 NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
+CONSUMER = msc_sites.load_consumer()
+
+
+def use_site_list(path):
+    """Read the sites (and the consumer coordinate, when the list has one) from `path`."""
+    global SL, NAMES, CONSUMER
+    msc_sites.PATH = path.replace('\\', '/')
+    SL = msc_sites.load()
+    NAMES = ['wtzz'] + [s['name'][:4].lower() for s in SL]
+    CONSUMER = msc_sites.load_consumer()
 
 
 def make(key, base, wire, exe, extra):
@@ -41,6 +55,8 @@ def make(key, base, wire, exe, extra):
             site = [('network.closed_loop.station.name', s['name']),
                     ('network.closed_loop.station.rinex_path', s['path']),
                     ('network.closed_loop.station.position_ecef', s['ecef'])]
+        elif CONSUMER:
+            site = [('network.closed_loop.station.position_ecef', CONSUMER['ecef'])]
         if rinex and site:
             # rapid_arm.py applies RINEX ops before --set, to the base's own consumer: write a per-site base
             # whose closed-loop consumer already is the census site, so a consumer=1 op edits the site's file.
@@ -116,6 +132,10 @@ def grade(ref, keys):
 
 if __name__ == '__main__':
     a = sys.argv[1:]
+    if '--sites' in a:
+        i = a.index('--sites')
+        use_site_list(a[i + 1])
+        a = a[:i] + a[i + 2:]
     if a[0] == 'make':
         make(a[1], a[2], a[3], a[4], a[5:])
     else:
