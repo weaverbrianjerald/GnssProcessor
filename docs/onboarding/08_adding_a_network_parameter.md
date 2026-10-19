@@ -221,7 +221,8 @@ tables of step 2 print it.
   network owns its parameter set, removes this; the set exists as a shadow of the state
   manager (`StationParams`, page 7), checked on every run, and the inventory, the trace labels,
   the diagnostics, the carried-prior steps of PASS B, the slip drains, the admissions' ambiguity
-  reads and the datum and anchor rows read it. Columns are still born and pruned in the state
+  reads, the datum and anchor rows, the integer-ambiguity searches and the snapshot's code-bias
+  linearization points read it. Columns are still born and pruned in the state
   manager, and so are the border columns the admissions allocate and prune.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
   census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,

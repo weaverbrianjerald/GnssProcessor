@@ -270,8 +270,12 @@ colour's elevation from the set. So do the slip drains (the MW, LLI, IF-pair, da
 injected and gap re-entry responses), the second-code census, the oracle pin rows, the
 admissions' ambiguity reads (signal integrity, the roster audit, the all-channel and
 multi-GNSS censuses), the phase-datum pin rows and the election's ambiguity values, the GLONASS
-anchor rows and the ionosphere constraint rows. Readers that run before a station's next split
-read the set of the previous epoch. That is the station's local columns as its state manager
+anchor rows and the ionosphere constraint rows. The integer-ambiguity searches read it as well:
+the producer search's ambiguity pool (including an ambiguity's unresolvable mark, set by the
+measurement pre-pass when no phase bias is applied to its signal) and the labels of its
+normal-equation export, the SD-EWL candidates and the linearization points of an arc's
+shared biases, and the snapshot writer's receiver code-bias linearization points. Readers that
+run before a station's next split read the set of the previous epoch. That is the station's local columns as its state manager
 holds them, because the only writer of a local column outside the split is the measurement
 pre-pass, and every assembly that runs it ends with the set rebuilt: the split builds it, and
 `networkRefreshStationParams` rebuilds it (without dispositions) when the assembly ends before
@@ -286,8 +290,11 @@ with the state manager's local columns and their values at the start of every ep
 change during the admissions, so the readers of the admissions' own state stay on the state
 manager until the admissions write the set. The state manager is also read where a value
 changes after the split (the re-seed marks the harvest reads and clears, which RAIM and the
-screens write) and by the split itself. A station whose set cannot be built from its state
-manager (an allocation failure, or a defect the classifier does not expect) fails its assembly
+screens write) and by the split itself. A warm resume installs the restored code-bias
+linearization points on the state manager's initializer (`networkApplyRxCbLinRestore`), because
+that value is a column's birth value; it stays there until the network births its own columns.
+A station whose set cannot be built from its state manager (an allocation failure, or a defect
+the classifier does not expect) fails its assembly
 for the epoch and is dropped with a warning, and its set is left empty: the readers of the next
 epoch's PASS A find no local column, the start-of-epoch check counts that as `stale`, and the
 failure is counted in the run-end table, until the next build or rebuild succeeds. The shadow
