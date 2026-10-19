@@ -11,7 +11,6 @@
 #include "common/GnssIdentity.hpp"   // obsTypeOf
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "network/state/StationParams.hpp"   // the station's parameter set: whether an ambiguity column exists
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
@@ -134,9 +133,8 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
         // so none of them can be reused), and a stale scale carried into an epoch
         // that did not re-derive it would demote an arc that was not classified.
         std::map<std::string, double> new_scale;
-        if (!present[i] || !st.sm) { st.phase_sigma_scale.swap(new_scale); continue; }
+        if (!present[i]) { st.phase_sigma_scale.swap(new_scale); continue; }
         const int si = static_cast<int>(i);
-        StateManager& sm = *st.sm;
         std::set<std::string> withheld_pb;   // "sat|signal|PB" state keys to prune
         bool prune_pb = false;
 
@@ -343,7 +341,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             if (state == SignalIntegrityState::FlickerRegain
                 || state == SignalIntegrityState::Reentry) {
                 // The keys are built from this epoch's bands and are not gated on a
-                // live StateManager ambiguity.  `ensureRequiredStates` prunes every
+                // live parameter-set ambiguity.  `networkBirthLocalStates` prunes every
                 // ambiguity whose phase observable is absent, with no grace epoch
                 // (apart from keys held by the soft-LLI / gap bridge), so a
                 // re-entering LOS and a regained band normally have no state at this
@@ -360,7 +358,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                     const std::string amb = StateKeys::makeAmbiguityKey(sat, b);
                     amb_keys.push_back(amb);
                     if (carry_slipped_ambs.count({si, amb})
-                        || sm.isAmbiguityPendingReseed(amb))
+                        || pendingReseed(st.params, amb))
                         any_marked = true;
                     if (findAmbiguity(st.params, amb) >= 0) any_state = true;
                 }
@@ -408,7 +406,7 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                             if (carry_slipped_ambs.insert({si, amb}).second) ++n_ins;
                         }
                         if (carry_warm) {
-                            sm.markAmbiguityPendingReseed(amb);
+                            markPendingReseed(st.params, amb);
                             ++n_seed;
                         }
                     }
@@ -424,16 +422,15 @@ void networkSignalIntegrity(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
 
         st.phase_sigma_scale.swap(new_scale);
         if (prune_pb) {
-            std::set<std::string> keep_pb;
-            for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                const auto p = net::satPhaseBiasKey(kv.first);
-                if (p && withheld_pb.count(net::holdKey(*p))) {
+            std::set<SatSignalId> keep_pb_ids;
+            for (const auto& kv : st.params.shared.sat_phase_bias) {
+                if (withheld_pb.count(net::holdKey(kv.first))) {
                     ++ctr.withheld_pb_pruned;
                     continue;
                 }
-                keep_pb.insert(kv.first);
+                keep_pb_ids.insert(kv.first);
             }
-            sm.pruneSatPhaseBiasStatesExcept(keep_pb);
+            pruneSatPhaseBiasExcept(st.params, keep_pb_ids);
         }
     }
 
@@ -565,7 +562,7 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
     if (s.reentry_amb_state_live > 0)
         log->warn("Network (signal integrity): {} re-entry(ies) arrived with a "
                   "SURVIVING ambiguity state, which should be structurally "
-                  "impossible (ensureRequiredStates prunes an ambiguity the epoch "
+                  "impossible (networkBirthLocalStates prunes an ambiguity the epoch "
                   "its phase observable is absent, with no grace).  The classifier's "
                   "re-entry reasoning assumes that prune; re-derive it before "
                   "trusting any re-entry verdict from this run.",
@@ -574,10 +571,10 @@ int networkSignalIntegrityRunEnd(const NetworkRunEndView& v) {
         log->warn("Network (signal integrity INC-3c): {} of {} loss-of-lock "
                   "assertion(s) raised ON a re-entry epoch did NOT reach a refloat "
                   "funnel.  The MW/LLI drain matches an assertion against the "
-                  "StateManager's ambiguities, and a re-entering arc's ambiguity "
+                  "parameter set's ambiguities, and a re-entering arc's ambiguity "
                   "has just been pruned — so the receiver said 'loss of lock', "
                   "nothing was marked, and any carried invariant-DD chord for that "
-                  "arc (keyed independently of the StateManager) was not re-tapped. "
+                  "arc (keyed independently of the parameter set) was not re-tapped. "
                   "This check MEASURES that hole and deliberately does not close it.",
                   s.lli_at_reentry - s.lli_at_reentry_funnelled, s.lli_at_reentry);
     if (s.reentry_unrefloated > 0)

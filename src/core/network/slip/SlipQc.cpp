@@ -363,8 +363,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                   const std::string& signal,
                                   std::uint8_t cause) -> SignalAction {
             SignalAction act;
-            const StationParams& params = stations[i].params;
-            StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
+            StationParams& params = stations[i].params;
             for (const auto& [arc, slot] : params.amb) {
                 (void)slot;
                 if (net::satKey(arc.sat) != sat) continue;
@@ -394,10 +393,10 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                     // Feed the DD invariant carry from epoch 1, independent of the
                     // legacy carry's warm gate (C3c).  The DD carry is live
                     // throughout, and pending-reseed cannot serve it: the PASS-B
-                    // MeasurementModel consumes and clears the mark before the fold.
+                    // birth step consumes and clears the mark before the fold.
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     // Legacy phase-leveling refloat: only meaningful once warm.
-                    if (carry_warm) { sm.markAmbiguityPendingReseed(amb_key); act.refloated = true;
+                    if (carry_warm) { markPendingReseed(params, amb_key); act.refloated = true;
                         // The mark alone does not deliver the free epoch, because
                         // PASS B consumes it before the inject; also latch the set
                         // the inject site reads (SPEC_slip_relevel_walk).
@@ -468,13 +467,12 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 if (datum_pb_reref_sats->count(sat)) { ++it; continue; }
                 int n_marked = 0;
                 for (int i = 1; i < n_sta_total; ++i) {
-                    StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
                     for (const auto& [arc, slot] : stations[i].params.amb) {
                         (void)slot;
                         if (net::satKey(arc.sat) != sat) continue;
                         const std::string amb_key = net::ambKey(arc);
                         if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
-                        sm.markAmbiguityPendingReseed(amb_key);
+                        markPendingReseed(stations[i].params, amb_key);
                         if (datum_arcs
                             && net::drop(*datum_arcs, ArcId{StationId{i}, arc.sat, arc.signal}, &net::ArcState::amb))
                             ++qc_cnt.datum_slip_carry_erases;   // retirement census (D)
@@ -970,7 +968,6 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                 const std::string& sig1,
                                 const std::string& sig2) -> PairAction {
             PairAction pact;
-            StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
             for (const auto& [arc, slot] : stations[i].params.amb) {
                 (void)slot;
                 if (net::satKey(arc.sat) != sat) continue;
@@ -1017,7 +1014,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                     if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                     if (carry_warm) {
                         pact.freed = true;
-                        sm.markAmbiguityPendingReseed(amb_key);
+                        markPendingReseed(stations[i].params, amb_key);
                         // SPEC_slip_relevel_walk: latch the free epoch the consumed
                         // mark never delivered (see refloat_signal).
                         if (relevel) {
@@ -1522,7 +1519,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
         // holds no fresh entry.  It is left for the return epoch, where the
         // continued gap fires a fresh restart that overwrites the stale one.
         if (i < static_cast<int>(present.size()) && !present[i]) continue;
-        if (!stations[i].model || !stations[i].sm) continue;
+        if (!stations[i].model) continue;
         const auto& ledger = stations[i].model->wuRestarts();
         if (ledger.empty()) continue;
         for (const auto& [sat, rec] : ledger) {
@@ -1547,7 +1544,6 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                                  rec.gap_s, carry_gap_s, "beyond_carry", "");
                 continue;
             }
-            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
             int matched = 0;
             // The arcs the restart stepped, as (ambiguity key, signal).  A restart is
             // a return after a gap longer than the wind-up horizon, so the arc has
@@ -1603,7 +1599,9 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
                     // pre-pass consumed it (the gap re-entry drain's rule).  The
                     // free-epoch latch is keyed on the string and reaches the inject
                     // either way.
-                    if (!via_carry) sm.markAmbiguityPendingReseed(amb_key);
+                    if (!via_carry) {
+                        markPendingReseed(stations[static_cast<std::size_t>(i)].params, amb_key);
+                    }
                     if (relevel) {
                         relevel->free_ambs.insert({i, amb_key});
                         relevel->free_cause[{i, amb_key}] |=
@@ -1694,7 +1692,6 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
             if (stations[static_cast<std::size_t>(i)].name != d.station) continue;
             station_seen = true;
             if (i < static_cast<int>(present.size()) && !present[i]) continue;
-            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;   // the re-seed marks stay in the state manager
             for (const auto& [arc, slot] : stations[static_cast<std::size_t>(i)].params.amb) {
                 (void)slot;
                 if (net::satKey(arc.sat) != d.sat) continue;
@@ -1705,7 +1702,7 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
                 // epoch 1 (C3c; the same contract as refloat_signal).
                 if (carry_invariant) carry_slipped_ambs.insert({ i, amb_key });
                 if (carry_warm) {
-                    sm.markAmbiguityPendingReseed(amb_key);
+                    markPendingReseed(stations[static_cast<std::size_t>(i)].params, amb_key);
                     if (relevel) {
                         relevel->free_ambs.insert({ i, amb_key });
                         // No detector saw anything: the cause bits describe the
@@ -1808,8 +1805,8 @@ struct GapArcOutcome {
  * @param i                  App station index (already screened against i_lo).
  * @param satellite          Satellite id.
  * @param sig                The one signal this call responds on (band-scoped).
- * @param params             That station's parameter set: whether the arc's ambiguity column exists.
- * @param sm                 That station's state manager, mutated (pending-reseed mark).
+ * @param params             That station's parameter set: whether the arc's ambiguity column exists;
+ *                           mutated (pending-reseed mark).
  * @param carry_invariant    The DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
  * @param carry_slipped_ambs C3c funnel, inserted into under @p carry_invariant.
@@ -1843,7 +1840,7 @@ struct GapArcOutcome {
  */
 GapArcOutcome gapReentryRespondArc(
     int i, const std::string& satellite, const std::string& sig,
-    const StationParams& params, StateManager& sm, bool carry_invariant, bool carry_warm,
+    StationParams& params, bool carry_invariant, bool carry_warm,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const net::ArcTable& arcs,
     double pl_now_s, double pl_max_gap_s,
@@ -1856,7 +1853,7 @@ GapArcOutcome gapReentryRespondArc(
     // SlipQc.hpp).  Walking the live ambiguity map, as the MW/LLI
     // drain's refloat_signal does, cannot work for a re-entry: the arc left the
     // model set, so its ambiguity column was pruned with the gap, and PASS B's
-    // measurement pre-pass (MeasurementModel::ensureRequiredStates) re-creates
+    // measurement pre-pass (networkBirthLocalStates) re-creates
     // it only after this drain, so a walk would match and free nothing.  This is
     // the key format the PASS-B inject site reads and the one the gap-reentry arc
     // classification synthesizes, so a freed arc reads `shifted_fresh` there by
@@ -1949,7 +1946,7 @@ GapArcOutcome gapReentryRespondArc(
         ++led.dd_marked;
     }
     if (carry_warm) {              // cold: nothing stale to refloat (counted below)
-        if (out.state_live) sm.markAmbiguityPendingReseed(amb_key);
+        if (out.state_live) markPendingReseed(params, amb_key);
         if (relevel) {
             relevel->free_ambs.insert({i, amb_key});
             relevel->free_cause[{i, amb_key}] |= cause_bits;
@@ -2271,7 +2268,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
     // them individually); the shared responder speaks the ledger shape.
     GapReentryLedger led;
     // The resumption list is built station-ordered by the qualify pass, and this
-    // walk touches only station i's own StateManager plus the two epoch-scoped
+    // walk touches only station i's own parameter set plus the two epoch-scoped
     // sets, serially in that order, so it is deterministic.
     for (const auto& g : raw.resumptions) {
         const int i = g.station;
@@ -2318,7 +2315,6 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         // read what the raw tier saw, and the response moves to the ledger loop
         // below.
         if (ledger_driven) continue;
-        StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
         bool voided_pends = false;
         // The signals this (station, satellite) tracks this epoch, which qualify
         // the unreachable count.  Built once per resumption and shared
@@ -2367,7 +2363,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             if (sig.empty()) continue;
             const GapArcOutcome out =
                 gapReentryRespondArc(i, g.satellite, sig,
-                                     stations[static_cast<std::size_t>(i)].params, sm,
+                                     stations[static_cast<std::size_t>(i)].params,
                                      carry_invariant, carry_warm, carry_slipped_ambs, arcs,
                                      pl_now_s, pl_max_gap_s, cause_bits, primary,
                                      led, qc_cnt, relevel, present_ptr);
@@ -2521,7 +2517,6 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
                 const GapCause primary = v.has ? v.primary : GapCause::Unmeas;
                 out = gapReentryRespondArc(i, a.satellite, a.signal,
                                            stations[static_cast<std::size_t>(i)].params,
-                                           *stations[static_cast<std::size_t>(i)].sm,
                                            carry_invariant, carry_warm,
                                            carry_slipped_ambs, arcs,
                                            pl_now_s, pl_max_gap_s,
@@ -2663,7 +2658,7 @@ void networkSlipDrainGapReentryPerSignal(
         }
     }
     // Station-ordered by the qualify pass, and this walk touches only station
-    // i's own StateManager plus the two epoch-scoped sets, so it is
+    // i's own parameter set plus the two epoch-scoped sets, so it is
     // deterministic.
     for (const auto& g : raw.sig_resumptions) {
         const int i = g.station;
@@ -2779,7 +2774,6 @@ void networkSlipDrainGapReentryPerSignal(
         const GapArcOutcome out =
             gapReentryRespondArc(i, g.satellite, g.signal,
                                  stations[static_cast<std::size_t>(i)].params,
-                                 *stations[static_cast<std::size_t>(i)].sm,
                                  carry_invariant, carry_warm, carry_slipped_ambs,
                                  arcs, pl_now_s, pl_max_gap_s,
                                  RelevelEpochState::kCauseGap, primary,

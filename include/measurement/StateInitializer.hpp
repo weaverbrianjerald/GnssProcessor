@@ -21,6 +21,7 @@
 #include "common/ParamRef.hpp"
 #include "common/PppTypes.hpp"
 #include "common/PppUtils.hpp"
+#include "measurement/ReceiverBias.hpp"
 #include <cmath>
 #include <map>
 #include <optional>
@@ -64,15 +65,8 @@ public:
     // Shared helpers (used by MeasurementModel for state pre-pass / Jacobian)
     // -------------------------------------------------------------------
 
-    /**
-     * @brief Resolved receiver-bias state for one observation signal.
-     */
-    struct ReceiverBiasEntry {
-        std::string state_key;   /**< Key into code_bias_indices_ (e.g. "GPS_DCB" or "GPS_IFB5"). */
-        double      coefficient; /**< Jacobian coefficient for the state.  NaN means no bias is modelled. */
-        RxCbKey     key{};       /**< The same state as a typed key (valid when @ref has_key). */
-        bool        has_key{false}; /**< True exactly when @ref state_key is non-empty. */
-    };
+    /// The receiver code-bias parameter of one code signal (measurement/ReceiverBias.hpp).
+    using ReceiverBiasEntry = GnssProcessor::ReceiverBiasEntry;
 
     /**
      * @brief Determine the receiver-bias state and coefficient for a signal.
@@ -89,7 +83,12 @@ public:
     ReceiverBiasEntry resolveReceiverBias(const std::string& obs_signal,
                                            System system,
                                            const std::string& satellite,
-                                           const ClockRefMap& clock_refs) const;
+                                           const ClockRefMap& clock_refs) const {
+        return resolver_.resolveReceiverBias(obs_signal, system, satellite, clock_refs);
+    }
+
+    /// The resolver itself (what the observation equation holds a pointer to).
+    const ReceiverBiasResolver& resolver() const { return resolver_; }
 
     // -------------------------------------------------------------------
     // Code-bias linearization point restore (RS-9)
@@ -180,7 +179,7 @@ public:
      *
      * @return The helper.
      */
-    const PppUtils& frequencyHelper() const { return ppp_utils_; }
+    const PppUtils& frequencyHelper() const { return resolver_.frequencyHelper(); }
 
     /**
      * @brief The RS-9 seed decision for one code-bias key.
@@ -234,9 +233,7 @@ public:
     static char systemToClockRefChar(System system);
 
 private:
-    const GnssConfig& config_;
-    const PppModel& ppp_model_;
-    PppUtils ppp_utils_;
+    ReceiverBiasResolver resolver_;
 
     bool isb_initialized_ = false;
     bool phase_clock_initialized_ = false;

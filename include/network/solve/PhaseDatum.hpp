@@ -134,13 +134,13 @@ int healNearNullPhaseBias(NetworkEstimator& est,
  * before the mode dispatch picks an election.
  *
  * Timing: the ambiguity states are allocated later, in PASS B's
- * computeMeasurementUpdate, so this function cannot test getAmbiguityIndex.  It
+ * networkBirthLocalStates, so this function cannot test findAmbiguity.  It
  * keys off the phase-bias states PASS A allocated through the same usability gate
  * as the row build.
  *
  * Side effect: when the coverage gate excludes keys, it prunes those keys'
  * phase-bias states at every present station
- * (StateManager::pruneSatPhaseBiasStatesExcept), so the per-station column sets stay
+ * (pruneSatPhaseBiasExcept), so the per-station column sets stay
  * consistent with the gated union.  Both elections depend on that prune having
  * happened.  This function is also the sole writer of the two run-end gate
  * counters, so computing the census twice would double-count them (standing

@@ -34,9 +34,8 @@
 #include "config/GnssConfig.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/StationSplit.hpp"   // rxIfbExcludedRows
-#include "network/state/StateColumns.hpp"      // classifyStateColumn
+#include "network/state/StationParams.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 
 #include <spdlog/sinks/ostream_sink.h>
@@ -52,6 +51,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "../support/StationParamsBuilder.hpp"   // bornRxCodeBias, bornSatCodeBias
 #include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 using namespace GnssProcessor;
@@ -161,9 +161,9 @@ bool anyLineHas(const std::vector<std::string>& lines, const std::string& what) 
 }
 
 ParamInstanceId codeBias(const std::string& key) {
-    const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
-    EXPECT_TRUE(id.has_value()) << key;
-    return id.value_or(ParamInstanceId{});
+    const auto rx = receiverCodeBiasKey(key);
+    EXPECT_TRUE(rx.has_value()) << key;
+    return rx ? paramInstanceOf(rxCodeBiasRef(*rx)) : ParamInstanceId{};
 }
 
 /// A station slot that reached the split, with one record per (key, disposition).
@@ -323,15 +323,21 @@ TEST(NetworkRxExtraBandDelayTest, InventoryNotesAGovernedInstanceAsEstimatedByTh
 // ---------------------------------------------------------------------------
 
 TEST(NetworkRxExtraBandDelayTest, RowsWithoutASharedSatelliteColumnAreExcluded) {
-    LogManager lm;
     GnssConfig cfg;
-    StateManager sm{5, lm, cfg};
-    const int ifb = static_cast<int>(sm.addCodeBiasState(K::makeIfbKey("GPS", '5'), 0.0));
-    const int dcb = static_cast<int>(sm.addCodeBiasState(K::makeDcbKey("GPS"), 0.0));
-    const int b03 = static_cast<int>(sm.addSatBiasState(K::makeSatBiasKey("G03", "C5Q"), 0.0));
-    const int b08 = static_cast<int>(sm.addSatBiasState(K::makeSatBiasKey("G08", "C5Q"), 0.0));
+    StationParams set = startStationParams(cfg, Eigen::Vector3d::Zero());
+    RxCbKey ifb_key;
+    ifb_key.form = ParamForm::Ifb;
+    ifb_key.sys  = System::GPS;
+    ifb_key.band = bandOfDigit(System::GPS, '5');
+    RxCbKey dcb_key;
+    dcb_key.form = ParamForm::Dcb;
+    dcb_key.sys  = System::GPS;
+    const int ifb = gnss_test::bornRxCodeBias(set, ifb_key);
+    const int dcb = gnss_test::bornRxCodeBias(set, dcb_key);
+    const int b03 = gnss_test::bornSatCodeBias(set, "G03", "C5Q");
+    const int b08 = gnss_test::bornSatCodeBias(set, "G08", "C5Q");
     // G06 C5Q: no satellite column at this station (pruned in PASS A).
-    const int n = static_cast<int>(sm.getStateSize());
+    const int n = static_cast<int>(set.slots.size());
 
     // Rows: G03 C5Q, G06 C5Q, G08 C5Q (the IFB's rows), and G03 C1C (a pair-band row).
     EpochMeasurement em;
@@ -345,19 +351,19 @@ TEST(NetworkRxExtraBandDelayTest, RowsWithoutASharedSatelliteColumnAreExcluded) 
 
     // G03 shared; G08 not (a CB-ADM sponge: in the state manager, not in the border).
     RxIfbStationState s;
-    EXPECT_EQ(rxIfbExcludedRows(s, sm, em, std::set<int>{b03}), (std::vector<int>{1, 2}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{b03}), (std::vector<int>{1, 2}));
     EXPECT_EQ(s.rows_unregistered, 2);
     EXPECT_EQ(s.cols_unregistered, 0);
     EXPECT_EQ(s.reg_edges + s.dereg_edges, 0);   // first sighting of every row: no edge
     EXPECT_EQ(s.signals.at(K::makeIfbKey("GPS", '5')), (std::set<std::string>{"C5Q"}));
 
     // Next epoch G08 registers and G03 leaves the border: one edge each way.
-    EXPECT_EQ(rxIfbExcludedRows(s, sm, em, std::set<int>{b08}), (std::vector<int>{0, 1}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{b08}), (std::vector<int>{0, 1}));
     EXPECT_EQ(s.reg_edges, 1);
     EXPECT_EQ(s.dereg_edges, 1);
 
     // No shared satellite column at all: every IFB row is excluded, and the column with them.
-    EXPECT_EQ(rxIfbExcludedRows(s, sm, em, std::set<int>{}), (std::vector<int>{0, 1, 2}));
+    EXPECT_EQ(rxIfbExcludedRows(s, set, em, std::set<int>{}), (std::vector<int>{0, 1, 2}));
     EXPECT_EQ(s.cols_unregistered, 1);
     EXPECT_EQ(s.dereg_edges, 2);
     EXPECT_EQ(s.rows_unregistered, 2 + 2 + 3);

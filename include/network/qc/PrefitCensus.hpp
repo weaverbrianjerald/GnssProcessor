@@ -301,7 +301,7 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
  * @param log           Run logger (invariant-#4 dead-wiring warns).
  * @param traces        PREFIT / TOPOLOGY events.
  * @param se            This synced epoch.
- * @param stations      Station roster (names + state managers for the birth detail).
+ * @param stations      Station roster (names + parameter sets for the birth detail).
  * @param est           The solved estimator (shared-column labels).
  * @param asm_res       PASS A/B station assemblies.
  * @param est_index_of  Station → kernel slot (−1 = not folded this epoch).

@@ -335,9 +335,9 @@ void networkRunArm(NetworkRun& run, LogManager& log_manager_) {
     // network.resume_signal_canon_restore is armed and a warm resume staged rows.
     networkRestoreCanonicalSignals(ctx, config_, stations, log);
     // Hands the resume's stashed code-bias linearization points to the station
-    // initializers (RS-9, §21.18).  This is the only window for it: the one-shot
-    // isCodeBiasInitialized latch closes at each station's first
-    // computeMeasurementUpdate.  A no-op unless the resume stashed RL rows.
+    // parameter sets (RS-9, §21.18).  This is the only window for it: the one-shot
+    // first-epoch code-bias seed latch closes at each station's first
+    // networkBirthLocalStates.  A no-op unless the resume stashed RL rows.
     networkApplyRxCbLinRestore(ctx, config_, stations, log);
     // Event harness (docs/SPEC_event_harness.md): arms the scripted-fault schedule.  It
     // comes after the warm resume because the injector is outside the resume

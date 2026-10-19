@@ -14,7 +14,6 @@
 #include "network/carry/CarryVce.hpp"
 #include "network/solve/PivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
 
 #include <spdlog/spdlog.h>

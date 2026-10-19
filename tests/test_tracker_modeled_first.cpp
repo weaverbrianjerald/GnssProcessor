@@ -32,7 +32,7 @@
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -415,8 +415,7 @@ struct UnreachableHarness {
     UnreachableHarness() {
         stations.emplace_back();
         stations.front().name = "BSHM00ISR";
-        stations.front().sm =
-            std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+        stations.front().params = startStationParams(config, Eigen::Vector3d::Zero());
         se.time = GnssTime{ 2313, 270390.0 };
         raw.reset(1);
         params.gap_reentry = true;

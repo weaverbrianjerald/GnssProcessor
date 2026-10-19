@@ -30,7 +30,7 @@
  *      observation set the seam has not touched.
  *
  * The classifier is called directly as a free function: it reads `modeled[i]`,
- * `present[]` and the config.  Real StateManagers are used only because the refloat
+ * `present[]` and the config.  Real parameter sets are used only because the refloat
  * path marks pending-reseed flags and the WITHHOLD path prunes phase-bias states.
  */
 
@@ -41,6 +41,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "network/assembly/SignalIntegrity.hpp"
+#include "network/state/StationParams.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
@@ -64,7 +65,6 @@ using namespace GnssProcessor;
 
 namespace {
 
-constexpr std::size_t kPppCoreSize = 5;
 constexpr const char* kL1 = "L1C";
 constexpr const char* kL2 = "L2W";
 constexpr const char* kC1 = "C1C";
@@ -160,7 +160,7 @@ PppObservation obsWith(const std::string& sat,
     return o;
 }
 
-/// One station with a real StateManager, plus the per-epoch scaffolding the seam takes.
+/// One station with a real parameter set, plus the per-epoch scaffolding the seam takes.
 /// The run (its context, stations and slip-QC epoch index) is the fixture's; the funnel and
 /// the modelled rows are carried across steps here and handed to each epoch.
 struct Rig {
@@ -175,7 +175,8 @@ struct Rig {
         : fx(std::make_unique<NetworkTestRun>(cfg)), stations(fx->setup().stations) {
         stations.resize(1);
         stations[0].name = "AAAA";
-        stations[0].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
+        (void)log;
+        stations[0].params = startStationParams(cfg, Eigen::Vector3d::Zero());
     }
 
     /// Run one epoch with the given per-satellite band sets.

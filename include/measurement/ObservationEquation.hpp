@@ -64,12 +64,13 @@
 #include <cstdint>
 #include <initializer_list>
 #include <map>
+#include <optional>
 #include <string>
 
 namespace GnssProcessor {
 
 class PppUtils;
-class StateInitializer;
+class ReceiverBiasResolver;
 
 // =======================================================================
 // Signs shared by the producer and the consumer
@@ -306,7 +307,7 @@ enum class FdmaChannel : std::uint8_t {
 struct ObsInput {
     RowProducts                       products;       ///< The configuration, the model's tables and the SSR store.
     const PppUtils&                   ppp_utils;      ///< Frequencies and wavelengths (GLONASS slots seeded).
-    const StateInitializer*           receiver_bias;  ///< Resolver of the receiver code-bias state of a code signal; null: none.
+    const ReceiverBiasResolver*       receiver_bias;  ///< Resolver of the receiver code-bias parameter of a code signal; null: none.
     const std::map<std::string, char>& nlwl_ref_band; ///< Per satellite, the NL/WL basis' reference band digit.
     const ClockRefMap&                clock_refs;     ///< The .BIA product's clock-reference observables per constellation letter: the bands the receiver code biases are referenced to (empty: none).
     FdmaChannel                       fdma{FdmaChannel::Satellite};  ///< Channel of the FDMA bands' frequency.
@@ -374,6 +375,27 @@ double evaluate(const ObservationEquation& eq, ObsTermValues* terms = nullptr);
  * @param row The row, already sized and zeroed by the caller.
  */
 void scatterDense(const ObservationEquation& eq, Eigen::VectorXd& row);
+
+/**
+ * @brief The satellite of a canonical RINEX id text ("G05"), or nothing for any other spelling
+ *        ("G5", "G 5", an empty text).
+ *
+ * A parameter named by a typed satellite would not equal the text a row carries, so the
+ * equation names a satellite only when the text round-trips; whoever creates a parameter for
+ * a row names its satellite by the same rule.
+ *
+ * @param text The satellite text.
+ * @return The satellite, or nothing when the text is not canonical.
+ */
+std::optional<SatId> canonicalSat(const std::string& text);
+
+/**
+ * @brief The signal of a canonical observation code ("L1C"), or nothing for any other text.
+ * @param sys  The constellation.
+ * @param code The observation code.
+ * @return The signal, or nothing when the text is not canonical.
+ */
+std::optional<SignalId> canonicalSignal(System sys, const std::string& code);
 
 /**
  * @brief Whether a constellation carries an inter-system bias parameter: every constellation

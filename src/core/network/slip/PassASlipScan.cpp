@@ -16,6 +16,7 @@
 #include "network/assembly/SecondCodeScope.hpp"  // secondCodeCellEdges
 #include "network/assembly/SecondPhaseScope.hpp" // secondPhaseCellEdges, secondPhaseWitness
 #include "network/assembly/Responses.hpp"     // prmRespond
+#include "network/assembly/SharedAdmission.hpp" // the shared satellite parameters of a station
 #include "network/state/ArcLedger.hpp"        // arcReasonExpand, the re-entry population
 #include "network/state/Entities.hpp"         // net::putLos and the entity tables
 #include "network/state/RunContext.hpp"       // the run context and its counters
@@ -56,6 +57,7 @@ void passAScanStations(const PassAView& v) {
     const int n_threads = v.n_threads;
     const bool phase_datum_prioritized = v.phase_datum_prioritized;
     const std::set<std::string>* cbadm_admit = v.cbadm_admit;
+    const GnssConfig& config_ = v.config_;
     const int i_lo = v.i_lo;
     PassABuffers& pa = v.pa;
     const bool sid_screens = v.sid_screens;
@@ -66,7 +68,7 @@ void passAScanStations(const PassAView& v) {
 
     // PASS A tail (stations[i_lo..]: from 1 on the legacy datum, from 0 when
     // prioritized), parallel over stations when enabled.  computeModels and
-    // ensureNetworkSharedStates touch only station i's own sm/model/mm/pstate;
+    // networkAdmitSharedStates touch only station i's own params/model/rows/pstate;
     // shared_phase_keys is read-only here and modeled[i] is a distinct slot per i,
     // so there is no shared write.  Each iteration catches its own exceptions,
     // because an exception must not escape an OpenMP structured block (UB).
@@ -89,9 +91,10 @@ void passAScanStations(const PassAView& v) {
             // allocates all its own trackable phase signals; the anchored shared
             // set is the post-election union, not a pivot restriction.
             if (phase_datum_prioritized)
-                st.mm->ensureNetworkSharedStates(modeled[i], {}, cbadm_admit);
+                networkAdmitSharedStates(rowContextOf(config_, st), st.params, modeled[i], {}, cbadm_admit);
             else
-                st.mm->ensureNetworkSharedStates(modeled[i], shared_phase_keys, cbadm_admit);
+                networkAdmitSharedStates(rowContextOf(config_, st), st.params, modeled[i],
+                                         shared_phase_keys, cbadm_admit);
             a_ok[i] = 1;
 
             // Slip detection (T0): roll this station's MW + GF arcs forward and

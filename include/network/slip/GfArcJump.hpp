@@ -201,7 +201,7 @@ struct GfArcJumpCounters {
  * @param qc                 The slip-QC channel: knobs, raw rows, per-arc state, counters;
  *                           every flagged line of sight is also recorded in
  *                           @c qc.epoch.gf_jump_flagged (whatever the flag's action).
- * @param stations           The network's stations (StateManager and name read; marks written).
+ * @param stations           The network's stations (parameter set and name read; marks written).
  * @param present            Per-station PASS-A presence.
  * @param i_lo               First locally refloatable station index (1 on the legacy pivot datum).
  * @param n_sta_total        Station count.

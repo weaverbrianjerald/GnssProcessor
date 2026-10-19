@@ -185,7 +185,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             continue;
         }
         if (R.threw || !R.ok) {
-            // computeMeasurementUpdate / splitStation threw.  Under threads the
+            // networkStationRows / splitStation threw.  Under threads the
             // exception must be caught inside the produce loop, so its disposition
             // is decided here, matching the addStation policy below: a failed pivot
             // (legacy datum) skips the epoch, any other station is dropped.

@@ -6,6 +6,7 @@
  */
 
 #include "network/solve/AnchorHygiene.hpp"
+#include "network/assembly/SharedAdmission.hpp"   // noteWithheldPhaseBias
 
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
@@ -106,12 +107,12 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     auto& sid_ctr = ctx.counters.sid;
     std::map<std::pair<int, std::string>, int> new_age;
     for (std::size_t i = 0; i < stations.size(); ++i) {
-        if (!present[i] || !stations[i].sm) continue;
+        if (!present[i]) continue;
         const int si = static_cast<int>(i);
         for (const auto& [amb, pbkey] : cnd.usable_keys[i]) {
             (void)pbkey;
             const bool slipped = carry_slipped_ambs.count({si, amb}) != 0
-                              || stations[i].sm->isAmbiguityPendingReseed(amb);
+                              || pendingReseed(stations[i].params, amb);
             if (slipped) {
                 new_age[{si, amb}] = 0;   // refloated ambiguity: fresh by definition
                 continue;
@@ -198,8 +199,7 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
             if (has_incumbent && stations[i].name == *inc) incumbent_live = true;
             if (a == 0
                 && (carry_slipped_ambs.count({static_cast<int>(i), amb}) != 0
-                    || (stations[i].sm
-                        && stations[i].sm->isAmbiguityPendingReseed(amb))))
+                    || pendingReseed(stations[i].params, amb)))
                 slipped_any = true;
         }
         // A bridged or held-out key has no host, so it is absent from anchor_incumbent
@@ -363,24 +363,20 @@ void networkAnchorHygiene(NetworkRunContext& ctx,
     if (!blocked.empty()) {
         for (const auto& amb : blocked) cnd.union_keys.erase(amb);
         for (std::size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i] || !stations[i].sm) continue;
-            StateManager& sm = *stations[i].sm;
-            std::set<std::string> keep_pb;
+            if (!present[i]) continue;
+            StationParams& set = stations[i].params;
+            std::set<SatSignalId> keep_pb_ids;
             bool drop_any = false;
-            for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                const auto p = net::satPhaseBiasKey(kv.first);
-                if (p && blocked.count(net::ambKey(*p))) {
+            for (const auto& kv : set.shared.sat_phase_bias) {
+                if (blocked.count(net::ambKey(kv.first))) {
                     drop_any = true;
                     // The parameter inventory's absorbed instance.
-                    if (stations[i].mm)
-                        stations[i].mm->noteAbsorbedSharedState(
-                            StateContainer::SatPhaseBiasStates, kv.first,
-                            AbsorbedReason::AnchorHygieneBlock);
+                    noteWithheldPhaseBias(set, kv.first, AbsorbedReason::AnchorHygieneBlock);
                     continue;
                 }
-                keep_pb.insert(kv.first);
+                keep_pb_ids.insert(kv.first);
             }
-            if (drop_any) sm.pruneSatPhaseBiasStatesExcept(keep_pb);
+            if (drop_any) pruneSatPhaseBiasExcept(set, keep_pb_ids);
         }
         log->debug("Network (eq34 hygiene): {} key(s) held out of the anchored set — "
                    "every candidate host younger than {} epoch(s).",

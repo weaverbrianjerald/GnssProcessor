@@ -94,8 +94,8 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     //     a clean gauge at another station instead of jumping.
     if (!phase_datum_prioritized) {
         shared_phase_keys.clear();
-        for (const auto& kv : stations.front().sm->getSatPhaseBiasStates())
-            shared_phase_keys.insert(kv.first);
+        for (const auto& kv : stations.front().params.shared.sat_phase_bias)
+            shared_phase_keys.insert(satPhaseBiasText(kv.first));
     } else {
         // This epoch's candidate census and the network.phase_datum_min_stations
         // coverage gate (filter/NetworkPhaseDatum, INC-8b).  It is built once here and
@@ -633,19 +633,20 @@ void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep)
     if (phase_datum_eq34) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
-            StateManager& sm = *stations[i].sm;
-            std::set<std::string> need_rpb;
-            for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                if (!shared_phase_keys.count(kv.first)) continue;   // gated → legacy lump
-                const auto p = net::satPhaseBiasKey(kv.first);
-                if (!p || p->sat == SatId{}) continue;
-                need_rpb.insert(StateKeys::makeReceiverPhaseBiasKey(
-                    systemName(p->sat.sys), net::signalKey(p->signal)));
+            StationParams& set = stations[i].params;
+            std::set<SignalId, SignalNameOrder> need_rpb;
+            for (const auto& kv : set.shared.sat_phase_bias) {
+                if (!shared_phase_keys.count(satPhaseBiasText(kv.first))) continue;   // gated → legacy lump
+                if (kv.first.sat == SatId{}) continue;
+                need_rpb.insert(kv.first.signal);
             }
-            for (const auto& rk : need_rpb)
-                if (sm.getReceiverPhaseBiasIndex(rk) < 0)
-                    sm.addReceiverPhaseBiasState(rk, 0.0);
-            sm.pruneReceiverPhaseBiasStatesExcept(need_rpb);
+            for (const SignalId& rk : need_rpb)
+                if (set.rx_pb.count(rk) == 0) {
+                    LocalSlot slot;
+                    slot.ref = rxPhaseBiasRef(rk.sys, rk);
+                    addParam(set, slot);
+                }
+            pruneReceiverPhaseBiasExcept(set, need_rpb);
         }
     }
 }

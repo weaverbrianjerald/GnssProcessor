@@ -56,7 +56,6 @@
 #include "network/solve/NormalEquations.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "network/qc/PrefitCensus.hpp"   // dataClassBit
 
@@ -516,9 +515,7 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
                 // RESPONDED ladder against the CLEAN one) would be circular and
                 // could not fail.
                 //
-                // The marks are read from the state manager, not from the station's
-                // parameter set: the screens write them after the split, and the set
-                // holds them as they were when it was built.
+                // The marks are read live: the screens write them after the split.
                 //
                 // This depends on seam order.  SB_LEVELING's carry harvest clears
                 // the pending-reseed set (LevelingCarry.cpp,
@@ -530,12 +527,9 @@ void networkRedundancyCensus(NetworkRun& run, const NetworkEpoch& nep, EpochEven
                 const std::size_t bb_hits_before = census_ev.bb_hits.size();
                 if (bb_on) {
                     std::set<std::string> responded;
-                    if (const StateManager* sm = stations[i].sm.get()) {
-                        for (const auto& kv : sm->getAmbiguities()) {
-                            if (!sm->isAmbiguityPendingReseed(kv.first)) continue;
-                            if (const auto parts = StateKeys::parseAmbiguityKey(kv.first))
-                                responded.insert(parts->satellite);
-                        }
+                    for (const auto& kv : stations[i].params.amb) {
+                        if (!pendingReseed(stations[i].params, kv.first)) continue;
+                        responded.insert(net::satKey(kv.first.sat));
                     }
                     networkBlockBaardaSweepStation(
                         ctx.carry.bb, kernel, slot, static_cast<int>(i), R, cls, sat,

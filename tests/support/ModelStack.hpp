@@ -21,7 +21,7 @@
 #include "products/ProductParser.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include "rinex/RinexParser.hpp"
-#include "support/TestTempDir.hpp"
+#include "TestTempDir.hpp"
 
 #include <Eigen/Dense>
 
@@ -89,17 +89,15 @@ struct ModelStack {
     /// @param processing  extra members of the processing object (each starting with a comma).
     /// @param estimation  extra members of the estimation object (each starting with a comma).
     /// @param bssd        estimation.between_satellite_sd.enabled.
-    /// @param check       processing.obs_equation_check.
     /// @param top         extra top-level members (each starting with a comma).
     bool load(LogManager& log, const std::string& tag, const std::string& mode,
               const std::string& processing, const std::string& estimation, bool bssd,
-              bool check, const std::string& top = "") {
+              const std::string& top = "") {
         const auto path = gnss_test::tempDir() / (std::string("obs_equation_") + tag + ".json");
         {
             std::ofstream out(path);
             out << R"({
-                "processing": {"mode": ")" << mode << R"(", "active_systems": ["GPS", "Galileo"],
-                               "obs_equation_check": )" << (check ? "true" : "false")
+                "processing": {"mode": ")" << mode << R"(", "active_systems": ["GPS", "Galileo"])"
                 << processing << R"(},
                 "estimation": {
                     "estimate_velocity": false,

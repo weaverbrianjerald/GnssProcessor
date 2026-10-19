@@ -17,12 +17,9 @@
  *    and the lookup of measurement/UserParamView.hpp), and the definitions of the
  *    usability rule and the product coverage checks (free functions,
  *    measurement/RowRules.hpp).
- *  - MeasurementModelRowReference.cpp: the row builder as it was before the term
- *    list, and the comparison with it (processing.obs_equation_check).  Temporary.
  *  - MeasurementModelVariance.cpp: the definition of rowVariance, the variance
  *    of one row (a free function, measurement/RowRules.hpp).
  *  - MeasurementModelDd.cpp: the baseline double-difference build, in stages.
- *  - MeasurementModelNetwork.cpp: the network producer's surface.
  *
  * Heavy sub-tasks are delegated:
  *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
@@ -71,16 +68,6 @@ namespace GnssProcessor {
             differencingModeFor(config_), log_manager_);
         log_manager_.getLogger("measurement_model")->info("MeasurementModel initialized with {} signal priority sets, mode={}",
             config_.getSignalPriorities().size(), modeLabel(config_));
-    }
-
-    void MeasurementModel::setGlonassSlots(const std::map<std::string, int>& slots) {
-        // Seeds this station's frequency helper with the FCN slots from its RINEX
-        // header, so the GLONASS frequency-dependent Jacobian terms (the iono
-        // coefficient alpha = (f_L1/f)^2 and the per-slot carrier wavelength) use
-        // the actual channel instead of the compiled-in default table.  PppModel
-        // seeds its own helper the same way, once; the network driver calls this
-        // for each station.
-        ppp_utils_.setGlonassSlots(slots);
     }
 
     const SsrCorrectionStore& MeasurementModel::ssrStore() const {
@@ -142,40 +129,45 @@ namespace GnssProcessor {
     // Row geometry gate
     // ===================================================================
 
-    bool MeasurementModel::hasValidGeometry(const PppObservation& obs,
-                                            const std::string& epoch_prefix) const {
+    bool hasValidGeometry(const GnssConfig& config, LogManager& log_manager,
+                          const PppObservation& obs, const std::string& epoch_prefix) {
         // Validate stored geometry
         if (obs.sat_pos.norm() < 1.9e7 || !obs.sat_pos.allFinite()) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored satellite position for {} at TOW {:.3f}: norm={:.3e} m, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.sat_pos.norm(), modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.sat_pos.norm(), modeLabel(config));
             return false;
         }
         if (obs.range < 1.5e7 || !std::isfinite(obs.range)) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.range, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.range, modeLabel(config));
             return false;
         }
-        if (obs.elevation < config_.getElevationMaskDeg()) {
-            log_manager_.getLogger("measurement_model")->debug(
+        if (obs.elevation < config.getElevationMaskDeg()) {
+            log_manager.getLogger("measurement_model")->debug(
                 "{}Satellite {} below elevation mask at TOW {:.3f}, elevation={:.3f} deg, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.elevation, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.elevation, modeLabel(config));
             return false;
         }
         if (obs.los.norm() < 0.5 || !obs.los.allFinite()) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored LOS for {} at TOW {:.3f}, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, modeLabel(config));
             return false;
         }
         if (obs.mf_w <= 0.0 || !std::isfinite(obs.mf_w)) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid wet mapping function for {} at TOW {:.3f}: {:.3f}, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.mf_w, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.mf_w, modeLabel(config));
             return false;
         }
         return true;
+    }
+
+    bool MeasurementModel::hasValidGeometry(const PppObservation& obs,
+                                            const std::string& epoch_prefix) const {
+        return GnssProcessor::hasValidGeometry(config_, log_manager_, obs, epoch_prefix);
     }
 
     // --- computeMeasurementUpdate: top-level orchestrator ---

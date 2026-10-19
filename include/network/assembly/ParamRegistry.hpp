@@ -3,7 +3,7 @@
  * @brief The network producer's parameter registry: one declared property set per
  *        parameter kind (docs/refound/PRM_parameter_registry_2026-09-29.md).
  *
- * The PPP path has a registry (@c StateManager owns the layout, @c StateKeySchema every
+ * The PPP path has a registry (the filter owns the layout, @c StateKeySchema every
  * key format).  The network path had identities without properties: a border parameter
  * is a (kind, satellite, signal) tuple whose process noise, variance floor and carry
  * route were re-derived at every site that needed them, and a site that needed a

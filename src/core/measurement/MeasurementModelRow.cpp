@@ -222,7 +222,7 @@ namespace GnssProcessor {
     // ===================================================================
 
     ObsInput MeasurementModel::obsInput() const {
-        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_, nlwl_ref_band_,
+        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_.resolver(), nlwl_ref_band_,
                         clockRefs()};
     }
 
@@ -250,8 +250,6 @@ namespace GnssProcessor {
             scatterDense(eq, jacobian);
             if (decomposed) traceRowDecomposition(obs, ref_type, predicted, terms);
         }
-        if (config_.obsEquationCheck())
-            checkRowAgainstReference(obs, ref_type, x, state_size, eq, jacobian, predicted);
         return eq.usable;
     }
 

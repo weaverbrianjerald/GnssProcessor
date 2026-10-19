@@ -25,7 +25,7 @@
  * is an explicit reference into the caller's NetworkRunContext.
  *
  * Ordering contract.  This function mutates persistent and epoch-local carries.  It
- * erases @c ctx.entities.arcs entries and marks StateManager ambiguities
+ * erases @c ctx.entities.arcs entries and marks parameter-set ambiguities
  * pending-reseed for every refloated (station,sat,σ); inserts consensus / whole-sat
  * culprits into @c clock_refloat_sats and @c retro_flag_sats (consumed downstream by
  * the SB_CLOCKUPD two-state clock update and retro-flag feed); folds σ̂0 into
@@ -198,7 +198,7 @@ struct NetworkPostFitHandoff;   // network/solve/SolveGlue.hpp
  *   - @p traces = run.traces: raim_trace / raim_attrib_trace / station_res_trace /
  *     events_trace + the emitEvent forwarder.
  *   - @p se = ep.se: Current synced epoch (week/TOW for the trace + log rows).
- *   - @p stations = run.setup.stations: [in/out] StateManager markAmbiguityPendingReseed on
+ *   - @p stations = run.setup.stations: [in/out] the parameter set's pending-reseed mark on
  *     refloat; name / is_pivot reads.
  *   - @p asm_res = ep.assembly.asm_res: Per-station assembly (pl_amb / A_s / A_r / y / w).
  *   - @p est_index_of = ep.assembly.est_index_of: Station → reduced-system index (< 0 =

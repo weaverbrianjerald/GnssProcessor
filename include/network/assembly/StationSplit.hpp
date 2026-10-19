@@ -27,7 +27,7 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 class GnssConfig;
 class NetworkEstimator;
-class StateManager;
+struct StationParams;
 class SphericalHarmonicIonosphere;
 class GlobalIonosphereMap;
 struct GlobalVtecShConfig;
@@ -96,21 +96,20 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
  * such a block as not checkable; the standardized residuals read zero).
  *
  * Called by @ref networkSplitStation only when @ref RxIfbRule::estimated_by_knob, inside the
- * parallel produce phase: it reads the station's state manager and measurement update and
+ * parallel produce phase: it reads the station's parameter set and measurement update and
  * writes only the station's own @p s (the rows excluded, the governed columns left with no
- * weighted row, the registration edges, and the family signals).  It reads the state manager
- * because the split decides the dispositions the station's parameter set records, so the set
- * of this epoch does not exist yet.
+ * weighted row, the registration edges, and the family signals).  The set holds the columns of
+ * this epoch's rows; the split has not yet decided their dispositions.
  *
  * @param s           The station's band-5 receiver-delay state (written).
- * @param sm          The station's state manager (governed columns, satellite code-bias
+ * @param set         The station's parameter set (governed columns, satellite code-bias
  *                    columns).
  * @param em          The station's measurement update (H and the row identities
  *                    @c satellite_ids / @c signal_types).
  * @param shared_cols The H columns the split scattered into the shared border.
  * @return The data rows to exclude, ascending.
  */
-std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
+std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& set,
                                    const EpochMeasurement& em, const std::set<int>& shared_cols);
 
 // ---- End of the PASS B station steps, declarations ----

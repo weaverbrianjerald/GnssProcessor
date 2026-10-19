@@ -218,7 +218,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *    station priors, which is what distinguishes the @c phase_leveling vehicle's
  *    block from the @c carry_invariant vehicle's.
  *  - One symmetric eigen-decomposition.
- *  - The ZWD column, located through @c StateManager::getTropoIndex and the
+ *  - The ZWD column, located through @c StationParams::zwd and the
  *    assembly's @c h2local map.  A carry-gated flag is not used: it would emit no
  *    rows on a cold run, which would read as "the state does not exist".
  *  - The row census over @c A_r / @c w.  Rows are classified code or phase as the
@@ -244,7 +244,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p traces = run.traces: Trace streams; the sweep is a no-op while @c station_block_trace
  *     is closed.
  *   - @p se = ep.se: This epoch (week / TOW stamp).
- *   - @p stations = run.setup.stations: Per-station run state (name + @c StateManager for the
+ *   - @p stations = run.setup.stations: Per-station run state (name + @c StationParams for the
  *     labels).
  *   - @p est = run.engines.est: The solved estimator, read through const accessors only.
  *   - @p x_s = ep.solve.x_s: Solved shared vector (for @c reconstructStation).

@@ -563,7 +563,7 @@ struct GrossLosStationState {
 /// the other carries, none of which has a rate.
 ///
 /// This state exists because the network producer never writes its solution back
-/// into the station StateManager: @c x_lin(clock) is set once (0, or the latched
+/// into the station's parameter set: @c x_lin(clock) is set once (0, or the latched
 /// cold_clock_seed median) and is constant for the run, so @c x_r carries the whole
 /// clock including its ramp of about 0.3 m/s (9 m per 30 s epoch, about 30 sigma
 /// against a bias-only prior).  The rate is a scalar Kalman state driven by the
@@ -672,7 +672,7 @@ struct StationState {
     /// (CB state key -> the writer's @c x_lin, metres).  Stashed by
     /// @c networkTryWarmResume beside the RS-6 RC restore and consumed once, by
     /// @c networkApplyRxCbLinRestore, which installs each station's map on its own
-    /// @c StateInitializer before the first epoch.  Empty on every other run.
+    /// parameter set before the first epoch.  Empty on every other run.
     /// CB state key -> the writer's @c x_lin (m).  Was
     /// @c NetworkCarryState::rxcb_lin_restore.  ResumeSeeded.
     std::optional<std::map<std::string, double>> rxcb_lin_restore;

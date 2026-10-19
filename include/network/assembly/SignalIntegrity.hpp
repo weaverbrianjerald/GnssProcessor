@@ -254,8 +254,8 @@ struct NetworkSignalIntegrityTallies {
     /// this dominates; the counter measures it instead of assuming it.
     long long reentry_already_refloated = 0;
     long long reentry_unrefloated = 0;    ///< …and the complement.  A large value falsifies the premise and is the headline number of the §6C census leg; this seam counts it and does not act on it (spec §2 INC-3a: "no change, but assert it with a counter").
-    /// Re-entries whose StateManager ambiguity state survived the outage.  Expected
-    /// zero: `MeasurementModel::ensureRequiredStates` prunes every ambiguity whose
+    /// Re-entries whose parameter-set ambiguity state survived the outage.  Expected
+    /// zero: `networkBirthLocalStates` prunes every ambiguity whose
     /// phase observable is absent, with no grace epoch, except keys held by the
     /// soft-LLI / gap bridge.  An absent arc's state is therefore gone and the arc
     /// re-enters code-anchored and fresh at the state level.  A nonzero value means
@@ -268,10 +268,10 @@ struct NetworkSignalIntegrityTallies {
     long long lli_at_reentry = 0;
     /// …of those, whose ambiguity key reached a refloat funnel.  This can fall below
     /// @c lli_at_reentry by construction: the MW/LLI drain matches an assertion
-    /// against `StateManager::getAmbiguities()`, and a re-entering arc's ambiguity
+    /// against the parameter set's ambiguities, and a re-entering arc's ambiguity
     /// has just been pruned, so the drain finds nothing to mark even though the
     /// receiver reported loss of lock, while the invariant-DD chord for that arc
-    /// (keyed independently of the StateManager) is still carried.  The difference
+    /// (keyed independently of the parameter set) is still carried.  The difference
     /// between the two counters measures that hole.
     long long lli_at_reentry_funnelled = 0;
     long long vet_completions = 0;        ///< LOS re-vets completed (a LOS returned to full phase weight).

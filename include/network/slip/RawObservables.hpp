@@ -744,7 +744,7 @@ struct SlipQcCounters {
     //
     // The denominator counts carry entries, not live ambiguity states.  An arc that
     // left the model set had its ambiguity pruned with the gap, and PASS B's
-    // measurement pre-pass (MeasurementModel::ensureRequiredStates) re-creates it
+    // measurement pre-pass (networkBirthLocalStates) re-creates it
     // only after the slip drains run, so at drain time a returning arc usually has
     // no ambiguity state.  What survives the gap, and what the response keeps from
     // being re-injected, is the leveling carry entry.  `gap_reentry_arcs` therefore

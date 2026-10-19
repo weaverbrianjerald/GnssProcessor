@@ -47,7 +47,7 @@ namespace GnssProcessor {
     /**
      * @brief Run-scope counters of the second-constellation telemetry.  Lives in @c NetworkServiceCounters.
      *
-     * Each map is keyed either by the constellation name the state manager uses for
+     * Each map is keyed either by the constellation name the parameter set uses for
      * the inter-system bias ("Galileo") or by the constellation letter the wire uses
      * ("E"), as each field states.  A zero with a zero denominator is dead wiring,
      * and the run-end line reports it as such.

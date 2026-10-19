@@ -17,7 +17,6 @@
 #include "network/qc/PriorResidual.hpp"   // prior-residual census (SPEC_prior_residual_census)
 #include "network/solve/PivotHandover.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
 
 #include <spdlog/spdlog.h>

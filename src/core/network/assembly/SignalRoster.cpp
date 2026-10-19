@@ -8,9 +8,8 @@
 #include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"           // obsTypeOf, systemName, systemOfSat, ObservableId
 #include "config/GnssConfig.hpp"
-#include "network/driver/RunTypes.hpp"        // NetStation (roster + its PppModel / StateManager)
+#include "network/driver/RunTypes.hpp"        // NetStation (roster + its PppModel / parameter set)
 #include "filter/StateKeySchema.hpp"         // parseAmbiguityKey, for the prune's keys
-#include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"
 #include "model/PppModel.hpp"
@@ -507,7 +506,7 @@ namespace GnssProcessor {
               "the entry's arc is dead, or was never admitted, in the ledger's "
               "admitted lifecycle" },
             { RosterSite::AmbiguityStates, "ambiguity_states", "arc",
-              "the station state vectors' ambiguity columns (StateManager)",
+              "the station state vectors' ambiguity columns (parameter set)",
               "ambiguity states, summed over epochs",
               "the state is alive while its admitted arc is in a gap, or it has no "
               "admitted arc" },
@@ -870,7 +869,7 @@ namespace GnssProcessor {
 
     void networkSignalRosterArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::shared_ptr<spdlog::logger>& log,
-                                const std::vector<NetStation>& stations) {
+                                std::vector<NetStation>& stations) {
         auto& rs = ctx.roster;
         // Every network run builds the roster and the arc ledger.
         // network.signal_roster, which armed them before, is the switch of the
@@ -905,8 +904,9 @@ namespace GnssProcessor {
         // the audit pass can mark the arcs whose column the prune removed inside a
         // gap.  The prune itself is unchanged and the recorder is a per-epoch vector
         // of strings that the audit pass drains every epoch.
-        for (const auto& st : stations)
-            if (st.sm) st.sm->setRecordPrunedAmbiguities(true);
+        for (auto& st : stations) {
+            st.params.record_pruned = true;
+        }
 
         log->info("Network (SIGNAL ROSTER + ARC LEDGER): "
                   "built on every epoch.  The roster (per station, constellation and "
@@ -1305,7 +1305,7 @@ namespace GnssProcessor {
         const std::shared_ptr<spdlog::logger>& log = nrun.log;
         NetworkRunTraces& traces = nrun.traces;
         const SyncedEpoch& se = nep.se;
-        const std::vector<NetStation>& stations = nrun.setup.stations;
+        std::vector<NetStation>& stations = nrun.setup.stations;
         const std::vector<std::vector<PppObservation>>& modeled = nep.pass_a.modeled;
         const std::vector<bool>& present = nep.pass_a.present;
         const RawSlipEpoch* raw = nrun.engines.slip_qc.epoch.computed ? &nrun.engines.slip_qc.epoch : nullptr;
@@ -1523,13 +1523,10 @@ namespace GnssProcessor {
         // behaviour change: the prune is unchanged and nothing here writes to the
         // solve.
         for (std::size_t i = 0; i < stations.size(); ++i) {
-            if (!stations[i].sm) continue;
-            for (const std::string& key : stations[i].sm->takePrunedAmbiguities()) {
+            for (const SatSignalId& pruned : takePrunedAmbiguities(stations[i].params)) {
                 ++ctr.state_prune_keys;
-                const auto pruned = net::satSignalKey(key);
-                if (!pruned) continue;
-                const ArcLedger::Key ak{ static_cast<int>(i), net::satKey(pruned->sat),
-                                         net::signalKey(pruned->signal) };
+                const ArcLedger::Key ak{ static_cast<int>(i), net::satKey(pruned.sat),
+                                         net::signalKey(pruned.signal) };
                 const ArcRecord* a = ctx.arc_ledger.find(ak);
                 // Only a column removed while its admitted arc is in a Gap inside
                 // the horizon is the silent death path the design names: past the
@@ -2061,7 +2058,7 @@ namespace GnssProcessor {
             "(c) local_carry vs the ledger: {} entr(y|ies) examined, {} at a DEAD arc, "
             "{} at an arc the ledger never saw, and {} MODELLED arc(s) Tracking with "
             "no carry entry.  "
-            "(d) StateManager ambiguities vs the ledger: {} state(s) examined, {} "
+            "(d) parameter-set ambiguities vs the ledger: {} state(s) examined, {} "
             "alive while their arc is in a GAP, {} with no arc at all, and {} "
             "MODELLED arc(s) in a GAP inside the horizon whose state is already gone "
             "(the silent death path).  "
@@ -2163,7 +2160,7 @@ namespace GnssProcessor {
             "{} at an arc never admitted, {} MODELLED arc(s) admitted-Tracking with no "
             "carry entry [RAW side, for comparison: {} dead, {} unknown, {} tracking "
             "without an entry].  "
-            "(d) StateManager ambiguities, ADMITTED side: {} of {} state(s) alive while "
+            "(d) parameter-set ambiguities, ADMITTED side: {} of {} state(s) alive while "
             "their ADMITTED arc is in a GAP, {} with no admitted arc, and {} MODELLED "
             "arc(s) in an ADMITTED GAP inside the horizon whose state is already gone "
             "[RAW side: {} gapped, {} unknown, {} destroyed in a gap].  "

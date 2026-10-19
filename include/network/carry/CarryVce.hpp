@@ -83,7 +83,7 @@
  * ## Isolation and testing
  *
  * Pure numeric leaf class: no @c ApplicationNetwork coupling and no parallel state
- * ownership (it does not touch @c StateManager).  It takes carry-row innovations,
+ * ownership (it does not touch a station parameter set).  It takes carry-row innovations,
  * variances and gaps, and returns σ̂ per component per (family, constellation).
  * It is driven directly from @c tests/network/test_network_carry_vce.cpp with synthetic
  * residuals of known truth, following the standalone-class pattern of

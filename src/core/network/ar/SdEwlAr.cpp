@@ -794,7 +794,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
     // Which columns need the x_lin term: the local ambiguity states are seeded from
     // code-minus-phase and reseeded on slips, so their term is large; it is the term
     // a correction-frame row subtracts as `z_lin` (z_corr = z_mw − z_lin).  The shared
-    // satellite phase/code-bias states are allocated at value 0 by MeasurementModel, as
+    // satellite phase/code-bias states are born at value 0 in the station's parameter set, as
     // shared states the network solves, and never written back from the solve, so their
     // term is currently zero.  It is included rather than assumed, so that a future
     // seeding change cannot skew the frame unnoticed.  The shared PB/CB columns are looked

@@ -89,7 +89,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
 // everything else through const references: the run context (knobs, carry maps, counters),
 // the configuration, the estimator's column layout, the setup, the epoch, every other station.
 // A write to shared state does not compile, except through a pointer member, where const
-// stops: each station's sm, model, mm, mw_slip, iono_var, turbo_edit and if_slip (reached
+// stops: each station's params, model, rows, mw_slip, iono_var, turbo_edit and if_slip (reached
 // through setup.stations), the setup's sync, brdc_apriori, sh_model, sh_model2,
 // product_writer and consumer, and ctx.carry.slip_oracle, oracle_pin and rhs_prev_frame.
 //
@@ -133,7 +133,7 @@ struct StationBuild {
     const std::unique_ptr<GlobalIonosphereMap>& gim;     ///< Application::gim_ for the GIM rows (null unless loaded).
     // ---- this station, writable ----
     const int        i;   ///< Roster index (the frozen loop variable's type: the carry keys are tuple<int, ...>).
-    NetStation&      st;  ///< Its state manager and measurement model.
+    NetStation&      st;  ///< Its parameter set and row inputs.
     StationAssembly& R;   ///< Its slot, asm_res[i].
     // ---- what one step hands a later one ----
     EpochMeasurement em;  ///< The measurement update (data_rows writes, congruence_geometry reads).
@@ -146,7 +146,7 @@ struct StationBuild {
      *
      * The data rows step seeds any new states while it computes the update, so a copy taken
      * before it (the update's own argument) is shorter than this one. Every later step reads
-     * the same vector: no step writes the station's state manager, so the first caller's copy
+     * the same vector: no step writes the station's parameter set, so the first caller's copy
      * is the copy each of them would have made. Call only after the data rows step.
      *
      * @return The copy, valid for the rest of this station's build.
@@ -266,22 +266,15 @@ void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd&
 bool networkStationBuild(StationBuild& build, const StationBuildSteps& steps = kStationBuildSteps);
 
 /**
- * @brief One station's turn of the produce loop: builds its block, records a throw in its slot,
- *        and leaves the station's parameter set following its state manager on every exit.
+ * @brief One station's turn of the produce loop: builds its block and records a throw in its slot.
  *
- * The walk (networkStationBuild) sets @c R.ok when the block is complete.  A step that ends the
- * build without one (no innovations, an H/state mismatch) has rebuilt the set itself
- * (networkRefreshStationParams).  A throw is caught here: @c R.threw and @c R.err say that the
- * station has no usable block this epoch (the solve drops it with a warning), and the set is
- * rebuilt from the state manager as it stands.  That rebuild is needed because the measurement
- * pre-pass (inside the data rows step) births and prunes the station's local columns before
- * the point where the step can throw, and the readers of the set that run before the
- * station's next split (the slip drains, the admissions, the election) must find those
- * columns.  The rebuild has no dispositions; if
- * the set cannot be built from the state manager it is left empty, the failure is counted
- * (StationParamsCheck::failed) and the next build or rebuild replaces it.
+ * The walk (networkStationBuild) sets @c R.ok when the block is complete.  A throw is caught
+ * here: @c R.threw and @c R.err say that the station has no usable block this epoch (the solve
+ * drops it with a warning).  The station's births write its set as they go, so the set is as the
+ * births left it on every exit, and the readers that run before the station's next split (the
+ * slip drains, the admissions, the election) find those columns.
  *
- * Writes only the station's own state: its slot, its set and its tally.
+ * Writes only the station's own state: its slot and its set.
  *
  * @param build One station's build.
  * @param steps The steps (kStationBuildSteps in a run; a unit test passes its own).

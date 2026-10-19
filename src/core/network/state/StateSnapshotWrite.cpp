@@ -438,7 +438,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // reference of the RC row.  The RC row above carries the rx-CB carry's numerator;
         // the gate that decides whether that prior is folded tests `value_abs − x_lin(cb)`
         // against a fixed 5.13 m bar, and x_lin is the one-shot seed that
-        // MeasurementModel::initializeCodeBiases wrote on this station's first processed
+        // the first-epoch code-bias seed wrote on this station's first processed
         // epoch and never revises.  It is not in ctx.carry but in the station's own parameter
         // set, which is why this block reads `stations`.
         //

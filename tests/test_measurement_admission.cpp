@@ -37,7 +37,7 @@
  *      observable touched.
  *
  * The seam is exercised directly as a free function.  It reads `observed` /
- * `modeled` and `present[]`, and needs a real StateManager only because the
+ * `modeled` and `present[]`, and needs a real parameter set only because the
  * refloat path marks pending-reseed flags and the withhold prunes shared states.
  */
 
@@ -48,6 +48,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/assembly/MeasurementAdmission.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParams.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
@@ -88,7 +89,6 @@ std::size_t admEvents(const NetworkRunContext& ctx) {
     return n;
 }
 
-constexpr std::size_t kPppCoreSize = 5;
 constexpr const char* kL1 = "L1C";
 constexpr const char* kL2 = "L2W";
 constexpr const char* kC1 = "C1C";
@@ -209,7 +209,7 @@ PppObservation healthy(const std::string& sat, double spread,
     return obsWith(sat, {kC1, kC2, kL1, kL2}, clock + spread);
 }
 
-/// One station with a real StateManager plus the per-epoch scaffolding the seam
+/// One station with a real parameter set plus the per-epoch scaffolding the seam
 /// takes.  Two stations so the second can stay absent (present[] gating).
 /// The run (its context, stations and slip-QC epoch index) is the fixture's; the funnel and the
 /// modelled rows are carried across steps here and handed to each epoch.
@@ -225,9 +225,10 @@ struct Rig {
         : fx(std::make_unique<NetworkTestRun>(cfg)), stations(fx->setup().stations) {
         stations.resize(2);
         stations[0].name = "AAAA";
-        stations[0].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
+        (void)log;
+        stations[0].params = startStationParams(cfg, Eigen::Vector3d::Zero());
         stations[1].name = "BBBB";
-        stations[1].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
+        stations[1].params = startStationParams(cfg, Eigen::Vector3d::Zero());
     }
 
     /// Run one epoch with the given station-0 observation set.
@@ -419,7 +420,7 @@ TEST(MeasurementAdmission, ThinStationIsSkippedAndCountedNeverScreened) {
 //
 // Standing invariant #1: a zero-q or stiff time-linked quantity needs a wired
 // slip/jump response before a hole is made in it.  A withhold is such a hole, and
-// the invariant-DD chord is keyed independently of the StateManager, so only an
+// the invariant-DD chord is keyed independently of the parameter set, so only an
 // explicit re-tap discards it.  (The invariant carry's slip hole without a response cost
 // 10.9 cyc/ep in the field.)
 TEST(MeasurementAdmission, MidArcOnsetWithholdsTheBandAndRefloatsTheArc) {
@@ -484,7 +485,7 @@ TEST(MeasurementAdmission, HealReadmitsAfterNCleanEpochsWithAFreshSeed) {
     EXPECT_TRUE(r.has("G07", kL1));
     EXPECT_TRUE(r.funnelHas("G07", kL1))
         << "a heal never restores the old states: the invariant-DD chord is keyed "
-           "independently of the StateManager, so only an explicit re-tap discards it";
+           "independently of the parameter set, so only an explicit re-tap discards it";
 }
 
 // ---------------------------------------------------------------------------

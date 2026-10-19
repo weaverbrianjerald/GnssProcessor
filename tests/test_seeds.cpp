@@ -34,7 +34,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/ObservationEquation.hpp"
-#include "measurement/ObservationEquationCheck.hpp"
+#include "support/SameBits.hpp"
 #include "measurement/Seeds.hpp"
 #include "measurement/StateInitializer.hpp"
 #include "measurement/UserParamView.hpp"
@@ -50,6 +50,7 @@
 #include <vector>
 
 using namespace GnssProcessor;
+using gnss_test::sameBits;
 namespace K = GnssProcessor::StateKeys;
 
 namespace {
@@ -616,7 +617,7 @@ protected:
               const std::string& top = "") {
         ASSERT_TRUE(stack.load(
             log, std::string("seeds_") + ::testing::UnitTest::GetInstance()->current_test_info()->name(),
-            mode, processing, estimation, bssd, /*check=*/false, top));
+            mode, processing, estimation, bssd, top));
         model().setClockRefs(&clock_refs);
     }
 
@@ -1385,7 +1386,7 @@ TEST_F(CodeBiasSeedsTest, TheModelWritesTheSeedsAndCountsTheRestoreOnTheInitiali
     const auto first_epoch = [&](const std::string& tag, const std::map<std::string, double>& restore) {
         FirstEpoch out;
         gnss_test::ModelStack s;
-        EXPECT_TRUE(s.load(log, tag, "ppp-rtk", "", R"(, "estimate_ifb": true)", false, false));
+        EXPECT_TRUE(s.load(log, tag, "ppp-rtk", "", R"(, "estimate_ifb": true)", false));
         s.model->setClockRefs(&clock_refs);
         if (!restore.empty())
             s.model->getStateInitializer().setCodeBiasSeedOverride(restore, &out.applied,
@@ -1527,8 +1528,7 @@ TEST_F(IonosphereSeedTest, AnEntryThatIsLoadedButNotAppliedCountsOnlyWhereTheRul
         const std::string top = std::string(R"(, "model_corrections": {"bias_coverage_requires_apply": )")
             + (p.requires_apply ? "true" : "false") + R"(, "enable_code_phase_bias": )"
             + (p.applied ? "true" : "false") + "}";
-        ASSERT_TRUE(s.load(log, "seeds_apply_" + std::to_string(index++), "ppp-rtk", "", "", false,
-                           /*check=*/false, top));
+        ASSERT_TRUE(s.load(log, "seeds_apply_" + std::to_string(index++), "ppp-rtk", "", "", false, top));
         s.model->setClockRefs(&clock_refs);
         const PppObservation o = satellite(0.0, 4.0, 6.5);
         const BiasPresence all = presenceOf({"C1W", "C2W", "C5X"});

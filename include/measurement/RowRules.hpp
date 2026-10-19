@@ -90,6 +90,23 @@ bool isUsableMeasurement(const GnssConfig& config,
                          const std::set<std::string>& excluded,
                          const std::string& epoch_prefix);
 
+/**
+ * @brief Whether an observation's stored geometry can carry a row: a satellite position and
+ *        range of a satellite's orbit, an elevation above the mask, a line of sight with a
+ *        finite unit vector and a positive wet mapping function.
+ *
+ * Logs the first failing check (a warning for an invalid value, a debug line for a satellite
+ * below the mask).
+ *
+ * @param config       Processing configuration (the elevation mask, the mode label).
+ * @param log_manager  Diagnostic logging.
+ * @param obs          The satellite's modeled observation.
+ * @param epoch_prefix Log prefix.
+ * @return True when the geometry is valid.
+ */
+bool hasValidGeometry(const GnssConfig& config, LogManager& log_manager,
+                      const PppObservation& obs, const std::string& epoch_prefix);
+
 // ---------------------------------------------------------------------------
 // Product coverage
 // ---------------------------------------------------------------------------

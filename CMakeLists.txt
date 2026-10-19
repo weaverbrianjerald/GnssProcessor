@@ -96,16 +96,14 @@ add_library(gnss_core STATIC
     src/core/measurement/MeasurementModelStates.cpp
     src/core/measurement/MeasurementModelSeeds.cpp
     src/core/measurement/MeasurementModelRow.cpp
-    src/core/measurement/MeasurementModelRowReference.cpp
     src/core/measurement/ObservationEquation.cpp
-    src/core/measurement/ObservationEquationCheck.cpp
     src/core/measurement/UserParamView.cpp
     src/core/measurement/Seeds.cpp
     src/core/measurement/MeasurementModelVariance.cpp
     src/core/measurement/MeasurementModelDd.cpp
-    src/core/measurement/MeasurementModelNetwork.cpp
     src/core/measurement/MeasurementBuilder.cpp
     src/core/measurement/StateInitializer.cpp
+    src/core/measurement/ReceiverBias.cpp
     src/core/measurement/BssdTransform.cpp
     src/core/measurement/BrsdTransform.cpp
     src/core/model/PppModel.cpp
@@ -300,6 +298,9 @@ add_library(gnss_core STATIC
     src/core/network/assembly/StationAnchors.cpp
     src/core/network/assembly/StationCarry.cpp
     src/core/network/assembly/StationSplit.cpp
+    src/core/network/assembly/StationRows.cpp
+    src/core/network/assembly/LocalBirth.cpp
+    src/core/network/assembly/SharedAdmission.cpp
     src/core/network/carry/ZwdCarry.cpp
     src/core/network/diag/ShHealth.cpp
     src/core/network/diag/Leveling.cpp
@@ -329,7 +330,6 @@ add_library(gnss_core STATIC
     src/core/network/runend/ResumeRunEnd.cpp
     src/core/network/runend/ReadmitRunEnd.cpp
     src/core/network/runend/ClosedLoopRunEnd.cpp
-    src/core/network/runend/ObsEquationCheckRunEnd.cpp
     src/core/network/carry/LevelingCarryRunEnd.cpp
     src/core/network/carry/RxCodeBiasCarryRunEnd.cpp
     src/core/network/carry/CarryVceRunEnd.cpp
@@ -340,9 +340,7 @@ add_library(gnss_core STATIC
     src/core/network/carry/Inject.cpp
     src/core/network/assembly/CanonicalPairAdmission.cpp
     src/core/network/state/ArcLedger.cpp
-    src/core/network/state/StateColumns.cpp
     src/core/network/state/StationParams.cpp
-    src/core/network/state/StationParamsShadow.cpp
     src/core/network/solve/AnchorReentry.cpp
     src/core/network/slip/OraclePin.cpp
     src/core/network/slip/OraclePinSetup.cpp

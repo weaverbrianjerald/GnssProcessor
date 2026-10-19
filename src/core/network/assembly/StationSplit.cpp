@@ -17,7 +17,10 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "network/state/StateColumns.hpp"   // classifyStateColumn (the receiver IFB rule)
+#include "network/assembly/LocalBirth.hpp"   // networkBirthLocalStates
+#include "network/assembly/StationRows.hpp"   // networkStationRows
+#include "network/state/Entities.hpp"       // net::satKey
+#include "network/state/StationParams.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
@@ -106,21 +109,18 @@ StationStep networkStationDataRows(StationBuild& build) {
     StationAssembly& R = build.R;
     // ---- End of the bindings ----
 
-    build.em = st.mm->computeMeasurementUpdate(
-        modeled[i], st.sm->getStateVector());
+    // The station's births, then its rows over the set they leave.
+    const StationRowContext row_ctx = rowContextOf(config_, st);
+    networkBirthLocalStates(row_ctx, st.params, modeled[i]);
+    build.em = networkStationRows(row_ctx, st.params, modeled[i]);
     EpochMeasurement& em = build.em;
-    // The pre-pass inside computeMeasurementUpdate has already changed the station's columns,
-    // so a station that leaves here still has its parameter set follow its state manager (the
-    // slip drains and the admissions of the next epoch read the set).
     if (em.innovations.size() == 0) {
         R.empty_innov = true;
-        networkRefreshStationParams(st);
         return StationStep::Done;
     }
-    if (em.H.cols() != static_cast<Eigen::Index>(st.sm->getStateSize())) {
+    if (em.H.cols() != static_cast<Eigen::Index>(st.params.slots.size())) {
         R.state_mismatch = true;
-        R.err = fmt::format("{} vs {}", em.H.cols(), st.sm->getStateSize());
-        networkRefreshStationParams(st);
+        R.err = fmt::format("{} vs {}", em.H.cols(), st.params.slots.size());
         return StationStep::Done;
     }
 
@@ -135,13 +135,12 @@ StationStep networkStationDataRows(StationBuild& build) {
     networkSplitStation(config_, st, est, em, ctx.param_inventory.rx_ifb,
                          R.A_s, R.A_r, R.w, R.y, h2local, col_disp, R.row_tags);
     R.n_data_rows = R.A_s.rows();
-    // The station's parameter set: every column of its state manager as a typed parameter
-    // with the disposition the split just gave it, and every shared state a gate withheld
-    // from the station this epoch.  The parameter inventory records it into this station's
-    // own slot (no shared write; drained serially below), and the set is checked against
-    // the state manager and against the inventory the state manager alone gives (own
-    // station only; trace class).
-    networkShadowStationParams(st, i, col_disp, R.param_inv, em.time.tow);
+    // The station's parameter set takes the disposition the split just gave each column and
+    // sorts the shared parameters a gate withheld from the station this epoch.  The parameter
+    // inventory records it into this station's own slot (no shared write; drained serially
+    // below).
+    settleStationParams(st.params, col_disp);
+    recordStationParams(st.params, i, R.param_inv);
     return StationStep::Next;
 }
 
@@ -164,31 +163,25 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     col_disp.assign(static_cast<std::size_t>(nstate), ParamDisposition::Unobserved);
 
     std::set<int> shared_cols;  // H-column indices that map to the shared border
-    for (const auto& kv : st.sm->getSatClockStates()) {
-        const std::string sat = StateKeys::satelliteFromSatClockKey(kv.first);
+    for (const auto& kv : st.params.shared.sat_clock) {
         Eigen::Index col;
-        try { col = est.clockColumn(sat); } catch (...) { continue; }
+        try { col = est.clockColumn(net::satKey(kv.first)); } catch (...) { continue; }
         A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
         shared_cols.insert(static_cast<int>(kv.second));
     }
-    for (const auto& kv : st.sm->getSatPhaseBiasStates()) {
-        const auto parts = StateKeys::parseSatPhaseBiasKey(kv.first);
-        if (!parts) continue;
+    for (const auto& kv : st.params.shared.sat_phase_bias) {
         Eigen::Index col;
-        try { col = est.phaseBiasColumn(parts->satellite, parts->signal); }
+        try { col = est.phaseBiasColumn(net::satKey(kv.first.sat), net::signalKey(kv.first.signal)); }
         catch (...) { continue; }
         A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
         shared_cols.insert(static_cast<int>(kv.second));
     }
     // Satellite code bias (W6): scatter each per-(sat,signal) sat-bias column
-    // into the shared border.  In network mode getSatBiasStates() holds only
-    // the network-owned satellite code biases (the single-receiver fallback is
-    // gated off in ensureRequiredStates); GLONASS has none (code-only scope).
-    for (const auto& kv : st.sm->getSatBiasStates()) {
-        const auto parts = StateKeys::parseSatBiasKey(kv.first);
-        if (!parts) continue;
+    // into the shared border.  The set holds only the network-owned satellite code
+    // biases; GLONASS has none (code-only scope).
+    for (const auto& kv : st.params.shared.sat_code_bias) {
         Eigen::Index col;
-        try { col = est.codeBiasColumn(parts->satellite, parts->signal); }
+        try { col = est.codeBiasColumn(net::satKey(kv.first.sat), kv.first.signal.obsCode(ObsType::Code)); }
         catch (...) { continue; }
         A_s.col(col) = em.H.col(static_cast<Eigen::Index>(kv.second));
         shared_cols.insert(static_cast<int>(kv.second));
@@ -237,24 +230,23 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // their treatment.
     std::set<int> drop_cols;
     if (ifb_rule.drop) {
-        for (const auto& kv : st.sm->getCodeBiasStates()) {
-            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, kv.first);
-            if (id && ifb_rule.drops(*id))
-                drop_cols.insert(static_cast<int>(kv.second));
+        for (const auto& kv : st.params.rx_cb) {
+            const ParamInstanceId id = paramInstanceOf(rxCodeBiasRef(kv.first));
+            if (ifb_rule.drops(id)) drop_cols.insert(kv.second);
         }
     }
     // The extra-band code rows excluded at zero weight (empty unless the knob
     // turned the drop off), as a row mask for the column test below.
     std::vector<char> excluded_row;
     if (ifb_rule.estimated_by_knob) {
-        const std::vector<int> ex = rxIfbExcludedRows(st.l5b, *st.sm, em, shared_cols);
+        const std::vector<int> ex = rxIfbExcludedRows(st.l5b, st.params, em, shared_cols);
         if (!ex.empty()) {
             excluded_row.assign(static_cast<std::size_t>(m), 0);
             for (const int r : ex) excluded_row[static_cast<std::size_t>(r)] = 1;
         }
     }
 
-    const int pos = static_cast<int>(st.sm->getPositionIndex());  // 0
+    const int pos = st.params.position[0];  // 0
     std::vector<int> local_cols;
     local_cols.reserve(static_cast<size_t>(nstate));
     for (int c = 0; c < static_cast<int>(nstate); ++c) {
@@ -273,7 +265,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
         }
         // Drop a structurally unobservable local state (all-zero H column this
         // epoch).  The usual case is the Galileo inter-system-bias state of a
-        // station that tracks no Galileo this epoch (the StateManager allocates
+        // station that tracks no Galileo this epoch (the station's parameter set holds
         // an ISB per active non-GPS system regardless of per-station, per-epoch
         // visibility); another is a stale ambiguity/iono column for a satellite
         // the cross-station observability gate just removed.  A zero column makes
@@ -334,10 +326,9 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // A station-epoch with a receiver IFB column in the block counts once.
     if (ifb_rule.estimated_by_knob) {
         bool ifb_estimated = false;
-        for (const auto& [key, sidx] : st.sm->getCodeBiasStates()) {
-            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
-            if (id && RxIfbRule::governs(id->cls) && h2local.count(static_cast<int>(sidx)))
-                ifb_estimated = true;
+        for (const auto& [key, sidx] : st.params.rx_cb) {
+            const ParamInstanceId id = paramInstanceOf(rxCodeBiasRef(key));
+            if (RxIfbRule::governs(id.cls) && h2local.count(sidx)) ifb_estimated = true;
         }
         if (ifb_estimated) ++st.l5b.est_epochs;
     }
@@ -452,7 +443,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     //
     // Thread-safety: networkPinBandsFor is a const read of the product cache's
     // clock-reference map, filled once at product load and never mutated in the
-    // epoch loop (the same contract StateInitializer::resolveReceiverBias relies
+    // epoch loop (the same contract ReceiverBiasResolver::resolveReceiverBias relies
     // on in this parallel produce).  The per-system result is memoized locally,
     // so each station resolves each constellation once.
     //
@@ -493,7 +484,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     // The test reads the state set, not the configuration: a row routes through
     // the inter-signal state exactly when this station holds
     // "<system>_ISC_<signal>", which is the state
-    // @c StateInitializer::resolveReceiverBias allocated from the same predicate.
+    // @c ReceiverBiasResolver::resolveReceiverBias allocated from the same predicate.
     // Deriving it again from the allow-list and the latch would be a second copy
     // of that predicate, free to drift; reading the states cannot disagree with
     // the Jacobian.
@@ -508,13 +499,11 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     //
     // Off: the whole block is skipped and the output is byte-identical.  With the
     // knob armed at scale 1 the weights are untouched (no division is performed).
-    if (config_.networkSecondCodeRowsActive() && st.sm) {
+    if (config_.networkSecondCodeRowsActive()) {
         std::set<std::string> isc_sigs;   // signals with an inter-signal state at this station
-        for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
-            (void)idx;
-            if (const auto p = StateKeys::parseReceiverIscKey(key))
-                isc_sigs.insert(p->signal);
-        }
+        for (const auto& entry : st.params.rx_cb)
+            if (entry.first.form == ParamForm::Isc)
+                isc_sigs.insert(entry.first.signal.obsCode(ObsType::Code));
         if (!isc_sigs.empty()) {
             const double sc_scale = config_.networkSecondCodeSigmaScale();
             const Eigen::Index mr = std::min<Eigen::Index>(
@@ -576,7 +565,7 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
     y = em.innovations;
 }
 
-std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
+std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& set,
                                    const EpochMeasurement& em, const std::set<int>& shared_cols) {
     std::set<int> excluded;
     const Eigen::Index nstate = em.H.cols();
@@ -584,10 +573,10 @@ std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
         em.H.rows(), static_cast<Eigen::Index>(
             std::min(em.satellite_ids.size(), em.signal_types.size())));
     std::map<std::string, bool> registered_now;
-    for (const auto& [key, sidx] : sm.getCodeBiasStates()) {
-        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, key);
-        if (!id || !RxIfbRule::governs(id->cls)) continue;
-        const int c = static_cast<int>(sidx);
+    for (const auto& [cb_key, sidx] : set.rx_cb) {
+        if (!RxIfbRule::governs(paramInstanceOf(rxCodeBiasRef(cb_key)).cls)) continue;
+        const std::string key = keyText(rxCodeBiasRef(cb_key));
+        const int c = sidx;
         if (c < 0 || c >= nstate) continue;
         std::set<std::string> signals;
         long long n_rows = 0, n_excluded = 0;
@@ -598,7 +587,13 @@ std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StateManager& sm,
             const std::string& sig = em.signal_types[static_cast<std::size_t>(r)];
             signals.insert(sig);
             const std::string row_key = StateKeys::makeSatBiasKey(sat, sig);
-            const int hc = sm.getSatBiasIndex(row_key);
+            int hc = -1;
+            if (const std::optional<SatId> sat_id = canonicalSat(sat)) {
+                if (const std::optional<SignalId> sig_id = canonicalSignal(sat_id->sys, sig)) {
+                    const auto held = set.shared.sat_code_bias.find(SatSignalId{*sat_id, *sig_id});
+                    if (held != set.shared.sat_code_bias.end()) hc = held->second;
+                }
+            }
             const bool registered = hc >= 0 && shared_cols.count(hc) != 0;
             // The edges of invariant #7: the row joins or leaves the solve with its
             // satellite column (a row seen for the first time is neither).

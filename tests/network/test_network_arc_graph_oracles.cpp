@@ -49,6 +49,7 @@
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Responses.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 
 #include <gtest/gtest.h>
@@ -2568,9 +2569,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 double seed_x = std::numeric_limits<double>::quiet_NaN();
                 bool   frame_shiftable = false;
                 auto ambStateValue = [&]() -> double {
-                    const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                    const int sidx = findAmbiguity(stations[ri].params, amb);
                     if (sidx < 0) return std::numeric_limits<double>::quiet_NaN();
-                    return stations[ri].sm->getStateVector()(sidx);
+                    return stations[ri].params.slots[static_cast<std::size_t>(sidx)].x_lin;
                 };
                 if (eq34_seed_round && !std::isfinite(carry_val) && roundable) {
                     // Freeze after first realization (INC-1, SPEC §8.5): a frame is
@@ -2592,10 +2593,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     } else {
                     const double lam = grp_lambda;
                     if (std::isfinite(lam) && lam > 0.0) {
-                        const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                        const int sidx = findAmbiguity(stations[ri].params, amb);
                         if (sidx >= 0) {
                             const double x =
-                                stations[ri].sm->getStateVector()(sidx);
+                                stations[ri].params.slots[static_cast<std::size_t>(sidx)].x_lin;
                             if (std::isfinite(x)) {
                                 if (eq34_seed_rehost) seed_x = x;   // re-host step baseline (INC-2)
                                 target = lam * std::round(x / lam);

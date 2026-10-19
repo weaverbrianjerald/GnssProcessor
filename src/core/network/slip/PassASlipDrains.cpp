@@ -245,8 +245,8 @@ void passAGapReentryStage(const PassAView& v, RelevelEpochState* relevel_ptr,
     // every other response.
     //
     // It receives `local_carry` and (pl_now_s, pl_max_gap_s), not only the
-    // StateManager, because at this point in the epoch a re-entering arc has no
-    // ambiguity column (PASS B's ensureRequiredStates re-creates it later).  The
+    // parameter set, because at this point in the epoch a re-entering arc has no
+    // ambiguity column (PASS B's networkBirthLocalStates re-creates it later).  The
     // carry entry is what survives the gap and what the inject would bridge, so the
     // carry is the drain's target and its oracle; the ambiguity key is synthesised
     // in the inject site's own format.  A drain that walked the live ambiguity map

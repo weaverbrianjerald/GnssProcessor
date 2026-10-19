@@ -8,8 +8,8 @@
  * on purpose.  The JSON loader (src/core/config/GnssConfigLoadNetwork.cpp) refuses
  * a bad scope by name at load time, and does so through the same parser the
  * run-scope seam uses, so the grammar exists in one place.  The seam's own header
- * includes network/driver/RunTypes.hpp (StateManager, NetworkEstimator, PppModel,
- * MeasurementModel), which the config TU should not depend on.
+ * includes network/driver/RunTypes.hpp (StationParams, NetworkEstimator, PppModel,
+ * StationRowInputs), which the config TU should not depend on.
  *
  * The oracle pin is described in include/network/slip/OraclePin.hpp.
  */

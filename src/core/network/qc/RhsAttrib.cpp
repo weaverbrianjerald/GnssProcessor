@@ -182,7 +182,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.datum     = plan_datum;
     if (x_s && x_s->size() == n) out.x_s = *x_s;
     // The station-local readout's inputs, read now because the kernel and the
-    // state managers move on after the epoch: each item's local-column names and the
+    // station parameter sets move on after the epoch: each item's local-column names and the
     // kernel's reconstruction of its locals at x_s, terms apart.  Only when asked (a LOC:
     // label is named) and with x_s, so every other capture, the flight recorder's
     // per-epoch retention among them, does no extra work.

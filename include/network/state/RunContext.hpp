@@ -470,7 +470,7 @@ namespace GnssProcessor {
         /// network.resume_rxcb_lin_restore (RS-9, SPEC_event_harness §21.18): at a warm
         /// resume, stash the snapshot's @c RL rows (the writer's code-bias @c x_lin per
         /// (station roster index, CB state key)) and seed each station's code-bias state
-        /// from them at its first-epoch @c MeasurementModel::initializeCodeBiases, instead
+        /// from them at its first-epoch code-bias seed, instead
         /// of from one epoch of the resume epoch's code.  RS-6 restores the rx-CB carry's
         /// numerator; this restores the reference its inject gate differences against, the
         /// other edge of the same seam (invariant #7).  Solve-invariant by construction: an
@@ -1664,7 +1664,7 @@ namespace GnssProcessor {
         // rxcb_lin_restore: moved to net::StationState::rxcb_lin_restore (network/state/Entities.hpp).
         /// Per-station out-slots for the two RS-9 override tallies, sized once by
         /// @c networkApplyRxCbLinRestore and never resized: each station's
-        /// @c StateInitializer holds a raw pointer to its own element, so the counting is
+        /// parameter set holds a raw pointer to its own element, so the counting is
         /// race-free inside the OpenMP parallel produce phase (distinct objects, no
         /// atomics).  {applied, uncovered}; summed at the run-end readout.
         std::vector<std::pair<long long, long long>> rxcb_lin_sta_counts;
@@ -2576,7 +2576,7 @@ namespace GnssProcessor {
      *     cannot be read out of @c ctx.carry. RS-8 (§21.16) @c CN: the canonical-signal latch
      *     lives in each station's @c PppModel. RS-9 (§21.18) @c RL: the code-bias linearization
      *     point is a property of each station's own state vector
-     *     (@c stations[i].sm->getStateVector()), which no other snapshot record needs; the
+     *     (@c stations[i].params), which no other snapshot record needs; the
      *     RC/SD/ER rows are all plain copies out of @c ctx.carry. Read-only in both cases, and
      *     each group is written only under its own knob (@c network.state_snapshot_signal_capture
      *     / @c network.state_snapshot_rxcb_lin_capture).
@@ -2593,7 +2593,7 @@ namespace GnssProcessor {
      */
     void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep);
 
-    /// Install the warm resume's stashed @c RL map on each station's @c StateInitializer,
+    /// Install the warm resume's stashed @c RL map on each station's parameter set,
     /// so the station's one-shot first-epoch code-bias seed takes the writer's
     /// linearization point instead of a median over one epoch of the resume epoch's code
     /// (RS-9, §21.18).  Called from @c runNetwork immediately after

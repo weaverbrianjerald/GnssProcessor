@@ -29,7 +29,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "network/state/StateColumns.hpp"        // classifyStateColumn
+#include "network/state/StationParams.hpp"       // receiverCodeBiasKey
 #include "measurement/UserParamView.hpp"          // userKey
 
 #include <algorithm>
@@ -286,17 +286,11 @@ void expectRxCbOrder(const SignalUniverse& u) {
         EXPECT_EQ(renderRxCb(key), strings[i]) << "at position " << i;
         ++i;
     }
-    // The classifier reads each state key back as the typed key's fields.
+    // The key parser reads each state key back as the typed key.
     for (const auto& [key, unused] : typed) {
-        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, renderRxCb(key));
-        ASSERT_TRUE(id.has_value()) << renderRxCb(key);
-        EXPECT_EQ(id->cls.kind, NetworkParamKind::RxCodeBias);
-        EXPECT_EQ(id->cls.form, key.form) << renderRxCb(key);
-        EXPECT_EQ(id->cls.sys, key.sys) << renderRxCb(key);
-        if (key.form == ParamForm::Ifb || key.form == ParamForm::GloSlotIfb)
-            EXPECT_EQ(id->cls.band, key.band) << renderRxCb(key);
-        if (key.form == ParamForm::GloSlotIfb) EXPECT_EQ(id->glo_slot, key.glo_slot);
-        if (key.form == ParamForm::Isc) EXPECT_EQ(id->cls.signal, key.signal);
+        const std::optional<RxCbKey> back = receiverCodeBiasKey(renderRxCb(key));
+        ASSERT_TRUE(back.has_value()) << renderRxCb(key);
+        EXPECT_EQ(*back, key) << renderRxCb(key);
     }
 }
 
@@ -439,68 +433,57 @@ TEST(ParamRefTest, TheKindsAndFormsKeepTheirTableNames) {
 
 namespace {
 
-/// A key of the station's state manager, classified, converted to a reference and back, and
-/// rendered as the key it came from.
-void expectConverts(StateContainer container, const std::string& key, bool renders_back = true,
-                    std::uint8_t axis = 0) {
-    const auto id = classifyStateColumn(container, key);
-    ASSERT_TRUE(id.has_value()) << key;
-    const ParamRef ref = paramRefOf(*id, axis);
-    EXPECT_EQ(ref.kind, id->cls.kind) << key;
-    EXPECT_EQ(paramInstanceOf(ref), *id) << key << " -> " << describe(ref);
+/// A reference converted to its instance and back, and rendered as the state key it stands for.
+void expectConverts(const ParamRef& ref, const std::string& key, bool renders_back = true) {
+    const ParamInstanceId id = paramInstanceOf(ref);
+    EXPECT_EQ(id.cls.kind, ref.kind) << key;
+    EXPECT_EQ(paramRefOf(id, ref.axis), ref) << key << " -> " << describe(ref);
+    EXPECT_EQ(paramInstanceOf(paramRefOf(id, ref.axis)), id) << key;
     if (renders_back) EXPECT_EQ(userKey(ref), key) << describe(ref);
 }
 
 } // namespace
 
-TEST(ParamRefTest, AClassifiedInstanceConvertsToItsReferenceAndBack) {
-    using SC = StateContainer;
+TEST(ParamRefTest, AnInstanceConvertsToItsReferenceAndBack) {
     const SignalUniverse u = classifiedUniverse();
     for (const auto& [sys, signals] : u) {
         for (const int prn : {5, 17}) {
             const SatId sat{sys, prn};
             const std::string s = sat.str();
-            expectConverts(SC::IonosphereStates, K::makeIonosphereKey(s));
-            expectConverts(SC::PhaseColourStates, s);
-            expectConverts(SC::SatClockStates, K::makeSatClockKey(s));
+            expectConverts(slantIonoRef(sat), K::makeIonosphereKey(s));
+            expectConverts(phaseColourRef(sat), s);
+            expectConverts(satClockRef(sat), K::makeSatClockKey(s));
             for (const SignalId& sig : signals) {
-                expectConverts(SC::Ambiguities, K::makeAmbiguityKey(s, sig.obsCode(ObsType::Phase)));
-                expectConverts(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey(s, sig.obsCode(ObsType::Phase)));
-                expectConverts(SC::SatBiasStates, K::makeSatBiasKey(s, sig.obsCode(ObsType::Code)));
+                expectConverts(ambiguityRef(sat, sig), K::makeAmbiguityKey(s, sig.obsCode(ObsType::Phase)));
+                expectConverts(satPhaseBiasRef(sat, sig), K::makeSatPhaseBiasKey(s, sig.obsCode(ObsType::Phase)));
+                expectConverts(satCodeBiasRef(sat, sig), K::makeSatBiasKey(s, sig.obsCode(ObsType::Code)));
             }
             for (std::size_t i = 0; i + 1 < signals.size(); i += 2) {
                 const SignalPair pair{signals[i], signals[i + 1]};
-                expectConverts(SC::Ambiguities, K::makeAmbiguityKey(s, pair.str(ObsType::Phase)));
+                expectConverts(ambiguityIfRef(sat, pair), K::makeAmbiguityKey(s, pair.str(ObsType::Phase)));
             }
             const std::vector<FrequencyBand> bands = keyBands(sys);
             for (const FrequencyBand a : bands) {
-                expectConverts(SC::Ambiguities, K::makeNlAmbiguityKey(s, digitFor(sys, a)));
+                expectConverts(narrowLaneRef(sat, a), K::makeNlAmbiguityKey(s, digitFor(sys, a)));
                 for (const FrequencyBand b : bands)
                     if (a < b)
-                        expectConverts(SC::Ambiguities,
+                        expectConverts(wideLaneRef(sat, a, b),
                                        K::makeWlAmbiguityKey(s, digitFor(sys, a), digitFor(sys, b)));
             }
         }
-        expectConverts(SC::SystemTimeOffsetStates, K::makeSystemTimeOffsetKey(systemName(sys)), false);
+        expectConverts(isbRef(sys), K::makeSystemTimeOffsetKey(systemName(sys)), false);
         for (const SignalId& sig : signals)
-            expectConverts(SC::ReceiverPhaseBiasStates,
+            expectConverts(rxPhaseBiasRef(sys, sig),
                            K::makeReceiverPhaseBiasKey(systemName(sys), sig.obsCode(ObsType::Phase)));
     }
     for (const RxCbKey& k : rxCbKeys(u)) {
-        expectConverts(SC::CodeBiasStates, renderRxCb(k));
+        expectConverts(rxCodeBiasRef(k), renderRxCb(k));
         // The typed key is the reference's own fields.
-        const auto id = classifyStateColumn(SC::CodeBiasStates, renderRxCb(k));
-        ASSERT_TRUE(id.has_value());
-        EXPECT_EQ(rxCbKeyOf(paramRefOf(*id)), k) << renderRxCb(k);
+        EXPECT_EQ(rxCbKeyOf(rxCodeBiasRef(k)), k) << renderRxCb(k);
     }
-    for (std::uint8_t axis = 0; axis < 3; ++axis) {
-        expectConverts(SC::PositionIndex, "", false, axis);
-        EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::PositionIndex, ""), axis), rxPositionRef(axis));
-    }
-    expectConverts(SC::ClockIndex, "", false);
-    expectConverts(SC::TropoIndex, "", false);
-    EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::ClockIndex, "")), rxClockRef());
-    EXPECT_EQ(paramRefOf(*classifyStateColumn(SC::TropoIndex, "")), zwdRef());
+    for (std::uint8_t axis = 0; axis < 3; ++axis) expectConverts(rxPositionRef(axis), "", false);
+    expectConverts(rxClockRef(), "", false);
+    expectConverts(zwdRef(), "", false);
 }
 
 TEST(ParamRefTest, TheStationOfAnInstanceTakesPartInItsEquality) {

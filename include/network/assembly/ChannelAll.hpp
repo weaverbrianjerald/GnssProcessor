@@ -20,7 +20,7 @@
  * Three questions the widening alone does not settle, and where they are handled:
  *
  *  - the receiver inter-signal code bias of an extra code on any band, in
- *    @c StateInitializer::resolveReceiverBias (the second code channel's state, with its band-1
+ *    @c ReceiverBiasResolver::resolveReceiverBias (the second code channel's state, with its band-1
  *    restriction and its allow-list dropped under the widening);
  *  - the satellite inter-signal correction of an extra code on band 2 or above,
  *    which @c network.sat_isc_state frees where a station bridges

@@ -8,9 +8,8 @@
 #include "network/driver/SetupResult.hpp"    // NetworkSetupResult::stations (the band-5 receiver-delay run-end report)
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"    // StationAssembly::param_inv, ok, threw
-#include "network/state/StateColumns.hpp"    // classifyStateColumn (the receiver IFB rule)
+#include "network/state/StationParams.hpp"   // receiverCodeBiasKey (the receiver IFB rule)
 #include "network/state/StationParams.hpp"    // StationParams (the inventory records its columns)
-#include "network/state/StationParamsShadow.hpp"   // stationParamsReport (run-end section)
 #include "network/diag/RunTraces.hpp"  // appendRunManifestRecord
 #include "model/PppModel.hpp"            // getAllowedBandDigits (rxExtraBandTracked)
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
@@ -205,9 +204,9 @@ constexpr AbsorbedReasonSpec kAbsorbedReasonTable[kAbsorbedReasons] = {
     {AbsorbedReason::GlonassCodeOnlyScope, "glonass_code_only_scope", "GLONASS code-only scope",
      "GLONASS is admitted on code-only scope (network.estimate_glonass): a shared "
      "per-(satellite, signal) bias is unphysical under FDMA, so none is allocated",
-     "MeasurementModel::ensureNetworkSharedStates", kByAmbiguity,
+     "networkAdmitSharedStates (SharedAdmission.cpp)", kByAmbiguity,
      // The code comment names the per-slot IFB alone; that column exists only on the FDMA
-     // bands at a known slot k != 0 (StateInitializer::resolveReceiverBias).  The case does
+     // bands at a known slot k != 0 (ReceiverBiasResolver::resolveReceiverBias).  The case does
      // not arise in a loaded run: the loader refuses network.estimate_sat_code_bias with
      // network.estimate_glonass.
      "the station's receiver per-slot IFB (FDMA bands, slot k != 0 only; not reachable in a "
@@ -215,14 +214,14 @@ constexpr AbsorbedReasonSpec kAbsorbedReasonTable[kAbsorbedReasons] = {
     {AbsorbedReason::CoverageGate, "coverage_gate", "coverage allowlist",
      "the signal is outside the coverage allowlist built from "
      "network.phase_bias_min_station_fraction",
-     "MeasurementModel::ensureNetworkSharedStates", kByAmbiguity, ""},
+     "networkAdmitSharedStates (SharedAdmission.cpp)", kByAmbiguity, ""},
     {AbsorbedReason::Allowlist, "allowlist", "pivot allowlist",
      "the legacy single-pivot datum is in force (network.phase_datum_prioritized off) and the "
      "key is not among the pivot station's satellite phase-bias keys",
-     "MeasurementModel::ensureNetworkSharedStates", kByAmbiguity, ""},
+     "networkAdmitSharedStates (SharedAdmission.cpp)", kByAmbiguity, ""},
     {AbsorbedReason::CodeCensusCogate, "code_census_cogate", "code-census co-gate",
      "the CB-ADM census (network.cb_admission) quarantined the signal's companion code pair",
-     "MeasurementModel::ensureNetworkSharedStates", kByAmbiguity, ""},
+     "networkAdmitSharedStates (SharedAdmission.cpp)", kByAmbiguity, ""},
     {AbsorbedReason::AnchoredUnionCoverage, "anchored_union_coverage", "anchored-union coverage",
      "fewer than network.phase_datum_min_stations stations hold the key this epoch",
      "networkBuildPhaseDatumCandidates", kByAmbiguity, ""},
@@ -293,9 +292,9 @@ bool rxIfbFamilyReseeded(const RxIfbStationState& s, const std::string& ifb_key,
     if (reseed_channels.empty()) return false;
     const auto sit = s.signals.find(ifb_key);
     if (sit == s.signals.end()) return false;
-    const auto id = classifyStateColumn(StateContainer::CodeBiasStates, ifb_key);
-    if (!id || !RxIfbRule::governs(id->cls)) return false;
-    const std::string cst = constellationKey(id->cls.sys);
+    const std::optional<RxCbKey> key = receiverCodeBiasKey(ifb_key);
+    if (!key || !RxIfbRule::governs(*key)) return false;
+    const std::string cst = constellationKey(key->sys);
     for (const std::string& sig : sit->second)
         if (reseed_channels.count(cst + "|" + sig)) return true;
     return false;
@@ -853,8 +852,8 @@ std::vector<RxIfbReportLine> rxExtraBandDelayReport(
     std::map<std::string, std::vector<double>> by_family;
     for (const auto& [sk, value] : carried) {
         if (!std::isfinite(value)) continue;
-        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, sk.second);
-        if (!id || !RxIfbRule::governs(id->cls)) continue;
+        const std::optional<RxCbKey> key = receiverCodeBiasKey(sk.second);
+        if (!key || !RxIfbRule::governs(*key)) continue;
         std::string family;
         const int i = sk.first;
         if (i >= 0 && static_cast<std::size_t>(i) < stations.size() && stations[i].second) {
@@ -922,34 +921,12 @@ static int networkRxExtraBandDelayRunEnd(const NetworkRunEndView& v) {
     return 0;
 }
 
-    /**
-     * @brief Run-end section: the stations' parameter sets, built beside their state managers.
-     *
-     * The table of @ref stationParamsReport: the families and their slots at each station's
-     * last build, the findings of the checks against the state managers and the inventory
-     * (all zero on a sound run), and the builds that did not happen.  Every line carries the
-     * prefix "Network (station parameter set)".
-     *
-     * Gate: none; the checks run on every network run.
-     *
-     * @param v The run at its end (network/runend/RunEnd.hpp).
-     * @return 0 (this report does not set the exit code).
-     */
-static int networkStationParamsTableRunEnd(const NetworkRunEndView& v) {
-    for (const std::string& line : stationParamsReport(v.setup.stations)) {
-        if (line.rfind("WARNING", 0) == 0) v.log->warn("Network (station parameter set): {}", line);
-        else                                v.log->info("Network (station parameter set): {}", line);
-    }
-    return 0;
-}
-
 // Run-end report of this subsystem: its sections in print order (
 // declared in network/assembly/ParamInventory.hpp).
 int networkParamInventoryRunEnd(const NetworkRunEndView& v) {
     return networkRunEndSections(v, {
         networkRxExtraBandDelayRunEnd,
-        networkParamInventoryTableRunEnd,
-        networkStationParamsTableRunEnd
+        networkParamInventoryTableRunEnd
     });
 }
 

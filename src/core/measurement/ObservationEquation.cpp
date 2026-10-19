@@ -15,7 +15,7 @@
 #include "common/GnssTypes.hpp"
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
-#include "measurement/StateInitializer.hpp"
+#include "measurement/ReceiverBias.hpp"
 #include "products/SsrCorrectionStore.hpp"
 
 #include <cmath>
@@ -23,27 +23,23 @@
 
 namespace GnssProcessor {
 
-namespace {
-
 // =======================================================================
 // Identities of the row
 // =======================================================================
 
-/// The satellite of a canonical RINEX id text ("G05"), or nothing for any other spelling
-/// ("G5", "G 5", an empty text): a state key built from a typed satellite would not equal the
-/// text the states were born under.
 std::optional<SatId> canonicalSat(const std::string& text) {
     const auto sat = SatId::parse(text);
     if (!sat || sat->str() != text) return std::nullopt;
     return sat;
 }
 
-/// The signal of a canonical observation code ("L1C"), or nothing for any other text.
 std::optional<SignalId> canonicalSignal(System sys, const std::string& code) {
     const auto sig = SignalId::fromObsCode(sys, code);
     if (!sig || sig->obsCode(obsTypeOf(code)) != code) return std::nullopt;
     return sig;
 }
+
+namespace {
 
 /// The pair of a canonical iono-free text ("L1C_L2W"), or nothing for any other text.
 std::optional<SignalPair> canonicalPair(System sys, const std::string& text) {

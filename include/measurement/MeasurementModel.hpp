@@ -1,7 +1,6 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
-#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states)
 #include "measurement/RowRules.hpp"             // RowProducts, PivotSignalMap (the row rules are free functions)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
@@ -59,12 +58,9 @@ namespace GnssProcessor {
      *    state (inter-system biases, phase clock, receiver code biases, the cold
      *    receiver clock) and the ambiguity seed: the values come from
      *    measurement/Seeds.hpp, this file applies them to the @c StateManager.
-     *  - MeasurementModelRowReference.cpp: the row builder as it was before the term
-     *    list, and the comparison with it (processing.obs_equation_check).  Temporary.
      *  - MeasurementModelVariance.cpp: the definition of rowVariance, the
      *    variance of one row (a free function, measurement/RowRules.hpp).
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
-     *  - MeasurementModelNetwork.cpp: the network-only surface.
      */
     class MeasurementModel {
     public:
@@ -111,137 +107,6 @@ namespace GnssProcessor {
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
             const Eigen::VectorXd& current_state,
             const std::set<std::string>& excluded_measurements = {});
-
-        // -------------------------------------------------------------------
-        // Network-only surface (the PPP-RTK network producer):
-        // from ensureNetworkSharedStates to carrierFrequency below,
-        // and the private members marked "network only".  The out-of-line
-        // definitions are in MeasurementModelNetwork.cpp, except
-        // setGlonassSlots (MeasurementModel.cpp).
-        // -------------------------------------------------------------------
-
-        /**
-         * @brief Pre-allocate the shared satellite states owned by the PPP-RTK
-         *        network producer's joint estimator (per-satellite clock,
-         *        per-(satellite, signal) phase bias and code bias), so this
-         *        station's @c H carries their columns this epoch.
-         *
-         * No-op unless @c ProcessingMode::PPP_RTK_Network and uncombined.  These
-         * state families are consume-only in @c buildJacobianRow (this function is
-         * their only creator), so without this pre-pass their Jacobian
-         * columns would be all zero and the satellites would receive no information
-         * from this station.  Each family is allocated only when its estimation
-         * toggle is on.  GLONASS is skipped unless the GLONASS network scope is
-         * enabled, and then receives a clock column only (no shared phase or code
-         * bias under FDMA).
-         *
-         * The admission gate mirrors the row-assembly loop in
-         * @c computeMeasurementUpdate (obs-level geometry and elevation checks plus
-         * @c isUsableMeasurement), so the allocated column set is exactly the set
-         * @c buildJacobianRow writes and never a superset.  An over-allocated
-         * all-zero column would be an unobserved gauge that the null-space rank
-         * gate rejects.  States no longer required are pruned, so a dropped
-         * satellite or signal leaves no stale column.
-         *
-         * Every shared state a gate here withholds from the station (GLONASS
-         * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
-         * noted in @ref absorbedSharedStates, which this call clears first: the
-         * parameter inventory counts each as an absorbed instance (the
-         * record is measurement/AbsorbedSharedStates.hpp, the inventory
-         * network/assembly/ParamInventory.hpp).
-         *
-         * @param observations This station's modeled observations for the epoch.
-         * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to
-         *        these @c "<sat>|<signal>|PB" keys: the datum (pivot) station's
-         *        set, so every shared phase-bias column has a pivot-receiver
-         *        ambiguity pin fixing its gauge.  Empty allocates for every usable
-         *        raw phase signal, which is how the pivot set is seeded.
-         * @param cbadm_admitted_code_keys If non-null, a phase bias is allocated
-         *        only when its companion code key (@c "<sat>|C<band><attr>") is in
-         *        this set, so a signal whose code pair the CB-ADM census has
-         *        quarantined also has its shared phase bias withheld.  Null
-         *        (feature off or census inactive) is byte-identical.
-         */
-        void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
-                                       const std::set<std::string>& allowed_phase_keys = {},
-                                       const std::set<std::string>* cbadm_admitted_code_keys = nullptr);
-
-        /**
-         * @brief The shared satellite states withheld from this station this epoch
-         *        (network producer only).
-         *
-         * Cleared and refilled by @ref ensureNetworkSharedStates in PASS A, then
-         * extended by the serial gates that prune a state the station had allocated
-         * (@ref noteAbsorbedSharedState).  Read by @c recordStationParams after the
-         * station's split.  Empty in every other mode: nothing writes it there.
-         *
-         * @return The station's list for the epoch.
-         */
-        const StationAbsorbed& absorbedSharedStates() const { return absorbed_shared_; }
-
-        /**
-         * @brief Note a shared satellite state a network gate withheld from this
-         *        station after allocation (the anchored-union coverage gate, the eq34
-         *        hygiene block): appended to @ref absorbedSharedStates.
-         *
-         * @param container @c StateContainer::SatPhaseBiasStates or @c SatBiasStates.
-         * @param key       The state's key in the station's state manager.
-         * @param reason    The gate.
-         */
-        void noteAbsorbedSharedState(StateContainer container, std::string_view key,
-                                     AbsorbedReason reason);
-
-        /**
-         * @brief Install a network coverage allowlist for satellite phase-bias states.
-         *
-         * System display name (e.g. "GPS") -> the phase signals permitted a
-         * per-(sat,signal) phase-bias state.  An absent constellation or empty map
-         * permits every phase signal (the byte-identical default).  Where a
-         * constellation is listed, an unlisted signal is skipped in
-         * @ref ensureNetworkSharedStates: no phase-bias state is allocated, so its
-         * float ambiguity absorbs the bias and the signal is not AR-eligible.  The
-         * network producer populates this from per-station coverage
-         * (network.phase_bias_min_station_fraction).
-         */
-        void setPhaseBiasSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
-            phase_bias_signal_allowlist_ = std::move(allowlist);
-        }
-
-        /**
-         * @brief Seed the model's frequency helper with GLONASS FCN slot numbers.
-         *
-         * GLONASS is FDMA, so the carrier frequency, and with it the iono
-         * coefficient and wavelength @c buildJacobianRow uses, depends on each
-         * satellite's channel.  This model's private @c PppUtils is constructed
-         * un-seeded and falls back to the compiled default channel table.  Only
-         * the network driver calls this (per station, from the station's RINEX
-         * "GLONASS SLOT / FRQ #" header).  The post-processing and real-time
-         * constructions do not, so a GLONASS uncombined user run takes the
-         * default table here while @c PppModel uses the header slots
-         * (identical whenever the header equals the table).
-         *
-         * @param slots satellite-id -> FCN channel number.
-         */
-        void setGlonassSlots(const std::map<std::string, int>& slots);
-
-        /**
-         * @brief Carrier frequency (Hz) of an observation code on a satellite.
-         *
-         * Exposes the private @c PppUtils lookup so the network driver can form the
-         * iono-free (clock-preserving) combination weights for the satellite
-         * code-bias IF datum pin: the OSB's GF/DCB part is emitted while its IF
-         * part lives in the estimable clock.  GLONASS uses the seeded FCN slots
-         * (@ref setGlonassSlots); GPS/Galileo are per-signal constants.  Returns 0
-         * for an unknown code/satellite.
-         *
-         * @param obs_code  RINEX observation code (e.g. "C1C").
-         * @param satellite Satellite id (e.g. "G05"); its first letter gives the system.
-         * @return The carrier frequency in Hz, or 0 when unknown.
-         */
-        double carrierFrequency(const std::string& obs_code,
-                                const std::string& satellite) const;
-
-        // ------------------- end of the network-only surface -------------------
 
         /**
          * @brief Compute a DD measurement update from two per-receiver
@@ -497,29 +362,6 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
-        // --- Network only (MeasurementModelNetwork.cpp) ---------
-
-        /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
-        /// system → admitted phase signals.  Empty (default) = allow every signal.
-        std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
-
-        /// The shared states withheld from this station this epoch (see
-        /// @ref absorbedSharedStates).  Network producer only.
-        StationAbsorbed absorbed_shared_;
-
-        /**
-         * @brief Whether @p signal may get a satellite phase-bias state under the
-         *        network coverage allowlist (@ref setPhaseBiasSignalAllowlist).
-         *
-         * @param system System display name (e.g. "GPS").
-         * @param signal Raw phase code (e.g. "L1C").
-         * @return True when the feature is off (empty allowlist) or the system is
-         *         not gated; else whether the allowlist admits the signal.
-         */
-        bool phaseBiasAdmitted(const std::string& system, const std::string& signal) const;
-
-        // --- End of the network-only members --------------------------------
-
         /// Non-owning SSR store override; nullptr -> process-wide singleton.
         /// Set via setSsrStore() for the closed-loop consumer (see header).
         const SsrCorrectionStore* ssr_store_override_{ nullptr };
@@ -746,12 +588,12 @@ namespace GnssProcessor {
          * (h) A raw code (uncombined) or iono-free code pair without .BIA or SSR
          * coverage that the BSSD pivot tracks; an uncombined GLONASS signal with a
          * per-slot IFB key is excluded.  The network producer allocates its
-         * satellite code biases in @ref ensureNetworkSharedStates.  (i) From
+         * satellite code biases itself (network/assembly/SharedAdmission.hpp).  (i) From
          * buildJacobianRow, re-referenced to the pivot's innovation under BSSD.
          *
-         * The network producer's own shared states (satellite clock, phase bias
-         * and code bias) are not in this table: @ref ensureNetworkSharedStates
-         * allocates them in PASS A, before this pre-pass runs.
+         * The network producer's own parameters (shared satellite clock, phase bias
+         * and code bias, and the station's local states) are not born here: the network
+         * station has its own set (network/state/StationParams.hpp).
          *
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix (empty: the log pattern carries the time).
@@ -905,7 +747,7 @@ namespace GnssProcessor {
         /**
          * @brief Satellite code biases (estimate_sat_biases; user path, the
          *        network producer allocates its own in
-         *        @ref ensureNetworkSharedStates): born for each code signal (raw,
+         *        network/assembly/SharedAdmission.hpp): born for each code signal (raw,
          *        or iono-free pair) without .BIA or SSR coverage that the BSSD
          *        pivot tracks; restored from the sat-bias cache, else seeded from
          *        the row's innovation (re-referenced to the pivot under BSSD);
@@ -931,9 +773,9 @@ namespace GnssProcessor {
          *        mapping function.
          *
          * Logs the failing check (warn; debug for the elevation mask).  The
-         * network pre-pass @ref ensureNetworkSharedStates repeats the five
-         * checks without the logs, so the shared columns it allocates are the
-         * ones the rows write.
+         * network producer's shared-parameter admission repeats the five checks
+         * without the logs, so the shared columns it allocates are the ones the
+         * rows write.
          *
          * @param obs          The satellite's modeled observation.
          * @param epoch_prefix Log prefix.
@@ -962,8 +804,7 @@ namespace GnssProcessor {
          * and the network's phase colour.  Doppler rows (@ref buildDopplerRow):
          * velocity, clock rate, inter-system rate and the tightly coupled IMU
          * partials.  Prints the PHASE-DECOMP and CODE-DECOMP traces at trace
-         * level.  With processing.obs_equation_check the row is also built by
-         * @ref buildJacobianRowReference and the two are compared bit for bit.
+         * level.
          *
          * @param obs        The satellite's modeled observation.
          * @param ref_type   The signal (a RINEX code, or an iono-free pair "a_b").
@@ -1028,44 +869,6 @@ namespace GnssProcessor {
             const std::string& ref_type,
             double predicted,
             const ObsTermValues& terms) const;
-
-        /**
-         * @brief The code and phase row builder as it was written before the observation
-         *        equation became a term list, kept for the check
-         *        (MeasurementModelRowReference.cpp).
-         * @param obs        The satellite's modeled observation.
-         * @param ref_type   The signal.
-         * @param x          The state vector the row is evaluated at.
-         * @param state_size The number of state columns.
-         * @param jacobian   Out: the row of H.
-         * @param predicted  Out: the predicted observable (m).
-         * @return False when the row cannot be built.
-         */
-        bool buildJacobianRowReference(const PppObservation& obs,
-            const std::string& ref_type,
-            const Eigen::VectorXd& x,
-            size_t state_size,
-            Eigen::VectorXd& jacobian,
-            double& predicted) const;
-
-        /**
-         * @brief Builds the row by the reference builder and counts whether the term-list
-         *        row agrees with it bit for bit (processing.obs_equation_check).
-         * @param obs        The satellite's modeled observation.
-         * @param ref_type   The signal.
-         * @param x          The state vector the row is evaluated at.
-         * @param state_size The number of state columns.
-         * @param eq         The term-list equation of the row.
-         * @param jacobian   The term-list Jacobian row (zero when @c eq is unusable).
-         * @param predicted  The term-list predicted observable.
-         */
-        void checkRowAgainstReference(const PppObservation& obs,
-            const std::string& ref_type,
-            const Eigen::VectorXd& x,
-            size_t state_size,
-            const ObservationEquation& eq,
-            const Eigen::VectorXd& jacobian,
-            double predicted) const;
 
         // -------------------------------------------------------------------
         // BSSD delegation (forwarders to PivotManager)

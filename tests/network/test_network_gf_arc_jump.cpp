@@ -28,7 +28,6 @@
 
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -48,7 +47,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-#include "../support/StationParamsOfState.hpp"   // syncStationParams
+#include "../support/StationParamsBuilder.hpp"   // bornAmbiguity
 #include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
@@ -323,12 +322,10 @@ struct Harness {
     explicit Harness(bool with_states = true) {
         stations.emplace_back();
         stations.front().name = kSta;
-        stations.front().sm =
-            std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+        stations.front().params = startStationParams(config, Eigen::Vector3d::Zero());
         if (with_states) {
-            stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig1), 0.0);
-            stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig2), 0.0);
-            gnss_test::syncStationParams(stations.front());
+            gnss_test::bornAmbiguity(stations.front().params, kSat, kSig1);
+            gnss_test::bornAmbiguity(stations.front().params, kSat, kSig2);
         }
         qc.params.gf_jump.armed = true;
         qc.hist.resize(1);
@@ -365,8 +362,8 @@ struct Harness {
     }
 
     bool pendingReseed(const char* sig) const {
-        return stations.front().sm->isAmbiguityPendingReseed(
-            StateKeys::makeAmbiguityKey(kSat, sig));
+        return GnssProcessor::pendingReseed(stations.front().params,
+                                            StateKeys::makeAmbiguityKey(kSat, sig));
     }
     bool freed(const char* sig) const {
         return relevel.free_ambs.count({0, StateKeys::makeAmbiguityKey(kSat, sig)}) != 0;

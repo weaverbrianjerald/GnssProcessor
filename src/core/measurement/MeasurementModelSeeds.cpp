@@ -26,12 +26,12 @@ namespace GnssProcessor {
     // ===================================================================
 
     ObsInput MeasurementModel::residualSeedInput() const {
-        return ObsInput{rowProducts(), state_initializer_.frequencyHelper(), &state_initializer_,
+        return ObsInput{rowProducts(), state_initializer_.frequencyHelper(), &state_initializer_.resolver(),
                         nlwl_ref_band_, clockRefs()};
     }
 
     ObsInput MeasurementModel::ambiguitySeedInput() const {
-        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_, nlwl_ref_band_,
+        return ObsInput{rowProducts(), ppp_utils_, &state_initializer_.resolver(), nlwl_ref_band_,
                         clockRefs(), FdmaChannel::Zero};
     }
 

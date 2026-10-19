@@ -36,7 +36,7 @@
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -325,7 +325,7 @@ bool loadConfig(const std::string& tag, const std::string& body, GnssConfig& cfg
 constexpr int kStations = 6;
 
 /// Six stations with deferred IF-TD detectors and the driver's buffers, cold carry
-/// (a flag is diagnostic, so no StateManager write is involved).  The traces
+/// (a flag is diagnostic, so no parameter-set write is involved).  The traces
 /// object's streams stay closed, so event rows are no-ops.
 struct DriverHarness {
     LogManager                 log_manager;
@@ -347,7 +347,7 @@ struct DriverHarness {
             stations.emplace_back();
             NetStation& st = stations.back();
             st.name = "STA" + std::to_string(i);
-            st.sm = std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+            st.params = startStationParams(config, Eigen::Vector3d::Zero());
             st.if_slip = std::make_unique<IfPhaseSlipDetector>(config, log_manager);
             st.if_slip->setDeferFlagging(true);
         }

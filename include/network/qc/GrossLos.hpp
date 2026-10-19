@@ -504,7 +504,7 @@ enum class GrossLosPhase {
  *
  * @param ctx      [in/out] the carry (the two maps the response reaches, the holds) and counters.
  * @param log      "main_log".
- * @param stations [in/out] @c sm->markAmbiguityPendingReseed on a declaration.
+ * @param stations [in/out] @c markPendingReseed on the station parameter set at a declaration.
  * @param asm_res  Per-station assembly: the ambiguity pool the response walks.
  * @param events The epoch's events; reads the gross group's decisions, writes its releases.
  */
@@ -526,7 +526,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *
  * Mutates persistent carries.  The response erases (or, under
  * @c network.gross_los_bound, holds) @c ctx.entities.arcs entries and marks
- * StateManager ambiguities pending-reseed for every declared LOS, and erases (or
+ * parameter-set ambiguities pending-reseed for every declared LOS, and erases (or
  * holds) the in-block iono carry (@c LosState::iono_blk) for it.  The decision
  * rewrites @c ctx.carry.gl_state (and the stations' @c gross_los, @c gl2_sat_down), which
  * the next epoch's assembly reads through @c NetStation::gl_code_sigma_scale.
@@ -558,7 +558,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p traces = run.traces: GROSSLOS-tier events (both edges + expiry).
  *   - @p se = ep.se: This epoch (week/TOW stamp).
  *   - @p stations = run.setup.stations: [in/out] names key the events;
- *     @c sm->markAmbiguityPendingReseed on a declaration.
+ *     @c markPendingReseed on the station parameter set at a declaration.
  *   - @p est = run.engines.est: Estimator (reconstructStation / sharedColumnLabel; both
  *     const).
  *   - @p x_s = ep.solve.x_s: Post-fit shared solution vector.

@@ -359,7 +359,7 @@ Application::LoopSignal Application::networkProcessEpoch_(NetworkRun& run,
     // Its position is fixed by four constraints: after networkAssemblyPrefilter_
     // (satellites seen by fewer than 2 stations are erased there, so an integer
     // decided for one that then vanishes is wasted), after the phase-datum election
-    // and the eq34 RPB allocation (both mutate the StateManager layout), after
+    // and the eq34 RPB allocation (both mutate the stations' parameter sets), after
     // networkAssemblyRegisterColumns_ (so the epoch is committed; that site can still
     // SkipEpoch), and before networkPassB_, whose parallel produce loop reads the
     // published map read-only.  It runs inside the existing SB_PREASM bracket rather

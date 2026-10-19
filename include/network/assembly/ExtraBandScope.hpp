@@ -11,7 +11,7 @@
  * against the pinned L1/L2.
  *
  * The pin pair is the BIA product's satellite clock-reference pair, the same source
- * @c StateInitializer::resolveReceiverBias uses to decide whether a receiver code
+ * @c ReceiverBiasResolver::resolveReceiverBias uses to decide whether a receiver code
  * bias is a reference-band DCB or an extra-band IFB, and the one @c PppModel reads
  * for the clock-ref band lock.  Reading it here keeps one definition of "the pin
  * pair's bands" across the producer.
@@ -64,7 +64,7 @@ struct NetworkPinBands {
  * .BIA file, e.g. `G C1W C2W`) and returns their two band digits.  This is a const
  * read of a map that is filled once at product load and not mutated during the
  * epoch loop, so it is safe from the per-station parallel produce (the same
- * contract @c StateInitializer::resolveReceiverBias relies on).
+ * contract @c ReceiverBiasResolver::resolveReceiverBias relies on).
  *
  * @param system_char RINEX system character ('G', 'E', 'R', 'C', 'J', 'S').
  * @return The pin bands, or an invalid value when the constellation has no

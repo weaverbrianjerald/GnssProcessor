@@ -22,12 +22,11 @@
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/assembly/SharedAdmission.hpp"   // noteWithheldPhaseBias
 #include "network/driver/RunTypes.hpp"   // StationAssembly (the drain's input)
-#include "network/state/StateColumns.hpp"
 #include "network/state/StationParams.hpp"
-#include "network/state/StationParamsShadow.hpp"
+#include "../support/StationParamsBuilder.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 
 #include <atomic>
@@ -45,41 +44,31 @@ namespace fs = std::filesystem;
 
 namespace {
 
-using SC = StateContainer;
 using PK = NetworkParamKind;
 using PD = ParamDisposition;
 
 const std::vector<System> kSystems = {System::GPS, System::Galileo, System::GLONASS,
                                       System::BeiDou, System::QZSS, System::SBAS};
 
-ParamInstanceId classify(SC container, const std::string& key) {
-    const auto id = classifyStateColumn(container, key);
-    EXPECT_TRUE(id.has_value()) << stateContainerName(container) << " '" << key << "'";
-    return id.value_or(ParamInstanceId{});
+/// The instance of a parameter, for a record the test writes by hand.
+ParamInstanceId inst(const ParamRef& r) { return paramInstanceOf(r); }
+
+/// The receiver code-bias key a text names.
+RxCbKey rxKeyOf(const std::string& text) {
+    const auto k = receiverCodeBiasKey(text);
+    EXPECT_TRUE(k.has_value()) << text;
+    return k.value_or(RxCbKey{});
 }
 
 SignalId sig(System s, const char* code) { return *SignalId::fromObsCode(s, code); }
 
-/// A station's inventory slot as the split's seam writes it: the set built from the state
-/// manager, then recorded from the set.  Also checked against the slot the state manager alone
-/// gives.
-void record(const StateManager& sm, int station, const std::vector<ParamDisposition>& disp,
-            const StationAbsorbed& absorbed, StationParamSlot& slot) {
-    StationParams set;
-    buildStationParams(sm, disp, absorbed, set);
+/// A station's inventory slot as the split's seam writes it: the set settled with the split's
+/// dispositions, then recorded.
+StationParamSlot recorded(StationParams& set, int station, const std::vector<ParamDisposition>& disp) {
+    settleStationParams(set, disp);
+    StationParamSlot slot;
     recordStationParams(set, station, slot);
-    StationParamSlot reference;
-    recordStationParamsFromState(sm, station, disp, absorbed, reference);
-    EXPECT_EQ(slot.filled, reference.filled);
-    EXPECT_EQ(slot.unclassified, reference.unclassified);
-    EXPECT_EQ(slot.no_disposition, reference.no_disposition);
-    EXPECT_EQ(slot.absorbed_no_absorber, reference.absorbed_no_absorber);
-    ASSERT_EQ(slot.records.size(), reference.records.size());
-    for (std::size_t k = 0; k < slot.records.size(); ++k) {
-        EXPECT_TRUE(slot.records[k].id == reference.records[k].id) << k;
-        EXPECT_EQ(slot.records[k].disp, reference.records[k].disp) << k;
-        EXPECT_EQ(slot.records[k].reason, reference.records[k].reason) << k;
-    }
+    return slot;
 }
 
 /// A temp config under a name no other test process or test case uses: the tag, a random
@@ -127,137 +116,6 @@ RxIfbRule ruleOf(const std::string& tag, const std::string& network_extra) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// The classifier, family by family, from the makers
-// ---------------------------------------------------------------------------
-
-TEST(NetworkParamInventoryTest, ClassifiesTheFixedCoreAndTheReceiverClockFamily) {
-    EXPECT_EQ(classify(SC::PositionIndex, "").cls.kind, PK::RxPosition);
-    const ParamClass clk = classify(SC::ClockIndex, "").cls;
-    EXPECT_EQ(clk.kind, PK::RxClock);
-    EXPECT_EQ(clk.form, ParamForm::None);
-    EXPECT_EQ(clk.sys, System::Unknown);   // the receiver clock: no constellation
-    EXPECT_EQ(classify(SC::TropoIndex, "").cls.kind, PK::Zwd);
-    for (System s : kSystems) {
-        // The inter-system bias: the registry's rx_clock kind, its own form.
-        const ParamClass isb = classify(SC::SystemTimeOffsetStates, K::makeSystemTimeOffsetKey(traitsOf(s).name)).cls;
-        EXPECT_EQ(isb.kind, PK::RxClock);
-        EXPECT_EQ(isb.form, ParamForm::Isb);
-        EXPECT_EQ(isb.sys, s);
-    }
-    EXPECT_FALSE(classifyStateColumn(SC::SystemTimeOffsetStates, "IRNSS").has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::Unlisted, "VEL_X").has_value());
-}
-
-TEST(NetworkParamInventoryTest, ClassifiesTheSatelliteKeyedFamilies) {
-    for (System s : kSystems)
-        for (int prn : {1, 9, 10, 37}) {
-            const SatId sat{s, prn};
-            const ParamInstanceId io = classify(SC::IonosphereStates, K::makeIonosphereKey(sat.str()));
-            EXPECT_EQ(io.cls.kind, PK::SlantIono);
-            EXPECT_EQ(io.sat, sat);
-            EXPECT_EQ(io.cls.sys, s);
-            // The phase-colour map is keyed by the bare satellite id
-            // (StateManager::addPhaseColourState), as the ionosphere map is: the same key,
-            // a different container, a different kind.
-            const ParamInstanceId pc = classify(SC::PhaseColourStates, sat.str());
-            EXPECT_EQ(pc.cls.kind, PK::PhaseColour);
-            EXPECT_EQ(pc.sat, sat);
-            const ParamInstanceId clk = classify(SC::SatClockStates, K::makeSatClockKey(sat.str()));
-            EXPECT_EQ(clk.cls.kind, PK::SatClock);
-            EXPECT_EQ(clk.sat, sat);
-        }
-    EXPECT_FALSE(classifyStateColumn(SC::IonosphereStates, "G5X").has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::SatClockStates, "G05").has_value());   // no "|SC"
-}
-
-TEST(NetworkParamInventoryTest, ClassifiesEveryAmbiguityForm) {
-    for (System s : kSystems) {
-        const SatId sat{s, 5};
-        for (const char* code : {"L1C", "L2W", "L5Q", "L7I"}) {
-            const auto g = SignalId::fromObsCode(s, code);
-            const ParamInstanceId a = classify(SC::Ambiguities, K::makeAmbiguityKey(sat.str(), code));
-            EXPECT_EQ(a.cls.kind, PK::Ambiguity);
-            EXPECT_EQ(a.cls.form, ParamForm::None);
-            EXPECT_EQ(a.sat, sat);
-            EXPECT_EQ(a.cls.signal, *g);
-            EXPECT_EQ(a.cls.signal_b.digit, '\0');
-        }
-    }
-    const ParamClass iff = classify(SC::Ambiguities, K::makeAmbiguityKey("G05", "L1C_L2W")).cls;
-    EXPECT_EQ(iff.form, ParamForm::IfPair);
-    EXPECT_EQ(iff.signal, sig(System::GPS, "L1C"));
-    EXPECT_EQ(iff.signal_b, sig(System::GPS, "L2W"));
-    const ParamInstanceId nl = classify(SC::Ambiguities, K::makeNlAmbiguityKey("E11", '1'));
-    EXPECT_EQ(nl.sat, (SatId{System::Galileo, 11}));
-    EXPECT_EQ(nl.cls.form, ParamForm::NarrowLane);
-    EXPECT_EQ(nl.cls.band, FrequencyBand::GalE1);
-    const ParamClass wl = classify(SC::Ambiguities, K::makeWlAmbiguityKey("G05", '5', '1')).cls;
-    EXPECT_EQ(wl.form, ParamForm::WideLane);
-    EXPECT_EQ(wl.band, FrequencyBand::GpsL1);
-    EXPECT_EQ(wl.band_b, FrequencyBand::GpsL5);
-    EXPECT_EQ(paramClassLabel(wl), "wide-lane ambiguity, GPS L1-L5");
-    // A lane band the constellation does not have is a part that does not parse.
-    EXPECT_FALSE(classifyStateColumn(SC::Ambiguities, K::makeNlAmbiguityKey("G05", '7')).has_value());
-    // The baseline mode's double-difference key: no network station holds one.
-    EXPECT_FALSE(classifyStateColumn(SC::Ambiguities, K::makeDdAmbiguityKey("GPS", "G05", "L1", "G01")).has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::Ambiguities, "G05L1C").has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::Ambiguities, "G05_L1C_X").has_value());
-}
-
-TEST(NetworkParamInventoryTest, ClassifiesTheBiasFamilies) {
-    for (System s : kSystems) {
-        const std::string name = traitsOf(s).name;
-        const ParamClass rpb = classify(SC::ReceiverPhaseBiasStates, K::makeReceiverPhaseBiasKey(name, "L1C")).cls;
-        EXPECT_EQ(rpb.kind, PK::RxPhaseBias);
-        EXPECT_EQ(rpb.sys, s);
-        EXPECT_EQ(rpb.signal, sig(s, "L1C"));
-
-        const ParamClass dcb = classify(SC::CodeBiasStates, K::makeDcbKey(name)).cls;
-        EXPECT_EQ(dcb.kind, PK::RxCodeBias);
-        EXPECT_EQ(dcb.form, ParamForm::Dcb);
-        EXPECT_EQ(dcb.sys, s);
-        for (char digit = '1'; digit <= '9'; ++digit) {
-            const ParamClass ifb = classify(SC::CodeBiasStates, K::makeIfbKey(name, digit)).cls;
-            EXPECT_EQ(ifb.form, ParamForm::Ifb);
-            EXPECT_EQ(ifb.sys, s);
-            EXPECT_EQ(ifb.band, bandOfDigit(s, digit));   // Unknown for a digit s does not use
-        }
-        const ParamClass isc = classify(SC::CodeBiasStates, K::makeReceiverIscKey(name, "C1W")).cls;
-        EXPECT_EQ(isc.form, ParamForm::Isc);
-        EXPECT_EQ(isc.signal, sig(s, "C1W"));
-
-        const SatId sat{s, 12};
-        const ParamInstanceId pb = classify(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey(sat.str(), "L2W"));
-        EXPECT_EQ(pb.cls.kind, PK::SatPhaseBias);
-        EXPECT_EQ(pb.sat, sat);
-        EXPECT_EQ(pb.cls.signal, sig(s, "L2W"));
-        const ParamInstanceId cb = classify(SC::SatBiasStates, K::makeSatBiasKey(sat.str(), "C1C"));
-        EXPECT_EQ(cb.cls.kind, PK::SatCodeBias);
-        EXPECT_EQ(cb.cls.signal, sig(s, "C1C"));
-    }
-    EXPECT_EQ(paramClassLabel(classify(SC::CodeBiasStates, K::makeIfbKey("GPS", '5')).cls), "receiver IFB, GPS L5");
-    for (int slot = -7; slot <= 6; ++slot)
-        for (char digit : {'1', '2'}) {
-            const ParamInstanceId g = classify(SC::CodeBiasStates, K::makeGlonassPerSlotIfbKey("GLONASS", digit, slot));
-            EXPECT_EQ(g.cls.form, ParamForm::GloSlotIfb);
-            EXPECT_EQ(g.cls.sys, System::GLONASS);
-            EXPECT_EQ(g.cls.band, digit == '1' ? FrequencyBand::GloG1 : FrequencyBand::GloG2);
-            EXPECT_EQ(g.glo_slot, slot);
-        }
-    // The refusal policy.  The forms without a signal are read from the key's shape: an
-    // unknown system name stays a receiver IFB (and DCB).  A part that must parse and does
-    // not refuses the key: the ISC's signal needs a known system, as the receiver phase
-    // bias's does.
-    const ParamClass unk = classify(SC::CodeBiasStates, K::makeIfbKey("IRNSS", '5')).cls;
-    EXPECT_EQ(unk.form, ParamForm::Ifb);
-    EXPECT_EQ(unk.sys, System::Unknown);
-    EXPECT_EQ(classify(SC::CodeBiasStates, K::makeDcbKey("IRNSS")).cls.form, ParamForm::Dcb);
-    EXPECT_FALSE(classifyStateColumn(SC::CodeBiasStates, K::makeReceiverIscKey("IRNSS", "C5A")).has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::ReceiverPhaseBiasStates, K::makeReceiverPhaseBiasKey("IRNSS", "L5A")).has_value());
-    EXPECT_FALSE(classifyStateColumn(SC::CodeBiasStates, "GPS_XYZ").has_value());
-}
-
-// ---------------------------------------------------------------------------
 // The receiver IFB rule
 // ---------------------------------------------------------------------------
 
@@ -281,15 +139,16 @@ TEST(NetworkParamInventoryTest, RuleNamesTheColumnsTheSubstringTestNamed) {
     long long n_dropped = 0;
     for (const std::string& key : keys) {
         const bool legacy = !K::isGlonassPerSlotIfbKey(key) && key.find("_IFB") != std::string::npos;
-        const auto id = classifyStateColumn(SC::CodeBiasStates, key);
-        ASSERT_TRUE(id.has_value()) << key;
-        EXPECT_EQ(rule.drops(*id), legacy) << key;
-        EXPECT_EQ(RxIfbRule::governs(id->cls), legacy) << key;
+        const RxCbKey typed = rxKeyOf(key);
+        const ParamInstanceId id = inst(rxCodeBiasRef(typed));
+        EXPECT_EQ(rule.drops(id), legacy) << key;
+        EXPECT_EQ(RxIfbRule::governs(id.cls), legacy) << key;
+        EXPECT_EQ(RxIfbRule::governs(typed), legacy) << key;
         n_dropped += legacy ? 1 : 0;
     }
     EXPECT_EQ(n_dropped, 6 * 10);
     rule.drop = false;
-    const ParamInstanceId ifb5 = classify(SC::CodeBiasStates, K::makeIfbKey("GPS", '5'));
+    const ParamInstanceId ifb5 = inst(rxCodeBiasRef(rxKeyOf(K::makeIfbKey("GPS", '5'))));
     EXPECT_FALSE(rule.drops(ifb5));
     EXPECT_TRUE(RxIfbRule::governs(ifb5.cls));   // governed whether or not it drops on this run
 }
@@ -329,42 +188,34 @@ TEST(NetworkParamInventoryTest, RulePremiseFollowsTheIonosphereWeighting) {
 // The station walk and the per-station record
 // ---------------------------------------------------------------------------
 
-TEST(NetworkParamInventoryTest, EveryColumnOfAStationIsListedOnceAndClassified) {
-    LogManager lm;
+TEST(NetworkParamInventoryTest, EveryColumnOfAStationIsListedOnceWithItsDisposition) {
     GnssConfig cfg;
-    StateManager sm{5, lm, cfg};
-    sm.addIonosphereState("G05", 0.0);
-    sm.addAmbiguity(K::makeAmbiguityKey("G05", "L1C"), 0.0, 10.0);
-    sm.addAmbiguity(K::makeAmbiguityKey("G05", "L2W"), 0.0, 10.0);
-    sm.addCodeBiasState(K::makeDcbKey("GPS"), 0.0);
-    sm.addCodeBiasState(K::makeIfbKey("GPS", '5'), 0.0);
-    sm.addCodeBiasState(K::makeReceiverIscKey("GPS", "C1W"), 0.0);
-    sm.addSatClockState(K::makeSatClockKey("G05"), 0.0);
-    sm.addSatPhaseBiasState(K::makeSatPhaseBiasKey("G05", "L1C"), 0.0);
-    sm.addSatBiasState(K::makeSatBiasKey("G05", "C1C"), 0.0);
-    sm.addReceiverPhaseBiasState(K::makeReceiverPhaseBiasKey("GPS", "L1C"), 0.0);
-    sm.addPhaseColourState("G05", 1e-6);
+    StationParams set = startStationParams(cfg, Eigen::Vector3d::Zero());
+    gnss_test::bornSlantIono(set, "G05");
+    gnss_test::bornAmbiguity(set, "G05", "L1C", 0.0);
+    gnss_test::bornAmbiguity(set, "G05", "L2W", 0.0);
+    gnss_test::bornRxCodeBias(set, rxKeyOf(K::makeDcbKey("GPS")));
+    gnss_test::bornRxCodeBias(set, rxKeyOf(K::makeIfbKey("GPS", '5')));
+    gnss_test::bornRxCodeBias(set, rxKeyOf(K::makeReceiverIscKey("GPS", "C1W")));
+    gnss_test::bornSatClock(set, "G05");
+    gnss_test::bornSatPhaseBias(set, "G05", "L1C");
+    gnss_test::bornSatCodeBias(set, "G05", "C1C");
+    gnss_test::bornRxPhaseBias(set, System::GPS, "L1C");
+    gnss_test::bornPhaseColour(set, "G05", 30.0);
 
-    const std::vector<StateColumn> columns = listStateColumns(sm);
-    ASSERT_EQ(columns.size(), sm.getStateSize());
-    std::set<std::size_t> idx;
-    for (const StateColumn& c : columns) {
-        EXPECT_TRUE(idx.insert(c.index).second) << c.index;
-        EXPECT_NE(c.container, SC::Unlisted) << c.key;
-    }
-
-    // Every column classified; the dispositions are copied by state index.
-    std::vector<ParamDisposition> disp(sm.getStateSize(), PD::EstimatedLocal);
-    for (std::size_t k = 0; k < 3; ++k) disp[sm.getPositionIndex() + k] = PD::Pinned;
-    StationParamSlot slot;
-    record(sm, 7, disp, StationAbsorbed{}, slot);
+    // Every column recorded once; the dispositions are copied by slot.
+    std::vector<ParamDisposition> disp(set.slots.size(), PD::EstimatedLocal);
+    for (std::size_t k = 0; k < 3; ++k) disp[static_cast<std::size_t>(set.position[k])] = PD::Pinned;
+    StationParamSlot slot = recorded(set, 7, disp);
     EXPECT_TRUE(slot.filled);
     EXPECT_TRUE(slot.unclassified.empty());
     EXPECT_EQ(slot.no_disposition, 0);
-    EXPECT_EQ(slot.records.size(), sm.getStateSize());
+    EXPECT_EQ(slot.records.size(), set.slots.size());
     long long pinned = 0;
-    for (const StationParamRecord& r : slot.records) {
+    for (std::size_t k = 0; k < slot.records.size(); ++k) {
+        const StationParamRecord& r = slot.records[k];
         EXPECT_EQ(r.id.station.index, 7);
+        EXPECT_TRUE(r.id == paramInstanceOf(set.slots[k].ref, StationId{7})) << k;
         if (r.disp == PD::Pinned) {
             ++pinned;
             EXPECT_EQ(r.id.cls.kind, PK::RxPosition);
@@ -372,12 +223,12 @@ TEST(NetworkParamInventoryTest, EveryColumnOfAStationIsListedOnceAndClassified) 
     }
     EXPECT_EQ(pinned, 3);
 
-    // A disposition vector shorter than the state: the columns past its end are counted,
+    // A disposition vector shorter than the set: the columns past its end are counted,
     // never given a disposition by default.
-    disp.resize(sm.getStateSize() - 2);
-    record(sm, 7, disp, StationAbsorbed{}, slot);
+    disp.resize(set.slots.size() - 2);
+    slot = recorded(set, 7, disp);
     EXPECT_EQ(slot.no_disposition, 2);
-    EXPECT_EQ(slot.records.size(), sm.getStateSize() - 2);
+    EXPECT_EQ(slot.records.size(), set.slots.size() - 2);
     ParamInventoryTally t;
     t.addStation(7, slot);
     EXPECT_EQ(t.no_disposition, 2);
@@ -394,10 +245,10 @@ StationParamSlot slotWithHeldIfb(int station) {
     StationParamSlot s;
     s.filled = true;
     for (int k = 0; k < 3; ++k)
-        s.records.push_back({classify(SC::PositionIndex, ""), PD::Pinned});
-    s.records.push_back({classify(SC::ClockIndex, ""), PD::EstimatedLocal});
-    s.records.push_back({classify(SC::CodeBiasStates, K::makeIfbKey("GPS", '5')), PD::HeldAtSeed});
-    s.records.push_back({classify(SC::SatClockStates, K::makeSatClockKey("G05")), PD::EstimatedBorder});
+        s.records.push_back({inst(rxPositionRef(0)), PD::Pinned});
+    s.records.push_back({inst(rxClockRef()), PD::EstimatedLocal});
+    s.records.push_back({inst(rxCodeBiasRef(rxKeyOf(K::makeIfbKey("GPS", '5')))), PD::HeldAtSeed});
+    s.records.push_back({inst(satClockRef(*SatId::parse("G05"))), PD::EstimatedBorder});
     for (auto& r : s.records) r.id.station = StationId{station};
     return s;
 }
@@ -470,8 +321,8 @@ TEST(NetworkParamInventoryTest, TablePrintsOneLinePerClassAndTheWarning) {
 }
 
 TEST(NetworkParamInventoryTest, ClassOrderPutsTheReceiverClockBeforeItsInterSystemBiases) {
-    const ParamClass clk = classify(SC::ClockIndex, "").cls;
-    const ParamClass isb = classify(SC::SystemTimeOffsetStates, "Galileo").cls;
+    const ParamClass clk = inst(rxClockRef()).cls;
+    const ParamClass isb = inst(isbRef(System::Galileo)).cls;
     EXPECT_LT(clk, isb);
     EXPECT_FALSE(isb < clk);
     EXPECT_EQ(paramClassLabel(clk), "receiver clock");
@@ -480,8 +331,8 @@ TEST(NetworkParamInventoryTest, ClassOrderPutsTheReceiverClockBeforeItsInterSyst
     ParamInventoryTally t;
     StationParamSlot s;
     s.filled = true;
-    s.records.push_back({classify(SC::ClockIndex, ""), PD::EstimatedLocal});
-    s.records.push_back({classify(SC::SystemTimeOffsetStates, "Galileo"), PD::EstimatedLocal});
+    s.records.push_back({inst(rxClockRef()), PD::EstimatedLocal});
+    s.records.push_back({inst(isbRef(System::Galileo)), PD::EstimatedLocal});
     t.addStation(0, s);
     const auto lines = paramInventoryTable(t, RxIfbRule{}, "x");
     ASSERT_GE(lines.size(), 4u);
@@ -489,7 +340,7 @@ TEST(NetworkParamInventoryTest, ClassOrderPutsTheReceiverClockBeforeItsInterSyst
     EXPECT_NE(lines[3].find("inter-system bias, Galileo"), std::string::npos);
     EXPECT_NE(lines[3].find(" rx_clock.isb "), std::string::npos) << lines[3];
     // The registry kind order leads: a satellite clock before a receiver clock.
-    EXPECT_LT(classify(SC::SatClockStates, K::makeSatClockKey("G05")).cls, clk);
+    EXPECT_LT(inst(satClockRef(*SatId::parse("G05"))).cls, clk);
 }
 
 TEST(NetworkParamInventoryTest, TallyMergeSumsCountsAndUnitesStations) {
@@ -510,7 +361,7 @@ TEST(NetworkParamInventoryTest, TallyMergeSumsCountsAndUnitesStations) {
     EXPECT_EQ(run.nStations(), 2);
     EXPECT_EQ(run.tow_first, 100.0);
     EXPECT_EQ(run.tow_last, 130.0);
-    const ParamClass pos = classify(SC::PositionIndex, "").cls;
+    const ParamClass pos = inst(rxPositionRef(0)).cls;
     ASSERT_TRUE(run.classes.count(pos));
     EXPECT_EQ(run.classes.at(pos).count(PD::Pinned), 9);
     EXPECT_EQ(run.classes.at(pos).nStations(), 2);
@@ -537,7 +388,7 @@ TEST(NetworkParamInventoryTest, DrainKeepsAStationRejectedAfterItsSplitOutOfTheC
     EXPECT_EQ(inv.last_epoch.station_epochs, 1);
     EXPECT_EQ(inv.last_epoch.station_epochs_rejected, 2);
     EXPECT_EQ(inv.last_epoch.nStations(), 1);
-    EXPECT_EQ(inv.last_epoch.classes.at(classify(SC::PositionIndex, "").cls).count(PD::Pinned), 3);
+    EXPECT_EQ(inv.last_epoch.classes.at(inst(rxPositionRef(0)).cls).count(PD::Pinned), 3);
     EXPECT_EQ(inv.whole_run.epochs, 1);
     EXPECT_EQ(inv.whole_run.station_epochs_rejected, 2);
     EXPECT_EQ(inv.whole_run.station_epochs_unreached, 1);
@@ -627,69 +478,34 @@ TEST(NetworkParamInventoryTest, ReasonTableNamesEveryGateAndWhatTakesItUp) {
               std::string::npos);
     // The sites: four at allocation, two after it.
     EXPECT_EQ(std::string(absorbedReasonSpec(AR::CoverageGate).site),
-              "MeasurementModel::ensureNetworkSharedStates");
+              "networkAdmitSharedStates (SharedAdmission.cpp)");
     EXPECT_EQ(std::string(absorbedReasonSpec(AR::AnchoredUnionCoverage).site),
               "networkBuildPhaseDatumCandidates");
     EXPECT_EQ(std::string(absorbedReasonSpec(AR::AnchorHygieneBlock).site), "networkAnchorHygiene");
 }
 
-TEST(NetworkParamInventoryTest, NoteAbsorbedClassifiesTheWithheldKey) {
-    // The gate notes the raw (container, key, reason); the inventory classifies the note.
-    StationAbsorbed a;
-    noteAbsorbed(a, SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"),
-                 AbsorbedReason::Allowlist);
-    noteAbsorbed(a, SC::SatBiasStates, K::makeSatBiasKey("R07", "C1C"),
-                 AbsorbedReason::GlonassCodeOnlyScope);
-    noteAbsorbed(a, SC::SatPhaseBiasStates, "not-a-key", AbsorbedReason::CoverageGate);
-    ASSERT_EQ(a.notes.size(), 3u);
-    const auto pb_opt = classifyAbsorbed(a.notes[0]);
-    const auto cb_opt = classifyAbsorbed(a.notes[1]);
-    ASSERT_TRUE(pb_opt.has_value());
-    ASSERT_TRUE(cb_opt.has_value());
-    const AbsorbedInstance& pb = *pb_opt;
-    EXPECT_EQ(pb.id.cls.kind, PK::SatPhaseBias);
-    EXPECT_EQ(pb.id.cls.sys, System::GPS);
-    EXPECT_EQ(pb.id.sat.str(), "G05");
-    EXPECT_EQ(pb.id.cls.signal, sig(System::GPS, "L1W"));
-    EXPECT_EQ(pb.reason, AbsorbedReason::Allowlist);
-    const AbsorbedInstance& cb = *cb_opt;
-    EXPECT_EQ(cb.id.cls.kind, PK::SatCodeBias);
-    EXPECT_EQ(cb.id.cls.sys, System::GLONASS);
-    EXPECT_EQ(cb.id.cls.signal, sig(System::GLONASS, "C1C"));
-    EXPECT_EQ(cb.reason, AbsorbedReason::GlonassCodeOnlyScope);
-    // A key the classifier refuses is kept, as a label, never dropped.
-    EXPECT_FALSE(classifyAbsorbed(a.notes[2]).has_value());
-    EXPECT_EQ(absorbedNoteLabel(a.notes[2]), "sat_phase_bias_states:not-a-key");
-}
-
 TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbingColumn) {
-    LogManager lm;
     GnssConfig cfg;
-    StateManager sm{5, lm, cfg};
-    sm.addSatClockState(K::makeSatClockKey("G05"), 0.0);
-    sm.addSatClockState(K::makeSatClockKey("R07"), 0.0);
-    sm.addAmbiguity(K::makeAmbiguityKey("G05", "L1W"), 0.0, 10.0);
+    StationParams set = startStationParams(cfg, Eigen::Vector3d::Zero());
+    gnss_test::bornSatClock(set, "G05");
+    gnss_test::bornSatClock(set, "R07");
+    gnss_test::bornAmbiguity(set, "G05", "L1W", 0.0);
 
-    StationAbsorbed a;
     // Absorbed by the station's G05 L1W ambiguity.
-    noteAbsorbed(a, SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"),
-                 AbsorbedReason::AnchoredUnionCoverage);
+    noteWithheldPhaseBias(set, SatSignalId{*SatId::parse("G05"), sig(System::GPS, "L1W")},
+                          AbsorbedReason::AnchoredUnionCoverage);
     // No G07 L1W ambiguity at the split: the observation left before it.
-    noteAbsorbed(a, SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G07", "L1W"),
-                 AbsorbedReason::AnchoredUnionCoverage);
+    noteWithheldPhaseBias(set, SatSignalId{*SatId::parse("G07"), sig(System::GPS, "L1W")},
+                          AbsorbedReason::AnchoredUnionCoverage);
     // A satellite code bias is taken up through the satellite's code row (its clock column).
-    noteAbsorbed(a, SC::SatBiasStates, K::makeSatBiasKey("R07", "C1C"),
-                 AbsorbedReason::GlonassCodeOnlyScope);
-    noteAbsorbed(a, SC::SatPhaseBiasStates, "not-a-key", AbsorbedReason::CoverageGate);
-    ASSERT_EQ(a.notes.size(), 4u);
-    EXPECT_TRUE(absorberPresent(sm, *classifyAbsorbed(a.notes[0])));
-    EXPECT_FALSE(absorberPresent(sm, *classifyAbsorbed(a.notes[1])));
-    EXPECT_TRUE(absorberPresent(sm, *classifyAbsorbed(a.notes[2])));
+    set.shared.withheld.push_back(AbsorbedParam{
+        satCodeBiasRef(*SatId::parse("R07"), sig(System::GLONASS, "C1C")), AbsorbedReason::GlonassCodeOnlyScope});
+    // An identity no constellation carries is listed, never dropped.
+    set.shared.withheld_unnamed.push_back("absorbed sat_phase_bias_states:not-a-key");
 
-    std::vector<ParamDisposition> disp(sm.getStateSize(), PD::EstimatedLocal);
-    StationParamSlot slot;
-    record(sm, 4, disp, a, slot);
-    EXPECT_EQ(slot.records.size(), sm.getStateSize() + 2u);
+    const std::vector<ParamDisposition> disp(set.slots.size(), PD::EstimatedLocal);
+    const StationParamSlot slot = recorded(set, 4, disp);
+    EXPECT_EQ(slot.records.size(), set.slots.size() + 2u);
     EXPECT_EQ(slot.absorbed_no_absorber, 1);
     long long absorbed = 0;
     for (const StationParamRecord& r : slot.records) {
@@ -706,7 +522,7 @@ TEST(NetworkParamInventoryTest, RecordAddsAnAbsorbedInstanceOnlyWithItsAbsorbing
     t.addStation(4, slot);
     EXPECT_EQ(t.absorbed_no_absorber, 1);
     EXPECT_EQ(t.unclassified, 1);
-    const ParamClass pb = classify(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W")).cls;
+    const ParamClass pb = inst(satPhaseBiasRef(*SatId::parse("G05"), sig(System::GPS, "L1W"))).cls;
     ASSERT_TRUE(t.classes.count(pb));
     EXPECT_EQ(t.classes.at(pb).count(PD::Absorbed), 1);
     EXPECT_EQ(t.classes.at(pb).countAbsorbed(AbsorbedReason::AnchoredUnionCoverage), 1);
@@ -718,8 +534,8 @@ TEST(NetworkParamInventoryTest, TableNoteAndReasonLinesStateTheAbsorbedCounts) {
     // GPS L1W: the border carries 3 satellite phase-bias columns; 2 more were withheld by
     // the coverage gate and 3 by the anchored-union coverage gate, so the ambiguity count
     // (8) equals border plus absorbed.
-    const ParamInstanceId pb = classify(SC::SatPhaseBiasStates, K::makeSatPhaseBiasKey("G05", "L1W"));
-    const ParamInstanceId amb = classify(SC::Ambiguities, K::makeAmbiguityKey("G05", "L1W"));
+    const ParamInstanceId pb = inst(satPhaseBiasRef(*SatId::parse("G05"), sig(System::GPS, "L1W")));
+    const ParamInstanceId amb = inst(ambiguityRef(*SatId::parse("G05"), sig(System::GPS, "L1W")));
     StationParamSlot s;
     s.filled = true;
     for (int k = 0; k < 3; ++k) s.records.push_back({pb, PD::EstimatedBorder});

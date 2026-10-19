@@ -11,10 +11,9 @@
  *    for bit;
  *  - the refusals: a phase row without its ambiguity, and a satellite text that is not a
  *    canonical RINEX id;
- *  - the check: whole epochs built by the term list and by the reference row builder
- *    (processing.obs_equation_check) over each posture the row has a branch for, with zero
- *    mismatches of any bit, and the agreement of the producer's satellite states with the
- *    consumer's known SSR terms.
+ *  - the postures: whole epochs built through the model over each posture the row has a
+ *    branch for, with finite rows, and the agreement of the producer's satellite states with
+ *    the consumer's known SSR terms.
  */
 
 #include <gtest/gtest.h>
@@ -26,7 +25,7 @@
 #include "filter/StateKeySchema.hpp"
 #include "measurement/MeasurementModel.hpp"
 #include "measurement/ObservationEquation.hpp"
-#include "measurement/ObservationEquationCheck.hpp"
+#include "support/SameBits.hpp"
 #include "measurement/UserParamView.hpp"
 #include "products/ProductParser.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -46,6 +45,7 @@
 #include <vector>
 
 using namespace GnssProcessor;
+using gnss_test::sameBits;
 namespace K = GnssProcessor::StateKeys;
 
 namespace {
@@ -230,14 +230,12 @@ protected:
     std::unique_ptr<MeasurementModel>& model = primary.model;
     int epoch = 0;
 
-    void SetUp() override { obsEquationCheckReset(); }
-
     void load(const std::string& mode, const std::string& processing = "",
               const std::string& estimation = "", bool bssd = false,
               const std::string& top = "") {
         ASSERT_TRUE(primary.load(
             log, ::testing::UnitTest::GetInstance()->current_test_info()->name(), mode,
-            processing, estimation, bssd, /*check=*/true, top));
+            processing, estimation, bssd, top));
     }
 
     /// One satellite with the given signals (see gnss_test::syntheticObservation).
@@ -248,10 +246,14 @@ protected:
                                                modeled);
     }
 
+    /// The last epoch the model built.
+    EpochMeasurement last;
+
     /// One epoch through the model (births, the row loop, the differencing).
     EpochMeasurement update(const std::vector<PppObservation>& obs) {
         ++epoch;
-        return model->computeMeasurementUpdate(obs, states->getStateVector());
+        last = model->computeMeasurementUpdate(obs, states->getStateVector());
+        return last;
     }
 
     ObservationEquation equation(const PppObservation& o, const std::string& signal,
@@ -275,14 +277,13 @@ protected:
         return nullptr;
     }
 
-    /// Zero mismatches of any kind over the rows compared so far, and some rows compared.
-    static void expectAgreement() {
-        const ObsEquationCheckCounts c = obsEquationCheckCounts();
-        EXPECT_GT(c.rows, 0);
-        EXPECT_EQ(c.usable_mismatch, 0);
-        EXPECT_EQ(c.unmapped_identity, 0);
-        EXPECT_EQ(c.jacobian_mismatch, 0);
-        EXPECT_EQ(c.predicted_mismatch, 0);
+    /// The last epoch has rows, and every entry of them is finite.
+    void expectRowsBuilt() const {
+        ASSERT_GT(last.innovations.size(), 0);
+        EXPECT_EQ(last.H.rows(), last.innovations.size());
+        EXPECT_TRUE(last.H.allFinite());
+        EXPECT_TRUE(last.innovations.allFinite());
+        EXPECT_TRUE(last.R_v.allFinite());
     }
 };
 
@@ -480,69 +481,69 @@ TEST_F(ObservationEquationTest, AMissingModeledValueThrows) {
 }
 
 // ===========================================================================
-// The check: the term list against the reference row builder
+// The rows the model builds in each posture
 // ===========================================================================
 
-TEST_F(ObservationEquationTest, PerBandUncombinedMatchesTheReference) {
+TEST_F(ObservationEquationTest, PerBandUncombinedBuildsItsRows) {
     load("ppp-rtk");
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"}),
                 observation("G15", System::GPS, {"C1W", "L1W", "C2W", "L2W"}, 200.0, 60.0)});
         perturbStates();
     }
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, MultiSystemWithGradientsAndPhaseClockMatchesTheReference) {
+TEST_F(ObservationEquationTest, MultiSystemWithGradientsAndPhaseClockBuildsItsRows) {
     load("ppp-rtk", "", R"(, "estimate_tropo_gradients": true, "estimate_phase_clock": true)");
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"}),
                 observation("E05", System::Galileo, {"C1C", "L1C", "C5Q", "L5Q"}, 120.0, 33.0)});
         perturbStates();
     }
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, NlWlBasisMatchesTheReference) {
+TEST_F(ObservationEquationTest, NlWlBasisBuildsItsRows) {
     load("ppp-rtk", "", R"(, "state_ambiguity_basis": "nl_wl")");
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"})});
         perturbStates();
     }
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, IonoFreeCombinationMatchesTheReference) {
+TEST_F(ObservationEquationTest, IonoFreeCombinationBuildsItsRows) {
     load("ppp", R"(, "uncombined_enabled": false)");
     ASSERT_FALSE(config.isUncombinedEnabled());
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W_C2W", "L1W_L2W"})});
         perturbStates();
     }
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, SatelliteCodeBiasStatesMatchTheReference) {
+TEST_F(ObservationEquationTest, SatelliteCodeBiasStatesBuildItsRows) {
     load("ppp-rtk", "", R"(, "estimate_sat_biases": true)");
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"})});
         perturbStates();
     }
     ASSERT_GE(states->getSatBiasIndex(std::string(kSat) + "|C1W"), 0);
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, SatelliteCodeBiasOfAnIonoFreePairMatchesTheReference) {
+TEST_F(ObservationEquationTest, SatelliteCodeBiasOfAnIonoFreePairBuildsItsRows) {
     load("ppp", R"(, "uncombined_enabled": false)", R"(, "estimate_sat_biases": true)");
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W_C2W", "L1W_L2W"})});
         perturbStates();
     }
     ASSERT_GE(states->getSatBiasIndex(std::string(kSat) + "|C1W_C2W"), 0);
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, BetweenSatelliteDifferencingMatchesTheReference) {
+TEST_F(ObservationEquationTest, BetweenSatelliteDifferencingBuildsItsRows) {
     load("ppp-rtk", "", "", /*bssd=*/true);
     for (int e = 0; e < 3; ++e) {
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"}),
@@ -550,10 +551,10 @@ TEST_F(ObservationEquationTest, BetweenSatelliteDifferencingMatchesTheReference)
                 observation("G20", System::GPS, {"C1W", "L1W", "C2W", "L2W"}, 300.0, 40.0)});
         perturbStates();
     }
-    expectAgreement();
+    expectRowsBuilt();
 }
 
-TEST_F(ObservationEquationTest, ProducerSatelliteStatesMatchTheReference) {
+TEST_F(ObservationEquationTest, ProducerSatelliteStatesBuildItsRows) {
     // The network producer's satellite phase bias, receiver phase bias, satellite clock and
     // phase colour: columns the single-receiver pre-pass does not create, added by hand.
     load("ppp-rtk", "", R"(, "estimate_sat_phase_biases": true, "estimate_sat_clocks": true)");
@@ -567,7 +568,7 @@ TEST_F(ObservationEquationTest, ProducerSatelliteStatesMatchTheReference) {
         perturbStates();
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"})});
     }
-    expectAgreement();
+    expectRowsBuilt();
     const PppObservation o = observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"});
     const ObservationEquation eq = equation(o, "L1W");
     ASSERT_TRUE(eq.usable);
@@ -581,14 +582,13 @@ TEST_F(ObservationEquationTest, ProducerSatelliteStatesMatchTheReference) {
     EXPECT_EQ(term(eq, ObsEffect::SsrBias), nullptr);
 }
 
-TEST_F(ObservationEquationTest, NetworkPostureWithReceiverPhaseBiasAndPhaseColourMatchesTheReference) {
+TEST_F(ObservationEquationTest, NetworkPostureWithReceiverPhaseBiasAndPhaseColourBuildsItsRows) {
     // A loadable network posture with the eq34 receiver phase bias and the phase-colour
     // state: the network loader forces the satellite clock and phase bias on, and these two
     // keys add the receiver phase bias to the satellite phase-bias term and the colour term.
     const std::string text = R"({
         "processing": {"mode": "ppp-rtk-network", "active_systems": ["GPS", "Galileo"],
-                       "signal_priorities": {"GPS": "WC", "Galileo": "CB"},
-                       "obs_equation_check": true},
+                       "signal_priorities": {"GPS": "WC", "Galileo": "CB"}},
         "network": {
             "clock_datum_station": "AAAA",
             "ambiguity_vehicle": "float_kf",
@@ -621,7 +621,7 @@ TEST_F(ObservationEquationTest, NetworkPostureWithReceiverPhaseBiasAndPhaseColou
         perturbStates();
         update({observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"})});
     }
-    expectAgreement();
+    expectRowsBuilt();
 
     const PppObservation o = observation(kSat, System::GPS, {"C1W", "L1W", "C2W", "L2W"});
     const ObservationEquation eq = equation(o, "L1W");
@@ -682,7 +682,7 @@ TEST_F(ObservationEquationTest, ProducerStatesAndConsumerKnownTermsGiveTheSamePr
     // column; the biases come from the SSR store with the shared sign, and the clock is
     // inside the modeled value as kSatClockPartial times c.
     Stack consumer;
-    ASSERT_TRUE(consumer.load(log, "consumer", "ppp-rtk", "", "", false, /*check=*/false));
+    ASSERT_TRUE(consumer.load(log, "consumer", "ppp-rtk", "", "", false));
     ASSERT_FALSE(consumer.config.estimateSatBiases());
     PppObservation known = base;
     for (auto& [signal, modeled] : known.modeled)

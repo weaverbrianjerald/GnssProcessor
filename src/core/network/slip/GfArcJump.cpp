@@ -149,7 +149,6 @@ GfJumpAction gfJumpFreePair(SlipQcChannel& qc, NetStation& st, int i,
                                      RelevelPend>* relevel_pend,
                             const CommonBandEpoch* common_band) {
     GfJumpAction act;
-    StateManager& sm = *st.sm;   // the re-seed marks stay in the state manager
     for (const auto& [arc, slot] : st.params.amb) {
         (void)slot;
         if (net::satKey(arc.sat) != sat) continue;
@@ -175,7 +174,7 @@ GfJumpAction gfJumpFreePair(SlipQcChannel& qc, NetStation& st, int i,
         // as at every other freeing site.
         if (carry_invariant) carry_slipped_ambs.insert(key);
         if (!carry_warm) continue;
-        sm.markAmbiguityPendingReseed(amb_key);
+        markPendingReseed(st.params, amb_key);
         ++act.freed;
         if (relevel) {
             relevel->free_ambs.insert(key);

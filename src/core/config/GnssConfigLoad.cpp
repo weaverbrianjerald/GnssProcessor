@@ -893,11 +893,6 @@ namespace GnssProcessor {
         // has been parsed.
         run_smoother_ = jval<bool>(json, "processing.run_smoother", "run_smoother", false);
 
-        // Comparator of the term-list observation equation against the row builder it
-        // replaced: a diagnostic, solve-inert, any mode.
-        obs_equation_check_ = jval<bool>(json, "processing.obs_equation_check",
-                                         "obs_equation_check", false);
-
         // Cross-session normal-equation export (item #13B): post-processing
         // only.  Real-time guard is applied by loadAppModeAndRealtimeSection_,
         // once app_mode_ has been parsed.

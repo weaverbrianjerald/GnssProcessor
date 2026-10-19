@@ -11,16 +11,14 @@
  * former file-static helper @ref sharedCarryKey is @c inline with external linkage.
  */
 
-#include "filter/StateManager.hpp"
 #include "network/solve/Estimator.hpp"      // SharedParamKind
 #include "network/carry/CouplingExact.hpp"  // CouplingExactCounters (StationAssembly)
 #include "network/assembly/ParamInventory.hpp" // StationParamSlot (StationAssembly)
 #include "network/assembly/Contributions.hpp" // RowTag, GimRowsOutcome (StationAssembly)
 #include "network/state/StationParams.hpp"      // StationParams (NetStation::params)
-#include "network/state/StationParamsShadow.hpp"  // StationParamsCheck (NetStation::params_check)
+#include "network/assembly/StationRows.hpp"      // StationRowInputs, StationRowContext (NetStation::rows)
 #include "network/qc/WithinEpochCulprits.hpp" // WithinEpochCulprits (EpochWorkspace::we_culprits)
 #include "model/PppModel.hpp"
-#include "measurement/MeasurementModel.hpp"
 #include "common/PppState.hpp"
 #include "slip/MwSlipDetector.hpp"
 #include "slip/TurboEditResolver.hpp"
@@ -44,25 +42,25 @@
 
 namespace GnssProcessor {
 
-/// Per-station runtime bundle: an independent single-receiver StateManager,
-/// PppModel and MeasurementModel.  The single-receiver invariants hold: the network
-/// couples stations only through the shared satellite border and never aliases
-/// their core indices.  Coordinates are held fixed at @c ecef.
+/// Per-station runtime bundle: the station's model, its own parameter set, and the
+/// state of its detectors and screens.  The network couples stations only through the shared
+/// satellite border; each station's columns are its own set.  Coordinates are held fixed at
+/// @c ecef.
 struct NetStation {
     std::string                       name;
     Eigen::Vector3d                   ecef{Eigen::Vector3d::Zero()};
     bool                              is_pivot{false};
-    std::unique_ptr<StateManager>     sm;
     std::unique_ptr<PppModel>         model;
-    std::unique_ptr<MeasurementModel> mm;
-    /// The station's own parameter set, rebuilt from its state manager after each split and,
-    /// when the station's assembly ends or fails before the split, without dispositions
-    /// (network/state/StationParams.hpp, network/state/StationParamsShadow.hpp).  Written only
-    /// inside the parallel produce phase by the station's own build; read by the carried
-    /// priors, the slip drains, the admissions, the datum rows and the diagnostics.
+    /// What the station's births and rows read besides its observations and its set
+    /// (network/assembly/StationRows.hpp).
+    std::unique_ptr<StationRowInputs> rows;
+    /// The station's own parameter set (network/state/StationParams.hpp): its columns with
+    /// their identities, linearization points and dispositions, the shared satellite parameters
+    /// it references, and the re-seed marks of its ambiguities.  Written by the station's own
+    /// births and, in the serial stages, by the screens that withhold, prune or mark its
+    /// parameters; read by the carried priors, the slip drains, the admissions, the datum rows
+    /// and the diagnostics.
     StationParams                     params;
-    /// The tally of those checks over the run, summed into the run-end table.
-    StationParamsCheck                params_check;
     PppState                          pstate;
     // MW cycle-slip arc state, persistent per station.  Built when
     // network.phase_leveling and (network.cycle_slip.turbo_edit or
@@ -310,6 +308,16 @@ struct NetStation {
     /// (@c GnssConfig::networkSecondPhaseRowsActive).
     std::map<std::string, std::pair<double, long long>> spc_witness;
 };
+
+/**
+ * @brief The references a station's births and rows are computed from.
+ * @param config Processing configuration.
+ * @param st     The station (its model and row inputs; must be built).
+ * @return The context.
+ */
+inline StationRowContext rowContextOf(const GnssConfig& config, const NetStation& st) {
+    return StationRowContext(config, *st.model, *st.rows);
+}
 
 /// One SD extra-wide-lane integer decision for a (station, constellation, satellite),
 /// as published by @ref networkSdEwlAr (increment 2a: Route B plus the A2 DD-to-SD
@@ -918,7 +926,7 @@ struct RelevelPend {
 /// network.cycle_slip.relevel_free_epoch, relevel_delta_bridge).
 ///
 /// A detector's pending-reseed mark is consumed (arc re-seeded, flag cleared) by the
-/// PASS-B measurement pre-pass (MeasurementModel::ensureRequiredStates) before the
+/// PASS-B measurement pre-pass (networkBirthLocalStates) before the
 /// inject-skip check at the leveling-carry fold reads it.  Without this state, the
 /// intended "re-float from data this epoch rather than clamp to the stale carry"
 /// does not happen for detector-caught slips: the pre-slip level is injected at
@@ -976,7 +984,7 @@ struct RelevelEpochState {
 struct PlPc {
     std::string  sat;          ///< Satellite id (the state's key).
     Eigen::Index col{-1};      ///< A_r column of the state (= h2local[state index]).
-    double       x_lin{0.0};   ///< Linearization point (the StateManager value; stays 0).
+    double       x_lin{0.0};   ///< Linearization point (the parameter set's value; stays 0).
     double       elev_deg{std::numeric_limits<double>::quiet_NaN()};  ///< Elevation (deg) recorded at allocation.
     bool         carried{false};///< A carried prior was folded this epoch (else a birth row).
 };
@@ -1013,7 +1021,7 @@ struct PlAmb {
 ///
 /// The ledger exists because `getStateVector()(amb_idx)` is `x_lin`, a linearization
 /// frame, not an estimate.  The network solve is never written back into the
-/// per-station StateManager (`setStateVector` runs once, at setup), and an `x_lin`
+/// per-station parameter set (a value changes only at a birth or a reseed), and an `x_lin`
 /// shift on a local column is an exact solve no-op, so pinning to it would carry no
 /// information about where the arc sits.  The absolute estimate is
 /// `x_lin + back-substituted Δx`, which exists only after the solve; hence the
@@ -1171,7 +1179,7 @@ inline bool rxClockRateUpdate(double& rate, double& rate_var, double obs_rate,
 /// act (the @c pl_zwd_present pattern).
 struct PlRxClk {
     Eigen::Index col;      ///< A_r column of the state (= h2local[state index]).
-    double       x_lin;    ///< This epoch's linearization point.  For the clock it is constant over the run: the network producer never writes its solution back into the station StateManager, so the whole time-varying clock lives in x_r.
+    double       x_lin;    ///< This epoch's linearization point.  For the clock it is constant over the run: the network producer never writes its solution back into the station's parameter set, so the whole time-varying clock lives in x_r.
     std::string  kind;     ///< "" = the primary receiver clock (the one with the carried drift); otherwise the ISB's system name ("Galileo", ...), which takes a pure random walk.
 };
 
@@ -1182,9 +1190,9 @@ struct PlRxClk {
 /// regardless of thread count (the determinism guarantee).
 struct StationAssembly {
     bool             ok{false};            ///< Produced a usable H/A_s/A_r block.
-    bool             empty_innov{false};   ///< computeMeasurementUpdate yielded no rows.
+    bool             empty_innov{false};   ///< networkStationRows yielded no rows.
     bool             state_mismatch{false};///< H column count != state size.
-    bool             threw{false};         ///< computeMeasurementUpdate / splitStation threw.
+    bool             threw{false};         ///< networkStationRows / splitStation threw.
     Eigen::MatrixXd  A_s, A_r;             ///< Shared-border + local-nuisance Jacobian.
     Eigen::VectorXd  w, y;                 ///< Per-row information weights + innovations.
     int              np{0};                ///< Pivot ambiguity pins folded in (pivot only).
@@ -1463,7 +1471,7 @@ struct StationAssembly {
     ///
     /// It is the Jacobian, not a raw line-of-sight vector, by design: it is copied from
     /// @c em.H (whose position partial is @f$-\hat u@f$ per
-    /// @c MeasurementModel::buildJacobianRow) and rotated by the ENU→ECEF matrix at the
+    /// the observation equation) and rotated by the ENU→ECEF matrix at the
     /// station's held coordinate.  Taking the partial the measurement model built,
     /// rather than re-deriving a sign per row type, makes the screen's convention
     /// correct by construction for every current and future row class:
@@ -1752,7 +1760,7 @@ inline constexpr double kRxCbMaxGapS = 900.0;
 ///
 /// The innovation test is frame-dependent.  @p innov_m is @c value_abs − x_lin(cb),
 /// and x_lin is a frozen linearization point (seeded once by
-/// @c MeasurementModel::initializeCodeBiases, never written back from the solve), so
+/// the first-epoch code-bias seed, never written back from the solve), so
 /// the statistic measures how far the carried value sits from an arbitrary frame, not
 /// whether anything happened.  @p innov_test = false disables it and leaves the
 /// frame-free gap and variance sanity checks; the in-block route passes false, and its

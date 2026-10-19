@@ -50,9 +50,9 @@
 #include "network/qc/RhsAttrib.hpp"
 #include "network/assembly/RowClassify.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "network/state/StationParamsShadow.hpp"
+#include "network/state/StationParams.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "support/StationParamsBuilder.hpp"
 #include "logging/LogManager.hpp"
 #include "rinex/MultiRinexSync.hpp"
 
@@ -100,26 +100,28 @@ struct Fixture {
     Eigen::Index pb2[2]{-1, -1};
 };
 
-/// A state manager whose states are the station's local columns, and the h2local map
-/// that puts each state on its column.
-void buildStateManager(Fixture& f, NetStation& st, StationAssembly& R) {
-    st.sm = std::make_unique<StateManager>(5, f.lm, f.cfg);
-    StateManager& sm = *st.sm;
-    ASSERT_TRUE(sm.hasClock());
-    const auto put = [&](std::size_t sidx, Eigen::Index col) {
-        R.h2local[static_cast<int>(sidx)] = static_cast<int>(col);
+/// The station's parameter set, whose local columns are the station's block, and the h2local
+/// map that puts each column on its place in the block.
+void buildStationSet(Fixture& f, NetStation& st, StationAssembly& R) {
+    st.params = startStationParams(f.cfg, Eigen::Vector3d::Zero());
+    StationParams& set = st.params;
+    ASSERT_GE(set.clock, 0);
+    const auto put = [&](int sidx, Eigen::Index col) {
+        R.h2local[sidx] = static_cast<int>(col);
     };
-    put(sm.getClockIndex(), kClk);
-    put(sm.addCodeBiasState(StateKeys::makeDcbKey("GPS"), 0.0), kDcb);
-    put(sm.addIonosphereState("G01", 0.0), kIon1);
-    put(sm.addIonosphereState("G02", 0.0), kIon2);
-    put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G01", "L1C"), 0.0), kN1a);
-    put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G01", "L2W"), 0.0), kN2a);
-    put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G02", "L1C"), 0.0), kN1b);
-    put(sm.addAmbiguity(StateKeys::makeAmbiguityKey("G02", "L2W"), 0.0), kN2b);
-    // The station's parameter set, as the split's seam builds it.
-    buildStationParams(sm, std::vector<ParamDisposition>(sm.getStateSize(), ParamDisposition::EstimatedLocal),
-                       StationAbsorbed{}, st.params);
+    RxCbKey dcb;
+    dcb.form = ParamForm::Dcb;
+    dcb.sys  = System::GPS;
+    put(set.clock, kClk);
+    put(gnss_test::bornRxCodeBias(set, dcb), kDcb);
+    put(gnss_test::bornSlantIono(set, "G01"), kIon1);
+    put(gnss_test::bornSlantIono(set, "G02"), kIon2);
+    put(gnss_test::bornAmbiguity(set, "G01", "L1C"), kN1a);
+    put(gnss_test::bornAmbiguity(set, "G01", "L2W"), kN2a);
+    put(gnss_test::bornAmbiguity(set, "G02", "L1C"), kN1b);
+    put(gnss_test::bornAmbiguity(set, "G02", "L2W"), kN2b);
+    // The split's decision: every column estimated.
+    settleStationParams(set, std::vector<ParamDisposition>(set.slots.size(), ParamDisposition::EstimatedLocal));
 }
 
 /// One station's rows: per satellite P1, P2, L1, L2; the first station pins its four
@@ -234,7 +236,7 @@ void solveFixture(Fixture& f, bool pins, int zero_sta = -1, Eigen::Index zero_ro
         NetStation& st = f.stations[static_cast<std::size_t>(r)];
         st.name = "STA" + std::to_string(r);
         StationAssembly& R = f.asm_res[static_cast<std::size_t>(r)];
-        buildStateManager(f, st, R);
+        buildStationSet(f, st, R);
         buildRows(f, r, pins, R);
         if (r == zero_sta) R.y(zero_row) = 0.0;
         const NetworkNormalEquations::StationPrior prior{R.prior_cols, R.prior_dNrr, R.prior_dur};
@@ -504,10 +506,11 @@ TEST(RhsAttribLocalTest, SharesCloseOnTheSolvedIncrementAndMatchADenseSolve) {
     EXPECT_EQ(nm[kIon2], "IONO:G02");
     EXPECT_EQ(nm[kN1a], "AMB:" + StateKeys::makeAmbiguityKey("G01", "L1C"));
     EXPECT_EQ(rhsAttribLocalColumnNames(f.asm_res[1], f.stations[1].params), nm);
-    // ... and are exactly the labels the state manager gives the same columns.
-    const std::vector<std::string> sm_labels = f.stations[1].sm->getStateLabels();
+    // ... and are exactly the labels of the set's slots for the same columns.
     for (const auto& [sidx, col] : f.asm_res[1].h2local)
-        EXPECT_EQ(nm[static_cast<std::size_t>(col)], sm_labels[static_cast<std::size_t>(sidx)]) << sidx;
+        EXPECT_EQ(nm[static_cast<std::size_t>(col)],
+                  stateLabel(f.stations[1].params.slots[static_cast<std::size_t>(sidx)],
+                             static_cast<std::size_t>(sidx))) << sidx;
 
     // The kernel's parts sum to its reconstruction.
     for (std::size_t k = 0; k < 3; ++k) {

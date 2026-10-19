@@ -277,14 +277,14 @@ void networkAmbiguityCarryColumns(StationCarryFrame& carry) {
         // captures the fresh value.
         // For detector marks this check never fires
         // (SPEC_slip_relevel_walk): the PASS-B measurement pre-pass
-        // (ensureRequiredStates) consumes and clears the mark before this
+        // (networkBirthLocalStates) consumes and clears the mark before this
         // line runs, so on its own it would let the stale pre-slip level
         // inject at converged weight for every detector-caught slip (the
         // root of the level walk).  The latched free set below is the same
         // predicate on state that survives to this read point; bridged
         // bands are removed from it (their carry is already shifted to the
         // post-slip level and should inject).
-        if (slot.pending_reseed) {
+        if (pendingReseed(params, arc)) {
             // Counted only for an arc with a carried entry
             // (read-only find; a new arc has no prior to skip).  Per station:
             // this is the parallel produce phase.
@@ -402,9 +402,9 @@ void networkHarvestHandoverLedger(NetworkRun& run, const NetworkEpoch& ep) {
     // next epoch the election can pin the successor at this value instead of at 0,
     // which makes the gauge change an S-transform rather than a re-realization.
     //
-    // The election cannot read `st.sm->getStateVector()(amb_idx)` instead: that is
+    // The election cannot read the ambiguity's value in `st.params` instead: that is
     // `x_lin`, a linearization frame.  The network solve is never written back into the
-    // per-station StateManager (`setStateVector` runs once, at setup), and an `x_lin`
+    // per-station parameter set (a value changes only at a birth or a reseed), and an `x_lin`
     // shift on a local column is an exact solve no-op, so pinning to it would carry no
     // information about where the arc sits.  The estimate is `x_lin + back-substituted
     // Δx`, which exists only here, after the solve.  Hence the one-epoch deferral:
@@ -713,10 +713,7 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
                 // not happen because the response skipped it, which is what RF-1
                 // replaces with a bounded drop.  Precedence follows the inject's
                 // own order of tests.
-                // The marks stay in the state manager: the set holds them as of the split,
-                // and RAIM and the screens set more after it.
-                const bool reseed_now =
-                    stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
+                const bool reseed_now = pendingReseed(stations[i].params, pa.amb_key);
                 const double gap_now = (oldc != nullptr)
                     ? (pl_now_s - oldc->last_seen_s) : 0.0;
                 if (yng_created)          row.event = "birth";
@@ -748,8 +745,8 @@ void networkHarvestAmbiguityStation(NetworkRun& run, const NetworkEpoch& ep, Har
         // drop any pending-reseed mark and let the next epoch resume normal carry
         // on the new arc.  Cleared only after a successful stash: a skipped
         // non-finite value keeps the mark, so the stale pre-slip carry is not
-        // trusted again.  No-op when unmarked.  The state manager holds the marks (see above).
-        stations[i].sm->clearPendingReseed(pa.amb_key);
+        // trusted again.  No-op when unmarked.
+        clearPendingReseed(stations[i].params, pa.amb_key);
     }
 }
 
@@ -799,9 +796,7 @@ void networkAmbiguityMonitorFeeds(NetworkRun& run, const NetworkEpoch& ep, const
     const bool prires_want = prires_pl && prires_est.enabled();
     if (carry_vce || prires_want) {
         const auto oc = net::getArc(ctx.entities.arcs, std::make_tuple(static_cast<int>(i), pa.sat, pa.signal), &net::ArcState::amb);
-        // The state manager holds the marks (the set's are as of the split).
-        const bool reseed_pending =
-            stations[i].sm->isAmbiguityPendingReseed(pa.amb_key);
+        const bool reseed_pending = pendingReseed(stations[i].params, pa.amb_key);
         const bool reref = eq34_reref.count({pa.sat, pa.signal}) > 0;
         // Harvest guard (SPEC_slip_relevel_walk): a freed or bridged arc's
         // (prior − solved) innovation is slip-scale, and without this guard

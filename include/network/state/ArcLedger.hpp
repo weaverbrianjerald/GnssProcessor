@@ -8,7 +8,7 @@
  *
  * Of the 29 arc-keyed containers in @c RunContext.hpp, 5 are keyed at the
  * signal level, and 31 lifecycle holders emit nothing at their birth and death
- * edges.  Among them, @c StateManager::pruneAmbiguitiesExcept destroys an
+ * edges.  Among them, @c pruneAmbiguitiesExcept destroys an
  * ambiguity after one missed epoch, with no window and no event, and the gap prune
  * of @c local_carry is silent.  The lifecycle vocabulary exists in three places
  * (@c adm_arc, @c pb_hold, @c gl_state) in three incompatible key spaces, and is
@@ -223,7 +223,7 @@ namespace GnssProcessor {
 
         // --- State-vector prune, recorded as a mark ----------
         //
-        // @c StateManager::pruneAmbiguitiesExcept destroys an ambiguity column
+        // @c pruneAmbiguitiesExcept destroys an ambiguity column
         // after one missed epoch, with no window and no event; the audit found it
         // the largest silent death path.  The prune itself is unchanged (the state
         // vector has to shrink); these fields record that it happened, so the

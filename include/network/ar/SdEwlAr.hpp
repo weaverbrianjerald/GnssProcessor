@@ -277,7 +277,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p log = run.log: Run logger (per-epoch summary at debug level).
  *   - @p traces = run.traces: Trace sinks (`network_sd_ewl_ar.csv`, armed only with
  *     `sd_ewl.trace && sd_ewl.fix_enable`).
- *   - @p setup = run.setup: Station roster (MW detectors + state managers).
+ *   - @p setup = run.setup: Station roster (MW detectors + parameter sets).
  *   - @p se = ep.se: This epoch (week/tow for the trace).
  *   - @p now_s = ep.clock.pl_now_s: Continuous GPS seconds. Currently unused: arc continuity
  *     is judged by the detector's lagged sample count. A time-based continuity test would use

@@ -69,7 +69,7 @@ constexpr ParamKindSet kBlkRxClk = kBlkIono | bit(PK::RxClock);
 constexpr ParamKindSet kBlkRxCb  = kBlkRxClk | bit(PK::RxCodeBias);
 constexpr ParamKindSet kBlkPc    = kBlkRxCb | bit(PK::PhaseColour);
 
-constexpr const char* kSplit = "MeasurementModel::computeMeasurementUpdate, networkSplitStation (StationSplit.cpp), station step data_rows";
+constexpr const char* kSplit = "networkStationRows (StationRows.cpp), networkSplitStation (StationSplit.cpp), station step data_rows";
 constexpr const char* kPinFold = "networkPhaseDatumPinRows (PhaseDatum.cpp), station step phase_datum_pins";
 constexpr const char* kGloFold = "networkGlonassAnchorRows (StationAnchors.cpp), station step glonass_anchors";
 constexpr const char* kLgmRows = "networkPhaseColourRows (PhaseColourCarry.cpp), station step phase_colour_rows";

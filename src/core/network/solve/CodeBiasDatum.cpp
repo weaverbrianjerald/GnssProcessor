@@ -364,7 +364,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
         auto freqOf = [&](const std::string& sat, const std::string& sig) -> double {
             for (size_t i = 0; i < stations.size(); ++i)
                 if (present[i]) {
-                    const double f = stations[i].mm->carrierFrequency(sig, sat);
+                    const double f = stations[i].rows->freq.getFrequency(sig, systemOfSat(sat), sat);
                     if (std::isfinite(f) && f > 0.0) return f;
                 }
             return 0.0;

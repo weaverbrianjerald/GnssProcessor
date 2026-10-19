@@ -14,7 +14,6 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/Estimator.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "network/state/StationParamsShadow.hpp"   // networkRefreshStationParams
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
 #include <spdlog/spdlog.h>
@@ -259,11 +258,8 @@ void networkStationAssemble(StationBuild& build, const StationBuildSteps& steps)
     } catch (...) {
         R.threw = true; R.err = "unknown exception";
     }
-    // The measurement pre-pass may have changed the station's columns before the step threw,
-    // and the set's own build empties the set when it throws.  The set follows the state
-    // manager as it stands, so the readers of the next epoch's PASS A find the columns the
-    // state manager holds.  Touches only this station's set and tally and never throws.
-    networkRefreshStationParams(build.st);
+    // The station's births write its set as they go, so a step that threw leaves the set as
+    // the births left it, and the readers of the next epoch's PASS A find those columns.
 }
 
 void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,

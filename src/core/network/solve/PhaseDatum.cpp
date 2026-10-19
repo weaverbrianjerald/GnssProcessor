@@ -11,6 +11,7 @@
 
 #include "network/carry/Inject.hpp"
 #include "network/solve/PhaseDatum.hpp"
+#include "network/assembly/SharedAdmission.hpp"   // noteWithheldPhaseBias
 
 #include "filter/StateKeySchema.hpp"    // StateKeys::parseSatPhaseBiasKey, parseAmbiguityKey
 #include "common/GnssIdentity.hpp"      // letterOfSat
@@ -139,9 +140,9 @@ void networkBuildPhaseDatumCandidates(
     // (a) Per present station: satellite elevation (from the pruned obs) and the
     //     anchorable keys, which are the per-(sat,signal) phase-bias states this
     //     station allocated in PASS A.  The ambiguity states are allocated later,
-    //     in PASS B's computeMeasurementUpdate, so getAmbiguityIndex cannot be
+    //     in PASS B's networkBirthLocalStates, so findAmbiguity cannot be
     //     tested here (it returns -1 for every key at this point).
-    //     ensureNetworkSharedStates allocates a phase-bias state through the same
+    //     networkAdmitSharedStates allocates a phase-bias state through the same
     //     usability gate as the row build, so a live phase-bias state implies a
     //     phase row and therefore a pinnable ambiguity in PASS B.  The pin fold's
     //     own getAmbiguityIndex + h2local check is the final guard: a miss orphans
@@ -152,12 +153,8 @@ void networkBuildPhaseDatumCandidates(
     for (size_t i = 0; i < stations.size(); ++i) {
         if (!present[i]) continue;
         for (const auto& o : modeled[i]) sat_el[i][o.satellite] = o.elevation;
-        StateManager& sm = *stations[i].sm;
-        for (const auto& kv : sm.getSatPhaseBiasStates()) {
-            const auto p = net::satPhaseBiasKey(kv.first);
-            if (!p) continue;
-            usable_keys[i].emplace(net::ambKey(*p), kv.first);
-        }
+        for (const auto& kv : stations[i].params.shared.sat_phase_bias)
+            usable_keys[i].emplace(net::ambKey(kv.first), satPhaseBiasText(kv.first));
     }
 
     // (b) Per-constellation candidate receivers and their coverage (number of
@@ -234,23 +231,19 @@ void networkBuildPhaseDatumCandidates(
             n_gated_key_epochs += gated_amb.size();
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
-                StateManager& sm = *stations[i].sm;
-                std::set<std::string> keep_pb;
+                StationParams& set = stations[i].params;
+                std::set<SatSignalId> keep_pb_ids;
                 bool drop_any = false;
-                for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                    const auto p = net::satPhaseBiasKey(kv.first);
-                    if (p && gated_amb.count(net::ambKey(*p))) {
+                for (const auto& kv : set.shared.sat_phase_bias) {
+                    if (gated_amb.count(net::ambKey(kv.first))) {
                         drop_any = true;
                         // The parameter inventory's absorbed instance.
-                        if (stations[i].mm)
-                            stations[i].mm->noteAbsorbedSharedState(
-                                StateContainer::SatPhaseBiasStates, kv.first,
-                                AbsorbedReason::AnchoredUnionCoverage);
+                        noteWithheldPhaseBias(set, kv.first, AbsorbedReason::AnchoredUnionCoverage);
                         continue;
                     }
-                    keep_pb.insert(kv.first);
+                    keep_pb_ids.insert(kv.first);
                 }
-                if (drop_any) sm.pruneSatPhaseBiasStatesExcept(keep_pb);
+                if (drop_any) pruneSatPhaseBiasExcept(set, keep_pb_ids);
             }
         }
     }

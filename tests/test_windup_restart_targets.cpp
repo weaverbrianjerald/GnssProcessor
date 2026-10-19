@@ -26,7 +26,7 @@
 #include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "support/StationParamsBuilder.hpp"
 #include "logging/LogManager.hpp"
 #include "network/slip/SlipQc.hpp"
 
@@ -50,18 +50,14 @@ using CarryMap = net::ArcTable;
 struct Harness {
     LogManager                    log_manager;
     GnssConfig                    config;
-    std::unique_ptr<StateManager> sm;
-    StationParams                 params;   // the set the targets read, rebuilt by addLive
+    StationParams                 params;   // the set the targets read
     CarryMap                      carry;
     double                        now_s{271200.0};
     double                        max_gap_s{900.0};
 
-    Harness() { sm = std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config); }
+    Harness() { params = startStationParams(config, Eigen::Vector3d::Zero()); }
 
-    void addLive(const char* sat, const char* sig) {
-        sm->addAmbiguity(StateKeys::makeAmbiguityKey(sat, sig), 0.0);
-        buildStationParams(*sm, {}, StationAbsorbed{}, params);
-    }
+    void addLive(const char* sat, const char* sig) { gnss_test::bornAmbiguity(params, sat, sig); }
     void addCarry(int station, const char* sat, const char* sig, double age_s) {
         LocalCarry lc{};
         lc.value_abs   = 0.0;

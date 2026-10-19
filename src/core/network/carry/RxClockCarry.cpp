@@ -156,7 +156,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     //     design.
     //
     //     Why the mean is a prediction, not the last value: the producer never
-    //     writes its solution back into the station StateManager, so
+    //     writes its solution back into the station's parameter set, so
     //     x_lin(clock) is constant over the run and x_r carries the whole
     //     clock, including a ~0.3 m/s drift, i.e. 9 m per 30 s epoch (0.29994
     //     m/s on the sim truth bed, against 0.299 m of RW jitter).  A
@@ -287,7 +287,7 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
     //     harvest block, run the (bias, drift) filter, and prune the stale entries.
     //
     //     The drift is central to the design.  The producer never writes its
-    //     solution back into the station StateManager, so x_lin(clock) is set once
+    //     solution back into the station's parameter set, so x_lin(clock) is set once
     //     (0, or the latched cold_clock_seed median) and is constant for the run:
     //     x_r carries the entire clock, including a ramp of about 0.3 m/s, i.e. 9 m
     //     per 30 s epoch (0.29994 m/s on the sim truth bed, with 0.299 m random-walk
