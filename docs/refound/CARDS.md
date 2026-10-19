@@ -196,3 +196,8 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   single-band rule is built behind `network.second_band_admission` (2026-10-18, UNVALIDATED; on 2 h arms it reproduces the
   subtraction: no station dropped, consumer within 1 mm of GEC-s; 2026-10-19, section 9: key off, 24 IDENTICAL on the identity
   gate; key on at 6 h it reproduces GEC-s, census hours 2 to 6 -0.0035 m against GE, 5 better, 0 worse); the arming decision is open.
+- [BDSB](BDSB_beidou_continued_2026-10-19.md): open, 2026-10-19: card BDS's continuation (that file is at the 60 KB bar). The
+  second-band admission re-run from fresh arms on the Release build of `fix/single-band` at `f300bda`. Key off: 24 IDENTICAL against
+  the parent side after the two declared run-end census lines; products and traces also identical against `w3base`. Key on at 6 h:
+  no station rejected (2,160 with the rule off), heal and S-basis completion silent, WTZZ00DEU within 0.6 mm of GEC-s, census median
+  change against GEC-s 0.0000 m, no site above 6 mm. UNVALIDATED, not armed.

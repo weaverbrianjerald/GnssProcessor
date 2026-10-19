@@ -181,6 +181,8 @@ golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, h
 single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
 GPS only; nothing armed; the single-band rule is built behind `network.second_band_admission`, UNVALIDATED; 2026-10-19: key off identical,
 key on at 6 h it reproduces GEC-s).
+[BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
+from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
