@@ -275,16 +275,24 @@ read the set of the previous epoch. That is the station's local columns as its s
 holds them, because the only writer of a local column outside the split is the measurement
 pre-pass, and every assembly that runs it ends with the set rebuilt: the split builds it, and
 `networkRefreshStationParams` rebuilds it (without dispositions) when the assembly ends before
-the split, for an epoch with no innovations. `networkCheckStationParamsFresh` compares the set
+the split, for an epoch with no innovations or an H/state mismatch, and when a step throws.
+The throw is caught by `networkStationAssemble` (`network\assembly\StationBuild.cpp`), which
+records it in the station's slot (the solve drops the station with a warning) and then rebuilds
+the set from the state manager as it stands, because the pre-pass may have created or pruned
+columns before the step threw. A station that was not assembled this epoch does not run the
+pre-pass, so its set keeps its last build. `networkCheckStationParamsFresh` compares the set
 with the state manager's local columns and their values at the start of every epoch's PASS A
 (finding kind `stale`, zero on a sound run). The border columns (satellite clocks and biases)
 change during the admissions, so the readers of the admissions' own state stay on the state
 manager until the admissions write the set. The state manager is also read where a value
 changes after the split (the re-seed marks the harvest reads and clears, which RAIM and the
-screens write) and by the split itself. A station whose set cannot be built fails its assembly
-for the epoch and is dropped with a warning. The shadow checks the set and the inventory
-recorded from it against the state manager
-on every station-epoch, and the run end prints the table `Network (station parameter set)` under
+screens write) and by the split itself. A station whose set cannot be built from its state
+manager (an allocation failure, or a defect the classifier does not expect) fails its assembly
+for the epoch and is dropped with a warning, and its set is left empty: the readers of the next
+epoch's PASS A find no local column, the start-of-epoch check counts that as `stale`, and the
+failure is counted in the run-end table, until the next build or rebuild succeeds. The shadow
+checks the set and the inventory recorded from it against the state manager on every
+station-epoch, and the run end prints the table `Network (station parameter set)` under
 the parameter inventory, with the findings (all zero on a sound run). The classifier that names a
 state manager's columns (`network\state\StateColumns.cpp`) is the bridge between the two and
 goes when the network allocates its own columns.
