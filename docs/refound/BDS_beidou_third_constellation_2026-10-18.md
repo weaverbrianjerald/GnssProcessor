@@ -5,14 +5,14 @@
 - **id:** BDS
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Read 2026-10-18. First GPS + Galileo + BeiDou network run on the field golden (DOY 129 2024, 58 stations, held-out consumer WTZZ00DEU), graded against GPS only and GPS + Galileo on one exe. BeiDou on B1I + B3I (C2I / C6I / L2I / L6I), the pair the loader's dual mode names. HEALTHY: 720 of 720 epochs emitted, no withhold, BeiDou clocks metre class (maximum 14.6 m, median 3.9 m), no failure mode A, no failure mode B, so none of the four pieces was needed. Three stations that track BeiDou on B1I alone are dropped whole by the addStation guard (GEC); with their band-2 BeiDou removed (GEC-s) the run is clean. Census, hours 2 to 6: GEC-s against GE -0.0038 m (5 better, 0 worse; the ten sites with the pair -0.0143 m), against GPS only -0.0267 m (12 better, 1 worse). WTZZ00DEU hours 2 to 6 within +0.007 m of GE. Cost 2 to 3 times GE. Nothing is armed by this card. The single-band rule is built behind `network.second_band_admission` (section 8, 2026-10-18): on 2 h arms it reproduces the subtraction (no station dropped, near-null count 3, consumer within 1 mm of GEC-s); UNVALIDATED, not armed.
+- **summary:** Read 2026-10-18. First GPS + Galileo + BeiDou network run on the field golden (DOY 129 2024, 58 stations, held-out consumer WTZZ00DEU), graded against GPS only and GPS + Galileo on one exe. BeiDou on B1I + B3I (C2I / C6I / L2I / L6I), the pair the loader's dual mode names. HEALTHY: 720 of 720 epochs emitted, no withhold, BeiDou clocks metre class (maximum 14.6 m, median 3.9 m), no failure mode A, no failure mode B, so none of the four pieces was needed. Three stations that track BeiDou on B1I alone are dropped whole by the addStation guard (GEC); with their band-2 BeiDou removed (GEC-s) the run is clean. Census, hours 2 to 6: GEC-s against GE -0.0038 m (5 better, 0 worse; the ten sites with the pair -0.0143 m), against GPS only -0.0267 m (12 better, 1 worse). WTZZ00DEU hours 2 to 6 within +0.007 m of GE. Cost 2 to 3 times GE. Nothing is armed by this card. The single-band rule is built behind `network.second_band_admission` (section 8, 2026-10-18): on 2 h arms it reproduces the subtraction (no station dropped, near-null count 3, consumer within 1 mm of GEC-s). Section 9 (2026-10-19): key off, 24 IDENTICAL on the identity gate against the parent-commit exe; key on, 6 h, it reproduces GEC-s (no station dropped, no heal, census hours 2 to 6 -0.0035 m against GE, 5 better, 0 worse, and 0.0000 m against the GEC-s census, no site over 6 mm; consumer within 1 mm of GEC-s); UNVALIDATED, not armed.
 - **source:** the author's request of 2026-10-18 ("perhaps we should do a GPS+Galileo+BeiDou run to compare against GPS-only and GPS+Galileo"); [GAD](GAD_galileo_adoption_2026-10-13.md) (how Galileo was added and graded); [SPEC_beidou_w6_datum.md](../SPEC_beidou_w6_datum.md) and [SPEC_cb_admission_card.md](../SPEC_cb_admission_card.md) (the four-piece emit path, failure mode B)
 - **knobs / posture:** `processing.active_systems` `["GPS","Galileo","BeiDou"]`, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`; candidate pieces, each only on the evidence of section 3: `network.cb_admission`, `network.rank_gate_tol` (placement), `network.cb_kaula_prior`; `network.phase_datum_prioritized` with `network.phase_datum_min_stations` 2 and `network.rank_gate_tol` 1e-11 are already in the goldens; section 8: `network.second_band_admission` (default false, UNVALIDATED), `network.second_band_scope` (`station`), `network.second_band_min_sats` (1)
 - **dates in the text:** 2026-10-18
-- **hashes / run dirs:** exe `gnss_processor_w3base.exe` (main `30ca49e`, sha256 `50ca2ea5fbbc540cbb2b41a0b208313e0b88cf0f60ae134e0230f778d209d285`) for every run; run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`): 2 h `_rap_bds_{g2,gp2,ge2,gec2,gecs2}`, 6 h `_rap_bds_{g6,ge6,gec6,gecs6}`, census keys `bdsg`, `bdsge`, `bdsgec`, `bdsgecs`, `bdsgecge`, `bdsgecg`, `bdsgecsge`, `bdsgecsg` (replays `_rap_<key>_<site4>`), BeiDou-only consumer `_rap_bdsxc_bdsonly_wtzz`; scratch and scripts `D:/GnssProcessorSupport/gates/bds/`; section 8: branch `fix/single-band` commit `1546d1c`, exes `gnss_processor_sband2.exe` (sha256 `1183ce584a938bdc6827db126d0b3f2def18839607a2906e80f236dca2d86655`) and `gnss_processor_sband_ref.exe` (parent commit `a54155a`, sha256 `5fc9c713269cb26adb0946dd64844bc52e40112d4bd11edcc5aea9179926c5dd`), runs `_rap_sband_*` under the same run root, scratch `D:/GnssProcessorSupport/gates/sband/`
+- **hashes / run dirs:** exe `gnss_processor_w3base.exe` (main `30ca49e`, sha256 `50ca2ea5fbbc540cbb2b41a0b208313e0b88cf0f60ae134e0230f778d209d285`) for every run; run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`): 2 h `_rap_bds_{g2,gp2,ge2,gec2,gecs2}`, 6 h `_rap_bds_{g6,ge6,gec6,gecs6}`, census keys `bdsg`, `bdsge`, `bdsgec`, `bdsgecs`, `bdsgecge`, `bdsgecg`, `bdsgecsge`, `bdsgecsg` (replays `_rap_<key>_<site4>`), BeiDou-only consumer `_rap_bdsxc_bdsonly_wtzz`; scratch and scripts `D:/GnssProcessorSupport/gates/bds/`; section 8: branch `fix/single-band` commit `1546d1c`, exes `gnss_processor_sband2.exe` (sha256 `1183ce584a938bdc6827db126d0b3f2def18839607a2906e80f236dca2d86655`) and `gnss_processor_sband_ref.exe` (parent commit `a54155a`, sha256 `5fc9c713269cb26adb0946dd64844bc52e40112d4bd11edcc5aea9179926c5dd`), runs `_rap_sband_*` under the same run root, scratch `D:/GnssProcessorSupport/gates/sband/`; section 9: runs `_rap_sband_{ge6,off6,on6}` and census keys `sbandge`, `sbandoff`, `sbandon` on `gnss_processor_sband2.exe`, gate sides `w3sband` and `w3sbandref` under `gates/g5` and `gates/g7`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Question: does a third constellation, BeiDou on B1I and B3I, run healthy on the self-contained field golden, and what does it change for the held-out consumer and the 16-site census against GPS + Galileo and against GPS only? It runs healthy: 720 of 720 epochs on every arm, BeiDou clocks in the metre class (failure mode A absent at 58 stations), the rank gate never failed (failure mode B absent), no piece armed. As pre-registered (GEC) the three single-band stations are dropped at every epoch and the phase-anchor heal fires on 551 of 720; with their band-2 BeiDou removed (GEC-s) nothing fires. Census hours 2 to 6: GEC-s -0.0038 m against GE (5 better, 0 worse), -0.0267 m against GPS only (12 better, 1 worse); the consumer is within +0.007 m of GE in every settled hour. Users of the BeiDou wire without BeiDou are unchanged at the median (ARHT00ATA named). Cost 2 to 3 times GE on a shared box. Arming is open.
+**Outcome.** Question: does a third constellation, BeiDou on B1I and B3I, run healthy on the self-contained field golden, and what does it change for the held-out consumer and the 16-site census against GPS + Galileo and against GPS only? It runs healthy: 720 of 720 epochs on every arm, BeiDou clocks in the metre class (failure mode A absent at 58 stations), the rank gate never failed (failure mode B absent), no piece armed. As pre-registered (GEC) the three single-band stations are dropped at every epoch and the phase-anchor heal fires on 551 of 720; with their band-2 BeiDou removed (GEC-s) nothing fires. Census hours 2 to 6: GEC-s -0.0038 m against GE (5 better, 0 worse), -0.0267 m against GPS only (12 better, 1 worse); the consumer is within +0.007 m of GE in every settled hour. Users of the BeiDou wire without BeiDou are unchanged at the median (ARHT00ATA named). Cost 2 to 3 times GE on a shared box. The single-band rule (section 9) reproduces GEC-s on 6 h arms with the key on and is byte-identical with it off. Arming is open.
 
 ## 1. Question and history
 
@@ -268,3 +268,70 @@ Three arms on `gnss_processor_sband2.exe`, the section 4a design: GEC (the three
 
 - The 6 h arm pair on one exe (GEC-s and GEC + rule) with the census, then the arming decision and the generator row (the author's decision, section 6).
 - A tolerance for satellite scope, if it is wanted at all.
+
+## 9. The second-band admission on 6 h arms and the key-off identity gate (2026-10-19; append only)
+
+Section 8.5 left the 6 h pair with the census, and section 8.4 the threshold-1 read. Both are read here, with the identity gate of the key-off path. Exe `gnss_processor_sband2.exe` (sha256 `1183ce58…`), byte-identical to the Release build of branch `fix/single-band` at `1546d1c` (`a73df8b` adds this card only); the gate copy `gnss_processor_w3sband.exe` has the same hash. Arms `_rap_sband_{ge6,off6,on6}` (6 h) were made with `rapid_arm.py make` from the `arm.json` of `_rap_bds_ge6` and `_rap_bds_gec6`; a flattened diff shows the output path only for GE and rule-off, and the output path plus `network.second_band_admission` true for rule-on. The three arms ran together with the gate on a shared box, so wall times are not controlled. Census keys `sbandge`, `sbandoff`, `sbandon` (replays on the same exe, each with the wire's own arm as consumer base). Readouts and scripts: `D:/GnssProcessorSupport/gates/sband/`; gate sides `w3sband` and `w3sbandref` under `gates/g5` and `gates/g7`.
+
+### 9.1 Key off: identity gate (G5, 23 arms and the snapshot bytes)
+
+- **Against the pre-merge side `w3base` (main `30ca49e`).** Products and every trace are IDENTICAL in all 23 arms; the manifest (one `param_responses` record) and the whole logs differ in all 23. The parent-commit side (`w3sbandref`, exe `gnss_processor_sband_ref.exe`, sha256 `5fc9c713…`, built from `a54155a`, which carries the three small defects of [NSD](NSD_network_small_defects_2026-10-17.md) merged in main `8d15451`) differs from `w3base` in the same three files in the same 23 arms: those lines are NSD's. The reference for the rule is the parent side.
+- **Against the parent side.** Products, every trace, the manifest and `rt_engine.log` are IDENTICAL in all 23 arms. `stdout.txt` and the `main_log` set differ in 48 to 56 lines per arm, all of them the run-end entity census (the count 109 to 110 and the added `station.sba_since` row, which shifts the rows below it). With those two lines reversed on the candidate's text outputs (`subs_w3sband.sed`, the mechanism of the earlier gates) every arm and the snapshot bytes of `snapw` read IDENTICAL: 24 IDENTICAL in `gates/g7/summary_w3sband.txt` (the raw and the `w3base` summaries are kept beside it).
+- **6 h.** `_rap_sband_off6` against `_rap_bds_gec6` (the `w3base` exe, section 5.2): products, closed-loop trace, solution, events and epoch status byte-identical. `_rap_sband_ge6` against `_rap_bds_ge6`: products identical, consumer by hour and census (`sbandge` against `bdsge`) identical. The 6 h `w3base` arms are therefore same-build for the rule-off exe, and GEC-s and the census keys `bdsge`, `bdsgecs` stand as comparators.
+- **User side and real time** are not run: the seam has one call site, in the network epoch driver, so neither `Application::run` nor the real-time engine reaches it.
+
+### 9.2 Key on, 6 h
+
+| quantity | GE | GEC, rule off | GEC, rule on | GEC-s (section 5.2) |
+| --- | --- | --- | --- | --- |
+| exit, wall (s) | 0, 3,223 | 0, 7,314 | 0, 6,449 | 0, 5,226 |
+| epochs emitted of 720 (withheld by a gate) | 720 (0) | 720 (0) | 720 (0) | 720 (0) |
+| stations in the solve, min / median | 57 / 58 | 54 / 55 | 57 / 58 | 57 / 58 |
+| addStation rejections (`n_sta_pd_dropped`) | 0 | 2,160 | 0 | 0 |
+| observed near-null count at the gate, min to max (declared) | 2 to 2 (2) | 3 to 21 (3) | 3 to 3 (3) | 3 to 3 (3) |
+| S-basis completion, directions on epochs | 0 | 427 on 299 | 0 | 0 |
+| phase-anchor heal, columns on epochs | 0 | 3,323 on 551 | 0 | 0 |
+| epoch-loop ms per epoch (shared box) | 4,256 | 9,944 | 8,711 | 7,000 |
+| rule edges, withhold / readmit | none | none | 5 / 2 | none |
+
+- Rule-off reproduces plain GEC counter for counter (section 5.2); rule-on reproduces GEC-s: no station dropped, the declared near-null count at every epoch, the heal and the completion silent.
+- **What the rule withheld.** BeiDou at five stations, 30,113 records in 2,165 of 78,587 station-constellation-epochs (721 epochs screened, 720 emitted): WARK00NZL, MAJU00MHL and SCTB00ATA for the whole run (no satellite on the pair), MAC100AUS at TOW 259230 (12 satellites, back next epoch with 5 on the pair) and BSHM00ISR at TOW 279540 (15 satellites, none on the pair; back at 279570 with 2). The 12,488 records of HKSL00HKG (B1I spelled C1I / L1I) are left alone. Both edges are event rows and log lines; the BSHM00ISR return is answered by the gap re-entry response (`reentry_relevel` and `arc_resume` rows at TOW 279570).
+- **Wire.** Datum-free per-epoch rms of the change in satellite clock `c0`, rule-on against the GEC-s wire: GPS at most 5 mm, Galileo 35 mm, BeiDou 77 mm (medians 0.1, 1.6, 0.5 mm), the maxima in the first four epochs (the MAC100AUS withhold, decaying); the BSHM00ISR edge moves BeiDou by 0.5 to 1.2 mm. BeiDou `c0` maximum 13.88 m (C20, epoch 159), median 3.84 m, none above 50 m, as GEC-s. Against the rule-off wire the same measure reaches 0.13 m (GPS and BeiDou) and the GPS common level is 0.33 to 0.55 m apart.
+
+**WTZZ00DEU, 3D p50 by hour (m), the consumer on the arm's own systems.**
+
+| arm | h1 | h2 | h3 | h4 | h5 | h6 | below 0.1 m of 720 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GE | 0.058 | 0.011 | 0.018 | 0.010 | 0.015 | 0.011 | 688 |
+| GEC, rule off | 0.033 | 0.017 | 0.020 | 0.017 | 0.018 | 0.014 | 689 |
+| GEC, rule on | 0.030 | 0.015 | 0.019 | 0.017 | 0.018 | 0.015 | 687 |
+| GEC-s | 0.030 | 0.015 | 0.019 | 0.017 | 0.018 | 0.015 | 689 |
+
+Rule-on minus GEC-s: -0.6, 0.0, -0.1, -0.1, 0.0, 0.0 mm by hour; against GE at most +6.8 mm in hours 2 to 6 (hour 4), the shape of section 5.2.
+
+### 9.3 Census, 16 sites
+
+Median site p50 by hour (m): GPS only 0.452 0.112 0.045 0.053 0.039 0.044; GE 0.136 0.054 0.041 0.036 0.040 0.037; GEC rule off 0.096 0.039 0.033 0.036 0.031 0.031; GEC rule on 0.089 0.036 0.032 0.032 0.030 0.031; GEC-s 0.092 0.035 0.032 0.032 0.030 0.031.
+
+| paired change, arm against base | hours 2 to 6, median (m) | better / worse at 1 cm | hour 1, median (m) | better / worse |
+| --- | --- | --- | --- | --- |
+| rule on against rule off | -0.0010 | 2 / 0 | -0.0103 | 8 / 0 |
+| rule on against GE (`sbandge`, equal to `bdsge`) | -0.0035 | 5 / 0 | -0.0346 | 11 / 1 |
+| rule off against GE | -0.0025 | 5 / 0 | -0.0162 | 10 / 2 |
+| GEC-s against GE (section 5.2) | -0.0038 | 5 / 0 | -0.0331 | 10 / 2 |
+| rule on against GPS only (`bdsg`) | -0.0267 | 11 / 1 | -0.3068 | 15 / 1 |
+| rule off against GPS only | -0.0243 | 11 / 1 | -0.2948 | 15 / 1 |
+| rule on against the GEC-s census (`bdsgecs`) | 0.0000 | 0 / 0 | -0.0008 | 2 / 1 |
+
+- By group (the 10 / 3 / 3 grouping of section 5.2, rule on against GE): the ten sites with the pair -0.0143 m (5 / 0; hour 1 -0.0710 m), the three with B1I only -0.0007 m, the three without BeiDou -0.0005 m. GEC-s reads -0.0143, -0.0004, -0.0006 m, rule off -0.0120, +0.0003, +0.0004 m.
+- No site is worse than GE by 1 cm. The changes above 5 cm are ARHT00ATA -0.112 m and DAV100ATA -0.067 m (GEC-s -0.107 and -0.071; rule off -0.097 and -0.060). Against GPS only the one worse site is HARB00ZAF +0.0124 m (GEC-s +0.0120, rule off +0.0245).
+- Rule on against GEC-s, per site: largest change in hours 2 to 6 ARHT00ATA -0.0056 m and DAV100ATA +0.0045 m, none above 6 mm; hour 1 ASCG00SHN -0.028 m and CHTI00NZL -0.025 m (ignition hour). Not run: the GPS + Galileo and GPS-only users of the rule-on wire (the S5 replays of section 5.2).
+
+### 9.4 Threshold 1, read (the deferral of section 8.4)
+
+Per station, the count of BeiDou satellites per epoch with phase and code on both C2I / L2I and C6I / L6I, from the 58 RINEX files over the 6 h window (`dualcount.py`; the raw file, not the admission's verdict). 52 stations track BeiDou; four never reach the pair (WARK00NZL, MAJU00MHL, SCTB00ATA withheld whole, HKSL00HKG left alone). Two stations have an epoch with BeiDou tracked and none on the pair: BSHM00ISR and MAC100AUS, one epoch each, exactly the two one-epoch withholds. Lowest minimum of the count at the other stations: 1 at BSHM00ISR (2 epochs; 2 satellites in 6 epochs), then 3 at SAVO00BRA, 4 at BOR100POL, MRC100USA and POVE00BRA, 5 at GAMB00PYF and MAC100AUS. With threshold 1 the addStation guard rejected no station the rule admitted (0 in 720 epochs), BSHM00ISR with one or two pair satellites included; by the raw count, threshold 3 would differ from threshold 1 at BSHM00ISR alone (9 epochs). The threshold stays 1; the read covers this network and this day.
+
+### 9.5 Verdict and open
+
+- Identity with the key off: PASS (24 IDENTICAL against the parent side after the two declared census lines; products and traces identical in every arm against both references). Grade: ran. With the key on at station scope the rule reproduces the subtraction GEC-s in every quantity read (counters, wire, consumer, census); GEC no longer drops stations and the heal does not fire. The ledger row stays UNVALIDATED and the goldens are not changed; arming is the author's decision.
+- Not run: the 305-station regime, a second day, the warm resume, the satellite-scope hysteresis, the users-of-the-wire census, and a same-exe 6 h GEC-s (the comparators are `w3base` runs; the rule-off exe reproduces its sibling arms byte for byte, section 9.1). Cost: epoch loop 8.7 s per epoch rule on, 9.9 s rule off and 4.3 s GE (2.0 times GE) on the same shared box, uncontrolled.

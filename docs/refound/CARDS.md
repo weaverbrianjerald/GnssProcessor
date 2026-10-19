@@ -194,4 +194,5 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   their band-2 BeiDou removed (GEC-s) nothing fires. Census hours 2 to 6: GEC-s -0.0038 m against GPS + Galileo (5 better, 0
   worse), -0.0267 m against GPS only (12 / 1); WTZZ00DEU within +0.007 m of GE; cost 2 to 3 times GE. Nothing armed. The
   single-band rule is built behind `network.second_band_admission` (2026-10-18, UNVALIDATED; on 2 h arms it reproduces the
-  subtraction: no station dropped, consumer within 1 mm of GEC-s); the arming decision is open.
+  subtraction: no station dropped, consumer within 1 mm of GEC-s; 2026-10-19, section 9: key off, 24 IDENTICAL on the identity
+  gate; key on at 6 h it reproduces GEC-s, census hours 2 to 6 -0.0035 m against GE, 5 better, 0 worse); the arming decision is open.
