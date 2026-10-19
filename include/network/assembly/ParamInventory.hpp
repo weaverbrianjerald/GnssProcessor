@@ -299,6 +299,15 @@ namespace GnssProcessor {
         }
 
         /**
+         * @brief Is a receiver code-bias key governed by the rule?  The same test as
+         *        @ref governs for a class, for a column of a station's parameter set.
+         *
+         * @param k The receiver code-bias key.
+         * @return True for the receiver IFB form (form Ifb).
+         */
+        static bool governs(const RxCbKey& k) { return k.form == ParamForm::Ifb; }
+
+        /**
          * @brief Does the rule drop this instance on this run?
          * @param id The instance.
          * @return @ref drop and the instance's class is governed (@ref governs).

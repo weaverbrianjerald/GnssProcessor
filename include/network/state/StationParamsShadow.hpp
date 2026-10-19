@@ -17,8 +17,8 @@
  *    (@c UserParamView), to its own column, and the slot's linearization point is the state's
  *    value there, bit for bit; a column the classifier refused is an unnamed slot with the
  *    state's value;
- *  - each slot's disposition is the split's, and an ambiguity's re-seed mark is the state
- *    manager's;
+ *  - each slot's disposition is the split's, an ambiguity's re-seed mark is the state
+ *    manager's, and a phase colour's elevation is the state manager's, bit for bit;
  *  - the set's own typed lookup (@ref findParam) finds each slot at its own index;
  *  - the inventory recorded from the set is the inventory the state manager alone gives
  *    (@ref recordStationParamsFromState: every record, the unclassified list and the two
@@ -61,6 +61,7 @@ enum class SetMismatch : std::uint8_t {
     XLin,         ///< A slot's linearization point is not the state's value at its column (any bit).
     Disposition,  ///< A slot's disposition is not the split's for its column.
     Reseed,       ///< An ambiguity's re-seed mark differs from the state manager's.
+    Elevation,    ///< A phase colour's elevation is not the state manager's (any bit).
     Lookup,       ///< The set's typed lookup does not find a slot at its own index.
     Inventory,    ///< The inventory recorded from the set differs from the one the state manager alone gives.
     TypedCount,   ///< A typed map holds a different number of keys than the state manager's map of its family.
@@ -68,13 +69,13 @@ enum class SetMismatch : std::uint8_t {
 };
 
 /// Number of @ref SetMismatch values.
-inline constexpr std::size_t kSetMismatches = 9;
+inline constexpr std::size_t kSetMismatches = 10;
 
 /**
  * @brief The name of a finding, as the run-end table prints it.
  * @param m The finding.
- * @return "size", "identity", "x_lin", "disposition", "reseed", "lookup", "inventory",
- *         "typed count" or "typed order".
+ * @return "size", "identity", "x_lin", "disposition", "reseed", "elevation", "lookup",
+ *         "inventory", "typed count" or "typed order".
  */
 const char* setMismatchName(SetMismatch m);
 
@@ -103,7 +104,8 @@ struct StationParamsCheck {
  * @brief Build a station's parameter set from its state manager.
  *
  * Lists the columns (@c listStateColumns) and appends a slot per column in column order with
- * the value of the state vector, the split's disposition and the ambiguity's re-seed mark.  A
+ * the value of the state vector, the split's disposition, the ambiguity's re-seed mark and the
+ * phase colour's elevation.  A
  * column the classifier refuses (@c classifyStateColumn) becomes an unnamed slot and its
  * "<container>:<key>" is listed in @ref StationParams::unclassified.  The withheld shared
  * states that the inventory keeps (a classifiable key whose absorbing column the station holds)
@@ -124,9 +126,8 @@ void buildStationParams(const StateManager& sm, const std::vector<ParamDispositi
  *
  * The record the inventory made before it read the set: every column of @p sm classified and
  * paired with the split's disposition, then each withheld state whose absorbing column
- * @p sm holds.  Kept as the reference the recorded-from-the-set inventory is checked against
- * and as the fallback when the set cannot be built.  Pure per-station work: writes only
- * @p slot.
+ * @p sm holds.  Kept as the reference the recorded-from-the-set inventory is checked against.
+ * Pure per-station work: writes only @p slot.
  *
  * @param sm       The station's state manager.
  * @param station  The station's roster index.
@@ -160,13 +161,14 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
 
 /**
  * @brief Build a station's parameter set after its split, record the inventory from it and
- *        check both (inside the parallel produce phase).
+ *        check both (inside the parallel produce phase).  Throws when the set cannot be built.
  *
  * Writes only the station's own @c params, @c params_check and @p inventory, and reads its
- * state manager and its measurement model's withheld-state list.  Never throws: a failure is
- * counted in @c StationParamsCheck::failed, the set is left empty, and the inventory is then
- * recorded from the state manager (@ref recordStationParamsFromState), so that the shadow
- * cannot change what the station does.
+ * state manager and its measurement model's withheld-state list.  A failed check is counted in
+ * @c StationParamsCheck::failed and changes nothing else.  A failed build is counted too, the
+ * set is left empty, and the exception propagates: the carried-prior steps read the set, so the
+ * station's assembly fails for the epoch (the produce loop records the error and the solve
+ * drops the station with a warning) instead of continuing with no parameters.
  *
  * @param st        The station (@c params and @c params_check written).
  * @param station   The station's roster index.

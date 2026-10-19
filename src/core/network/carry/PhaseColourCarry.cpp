@@ -22,7 +22,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -53,7 +53,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -126,14 +125,16 @@ StationStep networkPhaseColourRows(StationBuild& build) {
     const Eigen::VectorXd& x_lin_pc = build.postUpdateState();
     std::vector<std::tuple<Eigen::Index, double, double>> brows;   // (col, w, y)
     std::vector<RowTag> brow_tag;   // one contribution tag per row
-    for (const auto& [pc_sat, pc_sidx] : st.sm->getPhaseColourStates()) {
-        const int pidx = static_cast<int>(pc_sidx);
-        if (pidx < 0 || pidx >= x_lin_pc.size() || !std::isfinite(x_lin_pc(pidx)))
+    const StationParams& params = st.params;
+    for (const auto& [pc_sat_id, pidx] : params.colour) {
+        const LocalSlot& slot = slotAt(params, pidx);
+        const std::string pc_sat = net::satKey(pc_sat_id);
+        if (pidx >= x_lin_pc.size() || !std::isfinite(x_lin_pc(pidx)))
             continue;
         const auto phit = h2local.find(pidx);
         if (phit == h2local.end()) continue;
         const Eigen::Index pcol = static_cast<Eigen::Index>(phit->second);
-        const double elev = st.sm->getPhaseColourElevation(pc_sat);
+        const double elev = slot.elevation_deg;
         const bool folded = std::find(R.pc_folded.begin(), R.pc_folded.end(), pcol)
                             != R.pc_folded.end();
         R.pl_pc.push_back(PlPc{pc_sat, pcol, x_lin_pc(pidx), elev, folded});
@@ -197,21 +198,20 @@ void networkPhaseColourBlockColumns(StationCarryFrame& carry) {
     std::vector<LocalBlockCol>& pc_bc = carry.pc_bc;
     std::vector<LocalCarry>& pc_pred = carry.pc_pred;
     if (ctx.knobs.pc_on && pl_blk_on) {
-        const auto& pcs = st.sm->getPhaseColourStates();
-        pc_pred.reserve(pcs.size());
-        for (const auto& [pc_sat, pc_sidx] : pcs) {
-            const int pidx = static_cast<int>(pc_sidx);
-            if (pidx < 0 || pidx >= x_lin.size() || !std::isfinite(x_lin(pidx))) continue;
+        const StationParams& params = st.params;
+        pc_pred.reserve(params.colour.size());
+        for (const auto& [pc_sat, pidx] : params.colour) {
+            const LocalSlot& slot = slotAt(params, pidx);
+            if (pidx >= x_lin.size() || !std::isfinite(x_lin(pidx))) continue;
             const auto phit = h2local.find(pidx);
             if (phit == h2local.end()) continue;   // no phase row this epoch
             const LocalCarry* pit =
-                net::getLos(ctx.entities.los, static_cast<int>(i), pc_sat, &net::LosState::pc);
+                net::get(ctx.entities.los, LosId{StationId{i}, pc_sat}, &net::LosState::pc);
             if (pit == nullptr) continue;           // cold: birth row
             const double pgap = pl_now_s - pit->last_seen_s;
             if (!(pgap >= 0.0) || pgap > ctx.knobs.pc_max_gap_s) continue;   // stale: birth row
             const double phi = std::exp(-pgap / ctx.knobs.pc_tau_s);
-            const double s2  = ctx.knobs.pcStationaryVar(
-                st.sm->getPhaseColourElevation(pc_sat));
+            const double s2  = ctx.knobs.pcStationaryVar(slot.elevation_deg);
             const double pvar = phi * phi * pit->var + s2 * (1.0 - phi * phi);
             if (!(pvar > 0.0) || !std::isfinite(pvar)) continue;
             pc_pred.push_back(*pit);
@@ -223,8 +223,7 @@ void networkPhaseColourBlockColumns(StationCarryFrame& carry) {
                                &pr, pvar, std::max(0.0, pgap), /*vce_fac=*/1.0};
             pcol.phi   = phi;
             pcol.is_pc = true;
-            if (const auto col_sat = SatId::parse(pc_sat))   // its block row's tag
-                pcol.sat = *col_sat;
+            pcol.sat = pc_sat;   // its block row's tag
             pc_bc.push_back(pcol);
             R.pc_planned.push_back(pcol.col);
         }

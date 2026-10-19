@@ -1233,10 +1233,9 @@ void networkStationLocalBlock(StationCarryFrame& carry) {
             //     harvest needs the record whichever route folded.
             bool zwd_pushed = false;
             if (zwd_blk_on) {
-                const size_t ztidx_sz = st.sm->getTropoIndex();
-                if (ztidx_sz != std::numeric_limits<size_t>::max()) {
-                    const int ztidx = static_cast<int>(ztidx_sz);
-                    if (ztidx >= 0 && ztidx < x_lin.size()
+                const int ztidx = st.params.zwd;   // -1: the station has no wet-delay column
+                if (ztidx >= 0) {
+                    if (ztidx < x_lin.size()
                         && std::isfinite(x_lin(ztidx))) {
                         const auto zhit = h2local.find(ztidx);
                         if (zhit != h2local.end()) {

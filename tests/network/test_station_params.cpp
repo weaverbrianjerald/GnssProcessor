@@ -8,13 +8,16 @@
  * are added in an order unlike the key order, so a map that iterated in birth order instead of
  * key order would fail.  Contracts:
  *  - the set has one slot per column, in column order, with the state's value, the split's
- *    disposition and the ambiguity's re-seed mark, and every typed lookup finds its slot;
+ *    disposition, the ambiguity's re-seed mark and the phase colour's elevation, and every
+ *    typed lookup finds its slot;
  *  - every typed map iterates in the order of the state manager's map of its family;
  *  - the check passes on that set and counts each kind of damage when the set is damaged (a
  *    check that cannot fail proves nothing);
  *  - a column the classifier refuses is an unnamed slot, listed, and the other columns are named;
  *  - the inventory recorded from the set is the inventory the state manager alone gives, and
  *    the keys, the state labels and the trace labels read from the set are the state manager's;
+ *  - the strings and predicates the carried-prior steps take from a typed entry (satellite,
+ *    signal, key text, receiver code-bias form) are what the key parsers gave them;
  *  - the withheld shared states are kept exactly while their absorbing column is held;
  *  - a parameter with no typed map keeps its slot and is counted;
  *  - the run-end table names the families and prints the findings.
@@ -32,6 +35,7 @@
 #include "network/assembly/ParamInventory.hpp"
 #include "network/diag/StationBlock.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/Entities.hpp"
 #include "network/qc/RedundancyCensus.hpp"
 #include "network/state/StateColumns.hpp"
 #include "network/state/StationParams.hpp"
@@ -103,9 +107,11 @@ struct Station {
         // first, signals reversed.
         double v = 0.25;
         auto next = [&] { return v += 0.375; };
+        double elevation = 12.5;
         for (const char* sat : {"R07", "E24", "G12", "G05", "E11", "R02"}) {
             sm->addIonosphereState(sat, next());
             sm->addPhaseColourState(sat, 1e-6);
+            sm->setPhaseColourElevation(sat, elevation += 6.25);
         }
         for (const char* sat : {"G12", "E24", "G05", "E11", "R07", "R02"}) {
             const std::string s = sat;
@@ -187,6 +193,13 @@ TEST(StationParamsTest, TheSetHasOneSlotPerColumnInColumnOrder) {
         EXPECT_EQ(std::memcmp(&s.x_lin, &x(static_cast<Eigen::Index>(k)), sizeof(double)), 0) << k;
         EXPECT_EQ(s.disp, st.disp[k]) << k;
         EXPECT_EQ(findParam(set, s.ref), static_cast<int>(k)) << describe(s.ref);
+        if (s.ref.kind == NetworkParamKind::PhaseColour) {
+            const double want = st.sm->getPhaseColourElevation(userKey(s.ref));
+            EXPECT_FALSE(std::isnan(s.elevation_deg)) << k;
+            EXPECT_EQ(std::memcmp(&s.elevation_deg, &want, sizeof(double)), 0) << k;
+        } else {
+            EXPECT_TRUE(std::isnan(s.elevation_deg)) << k;
+        }
     }
     EXPECT_EQ(set.untyped, 0);
     EXPECT_EQ(set.position[0], static_cast<int>(st.sm->getPositionIndex()));
@@ -392,6 +405,11 @@ TEST(StationParamsTest, TheCheckCountsEachKindOfDamage) {
              for (LocalSlot& l : s.slots)
                  if (l.ref.kind == NetworkParamKind::Ambiguity) { l.pending_reseed = true; return; }
          }},
+        {"a phase colour elevation moved by one ulp", SetMismatch::Elevation,
+         [](StationParams& s, StationParamSlot&) {
+             LocalSlot& l = s.slots[static_cast<std::size_t>(s.colour.begin()->second)];
+             l.elevation_deg = std::nextafter(l.elevation_deg, 1e300);
+         }},
         {"a typed entry removed", SetMismatch::TypedCount,
          [](StationParams& s, StationParamSlot&) { s.amb.erase(s.amb.begin()); }},
         {"two typed entries pointing at each other's slots", SetMismatch::TypedOrder,
@@ -491,6 +509,73 @@ TEST(StationParamsTest, KeyTextAndStateLabelAreTheStateManagers) {
     EXPECT_EQ(keys(set.shared.sat_clock), textKeys(st.sm->getSatClockStates()));
     EXPECT_EQ(keys(set.shared.sat_phase_bias), textKeys(st.sm->getSatPhaseBiasStates()));
     EXPECT_EQ(keys(set.shared.sat_code_bias), textKeys(st.sm->getSatBiasStates()));
+}
+
+TEST(StationParamsTest, TheCarryReadersGetWhatTheKeyParsersGave) {
+    Station st;
+    StationParams set;
+    buildStationParams(*st.sm, st.disp, st.absorbed, set);
+
+    // Ambiguity: the satellite, the signal and the key the readers build from an entry are the
+    // ones the key parser split out of the state manager's key, at the same column.
+    ASSERT_EQ(set.amb.size(), st.sm->getAmbiguities().size());
+    auto amb = st.sm->getAmbiguities().begin();
+    for (const auto& [arc, index] : set.amb) {
+        const auto parts = K::parseAmbiguityKey(amb->first);
+        ASSERT_TRUE(parts.has_value()) << amb->first;
+        EXPECT_EQ(net::satKey(arc.sat), parts->satellite);
+        EXPECT_EQ(net::signalKey(arc.signal), parts->signal);
+        EXPECT_EQ(keyText(slotAt(set, index).ref), amb->first);
+        EXPECT_EQ(static_cast<std::size_t>(index), amb->second);
+        ++amb;
+    }
+
+    // Slant ionosphere and phase colour: the satellite string is the key.
+    auto bySatellite = [&](const std::map<SatId, int>& typed, const std::map<std::string, std::size_t>& text) {
+        ASSERT_EQ(typed.size(), text.size());
+        auto t = text.begin();
+        for (const auto& [sat, index] : typed) {
+            EXPECT_EQ(net::satKey(sat), t->first);
+            EXPECT_EQ(static_cast<std::size_t>(index), t->second);
+            ++t;
+        }
+    };
+    bySatellite(set.iono, st.sm->getIonosphereStates());
+    bySatellite(set.colour, st.sm->getPhaseColourStates());
+
+    // Inter-system bias: the constellation name is the key.
+    ASSERT_EQ(set.isb.size(), st.sm->getSystemTimeOffsetStates().size());
+    auto isb = st.sm->getSystemTimeOffsetStates().begin();
+    for (const auto& [sys, index] : set.isb) {
+        EXPECT_EQ(std::string(systemName(sys)), isb->first);
+        EXPECT_EQ(static_cast<std::size_t>(index), isb->second);
+        ++isb;
+    }
+
+    // The receiver clock and the wet delay: the state manager's indices, -1 where it has none.
+    EXPECT_EQ(static_cast<std::size_t>(set.clock), st.sm->getClockIndex());
+    EXPECT_EQ(static_cast<std::size_t>(set.zwd), st.sm->getTropoIndex());
+
+    // Receiver code bias: the form predicates the readers use are the key predicates.
+    ASSERT_EQ(set.rx_cb.size(), st.sm->getCodeBiasStates().size());
+    auto cb = st.sm->getCodeBiasStates().begin();
+    long long per_slot = 0, dcb = 0, ifb = 0;
+    for (const auto& [key, index] : set.rx_cb) {
+        EXPECT_EQ(keyText(slotAt(set, index).ref), cb->first);
+        EXPECT_EQ(key.form == ParamForm::GloSlotIfb, K::isGlonassPerSlotIfbKey(cb->first)) << cb->first;
+        EXPECT_EQ(key.form == ParamForm::Dcb, K::parseDcbKey(cb->first).has_value()) << cb->first;
+        EXPECT_EQ(key.form == ParamForm::Ifb, K::parseIfbKey(cb->first).has_value()) << cb->first;
+        // The rule reads a key as it reads the class of the same column.
+        EXPECT_EQ(RxIfbRule::governs(key), RxIfbRule::governs(paramInstanceOf(slotAt(set, index).ref).cls))
+            << cb->first;
+        per_slot += key.form == ParamForm::GloSlotIfb;
+        dcb += key.form == ParamForm::Dcb;
+        ifb += RxIfbRule::governs(key);
+        ++cb;
+    }
+    EXPECT_EQ(per_slot, 2);
+    EXPECT_EQ(dcb, 2);
+    EXPECT_EQ(ifb, 1);
 }
 
 namespace {
@@ -619,8 +704,8 @@ TEST(StationParamsTest, TheReportNamesTheFamiliesAndPrintsTheFindings) {
                                "satellite code bias"})
         EXPECT_TRUE(has(family)) << family;
     EXPECT_FALSE(has("no typed map"));   // listed only when a slot has none
-    EXPECT_TRUE(has("size 0, identity 0, x_lin 0, disposition 0, reseed 0, lookup 0, inventory 0, "
-                    "typed count 0, typed order 0"));
+    EXPECT_TRUE(has("size 0, identity 0, x_lin 0, disposition 0, reseed 0, elevation 0, lookup 0, "
+                    "inventory 0, typed count 0, typed order 0"));
     EXPECT_FALSE(has("WARNING"));
     EXPECT_TRUE(has("wall of the builds and checks"));
 

@@ -21,8 +21,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "network/state/StateColumns.hpp"   // classifyStateColumn (the receiver IFB rule)
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -53,7 +52,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -121,10 +119,10 @@ StationStep networkRxIfbRecoupleEdge(StationBuild& build) {
     // (constellation, kind) and not per signal.  The carry map is read-only here.
     if (!ctx.param_inventory.rx_ifb.estimated_by_knob) return StationStep::Next;
     const long long ep = static_cast<long long>(ctx.counters.n_loop_epochs);
-    for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
-        if (!h2local.count(static_cast<int>(cb_sidx))) continue;
-        const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
-        if (!id || !RxIfbRule::governs(id->cls)) continue;
+    for (const auto& [cb, cb_slot] : st.params.rx_cb) {
+        if (!h2local.count(cb_slot)) continue;
+        if (!RxIfbRule::governs(cb)) continue;
+        const std::string cb_key = keyText(slotAt(st.params, cb_slot).ref);
         const auto lit = st.l5b.last_est_epoch.find(cb_key);
         if (lit != st.l5b.last_est_epoch.end() && lit->second < ep - 1
             && (net::get(ctx.entities.stations, StationId{static_cast<int>(i)},
@@ -184,13 +182,13 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
     // (filled only when network.estimate_rx_extra_band_code_delay is effective).
     std::vector<char>& rxcb_ifb = carry.rxcb_ifb;
     if (rxcb_blk_on) {
-        for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
-            if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
-            const int cb_idx = static_cast<int>(cb_sidx);
-            if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+        for (const auto& [cb, cb_idx] : st.params.rx_cb) {
+            if (cb.form == ParamForm::GloSlotIfb) continue;  // anchored family
+            if (cb_idx >= x_lin.size()) continue;
             if (!std::isfinite(x_lin(cb_idx))) continue;
             const auto cbhit = h2local.find(cb_idx);
             if (cbhit == h2local.end()) continue;
+            const std::string cb_key = keyText(slotAt(st.params, cb_idx).ref);
             const auto* cbit = net::get(sta_rows, StationId{static_cast<int>(i)},
                                         &net::StationState::signals, cb_key, &net::StationSignalState::rx_cb);
             if (cbit == nullptr) continue;   // cold: the harvest seeds it
@@ -222,9 +220,8 @@ void networkRxCbBlockColumns(StationCarryFrame& carry) {
                 /*is_rx_cb=*/true});
             rxcb_bc.back().signal = rxCodeBiasSignal(cb_key);   // its block row's tag
             if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
-                const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
                 rxcb_ifb.resize(rxcb_bc.size(), 0);
-                rxcb_ifb.back() = (id && RxIfbRule::governs(id->cls)) ? 1 : 0;
+                rxcb_ifb.back() = RxIfbRule::governs(cb) ? 1 : 0;
             }
         }
     }
@@ -274,14 +271,14 @@ void networkRxCbPriors(StationCarryFrame& carry) {
     // gated on rx_cb_on, so a datum-only run fills the vector and nothing
     // harvests it, as intended.)
     if (!(rx_cb_on || rx_cb_datum)) return;
-    for (const auto& [cb_key, cb_sidx] : st.sm->getCodeBiasStates()) {
-        if (StateKeys::isGlonassPerSlotIfbKey(cb_key)) continue;  // anchored family
-        const int cb_idx = static_cast<int>(cb_sidx);
-        if (cb_idx < 0 || cb_idx >= x_lin.size()) continue;
+    for (const auto& [cb, cb_idx] : st.params.rx_cb) {
+        if (cb.form == ParamForm::GloSlotIfb) continue;  // anchored family
+        if (cb_idx >= x_lin.size()) continue;
         if (!std::isfinite(x_lin(cb_idx))) continue;
         const auto cbhit = h2local.find(cb_idx);
         if (cbhit == h2local.end()) continue;
         const Eigen::Index cbcol = static_cast<Eigen::Index>(cbhit->second);
+        const std::string cb_key = keyText(slotAt(st.params, cb_idx).ref);
         R.pl_cb.emplace_back(cb_key, cbcol, x_lin(cb_idx));
         // --- RXCB-DATUM: loose zero-mean prior on the receiver DCB ----
         // The receiver-side counterpart of the W6 satellite code-bias
@@ -308,7 +305,7 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         // The target is the absolute zero, so in the local block's
         // delta-around-x_lin coordinates the RHS is -Lambda * x_lin, the
         // same convention the rx-CB carry's innovation uses.
-        if (rx_cb_datum && StateKeys::parseDcbKey(cb_key)) {
+        if (rx_cb_datum && cb.form == ParamForm::Dcb) {
             const double lam = 1.0 / (rx_cb_datum_sigma * rx_cb_datum_sigma);
             const double eta = lam * (0.0 - x_lin(cb_idx));
             if (std::isfinite(lam) && std::isfinite(eta)) {
@@ -340,11 +337,8 @@ void networkRxCbPriors(StationCarryFrame& carry) {
         // A receiver IFB column's folds and withholds on this route,
         // counted at its own station (nothing is counted unless the knob is
         // effective).
-        bool cb_is_ifb = false;
-        if (ctx.param_inventory.rx_ifb.estimated_by_knob) {
-            const auto id = classifyStateColumn(StateContainer::CodeBiasStates, cb_key);
-            cb_is_ifb = id && RxIfbRule::governs(id->cls);
-        }
+        const bool cb_is_ifb =
+            ctx.param_inventory.rx_ifb.estimated_by_knob && RxIfbRule::governs(cb);
         double cb_var_eff = 0.0;
         const double cb_innov = cbit->value_abs - x_lin(cb_idx);
         const RxCbInjectAction act = rxCbInjectGate(

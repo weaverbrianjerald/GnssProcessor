@@ -14,7 +14,7 @@
 #include "config/GnssConfig.hpp"              // config_.getNetworkConfig()
 #include "common/GnssIdentity.hpp"            // systemOfSat, rinexLetter
 #include "network/solve/NormalEquations.hpp"  // DdPriorBlock / GroupInput
-#include "filter/StateKeySchema.hpp"          // StateKeys::parse*
+#include "network/state/StationParams.hpp"   // the station's parameter set, keyText
 
 #include <Eigen/Dense>
 
@@ -92,22 +92,18 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
 
     // The carry driver needs this arc's ambiguity linearization value when the
     // linearization-frame carry is armed: it stores Σ c·x_lin per chord (RS-2,
-    // SPEC_event_harness §21.4).  Nothing else reads it, so with it off the per-station
-    // state copy is not taken.
+    // SPEC_event_harness §21.4).  Nothing else reads it.
     const bool carry_lin_needed = config_.getNetworkConfig().state_snapshot_carry_lin;
     for (size_t i = 0; i < stations.size(); ++i) {
         if (est_index_of[i] < 0) continue;
         const auto& h2l = asm_res[i].h2local;
-        const Eigen::VectorXd x_lin_st =
-            carry_lin_needed ? stations[i].sm->getStateVector() : Eigen::VectorXd();
-        auto linOf = [&](std::size_t state_index) -> double {
-            const Eigen::Index si = static_cast<Eigen::Index>(state_index);
-            return (si >= 0 && si < x_lin_st.size()) ? x_lin_st(si) : 0.0;
-        };
-        for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
-            const auto parts = StateKeys::parseAmbiguityKey(key);
-            if (!parts || parts->satellite.empty()) continue;
-            const System sys = systemOfSat(parts->satellite);
+        const StationParams& params = stations[i].params;
+        for (const auto& [arc, sidx] : params.amb) {
+            const LocalSlot& slot = slotAt(params, sidx);
+            const std::string sat    = net::satKey(arc.sat);
+            const std::string signal = net::signalKey(arc.signal);
+            const std::string key    = keyText(slot.ref);
+            const System sys = arc.sat.sys;
             if (sys == System::GLONASS) {   // GLONASS FDMA: no common-λ integer DD (spec OPEN-3)
                 if (!carry_glonass_warned) {
                     log->warn("Network[invariant carry]: GLONASS ambiguities are EXCLUDED from the "
@@ -120,10 +116,9 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
             // The satellite phase-bias key is per satellite ("<sat>|<sig>|PB"), not the
             // per-system receiver-bias key.  Only ambiguities backing an ungated shared
             // phase bias (a vertex of the eq34 graph) become DD arcs.
-            const std::string pbkey =
-                StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal);
+            const std::string pbkey = keyText(satPhaseBiasRef(arc.sat, arc.signal));
             if (!shared_phase_keys.count(pbkey)) continue;   // not an eq34 arc (gated/legacy lump)
-            const auto hit = h2l.find(static_cast<int>(sidx));
+            const auto hit = h2l.find(sidx);
             if (hit == h2l.end() || hit->second < 0) continue;   // unresolvable ⇒ chord refloats
             // Slip feed (C3c): an entry in the slip funnel carry_slipped_ambs (a PASS-A
             // detection by MW wide-lane / LLI / IF-phase, recorded at the detector so the
@@ -161,7 +156,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                         return true;
                     funnel_spared = true;
                 }
-                if (we_culprits.names(static_cast<int>(i), parts->satellite)) {
+                if (we_culprits.names(static_cast<int>(i), sat)) {
                     culprit_marked.insert(sk);
                     return true;
                 }
@@ -171,12 +166,12 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
                 if (funnel_spared) ++ctx.counters.carry_innov_kill_suppressed;
                 return false;
             };
-            int& sv = net::putSat(entities, parts->satellite, &net::SatelliteState::carry_vertex);
+            int& sv = net::putSat(entities, sat, &net::SatelliteState::carry_vertex);
             if (sv == 0)
                 sv = kSatBase + static_cast<int>(net::present(ctx.entities.sats,
                                                               &net::SatelliteState::carry_vertex));
 
-            int& gk = net::put(cons_rows, sys, &net::ConstellationState::channels, parts->signal,
+            int& gk = net::put(cons_rows, sys, &net::ConstellationState::channels, signal,
                                &net::ChannelState::group_id);
             if (gk == 0)
                 gk = static_cast<int>(net::present(cons_rows, &net::ConstellationState::channels,
@@ -188,7 +183,7 @@ void networkBuildCarryDdPriors(NetworkRun& run, const NetworkEpoch& ep, EpochDdB
             a.est_station = est_index_of[i];
             a.local_col   = static_cast<int>(hit->second);
             a.slipped     = ambSlipped(key);
-            if (carry_lin_needed) a.x_lin = linOf(sidx);   // RS-2
+            if (carry_lin_needed) a.x_lin = slot.x_lin;   // RS-2
             groups[gk].key = gk;
             groups[gk].arcs.push_back(a);
             // Record arcs for the innovation-flag reverse lookup (D5).  Only chords can be

@@ -30,15 +30,18 @@
  *
  * The set is built from the station's state manager, one slot per state column (slot k is
  * column k), after the station's measurement pre-pass and split, and checked against it
- * (network/state/StationParamsShadow.hpp).  The parameter inventory, the trace labels and the
- * diagnostics read it; the columns are still born in the state manager, so the writers of a
- * column (births, prunes, the re-seed marks) are the state manager's, and a reader that needs
- * what a later stage of the epoch changes (a re-seed mark set by a screen after the split)
- * still asks the state manager.  The set holds the values of the split: the linearization
- * points and the dispositions as they were when the station's rows were built.  It is rebuilt
- * only when a station reaches its split, so a reader uses a station's set only in an epoch in
- * which the station was assembled (an entry of the epoch's estimator index); for any other
- * station it is the last build.
+ * (network/state/StationParamsShadow.hpp).  The parameter inventory, the trace labels, the
+ * diagnostics and the carried-prior steps of PASS B (the ambiguity, slant ionosphere, receiver
+ * clock, receiver code-bias, phase-colour and wet-delay carries, the local block, and the
+ * double-difference prior build) read it; the columns are still born in the state manager, so
+ * the writers of a column (births, prunes, the re-seed marks) are the state manager's, and a
+ * reader that needs what a later stage of the epoch changes (a re-seed mark set by a screen
+ * after the split) still asks the state manager.  The set holds the values of the split: the
+ * linearization points and the dispositions as they were when the station's rows were built.
+ * It is rebuilt only when a station reaches its split, so a reader uses a station's set only in
+ * an epoch in which the station was assembled (an entry of the epoch's estimator index); for
+ * any other station it is the last build.  A station whose set cannot be built fails its
+ * assembly for the epoch (the run names it and drops it), so that no reader meets an empty set.
  *
  * Plain value types and free functions; no behaviour classes.
  */
@@ -49,6 +52,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <map>
 #include <string>
 #include <vector>
@@ -69,6 +73,10 @@ struct LocalSlot {
     /// map, so no reader of a family sees it, and the inventory lists it as unclassified.  It
     /// keeps slot k the column k.
     bool             unnamed{false};
+    /// The elevation (degrees) of the line of sight a phase colour belongs to this epoch, the
+    /// argument of its stationary prior; NaN for every other parameter and for a phase colour
+    /// with none recorded.
+    double           elevation_deg{std::numeric_limits<double>::quiet_NaN()};
 };
 
 /**
@@ -147,6 +155,17 @@ struct StationParams {
  *         map or the key was taken (counted in @ref StationParams::untyped).
  */
 bool addParam(StationParams& set, const LocalSlot& slot);
+
+/**
+ * @brief The slot a typed map entry or a state column names.
+ *
+ * @param set   The set.
+ * @param index A slot index (a value of a typed map, a state column), in range.
+ * @return The slot.
+ */
+inline const LocalSlot& slotAt(const StationParams& set, int index) {
+    return set.slots[static_cast<std::size_t>(index)];
+}
 
 /**
  * @brief The slot of a parameter.

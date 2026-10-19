@@ -165,6 +165,7 @@ const char* setMismatchName(SetMismatch m) {
         case SetMismatch::XLin:        return "x_lin";
         case SetMismatch::Disposition: return "disposition";
         case SetMismatch::Reseed:      return "reseed";
+        case SetMismatch::Elevation:   return "elevation";
         case SetMismatch::Lookup:      return "lookup";
         case SetMismatch::Inventory:   return "inventory";
         case SetMismatch::TypedCount:  return "typed count";
@@ -197,6 +198,8 @@ void buildStationParams(const StateManager& sm, const std::vector<ParamDispositi
             slot.ref = paramRefOf(*id, axis);
             slot.pending_reseed = col.container == StateContainer::Ambiguities
                                && sm.isAmbiguityPendingReseed(col.key);
+            if (col.container == StateContainer::PhaseColourStates)
+                slot.elevation_deg = sm.getPhaseColourElevation(col.key);
         } else {
             slot.unnamed = true;
             set.unclassified.push_back(std::string(stateContainerName(col.container)) + ":" + col.key);
@@ -317,6 +320,14 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
                                        describe(s.ref), s.pending_reseed, reseed);
                 });
             }
+            if (s.ref.kind == NetworkParamKind::PhaseColour
+                && !sameBits(s.elevation_deg, sm.getPhaseColourElevation(userKey(s.ref)))) {
+                f.note(SetMismatch::Elevation, [&] {
+                    return fmt::format("slot {} ({}): {:.17g} against the state manager's {:.17g}", k,
+                                       describe(s.ref), s.elevation_deg,
+                                       sm.getPhaseColourElevation(userKey(s.ref)));
+                });
+            }
             if (findParam(set, s.ref) != static_cast<int>(k)) {
                 f.note(SetMismatch::Lookup, [&] {
                     return fmt::format("slot {} ({}) is found at slot {}", k, describe(s.ref),
@@ -350,32 +361,31 @@ void networkShadowStationParams(NetStation& st, int station,
                                 const std::vector<ParamDisposition>& col_disp,
                                 StationParamSlot& inventory, double tow) {
     const auto started = std::chrono::steady_clock::now();
+    const auto tally_wall = [&] {
+        st.params_check.wall_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                       std::chrono::steady_clock::now() - started).count();
+    };
     const StationAbsorbed& absorbed = st.mm->absorbedSharedStates();
-    bool built = false;
     try {
         buildStationParams(*st.sm, col_disp, absorbed, st.params);
         recordStationParams(st.params, station, inventory);
-        ++st.params_check.builds;
-        if (!st.params.unclassified.empty()) ++st.params_check.unclassified;
-        built = true;
     } catch (...) {
+        // The carried-prior steps read the set, so an empty one must not reach them: the
+        // station's assembly fails for the epoch (the produce loop records and reports it).
         ++st.params_check.failed;
         st.params = StationParams{};
-        try {
-            recordStationParamsFromState(*st.sm, station, col_disp, absorbed, inventory);
-        } catch (...) {
-        }
+        tally_wall();
+        throw;
     }
-    if (built) {
-        try {
-            checkStationParams(st.params, *st.sm, col_disp, absorbed, inventory, station, tow,
-                               st.params_check);
-        } catch (...) {
-            ++st.params_check.failed;
-        }
+    ++st.params_check.builds;
+    if (!st.params.unclassified.empty()) ++st.params_check.unclassified;
+    try {
+        checkStationParams(st.params, *st.sm, col_disp, absorbed, inventory, station, tow,
+                           st.params_check);
+    } catch (...) {
+        ++st.params_check.failed;
     }
-    st.params_check.wall_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   std::chrono::steady_clock::now() - started).count();
+    tally_wall();
 }
 
 std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stations) {
