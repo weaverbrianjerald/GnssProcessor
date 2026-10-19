@@ -395,7 +395,8 @@ void networkShadowStationParams(NetStation& st, int station,
 namespace {
 
 /// Rebuild a station's set from its state manager with no dispositions; false (counted, set
-/// left empty) when the build throws.
+/// left empty) when the build throws.  A set that cannot be built is empty, never the last
+/// build: that one may hold columns the state manager no longer has.
 bool rebuildWithoutDispositions(NetStation& st) {
     static const StationAbsorbed none;
     try {
@@ -508,8 +509,8 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
     lines.push_back(fmt::format("station-epochs with a column or a withheld state the classifier "
                                 "refused: {}; with a build or check error (no set): {}",
                                 total.unclassified, total.failed));
-    lines.push_back(fmt::format("station-epochs whose assembly ended before the split (set rebuilt "
-                                "without dispositions): {}; epoch starts checked for staleness: {}",
+    lines.push_back(fmt::format("station-epochs whose assembly ended before the split or failed (set "
+                                "rebuilt without dispositions): {}; epoch starts checked for staleness: {}",
                                 total.refreshed, total.fresh_checks));
     const long long attempts = total.builds + total.failed;
     lines.push_back(fmt::format("wall of the builds and checks, summed over the station-epochs: "

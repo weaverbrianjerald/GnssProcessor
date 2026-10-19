@@ -165,8 +165,10 @@ struct StationBuildStep {
     StationBuildFn      build;   ///< Gates itself at its first line.
 };
 inline constexpr std::size_t kStationBuildStepCount = 12;
+/// The type of a station build's step table.
+using StationBuildSteps = std::array<StationBuildStep, kStationBuildStepCount>;
 /// The station build, in walk order (src/core/network/assembly/StationBuild.cpp).
-extern const std::array<StationBuildStep, kStationBuildStepCount> kStationBuildSteps;
+extern const StationBuildSteps kStationBuildSteps;
 
 /// An ambiguity column waiting for the station's local block (or its per-column fallback):
 /// written by the ambiguity step, read by the local-block step (a local struct before step PB1b).
@@ -256,16 +258,39 @@ void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd&
                               Eigen::VectorXd& w, Eigen::VectorXd& y);
 
 /**
- * @brief Builds one station's block: walks kStationBuildSteps in order.
+ * @brief Builds one station's block: walks a step table in order.
  * @param build One station's build.
+ * @param steps The steps (kStationBuildSteps in a run; a unit test passes its own).
  * @return false when a step ended the build (the slot names the cause).
  */
-bool networkStationBuild(StationBuild& build);
+bool networkStationBuild(StationBuild& build, const StationBuildSteps& steps = kStationBuildSteps);
+
+/**
+ * @brief One station's turn of the produce loop: builds its block, records a throw in its slot,
+ *        and leaves the station's parameter set following its state manager on every exit.
+ *
+ * The walk (networkStationBuild) sets @c R.ok when the block is complete.  A step that ends the
+ * build without one (no innovations, an H/state mismatch) has rebuilt the set itself
+ * (networkRefreshStationParams).  A throw is caught here: @c R.threw and @c R.err say that the
+ * station has no usable block this epoch (the solve drops it with a warning), and the set is
+ * rebuilt from the state manager as it stands.  That rebuild is needed because the measurement
+ * pre-pass (inside the data rows step) births and prunes the station's local columns before
+ * the point where the step can throw, and the readers of the set that run before the
+ * station's next split (the slip drains, the admissions, the election) must find those
+ * columns.  The rebuild has no dispositions; if
+ * the set cannot be built from the state manager it is left empty, the failure is counted
+ * (StationParamsCheck::failed) and the next build or rebuild replaces it.
+ *
+ * Writes only the station's own state: its slot, its set and its tally.
+ *
+ * @param build One station's build.
+ * @param steps The steps (kStationBuildSteps in a run; a unit test passes its own).
+ */
+void networkStationAssemble(StationBuild& build, const StationBuildSteps& steps = kStationBuildSteps);
 
 /**
  * @brief PASS B's parallel produce: one station's block per OpenMP iteration, into its own
- *        slot.  The frozen loop, its present test and its catch; the body is the walk of
- *        kStationBuildSteps (networkStationBuild).
+ *        slot.  The frozen loop and its present test; the body is networkStationAssemble.
  *
  * An epoch writer in EP1's form (run, ep, kept, outputs), a row of
  * tests/network/test_network_epoch_contract.cpp; called by Application::networkPassB_.

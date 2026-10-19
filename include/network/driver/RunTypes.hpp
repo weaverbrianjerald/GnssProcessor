@@ -55,9 +55,11 @@ struct NetStation {
     std::unique_ptr<StateManager>     sm;
     std::unique_ptr<PppModel>         model;
     std::unique_ptr<MeasurementModel> mm;
-    /// The station's own parameter set, rebuilt from its state manager after each split and
-    /// checked against it (network/state/StationParamsShadow.hpp).  Written only inside the
-    /// parallel produce phase by the station's own build; nothing reads it yet.
+    /// The station's own parameter set, rebuilt from its state manager after each split and,
+    /// when the station's assembly ends or fails before the split, without dispositions
+    /// (network/state/StationParams.hpp, network/state/StationParamsShadow.hpp).  Written only
+    /// inside the parallel produce phase by the station's own build; read by the carried
+    /// priors, the slip drains, the admissions, the datum rows and the diagnostics.
     StationParams                     params;
     /// The tally of those checks over the run, summed into the run-end table.
     StationParamsCheck                params_check;

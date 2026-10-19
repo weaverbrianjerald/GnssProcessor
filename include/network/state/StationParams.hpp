@@ -43,15 +43,22 @@
  * were built.
  *
  * The set is rebuilt when a station reaches its split, and, without dispositions, when its
- * assembly ends before the split (@c networkRefreshStationParams): the measurement pre-pass is
- * the one writer of a local column outside the split, so after every assembly the set holds the
- * station's local columns as the state manager does, and a reader that runs before the next
- * split (the slip drains, the admissions, the election) reads the previous epoch's set and is
- * right.  @c networkCheckStationParamsFresh verifies this at the start of every epoch.  A reader
- * of a border column, or of a local column after a stage that changed it, reads the state
- * manager.  A station that was not assembled keeps its last build.  A station whose set cannot
- * be built fails its assembly for the epoch (the run names it and drops it), so that no reader
- * meets an empty set.
+ * assembly ends before the split or fails (@c networkRefreshStationParams): the measurement
+ * pre-pass is the one writer of a local column outside the split, so after every assembly the
+ * set holds the station's local columns as the state manager does, and a reader that runs
+ * before the next split (the slip drains, the admissions, the election) reads the previous
+ * epoch's set and is right.  An assembly ends in one of three ways, and the set follows the
+ * state manager in each: the split builds it; a step that ends the build early (no
+ * innovations, an H/state mismatch) rebuilds it; a step that throws is caught by
+ * @c networkStationAssemble, which rebuilds it after recording the throw.  A station that was
+ * not assembled this epoch does not run the pre-pass, so its set keeps its last build.
+ * @c networkCheckStationParamsFresh verifies this at the start of every epoch.
+ * A reader of a border column, or of a local column after a stage that changed it, reads the
+ * state manager.  A station whose set cannot be built from its state manager (an allocation
+ * failure, or a defect the classifier does not expect) fails its assembly for the epoch (the
+ * run names it and drops it) and the set is left empty: its readers in the next epoch's PASS A
+ * find no local column and the start-of-epoch check counts that as stale, until the next build
+ * or rebuild succeeds.  The failure is counted and printed in the run-end table.
  *
  * Plain value types and free functions; no behaviour classes.
  */

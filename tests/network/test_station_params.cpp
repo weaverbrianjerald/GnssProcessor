@@ -25,11 +25,15 @@
  *    read;
  *  - a set that no longer holds the state manager's local columns is counted at the start of
  *    an epoch, and a station whose assembly ends before its split has its set rebuilt;
+ *  - a step of the station build that throws is recorded in the station's slot and leaves the
+ *    set following the state manager (the pre-pass may have changed the columns first), whether
+ *    the throw is a standard exception or not, before or after the split built the set;
  *  - the run-end table names the families and prints the findings.
  */
 
 #include <gtest/gtest.h>
 
+#include "atmosphere/GlobalIonosphereMap.hpp"
 #include "common/GnssIdentity.hpp"
 #include "common/ParamRef.hpp"
 #include "config/GnssConfig.hpp"
@@ -38,6 +42,7 @@
 #include "logging/LogManager.hpp"
 #include "measurement/UserParamView.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/assembly/StationBuild.hpp"
 #include "network/diag/StationBlock.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "network/state/Entities.hpp"
@@ -45,6 +50,7 @@
 #include "network/state/StateColumns.hpp"
 #include "network/state/StationParams.hpp"
 #include "network/state/StationParamsShadow.hpp"
+#include "../support/NetworkTestRun.hpp"
 #include "../support/TestTempDir.hpp"
 
 #include <algorithm>
@@ -57,6 +63,7 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -835,4 +842,154 @@ TEST(StationParamsTest, AStaleSetIsCountedAtTheStartOfTheEpochAndRebuiltAfterAnE
     net.sm->setStateVector(x);
     networkCheckStationParamsFresh(net, 5.0);
     EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 2);
+}
+
+// ---------------------------------------------------------------------------
+// The produce loop's failure path
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// The measurement pre-pass births a column and then the update throws.  The satellite is
+/// "G3<Last>", so that two calls on one station birth two columns.
+template <char Last>
+StationStep bornThenThrows(StationBuild& b) {
+    b.st.sm->addAmbiguity(K::makeAmbiguityKey(std::string("G3") + Last, "L1C"), 0.5, 10.0);
+    throw std::runtime_error("update failed");
+}
+
+/// The same, with an exception that is not a std::exception.
+StationStep bornThenThrowsNonStandard(StationBuild& b) {
+    b.st.sm->addAmbiguity(K::makeAmbiguityKey("G33", "L1C"), 0.5, 10.0);
+    throw 7;
+}
+
+/// The station shape whose dispositions the stand-in split below uses.
+const Station* g_split_shape = nullptr;
+
+/// The split: the set is built from the state manager with the station's dispositions.
+StationStep splitBuildsTheSet(StationBuild& b) {
+    buildStationParams(*b.st.sm, g_split_shape->disp, g_split_shape->absorbed, b.st.params);
+    return StationStep::Next;
+}
+
+StationStep goesOn(StationBuild&) { return StationStep::Next; }
+StationStep endsTheBuild(StationBuild&) { return StationStep::Done; }
+StationStep throwsLater(StationBuild&) { throw std::runtime_error("a later step failed"); }
+
+/// A step table of steps that do nothing, with @p first and @p second as its first two.
+StationBuildSteps stepsOf(StationBuildFn first, StationBuildFn second = &goesOn) {
+    StationBuildSteps steps = kStationBuildSteps;
+    for (StationBuildStep& step : steps) step.build = &goesOn;
+    steps[0].build = first;
+    steps[1].build = second;
+    return steps;
+}
+
+/// A run with one station over the station-shaped state manager: its set as the station's
+/// construction builds it, and the build of the first epoch.
+struct ProduceFixture {
+    Station                              shape;
+    NetworkTestRun                       run;
+    std::unique_ptr<GlobalIonosphereMap> gim;
+    StationAssembly                      slot;
+
+    ProduceFixture() : run(shape.cfg) {
+        run.setup().stations.resize(1);
+        station().name = "AAAA";
+        station().sm   = std::move(shape.sm);
+        networkStartStationParams(station());
+        run.newEpoch(GnssTime{2313, 259230.0});
+    }
+
+    NetStation& station() { return run.setup().stations[0]; }
+
+    StationBuild build() {
+        NetworkEpoch& e = run.ep();
+        return StationBuild{run.ctx(), run.config(), run.est(), run.setup(), e.se, e.clock,
+                            e.pass_a, e.events, gim, 0, station(), slot};
+    }
+};
+
+}  // namespace
+
+TEST(StationParamsTest, AStepThatThrowsAfterAColumnWasBornLeavesTheSetFollowingTheStateManager) {
+    ProduceFixture f;
+    NetStation& net = f.station();
+    StationBuild b = f.build();
+    ASSERT_EQ(net.params.slots.size(), net.sm->getStateSize());
+
+    // What the walk alone leaves behind: the throw escapes with the column born and the set
+    // not rebuilt, and the start-of-epoch check sees the difference.
+    EXPECT_THROW(networkStationBuild(b, stepsOf(&bornThenThrows<'0'>)), std::runtime_error);
+    networkCheckStationParamsFresh(net, 1.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 1);
+    EXPECT_LT(net.params.slots.size(), net.sm->getStateSize());
+
+    // The produce loop's turn: the throw is recorded in the slot, the column is born and the
+    // set holds it, with no dispositions.  The check finds nothing new.
+    const long long refreshed = net.params_check.refreshed;
+    networkStationAssemble(b, stepsOf(&bornThenThrows<'1'>));
+    EXPECT_TRUE(f.slot.threw);
+    EXPECT_FALSE(f.slot.ok);
+    EXPECT_EQ(f.slot.err, "update failed");
+    EXPECT_EQ(net.params_check.refreshed, refreshed + 1);
+    EXPECT_EQ(net.params_check.failed, 0);
+    ASSERT_EQ(net.params.slots.size(), net.sm->getStateSize());
+    EXPECT_EQ(net.params.decided, 0u);
+    EXPECT_EQ(net.params.amb.size(), net.sm->getAmbiguities().size());
+    EXPECT_GE(findAmbiguity(net.params, K::makeAmbiguityKey("G31", "L1C")), 0);
+    networkCheckStationParamsFresh(net, 2.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 1);   // the control's finding only
+}
+
+TEST(StationParamsTest, AThrowThatIsNotAStdExceptionIsRecordedAndTheSetRebuiltToo) {
+    ProduceFixture f;
+    NetStation& net = f.station();
+    StationBuild b = f.build();
+
+    networkStationAssemble(b, stepsOf(&bornThenThrowsNonStandard));
+    EXPECT_TRUE(f.slot.threw);
+    EXPECT_EQ(f.slot.err, "unknown exception");
+    ASSERT_EQ(net.params.slots.size(), net.sm->getStateSize());
+    networkCheckStationParamsFresh(net, 1.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 0);
+}
+
+TEST(StationParamsTest, AThrowAfterTheSplitBuiltTheSetRebuildsItWithoutDispositions) {
+    ProduceFixture f;
+    NetStation& net = f.station();
+    g_split_shape = &f.shape;
+    StationBuild b = f.build();
+
+    // The split built the set with the station's dispositions; a later step throws.
+    networkStationAssemble(b, stepsOf(&splitBuildsTheSet, &throwsLater));
+    g_split_shape = nullptr;
+    EXPECT_TRUE(f.slot.threw);
+    EXPECT_EQ(f.slot.err, "a later step failed");
+    ASSERT_EQ(net.params.slots.size(), net.sm->getStateSize());
+    EXPECT_EQ(net.params.decided, 0u);
+    networkCheckStationParamsFresh(net, 1.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 0);
+}
+
+TEST(StationParamsTest, ABuildThatCompletesOrEndsEarlyLeavesTheSetToItsSteps) {
+    ProduceFixture f;
+    NetStation& net = f.station();
+    StationBuild b = f.build();
+    const long long refreshed = net.params_check.refreshed;
+
+    // A complete walk marks the slot ok and rebuilds nothing.
+    networkStationAssemble(b, stepsOf(&goesOn));
+    EXPECT_TRUE(f.slot.ok);
+    EXPECT_FALSE(f.slot.threw);
+    EXPECT_EQ(net.params_check.refreshed, refreshed);
+
+    // A step that ends the build leaves its cause in the slot and rebuilds the set itself
+    // when it must (networkStationDataRows); the loop adds nothing.
+    f.slot = StationAssembly{};
+    networkStationAssemble(b, stepsOf(&endsTheBuild));
+    EXPECT_FALSE(f.slot.ok);
+    EXPECT_FALSE(f.slot.threw);
+    EXPECT_EQ(net.params_check.refreshed, refreshed);
 }

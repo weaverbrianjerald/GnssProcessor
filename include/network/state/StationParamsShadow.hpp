@@ -31,9 +31,9 @@
  * the set still holds the station's local columns as its state manager does.  The readers that
  * run before a station's next split (the slip drains, the admissions, the anchor election) read
  * the set of the previous epoch, so they are right exactly when that holds.  A station whose
- * assembly ends before its split (no innovations) has its set rebuilt without dispositions
- * (@ref networkRefreshStationParams), because its measurement pre-pass has already changed
- * its columns.
+ * assembly ends before its split (no innovations, an H/state mismatch) or fails (a step threw)
+ * has its set rebuilt without dispositions (@ref networkRefreshStationParams), because its
+ * measurement pre-pass has already changed its columns.
  *
  * The counts are kept per station (the check runs inside the parallel produce phase, so each
  * station writes only its own) and printed once at the run end as "the station parameter set"
@@ -94,7 +94,7 @@ const char* setMismatchName(SetMismatch m);
  */
 struct StationParamsCheck {
     long long builds{0};        ///< Station-epochs the set was built, recorded and checked.
-    long long refreshed{0};     ///< Station-epochs whose assembly ended before the split and whose set was rebuilt without dispositions.
+    long long refreshed{0};     ///< Station-epochs whose assembly ended before the split or failed, and whose set was rebuilt without dispositions.
     long long fresh_checks{0};  ///< Epoch starts at which the set was checked against the state manager's local columns.
     long long unclassified{0};  ///< Of those, the station-epochs with a column or a withheld state the classifier refused.
     long long failed{0};        ///< Station-epochs whose build or check threw (the set is not trusted).
@@ -179,7 +179,9 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
  * @c StationParamsCheck::failed and changes nothing else.  A failed build is counted too, the
  * set is left empty, and the exception propagates: the carried-prior steps read the set, so the
  * station's assembly fails for the epoch (the produce loop records the error and the solve
- * drops the station with a warning) instead of continuing with no parameters.
+ * drops the station with a warning) instead of continuing with no parameters.  The produce
+ * loop then rebuilds the set from the state manager (@ref networkRefreshStationParams), so
+ * the set stays empty only if that build fails as well.
  *
  * @param st        The station (@c params and @c params_check written).
  * @param station   The station's roster index.
@@ -205,13 +207,16 @@ void networkStartStationParams(NetStation& st);
 
 /**
  * @brief Rebuild a station's parameter set from its state manager when the station's assembly
- *        ends before its split (inside the parallel produce phase).
+ *        ends before its split or fails (inside the parallel produce phase).
  *
  * The station's measurement pre-pass has run, so its columns may have changed (a birth, a
- * prune, a reallocated receiver phase bias) while the split, which builds the set, has not.
+ * prune, a reallocated receiver phase bias) while the split, which builds the set, has not
+ * (an assembly that ends early, or a step that threw before the set's own build, or in it).
  * The set is rebuilt with no dispositions (nothing decided them) and no inventory record or
- * check.  A failed build is counted in @c StationParamsCheck::failed and leaves the set empty;
- * nothing is thrown, because the station is dropped for the epoch anyway.
+ * check.  A failed build is counted in @c StationParamsCheck::failed and leaves the set empty:
+ * the readers of the station's next PASS A then find no local column, the start-of-epoch
+ * check counts the difference as stale, and the next build or rebuild replaces the set.
+ * Nothing is thrown, because the station is dropped for the epoch anyway.
  *
  * @param st The station (@c params and @c params_check written).
  */
