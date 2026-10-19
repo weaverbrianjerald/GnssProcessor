@@ -266,10 +266,24 @@ and phase-anchor traces, the SH diagnostics and the pre-fit census's birth seeds
 carried-prior steps of PASS B read it too: the ambiguity, slant-ionosphere, receiver-clock,
 receiver-code-bias, phase-colour and wet-delay carries, the local block, and the
 double-difference prior build take their columns, keys, linearization points and a phase
-colour's elevation from the set. The state manager is still read where a value changes after
-the split (the re-seed marks the harvest reads and clears, which RAIM and the screens write) and
-by the split itself. A station whose set cannot be built fails its assembly for the epoch and is
-dropped with a warning. The shadow checks the set and the inventory recorded from it against the state manager
+colour's elevation from the set. So do the slip drains (the MW, LLI, IF-pair, datum, wind-up,
+injected and gap re-entry responses), the second-code census, the oracle pin rows, the
+admissions' ambiguity reads (signal integrity, the roster audit, the all-channel and
+multi-GNSS censuses), the phase-datum pin rows and the election's ambiguity values, the GLONASS
+anchor rows and the ionosphere constraint rows. Readers that run before a station's next split
+read the set of the previous epoch. That is the station's local columns as its state manager
+holds them, because the only writer of a local column outside the split is the measurement
+pre-pass, and every assembly that runs it ends with the set rebuilt: the split builds it, and
+`networkRefreshStationParams` rebuilds it (without dispositions) when the assembly ends before
+the split, for an epoch with no innovations. `networkCheckStationParamsFresh` compares the set
+with the state manager's local columns and their values at the start of every epoch's PASS A
+(finding kind `stale`, zero on a sound run). The border columns (satellite clocks and biases)
+change during the admissions, so the readers of the admissions' own state stay on the state
+manager until the admissions write the set. The state manager is also read where a value
+changes after the split (the re-seed marks the harvest reads and clears, which RAIM and the
+screens write) and by the split itself. A station whose set cannot be built fails its assembly
+for the epoch and is dropped with a warning. The shadow checks the set and the inventory
+recorded from it against the state manager
 on every station-epoch, and the run end prints the table `Network (station parameter set)` under
 the parameter inventory, with the findings (all zero on a sound run). The classifier that names a
 state manager's columns (`network\state\StateColumns.cpp`) is the bridge between the two and
