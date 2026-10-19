@@ -27,6 +27,14 @@
  *    order and at the same columns (the comparators of the identity types reproduce the
  *    string order).
  *
+ * A second check runs at the start of each epoch's PASS A (@ref networkCheckStationParamsFresh):
+ * the set still holds the station's local columns as its state manager does.  The readers that
+ * run before a station's next split (the slip drains, the admissions, the anchor election) read
+ * the set of the previous epoch, so they are right exactly when that holds.  A station whose
+ * assembly ends before its split (no innovations) has its set rebuilt without dispositions
+ * (@ref networkRefreshStationParams), because its measurement pre-pass has already changed
+ * its columns.
+ *
  * The counts are kept per station (the check runs inside the parallel produce phase, so each
  * station writes only its own) and printed once at the run end as "the station parameter set"
  * (@ref stationParamsReport).  A nonzero count is a defect of the set, never a property of the
@@ -66,16 +74,17 @@ enum class SetMismatch : std::uint8_t {
     Inventory,    ///< The inventory recorded from the set differs from the one the state manager alone gives.
     TypedCount,   ///< A typed map holds a different number of keys than the state manager's map of its family.
     TypedOrder,   ///< A typed map iterates in a different order, or to a different column, than the state manager's map.
+    Stale,        ///< At the start of an epoch a local family of the set differs from the state manager's (the set was not rebuilt after a change).
 };
 
 /// Number of @ref SetMismatch values.
-inline constexpr std::size_t kSetMismatches = 10;
+inline constexpr std::size_t kSetMismatches = 11;
 
 /**
  * @brief The name of a finding, as the run-end table prints it.
  * @param m The finding.
  * @return "size", "identity", "x_lin", "disposition", "reseed", "elevation", "lookup",
- *         "inventory", "typed count" or "typed order".
+ *         "inventory", "typed count", "typed order" or "stale".
  */
 const char* setMismatchName(SetMismatch m);
 
@@ -85,6 +94,8 @@ const char* setMismatchName(SetMismatch m);
  */
 struct StationParamsCheck {
     long long builds{0};        ///< Station-epochs the set was built, recorded and checked.
+    long long refreshed{0};     ///< Station-epochs whose assembly ended before the split and whose set was rebuilt without dispositions.
+    long long fresh_checks{0};  ///< Epoch starts at which the set was checked against the state manager's local columns.
     long long unclassified{0};  ///< Of those, the station-epochs with a column or a withheld state the classifier refused.
     long long failed{0};        ///< Station-epochs whose build or check threw (the set is not trusted).
     long long slots{0};         ///< Slots checked, summed over the builds.
@@ -179,6 +190,47 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
 void networkShadowStationParams(NetStation& st, int station,
                                 const std::vector<ParamDisposition>& col_disp,
                                 StationParamSlot& inventory, double tow);
+
+/**
+ * @brief Build a station's parameter set from its state manager when the station is
+ *        constructed: the core columns (position, clock, wet delay, inter-system biases), with
+ *        no dispositions.
+ *
+ * The set then holds what the state manager holds from the first epoch on, and the first
+ * start-of-epoch check finds nothing.  Not counted as a refresh.
+ *
+ * @param st The station (@c params written; @c sm set).
+ */
+void networkStartStationParams(NetStation& st);
+
+/**
+ * @brief Rebuild a station's parameter set from its state manager when the station's assembly
+ *        ends before its split (inside the parallel produce phase).
+ *
+ * The station's measurement pre-pass has run, so its columns may have changed (a birth, a
+ * prune, a reallocated receiver phase bias) while the split, which builds the set, has not.
+ * The set is rebuilt with no dispositions (nothing decided them) and no inventory record or
+ * check.  A failed build is counted in @c StationParamsCheck::failed and leaves the set empty;
+ * nothing is thrown, because the station is dropped for the epoch anyway.
+ *
+ * @param st The station (@c params and @c params_check written).
+ */
+void networkRefreshStationParams(NetStation& st);
+
+/**
+ * @brief Check, at the start of an epoch's PASS A, that a station's set still holds its local
+ *        columns as its state manager does.
+ *
+ * The inter-system biases, slant ionospheres, phase colours, ambiguities, receiver phase
+ * biases and receiver code biases (keys, order and columns) and the wet-delay column.  The
+ * border families are not compared: the admissions change them during the epoch, before the
+ * split rebuilds them.  A difference is counted as @ref SetMismatch::Stale.  Writes only the
+ * station's own tally and never throws.
+ *
+ * @param st  The station (@c params_check written).
+ * @param tow GPS time of week of the epoch (s), for the message of a first finding.
+ */
+void networkCheckStationParamsFresh(NetStation& st, double tow);
 
 /**
  * @brief The run-end table of the stations' parameter sets.

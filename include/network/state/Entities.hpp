@@ -1067,6 +1067,32 @@ std::optional<SatSignalId> satSignalKey(const std::string& sat, const std::strin
 std::optional<SatSignalId> satSignalKey(const std::string& key);
 
 /**
+ * @brief The satellite and phase signal of a satellite phase-bias key, "<sat>|<signal>|PB"
+ *        ("G05|L1C|PB"), without counting: the text a border column's key and the
+ *        second-phase scope's cells carry.
+ *
+ * The satellite and the signal read as the station parameter set's classifier reads them
+ * (the satellite id, the signal of the satellite's constellation), so a key the set holds
+ * converts to the identity it is stored under.
+ *
+ * @param key The key.
+ * @return The satellite signal, or @c std::nullopt when the key has no "|PB" suffix or
+ *         either part does not read as an identity.
+ */
+std::optional<SatSignalId> satPhaseBiasKey(const std::string& key);
+
+/**
+ * @brief The satellite and code signal of a satellite code-bias key, "<sat>|<signal>"
+ *        ("G05|C1C"), without counting.
+ *
+ * Read as @ref satPhaseBiasKey reads its key; a phase-bias key ("G05|L1C|PB") is refused.
+ *
+ * @param key The key.
+ * @return The satellite signal, or @c std::nullopt when the key does not read as an identity.
+ */
+std::optional<SatSignalId> satCodeBiasKey(const std::string& key);
+
+/**
  * @brief The satellite signal of an old key, counting a failure under
  *        Converter::SatSignal (the writer's converter; serial code).
  * @param e   The entities (the converter tally).

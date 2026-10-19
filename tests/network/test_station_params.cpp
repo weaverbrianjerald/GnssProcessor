@@ -20,6 +20,11 @@
  *    signal, key text, receiver code-bias form) are what the key parsers gave them;
  *  - the withheld shared states are kept exactly while their absorbing column is held;
  *  - a parameter with no typed map keeps its slot and is counted;
+ *  - the readers that hold an identity as text (an election's key, a funnel's key) find the
+ *    column the state manager indexes, and the border key converters read what the key parsers
+ *    read;
+ *  - a set that no longer holds the state manager's local columns is counted at the start of
+ *    an epoch, and a station whose assembly ends before its split has its set rebuilt;
  *  - the run-end table names the families and prints the findings.
  */
 
@@ -705,7 +710,7 @@ TEST(StationParamsTest, TheReportNamesTheFamiliesAndPrintsTheFindings) {
         EXPECT_TRUE(has(family)) << family;
     EXPECT_FALSE(has("no typed map"));   // listed only when a slot has none
     EXPECT_TRUE(has("size 0, identity 0, x_lin 0, disposition 0, reseed 0, elevation 0, lookup 0, "
-                    "inventory 0, typed count 0, typed order 0"));
+                    "inventory 0, typed count 0, typed order 0, stale 0"));
     EXPECT_FALSE(has("WARNING"));
     EXPECT_TRUE(has("wall of the builds and checks"));
 
@@ -719,4 +724,104 @@ TEST(StationParamsTest, TheReportNamesTheFamiliesAndPrintsTheFindings) {
     EXPECT_TRUE(has("x_lin 1"));
     EXPECT_TRUE(has("WARNING: station BBBB: TOW 7.0: x_lin"));
     EXPECT_TRUE(has("no typed map"));
+}
+
+// ---------------------------------------------------------------------------
+// Identities held as text, and the freshness of the set
+// ---------------------------------------------------------------------------
+
+TEST(StationParamsTest, TheTextLookupsFindTheColumnsTheStateManagerIndexes) {
+    Station st;
+    StationParams set;
+    buildStationParams(*st.sm, st.disp, st.absorbed, set);
+
+    for (const auto& [key, col] : st.sm->getAmbiguities())
+        EXPECT_EQ(findAmbiguity(set, key), static_cast<int>(col)) << key;
+    EXPECT_EQ(findAmbiguity(set, K::makeAmbiguityKey("G07", "L1C")), -1);   // a satellite the station lacks
+    EXPECT_EQ(findAmbiguity(set, "G12"), -1);                               // no signal
+    EXPECT_EQ(findAmbiguity(set, ""), -1);
+
+    for (const auto& [sat, col] : st.sm->getIonosphereStates())
+        EXPECT_EQ(findSlantIono(set, sat), static_cast<int>(col)) << sat;
+    EXPECT_EQ(findSlantIono(set, "G07"), -1);
+    EXPECT_EQ(findSlantIono(set, "not a satellite"), -1);
+
+    for (const auto& [key, col] : st.sm->getReceiverPhaseBiasStates()) {
+        EXPECT_EQ(findReceiverPhaseBias(set, key), static_cast<int>(col)) << key;
+        EXPECT_TRUE(receiverPhaseBiasSignal(key).has_value()) << key;
+        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+    }
+    EXPECT_EQ(findReceiverPhaseBias(set, K::makeReceiverPhaseBiasKey("GPS", "L5X")), -1);
+    EXPECT_EQ(findReceiverPhaseBias(set, "GPS_DCB"), -1);
+    EXPECT_FALSE(receiverPhaseBiasSignal("GPS_RPB_").has_value());
+    EXPECT_FALSE(receiverPhaseBiasSignal("_RPB_L1C").has_value());
+    EXPECT_FALSE(receiverPhaseBiasSignal("Nowhere_RPB_L1C").has_value());
+}
+
+TEST(StationParamsTest, TheBorderKeyConvertersReadWhatTheKeyParsersRead) {
+    Station st;
+    StationParams set;
+    buildStationParams(*st.sm, st.disp, st.absorbed, set);
+
+    ASSERT_FALSE(st.sm->getSatPhaseBiasStates().empty());
+    for (const auto& [key, col] : st.sm->getSatPhaseBiasStates()) {
+        const auto id = net::satPhaseBiasKey(key);
+        ASSERT_TRUE(id.has_value()) << key;
+        EXPECT_EQ(set.shared.sat_phase_bias.at(*id), static_cast<int>(col)) << key;
+        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+        EXPECT_FALSE(net::satCodeBiasKey(key).has_value()) << key;   // a phase-bias key is no code-bias key
+    }
+    ASSERT_FALSE(st.sm->getSatBiasStates().empty());
+    for (const auto& [key, col] : st.sm->getSatBiasStates()) {
+        const auto id = net::satCodeBiasKey(key);
+        ASSERT_TRUE(id.has_value()) << key;
+        EXPECT_EQ(set.shared.sat_code_bias.at(*id), static_cast<int>(col)) << key;
+        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+        EXPECT_FALSE(net::satPhaseBiasKey(key).has_value()) << key;
+    }
+    for (const char* bad : {"", "|PB", "G05|PB", "G05||PB", "G05|L1C", "G05_L1C|PB", "X99|L1C|PB", "G05|??C|PB"})
+        EXPECT_FALSE(net::satPhaseBiasKey(bad).has_value()) << bad;
+    for (const char* bad : {"", "G05", "|C1C", "G05|", "G05|C1", "G05|L1C|PB", "X99|C1C"})
+        EXPECT_FALSE(net::satCodeBiasKey(bad).has_value()) << bad;
+}
+
+TEST(StationParamsTest, AStaleSetIsCountedAtTheStartOfTheEpochAndRebuiltAfterAnEarlyExit) {
+    Station st;
+    NetStation net;
+    net.name = "AAAA";
+    net.sm = std::move(st.sm);
+
+    // An assembly that ended before its split: the set follows the state manager, with no
+    // dispositions, and the start-of-epoch check finds nothing.
+    networkRefreshStationParams(net);
+    EXPECT_EQ(net.params_check.refreshed, 1);
+    EXPECT_EQ(net.params_check.failed, 0);
+    ASSERT_EQ(net.params.slots.size(), net.sm->getStateSize());
+    EXPECT_EQ(net.params.decided, 0u);
+    networkCheckStationParamsFresh(net, 1.0);
+    EXPECT_EQ(net.params_check.fresh_checks, 1);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 0);
+
+    // A border column does not make the set stale: the admissions change it every epoch.
+    net.sm->addSatClockState(K::makeSatClockKey("G30"), 0.5);
+    networkCheckStationParamsFresh(net, 2.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 0);
+
+    // A local column born after the set was built does.
+    net.sm->addAmbiguity(K::makeAmbiguityKey("G30", "L1C"), 0.5, 10.0);
+    networkCheckStationParamsFresh(net, 3.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 1);
+    EXPECT_NE(net.params_check.first.find("TOW 3.0: stale: ambiguity"), std::string::npos)
+        << net.params_check.first;
+
+    // A local column whose value moved does too, in any bit.
+    networkRefreshStationParams(net);
+    networkCheckStationParamsFresh(net, 4.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 1);
+    Eigen::VectorXd x = net.sm->getStateVector();
+    const std::size_t col = net.sm->getIonosphereStates().begin()->second;
+    x(static_cast<Eigen::Index>(col)) = std::nextafter(x(static_cast<Eigen::Index>(col)), 1e9);
+    net.sm->setStateVector(x);
+    networkCheckStationParamsFresh(net, 5.0);
+    EXPECT_EQ(found(net.params_check, SetMismatch::Stale), 2);
 }

@@ -109,10 +109,18 @@ StationStep networkStationDataRows(StationBuild& build) {
     build.em = st.mm->computeMeasurementUpdate(
         modeled[i], st.sm->getStateVector());
     EpochMeasurement& em = build.em;
-    if (em.innovations.size() == 0) { R.empty_innov = true; return StationStep::Done; }
+    // The pre-pass inside computeMeasurementUpdate has already changed the station's columns,
+    // so a station that leaves here still has its parameter set follow its state manager (the
+    // slip drains and the admissions of the next epoch read the set).
+    if (em.innovations.size() == 0) {
+        R.empty_innov = true;
+        networkRefreshStationParams(st);
+        return StationStep::Done;
+    }
     if (em.H.cols() != static_cast<Eigen::Index>(st.sm->getStateSize())) {
         R.state_mismatch = true;
         R.err = fmt::format("{} vs {}", em.H.cols(), st.sm->getStateSize());
+        networkRefreshStationParams(st);
         return StationStep::Done;
     }
 

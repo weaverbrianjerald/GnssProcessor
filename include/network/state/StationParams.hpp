@@ -33,15 +33,25 @@
  * (network/state/StationParamsShadow.hpp).  The parameter inventory, the trace labels, the
  * diagnostics and the carried-prior steps of PASS B (the ambiguity, slant ionosphere, receiver
  * clock, receiver code-bias, phase-colour and wet-delay carries, the local block, and the
- * double-difference prior build) read it; the columns are still born in the state manager, so
- * the writers of a column (births, prunes, the re-seed marks) are the state manager's, and a
- * reader that needs what a later stage of the epoch changes (a re-seed mark set by a screen
- * after the split) still asks the state manager.  The set holds the values of the split: the
- * linearization points and the dispositions as they were when the station's rows were built.
- * It is rebuilt only when a station reaches its split, so a reader uses a station's set only in
- * an epoch in which the station was assembled (an entry of the epoch's estimator index); for
- * any other station it is the last build.  A station whose set cannot be built fails its
- * assembly for the epoch (the run names it and drops it), so that no reader meets an empty set.
+ * double-difference prior build) read it, and so do the slip drains, the admissions' reads of
+ * the ambiguity columns, the phase-datum and anchor rows and the ionosphere constraint rows.
+ * The columns are still born in the state manager, so the writers of a column (births, prunes,
+ * the re-seed marks) are the state manager's, and a reader that needs what a later stage of the
+ * epoch changes (a re-seed mark set by a screen after the split, a border column the
+ * admissions allocate or prune) still asks the state manager.  The set holds the values of the
+ * split: the linearization points and the dispositions as they were when the station's rows
+ * were built.
+ *
+ * The set is rebuilt when a station reaches its split, and, without dispositions, when its
+ * assembly ends before the split (@c networkRefreshStationParams): the measurement pre-pass is
+ * the one writer of a local column outside the split, so after every assembly the set holds the
+ * station's local columns as the state manager does, and a reader that runs before the next
+ * split (the slip drains, the admissions, the election) reads the previous epoch's set and is
+ * right.  @c networkCheckStationParamsFresh verifies this at the start of every epoch.  A reader
+ * of a border column, or of a local column after a stage that changed it, reads the state
+ * manager.  A station that was not assembled keeps its last build.  A station whose set cannot
+ * be built fails its assembly for the epoch (the run names it and drops it), so that no reader
+ * meets an empty set.
  *
  * Plain value types and free functions; no behaviour classes.
  */
@@ -54,6 +64,7 @@
 #include <cstddef>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -175,6 +186,47 @@ inline const LocalSlot& slotAt(const StationParams& set, int index) {
  * @return Its slot index, or -1 when the set does not hold it or holds it in no typed map.
  */
 int findParam(const StationParams& set, const ParamRef& ref);
+
+/**
+ * @brief The slot of the ambiguity a state-key text names.
+ *
+ * For a reader whose identity is the text of an election or a funnel ("G05_L1C").
+ *
+ * @param set The set.
+ * @param key The ambiguity key, "<satellite>_<phase signal>".
+ * @return The ambiguity's slot index, or -1 when the key does not read as an ambiguity or the
+ *         set does not hold it (the old state manager's @c getAmbiguityIndex).
+ */
+int findAmbiguity(const StationParams& set, const std::string& key);
+
+/**
+ * @brief The slot of the slant ionosphere of a satellite text.
+ *
+ * @param set The set.
+ * @param sat The satellite ("G05").
+ * @return The slot index, or -1 when the text does not read as a satellite or the set holds no
+ *         slant ionosphere for it (the old @c getIonosphereIndex).
+ */
+int findSlantIono(const StationParams& set, const std::string& sat);
+
+/**
+ * @brief The signal a receiver phase-bias state-key text names.
+ *
+ * @param key The receiver phase-bias key, "<system name>_RPB_<phase signal>" ("GPS_RPB_L1C").
+ * @return The signal (its system is the key's), or @c std::nullopt when the key does not read
+ *         as a receiver phase bias.
+ */
+std::optional<SignalId> receiverPhaseBiasSignal(const std::string& key);
+
+/**
+ * @brief The slot of the receiver phase bias a state-key text names.
+ *
+ * @param set The set.
+ * @param key The receiver phase-bias key, "<system name>_RPB_<phase signal>" ("GPS_RPB_L1C").
+ * @return The slot index, or -1 when the key does not read as a receiver phase bias or the set
+ *         does not hold it (the old @c getReceiverPhaseBiasIndex).
+ */
+int findReceiverPhaseBias(const StationParams& set, const std::string& key);
 
 /**
  * @brief The state-key text of a parameter, as the traces print it.

@@ -7,6 +7,7 @@
 #include "network/state/StationParams.hpp"
 
 #include "filter/StateFamily.hpp"          // kStateFamilies: the label prefixes
+#include "network/state/Entities.hpp"      // net::satSignalKey
 #include "measurement/UserParamView.hpp"   // userKey: the one rendering of a typed identity as a key
 
 namespace GnssProcessor {
@@ -121,6 +122,30 @@ int findParam(const StationParams& set, const ParamRef& r) {
             break;
     }
     return -1;
+}
+
+int findAmbiguity(const StationParams& set, const std::string& key) {
+    const std::optional<SatSignalId> id = net::satSignalKey(key);
+    return id ? slotOf(set.amb, *id) : -1;
+}
+
+int findSlantIono(const StationParams& set, const std::string& sat) {
+    const std::optional<SatId> id = net::satIdKey(sat);
+    return id ? slotOf(set.iono, *id) : -1;
+}
+
+std::optional<SignalId> receiverPhaseBiasSignal(const std::string& key) {
+    static const std::string infix = "_RPB_";
+    const std::size_t pos = key.find(infix);
+    if (pos == std::string::npos || pos == 0 || pos + infix.size() >= key.size()) return std::nullopt;
+    const System sys = systemFromName(key.substr(0, pos));
+    if (sys == System::Unknown) return std::nullopt;
+    return SignalId::fromObsCode(sys, key.substr(pos + infix.size()));
+}
+
+int findReceiverPhaseBias(const StationParams& set, const std::string& key) {
+    const std::optional<SignalId> signal = receiverPhaseBiasSignal(key);
+    return signal ? slotOf(set.rx_pb, *signal) : -1;
 }
 
 std::string keyText(const ParamRef& r) {

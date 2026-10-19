@@ -564,6 +564,37 @@ std::optional<SatSignalId> satSignalKey(const std::string& key) {
     return satSignalKey(key.substr(0, cut), key.substr(cut + 1));
 }
 
+namespace {
+
+/// A satellite and a signal of its constellation, as the station parameter set's classifier
+/// reads a border column's key parts.
+std::optional<SatSignalId> satAndSignal(const std::string& sat, const std::string& signal) {
+    const std::optional<SatId> s = SatId::parse(sat);
+    if (!s) return std::nullopt;
+    const std::optional<SignalId> sig = SignalId::fromObsCode(s->sys, signal);
+    if (!sig) return std::nullopt;
+    return SatSignalId{*s, *sig};
+}
+
+}  // namespace
+
+std::optional<SatSignalId> satPhaseBiasKey(const std::string& key) {
+    static const std::string suffix = "|PB";
+    if (key.size() <= suffix.size()
+        || key.compare(key.size() - suffix.size(), suffix.size(), suffix) != 0)
+        return std::nullopt;
+    const std::string body = key.substr(0, key.size() - suffix.size());
+    const std::size_t bar = body.find('|');
+    if (bar == std::string::npos || bar == 0 || bar + 1 >= body.size()) return std::nullopt;
+    return satAndSignal(body.substr(0, bar), body.substr(bar + 1));
+}
+
+std::optional<SatSignalId> satCodeBiasKey(const std::string& key) {
+    const std::size_t bar = key.find('|');
+    if (bar == std::string::npos || bar == 0 || bar + 1 >= key.size()) return std::nullopt;
+    return satAndSignal(key.substr(0, bar), key.substr(bar + 1));
+}
+
 std::optional<SatSignalId> satSignalOf(const NetworkEntities& e, const std::string& key) {
     const std::optional<SatSignalId> id = satSignalKey(key);
     if (!id) ++e.reach.failures[static_cast<std::size_t>(Converter::SatSignal)];

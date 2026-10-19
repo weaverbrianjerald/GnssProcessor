@@ -943,6 +943,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         x0.head<3>() = st.ecef;
         st.sm->setStateVector(x0);
         st.sm->setStateEpochTime(synced.front().time);
+        networkStartStationParams(st);   // the set holds the core columns before the first epoch
         st.model = std::make_unique<PppModel>(
             config_, *product_parser_, log_manager_, *parser);
         // Label the canonical-signal rider with the station name, unconditionally.  The

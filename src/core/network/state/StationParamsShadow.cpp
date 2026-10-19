@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <utility>
 
@@ -49,9 +50,11 @@ private:
 /// at the same columns.
 template <class Typed>
 void checkMap(const char* family, const std::map<std::string, std::size_t>& text, const Typed& typed,
-              const std::vector<LocalSlot>& slots, Findings& f) {
+              const std::vector<LocalSlot>& slots, Findings& f,
+              SetMismatch count_kind = SetMismatch::TypedCount,
+              SetMismatch order_kind = SetMismatch::TypedOrder) {
     if (text.size() != typed.size()) {
-        f.note(SetMismatch::TypedCount, [&] {
+        f.note(count_kind, [&] {
             return fmt::format("{}: {} keys in the state manager, {} typed", family, text.size(),
                                typed.size());
         });
@@ -63,7 +66,7 @@ void checkMap(const char* family, const std::map<std::string, std::size_t>& text
         const bool in_range = index >= 0 && static_cast<std::size_t>(index) < slots.size();
         const std::string want = in_range ? keyText(slots[static_cast<std::size_t>(index)].ref) : std::string();
         if (t->first != want || t->second != static_cast<std::size_t>(index)) {
-            f.note(SetMismatch::TypedOrder, [&] {
+            f.note(order_kind, [&] {
                 return fmt::format("{}: the state manager has '{}' at column {}, the typed map has "
                                    "'{}' at slot {}",
                                    family, t->first, t->second, want, index);
@@ -170,6 +173,7 @@ const char* setMismatchName(SetMismatch m) {
         case SetMismatch::Inventory:   return "inventory";
         case SetMismatch::TypedCount:  return "typed count";
         case SetMismatch::TypedOrder:  return "typed order";
+        case SetMismatch::Stale:       return "stale";
     }
     return "?";
 }
@@ -388,6 +392,76 @@ void networkShadowStationParams(NetStation& st, int station,
     tally_wall();
 }
 
+namespace {
+
+/// Rebuild a station's set from its state manager with no dispositions; false (counted, set
+/// left empty) when the build throws.
+bool rebuildWithoutDispositions(NetStation& st) {
+    static const StationAbsorbed none;
+    try {
+        buildStationParams(*st.sm, {}, st.mm ? st.mm->absorbedSharedStates() : none, st.params);
+        return true;
+    } catch (...) {
+        ++st.params_check.failed;
+        st.params = StationParams{};
+        return false;
+    }
+}
+
+}  // namespace
+
+void networkStartStationParams(NetStation& st) { rebuildWithoutDispositions(st); }
+
+void networkRefreshStationParams(NetStation& st) {
+    if (rebuildWithoutDispositions(st)) ++st.params_check.refreshed;
+}
+
+void networkCheckStationParamsFresh(NetStation& st, double tow) {
+    if (!st.sm) return;
+    try {
+        const StateManager& sm = *st.sm;
+        const StationParams& set = st.params;
+        Findings f(st.params_check, tow);
+        const auto stale = [&](const char* family, const auto& text, const auto& typed) {
+            checkMap(family, text, typed, set.slots, f, SetMismatch::Stale, SetMismatch::Stale);
+        };
+        stale("inter-system bias", sm.getSystemTimeOffsetStates(), set.isb);
+        stale("slant ionosphere", sm.getIonosphereStates(), set.iono);
+        stale("phase colour", sm.getPhaseColourStates(), set.colour);
+        stale("ambiguity", sm.getAmbiguities(), set.amb);
+        stale("receiver phase bias", sm.getReceiverPhaseBiasStates(), set.rx_pb);
+        stale("receiver code bias", sm.getCodeBiasStates(), set.rx_cb);
+        const bool has_zwd = sm.getTropoIndex() != std::numeric_limits<std::size_t>::max();
+        if (has_zwd != (set.zwd >= 0)) {
+            f.note(SetMismatch::Stale, [&] {
+                return std::string("wet delay: the state manager and the set disagree on holding it");
+            });
+        }
+        // The values a reader takes from the set are the state's, bit for bit, for every local
+        // column (the border columns are rebuilt by the admissions).
+        const Eigen::VectorXd x = sm.getStateVector();
+        if (static_cast<std::size_t>(x.size()) == set.slots.size()) {
+            for (std::size_t k = 0; k < set.slots.size(); ++k) {
+                const LocalSlot& s = set.slots[k];
+                if (!s.unnamed && (s.ref.kind == NetworkParamKind::SatClock
+                                   || s.ref.kind == NetworkParamKind::SatPhaseBias
+                                   || s.ref.kind == NetworkParamKind::SatCodeBias))
+                    continue;
+                if (!sameBits(x(static_cast<Eigen::Index>(k)), s.x_lin)) {
+                    f.note(SetMismatch::Stale, [&] {
+                        return fmt::format("slot {}: {:.17g} against the state's {:.17g}", k, s.x_lin,
+                                           x(static_cast<Eigen::Index>(k)));
+                    });
+                    break;
+                }
+            }
+        }
+        ++st.params_check.fresh_checks;
+    } catch (...) {
+        ++st.params_check.failed;
+    }
+}
+
 std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stations) {
     std::vector<std::string> lines;
     StationParamsCheck total;
@@ -397,6 +471,8 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
     for (const NetStation& st : stations) {
         const StationParamsCheck& c = st.params_check;
         total.builds += c.builds;
+        total.refreshed += c.refreshed;
+        total.fresh_checks += c.fresh_checks;
         total.unclassified += c.unclassified;
         total.failed += c.failed;
         total.slots += c.slots;
@@ -432,6 +508,9 @@ std::vector<std::string> stationParamsReport(const std::vector<NetStation>& stat
     lines.push_back(fmt::format("station-epochs with a column or a withheld state the classifier "
                                 "refused: {}; with a build or check error (no set): {}",
                                 total.unclassified, total.failed));
+    lines.push_back(fmt::format("station-epochs whose assembly ended before the split (set rebuilt "
+                                "without dispositions): {}; epoch starts checked for staleness: {}",
+                                total.refreshed, total.fresh_checks));
     const long long attempts = total.builds + total.failed;
     lines.push_back(fmt::format("wall of the builds and checks, summed over the station-epochs: "
                                 "{:.1f} ms ({:.1f} us per station-epoch)",

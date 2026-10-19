@@ -157,6 +157,10 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
     auto emitEpochStatus = [&](const char* disposition, const EpochStatusRow& r) {
         traces.emitEpochStatus(se.time, disposition, r);
     };
+    // The readers of the PASS A slip drains and of the admissions take a station's local
+    // columns from its parameter set, which the previous epoch's assembly left; the state
+    // manager is still their writer, so the two are compared once, here, before either changes.
+    for (NetStation& st : stations) networkCheckStationParamsFresh(st, se.time.tow);
     // CB-ADM phase co-gate feed: the run-latched admitted code-key set (null unless
     // the flag is armed and the census ran).  It is passed into every
     // ensureNetworkSharedStates call, so a signal whose code was quarantined also
