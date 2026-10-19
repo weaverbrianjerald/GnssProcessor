@@ -262,9 +262,14 @@ columns are still born in the station's `StateManager`, and `networkShadowStatio
 parameter inventory records from the set (`recordStationParams`), and so do the trace labels (the
 station-block span and the redundancy census, the RHS attribution's local columns, the names in
 the station-drop event), the ionosphere, wet-delay and receiver-state traces, the DD-fractional
-and phase-anchor traces, the SH diagnostics and the pre-fit census's birth seeds. The state
-manager is still read where a value changes after the split (the re-seed marks) and by the split
-itself. The shadow checks the set and the inventory recorded from it against the state manager
+and phase-anchor traces, the SH diagnostics and the pre-fit census's birth seeds. The
+carried-prior steps of PASS B read it too: the ambiguity, slant-ionosphere, receiver-clock,
+receiver-code-bias, phase-colour and wet-delay carries, the local block, and the
+double-difference prior build take their columns, keys, linearization points and a phase
+colour's elevation from the set. The state manager is still read where a value changes after
+the split (the re-seed marks the harvest reads and clears, which RAIM and the screens write) and
+by the split itself. A station whose set cannot be built fails its assembly for the epoch and is
+dropped with a warning. The shadow checks the set and the inventory recorded from it against the state manager
 on every station-epoch, and the run end prints the table `Network (station parameter set)` under
 the parameter inventory, with the findings (all zero on a sound run). The classifier that names a
 state manager's columns (`network\state\StateColumns.cpp`) is the bridge between the two and

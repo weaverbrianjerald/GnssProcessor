@@ -111,7 +111,8 @@ colour; `tests\network\test_network_station_build.cpp` pins it.
 Template: the diagonal route of `src\core\network\carry\ZwdCarry.cpp`.
 
 **Inject** (PASS B, parallel): `networkZwdCarryPrior`, row `zwd` of `kStationCarrySteps`.
-Copy the gate at the first line; the column through `h2local.find(tropo_idx)`; the record
+Copy the gate at the first line; the column's slot from the station's set (`st.params.zwd`, a
+typed map or a field of `StationParams` for another kind), then `h2local.find(tropo_idx)`; the record
 `R.pl_zwd = PlZwd{zcol, x_lin}`; the entry from `net::get(sta_rows, ...)`; the gap test
 `carryPastHorizon`; and the prior pushed to `inj` with
 `RowTag{ContributionKind::PriorZwdCarry, {}, {}}`, `lambda = 1 / (var + q * gap)`. Trap:
@@ -218,8 +219,9 @@ tables of step 2 print it.
   flag changes the network layout with no network key and no ledger row
   (`estimation.estimate_tropo_gradients` has neither). A separate future step, in which the
   network owns its parameter set, removes this; the set exists as a shadow of the state
-  manager (`StationParams`, page 7), checked on every run, and the inventory, the trace labels
-  and the diagnostics read it. Columns are still born and pruned in the state manager.
+  manager (`StationParams`, page 7), checked on every run, and the inventory, the trace labels,
+  the diagnostics and the carried-prior steps of PASS B read it. Columns are still born and
+  pruned in the state manager.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
   census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,
   the last estimated kind in the enum, is a second template for steps 2 to 4.
