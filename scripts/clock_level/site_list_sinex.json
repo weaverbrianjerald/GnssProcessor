@@ -1,0 +1,633 @@
+{
+ "_source": {
+  "file": "IGS0OPSSNX_20241260000_07D_07D_SOL.SNX.gz",
+  "sha256": "74a412dc1d09db480c87b5a1d160c7cfc3d59ad2db630aeb8ed80e092758d243",
+  "header": "%=SNX 2.02 IGN 24:144:26732 IGN 24:126:00000 24:133:00000 C  1379 2 S E",
+  "reference_epoch": "24:129:43200",
+  "decimal_year": 2024.35109,
+  "propagated_to": null,
+  "config": "config/golden/golden_field_refound.json",
+  "site_list": "site_list.json",
+  "note": "each site's ecef is the SINEX marker coordinate; a site the file lacks keeps its original ecef and is listed in `kept`"
+ },
+ "kept": [],
+ "sites": [
+  {
+   "name": "CHTI00NZL",
+   "dir": "chti00nzl",
+   "path": "C:/GnssProcessor/data/2024-129/obs/chti00nzl/CHTI00NZL_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -4607856.3405,
+    -272375.1715,
+    -4386954.0732
+   ],
+   "lat": -43.7355,
+   "lon": -176.6171,
+   "receiver": "TRIMBLE ALLOY",
+   "antenna": "TRM115000.00    NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.002,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 9.74,
+   "n_ep_seen": 720,
+   "nearest_roster": "WARK00NZL",
+   "nearest_roster_km": 1098.5,
+   "dist_wtzz_km": 19072.3
+  },
+  {
+   "name": "SCRZ00BOL",
+   "dir": "scrz00bol",
+   "path": "C:/GnssProcessor/data/2024-129/obs/scrz00bol/SCRZ00BOL_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    2743005.9181,
+    -5420745.2975,
+    -1937116.9426
+   ],
+   "lat": -17.7968,
+   "lon": -63.1597,
+   "receiver": "LEICA GR10",
+   "antenna": "LEIAR10         NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 9.33,
+   "n_ep_seen": 720,
+   "nearest_roster": "POVE00BRA",
+   "nearest_roster_km": 1013.6,
+   "dist_wtzz_km": 10523.5
+  },
+  {
+   "name": "ANMG00MYS",
+   "dir": "anmg00mys",
+   "path": "C:/GnssProcessor/data/2024-129/obs/anmg00mys/ANMG00MYS_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -1270827.121,
+    6242631.2781,
+    307792.3802
+   ],
+   "lat": 2.7846,
+   "lon": 101.5066,
+   "receiver": "TRIMBLE NETR9",
+   "antenna": "JAVRINGANT_DM   SCIS",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 11.58,
+   "n_ep_seen": 720,
+   "nearest_roster": "CUSV00THA",
+   "nearest_roster_km": 1222.4,
+   "dist_wtzz_km": 9673.6
+  },
+  {
+   "name": "QUIN00USA",
+   "dir": "quin00usa",
+   "path": "C:/GnssProcessor/data/2024-129/obs/quin00usa/QUIN00USA_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -2517231.5318,
+    -4198594.9109,
+    4076531.1367
+   ],
+   "lat": 39.9746,
+   "lon": -120.9444,
+   "receiver": "JAVAD TRE_3 DELTA",
+   "antenna": "ASH701945E_M    SNOW",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.5847,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 9.06,
+   "n_ep_seen": 720,
+   "nearest_roster": "JPLM00USA",
+   "nearest_roster_km": 686.9,
+   "dist_wtzz_km": 9120.4
+  },
+  {
+   "name": "HARB00ZAF",
+   "dir": "harb00zaf",
+   "path": "C:/GnssProcessor/data/2024-129/obs/harb00zaf/HARB00ZAF_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    5084657.6088,
+    2670325.4897,
+    -2768480.835
+   ],
+   "lat": -25.887,
+   "lon": 27.7072,
+   "receiver": "SEPT POLARX5TR",
+   "antenna": "TRM59800.00     NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    3.052,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 11.47,
+   "n_ep_seen": 720,
+   "nearest_roster": "WIND00NAM",
+   "nearest_roster_km": 1137.4,
+   "dist_wtzz_km": 8472.0
+  },
+  {
+   "name": "POHN00FSM",
+   "dir": "pohn00fsm",
+   "path": "C:/GnssProcessor/data/2024-129/obs/pohn00fsm/POHN00FSM_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -5879158.1297,
+    2350293.0407,
+    767748.7197
+   ],
+   "lat": 6.9599,
+   "lon": 158.2101,
+   "receiver": "SEPT POLARX5",
+   "antenna": "JAVRINGANT_DM   NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.001,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 10.44,
+   "n_ep_seen": 720,
+   "nearest_roster": "MAJU00MHL",
+   "nearest_roster_km": 1451.7,
+   "dist_wtzz_km": 12927.2
+  },
+  {
+   "name": "DAV100ATA",
+   "dir": "dav100ata",
+   "path": "C:/GnssProcessor/data/2024-129/obs/dav100ata/DAV100ATA_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    486854.5925,
+    2285099.1479,
+    -5914955.7266
+   ],
+   "lat": -68.5773,
+   "lon": 77.9726,
+   "receiver": "SEPT POLARX5",
+   "antenna": "LEIAR25.R3      LEIT",
+   "latch_l1": "L1C",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 12.79,
+   "n_ep_seen": 720,
+   "nearest_roster": "CAS100ATA",
+   "nearest_roster_km": 1394.9,
+   "dist_wtzz_km": 14135.1
+  },
+  {
+   "name": "BADG00RUS",
+   "dir": "badg00rus",
+   "path": "C:/GnssProcessor/data/2024-129/obs/badg00rus/BADG00RUS_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -838282.1818,
+    3865777.323,
+    4987624.5544
+   ],
+   "lat": 51.7697,
+   "lon": 102.235,
+   "receiver": "JAVAD TRE_3 DELTA",
+   "antenna": "JAVRINGANT_DM   JVDM",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 719,
+   "grid_any": 719,
+   "grid_l5": 719,
+   "cadence_s": 30.04,
+   "hen": [
+    0.028,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 10.41,
+   "n_ep_seen": 719,
+   "nearest_roster": "ULAB00MNG",
+   "nearest_roster_km": 554.7,
+   "dist_wtzz_km": 5918.2
+  },
+  {
+   "name": "STPM00SPM",
+   "dir": "stpm00spm",
+   "path": "C:/GnssProcessor/data/2024-129/obs/stpm00spm/STPM00SPM_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    2436207.922,
+    -3634804.8987,
+    4624885.5789
+   ],
+   "lat": 46.7778,
+   "lon": -56.1682,
+   "receiver": "TRIMBLE ALLOY",
+   "antenna": "TRM57971.00     NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    3.0434,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 10.37,
+   "n_ep_seen": 720,
+   "nearest_roster": "STJO00CAN",
+   "nearest_roster_km": 279.0,
+   "dist_wtzz_km": 4965.3
+  },
+  {
+   "name": "ASCG00SHN",
+   "dir": "ascg00shn",
+   "path": "C:/GnssProcessor/data/2024-129/obs/ascg00shn/ASCG00SHN_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    6121151.5608,
+    -1563978.9885,
+    -872615.2669
+   ],
+   "lat": -7.9163,
+   "lon": -14.3327,
+   "receiver": "TRIMBLE ALLOY",
+   "antenna": "TRM59800.00     NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.408,
+    0.0001,
+    -0.0007
+   ],
+   "mean_gps_sats": 10.62,
+   "n_ep_seen": 720,
+   "nearest_roster": "STHL00GBR",
+   "nearest_roster_km": 1297.5,
+   "dist_wtzz_km": 6875.5
+  },
+  {
+   "name": "CEDU00AUS",
+   "dir": "cedu00aus",
+   "path": "C:/GnssProcessor/data/2024-129/obs/cedu00aus/CEDU00AUS_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -3753473.3786,
+    3912741.0361,
+    -3347959.4722
+   ],
+   "lat": -31.8667,
+   "lon": 133.8098,
+   "receiver": "TRIMBLE ALLOY",
+   "antenna": "LEIAR25.R4      NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1C",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.025,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 11.08,
+   "n_ep_seen": 720,
+   "nearest_roster": "PARK00AUS",
+   "nearest_roster_km": 1361.3,
+   "dist_wtzz_km": 14814.0
+  },
+  {
+   "name": "KOKB00USA",
+   "dir": "kokb00usa",
+   "path": "C:/GnssProcessor/data/2024-129/obs/kokb00usa/KOKB00USA_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -5543838.3739,
+    -2054585.5338,
+    2387810.5794
+   ],
+   "lat": 22.1263,
+   "lon": -159.6649,
+   "receiver": "SEPT POLARX5TR",
+   "antenna": "ASH701945G_M    NONE",
+   "latch_l1": "L1C",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0614,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 10.24,
+   "n_ep_seen": 720,
+   "nearest_roster": "KOKV00USA",
+   "nearest_roster_km": 0.0,
+   "dist_wtzz_km": 12055.7
+  },
+  {
+   "name": "UTQI00USA",
+   "dir": "utqi00usa",
+   "path": "C:/GnssProcessor/data/2024-129/obs/utqi00usa/UTQI00USA_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -1880400.0452,
+    -813136.6798,
+    6019921.4754
+   ],
+   "lat": 71.3228,
+   "lon": -156.615,
+   "receiver": "JAVAD TR_G3TH",
+   "antenna": "JAV_GRANT-G3T   NONE",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 12.53,
+   "n_ep_seen": 720,
+   "nearest_roster": "GCGO00USA",
+   "nearest_roster_km": 798.1,
+   "dist_wtzz_km": 6593.8
+  },
+  {
+   "name": "ARHT00ATA",
+   "dir": "arht00ata",
+   "path": "C:/GnssProcessor/data/2024-129/obs/arht00ata/ARHT00ATA_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -1312626.4852,
+    311171.0539,
+    -6213081.9495
+   ],
+   "lat": -77.8294,
+   "lon": 166.6637,
+   "receiver": "JAVAD TRE_3 DELTA",
+   "antenna": "JAVRINGANT_DM   SCIS",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.0083,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 12.69,
+   "n_ep_seen": 720,
+   "nearest_roster": "SCTB00ATA",
+   "nearest_roster_km": 3.1,
+   "dist_wtzz_km": 16642.0
+  },
+  {
+   "name": "WUH200CHN",
+   "dir": "wuh200chn",
+   "path": "C:/GnssProcessor/data/2024-129/obs/wuh200chn/WUH200CHN_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -2267750.263,
+    5009154.4792,
+    3221294.345
+   ],
+   "lat": 30.5317,
+   "lon": 114.3573,
+   "receiver": "JAVAD TRE_3",
+   "antenna": "JAVRINGANT_G5T  NONE",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5X",
+   "latch_c5": "C5X",
+   "l5_types": [
+    "L5X"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 29.79,
+   "hen": [
+    0.1206,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 8.85,
+   "n_ep_seen": 725,
+   "nearest_roster": "HKSL00HKG",
+   "nearest_roster_km": 908.3,
+   "dist_wtzz_km": 8251.8
+  },
+  {
+   "name": "BAKE00CAN",
+   "dir": "bake00can",
+   "path": "C:/GnssProcessor/data/2024-129/obs/bake00can/BAKE00CAN_R_20241290000_01D_30S_MO.rnx",
+   "ecef": [
+    -289834.3746,
+    -2756501.1906,
+    5725162.4122
+   ],
+   "lat": 64.3178,
+   "lon": -96.0024,
+   "receiver": "SEPT POLARX5S",
+   "antenna": "TPSCR.G3        NONE",
+   "latch_l1": "L1W",
+   "latch_c1": "C1W",
+   "latch_l2": "L2W",
+   "latch_c2": "C2W",
+   "latch_l5": "L5Q",
+   "latch_c5": "C5Q",
+   "l5_types": [
+    "L5Q"
+   ],
+   "has_l5": true,
+   "grid_complete": 720,
+   "grid_any": 720,
+   "grid_l5": 720,
+   "cadence_s": 30.0,
+   "hen": [
+    0.1,
+    0.0,
+    0.0
+   ],
+   "mean_gps_sats": 11.04,
+   "n_ep_seen": 720,
+   "nearest_roster": "CHUR00CAN",
+   "nearest_roster_km": 626.3,
+   "dist_wtzz_km": 5987.9
+  }
+ ],
+ "consumer": {
+  "name": "WTZZ00DEU",
+  "ecef": [
+   4075579.1183,
+   931853.4434,
+   4801569.2306
+  ],
+  "source": "sinex"
+ }
+}

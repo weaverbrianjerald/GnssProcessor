@@ -90,6 +90,7 @@ Fetching, converting and laying out inputs.
 | `migrate_data_layout.py` | migrate_data_layout.py One-shot migrator from the legacy *flat* GNSS data layout to the unified *date-first* layout used by ``PathResolver`` and ``Pr… | 1 |
 | `refresh_atx.py` | Keep the IGS ANTEX (igs20.atx) antenna model up to date. The IGS ``igs20.atx`` at files.igs.org is a single, continuously-updated file: new satellite… | 5 |
 | `resolve_itrf_ecef.py` | Resolve ITRF2020 (IGS SSC) station ECEF coordinates at an observation epoch. Wraps the test-suite's authoritative ``SinexTruth`` parser (``pyviz/gnss… | 9 |
+| `roster_from_sinex.py` | Roster coordinates from an IGS weekly SINEX. Reads a SINEX (plain or gzip) and writes, for every station of a config's network roster that the file holds, the marker coordinate of the solution that covers the epoch; a station the file lacks keeps the config coordinate and is named in the report. Also writes the census site list and the consumer coordinate under the same source. | 4 |
 | `select_global_stations.py` | Select a globally-distributed subset of IGS stations from a CDDIS day listing. Input: a CDDIS daily-directory listing (``curl '<dir>*?list'``) for a … | 2 |
 
 ## Event harness
