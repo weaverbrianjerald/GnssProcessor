@@ -5,14 +5,14 @@
 - **id:** BDS
 - **topic:** network-vehicle
 - **status:** open
-- **summary:** Pre-registered 2026-10-18, no run read yet. First GPS + Galileo + BeiDou network run on the field golden (DOY 129 2024, 58 stations, held-out consumer WTZZ00DEU), graded against GPS only and GPS + Galileo on one exe. BeiDou signals chosen from the roster's RINEX: B1I + B3I (C2I / C6I / L2I / L6I), the pair the loader's dual mode names for BeiDou. Arms G, GE, GEC; a BeiDou-required piece is armed only if the 2 h GEC run shows the failure it answers. Nothing is armed by this card.
+- **summary:** Read 2026-10-18. First GPS + Galileo + BeiDou network run on the field golden (DOY 129 2024, 58 stations, held-out consumer WTZZ00DEU), graded against GPS only and GPS + Galileo on one exe. BeiDou on B1I + B3I (C2I / C6I / L2I / L6I), the pair the loader's dual mode names. HEALTHY: 720 of 720 epochs emitted, no withhold, BeiDou clocks metre class (maximum 14.6 m, median 3.9 m), no failure mode A, no failure mode B, so none of the four pieces was needed. Three stations that track BeiDou on B1I alone are dropped whole by the addStation guard (GEC); with their band-2 BeiDou removed (GEC-s) the run is clean. Census, hours 2 to 6: GEC-s against GE -0.0038 m (5 better, 0 worse; the ten sites with the pair -0.0143 m), against GPS only -0.0267 m (12 better, 1 worse). WTZZ00DEU hours 2 to 6 within +0.007 m of GE. Cost 2 to 3 times GE. Nothing is armed by this card.
 - **source:** the author's request of 2026-10-18 ("perhaps we should do a GPS+Galileo+BeiDou run to compare against GPS-only and GPS+Galileo"); [GAD](GAD_galileo_adoption_2026-10-13.md) (how Galileo was added and graded); [SPEC_beidou_w6_datum.md](../SPEC_beidou_w6_datum.md) and [SPEC_cb_admission_card.md](../SPEC_cb_admission_card.md) (the four-piece emit path, failure mode B)
 - **knobs / posture:** `processing.active_systems` `["GPS","Galileo","BeiDou"]`, `processing.signal_priorities.BeiDou` `["C2I","L2I","C6I","L6I"]`; candidate pieces, each only on the evidence of section 3: `network.cb_admission`, `network.rank_gate_tol` (placement), `network.cb_kaula_prior`; `network.phase_datum_prioritized` with `network.phase_datum_min_stations` 2 and `network.rank_gate_tol` 1e-11 are already in the goldens
 - **dates in the text:** 2026-10-18
-- **hashes / run dirs:** exe `gnss_processor_w3base.exe` (main `30ca49e`, sha256 `50ca2ea5fbbc540cbb2b41a0b208313e0b88cf0f60ae134e0230f778d209d285`) for every run; run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`), arms `_rap_bds_*`; scratch `D:/GnssProcessorSupport/gates/bds/`
+- **hashes / run dirs:** exe `gnss_processor_w3base.exe` (main `30ca49e`, sha256 `50ca2ea5fbbc540cbb2b41a0b208313e0b88cf0f60ae134e0230f778d209d285`) for every run; run root `D:/GnssProcessorSupport/runs_nom` (`RAPID_RUNS_ROOT`): 2 h `_rap_bds_{g2,gp2,ge2,gec2,gecs2}`, 6 h `_rap_bds_{g6,ge6,gec6,gecs6}`, census keys `bdsg`, `bdsge`, `bdsgec`, `bdsgecs`, `bdsgecge`, `bdsgecg`, `bdsgecsge`, `bdsgecsg` (replays `_rap_<key>_<site4>`), BeiDou-only consumer `_rap_bdsxc_bdsonly_wtzz`; scratch and scripts `D:/GnssProcessorSupport/gates/bds/`
 - **gates (frozen at pre-registration):** section 4
 
-**Outcome.** Pre-registered; no result yet. Question: does a third constellation, BeiDou on B1I and B3I, run healthy on the self-contained field golden, and what does it change for the held-out consumer and the 16-site census against GPS + Galileo and against GPS only? The answer is written below the pre-registration, dated.
+**Outcome.** Question: does a third constellation, BeiDou on B1I and B3I, run healthy on the self-contained field golden, and what does it change for the held-out consumer and the 16-site census against GPS + Galileo and against GPS only? It runs healthy: 720 of 720 epochs on every arm, BeiDou clocks in the metre class (failure mode A absent at 58 stations), the rank gate never failed (failure mode B absent), no piece armed. As pre-registered (GEC) the three single-band stations are dropped at every epoch and the phase-anchor heal fires on 551 of 720; with their band-2 BeiDou removed (GEC-s) nothing fires. Census hours 2 to 6: GEC-s -0.0038 m against GE (5 better, 0 worse), -0.0267 m against GPS only (12 better, 1 worse); the consumer is within +0.007 m of GE in every settled hour. Users of the BeiDou wire without BeiDou are unchanged at the median (ARHT00ATA named). Cost 2 to 3 times GE on a shared box. Arming is open.
 
 ## 1. Question and history
 
@@ -131,3 +131,71 @@ All arms on `gnss_processor_w3base.exe`, run root `D:/GnssProcessorSupport/runs_
 
 G and GE reproduce the first two hours of card GAD's pair (0.113 0.023 and 0.058 0.011 on `gnss_processor_galp2.exe`). The stage 1 verdict is health only; the quality gates are stage 2.
 
+### 5.2 Stage 2, 6 h (2026-10-18)
+
+Four arms on one exe, `_rap_bds_{g6,ge6,gec6,gecs6}`; the consumer replays and the census ran afterwards on the same exe. Four runs of another session shared the box throughout.
+
+| gate | reading | verdict |
+| --- | --- | --- |
+| S1 | Every arm exits 0 and emits 720 of 720 epochs (G 474 s, GE 1,734 s, GEC 6,646 s, GEC-s 5,226 s wall); 0 skipped, 0 withheld by the observability gate, the A4 ceiling or the rank gate (0 UNDER, 0 OVER-specified). Observed near-null count at the gate (declared dimension 1, 2, 3, 3): G 1 to 1, GE 2 to 2, GEC-s 3 to 3, GEC 3 to 21. H2: BeiDou `c0` maximum 14.65 m (GEC) and 13.88 m (GEC-s), both C20 at epoch 159 (the declared 4.7 m step of section 5.1), median 3.89 and 3.85 m, p99 10.15 and 9.85 m, none above 50 m. H3: GPS and Galileo clocks against GE, the datum-free rms of the change at most 0.128 and 0.121 m (GEC) and 0.054 and 0.083 m (GEC-s); the constellation-common GPS level moves by -0.36 m (GEC, -0.64 m in hour 6) and -0.01 to -0.08 m (GEC-s). H4: 38 BeiDou satellites with clock, two code-bias and two phase-bias lines at every epoch (GEC minimum 37). | PASS (GEC and GEC-s) |
+| S2 | WTZZ00DEU, table below: GEC against GE no worse than +0.007 m in any of hours 2 to 6 (hour 4); GEC-s +0.007 m (hour 4). The GPS + Galileo consumer of the GEC wire reads 0.056 0.011 0.021 0.010 0.016 0.011 m (GE 0.058 0.011 0.018 0.010 0.015 0.011), of the GEC-s wire 0.057 0.012 0.024 0.011 0.014 0.009 m. | PASS (GEC and GEC-s) |
+| S3 | Census `bdsge` against `bdsg`: hours 2 to 6 paired median -0.0198 m, 10 better, 2 worse (DAV100ATA +0.0605, HARB00ZAF +0.0158); hour 1 -0.2200 m (14 / 2). Median site p50 by hour 0.452 0.112 0.045 0.053 0.039 0.044 -> 0.136 0.054 0.041 0.036 0.040 0.037 m. Card GAD's numbers on `gnss_processor_galp2.exe` (-0.0198 m, 10 / 2, -0.2203 m in hour 1) are reproduced; the 6 h G and GE runs reproduce its pair (WTZZ00DEU 0.113 0.023 0.016 0.020 0.030 0.026 m, 655 epochs below a decimetre; 0.058 0.011 0.018 0.010 0.015 0.011 m, 688). | PASS |
+| S4 | GEC-s (`bdsgecs`) against GE: hours 2 to 6 paired median -0.0038 m, 5 better, 0 worse; hour 1 -0.0331 m (10 / 2); no site worse than +0.0042 m. GEC (`bdsgec`) against GE: -0.0025 m, 5 better, 0 worse; hour 1 -0.0162 m (10 / 2); largest worsening +0.0087 m (HARB00ZAF). Median site p50 by hour: GE 0.136 0.054 0.041 0.036 0.040 0.037, GEC 0.096 0.039 0.033 0.036 0.031 0.031, GEC-s 0.092 0.035 0.032 0.032 0.030 0.031 m. Against GPS only: GEC-s -0.0267 m (12 better, 1 worse: HARB00ZAF +0.0120), GEC -0.0243 m (11 / 1: HARB00ZAF +0.0245). | PASS (both) |
+| S5 | GPS + Galileo users of the GEC wire (`bdsgecge`) against `bdsge`: hours 2 to 6 median +0.0003 m (DAV100ATA +0.0259, HARB00ZAF +0.0223; none above 0.05 m); of the GEC-s wire (`bdsgecsge`): -0.0002 m (ARHT00ATA +0.0342). GPS-only users of the GEC wire (`bdsgecg`) against `bdsg`: +0.0000 m (ARHT00ATA +0.0463); of the GEC-s wire (`bdsgecsg`): +0.0001 m (ARHT00ATA +0.1216, QUIN00USA +0.0502, both named). | PASS on the median bars, sites named |
+| S6 | Epoch-loop wall per epoch (the run log's `Network[timing]` line): 6 h G 457 ms, GE 2,188 ms, GEC 9,008 ms, GEC-s 7,000 ms; 2 h G 3,054, GE 5,546, GEC 11,872, GEC-s 8,853 ms. The load differs between the rows (the five 2 h arms ran together, the 6 h arms overlapped only at the start and the census replays followed), so the ratios are not controlled: GEC-s is 1.6 times GE at 2 h and 3.2 times at 6 h; card GAD read GE at 2.9 times G (mean) under its own load. Read as about 2 to 3 times GE. GEC costs 1.3 times GEC-s (the heal and the S-basis completion run on most epochs). | read |
+| S7 | BeiDou wire, datum-free rms of `c0` by hour (GEC-s, 6 h): BeiDou 0.85 1.47 1.52 1.32 1.18 1.07 m, Galileo 0.64 0.41 0.18 0.14 0.12 0.12 m, GPS 0.81 0.80 0.81 0.80 0.81 0.85 m (GEC: BeiDou 0.85 1.54 1.57 1.35 1.21 1.10 m): the deviation from the a priori product, not a truth. 38 satellites per epoch. BeiDou-only consumer of the GEC-s wire at WTZZ00DEU (`_rap_bdsxc_bdsonly_wtzz`, `processing.active_systems` `["BeiDou"]`, 13.4 satellites): 0.154 0.075 0.041 0.047 0.042 0.026 m by hour, 621 of 720 epochs below a decimetre. | read |
+
+**WTZZ00DEU, 3D p50 by hour (m), the consumer on the arm's own systems.**
+
+| arm | systems | h1 | h2 | h3 | h4 | h5 | h6 | below 0.1 m of 720 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| G | GPS | 0.113 | 0.023 | 0.016 | 0.020 | 0.030 | 0.026 | 655 |
+| GE | GPS, Galileo | 0.058 | 0.011 | 0.018 | 0.010 | 0.015 | 0.011 | 688 |
+| GEC | GPS, Galileo, BeiDou | 0.033 | 0.017 | 0.020 | 0.017 | 0.018 | 0.014 | 689 |
+| GEC-s | GPS, Galileo, BeiDou | 0.030 | 0.015 | 0.019 | 0.017 | 0.018 | 0.015 | 689 |
+
+The consumer is better in hour 1 (-0.025 and -0.028 m) and up to 7 mm worse than GE in hours 2 to 6; it is one instrument, and the census is the bar.
+
+**Census, 16 sites, mean of the hourly p50 over hours 2 to 6 (m), by what the site tracks.**
+
+| site | BeiDou at the site | G | GE | GEC | GEC-s |
+| --- | --- | --- | --- | --- | --- |
+| CHTI | B1I only | 0.054 | 0.043 | 0.043 | 0.042 |
+| SCRZ | B1I only | 0.045 | 0.045 | 0.042 | 0.041 |
+| ANMG | B1I only | 0.058 | 0.054 | 0.056 | 0.054 |
+| QUIN | B1I + B3I | 0.102 | 0.026 | 0.024 | 0.024 |
+| HARB | B1I + B3I | 0.023 | 0.039 | 0.048 | 0.035 |
+| POHN | B1I + B3I | 0.087 | 0.068 | 0.045 | 0.043 |
+| DAV1 | B1I + B3I | 0.069 | 0.129 | 0.069 | 0.058 |
+| STPM | B1I + B3I | 0.031 | 0.024 | 0.020 | 0.020 |
+| ASCG | B1I + B3I | 0.071 | 0.035 | 0.039 | 0.039 |
+| CEDU | B1I + B3I | 0.127 | 0.043 | 0.019 | 0.020 |
+| KOKB | B1I + B3I | 0.345 | 0.050 | 0.047 | 0.040 |
+| ARHT | B1I + B3I | 0.402 | 0.225 | 0.128 | 0.119 |
+| WUH2 | B1I + B3I | 0.091 | 0.046 | 0.025 | 0.026 |
+| BADG | none | 0.032 | 0.025 | 0.025 | 0.024 |
+| UTQI | none | 0.091 | 0.049 | 0.049 | 0.050 |
+| BAKE | none | 0.037 | 0.016 | 0.021 | 0.016 |
+
+By group (GEC-s against GE, hours 2 to 6 paired): the ten sites with the pair -0.0143 m (5 better, 0 worse; hour 1 -0.0726 m), the three with B1I only -0.0004 m, the three without BeiDou -0.0006 m (the wire effect on a site that cannot use BeiDou). The gain sits at the sites that use BeiDou: ARHT00ATA -0.107 m and DAV100ATA -0.071 m (GE had DAV100ATA 0.060 m worse than GPS only; GEC-s brings it to 0.058 m against GPS only's 0.069 m), POHN00FSM -0.025, CEDU00AUS -0.023, WUH200CHN -0.020 m. GEC against GE by group: -0.0120 m (pair), +0.0003 m (B1I only), +0.0004 m (none). Scripts `census_groups.py`, `wire_clock.py`, `wire_sats.py`, `health.py`, `consumer_hours.py` and the grade outputs are in `D:/GnssProcessorSupport/gates/bds/`.
+
+### 5.3 What the read says
+
+- **Failure mode A did not recur.** At 58 stations on the self-contained golden the BeiDou satellite clocks are in the metre class from the first epoch (maximum 14.65 m, none above 50 m, none at kilometre class) and GPS and Galileo move by at most 0.13 m (datum-free). The 305-station W6-off configuration of the 2026-06-29 run is a different regime (W6 off, 305 stations, the older posture): this read does not close mode A for it.
+- **Failure mode B did not recur and needed no piece.** The rank gate never withheld; the CB-ADM census and the Kaula prior stay off. Two of the four pieces were already in the golden, and one of them acted: the phase-anchor heal fired on 240 of 240 (2 h) and 551 of 720 (6 h) epochs of GEC and recovered every gate, soft-anchoring 3,323 phase-bias columns, while GEC-s needed neither the heal nor the S-basis completion. With one dual pair, B1I + B3I, tracked by 38 satellites at 16 or more stations each, the bias datum is not under-specified at this scale; the sparsity of failure mode B (many BDS-3 signals, many seen by one or two stations) does not arise from a single pair. Whether it returns at 305 stations or with the other bands is not read.
+- **A station that tracks BeiDou on one band is dropped whole.** The addStation positive-definiteness guard rejects such a station (WARK00NZL, MAJU00MHL, SCTB00ATA) at every epoch, its GPS and Galileo rows with it. The null direction is ambiguity, slant ionosphere and the BeiDou inter-system bias (75.5 %, 19.3 % and 3.9 % of the null-vector mass over 6 h): one band leaves those three columns collinear. A roster that adds BeiDou has to remove the lone band at such stations (GEC-s did, by data subtraction) or the producer needs a rule that admits a constellation's rows at a station only with the second band. Owed.
+- **BeiDou helps where it is used.** The settled census gain of GEC-s over GE is -0.0038 m overall and -0.0143 m at the ten sites with the pair, with ARHT00ATA and DAV100ATA (the two sites GE left worst) improving by 0.107 and 0.071 m; no site is worse by more than 0.0042 m. Sites without the pair and users of the wire without BeiDou are unchanged at the median.
+- **BeiDou product quality now has a first measure.** A BeiDou-only consumer of the wire reaches 4 to 5 cm in hours 3 to 5 and 2.6 cm in hour 6 (621 of 720 epochs below a decimetre), without GPS or Galileo. It is one station and one day; the wire's BeiDou clocks deviate from the a priori product by 1.1 to 1.5 m rms (datum-free), against 0.1 to 0.2 m for Galileo and 0.8 m for GPS, so the BeiDou level is not yet a graded quantity.
+- **RAIM acts on BeiDou more than on the others.** 367 rows name a `C##` satellite in GEC-s (243 spiked, 202 refloated) against 103 Galileo and 106 GPS rows, and 82 GPS and 70 Galileo rows in GE; the stations are mainly YKRO00CIV, KIT300UZB, GUAM00GUM, MAC100AUS and PARK00AUS (2 h read). The per-satellite and per-station attribution of the 6 h run is not read here.
+
+## 6. Open
+
+- The single-band rule (section 5.3): data subtraction used here, a producer rule owed; GEC-s is the arm to carry forward.
+- Arming BeiDou in the goldens is the author's decision (ledger rows for `processing.active_systems` and `processing.signal_priorities.BeiDou`, the generator, a fresh-convergence baseline pair). The evidence of this card: all gates pass on GEC-s, the gain is at the sites that use BeiDou, the cost is 2 to 3 times GE.
+- ARHT00ATA and QUIN00USA worse as GPS-only users of the BeiDou wire (+0.12 and +0.05 m on GEC-s, +0.046 m ARHT00ATA on GEC); the same fragility as card GAD's ARHT00ATA (+0.196 m).
+- HARB00ZAF stays worse than GPS only (+0.012 m on GEC-s, +0.025 m on GEC); DAV100ATA is now level with GPS only.
+- BeiDou attitude: the golden runs nominal yaw steering for every system (the BeiDou orbit-normal mode at low beta, `processing.enable_orbit_normal_attitude`, is off) and the wind-up is accumulated; the beta angles of the 38 satellites over the window were not read.
+- The BeiDou RAIM load and the BSHM00ISR L6I gaps (453 of 609 per-signal resumptions in 2 h) are not attributed.
+- The B1C / B2a pair (21 stations) and the BDS-3 B2b signals are not exercised: they need triple or all mode and are a different configuration.
+- A controlled cost measurement (one arm per box load) and the 24 h and multi-day behaviour are not read.
+- The 305-station and W6-off regimes of the earlier failures are not rerun.
