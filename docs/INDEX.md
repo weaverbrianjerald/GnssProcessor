@@ -181,6 +181,14 @@ Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md)
 health and shadow, at ignition and at a forced handover (open, 2026-10-18: built default off, never armed; unit gate and
 Release smoke in; checked 2026-10-18 against same-exe controls on the field and sim goldens: knob absent identical except the declared lines, no handover in 6 h against two in each control, field hour-2 common drift 0.051 against 0.192 m/h, consumer and census unchanged at the median, clock product within 2.4 mm).
 
+[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
+golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
+single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
+GPS only; nothing armed; the single-band rule is built behind `network.second_band_admission`, UNVALIDATED; 2026-10-19: key off identical,
+key on at 6 h it reproduces GEC-s).
+[BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
+from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |

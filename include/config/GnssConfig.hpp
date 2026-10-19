@@ -3288,6 +3288,40 @@ namespace GnssProcessor {
          */
         int networkCanonicalPairKeepEpochs() const { return network_canonical_pair_keep_epochs_; }
         /**
+         * @brief Second-band admission (@c network.second_band_admission, network
+         *        producer only).
+         *
+         * A constellation other than the time reference enters the network path at a
+         * station only while the station holds it on two modelled bands (a band is
+         * modelled for a satellite when the epoch carries an admitted phase and an
+         * admitted code on it).  A station that tracks the constellation on one band
+         * leaves the inter-system bias, the slant ionosphere and the ambiguities of
+         * that constellation collinear in its local block, and the addStation
+         * positive-definiteness guard then rejects the whole station, its other
+         * constellations included.  With the rule on, only the constellation's rows
+         * leave the station. A withheld record is absent downstream exactly as if the
+         * RINEX record were missing, and the constellation returns when a second band
+         * appears. See @ref networkSecondBandScope and @ref networkSecondBandMinSats.
+         *
+         * Default false = byte-identical (the epoch is returned as it came, no copy and
+         * no walk). Not fingerprinted: a forward-only admission policy. The held-out
+         * closed-loop consumer is never screened.
+         */
+        bool networkSecondBandAdmission() const { return network_second_band_admission_; }
+        /**
+         * @brief What the second-band admission tests (@c network.second_band_scope:
+         *        "station" or "satellite"; inert without @ref networkSecondBandAdmission).
+         */
+        SecondBandScope networkSecondBandScope() const { return network_second_band_scope_; }
+        /**
+         * @brief Station scope threshold (@c network.second_band_min_sats; inert without
+         *        @ref networkSecondBandAdmission and under satellite scope): the number of
+         *        satellites of a constellation that must be on two modelled bands at a
+         *        station for the constellation to be admitted there. Clamped at 1 by the
+         *        loader.
+         */
+        int networkSecondBandMinSats() const { return network_second_band_min_sats_; }
+        /**
          * @brief Post-resume MW/LLI slip-drain warm-up (@c network.resume_slip_warmup_ep,
          *        epochs, SPEC_synthetic_minimum_network §18.10).
          *
@@ -8623,6 +8657,9 @@ namespace GnssProcessor {
         bool   network_readmit_seed_code_bias_{true};      ///< Re-admission seed sub-knob (READMIT): also park + seed the departing satellite's per-signal code-bias columns (true) or the clock alone (false; FALSIFIED as an improvement).  Inert without readmit_seed_horizon_s.
         bool   network_readmit_seed_mirrors_{false};       ///< The carry LS-VCE monitor and the prior-residual census take a parked seed the D2 fold folded, as a row at the seed gap (network.readmit_seed_mirrors); off = they skip every parked entry (byte-identical).  Inert without readmit_seed_horizon_s.  Not fingerprinted.  Network mode only.
         bool   network_canonical_pair_admission_{false};   ///< Canonical-pair admission (docs/refound/CPA_canonical_pair_admission_2026-09-20.md; ledger KEEP_OFF): a (station, satellite) record enters the network path only while the station holds its canonical phase and code on band digits 1 and 2 (its own PppModel latch decides them), or the last good processed epoch is within canonical_pair_keep_epochs; a withheld record is absent downstream exactly as if the RINEX record were missing, so the row-level gap re-entry tier sees the return as a re-entry.  A constellation with no canonical pair decided on those digits is left untouched.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
+        bool   network_second_band_admission_{false};      ///< Second-band admission (network.second_band_admission): a non-reference constellation enters the network path at a station only while the station holds it on two modelled bands; a withheld record is absent downstream as if the RINEX record were missing.  Off = byte-identical (no copy of the epoch is taken).  Not fingerprinted.
+        SecondBandScope network_second_band_scope_{SecondBandScope::Station}; ///< What the second-band admission tests: the constellation at the station (default) or each satellite (network.second_band_scope).  Inert without second_band_admission.
+        int    network_second_band_min_sats_{1};           ///< Station scope: satellites of a constellation that must be on two modelled bands at a station for the constellation to be admitted there (network.second_band_min_sats, clamped at 1).  Inert without second_band_admission and under satellite scope.
         int    network_canonical_pair_keep_epochs_{3};     ///< Canonical-pair admission tolerance, in processed epochs: a record without its canonical pair is still admitted while the last good epoch is at most this many epochs back.  Clamped at 0 (0 admits only the epochs that hold the pair).  Inert without canonical_pair_admission.
         int    network_resume_d5_warmup_ep_{0};            ///< Epochs after a warm resume during which the D5 innovation gate is diagnostic-only (RS-2b, SPEC_event_harness §21.6): a tripping chord is counted (d5_warmup_suppressed and the epoch's n_d5_flags) but not re-tapped, not marked slipped, and its block is not refolded, so "branch correct / cold station layer wrong" can be told from "branch inconsistent".  The σ̂₀ feed, the v3 corroboration gate and the MW/LLI/IF-TD drains are untouched.  Counted in processed epochs at the install seam.  0 = off (byte-identical).  Not fingerprinted.
         int    network_resume_slip_warmup_ep_{0};          ///< Epochs after a warm resume during which the MW/LLI (T0) slip drain is diagnostic-only (its cold reference fires on many arcs at the second warm epoch); T1 IF-TD and wind-up drains stay live.  0 = off.  Not fingerprinted.

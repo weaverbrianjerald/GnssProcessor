@@ -47,6 +47,7 @@
  */
 
 #include "config/GnssConfig.hpp"
+#include "common/GnssIdentity.hpp"   // systemName, timeReferenceSystem (second-band admission)
 #include "network/qc/PrefitCensus.hpp"   // parseFuseClassMask / fuseClassMaskName (SPEC_prefit_census_observability INC-2)
 #include "network/carry/CarryVce.hpp"       // parseComponents (prior-residual census family list)
 #include "network/carry/CarryVceApply.hpp"  // familySlot (M2 v2 apply-family validation)
@@ -4856,6 +4857,32 @@ namespace GnssProcessor {
                       "negative, clamped to 0 (admit only the epochs that hold the "
                       "canonical pair).", network_canonical_pair_keep_epochs_);
             network_canonical_pair_keep_epochs_ = 0;
+        }
+        // Second-band admission.  Default off = byte-identical; not fingerprinted (a
+        // forward-only admission policy).  An unknown scope falls back to the default
+        // with a warning, and a threshold below 1 is clamped (0 satellites on two bands
+        // would admit every constellation, so it has no reading but 1).
+        network_second_band_admission_ =
+            jval<bool>(json, "network.second_band_admission", "second_band_admission", false);
+        {
+            const std::string raw = jval<std::string>(json, "network.second_band_scope",
+                                                      "second_band_scope",
+                                                      std::string{"station"});
+            const std::string low = detail::toLower(raw);
+            if      (low == "station")   network_second_band_scope_ = SecondBandScope::Station;
+            else if (low == "satellite") network_second_band_scope_ = SecondBandScope::Satellite;
+            else {
+                log->warn("Network: network.second_band_scope '{}' is not 'station' or "
+                          "'satellite', using 'station'.", raw);
+                network_second_band_scope_ = SecondBandScope::Station;
+            }
+        }
+        network_second_band_min_sats_ =
+            jval<int>(json, "network.second_band_min_sats", "second_band_min_sats", 1);
+        if (network_second_band_min_sats_ < 1) {
+            log->warn("Network: network.second_band_min_sats = {} is below 1, clamped to 1.",
+                      network_second_band_min_sats_);
+            network_second_band_min_sats_ = 1;
         }
         if (network_resume_frame_restore_ || network_resume_slip_warmup_ep_ > 0) {
             if (network_config_.state_snapshot_path.empty())
@@ -10080,6 +10107,35 @@ namespace GnssProcessor {
                             "epochs below a decimetre), where a satellite without its band-2 "
                             "phase is still a two-band satellite."
                           : "");
+        // Armed line for the second-band admission.  The rule has no prerequisite knob; it
+        // is inert when no non-reference constellation is active, which the line says.
+        if (network_second_band_admission_) {
+            log->info("Network producer (SECOND-BAND ADMISSION): ON, scope {}: a "
+                      "constellation other than the time reference enters the network path "
+                      "at a station only while {}.  A withheld record is absent for "
+                      "everything downstream exactly as if the RINEX record were missing "
+                      "(the row-level gap re-entry tier reads its return as a re-entry), and "
+                      "a band counts as modelled for a satellite when the epoch carries an "
+                      "admitted phase and an admitted code on it.  Both edges are "
+                      "ADMISSION/second_band events and log lines; the held-out closed-loop "
+                      "consumer is never screened.",
+                      network_second_band_scope_ == SecondBandScope::Station ? "station"
+                                                                              : "satellite",
+                      network_second_band_scope_ == SecondBandScope::Station
+                          ? fmt::format("at least {} of its satellites are on two modelled "
+                                        "bands at that station", network_second_band_min_sats_)
+                          : std::string("the satellite is on two modelled bands"));
+            bool non_reference_active = false;
+            for (const std::string& sys : active_systems_)
+                if (sys != systemName(timeReferenceSystem()) && signal_priorities_.count(sys) != 0)
+                    non_reference_active = true;
+            if (!non_reference_active)
+                log->warn("Network producer: network.second_band_admission is armed with no "
+                          "constellation other than {} that is both in processing.active_systems "
+                          "and has a processing.signal_priorities list, so the rule has nothing "
+                          "to screen: the switch is INERT here.",
+                          systemName(timeReferenceSystem()));
+        }
         if (network_readmit_seed_mirrors_) {
             log->info("Network producer (READMIT seed mirrors): the carry LS-VCE monitor and "
                       "the prior-residual census take a parked seed the D2 fold applied as a "

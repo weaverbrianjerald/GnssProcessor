@@ -133,6 +133,9 @@ NetworkKnobs NetworkKnobs::snapshot(const GnssConfig& config_, const NetworkConf
     k.readmit_marg_ep        = config_.networkReadmitCouplingMargEp();   // block/row re-coupling edge
     k.readmit_seed_cb        = config_.networkReadmitSeedCodeBias();     // seed the code biases too (or clock only)
     k.readmit_seed_mirrors   = config_.networkReadmitSeedMirrors();      // monitor and census take a folded seed
+    k.second_band_admission  = config_.networkSecondBandAdmission();     // a constellation enters a station on two modelled bands only
+    k.second_band_scope      = config_.networkSecondBandScope();         // what the rule tests: the constellation or each satellite
+    k.second_band_min_sats   = config_.networkSecondBandMinSats();       // station scope threshold
     // Z-row capture is unconditional (SPEC_synthetic_minimum_network §17 finding 3): a run
     // with a snapshot path records and harvests the per-station ZWD posterior, so every
     // snapshot carries Z rows.  The capture is read-only with respect to the solve (no

@@ -717,6 +717,14 @@ struct StationState {
     /// @c NetworkCarryState::adm_event_last ("event|station|sat|band", the station by NAME,
     /// O3; step N4f1, re-placed from the arc rows; O4).  ColdStart.
     std::map<std::string, long long> adm_event_last;
+    /// Unit -> the processed-epoch index at which its current second-band withhold began
+    /// (network.second_band_admission).  A unit is present exactly while it is withheld: the
+    /// constellation name under station scope ("BeiDou"), the satellite under satellite scope
+    /// ("C06"); the two key spaces cannot meet because one scope runs at a time.  A return is
+    /// the re-coupling edge, so the entry is erased at it.  Not serialized (the mechanism is not
+    /// fingerprinted); a warm resume starts every unit admitted and the first withheld epoch
+    /// raises its decoupling edge again.  New in the second-band admission.  ColdStart.
+    std::map<std::string, long long> sba_since;
     /// The members keyed below the station.
     std::map<std::string, StationSignalState> signals;
 };

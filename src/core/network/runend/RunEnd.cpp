@@ -39,6 +39,7 @@
 #include "network/qc/BlockBaarda.hpp"
 #include "network/emit/BrdcWire.hpp"
 #include "network/assembly/CanonicalPairAdmission.hpp"
+#include "network/assembly/SecondBandAdmission.hpp"
 #include "network/state/CarryDisposition.hpp"
 #include "network/state/CarrySites.hpp"
 #include "network/carry/CarryVceRunEnd.hpp"
@@ -149,6 +150,8 @@ const std::array<NetworkRunEndRow, kNetworkRunEndReportCount> kNetworkRunEndRepo
      "network/qc/PrefitCensus.cpp", networkPrefitCensusRunEnd},
     {"the product-referenced admission of measurements",
      "network/assembly/MeasurementAdmission.cpp", networkMeasurementAdmissionRunEnd},
+    {"the second-band admission",
+     "network/assembly/SecondBandAdmission.cpp", networkSecondBandAdmissionRunEnd},
     {"the invariant carry driver: the PD-safe DD fold, the invariant carry, the D5 gate and its map misses",
      "network/carry/InvariantCarryDriver.cpp", networkInvariantCarryDriverRunEnd},
     {"the producer ambiguity-resolution search",

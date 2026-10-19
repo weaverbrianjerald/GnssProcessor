@@ -756,6 +756,8 @@ const std::vector<FieldDecl> kStationFields = {
      nullptr, nullptr, &stationCells<&S::adm_arc>},
     {"adm_event_last", "adm_event_last", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationCells<&S::adm_event_last>},
+    {"sba_since", "", Persist::ColdStart, "", "",   // no former member: new with the second-band admission
+     nullptr, nullptr, &stationCells<&S::sba_since>},
     {"staf_ewma", "staf_ewma", Persist::ColdStart, "", "",
      nullptr, nullptr, &stationRows<&S::staf_ewma>},
     {"staf_updates", "staf_updates", Persist::ColdStart, "", "",
@@ -1211,6 +1213,7 @@ const std::vector<EntityWriterRow> kEntityWriters = {
     {"networkProducerAr", "network/ar/ProducerAr.cpp", "constellations"},
     {"networkSdEwlAr", "network/ar/SdEwlAr.cpp", "constellations los stations"},
     {"networkMeasurementAdmission", "network/assembly/MeasurementAdmission.cpp", "stations"},
+    {"networkSecondBandAdmission", "network/assembly/SecondBandAdmission.cpp", "stations"},
     {"networkSignalIntegrity", "network/assembly/SignalIntegrity.cpp", "los"},
     {"networkCouplingReinitHistory", "network/carry/Coupling.cpp", "sat_signals"},
     {"networkBuildCarryDdPriors", "network/carry/DdPriorBuild.cpp", "constellations sats"},
