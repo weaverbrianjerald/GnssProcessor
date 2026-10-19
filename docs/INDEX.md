@@ -175,6 +175,12 @@ nodal corrections, gated against IERS HARDISP (open, 2026-10-17: built default o
 Program card on this topic, also indexed in [refound/CARDS.md](refound/CARDS.md):
 [NSD](refound/NSD_network_small_defects_2026-10-17.md), three small network defects (open, 2026-10-17: the hard clock refloat counted by three response sites; the stash-status mirrors' skipped readmit seeds confirmed, counted and taken behind the default-off `network.readmit_seed_mirrors`; the coupled-mark census median per constellation; same-build check 2026-10-18: declared lines only; the 6 h seed counts owed).
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[BDS](refound/BDS_beidou_third_constellation_2026-10-18.md), BeiDou on B1I and B3I as the third constellation of the field
+golden, against GPS only and GPS + Galileo on one exe (open, 2026-10-18: read, healthy, no failure mode A or B, no piece needed;
+single-band stations dropped whole, removed in arm GEC-s; census hours 2 to 6 -0.0038 m against GPS + Galileo, -0.0267 m against
+GPS only; nothing armed).
+
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
 | card | one line | status | last dated |
