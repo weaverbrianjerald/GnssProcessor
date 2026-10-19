@@ -19,6 +19,7 @@
 #include "network/state/ArcLedger.hpp"        // arcReasonExpand, the re-entry population
 #include "network/state/Entities.hpp"         // net::putLos and the entity tables
 #include "network/state/RunContext.hpp"       // the run context and its counters
+#include "network/state/StationParams.hpp"    // the station's parameter set: the receiver inter-signal biases
 #include "network/ar/ArSuspect.hpp"           // arSuspectNote
 #include "network/diag/RunTraces.hpp"         // NetworkRunTraces::emitEvent
 #include "filter/StateKeySchema.hpp"          // StateKeys
@@ -420,14 +421,12 @@ void passASecondCode(const PassAView& v) {
             // is the one way the second code channel can determine a receiver bias from a single
             // epoch of code (standing invariant #1's re-coupling edge).
             std::set<std::string> isc_now;
-            if (st.sm) {
-                for (const auto& [key, idx] : st.sm->getCodeBiasStates()) {
-                    (void)idx;
-                    if (!StateKeys::isReceiverIscKey(key)) continue;
-                    isc_now.insert(key);
-                    if (!st.scc_isc_prev.count(key) && st.scc_isc_seen.count(key))
-                        ++C.isc_reseeds;
-                }
+            for (const auto& [cb, cb_slot] : st.params.rx_cb) {
+                if (cb.form != ParamForm::Isc) continue;
+                const std::string key = keyText(slotAt(st.params, cb_slot).ref);
+                isc_now.insert(key);
+                if (!st.scc_isc_prev.count(key) && st.scc_isc_seen.count(key))
+                    ++C.isc_reseeds;
             }
             isc_alive += static_cast<long long>(isc_now.size());
             st.scc_isc_seen.insert(isc_now.begin(), isc_now.end());

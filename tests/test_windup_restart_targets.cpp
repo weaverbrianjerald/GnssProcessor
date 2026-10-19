@@ -51,6 +51,7 @@ struct Harness {
     LogManager                    log_manager;
     GnssConfig                    config;
     std::unique_ptr<StateManager> sm;
+    StationParams                 params;   // the set the targets read, rebuilt by addLive
     CarryMap                      carry;
     double                        now_s{271200.0};
     double                        max_gap_s{900.0};
@@ -59,6 +60,7 @@ struct Harness {
 
     void addLive(const char* sat, const char* sig) {
         sm->addAmbiguity(StateKeys::makeAmbiguityKey(sat, sig), 0.0);
+        buildStationParams(*sm, {}, StationAbsorbed{}, params);
     }
     void addCarry(int station, const char* sat, const char* sig, double age_s) {
         LocalCarry lc{};
@@ -68,7 +70,7 @@ struct Harness {
         net::putArcIn(carry, std::make_tuple(station, std::string(sat), std::string(sig)), &net::ArcState::amb) = lc;
     }
     std::vector<std::pair<std::string, std::string>> targets(const CarryMap* c, bool* via) const {
-        return networkWindupRestartTargets(*sm, 0, kSat, c, now_s, max_gap_s, via);
+        return networkWindupRestartTargets(params, 0, kSat, c, now_s, max_gap_s, via);
     }
 };
 
@@ -160,7 +162,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     const auto site = static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs);
     bool via = false;
     // L1C admitted in the ledger; L2W carried with no ledger record: both named.
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(h.params, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_TRUE(via);
@@ -173,7 +175,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     ledger.observe(k1, true);
     ledger.observe(k2, true);
     ledger.admitEpoch(std::set<ArcLedger::Key>{ k1, k2 }, edges);
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(h.params, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_EQ(census.count[site].compared, 2);

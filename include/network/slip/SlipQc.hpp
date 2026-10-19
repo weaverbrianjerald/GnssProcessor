@@ -527,14 +527,14 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @brief The arcs a wind-up accumulator restart of (station @p i, satellite
  *        @p sat) steps, as (ambiguity key, signal) pairs.
  *
- * The satellite's live ambiguity columns in @p sm, in the map's order, when it
+ * The satellite's live ambiguity columns in @p params, in the map's order, when it
  * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
  * the (station, satellite)'s leveling carry entries in @p arcs whose age
  * (@p pl_now_s minus @c last_seen_s) lies in [0, @p pl_max_gap_s], on the
- * synthesised key (@c StateKeys::makeAmbiguityKey) the PASS-B inject reads.
+ * synthesised ambiguity key the PASS-B inject reads.
  * Empty when neither exists, which is the restart with nothing to free.
  *
- * @param sm            The station's state manager (read-only).
+ * @param params        The station's parameter set (read-only): its ambiguities are the live columns.
  * @param i             App station index (the carry (the arc table)'s first key).
  * @param sat           Satellite id.
  * @param arcs   The leveling carry (the arc table); null reaches live columns only.
@@ -552,7 +552,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @return The targets, live columns first-and-only when any exist.
  */
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
-        const StateManager& sm, int i, const std::string& sat,
+        const StationParams& params, int i, const std::string& sat,
         const net::ArcTable* arcs,
         double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr,
         const ArcLedger* arc_ledger = nullptr, RosterN3bCensus* n3b = nullptr);

@@ -48,6 +48,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "../support/StationParamsOfState.hpp"   // syncStationParams
 #include "../support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
@@ -327,6 +328,7 @@ struct Harness {
         if (with_states) {
             stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig1), 0.0);
             stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig2), 0.0);
+            gnss_test::syncStationParams(stations.front());
         }
         qc.params.gf_jump.armed = true;
         qc.hist.resize(1);

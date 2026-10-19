@@ -20,7 +20,7 @@
 
 #include "common/GnssIdentity.hpp"      // obsTypeOf, systemOfSat, SignalId, LosId
 #include "config/GnssConfig.hpp"        // networkCycleSlip* getters
-#include "filter/StateKeySchema.hpp"    // StateKeys::parseAmbiguityKey (refloat lambdas)
+#include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguities the drains free
 #include "rinex/MultiRinexSync.hpp"     // SyncedEpoch (se.time in log/event rows)
 
 #include <fmt/format.h>
@@ -363,11 +363,13 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                                   const std::string& signal,
                                   std::uint8_t cause) -> SignalAction {
             SignalAction act;
-            StateManager& sm = *stations[i].sm;
-            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                if (!parts || parts->satellite != sat) continue;
-                if (parts->signal == signal) {
+            const StationParams& params = stations[i].params;
+            StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
+            for (const auto& [arc, slot] : params.amb) {
+                (void)slot;
+                if (net::satKey(arc.sat) != sat) continue;
+                const std::string amb_key = net::ambKey(arc);
+                if (net::signalKey(arc.signal) == signal) {
                     act.matched = true;
                     // Sim-only oracle slip response (include/network/slip/SlipOracle.hpp):
                     // a perfect repair replaces the free.  When the oracle handles
@@ -466,14 +468,15 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
                 if (datum_pb_reref_sats->count(sat)) { ++it; continue; }
                 int n_marked = 0;
                 for (int i = 1; i < n_sta_total; ++i) {
-                    StateManager& sm = *stations[i].sm;
-                    for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-                        const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                        if (!parts || parts->satellite != sat) continue;
+                    StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
+                    for (const auto& [arc, slot] : stations[i].params.amb) {
+                        (void)slot;
+                        if (net::satKey(arc.sat) != sat) continue;
+                        const std::string amb_key = net::ambKey(arc);
                         if (carry_invariant) carry_slipped_ambs.insert({i, amb_key});
                         sm.markAmbiguityPendingReseed(amb_key);
                         if (datum_arcs
-                            && net::dropArc(*datum_arcs, std::make_tuple(i, parts->satellite, parts->signal), &net::ArcState::amb))
+                            && net::drop(*datum_arcs, ArcId{StationId{i}, arc.sat, arc.signal}, &net::ArcState::amb))
                             ++qc_cnt.datum_slip_carry_erases;   // retirement census (D)
                         ++n_marked;
                     }
@@ -967,31 +970,33 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
                                 const std::string& sig1,
                                 const std::string& sig2) -> PairAction {
             PairAction pact;
-            StateManager& sm = *stations[i].sm;
-            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                if (!parts || parts->satellite != sat) continue;
+            StateManager& sm = *stations[i].sm;   // the re-seed marks stay in the state manager
+            for (const auto& [arc, slot] : stations[i].params.amb) {
+                (void)slot;
+                if (net::satKey(arc.sat) != sat) continue;
+                const std::string amb_key = net::ambKey(arc);
+                const std::string arc_signal = net::signalKey(arc.signal);
                 // Common-band scope, §14 rule: free (this pair's bands ∩ implicated).
                 // With a null verdict (knob off) or no narrowed verdict the call
                 // returns true and the unscoped path runs.
-                if (!commonBandMayFree(common_band, i, sat, parts->signal)) {
+                if (!commonBandMayFree(common_band, i, sat, arc_signal)) {
                     // Record the refused band (the §14.12 token), but only for a
                     // band of this pair: the satellite's other bands were never
                     // this drain's to free.
-                    if (parts->signal == sig1 || parts->signal == sig2) {
+                    if (arc_signal == sig1 || arc_signal == sig2) {
                         if (!pact.cb_kept.empty()) pact.cb_kept += "+";
-                        pact.cb_kept += parts->signal;
+                        pact.cb_kept += arc_signal;
                     }
                     continue;
                 }
-                if (parts->signal == sig1 || parts->signal == sig2) {
+                if (arc_signal == sig1 || arc_signal == sig2) {
                     // Sim-only oracle: each band is handled independently (the IF
                     // combination cannot localize the slip, but truth can); a
                     // handled band skips every freeing action.
                     if (oracle) {
                         OracleOutcome oc = OracleOutcome::NotHandled;
                         std::string det;
-                        if (networkSlipOracleHandle(*oracle, i, sat, parts->signal,
+                        if (networkSlipOracleHandle(*oracle, i, sat, arc_signal,
                                                     oracle_now_s,
                                                     RelevelEpochState::kCauseIfTd,
                                                     det, oc)) {
@@ -1427,15 +1432,15 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
 }
 
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
-        const StateManager& sm, int i, const std::string& sat,
+        const StationParams& params, int i, const std::string& sat,
         const net::ArcTable* arcs,
         double pl_now_s, double pl_max_gap_s, bool* via_carry,
         const ArcLedger* arc_ledger, RosterN3bCensus* n3b) {
     std::vector<std::pair<std::string, std::string>> targets;
-    for (const auto& [ak, si] : sm.getAmbiguities()) {
-        (void)si;
-        const auto pp = StateKeys::parseAmbiguityKey(ak);
-        if (pp && pp->satellite == sat) targets.emplace_back(ak, pp->signal);
+    for (const auto& [arc, slot] : params.amb) {
+        (void)slot;
+        if (net::satKey(arc.sat) == sat)
+            targets.emplace_back(net::ambKey(arc), net::signalKey(arc.signal));
     }
     bool carry = false;
     if (targets.empty() && arcs != nullptr) {
@@ -1449,7 +1454,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
             const double age_s = pl_now_s - it->second.amb->last_seen_s;
             if (age_s < 0.0 || age_s > pl_max_gap_s) continue;
             const std::string sig = net::signalKey(it->first.signal);
-            targets.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
+            targets.emplace_back(net::ambKey(SatSignalId{it->first.sat, it->first.signal}), sig);
         }
         // The arc identity from the arc ledger: of the carry entries
         // inside the horizon (the arcs with a value), in signal order, the ledger keeps
@@ -1471,7 +1476,7 @@ std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
                 if (a == nullptr || a->ep_first_admitted < 0) fallback = true;
                 else if (a->adm_state == ArcState::Dead)       continue;
                 const std::string sig = net::signalKey(it->first.signal);
-                named.emplace_back(StateKeys::makeAmbiguityKey(sat, sig), sig);
+                named.emplace_back(net::ambKey(SatSignalId{it->first.sat, it->first.signal}), sig);
             }
             if (n3b != nullptr && fallback)
                 ++n3b->fallback[static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs)];
@@ -1558,7 +1563,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
             // (gapReentryRespondArc).  Live-column order is the map's, as before.
             bool via_carry = false;
             const std::vector<std::pair<std::string, std::string>> targets =
-                networkWindupRestartTargets(sm, i, sat, arcs, pl_now_s,
+                networkWindupRestartTargets(stations[static_cast<std::size_t>(i)].params, i, sat, arcs, pl_now_s,
                                             pl_max_gap_s, &via_carry, arc_ledger, n3b);
             // Sim-only oracle: a restart steps every signal of the satellite, so
             // each signal is offered to the oracle independently (truth localizes
@@ -1689,12 +1694,12 @@ void networkSlipDrainInjectedFree(const std::vector<InjectArcErase>& arc_free,
             if (stations[static_cast<std::size_t>(i)].name != d.station) continue;
             station_seen = true;
             if (i < static_cast<int>(present.size()) && !present[i]) continue;
-            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;
-            for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-                (void)sidx;
-                const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-                if (!parts || parts->satellite != d.sat) continue;
-                if (!d.coversSignal(parts->signal)) continue;   // band scope
+            StateManager& sm = *stations[static_cast<std::size_t>(i)].sm;   // the re-seed marks stay in the state manager
+            for (const auto& [arc, slot] : stations[static_cast<std::size_t>(i)].params.amb) {
+                (void)slot;
+                if (net::satKey(arc.sat) != d.sat) continue;
+                if (!d.coversSignal(net::signalKey(arc.signal))) continue;   // band scope
+                const std::string amb_key = net::ambKey(arc);
                 ++matched;
                 // The DD invariant carry owns its own funnel and is live from
                 // epoch 1 (C3c; the same contract as refloat_signal).
@@ -1803,6 +1808,7 @@ struct GapArcOutcome {
  * @param i                  App station index (already screened against i_lo).
  * @param satellite          Satellite id.
  * @param sig                The one signal this call responds on (band-scoped).
+ * @param params             That station's parameter set: whether the arc's ambiguity column exists.
  * @param sm                 That station's state manager, mutated (pending-reseed mark).
  * @param carry_invariant    The DD invariant carry vehicle is armed.
  * @param carry_warm         The legacy phase-leveling carry is warm.
@@ -1837,7 +1843,7 @@ struct GapArcOutcome {
  */
 GapArcOutcome gapReentryRespondArc(
     int i, const std::string& satellite, const std::string& sig,
-    StateManager& sm, bool carry_invariant, bool carry_warm,
+    const StationParams& params, StateManager& sm, bool carry_invariant, bool carry_warm,
     std::set<std::pair<int, std::string>>& carry_slipped_ambs,
     const net::ArcTable& arcs,
     double pl_now_s, double pl_max_gap_s,
@@ -1932,7 +1938,8 @@ GapArcOutcome gapReentryRespondArc(
     // Only the pending-reseed mark needs a live state, because a mark on an
     // absent key would sit in the set until some later epoch's pre-pass
     // consumed it, a response acting on an old event.
-    out.state_live = sm.getAmbiguities().count(amb_key) != 0;
+    const std::optional<SatSignalId> live_id = net::satSignalKey(satellite, sig);
+    out.state_live = live_id && params.amb.count(*live_id) != 0;
     if (!out.state_live) ++led.state_absent;
 
     // The DD invariant carry owns its own funnel and is live from
@@ -2343,9 +2350,9 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             const auto band1 = SignalId::fromObsCode(sys, g.sig1);   // the two bands that broke
             const auto band2 = SignalId::fromObsCode(sys, g.sig2);
             for (const std::string& cell : stx.spc_cells) {
-                const auto parts = StateKeys::parseSatPhaseBiasKey(cell);
-                if (!parts || parts->satellite != g.satellite) continue;
-                const std::string& s = parts->signal;
+                const auto cell_id = net::satPhaseBiasKey(cell);
+                if (!cell_id || net::satKey(cell_id->sat) != g.satellite) continue;
+                const std::string s = cell_id->signal.obsCode(ObsType::Phase);
                 const auto cell_sig = SignalId::fromObsCode(sys, s);
                 if (!cell_sig) continue;
                 const bool on_band = (band1 && cell_sig->digit == band1->digit)
@@ -2359,8 +2366,9 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
         for (const std::string& sig : sigs6b) {
             if (sig.empty()) continue;
             const GapArcOutcome out =
-                gapReentryRespondArc(i, g.satellite, sig, sm, carry_invariant,
-                                     carry_warm, carry_slipped_ambs, arcs,
+                gapReentryRespondArc(i, g.satellite, sig,
+                                     stations[static_cast<std::size_t>(i)].params, sm,
+                                     carry_invariant, carry_warm, carry_slipped_ambs, arcs,
                                      pl_now_s, pl_max_gap_s, cause_bits, primary,
                                      led, qc_cnt, relevel, present_ptr);
             sidRecordOutcome(sid_out, i, g.satellite, sig,
@@ -2512,6 +2520,7 @@ void networkSlipDrainGapReentry(std::vector<NetStation>& stations,
             if (respond) {
                 const GapCause primary = v.has ? v.primary : GapCause::Unmeas;
                 out = gapReentryRespondArc(i, a.satellite, a.signal,
+                                           stations[static_cast<std::size_t>(i)].params,
                                            *stations[static_cast<std::size_t>(i)].sm,
                                            carry_invariant, carry_warm,
                                            carry_slipped_ambs, arcs,
@@ -2769,6 +2778,7 @@ void networkSlipDrainGapReentryPerSignal(
         // carry it would otherwise be scored against tracked through this break.
         const GapArcOutcome out =
             gapReentryRespondArc(i, g.satellite, g.signal,
+                                 stations[static_cast<std::size_t>(i)].params,
                                  *stations[static_cast<std::size_t>(i)].sm,
                                  carry_invariant, carry_warm, carry_slipped_ambs,
                                  arcs, pl_now_s, pl_max_gap_s,
