@@ -177,10 +177,8 @@ built by the observation equation's files beside them:
 | `MeasurementModelRow.cpp` | One row: `buildJacobianRow()`, which builds the term list of the observation equation over the state (`ObservationEquation.cpp`, `UserParamView.cpp`), sums it for the predicted observable and scatters the partials; the Doppler row; and the definitions of the free functions `isUsableMeasurement()` and the product coverage checks (declared in `include\measurement\RowRules.hpp`). |
 | `ObservationEquation.cpp` | The observation equation of a code or phase row as a list of terms in the order of the sum: one function per effect (clock, troposphere, ionosphere, biases, ambiguity), `evaluate()` for the predicted observable and `scatterDense()` for the Jacobian row. Parameters are named by `ParamRef` (`include\common\ParamRef.hpp`) and found through a lookup the caller supplies. |
 | `UserParamView.cpp` | The single-receiver lookup: where a `ParamRef` sits in a `StateManager` and a state vector, and the one place a typed identity becomes a user-side state key (`userKey()`). |
-| `MeasurementModelRowReference.cpp`, `ObservationEquationCheck.cpp` | Temporary. The row builder as written before the term list, and the counters of `processing.obs_equation_check`, which builds every row both ways and compares the bits. |
 | `MeasurementModelVariance.cpp` | `rowVariance()`, a free function declared in `RowRules.hpp`: the variance of one row, its terms in the order the banner lists. |
 | `MeasurementModelDd.cpp` | The baseline double difference: `buildDdMeasurement()`, a 28-line driver over stages (`ddRunStages()`); the three stages that write filter state are named in it. |
-| `MeasurementModelNetwork.cpp` | The part only the network producer reaches. Skip. |
 
 ### The state families
 
@@ -494,9 +492,8 @@ files, in this order:
 | 14 | `realtime\RealTimeEngine.hpp` | The real-time epoch |
 
 Some single-receiver classes also carry code only the network producer reaches:
-`MeasurementModelNetwork.cpp` and the network-only surfaces of `MeasurementModel.hpp` and
-`MwSlipDetector.hpp` (each behind a banner), the four network families of `StateManager`
-(named in `StateFamily.hpp`), and `IfPhaseSlipDetector` (its header note).
+the network-only surfaces of `MwSlipDetector.hpp` (behind a banner), the four network families
+of `StateManager` (named in `StateFamily.hpp`), and `IfPhaseSlipDetector` (its header note).
 
 The **math** behind each header is in the LaTeX reference, `docs\report\main.pdf`.
 Each header is best read with its chapter: the observation equations with `PppModel`,

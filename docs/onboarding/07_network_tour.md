@@ -253,56 +253,56 @@ one epoch and read at the next, hand-offs a later stage drains, run counters) is
 names what it writes: an events group arrives as an output parameter, and an entity table it
 binds for writing has its row in `net::kEntityWriters`.
 
-A station's own parameter set is a fourth home that is still being built.
+A station's own parameter set is a fourth home, and the network is its only writer.
 `StationParams` (`include\network\state\StationParams.hpp`) lists a station's columns in column
 order, each as a typed `ParamRef` with its linearization point and the split's disposition, and
-looks a parameter up by satellite, signal or constellation without parsing a state key. Today the
-columns are still born in the station's `StateManager`, and `networkShadowStationParams`
-(`network\state\StationParamsShadow.cpp`) builds the set from it after each station's split. The
-parameter inventory records from the set (`recordStationParams`), and so do the trace labels (the
-station-block span and the redundancy census, the RHS attribution's local columns, the names in
-the station-drop event), the ionosphere, wet-delay and receiver-state traces, the DD-fractional
-and phase-anchor traces, the SH diagnostics and the pre-fit census's birth seeds. The
-carried-prior steps of PASS B read it too: the ambiguity, slant-ionosphere, receiver-clock,
-receiver-code-bias, phase-colour and wet-delay carries, the local block, and the
-double-difference prior build take their columns, keys, linearization points and a phase
-colour's elevation from the set. So do the slip drains (the MW, LLI, IF-pair, datum, wind-up,
-injected and gap re-entry responses), the second-code census, the oracle pin rows, the
-admissions' ambiguity reads (signal integrity, the roster audit, the all-channel and
+looks a parameter up by satellite, signal or constellation without parsing a state key. A
+station has the layout of its own set (`startStationParams`): the position, the receiver clock,
+the wet delay and one inter-system bias per active non-GPS constellation. The single-receiver
+filter's optional columns (velocity, phase clock, gradients, IMU, NL/WL ambiguities,
+between-satellite differencing) are not part of it, and a network run that enables one warns at
+start that it is ignored.
+
+The columns are born in the network's own functions. `networkAdmitSharedStates`
+(`network\assembly\SharedAdmission.cpp`) takes up the shared columns (satellite clock, phase
+bias, code bias) in PASS A behind the gates that decide which a station carries.
+`networkBirthLocalStates` (`network\assembly\LocalBirth.cpp`) births the local ones at the head
+of the station's data-rows step: the slant ionosphere, the phase colour, the cold receiver
+clock, the ambiguities (with their re-seeds and prunes), the receiver code biases and the
+first-epoch code-bias seed. The seed values are the pure functions of `measurement\Seeds.hpp`;
+the births apply them to the set. `networkStationRows` (`network\assembly\StationRows.cpp`)
+then builds the station's rows over the set through the observation equation
+(`measurement\ObservationEquation.hpp`), with `NetView` as the lookup and `scatterDense` writing
+the dense Jacobian. A shared parameter reads zero there, as its linearization point does.
+
+A pending re-seed is a mark on the set (`markPendingReseed`, `pendingReseed`,
+`clearPendingReseed`), independent of whether the column exists: a slip drain, RAIM or a screen
+marks an arc, and the births consume the mark when they re-seed it. A mark on an arc without a
+column is kept for the birth that creates the column. The split settles the set (`settleStationParams`, the
+disposition of each column) and the parameter inventory records from it (`recordStationParams`).
+So do the trace labels (the station-block span and the redundancy census, the RHS attribution's
+local columns, the names in the station-drop event), the ionosphere, wet-delay and
+receiver-state traces, the DD-fractional and phase-anchor traces, the SH diagnostics and the
+pre-fit census's birth seeds. The carried-prior steps of PASS B read it too: the ambiguity,
+slant-ionosphere, receiver-clock, receiver-code-bias, phase-colour and wet-delay carries, the
+local block, and the double-difference prior build take their columns, keys, linearization
+points and a phase colour's elevation from the set. So do the slip drains (the MW, LLI, IF-pair,
+datum, wind-up, injected and gap re-entry responses), the second-code census, the oracle pin
+rows, the admissions' ambiguity reads (signal integrity, the roster audit, the all-channel and
 multi-GNSS censuses), the phase-datum pin rows and the election's ambiguity values, the GLONASS
 anchor rows and the ionosphere constraint rows. The integer-ambiguity searches read it as well:
 the producer search's ambiguity pool (including an ambiguity's unresolvable mark, set by the
-measurement pre-pass when no phase bias is applied to its signal) and the labels of its
-normal-equation export, the SD-EWL candidates and the linearization points of an arc's
-shared biases, and the snapshot writer's receiver code-bias linearization points. Readers that
-run before a station's next split read the set of the previous epoch. That is the station's local columns as its state manager
-holds them, because the only writer of a local column outside the split is the measurement
-pre-pass, and every assembly that runs it ends with the set rebuilt: the split builds it, and
-`networkRefreshStationParams` rebuilds it (without dispositions) when the assembly ends before
-the split, for an epoch with no innovations or an H/state mismatch, and when a step throws.
-The throw is caught by `networkStationAssemble` (`network\assembly\StationBuild.cpp`), which
-records it in the station's slot (the solve drops the station with a warning) and then rebuilds
-the set from the state manager as it stands, because the pre-pass may have created or pruned
-columns before the step threw. A station that was not assembled this epoch does not run the
-pre-pass, so its set keeps its last build. `networkCheckStationParamsFresh` compares the set
-with the state manager's local columns and their values at the start of every epoch's PASS A
-(finding kind `stale`, zero on a sound run). The border columns (satellite clocks and biases)
-change during the admissions, so the readers of the admissions' own state stay on the state
-manager until the admissions write the set. The state manager is also read where a value
-changes after the split (the re-seed marks the harvest reads and clears, which RAIM and the
-screens write) and by the split itself. A warm resume installs the restored code-bias
-linearization points on the state manager's initializer (`networkApplyRxCbLinRestore`), because
-that value is a column's birth value; it stays there until the network births its own columns.
-A station whose set cannot be built from its state manager (an allocation failure, or a defect
-the classifier does not expect) fails its assembly
-for the epoch and is dropped with a warning, and its set is left empty: the readers of the next
-epoch's PASS A find no local column, the start-of-epoch check counts that as `stale`, and the
-failure is counted in the run-end table, until the next build or rebuild succeeds. The shadow
-checks the set and the inventory recorded from it against the state manager on every
-station-epoch, and the run end prints the table `Network (station parameter set)` under
-the parameter inventory, with the findings (all zero on a sound run). The classifier that names a
-state manager's columns (`network\state\StateColumns.cpp`) is the bridge between the two and
-goes when the network allocates its own columns.
+births when no phase bias is applied to its signal) and the labels of its normal-equation
+export, the SD-EWL candidates and the linearization points of an arc's shared biases, and the
+snapshot writer's receiver code-bias linearization points. Readers that run before a station's
+next split read the set as the previous epoch left it.
+
+A warm resume installs the restored code-bias linearization points on the set
+(`networkApplyRxCbLinRestore`), where the first-epoch seed takes them in place of its own
+median. A step of a station's assembly that throws is caught by `networkStationAssemble`
+(`network\assembly\StationBuild.cpp`), which records it in the station's slot (the solve drops
+the station with a warning); the set stays as the births left it, so the next epoch's PASS A
+finds the columns that were born.
 
 ## The run end
 
