@@ -133,8 +133,8 @@ The full-prose ledger before 2026-10-13 is in git (`git show 8326da3:docs/CONFIG
 | --- | --- |
 | RECOMMEND_ON | 24 |
 | RECOMMEND_SCOPED | 85 |
-| ARMED | 21 |
-| UNVALIDATED | 68 |
+| ARMED | 22 |
+| UNVALIDATED | 67 |
 | KEEP_OFF | 95 |
 | REMOVE | 0 |
 | TRACE | 61 |
@@ -264,7 +264,7 @@ Arm only in the stated regime. Machine-checked like RECOMMEND_ON.
 | `processing.canonical_signal_rule` |  |  | `val("network.ambiguity_vehicle", "level") == "float_kf"` | Latches each station's band signal by priority, not by its first epoch's satellite count: field dual 6 h epochs below a decimetre 162 to 603 of 720; sim byte-identical; pinned in both goldens. | [CSL](refound/CSL_canonical_signal_latch_2026-09-20.md) |
 | `processing.signal_priorities.Galileo` |  |  | `val("network.ambiguity_vehicle", "level") == "float_kf" and not tri and n_sys >= 2 and gps_gal_only` | E1 / E5a in both code families (pilot first, combined second), the dual pair the Galileo package was graded on; a missing entry drops the constellation; pinned in both goldens. | [GAD](refound/GAD_galileo_adoption_2026-10-13.md) |
 
-## ARMED (21)
+## ARMED (22)
 
 Pinned in both goldens by the card named; the golden manifest is the authority.
 
@@ -283,6 +283,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.adm_screen` | false | true | Absolute product-referenced code screen refusing corrupt channels at arc birth (BSHM00ISR G07, G16); gates 2 to 4 PASS; solve-affecting and pinned on in both goldens. | [MEAS-ADMISSION](cards/raim-qc/MEAS-ADMISSION.md) |
 | `network.station_prior_before_pd` | false | true | Folds each station's RXCB-DATUM rows before the PD test, curing the amputation (PD rejections to 0); in the RF-0hv posture and both goldens since GRB; replay fixed by RPD. | [RF-PD-fix](refound/RF-PD-fix_station_prior_before_pd_2026-09-15.md) |
 | `network.parallel_stations` | true | true | Per-station OpenMP fan-out of geometry and measurement assembly (default on); pinned true in both goldens and the parent gate of the parallel_seam / parallel_carry family. |  |
+| `network.sparse_station_normals` | true | true | Forms each station's normal blocks from the nonzero entries of its rows; bit-identical to the dense products (24 of 24 gate comparisons and four 2 h golden pairs identical with it on). Default on and pinned true in both goldens by the author's decision of 2026-10-19 (card NETCOST); false gives the dense products. |  |
 | `network.gross_los_emit_exclude` | false | true | Pinned true in both goldens; one of the three terms of the screen's SCOPED posture row: the decision runs before emission so the response lands at the declaring epoch (RF-3). | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |
 | `network.gross_los_min_rows_rule` | fixed | available | Pinned available in both goldens; one of the three terms of the gross-LOS screen's SCOPED posture row (float vehicle regime, GnssConfigNetworkPosture.cpp). | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |
 | `network.rx_code_bias_datum` | false | true | Zero-mean receiver-DCB prior; RF-0 found GPS dual W6 solves only with it, and under L5B it closes the station GF level. Pinned on in both goldens. | [RF-0](refound/RF-0_baseline_2026-09-14.md) |
@@ -292,7 +293,7 @@ Pinned in both goldens by the card named; the golden manifest is the authority.
 | `network.cycle_slip.relevel_free_epoch` | false | true | Pinned true in both goldens; its free-epoch latch is the slip set read by the anchor handover, the phase-datum candidacy screen and the ARL fold slip set. RF-1 retired only its inject skip. | [RF-1](refound/RF-1_float_ambiguities_design.md) |
 | `processing.exclude_eclipsing_satellites` |  |  | Drops satellites in Earth's umbra at the geometry (nominal yaw only); true in both goldens through the base lineage; its edges force the per-run clock-pivot handovers (E02, G01) the ISB re-inflation answers. | [OWD](refound/OWD_owed_defects_2026-09-22.md) |
 
-## UNVALIDATED (68)
+## UNVALIDATED (67)
 
 Built and plausible, never graded on the current posture.
 
@@ -330,7 +331,6 @@ Built and plausible, never graded on the current posture.
 | `network.state_snapshot_frame_capture` | false |  | Write half of resume_frame_restore (anchor incumbents, Q3 clock anchor, CLK-R frame rows); products byte-identical; sim-validated only (leg E), never on a field warm resume of the current posture. | [RESUME-DENSE-BORDER-E2](cards/resume-seam/RESUME-DENSE-BORDER-E2.md) |
 | `network.state_snapshot_path` |  |  | Master path of the producer snapshot and warm resume; seams are a re-founding add-back (fresh convergence only today) and the goldens set no path. | [NETWORK_REFOUNDING_2026-09-14](refound/NETWORK_REFOUNDING_2026-09-14.md) |
 | `network.warmup_ura_floor_m` | 0.0 |  | Cold-start URA floor ramp for consumer down-weighting; wired and fingerprinted, set in no config and never graded; at 0 the ramp is inert (RF-IGN). | [RF-IGN](refound/RF-IGN_ignition_born_levels_2026-09-15.md) |
-| `network.sparse_station_normals` | false |  | Forms each station's normal blocks from the nonzero products of its rows in the summation order of Eigen's dense product, bit-identical to it (unit tests, full 2 h on/off pairs, the 23-arm gate); the golden epoch loop is 13 % shorter on the field bed and 11 % on the sim bed. Any Eigen thread count other than one keeps the dense products. Not armed. | [NETCOST](refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md) |
 | `network.block_baarda_estimable` | false |  | Tests the estimable part of each (station, satellite) block of the block-Baarda census instead of refusing a block whose residual cofactor is rank-deficient: the cofactor is whitened, the directions with a redundancy number of at least block_baarda_estimable_eps are kept, and the quadratic form is read on them with their count as the degrees of freedom. On the float vehicle the line of sight's free slant ionosphere absorbs one direction of every block exactly, so the whole-block test refused every block (field 60279 of 60302, sim all). Measure-only, needs block_baarda, off byte-identical to a main control on the 10-epoch smokes (field and sim); not armed in the goldens. The 2 h check on both beds (2026-10-18) found every other product, the wire and the held-out consumer unmoved with the key on, 4 of 9984 field and 0 of 10584 sim blocks refused in hour 2, and no flagged block that the row tier does not also flag; the injected positive control and a guard for the unwarmed first sweep are still owed. | [BBE](refound/BBE_block_baarda_estimable_2026-10-18.md) |
 | `network.clock_monitor` | false |  | Refloats a lone satellite clock locked past the abs/jump bounds (read via networkClockMonitor()); off in both goldens; its specified lock-in validation (305-station h4 run) was never run. |  |
 | `network.gross_los_station_tier` | false |  | Built, exercised once; inert in the RF-3 census arm (0 station declarations, byte-identical). Stays OFF until a posture exercises it beyond one declaration. | [RF-3](refound/RF-3_code_row_qc_2026-09-22.md) |

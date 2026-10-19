@@ -1750,7 +1750,7 @@ namespace GnssProcessor {
         // cover takes the dense path for that station.  The dense work grows with the square
         // of the shared columns (about 420 for GPS + Galileo on the field golden) and is the
         // largest part of the serial scatter.  Default off: the dense products.
-        bool sparse_station_normals{ false };  ///< Form each station's normal blocks from the nonzero entries of its rows, bit-identical to the dense products (opt-in).
+        bool sparse_station_normals{ true };   ///< Form each station's normal blocks from the nonzero entries of its rows, bit-identical to the dense products (default on; false gives the dense products).
         // Thread the dense per-block linear algebra of the invariant carry across all
         // cores.  @ref parallel_seam parallelizes the carry only over the few
         // (const,signal) blocks (byte-identical) and leaves each block's O(K²–K³) dense

@@ -1764,7 +1764,7 @@ namespace GnssProcessor {
         network_config_.parallel_seam =
             jval<bool>(json, "network.parallel_seam", "parallel_seam", false);
         network_config_.sparse_station_normals =
-            jval<bool>(json, "network.sparse_station_normals", "sparse_station_normals", false);
+            jval<bool>(json, "network.sparse_station_normals", "sparse_station_normals", true);
         network_config_.parallel_carry =
             jval<bool>(json, "network.parallel_carry", "parallel_carry", false);
 

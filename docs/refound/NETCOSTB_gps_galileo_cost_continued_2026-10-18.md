@@ -219,3 +219,7 @@ change 2 is a field figure.
   sub-section estimates reproduce, and the gain on the field golden is 13.4 % against the bar of 5 %.
 - **Owed, unchanged:** the arming decision, optimizations 2 and 3, and a quiet-machine pair on the sim bed (no reading at
   2 or fewer foreign processors was available in this check; the machine held 5.6 or more throughout).
+
+## Armed (2026-10-19)
+
+By the author's decision, `network.sparse_station_normals` is default on: the loader default is true, the ledger verdict is ARMED, and both goldens pin it through `config/golden/golden_manifest.json`. The products are bit-identical to the dense formation (24 of 24 gate comparisons and four 2 h golden pairs), so the baseline pair and every graded result stand. `false` restores the dense products.
