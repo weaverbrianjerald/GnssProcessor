@@ -251,3 +251,44 @@ SOLN is the SINEX solution number; sigma is the largest formal axis sigma of the
 | UTQI00USA | census | 2 | -6.8 | -3.8 | +8.2 | 11.3 | 0.8 |
 | WUH200CHN | census | 6 | +0.9 | -1.5 | -1.2 | 2.1 | 0.8 |
 | MIZU00JPN | dropped from the roster | 16 | +1527.0 | -698.7 | -22.4 | 1679.5 | 0.4 |
+
+## Check of 2026-10-19: independent recomputation
+
+A second parser, written without reference to `snx_parse.py` (fixed-column reads of SOLUTION/ESTIMATE, SOLUTION/APRIORI, SITE/ECCENTRICITY and SOLUTION/EPOCHS, each asserted equal to a token read; `python -I`), was run on the file in `D:/GnssProcessorSupport/downloads/sinex_2313/` (sha256 equal to the copy in `data/2024-129/products/`; decompressed 25,683,008 bytes, sha256 `b05b5dbe80ea8958...`, as recorded above). Held values: `config/golden/golden_field_refound.json`, `scripts/clock_level/site_list.json` (identical to `runs/_msc/site_list.json`) and, for MIZU00JPN, an own parse of the SSC extrapolated to decimal year 2024.349727 (it reproduces all 76 held values within 0.074 mm). Nothing was downloaded. Scripts and logs: `D:/GnssProcessorSupport/gates/sinex/check/`.
+
+**Result: every figure of sections 2 to 7 and every row of the appendix reproduces. Two statements of section 8 and one of section 2 are corrected below.**
+
+Stations recomputed (SINEX minus held, mm; the card's value, then the recomputed one to 0.01 mm; 3D in brackets):
+
+| station | why chosen | card E, N, U (3D) | recomputed E, N, U (3D) |
+| --- | --- | --- | --- |
+| MAC100AUS | largest | +13.9 -62.2 +4.6 (64.0) | +13.92 -62.25 +4.63 (63.95) |
+| PARK00AUS | second largest | -31.5 -48.1 -23.7 (62.2) | -31.53 -48.10 -23.67 (62.19) |
+| GCGO00USA | third largest | +24.5 -50.7 -1.9 (56.3) | +24.46 -50.68 -1.85 (56.30) |
+| SOLO00SLB | fourth largest | -27.2 -43.0 -19.4 (54.5) | -27.22 -43.01 -19.40 (54.47) |
+| SVTL00RUS | the median (36th of 71) | +1.3 +0.8 -5.8 (6.0) | +1.27 +0.84 -5.84 (6.04) |
+| CEBR00ESP | near the median | -1.5 +0.9 -5.5 (5.8) | -1.53 +0.94 -5.53 (5.81) |
+| POTS00DEU | near the median | +0.5 +0.4 -6.8 (6.8) | +0.52 +0.40 -6.81 (6.84) |
+| WTZZ00DEU | consumer | -0.1 +1.3 -4.3 (4.5) | -0.10 +1.30 -4.26 (4.46) |
+| MIZU00JPN | suspect | +1527.0 -698.7 -22.4 (1679.5) | +1527.04 -698.72 -22.44 (1679.45) |
+
+Reproduced without a difference beyond the print precision:
+
+- All 72 appendix rows (SOLN, E, N, U, 3D, sigma; largest difference below 0.05 mm) and the four roster stations absent from the file.
+- The counts of section 4: roster 54 (median 7.1, 90th percentile 37.2, largest 64.0; above 5 mm 35, above 1 cm 16, above 5 cm 4), consumer 4.5, census 16 (5.2, 14.2, 18.0; 9, 4, 0), all 71 (6.0, 23.1, 64.0; 44, 20, 4); the component medians and means; the sixteen stations between 1 and 5 cm.
+- Solution numbers: 14 stations above the SSC's last solution (3D median 20.6 mm, 13 above 1 cm, the 13 named pairs identical), 57 equal (median 5.3 mm, the seven named above 1 cm).
+- Reference point: the RINEX `ANTENNA: DELTA H/E/N` equals the SINEX eccentricity in force at `24:129:43200` at all 72 stations (largest difference 0.0000 m); 57 of the 71 have a nonzero height, the largest 3.052 m (HARB00ZAF); Up offset against height: slope 1.22 mm per metre, correlation 0.076, the seven stations with 0.5 m or more at -11.9 to +7.4 mm. Both the held values (the SSC) and the SINEX are marker coordinates; the engine reduces the roster and the consumer truth to the ARP only under `network.station_marker_to_arp` (true in the golden; `ApplicationNetworkSetup.cpp`).
+- The file: 447 stations, 1379 parameters (1341 coordinates, 35 EOP, 3 geocentre), every coordinate row at `24:129:43200`, no velocity parameter, created `24:144:26732`, 7 daily inputs `24:126` to `24:132`; formal sigma of the 71: median 0.57 mm, largest 2.31 mm (ANMG00MYS); geocentre (-0.81, -0.63, +2.24) mm.
+- Epoch: SSC velocity over half a day median 0.035 mm, largest 0.103 mm (MAJU00MHL), at most 0.72 mm over 3.5 days; the SSC's last window ends at 2021.000 for 60 of the 71, earliest 2020.246 (POHN00FSM); PARK00AUS last window 0.749 years, X velocity -55.1 against -30.8 mm/yr.
+- Frame, with the card's rule: 65 of 71 stations, T (-0.91, +0.23, +0.15) mm, scale -0.20 ppb (-1.285 mm), R (0.036, 0.011, -0.022) mas; after removal the median is 6.3 mm and 24 stations are above 1 cm. The clip is 3 x 1.4826 x the median of the 3D residual norms (floor 3 mm), which is what "three robust sigma" in section 5 means. With a median absolute deviation about the median instead, 57 stations are kept and the fit reads T (-0.13, +0.14, -0.61) mm, scale -0.07 ppb, R at most 0.013 mas, median after removal 5.9 mm, 22 above 1 cm; the conclusion of section 5 holds under both rules.
+- A priori and the week: a priori minus held median 0.9 mm, 90th percentile 21.7 mm; week minus a priori median 3.3 mm, 90th percentile 8.5 mm, largest 18.8 mm; GCGO00USA a priori 54.1 mm from the held value and 2.6 mm from its own estimate; the nine central European stations Up -7.7 to +0.1 mm (median -4.7), week minus model -3.5 mm, model minus held 0.0 mm (Up medians); WTZZ00DEU model 1.2 mm from the held value.
+- NGS SIF cross-check (the repository's `SifTruth` at the SINEX epoch 2024.3511): 63 of 71 stations, SINEX minus SIF median 4.1, 90th percentile 11.6, largest 55.3 mm; SIF minus held 4.0, 44.9, 113.3 mm; WTZZ00DEU 0.5 mm; the per-station values of section 6 (PARK00AUS 10.3, SOLO00SLB 10.6, REYK00ISL 12.7, LCK400IND 2.1, ASCG00SHN 2.2, URUM00CHN 11.7, MAC100AUS 51.1, GCGO00USA 55.3, NIUM00NIU 31.9, COCO00AUS 24.9 mm).
+- Section 7: the Up median of the ten Asian stations (-1.6 mm), the SOLN pairs, the MIZU00JPN SINEX coordinate, its differences from the leave-out estimate of card SCU (+55.5, -62.1, +98.0 mm), and the card SCU figures quoted (leave-out estimate, the SOLO00SLB, LCK400IND and ULAB00MNG replays, G3).
+
+Corrections:
+
+1. Section 8.4, "Expected result": the census median p50 "of 0.067 to 0.103 m in hours 2 to 6" is wrong. Card SCU section 8 (the 58-station column, key `rf8`) reads 0.673 0.169 0.103 0.082 0.095 0.067 m by hour, so hours 2 to 6 span 0.067 to 0.169 m; 0.067 to 0.103 is hours 3 to 6. The four census truths that move by 11 to 18 mm stay an order of magnitude below the median; the conclusion stands.
+2. Section 8.3: "`msc_sites.load()` takes an environment override for the file name" states the planned change, not the present code: `msc_sites.PATH` is fixed to `site_list.json` and `load()` reads no environment variable. The override is part of phase 1 and is owed with the generator.
+3. Section 2: "one point (A)" holds for every station compared; the file has one point B (IISC), which is in no set here.
+
+Rounding only, no change to any conclusion: "largest 4.11" years in the extrapolation distance is measured to the SINEX epoch (2024.3511), to the held epoch 2024.349727 it is 4.10; "largest 64.7" mm for the a priori minus held is against the unrounded SSC extrapolation, against the printed configuration value it is 64.65 mm.
