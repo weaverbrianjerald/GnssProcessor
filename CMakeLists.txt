@@ -507,6 +507,7 @@ add_executable(gnss_tests
     tests/network/test_network_normal_equations.cpp
     tests/network/test_network_detached_fold.cpp
     tests/network/test_neq_station_prior_before_pd.cpp
+    tests/network/test_neq_sparse_station_normals.cpp
     tests/network/test_pd_safe_fold.cpp
     tests/network/test_carry_aware_covariance.cpp
     tests/test_w6_iono_constraint.cpp

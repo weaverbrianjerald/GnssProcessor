@@ -64,6 +64,275 @@ void requireSymmetric(const Eigen::MatrixXd& m, const char* name) {
     }
 }
 
+/// The check of @ref requireSymmetric when its two numbers are already known: the largest
+/// |M(i,j) - M(j,i)| and the largest |M(i,j)| of the matrix (same test, same message).
+void requireSymmetricValues(double asym, double magnitude, const char* name) {
+    const double scale = 1.0 + magnitude;
+    if (asym > 1e-8 * scale) {
+        std::ostringstream os;
+        os << name << " must be symmetric (max |M - Mᵀ| = " << asym << ")";
+        fail(os.str());
+    }
+}
+
+/// Puts the square of the listed rows and columns of a scratch matrix back to zero when an exception
+/// leaves the scope (the sparse station border is all zero between stations; the border update zeroes it
+/// as it adds, so a normal exit has nothing left to do).
+struct ZeroActiveOnThrow {
+    Eigen::MatrixXd& m;
+    const std::vector<Eigen::Index>& active;
+    const int thrown_at_entry{std::uncaught_exceptions()};
+    ~ZeroActiveOnThrow() {
+        if (std::uncaught_exceptions() <= thrown_at_entry) return;
+        const Eigen::Index ld = m.rows();
+        for (const Eigen::Index j : active) {
+            double* col = m.data() + j * ld;
+            for (const Eigen::Index i : active) col[i] = 0.0;
+        }
+    }
+};
+
+/// The order in which Eigen 3.4 sums the terms of each element of a dense product C = Aᵀ B
+/// (A: depth x rows, B: depth x cols, all column-major, one thread, SSE2 doubles, no fused
+/// multiply-add), for the shapes where it runs its blocked kernel in one depth panel.
+///
+/// The blocked kernel (GeneralBlockPanelKernel.h) cuts the rows into panels of @c mc and tiles each
+/// panel with 4-row tiles (two packets), then one 2-row tile (one packet), then a last single row, and
+/// the columns into panels of @c nc with blocks of 4 columns and single leftover columns.  Every
+/// element is a plain sum of its terms over the depth in ascending order, from +0, with ONE exception:
+/// an element in the 2-row tile and in a 4-column block keeps two accumulators, the even depth indices
+/// and the odd ones among the first @c peeled = depth & ~7, adds them, and then continues with the
+/// remaining indices one by one.  The test of this order against Eigen's own product is
+/// tests/network/test_neq_sparse_station_normals.cpp; it fails if the kernel changes.
+struct GemmOrder {
+    Eigen::Index cols{0};
+    Eigen::Index peeled{0};              ///< depth & ~7: the depth indices below it use the two accumulators
+    std::vector<int> dual_slot;          ///< per row: index of its accumulator row when it sits in a 2-row tile, else -1
+    std::vector<char> col_block4;        ///< per column: 1 when it sits in a 4-column block
+    int n_dual{0};                       ///< number of rows with a slot
+};
+
+/// Fills @p g for the product (@p rows x depth) * (depth x @p cols); false when the product is outside
+/// what the order above describes: a result that is a vector (matrix-vector kernel) or has a tiny
+/// size sum (coefficient-wise product), more than one thread (the rows are partitioned and the tiles
+/// restart in each part), a depth over the panel depth (partial sums are added afterwards), a kernel
+/// tile geometry other than the one described, or a build that fuses multiply and add.
+bool gemmOrderOf(Eigen::Index rows, Eigen::Index cols, Eigen::Index depth, GemmOrder& g) {
+#if defined(EIGEN_VECTORIZE_FMA) || defined(__FMA__) || defined(__AVX2__)
+    (void)rows; (void)cols; (void)depth; (void)g;
+    return false;
+#else
+    using Traits = Eigen::internal::gebp_traits<double, double>;
+    constexpr bool kKnownGeometry = Traits::mr == 4 && Traits::LhsProgress == 2 && Traits::nr == 4;
+    if (!kKnownGeometry) return false;
+    if (rows < 2 || cols < 2 || depth < 1) return false;
+    if (rows + cols + depth < EIGEN_GEMM_TO_COEFFBASED_THRESHOLD) return false;
+    if (Eigen::nbThreads() != 1) return false;
+    Eigen::Index kc = depth, mc = rows, nc = cols;
+    Eigen::internal::computeProductBlockingSizes<double, double>(kc, mc, nc, Eigen::Index(1));
+    if (kc < depth) return false;
+    mc = std::min(rows, mc);
+    nc = std::min(cols, nc);
+    g.cols = cols;
+    g.peeled = depth & ~Eigen::Index(7);
+    g.n_dual = 0;
+    g.dual_slot.assign(static_cast<std::size_t>(rows), -1);
+    for (Eigen::Index i2 = 0; i2 < rows; i2 += mc) {
+        const Eigen::Index panel = std::min(i2 + mc, rows) - i2;
+        const Eigen::Index two_packet_rows = (panel / 4) * 4;
+        const Eigen::Index one_packet_rows = two_packet_rows + ((panel - two_packet_rows) / 2) * 2;
+        for (Eigen::Index r = two_packet_rows; r < one_packet_rows; ++r) {
+            g.dual_slot[static_cast<std::size_t>(i2 + r)] = g.n_dual++;
+        }
+    }
+    g.col_block4.assign(static_cast<std::size_t>(cols), 0);
+    for (Eigen::Index j2 = 0; j2 < cols; j2 += nc) {
+        const Eigen::Index panel = std::min(j2 + nc, cols) - j2;
+        for (Eigen::Index c = 0; c < (panel / 4) * 4; ++c) g.col_block4[static_cast<std::size_t>(j2 + c)] = 1;
+    }
+    return true;
+#endif
+}
+
+/// Accumulates the terms of one product into @p out in the order of @p g (see GemmOrder).  The terms
+/// of one depth index (one row of both factors) are added with @ref addRow, the depth indices in
+/// ascending order; @ref merge is called once, between the last depth index below @c g.peeled and the
+/// first one at or above it (or after the last one when none is above).
+struct OrderedSum {
+    double* out{nullptr};
+    Eigen::Index ld{0};
+    const GemmOrder* g{nullptr};
+    std::vector<double> even, odd;       ///< the two accumulators of the dual rows (n_dual x cols)
+    std::vector<Eigen::Index> reg_idx, dual_idx;   ///< scratch of addRow: one row's entries split by tile
+    std::vector<double> reg_val, dual_val;
+    std::vector<double> packed;                    ///< scratch of addRow: a dense left-factor row as a contiguous vector
+
+    void init(double* o, Eigen::Index ld_, const GemmOrder& order) {
+        out = o;
+        ld = ld_;
+        g = &order;
+        const std::size_t n = static_cast<std::size_t>(order.n_dual) * static_cast<std::size_t>(order.cols);
+        even.assign(n, 0.0);
+        odd.assign(n, 0.0);
+    }
+    /// Adds the outer product of one row of the left factor (@p n_l nonzero entries, columns @p li, values
+    /// @p lv) and one row of the right factor (@p n_r entries) at depth index @p k.
+    void addRow(Eigen::Index k, const Eigen::Index* li, const double* lv, std::size_t n_l,
+                const Eigen::Index* ri, const double* rv, std::size_t n_r) {
+        // The left-factor entries that sit in a 2-row tile (a handful per product at most) take the slow
+        // path; the others are plain scatter-adds.  Each element (i,j) belongs to exactly one entry pair,
+        // so splitting the entries does not change any element's sum.
+        std::size_t n_dual_entries = 0;
+        if (g->n_dual > 0) {
+            for (std::size_t p = 0; p < n_l; ++p) {
+                n_dual_entries += g->dual_slot[static_cast<std::size_t>(li[p])] >= 0;
+            }
+        }
+        // A row that fills a good part of the result's rows is packed into a contiguous vector and added to
+        // each result column as a vector operation: one multiply and one add per element, the zero
+        // entries adding +-0, so every element sees the same sum as from the scatter below.
+        const std::size_t rows = static_cast<std::size_t>(ld);
+        if (n_dual_entries == 0 && n_l * 3 >= rows) {
+            packed.assign(rows, 0.0);
+            for (std::size_t p = 0; p < n_l; ++p) packed[static_cast<std::size_t>(li[p])] = lv[p];
+            const double* __restrict ap = packed.data();
+            for (std::size_t q = 0; q < n_r; ++q) {
+                double* __restrict col = out + ri[q] * ld;
+                const double b = rv[q];
+                for (std::size_t t = 0; t < rows; ++t) col[t] += ap[t] * b;
+            }
+            return;
+        }
+        if (n_dual_entries == 0) {
+            for (std::size_t q = 0; q < n_r; ++q) {
+                double* const col = out + ri[q] * ld;
+                const double b = rv[q];
+                for (std::size_t p = 0; p < n_l; ++p) col[li[p]] += lv[p] * b;
+            }
+            return;
+        }
+        reg_idx.clear();
+        reg_val.clear();
+        dual_idx.clear();
+        dual_val.clear();
+        for (std::size_t p = 0; p < n_l; ++p) {
+            if (g->dual_slot[static_cast<std::size_t>(li[p])] >= 0) {
+                dual_idx.push_back(li[p]);
+                dual_val.push_back(lv[p]);
+            } else {
+                reg_idx.push_back(li[p]);
+                reg_val.push_back(lv[p]);
+            }
+        }
+        const bool pack_regular = reg_idx.size() * 3 >= rows;
+        if (pack_regular) {
+            packed.assign(rows, 0.0);
+            for (std::size_t p = 0; p < reg_idx.size(); ++p) packed[static_cast<std::size_t>(reg_idx[p])] = reg_val[p];
+        }
+        for (std::size_t q = 0; q < n_r; ++q) {
+            const Eigen::Index j = ri[q];
+            const double b = rv[q];
+            double* __restrict col = out + j * ld;
+            if (pack_regular) {
+                const double* __restrict ap = packed.data();
+                for (std::size_t t = 0; t < rows; ++t) col[t] += ap[t] * b;
+            } else {
+                for (std::size_t p = 0; p < reg_idx.size(); ++p) col[reg_idx[p]] += reg_val[p] * b;
+            }
+            for (std::size_t p = 0; p < dual_idx.size(); ++p) {
+                const Eigen::Index i = dual_idx[p];
+                if (k < g->peeled && g->col_block4[static_cast<std::size_t>(j)]) {
+                    std::vector<double>& acc = (k & 1) ? odd : even;
+                    const int slot = g->dual_slot[static_cast<std::size_t>(i)];
+                    acc[static_cast<std::size_t>(slot) * static_cast<std::size_t>(g->cols) + static_cast<std::size_t>(j)] += dual_val[p] * b;
+                } else {
+                    col[i] += dual_val[p] * b;
+                }
+            }
+        }
+    }
+    void merge() {
+        for (std::size_t i = 0; i < g->dual_slot.size(); ++i) {
+            const int slot = g->dual_slot[i];
+            if (slot < 0) continue;
+            for (Eigen::Index j = 0; j < g->cols; ++j) {
+                if (!g->col_block4[static_cast<std::size_t>(j)]) continue;
+                const std::size_t at = static_cast<std::size_t>(slot) * static_cast<std::size_t>(g->cols) + static_cast<std::size_t>(j);
+                out[j * ld + static_cast<Eigen::Index>(i)] = even[at] + odd[at];
+            }
+        }
+    }
+};
+
+/// The nonzero entries of a matrix by row, columns ascending within a row: row k owns
+/// idx/val[first[k] .. first[k] + len[k]).
+struct RowLists {
+    std::vector<std::size_t> first, len;
+    std::vector<Eigen::Index> idx;
+    std::vector<double> val;
+};
+
+/// Lists the nonzero entries of @p X by row.  False when an entry is not finite.  The fill pass writes
+/// every entry to its row's next free slot and advances the slot only on a nonzero, so it has no
+/// data-dependent branch; each row therefore owns one spare slot.
+bool scanRows(const Eigen::MatrixXd& X, RowLists& out) {
+    const std::size_t m = static_cast<std::size_t>(X.rows());
+    out.len.assign(m, 0);
+    bool finite = true;
+    for (Eigen::Index j = 0; j < X.cols(); ++j) {
+        const double* col = X.data() + j * X.rows();
+        for (std::size_t k = 0; k < m; ++k) {
+            out.len[k] += (col[k] != 0.0);
+            finite &= std::isfinite(col[k]);
+        }
+    }
+    if (!finite) return false;
+    out.first.assign(m, 0);
+    std::size_t total = 0;
+    for (std::size_t k = 0; k < m; ++k) {
+        out.first[k] = total;
+        total += out.len[k] + 1;
+    }
+    out.idx.assign(total, 0);
+    out.val.assign(total, 0.0);
+    std::vector<std::size_t> next(out.first);
+    for (Eigen::Index j = 0; j < X.cols(); ++j) {
+        const double* col = X.data() + j * X.rows();
+        for (std::size_t k = 0; k < m; ++k) {
+            const std::size_t at = next[k];
+            out.idx[at] = j;
+            out.val[at] = col[k];
+            next[k] += (col[k] != 0.0);
+        }
+    }
+    return true;
+}
+
+/// The entries of @p f scaled by the weight of their row (the same single multiplication as
+/// diag(w) * X), those whose product is zero dropped.  False when a product is not finite.
+bool weightRows(const RowLists& f, const Eigen::VectorXd& w, RowLists& out) {
+    const std::size_t m = f.first.size();
+    out.first.assign(m, 0);
+    out.len.assign(m, 0);
+    out.idx.clear();
+    out.val.clear();
+    out.idx.reserve(f.idx.size());
+    out.val.reserve(f.val.size());
+    for (std::size_t k = 0; k < m; ++k) {
+        out.first[k] = out.idx.size();
+        for (std::size_t p = f.first[k]; p < f.first[k] + f.len[k]; ++p) {
+            const double prod = w(static_cast<Eigen::Index>(k)) * f.val[p];
+            if (!std::isfinite(prod)) return false;
+            if (prod != 0.0) {
+                out.idx.push_back(f.idx[p]);
+                out.val.push_back(prod);
+            }
+        }
+        out.len[k] = out.idx.size() - out.first[k];
+    }
+    return true;
+}
+
 /// Verify that an LDLᵀ factorization is positive-definite.  Eigen's @c info() does not
 /// reject a singular or indefinite matrix: LDLᵀ factorizes it, and a later solve goes
 /// through a pseudo-inverse.  A non-positive pivot, or a pivot below 1e-12 of the
@@ -394,9 +663,19 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
                                                const Eigen::VectorXd& u_s_r,
                                                const Eigen::VectorXd& u_r_r,
                                                const StationPrior& prior) {
+    return addStationImpl_(&N_ss_r, nullptr, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
+}
+
+std::size_t NetworkNormalEquations::addStationImpl_(const Eigen::MatrixXd* N_ss_dense,
+                                                    const SparseBorder* border,
+                                                    const Eigen::MatrixXd& N_sr_r,
+                                                    const Eigen::MatrixXd& N_rr_r,
+                                                    const Eigen::VectorXd& u_s_r,
+                                                    const Eigen::VectorXd& u_r_r,
+                                                    const StationPrior& prior) {
     const Eigen::Index n_r = N_rr_r.rows();
 
-    requireSquare(N_ss_r, n_shared_, "addStation: N_ss_r");
+    if (N_ss_dense) requireSquare(*N_ss_dense, n_shared_, "addStation: N_ss_r");
     if (N_sr_r.rows() != n_shared_ || N_sr_r.cols() != n_r) {
         fail("addStation: N_sr_r must be n_shared x n_local");
     }
@@ -410,7 +689,8 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     // The normal-equation blocks are symmetric by construction (AᵀWA); reject a
     // grossly asymmetric input so a caller bug is caught here, not silently
     // half-used by the LDLᵀ factorization / final symmetrization.
-    requireSymmetric(N_ss_r, "addStation: N_ss_r");
+    if (N_ss_dense) requireSymmetric(*N_ss_dense, "addStation: N_ss_r");
+    else            requireSymmetricValues(border->asymmetry, border->magnitude, "addStation: N_ss_r");
     requireSymmetric(N_rr_r, "addStation: N_rr_r");
 
     // --- Station prior before the PD test (network.station_prior_before_pd, RF-PD-fix)
@@ -569,7 +849,22 @@ std::size_t NetworkNormalEquations::addStation(const Eigen::MatrixXd& N_ss_r,
     for (Eigen::Index i = 0; i < n_pri; ++i) {
         st.u_r(prior.cols[static_cast<std::size_t>(i)]) += prior.dur(i);
     }
-    N_ss_ += N_ss_r;
+    if (N_ss_dense) {
+        N_ss_ += *N_ss_dense;
+    } else {
+        // The sparse border: add the square of the touched shared columns and put the scratch back to
+        // zero in the same pass.  Every entry outside it is exactly zero, and the dense sum would add
+        // +0 to a value that is never -0, which changes nothing.
+        const Eigen::Index ld = n_shared_;
+        for (const Eigen::Index j : border->active) {
+            double* dst = N_ss_.data() + j * ld;
+            double* src = sparse_nss_.data() + j * ld;
+            for (const Eigen::Index i : border->active) {
+                dst[i] += src[i];
+                src[i] = 0.0;
+            }
+        }
+    }
     u_s_ += u_s_r;
 
     reduced_ = false;
@@ -637,6 +932,21 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::MatrixXd WA_s = w_diag.asDiagonal() * A_s;  // m × n_s
     const Eigen::MatrixXd WA_r = w_diag.asDiagonal() * A_r;  // m × n_r
 
+    // The nonzero-entry formation of the three normal blocks (network.sparse_station_normals); a
+    // shape it does not cover falls through to the dense products below.
+    if (sparse_station_normals_) {
+        if (sparse_nss_.rows() != n_shared_ || sparse_nss_.cols() != n_shared_) {
+            sparse_nss_.setZero(n_shared_, n_shared_);
+        }
+        Eigen::MatrixXd N_sr_s, N_rr_s;
+        if (formStationNormalsSparse(A_s, A_r, w_diag, sparse_nss_, N_sr_s, N_rr_s, sparse_border_)) {
+            const ZeroActiveOnThrow restore_border{sparse_nss_, sparse_border_.active};
+            const Eigen::VectorXd u_s_s = WA_s.transpose() * y;
+            const Eigen::VectorXd u_r_s = WA_r.transpose() * y;
+            return addStationImpl_(nullptr, &sparse_border_, N_sr_s, N_rr_s, u_s_s, u_r_s, prior);
+        }
+    }
+
     const Eigen::MatrixXd N_ss_r = A_s.transpose() * WA_s;
     const Eigen::MatrixXd N_sr_r = A_s.transpose() * WA_r;
     const Eigen::MatrixXd N_rr_r = A_r.transpose() * WA_r;
@@ -644,6 +954,129 @@ std::size_t NetworkNormalEquations::addStationObservations(
     const Eigen::VectorXd u_r_r = WA_r.transpose() * y;
 
     return addStation(N_ss_r, N_sr_r, N_rr_r, u_s_r, u_r_r, prior);
+}
+
+bool NetworkNormalEquations::formStationNormalsSparse(
+    const Eigen::MatrixXd& A_s, const Eigen::MatrixXd& A_r, const Eigen::VectorXd& w,
+    Eigen::MatrixXd& N_ss, Eigen::MatrixXd& N_sr, Eigen::MatrixXd& N_rr, SparseBorder& border) {
+    const Eigen::Index m  = A_s.rows();
+    const Eigen::Index ns = A_s.cols();
+    const Eigen::Index nr = A_r.cols();
+    if (A_r.rows() != m || w.size() != m || N_ss.rows() != ns || N_ss.cols() != ns) {
+        return false;
+    }
+    GemmOrder order_ss, order_sr, order_rr;
+    if (!gemmOrderOf(ns, ns, m, order_ss) || !gemmOrderOf(ns, nr, m, order_sr) ||
+        !gemmOrderOf(nr, nr, m, order_rr)) {
+        return false;
+    }
+
+    // The nonzero entries of the two Jacobians by row, and of their weighted copies; a non-finite entry,
+    // weight or product ends the attempt before anything is written.
+    for (Eigen::Index k = 0; k < m; ++k) {
+        if (!std::isfinite(w(k))) return false;
+    }
+    RowLists as, ar, was, war;
+    if (!scanRows(A_s, as) || !scanRows(A_r, ar) || !weightRows(as, w, was) || !weightRows(ar, w, war)) {
+        return false;
+    }
+
+    // The shared columns any row of A_s touches: N_ss is exactly zero outside their square, so its sum is
+    // accumulated on that square (compressed indices) and written into the full scratch once.
+    std::vector<char> in_active(static_cast<std::size_t>(ns), 0);
+    for (std::size_t k = 0; k < as.first.size(); ++k) {
+        for (std::size_t p = as.first[k]; p < as.first[k] + as.len[k]; ++p) {
+            in_active[static_cast<std::size_t>(as.idx[p])] = 1;
+        }
+    }
+    border.active.clear();
+    std::vector<Eigen::Index> position(static_cast<std::size_t>(ns), -1);
+    for (Eigen::Index j = 0; j < ns; ++j) {
+        if (in_active[static_cast<std::size_t>(j)]) {
+            position[static_cast<std::size_t>(j)] = static_cast<Eigen::Index>(border.active.size());
+            border.active.push_back(j);
+        }
+    }
+    const std::size_t na = border.active.size();
+    GemmOrder order_zz;                                  // N_ss's order seen from the compressed indices
+    order_zz.cols = static_cast<Eigen::Index>(na);
+    order_zz.peeled = order_ss.peeled;
+    order_zz.dual_slot.assign(na, -1);
+    order_zz.col_block4.assign(na, 0);
+    for (std::size_t t = 0; t < na; ++t) {
+        const std::size_t full = static_cast<std::size_t>(border.active[t]);
+        order_zz.dual_slot[t] = order_ss.dual_slot[full];
+        order_zz.col_block4[t] = order_ss.col_block4[full];
+        if (order_zz.dual_slot[t] >= 0) ++order_zz.n_dual;
+    }
+    // the entries of A_s and of its weighted copy at their compressed positions
+    std::vector<Eigen::Index> as_pos(as.idx.size(), 0), was_pos(was.idx.size(), 0);
+    for (std::size_t k = 0; k < as.first.size(); ++k) {
+        for (std::size_t p = as.first[k]; p < as.first[k] + as.len[k]; ++p) as_pos[p] = position[static_cast<std::size_t>(as.idx[p])];
+        for (std::size_t p = was.first[k]; p < was.first[k] + was.len[k]; ++p) was_pos[p] = position[static_cast<std::size_t>(was.idx[p])];
+    }
+    // the dual slots are numbered in the full order's rows; the accumulators need them dense in 0..n_dual-1
+    {
+        int next = 0;
+        for (std::size_t t = 0; t < na; ++t) {
+            if (order_zz.dual_slot[t] >= 0) order_zz.dual_slot[t] = next++;
+        }
+    }
+
+    // Every element C(i,j) receives A(k,i) * WA(k,j) for the rows k in ascending order, in the order of
+    // its product (GemmOrder): the dense product's own sum, without its zero terms (a zero term adds
+    // +-0 to a sum that cannot be -0, which changes nothing).
+    N_sr.setZero(ns, nr);
+    N_rr.setZero(nr, nr);
+    thread_local std::vector<double> zz;                 // N_ss on the compressed square
+    zz.assign(na * na, 0.0);
+    OrderedSum sum_ss, sum_sr, sum_rr;
+    sum_ss.init(zz.data(), static_cast<Eigen::Index>(na), order_zz);
+    sum_sr.init(N_sr.data(), ns, order_sr);
+    sum_rr.init(N_rr.data(), nr, order_rr);
+    const Eigen::Index peeled = m & ~Eigen::Index(7);
+    auto merge_all = [&]() { sum_ss.merge(); sum_sr.merge(); sum_rr.merge(); };
+    for (Eigen::Index k = 0; k < m; ++k) {
+        if (k == peeled) merge_all();
+        const std::size_t kk = static_cast<std::size_t>(k);
+        sum_ss.addRow(k, as_pos.data() + as.first[kk], as.val.data() + as.first[kk], as.len[kk],
+                      was_pos.data() + was.first[kk], was.val.data() + was.first[kk], was.len[kk]);
+        sum_sr.addRow(k, as.idx.data() + as.first[kk], as.val.data() + as.first[kk], as.len[kk],
+                      war.idx.data() + war.first[kk], war.val.data() + war.first[kk], war.len[kk]);
+        sum_rr.addRow(k, ar.idx.data() + ar.first[kk], ar.val.data() + ar.first[kk], ar.len[kk],
+                      war.idx.data() + war.first[kk], war.val.data() + war.first[kk], war.len[kk]);
+    }
+    if (peeled == m) merge_all();
+
+    // Into the full scratch, then the two numbers of the symmetry check over the square, in tiles so
+    // that an entry and its mirror are near each other in memory.
+    for (std::size_t tj = 0; tj < na; ++tj) {
+        double* const col = N_ss.data() + border.active[tj] * ns;
+        const double* const z = zz.data() + tj * na;
+        for (std::size_t ti = 0; ti < na; ++ti) col[border.active[ti]] = z[ti];
+    }
+    border.asymmetry = 0.0;
+    border.magnitude = 0.0;
+    const double* const nss = N_ss.data();
+    constexpr std::size_t kTile = 32;
+    for (std::size_t bj = 0; bj < na; bj += kTile) {
+        for (std::size_t bi = 0; bi <= bj; bi += kTile) {
+            for (std::size_t jj = bj; jj < std::min(bj + kTile, na); ++jj) {
+                const Eigen::Index j = border.active[jj];
+                const std::size_t ii_end = bi == bj ? jj + 1 : std::min(bi + kTile, na);
+                for (std::size_t ii = bi; ii < ii_end; ++ii) {
+                    const Eigen::Index i = border.active[ii];
+                    const double v = nss[j * ns + i];
+                    const double mirror = nss[i * ns + j];
+                    const double d = std::abs(v - mirror);
+                    if (d > border.asymmetry) border.asymmetry = d;
+                    if (std::abs(v) > border.magnitude) border.magnitude = std::abs(v);
+                    if (std::abs(mirror) > border.magnitude) border.magnitude = std::abs(mirror);
+                }
+            }
+        }
+    }
+    return true;
 }
 
 void NetworkNormalEquations::addStationPrior(

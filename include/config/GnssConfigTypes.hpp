@@ -1742,6 +1742,15 @@ namespace GnssProcessor {
         // deterministic-parallel region reuses that pin).  Default off: the seam runs
         // its original serial path, with no new code on the off path.
         bool parallel_seam{ false };      ///< Run the post-solve carry-fold / D5-readout seam deterministically in parallel (byte-identical, opt-in; needs @ref parallel_stations).
+        // Form each station's normal blocks (A_sᵀWA_s, A_sᵀWA_r, A_rᵀWA_r) from the nonzero
+        // entries of its rows instead of dense products over the whole shared border, and add
+        // the shared block to the border entry by entry.  The sum of every element is the one
+        // Eigen's dense product makes, so the output is bit-identical (see
+        // @ref NetworkNormalEquations::formStationNormalsSparse); a shape the proof does not
+        // cover takes the dense path for that station.  The dense work grows with the square
+        // of the shared columns (about 420 for GPS + Galileo on the field golden) and is the
+        // largest part of the serial scatter.  Default off: the dense products.
+        bool sparse_station_normals{ false };  ///< Form each station's normal blocks from the nonzero entries of its rows, bit-identical to the dense products (opt-in).
         // Thread the dense per-block linear algebra of the invariant carry across all
         // cores.  @ref parallel_seam parallelizes the carry only over the few
         // (const,signal) blocks (byte-identical) and leaves each block's O(K²–K³) dense

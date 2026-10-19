@@ -389,6 +389,12 @@ public:
     /// the epoch loop; survives @ref beginEpoch / @ref reset.
     void setStationPdMedianScale(bool on) { neq_.setStationPdMedianScale(on); }
 
+    /// Sparse station normals passthrough
+    /// (@ref NetworkNormalEquations::setSparseStationNormals;
+    /// @c network.sparse_station_normals).  Configuration-level: set once before
+    /// the epoch loop; survives @ref beginEpoch / @ref reset.
+    void setSparseStationNormals(bool on) { neq_.setSparseStationNormals(on); }
+
     /// Passthrough for the station PD null-direction read
     /// (@ref NetworkNormalEquations::setStationPdNullTrace;
     /// @c network.trace_station_pd_null).  Configuration-level: set

@@ -403,6 +403,11 @@ Standing documents (not split this pass):
 - [SPEC_inc8b_election_split.md](SPEC_inc8b_election_split.md)
 - [network_decomposition_plan.md](network_decomposition_plan.md)
 
+Program card on this topic (indexed in [refound/CARDS.md](refound/CARDS.md)):
+[NETCOST](refound/NETCOST_gps_galileo_cost_attribution_2026-10-18.md), where the GPS + Galileo epoch time goes and the exact sparse station
+normals (open, 2026-10-18: loop 5.3 and 3.7 times the GPS-only loop; the sparse formation behind a default-off key
+shortens the field loop 13.3 % and the sim loop 10.6 % at identical output; arming and two further optimizations owed).
+
 ### `realtime` — [topics/realtime.md](topics/realtime.md)
 
 _No split cards yet — the topic page and the standing documents below are the whole of it._
