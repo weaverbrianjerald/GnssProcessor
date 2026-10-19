@@ -168,6 +168,7 @@ const char* setMismatchName(SetMismatch m) {
         case SetMismatch::XLin:        return "x_lin";
         case SetMismatch::Disposition: return "disposition";
         case SetMismatch::Reseed:      return "reseed";
+        case SetMismatch::Unresolvable: return "unresolvable";
         case SetMismatch::Elevation:   return "elevation";
         case SetMismatch::Lookup:      return "lookup";
         case SetMismatch::Inventory:   return "inventory";
@@ -202,6 +203,8 @@ void buildStationParams(const StateManager& sm, const std::vector<ParamDispositi
             slot.ref = paramRefOf(*id, axis);
             slot.pending_reseed = col.container == StateContainer::Ambiguities
                                && sm.isAmbiguityPendingReseed(col.key);
+            slot.unresolvable = col.container == StateContainer::Ambiguities
+                             && sm.isAmbiguityUnresolvable(col.key);
             if (col.container == StateContainer::PhaseColourStates)
                 slot.elevation_deg = sm.getPhaseColourElevation(col.key);
         } else {
@@ -322,6 +325,14 @@ void checkStationParams(const StationParams& set, const StateManager& sm,
                 f.note(SetMismatch::Reseed, [&] {
                     return fmt::format("slot {} ({}): mark {} against the state manager's {}", k,
                                        describe(s.ref), s.pending_reseed, reseed);
+                });
+            }
+            const bool unresolvable = s.ref.kind == NetworkParamKind::Ambiguity
+                                   && sm.isAmbiguityUnresolvable(userKey(s.ref));
+            if (s.unresolvable != unresolvable) {
+                f.note(SetMismatch::Unresolvable, [&] {
+                    return fmt::format("slot {} ({}): mark {} against the state manager's {}", k,
+                                       describe(s.ref), s.unresolvable, unresolvable);
                 });
             }
             if (s.ref.kind == NetworkParamKind::PhaseColour

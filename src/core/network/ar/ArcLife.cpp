@@ -10,7 +10,7 @@
 #include "network/state/RunContext.hpp"     // ctx.arc_ledger, ctx.entities.arcs (the leveling carry), the station table (amb_flag_ep)
 #include "network/state/ArcLedger.hpp"          // ArcRecord, ArcState
 #include "network/driver/RunTypes.hpp"    // LocalCarry
-#include "filter/StateKeySchema.hpp"     // StateKeys::makeAmbiguityKey
+#include "network/state/Entities.hpp"     // net::ambKey
 
 #include <string>
 #include <tuple>
@@ -82,7 +82,7 @@ ArcLifeKeys arcLifeKeys(const ArcId& arc) {
     const int         sta = arc.station.index;
     const std::string sat = arc.sat.str();
     const std::string sig = arc.signal.obsCode(ObsType::Phase);
-    return ArcLifeKeys{std::make_tuple(sta, sat, sig), {sta, StateKeys::makeAmbiguityKey(sat, sig)}};
+    return ArcLifeKeys{std::make_tuple(sta, sat, sig), {sta, net::ambKey(SatSignalId{arc.sat, arc.signal})}};
 }
 
 ArcLifeStamp arcLifeStamp(const NetworkRunContext& ctx, const ArcLifeKeys& keys) {

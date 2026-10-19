@@ -589,6 +589,7 @@ add_executable(gnss_tests
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp
     tests/network/test_sd_ewl_integer.cpp
+    tests/network/test_sd_ewl_station_params.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp

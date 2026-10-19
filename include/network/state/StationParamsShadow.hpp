@@ -17,8 +17,8 @@
  *    (@c UserParamView), to its own column, and the slot's linearization point is the state's
  *    value there, bit for bit; a column the classifier refused is an unnamed slot with the
  *    state's value;
- *  - each slot's disposition is the split's, an ambiguity's re-seed mark is the state
- *    manager's, and a phase colour's elevation is the state manager's, bit for bit;
+ *  - each slot's disposition is the split's, an ambiguity's re-seed and unresolvable marks are
+ *    the state manager's, and a phase colour's elevation is the state manager's, bit for bit;
  *  - the set's own typed lookup (@ref findParam) finds each slot at its own index;
  *  - the inventory recorded from the set is the inventory the state manager alone gives
  *    (@ref recordStationParamsFromState: every record, the unclassified list and the two
@@ -69,6 +69,7 @@ enum class SetMismatch : std::uint8_t {
     XLin,         ///< A slot's linearization point is not the state's value at its column (any bit).
     Disposition,  ///< A slot's disposition is not the split's for its column.
     Reseed,       ///< An ambiguity's re-seed mark differs from the state manager's.
+    Unresolvable, ///< An ambiguity's unresolvable mark (left out of the integer search) differs from the state manager's.
     Elevation,    ///< A phase colour's elevation is not the state manager's (any bit).
     Lookup,       ///< The set's typed lookup does not find a slot at its own index.
     Inventory,    ///< The inventory recorded from the set differs from the one the state manager alone gives.
@@ -78,13 +79,13 @@ enum class SetMismatch : std::uint8_t {
 };
 
 /// Number of @ref SetMismatch values.
-inline constexpr std::size_t kSetMismatches = 11;
+inline constexpr std::size_t kSetMismatches = 12;
 
 /**
  * @brief The name of a finding, as the run-end table prints it.
  * @param m The finding.
- * @return "size", "identity", "x_lin", "disposition", "reseed", "elevation", "lookup",
- *         "inventory", "typed count", "typed order" or "stale".
+ * @return "size", "identity", "x_lin", "disposition", "reseed", "unresolvable", "elevation",
+ *         "lookup", "inventory", "typed count", "typed order" or "stale".
  */
 const char* setMismatchName(SetMismatch m);
 
@@ -115,8 +116,8 @@ struct StationParamsCheck {
  * @brief Build a station's parameter set from its state manager.
  *
  * Lists the columns (@c listStateColumns) and appends a slot per column in column order with
- * the value of the state vector, the split's disposition, the ambiguity's re-seed mark and the
- * phase colour's elevation.  A
+ * the value of the state vector, the split's disposition, the ambiguity's re-seed and
+ * unresolvable marks and the phase colour's elevation.  A
  * column the classifier refuses (@c classifyStateColumn) becomes an unnamed slot and its
  * "<container>:<key>" is listed in @ref StationParams::unclassified.  The withheld shared
  * states that the inventory keeps (a classifiable key whose absorbing column the station holds)

@@ -16,7 +16,7 @@
 #include "network/diag/AmbStateTrace.hpp"
 #include "network/carry/Coupling.hpp"          // phaseBiasShiftOf (the phase-bias shift rule)
 #include "network/solve/HandoverStransform.hpp" // kStsExactTolM (one exactness tolerance)
-#include "filter/StateKeySchema.hpp"
+#include "network/state/Entities.hpp"          // net::arcKey, net::satSignalKey, net::satKey
 #include "network/diag/RunTraces.hpp"
 
 #include <fmt/format.h>
@@ -196,8 +196,8 @@ void networkAmbFloatApplyDrops(
     //     own statistics guards all read it, and re-pointing them is a separate change.
     //     Only the response the set invokes changes here.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
-        const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-        if (!parts) continue;
+        const std::optional<ArcId> arc = net::arcKey(sta, amb_key);
+        if (!arc) continue;
         // Under the held S-basis (network.phase_datum_held_basis), every screen flag
         // stamps the arc, whether or not it has a carry to drop.  The election's quiet
         // window reads the stamp to refuse the S-basis to a recently flagged candidate,
@@ -206,9 +206,9 @@ void networkAmbFloatApplyDrops(
         // datum (RF-2 items 3 and 4).
         if (ctx.knobs.pd_held_basis)
             net::putAmbFlagEp(entities, sta, amb_key) = now_ep;
-        const auto it = net::getArc(ctx.entities.arcs, std::make_tuple(sta, parts->satellite, parts->signal), &net::ArcState::amb);
+        const auto it = net::get(ctx.entities.arcs, *arc, &net::ArcState::amb);
         if (it == nullptr) continue;      // nothing carried ⇒ nothing to drop
-        const bool acted = dropAt((*it), sta, parts->satellite);
+        const bool acted = dropAt((*it), sta, net::satKey(arc->sat));
         if (acted) ++n_free;
         else       ++n_idem;
         // A drop that changed the carried prior (the variance moved,
@@ -221,7 +221,7 @@ void networkAmbFloatApplyDrops(
             prmRespond(counters.prm_resp, reentry ? ResponseSite::AmbDropLatchReentry
                                                   : ResponseSite::AmbDropLatchSlip);
         }
-        note(std::make_tuple(sta, parts->satellite, parts->signal), (*it), AmbDropCause::kReLevelFree);
+        note(net::arcTuple(*arc), (*it), AmbDropCause::kReLevelFree);
     }
     // (2) The gap cliff.  An arc present this epoch whose sighting gap already exceeds the
     //     horizon: on the leveling vehicle the inject skips it and the harvest re-stashes
@@ -321,10 +321,10 @@ long long networkAmbFloatDeclaredHandover(
 
     long long n_shift_total = 0;
     for (const AnchorHandoverEvent& h : handovers) {
-        const auto parts = StateKeys::parseAmbiguityKey(h.amb);
-        if (!parts) continue;
-        const std::string& sat = parts->satellite;
-        const std::string& sig = parts->signal;
+        const std::optional<SatSignalId> family = net::satSignalKey(h.amb);
+        if (!family) continue;
+        const std::string sat = net::satKey(family->sat);
+        const std::string sig = net::signalKey(family->signal);
         // Only a continuous handover has a Δ.  A cold re-realization elected a successor
         // with no usable carried level, so there is no new basis to express the family
         // in: its erase stands, and it is counted as refused rather than transformed
@@ -368,7 +368,7 @@ long long networkAmbFloatDeclaredHandover(
         // The family's held emission, left in the old frame (PbHold
         // is exempt from the shift).  Measure-only.
         if (delta != 0.0
-            && net::getSig(ctx.entities.sat_signals, sat + "|" + sig, &net::SatSignalState::pb_hold))
+            && net::getSig(ctx.entities.sat_signals, net::holdKey(*family), &net::SatSignalState::pb_hold))
             ++counters.prm_pbhold_unmoved_at_shift;
         // ---- Exactness self-check (the sts_selfcheck_ok pattern).  The incoming
         //      anchor's column now reads 0, which is what its w = 1e10 pin asserts.

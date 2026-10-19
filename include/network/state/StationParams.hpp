@@ -34,7 +34,10 @@
  * diagnostics and the carried-prior steps of PASS B (the ambiguity, slant ionosphere, receiver
  * clock, receiver code-bias, phase-colour and wet-delay carries, the local block, and the
  * double-difference prior build) read it, and so do the slip drains, the admissions' reads of
- * the ambiguity columns, the phase-datum and anchor rows and the ionosphere constraint rows.
+ * the ambiguity columns, the phase-datum and anchor rows, the ionosphere constraint rows, the
+ * integer-ambiguity searches (the producer search's ambiguity pool and its normal-equation
+ * export labels, the SD-EWL candidates and arc frame terms) and the snapshot's code-bias
+ * linearization points.
  * The columns are still born in the state manager, so the writers of a column (births, prunes,
  * the re-seed marks) are the state manager's, and a reader that needs what a later stage of the
  * epoch changes (a re-seed mark set by a screen after the split, a border column the
@@ -85,6 +88,9 @@ struct LocalSlot {
     double           x_lin{0.0};                                ///< Its linearization point: the value the epoch's rows are evaluated at.
     ParamDisposition disp{ParamDisposition::Unobserved};        ///< What the split did with it this epoch.
     bool             pending_reseed{false};                     ///< An ambiguity marked to be re-seeded at its next use.
+    /// An ambiguity the integer search leaves out because no phase bias is applied to its
+    /// signal this epoch (the measurement pre-pass marks it, and clears every mark first).
+    bool             unresolvable{false};
     /// The state manager holds a column here that no typed identity names (a layout column of
     /// the single-receiver filter, or a key the classifier refuses).  @ref ref is left at its
     /// default and means nothing (it would read as the receiver clock); the slot is in no typed
@@ -234,6 +240,21 @@ std::optional<SignalId> receiverPhaseBiasSignal(const std::string& key);
  *         does not hold it (the old @c getReceiverPhaseBiasIndex).
  */
 int findReceiverPhaseBias(const StationParams& set, const std::string& key);
+
+/**
+ * @brief The slot of the receiver code bias a state-key text names.
+ *
+ * For a reader whose identity is the key a carry or a snapshot row holds ("GPS_DCB",
+ * "GPS_IFB5", "GPS_ISC_C1W", "GLONASS_IFB2_k-4"): the key is compared with the text of each
+ * receiver code bias of the set (@ref keyText), so the lookup agrees with the key every
+ * writer of such a row renders.
+ *
+ * @param set The set.
+ * @param key The receiver code-bias key.
+ * @return The slot index, or -1 when the set holds no receiver code bias with that key (the
+ *         old state manager's @c getCodeBiasIndex).
+ */
+int findReceiverCodeBias(const StationParams& set, const std::string& key);
 
 /**
  * @brief The state-key text of a parameter, as the traces print it.

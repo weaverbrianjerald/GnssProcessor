@@ -148,6 +148,12 @@ int findReceiverPhaseBias(const StationParams& set, const std::string& key) {
     return signal ? slotOf(set.rx_pb, *signal) : -1;
 }
 
+int findReceiverCodeBias(const StationParams& set, const std::string& key) {
+    for (const auto& entry : set.rx_cb)
+        if (keyText(slotAt(set, entry.second).ref) == key) return entry.second;
+    return -1;
+}
+
 std::string keyText(const ParamRef& r) {
     if (r.kind == NetworkParamKind::RxClock && r.form == ParamForm::Isb && r.core == UserCore::None)
         return systemName(r.sys);

@@ -18,6 +18,10 @@
  *    the keys, the state labels and the trace labels read from the set are the state manager's;
  *  - the strings and predicates the carried-prior steps take from a typed entry (satellite,
  *    signal, key text, receiver code-bias form) are what the key parsers gave them;
+ *  - an ambiguity's unresolvable mark (left out of the integer search) is in the set and is
+ *    checked against the state manager's;
+ *  - the SD-EWL candidates read from the set are the ones the state manager's ambiguity keys
+ *    gave;
  *  - the withheld shared states are kept exactly while their absorbing column is held;
  *  - a parameter with no typed map keeps its slot and is counted;
  *  - the readers that hold an identity as text (an election's key, a funnel's key) find the
@@ -42,11 +46,13 @@
 #include "logging/LogManager.hpp"
 #include "measurement/UserParamView.hpp"
 #include "network/assembly/ParamInventory.hpp"
+#include "network/ar/SdEwlRows.hpp"
 #include "network/assembly/StationBuild.hpp"
 #include "network/diag/StationBlock.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "network/state/Entities.hpp"
 #include "network/qc/RedundancyCensus.hpp"
+#include "network/solve/Estimator.hpp"
 #include "network/state/StateColumns.hpp"
 #include "network/state/StationParams.hpp"
 #include "network/state/StationParamsShadow.hpp"
@@ -417,6 +423,11 @@ TEST(StationParamsTest, TheCheckCountsEachKindOfDamage) {
              for (LocalSlot& l : s.slots)
                  if (l.ref.kind == NetworkParamKind::Ambiguity) { l.pending_reseed = true; return; }
          }},
+        {"an unresolvable mark set", SetMismatch::Unresolvable,
+         [](StationParams& s, StationParamSlot&) {
+             for (LocalSlot& l : s.slots)
+                 if (l.ref.kind == NetworkParamKind::Ambiguity) { l.unresolvable = true; return; }
+         }},
         {"a phase colour elevation moved by one ulp", SetMismatch::Elevation,
          [](StationParams& s, StationParamSlot&) {
              LocalSlot& l = s.slots[static_cast<std::size_t>(s.colour.begin()->second)];
@@ -716,8 +727,8 @@ TEST(StationParamsTest, TheReportNamesTheFamiliesAndPrintsTheFindings) {
                                "satellite code bias"})
         EXPECT_TRUE(has(family)) << family;
     EXPECT_FALSE(has("no typed map"));   // listed only when a slot has none
-    EXPECT_TRUE(has("size 0, identity 0, x_lin 0, disposition 0, reseed 0, elevation 0, lookup 0, "
-                    "inventory 0, typed count 0, typed order 0, stale 0"));
+    EXPECT_TRUE(has("size 0, identity 0, x_lin 0, disposition 0, reseed 0, unresolvable 0, elevation 0, "
+                    "lookup 0, inventory 0, typed count 0, typed order 0, stale 0"));
     EXPECT_FALSE(has("WARNING"));
     EXPECT_TRUE(has("wall of the builds and checks"));
 
@@ -763,6 +774,99 @@ TEST(StationParamsTest, TheTextLookupsFindTheColumnsTheStateManagerIndexes) {
     EXPECT_FALSE(receiverPhaseBiasSignal("GPS_RPB_").has_value());
     EXPECT_FALSE(receiverPhaseBiasSignal("_RPB_L1C").has_value());
     EXPECT_FALSE(receiverPhaseBiasSignal("Nowhere_RPB_L1C").has_value());
+
+    for (const auto& [key, col] : st.sm->getCodeBiasStates()) {
+        EXPECT_EQ(findReceiverCodeBias(set, key), static_cast<int>(col)) << key;
+        EXPECT_EQ(keyText(slotAt(set, static_cast<int>(col)).ref), key);
+    }
+    EXPECT_EQ(findReceiverCodeBias(set, K::makeDcbKey("GLONASS")), -1);       // a system with no code bias here
+    EXPECT_EQ(findReceiverCodeBias(set, K::makeIfbKey("GPS", '2')), -1);      // a band the station lacks
+    EXPECT_EQ(findReceiverCodeBias(set, K::makeReceiverPhaseBiasKey("GPS", "L1C")), -1);   // another family
+    EXPECT_EQ(findReceiverCodeBias(set, ""), -1);
+}
+
+TEST(StationParamsTest, TheSdEwlCandidatesAreWhatTheStateManagersAmbiguityKeysGave) {
+    Station st;
+    NetStation net;
+    buildStationParams(*st.sm, st.disp, st.absorbed, net.params);
+
+    // This epoch's phase rows: every second ambiguity column of the state manager.
+    std::map<int, int> h2local;
+    int n = 0, col = 0;
+    for (const auto& kv : st.sm->getAmbiguities())
+        if (n++ % 2 == 0) h2local[static_cast<int>(kv.second)] = col++;
+
+    // The candidates the key parser gave: the phase signals that have a row, grouped by
+    // satellite and band digit, each list ascending by signal name.
+    SdEwlCandidates expected;
+    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+        const auto parts = K::parseAmbiguityKey(key);
+        ASSERT_TRUE(parts.has_value()) << key;
+        const auto phase = ObservableId::parse(systemOfSat(parts->satellite), parts->signal);
+        ASSERT_TRUE(phase.has_value()) << key;
+        const auto hit = h2local.find(static_cast<int>(sidx));
+        if (hit == h2local.end()) continue;
+        expected[{parts->satellite, phase->signal.digit}].emplace_back(parts->signal, hit->second,
+                                                                       static_cast<int>(sidx));
+    }
+    for (auto& kv : expected) std::sort(kv.second.begin(), kv.second.end());
+    ASSERT_FALSE(expected.empty());
+
+    NetworkEstimator est;
+    std::vector<PppObservation> sta_obs;
+    GnssTime t{};
+    Eigen::MatrixXd A_s, A_r;
+    Eigen::VectorXd w, y;
+    std::vector<RowTag> tags;
+    std::vector<std::string> trace_rows;
+    SdEwlConfig cfg;
+    NetStation::SdEwlCounters ctr;
+    SdEwlTraceFull tr2 = [](const char*, const std::string&, const std::string&, const std::string&,
+                            const std::string&, const std::string&, const std::string&, std::size_t,
+                            std::size_t, bool, double, double, double, double, double, long long, bool,
+                            bool) {};
+    SdEwlTraceShort tr = [](const char*, const std::string&, const std::string&, const std::string&,
+                            const std::string&, const std::string&, const std::string&, std::size_t,
+                            std::size_t, bool, double, double, double, double, double) {};
+    const SdEwlRowView view{st.cfg, net, est, sta_obs, h2local, t, A_s, A_r, w, y, tags, trace_rows,
+                            nullptr, 0, cfg, ctr, false, tr2, tr};
+    SdEwlCandidates got;
+    sdEwlFillCandidates(view, got);
+    EXPECT_EQ(got, expected);
+}
+
+TEST(StationParamsTest, AnUnresolvableAmbiguityIsMarkedInTheSetAndTheMarkIsChecked) {
+    Station st;
+    const std::string marked = K::makeAmbiguityKey("G05", "L1C");
+    const std::string other  = K::makeAmbiguityKey("E24", "L1C");
+    st.sm->markAmbiguityUnresolvable(marked);
+    ASSERT_TRUE(st.sm->isAmbiguityUnresolvable(marked));
+    ASSERT_FALSE(st.sm->isAmbiguityUnresolvable(other));
+
+    StationParams set;
+    buildStationParams(*st.sm, st.disp, st.absorbed, set);
+    int n_marked = 0;
+    for (const LocalSlot& s : set.slots) {
+        if (s.unresolvable) ++n_marked;
+        if (s.ref.kind == NetworkParamKind::Ambiguity)
+            EXPECT_EQ(s.unresolvable, userKey(s.ref) == marked) << userKey(s.ref);
+        else
+            EXPECT_FALSE(s.unresolvable) << describe(s.ref);
+    }
+    EXPECT_EQ(n_marked, 1);
+    EXPECT_TRUE(slotAt(set, findAmbiguity(set, marked)).unresolvable);
+    EXPECT_FALSE(slotAt(set, findAmbiguity(set, other)).unresolvable);
+
+    StationParamsCheck check;
+    checkStationParams(set, *st.sm, st.disp, st.absorbed, st.inventory(), 4, 100.0, check);
+    EXPECT_EQ(check.mismatches(), 0) << check.first;
+
+    // The state manager clears every mark at each pre-pass: a set built before that no
+    // longer matches it, and the check says so.
+    st.sm->clearUnresolvableAmbiguities();
+    StationParamsCheck after;
+    checkStationParams(set, *st.sm, st.disp, st.absorbed, st.inventory(), 4, 101.0, after);
+    EXPECT_EQ(found(after, SetMismatch::Unresolvable), 1);
 }
 
 TEST(StationParamsTest, ThePhaseBiasKeyConverterReadsWhatTheKeyParserReads) {
