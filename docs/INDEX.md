@@ -188,7 +188,7 @@ GPS only; nothing armed; the single-band rule is built behind `network.second_ba
 key on at 6 h it reproduces GEC-s).
 [BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
 from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
-[SNX](refound/SNX_sinex_station_coordinates_2026-10-19.md), the IGS weekly SINEX of week 2313 against the coordinates the field runs hold (open, 2026-10-19: median 3D 6.0 mm over 71 stations, 20 above 1 cm, 4 above 5 cm, MIZU00JPN 1.68 m, WTZZ00DEU 4.5 mm; frame and marker reduction not the cause; the Asian Up bias, MAJU00MHL and POHN00FSM not explained by it; a default-off coordinate source planned, nothing built).
+[SNX](refound/SNX_sinex_station_coordinates_2026-10-19.md), the IGS weekly SINEX of week 2313 against the coordinates the field runs hold (open, 2026-10-19: median 3D 6.0 mm over 71 stations, 20 above 1 cm, 4 above 5 cm, MIZU00JPN 1.68 m, WTZZ00DEU 4.5 mm; frame and marker reduction not the cause; the Asian Up bias, MAJU00MHL and POHN00FSM not explained by it; a default-off coordinate source planned, nothing built; phase 1 arms of 2026-10-19, section 10: the roster at its SINEX values moves the satellite clocks 5 to 7 mm RMS and no consumer by more than 2.4 mm, the SINEX truth moves the census median -1.35 mm, CEDU00AUS -11.5 mm).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 
