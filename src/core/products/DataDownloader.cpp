@@ -13,6 +13,7 @@
 #include "common/CurlGlobalGuard.hpp"
 #include <curl/curl.h>
 #include <zlib.h>
+#include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -73,6 +74,59 @@ namespace {
             }
         }
         while (!out.empty() && out.back() == ' ') out.pop_back();
+        return out;
+    }
+
+    /// @p s in lower case (ASCII only; the length is unchanged).
+    std::string asciiLower(std::string s) {
+        for (char& c : s) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        return s;
+    }
+
+    /// True when @p s ends with @p suffix, ignoring ASCII case.
+    bool endsWithNoCase(const std::string& s, const std::string& suffix) {
+        return s.size() >= suffix.size()
+            && asciiLower(s.substr(s.size() - suffix.size())) == suffix;
+    }
+
+    /// The text of the first <title> element in @p head, blanks collapsed and
+    /// cut at 80 characters, or empty when there is none.
+    std::string htmlTitle(const std::string& head) {
+        const std::string lower = asciiLower(head);
+        const auto open = lower.find("<title");
+        if (open == std::string::npos) return {};
+        const auto start = lower.find('>', open);
+        if (start == std::string::npos) return {};
+        const auto end = lower.find("</title", start);
+        if (end == std::string::npos) return {};
+        std::string title;
+        bool prev_blank = true;
+        for (std::size_t i = start + 1; i < end && title.size() < 80; ++i) {
+            const unsigned char c = static_cast<unsigned char>(head[i]);
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+                if (!prev_blank) title.push_back(' ');
+                prev_blank = true;
+            } else {
+                title.push_back(c < 0x20 || c == 0x7f ? '.' : static_cast<char>(c));
+                prev_blank = false;
+            }
+        }
+        while (!title.empty() && title.back() == ' ') title.pop_back();
+        return title;
+    }
+
+    /// The first @p n bytes of @p s as lower-case hex pairs separated by blanks.
+    std::string hexBytes(const std::string& s, std::size_t n) {
+        static const char* digits = "0123456789abcdef";
+        std::string out;
+        for (std::size_t i = 0; i < (std::min)(n, s.size()); ++i) {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (!out.empty()) out.push_back(' ');
+            out.push_back(digits[c >> 4]);
+            out.push_back(digits[c & 0x0f]);
+        }
         return out;
     }
 
@@ -154,6 +208,55 @@ void DataDownloader::resolveNetrcPath() {
 }
 
 // ---------------------------------------------------------------------------
+// Content check
+// ---------------------------------------------------------------------------
+
+std::string DataDownloader::contentRefusal(const std::string& name,
+                                           const std::string& head,
+                                           const std::string& content_type) {
+    // HTML: the first non-blank character (after an optional UTF-8 BOM) is '<',
+    // and the media type or a marker in the bytes says HTML.
+    std::size_t first = (head.compare(0, 3, "\xEF\xBB\xBF") == 0) ? 3 : 0;
+    first = head.find_first_not_of(" \t\r\n\v\f", first);
+    if (first != std::string::npos && head[first] == '<') {
+        std::string media = asciiLower(content_type.substr(0, content_type.find(';')));
+        const auto b = media.find_first_not_of(" \t");
+        const auto e = media.find_last_not_of(" \t");
+        media = (b == std::string::npos) ? std::string{} : media.substr(b, e - b + 1);
+        bool html = (media == "text/html" || media == "application/xhtml+xml");
+        if (!html) {
+            const std::string text = asciiLower(head.substr(first));
+            for (const char* marker : {"<!doctype html", "<html", "<head", "<body", "<title"}) {
+                if (text.find(marker) != std::string::npos) { html = true; break; }
+            }
+        }
+        if (html) {
+            const std::string title = htmlTitle(head);
+            return title.empty() ? std::string("the response is an HTML page")
+                                 : "the response is an HTML page titled \"" + title + "\"";
+        }
+    }
+    // A .gz name must hold gzip data.
+    if (endsWithNoCase(name, ".gz") && head.compare(0, 2, "\x1f\x8b") != 0) {
+        return "the file is a .gz but the response is not gzip data ("
+             + (head.empty() ? std::string("the body is empty")
+                             : "it begins with bytes " + hexBytes(head, 4))
+             + ")";
+    }
+    return {};
+}
+
+std::string DataDownloader::fileContentRefusal(const std::filesystem::path& path,
+                                               const std::string& content_type) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return {};
+    std::string head(kSniffBytes, '\0');
+    f.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(f.gcount()));
+    return contentRefusal(path.filename().string(), head, content_type);
+}
+
+// ---------------------------------------------------------------------------
 // download
 // ---------------------------------------------------------------------------
 
@@ -162,10 +265,20 @@ bool DataDownloader::download(const std::string& url,
     auto log = log_manager_.getLogger("downloader");
     resolveNetrcPath();
 
-    // Skip if file already exists on disk.
+    // Skip if a valid file already exists on disk.  An empty file, or one that
+    // fails the content check (a login page saved by an earlier build), is
+    // removed and fetched again.
     if (std::filesystem::exists(local_path)) {
-        log->info("Already cached: {}", local_path.string());
-        return true;
+        std::error_code ec;
+        const auto size = std::filesystem::file_size(local_path, ec);
+        const std::string reason = (!ec && size == 0) ? std::string("the file is empty")
+                                                      : fileContentRefusal(local_path);
+        if (reason.empty()) {
+            log->info("Already cached: {}", local_path.string());
+            return true;
+        }
+        log->warn("Discarding cached {} ({}); fetching it again", local_path.string(), reason);
+        std::filesystem::remove(local_path);
     }
 
     // Ensure parent directory exists.
@@ -215,6 +328,9 @@ bool DataDownloader::download(const std::string& url,
     char* effective_url = nullptr;
     curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effective_url);
     const std::string final_url = effective_url ? effective_url : url;
+    char* content_type_c = nullptr;
+    curl_easy_getinfo(curl, CURLINFO_CONTENT_TYPE, &content_type_c);
+    const std::string content_type = content_type_c ? content_type_c : "";
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
@@ -244,6 +360,19 @@ bool DataDownloader::download(const std::string& url,
         return false;
     }
 
+    // A 200 is not yet the file: the Earthdata login answers an unauthenticated
+    // request with its HTML page at 200, and a .gz must hold gzip data.
+    if (const std::string reason = fileContentRefusal(local_path, content_type);
+        !reason.empty()) {
+        log->error("Refused {}: {}", url, reason);
+        if (final_url != url) log->error("  Final URL after redirects: {}", final_url);
+        log->error("  Hint: check the urs.earthdata.nasa.gov entry of the .netrc. "
+                   "See https://cddis.nasa.gov/Data_and_Derived_Products/CreateNetrcFile.html");
+        log->error("  Resolved .netrc: {}", netrc_path_.empty() ? "<none>" : netrc_path_.string());
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
     log->info("Downloaded: {}", local_path.string());
     return true;
 }
@@ -257,8 +386,20 @@ bool DataDownloader::decompressGz(const std::filesystem::path& gz_path,
     auto log = log_manager_.getLogger("downloader");
 
     if (std::filesystem::exists(output_path)) {
-        log->info("Already decompressed: {}", output_path.string());
-        return true;
+        const std::string reason = fileContentRefusal(output_path);
+        if (reason.empty()) {
+            log->info("Already decompressed: {}", output_path.string());
+            return true;
+        }
+        log->warn("Discarding {} ({}); decompressing again", output_path.string(), reason);
+        std::filesystem::remove(output_path);
+    }
+
+    // gzread copies a file that is not gzip data through unchanged, so an
+    // HTML page, or a .gz input without the gzip magic, is refused here.
+    if (const std::string reason = fileContentRefusal(gz_path); !reason.empty()) {
+        log->error("Not decompressing {}: {}", gz_path.string(), reason);
+        return false;
     }
 
     std::filesystem::create_directories(output_path.parent_path());
@@ -319,7 +460,15 @@ std::filesystem::path DataDownloader::downloadAndDecompress(
     }
     std::filesystem::path out_path = unzip_dir / unzipped_name;
 
-    // If already decompressed, return immediately.
+    // If already decompressed, return immediately; a saved HTML page is not a
+    // product and is removed so it is fetched again.
+    if (std::filesystem::exists(out_path)) {
+        if (const std::string reason = fileContentRefusal(out_path); !reason.empty()) {
+            log_manager_.getLogger("downloader")->warn(
+                "Discarding {} ({}); fetching it again", out_path.string(), reason);
+            std::filesystem::remove(out_path);
+        }
+    }
     if (std::filesystem::exists(out_path)) {
         log_manager_.getLogger("downloader")->info("Already available: {}", out_path.string());
         return out_path;
