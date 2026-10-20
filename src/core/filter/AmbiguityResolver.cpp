@@ -295,7 +295,7 @@ std::vector<AmbiguityResolver::DdPair> AmbiguityResolver::buildDdPairs(
         info.state_idx = static_cast<int>(idx);
 
         // Two separate filters with documented intent:
-        //   (1) value == 0  → uninitialized seed.  computeAmbiguitySeed()
+        //   (1) value == 0  → uninitialized seed.  MeasurementModel::ambiguitySeed()
         //       returns 0 when the obs/modeled maps don't have the signal,
         //       so the float ambiguity hasn't yet been informed by data.
         //       LAMBDA candidate would be undefined.

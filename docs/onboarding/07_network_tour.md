@@ -255,6 +255,61 @@ one epoch and read at the next, hand-offs a later stage drains, run counters) is
 names what it writes: an events group arrives as an output parameter, and an entity table it
 binds for writing has its row in `net::kEntityWriters`.
 
+A station's own parameter set is a fourth home, and the network is its only writer.
+`StationParams` (`include\network\state\StationParams.hpp`) lists a station's columns in column
+order, each as a typed `ParamRef` with its linearization point and the split's disposition, and
+looks a parameter up by satellite, signal or constellation without parsing a state key. A
+station has the layout of its own set (`startStationParams`): the position, the receiver clock,
+the wet delay and one inter-system bias per active non-GPS constellation. The single-receiver
+filter's optional columns (velocity, phase clock, gradients, IMU, NL/WL ambiguities,
+between-satellite differencing) are not part of it, and a network run that enables one warns at
+start that it is ignored. The equation's inputs for a station name the per-band ambiguity basis
+(`kNetworkAmbiguityBasis`, `include\network\assembly\StationRows.hpp`), so
+`estimation.state_ambiguity_basis` has no effect on a network run.
+
+The columns are born in the network's own functions. `networkAdmitSharedStates`
+(`network\assembly\SharedAdmission.cpp`) takes up the shared columns (satellite clock, phase
+bias, code bias) in PASS A behind the gates that decide which a station carries.
+`networkBirthLocalStates` (`network\assembly\LocalBirth.cpp`) births the local ones at the head
+of the station's data-rows step: the slant ionosphere, the phase colour, the cold receiver
+clock, the ambiguities (with their re-seeds and prunes), the receiver code biases and the
+first-epoch code-bias seed. The seed values are the pure functions of `measurement\Seeds.hpp`;
+the births apply them to the set. `networkStationRows` (`network\assembly\StationRows.cpp`)
+then builds the station's rows over the set through the observation equation
+(`measurement\ObservationEquation.hpp`), with `NetView` as the lookup and `scatterDense` writing
+the dense Jacobian. A shared parameter reads zero there, as its linearization point does. At
+trace level each row also prints its PHASE-DECOMP or CODE-DECOMP line (`measurement\RowTrace.hpp`),
+the same function the single-receiver model calls.
+
+A pending re-seed is a mark on the set (`markPendingReseed`, `pendingReseed`,
+`clearPendingReseed`), independent of whether the column exists: a slip drain, RAIM or a screen
+marks an arc, and the births consume the mark when they re-seed it. A mark on an arc without a
+column is kept for the birth that creates the column. The split settles the set (`settleStationParams`, the
+disposition of each column) and the parameter inventory records from it (`recordStationParams`).
+So do the trace labels (the station-block span and the redundancy census, the RHS attribution's
+local columns, the names in the station-drop event), the ionosphere, wet-delay and
+receiver-state traces, the DD-fractional and phase-anchor traces, the SH diagnostics and the
+pre-fit census's birth seeds. The carried-prior steps of PASS B read it too: the ambiguity,
+slant-ionosphere, receiver-clock, receiver-code-bias, phase-colour and wet-delay carries, the
+local block, and the double-difference prior build take their columns, keys, linearization
+points and a phase colour's elevation from the set. So do the slip drains (the MW, LLI, IF-pair,
+datum, wind-up, injected and gap re-entry responses), the second-code census, the oracle pin
+rows, the admissions' ambiguity reads (signal integrity, the roster audit, the all-channel and
+multi-GNSS censuses), the phase-datum pin rows and the election's ambiguity values, the GLONASS
+anchor rows and the ionosphere constraint rows. The integer-ambiguity searches read it as well:
+the producer search's ambiguity pool (including an ambiguity's unresolvable mark, set by the
+births when no phase bias is applied to its signal) and the labels of its normal-equation
+export, the SD-EWL candidates and the linearization points of an arc's shared biases, and the
+snapshot writer's receiver code-bias linearization points. Readers that run before a station's
+next split read the set as the previous epoch left it.
+
+A warm resume installs the restored code-bias linearization points on the set
+(`networkApplyRxCbLinRestore`), where the first-epoch seed takes them in place of its own
+median. A step of a station's assembly that throws is caught by `networkStationAssemble`
+(`network\assembly\StationBuild.cpp`), which records it in the station's slot (the solve drops
+the station with a warning); the set stays as the births left it, so the next epoch's PASS A
+finds the columns that were born.
+
 ## The run end
 
 After the last epoch, every mechanism prints what it did over the run: counters, verdicts,

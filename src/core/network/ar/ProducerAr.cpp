@@ -33,9 +33,9 @@
 #include "network/ar/ArCycleBasis.hpp" // the sticky full-coverage cycle basis
 #include "network/ar/ArcLife.hpp"     // the arc life stamp and the search's track of a life
 #include "network/ar/ArSuspect.hpp"   // the suspect-corner mask
-#include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
 #include "math/TimeUtils.hpp"            // TimeUtils::continuousGpsSeconds (the mask's fold clock)
-#include "filter/StateManager.hpp"       // stations[i].sm-> ...
+#include "network/state/Entities.hpp"    // net::satKey, net::signalKey
+#include "network/state/StationParams.hpp"   // the stations' parameter sets: the ambiguity pool and the NEQ labels
 #include "network/diag/RunTraces.hpp"  // traces.producer_ar_trace
 
 #include <Eigen/Dense>
@@ -428,14 +428,14 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
             continue;
         }
         std::string ref_sat; std::size_t best = 0;
-        for (auto& [sat, sm] : satmap)
-            if (sm.size() > best) { best = sm.size(); ref_sat = sat; }
+        for (auto& [sat, by_sta] : satmap)
+            if (by_sta.size() > best) { best = by_sta.size(); ref_sat = sat; }
         if (ref_sat.empty() || satmap[ref_sat].size() < 2) continue;
         std::size_t ref_i = 0, ref_cnt = 0; bool have_ref = false;
         for (auto& [sta_i, rec] : satmap[ref_sat]) {
             (void)rec;
             std::size_t cnt = 0;
-            for (auto& [sat, sm] : satmap) if (sm.count(sta_i)) ++cnt;
+            for (auto& [sat, by_sta] : satmap) if (by_sta.count(sta_i)) ++cnt;
             if (!have_ref || cnt > ref_cnt) { ref_cnt = cnt; ref_i = sta_i; have_ref = true; }
         }
         if (!have_ref) continue;
@@ -445,11 +445,11 @@ int arSignalBasisRows(bool tree_basis, ArPools& ar_pool, const SyncedEpoch& se,
         if (!(std::isfinite(lambda) && lambda > 0.0)) continue;
         const ArRec& fp = satmap[ref_sat].at(ref_i);   // ref station, ref sat
         ++n_const_signal;
-        for (auto& [sat, sm] : satmap) {
+        for (auto& [sat, by_sta] : satmap) {
             if (sat == ref_sat) continue;
-            const auto fj_it = sm.find(ref_i);          // ref station, sat j
-            if (fj_it == sm.end()) continue;
-            for (const auto& [sta_i, rj] : sm) {
+            const auto fj_it = by_sta.find(ref_i);      // ref station, sat j
+            if (fj_it == by_sta.end()) continue;
+            for (const auto& [sta_i, rj] : by_sta) {
                 if (sta_i == ref_i) continue;
                 const auto rp_it = satmap[ref_sat].find(sta_i);   // station r, ref sat
                 if (rp_it == satmap[ref_sat].end()) continue;
@@ -528,8 +528,7 @@ ArCycleInput arCycleInputOf(const NetworkRunContext& ctx, const ArFamilySpec& fa
             for (const auto& [i, rec] : by_station) {
                 (void)rec;
                 const ArcId arc{StationId{static_cast<int>(i)}, sat_id, fam.bands[k]};
-                const ArcLifeKeys keys{std::make_tuple(static_cast<int>(i), sat, fam.signals[k]),
-                                       {static_cast<int>(i), StateKeys::makeAmbiguityKey(sat, fam.signals[k])}};
+                const ArcLifeKeys keys = arcLifeKeys(arc);
                 const bool freed = relevel.free_ambs.count(keys.amb) > 0;
                 const auto last = mem.arcs.find(arc);
                 const ArcLifeStep step =
@@ -823,37 +822,31 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
             try { x_r = est.reconstructStation(static_cast<std::size_t>(est_index_of[i]), x_s); }
             catch (...) { continue; }
             const auto& h2l = asm_res[i].h2local;
-            const Eigen::VectorXd x_lin = stations[i].sm->getStateVector();
-            for (const auto& [key, sidx] : stations[i].sm->getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(key);
-                if (!parts) continue;
-                const System sys = systemOfSat(parts->satellite);
+            const StationParams& params = stations[i].params;
+            for (const auto& [amb, amb_idx] : params.amb) {
+                const System sys = amb.sat.sys;
                 if (sys != System::GPS && sys != System::Galileo)
                     continue;   // GPS+Gal integer-capable; GLONASS FDMA stays float
                 const std::string cst = constellationKey(sys);
-                if (stations[i].sm->isAmbiguityUnresolvable(key)) continue;
-                const int amb_idx = static_cast<int>(sidx);
-                if (amb_idx < 0 || amb_idx >= x_lin.size()) continue;
+                const LocalSlot& slot = slotAt(params, amb_idx);
+                if (slot.unresolvable) continue;
                 const auto hit = h2l.find(amb_idx);
                 if (hit == h2l.end() || hit->second < 0
                     || static_cast<Eigen::Index>(hit->second) >= x_r.size()) continue;
-                const double value_m = x_lin(amb_idx) + x_r(hit->second);
+                const double value_m = slot.x_lin + x_r(hit->second);
                 if (!std::isfinite(value_m)) continue;
+                const std::string sat = net::satKey(amb.sat);
                 const ArSuspectCornerState suspect = arSuspectPoolCorner(
-                    mask, ctx.carry.ar_suspect, static_cast<int>(i), parts->satellite);
-                ar_pool[{cst, parts->signal}][parts->satellite][i] =
+                    mask, ctx.carry.ar_suspect, static_cast<int>(i), sat);
+                ar_pool[{cst, net::signalKey(amb.signal)}][sat][i] =
                     ArRec{value_m, static_cast<std::size_t>(est_index_of[i]),
                           static_cast<Eigen::Index>(hit->second), suspect};
                 // The band-arc's live column, where a fixed cycle through it lands.
-                if (fold_armed) {
-                    const std::optional<SatId>    sat_id = SatId::parse(parts->satellite);
-                    const std::optional<SignalId> sig_id = SignalId::fromObsCode(sys, parts->signal);
-                    if (sat_id && sig_id)
-                        lattice_fixes.columns[ArcId{StationId{static_cast<int>(i)}, *sat_id, *sig_id}] =
-                            ArcColumn{static_cast<std::size_t>(est_index_of[i]),
-                                      static_cast<std::ptrdiff_t>(hit->second), x_lin(amb_idx),
-                                      sig_id->wavelengthM(0)};
-                }
+                if (fold_armed)
+                    lattice_fixes.columns[ArcId{StationId{static_cast<int>(i)}, amb.sat, amb.signal}] =
+                        ArcColumn{static_cast<std::size_t>(est_index_of[i]),
+                                  static_cast<std::ptrdiff_t>(hit->second), slot.x_lin,
+                                  amb.signal.wavelengthM(0)};
             }
         }
         // The covariance request: each pool entry's (est id, A_r column) once, in first-use
@@ -1283,16 +1276,17 @@ ArEpochFixes networkProducerAr(NetworkRun& run, const NetworkEpoch& ep) {
             appendBin(nsr, kernel.stationCrossBlock(r));
             appendBin(nrr, kernel.stationLocalNormals(r));
             appendBin(urf, kernel.stationLocalRhs(r));
-            // Local col → StateManager label via the assembly's h2local inverse;
-            // columns with no SM mapping (none expected) stay "?".
+            // Local col → label of the station's parameter via the assembly's h2local
+            // inverse; columns with no parameter (none expected) stay "?".
             std::vector<std::string> names(static_cast<std::size_t>(nl), "?");
-            const auto sm_labels = stations[i].sm->getStateLabels();
+            const StationParams& params = stations[i].params;
             for (const auto& kv : asm_res[i].h2local) {
                 const auto lc = static_cast<Eigen::Index>(kv.second);
                 if (lc >= 0 && lc < nl
-                    && static_cast<std::size_t>(kv.first) < sm_labels.size())
+                    && static_cast<std::size_t>(kv.first) < params.slots.size())
                     names[static_cast<std::size_t>(lc)] =
-                        sm_labels[static_cast<std::size_t>(kv.first)];
+                        stateLabel(params.slots[static_cast<std::size_t>(kv.first)],
+                                   static_cast<std::size_t>(kv.first));
             }
             for (Eigen::Index c = 0; c < nl; ++c)
                 slab << r << ',' << c << ','

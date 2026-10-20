@@ -182,7 +182,7 @@ struct NetworkAttribFrame {
     // nothing for them.
     /// Per item, one name per local column (A_r column): the station's state label
     /// (@ref rhsAttribLocalColumnNames); an empty name where no state claims the column.
-    /// Read from the state manager as it stands at the capture: on the network path states
+    /// Read from the station's parameter set as it stands at the capture: on the network path states
     /// are removed only inside the measurement update, before the split, so the split's
     /// state indices (@c h2local) still name the same states after the solve (the
     /// station-block audit reads them the same way).
@@ -213,7 +213,7 @@ struct NetworkAttribFrame {
  *                       @ref NetworkAttribFrame::x_s when its size matches the shared
  *                       width; nullptr (the default) leaves it empty.
  * @param local_readout  also record, when @p x_s was copied, every item's local-column
- *                       names (from the station's state manager, when it has one) and the
+ *                       names (from the station's parameter set, when it has one) and the
  *                       kernel's reconstruction parts at @p x_s
  *                       (@ref NetworkAttribFrame::local_names,
  *                       @ref NetworkAttribFrame::local_parts), which the station-local
@@ -425,20 +425,20 @@ RhsAttribLocalLabel parseRhsAttribLocalLabel(const std::string& label);
 
 /**
  * @brief The names of a station's local columns: for each column of @c R.A_r, the
- *        station's state label (@c StateManager::getStateLabels) of the state the
- *        assembly's @c h2local map puts there.
+ *        station's state label (@ref stateLabel) of the parameter the assembly's
+ *        @c h2local map puts there.
  *
- * The labels are the state manager's: the fixed core by name (@c CLK, @c ZWD,
+ * The labels are the parameter set's: the fixed core by name (@c CLK, @c ZWD,
  * @c ISB_<system>, @c PHASE_CLK, ...) and the dynamic maps with a category prefix
  * (@c CBIAS:<key> for the receiver code biases, @c IONO:<sat>, @c AMB:<key>,
  * @c RPB:<key>, @c PCOL:<sat>, ...).  A column no state claims keeps an empty name.
  *
- * @param R  The station's assembly (its @c h2local map and local width).
- * @param sm The station's state manager, at the epoch of the assembly.
+ * @param R   The station's assembly (its @c h2local map and local width).
+ * @param set The station's parameter set, built at the epoch of the assembly.
  * @return One name per local column.
  */
 std::vector<std::string> rhsAttribLocalColumnNames(const StationAssembly& R,
-                                                   const StateManager& sm);
+                                                   const StationParams& set);
 
 /**
  * @brief Resolve the key of a `LOC:` label against a station's local-column names.
@@ -447,7 +447,7 @@ std::vector<std::string> rhsAttribLocalColumnNames(const StationAssembly& R,
  * @c "CBIAS:GPS_DCB", @c "IONO:G08", @c "AMB:G08_L1C") or, failing that, the name's
  * part after its category prefix, when exactly one column has that part (@c "GPS_DCB",
  * @c "GPS_IFB5", @c "GPS_ISC_C1W" for the receiver code biases, @c "G08_L1C" for an
- * ambiguity).  So the receiver code-bias keys are written as the state manager keys
+ * ambiguity).  So the receiver code-bias keys are written as the parameter set keys
  * them, and every other column as @ref rhsAttribLocalColumnNames names it.
  *
  * @param names The station's local-column names.

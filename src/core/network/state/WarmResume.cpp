@@ -34,7 +34,6 @@
 #include "network/carry/InvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "network/emit/ClockEmitRebase.hpp"       // CLK-R held frame, restored on warm resume (§18.10)
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, restored on warm resume (RS-5, §21.10)
-#include "filter/StateKeySchema.hpp"         // StateKeys::makeAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
@@ -721,8 +720,8 @@ void networkTryWarmResume(NetworkRunContext& ctx, const GnssConfig& config_,
                     // frame it is judged against.
                     //
                     // The rows are only stashed here.  x_lin lives in each station's
-                    // StateManager, and the one-shot latch that freezes it does not close
-                    // until that station's first computeMeasurementUpdate, so a separate
+                    // parameter set, and the one-shot latch that freezes it does not close
+                    // until that station's first networkBirthLocalStates, so a separate
                     // seam (networkApplyRxCbLinRestore), called from runNetwork right after
                     // this function where the station roster is in scope, consumes them.
                     // The loader requires resume_station_restore and its rxcb half, so an
@@ -1341,13 +1340,13 @@ void networkRestoreCanonicalSignals(NetworkRunContext& ctx, const GnssConfig& co
 
 // ---------------------------------------------------------------------------
 // Install the resume's stashed code-bias linearization points on the station
-// initializers (RS-9, SPEC_event_harness §21.18).
+// parameter sets.
 //
 // This is a separate seam rather than a block inside networkTryWarmResume because
 // the two need different inputs: the resume function owns the snapshot and stashes
 // the RL map into ctx.carry, while this one needs the mutable station roster.  The
-// install matters only between the resume and the first computeMeasurementUpdate,
-// since StateInitializer::isCodeBiasInitialized is a one-shot latch, so the driver
+// install matters only between the resume and the first networkBirthLocalStates,
+// since the first-epoch code-bias seed is a one-shot latch, so the driver
 // calls it immediately after the resume, in the same way as the RS-8
 // canonical-signal restore.
 // ---------------------------------------------------------------------------
@@ -1361,7 +1360,7 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
     if (net::present(sta_rows, &net::StationState::rxcb_lin_restore) == 0) return;
     (void)config_;   // the knob is already resolved into ctx.knobs / the stash
     // One out-slot pair per station, sized once here and never resized: each
-    // StateInitializer keeps a raw pointer to its own element and increments it from
+    // station parameter set keeps a raw pointer to its own element and increments it from
     // inside the OpenMP parallel produce phase.  Distinct objects ⇒ race-free without
     // atomics, the same discipline as the per-station StationAssembly tallies.  The
     // pair is {applied, carried-but-unseeded}; the second is scoped to the keys the
@@ -1374,10 +1373,9 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
         const int sidx = sid.index;
         if (sidx < 0 || sidx >= static_cast<int>(stations.size())) { ++orphan; return; }
         auto& st = stations[static_cast<std::size_t>(sidx)];
-        if (!st.mm) { ++orphan; return; }
+        if (!st.model) { ++orphan; return; }
         auto& slot = ctx.carry.rxcb_lin_sta_counts[static_cast<std::size_t>(sidx)];
-        st.mm->getStateInitializer().setCodeBiasSeedOverride(keymap, &slot.first,
-                                                             &slot.second);
+        st.params.rx_cb_restore = CodeBiasRestore{keymap, &slot.first, &slot.second};
         ++installed_sta;
         installed_entries += static_cast<long long>(keymap.size());
     });
@@ -1391,10 +1389,10 @@ void networkApplyRxCbLinRestore(NetworkRunContext& ctx, const GnssConfig& config
                   "code, which is the pre-restore behaviour for them.", orphan);
     log->info("Network (RS-9 rx-CB frame restore): installed on {} station(s), {} "
               "linearization point(s) — consumed at each station's first-epoch code-bias "
-              "initialization (the one-shot isCodeBiasInitialized latch), so the rx-CB "
+              "initialization (the one-shot seed latch), so the rx-CB "
               "inject gate's reference is the writer's rather than this leg's.",
               installed_sta, installed_entries);
-    // Consumed: the map has been handed to the initializers, and re-installing it
+    // Consumed: the map has been handed to the parameter sets, and re-installing it
     // later would be inert (the latch has closed).  Clearing it here enforces that.
     net::dropAll(sta_rows, &net::StationState::rxcb_lin_restore);
 }

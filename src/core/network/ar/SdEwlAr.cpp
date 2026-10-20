@@ -11,12 +11,11 @@
 
 #include "network/state/RunContext.hpp"
 #include "common/Constants.hpp"
-#include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, ObservableId, carrier frequencies
+#include "common/GnssIdentity.hpp"   // letterOfSat, systemFromLetter, carrier frequencies
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "network/solve/Sbasis.hpp"
-#include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguity candidates and the linearization point
 #include "network/diag/RunTraces.hpp"
 #include "slip/MwSlipDetector.hpp"
 
@@ -300,11 +299,11 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
 
     // ---------------------------------------------------------------------------
     // 1. Collect every mature EWL arc, keyed by the channel pair it sits on.
-    //    Candidate phase signals come from StateManager's own ambiguity key map (the
-    //    authority; a reconstructed key that fails to round-trip makes every arc look
-    //    absent), not from h2local: this seam runs before assembly, and an arc without a
-    //    local column this epoch still carries valid MW information for the DD.  The row
-    //    builder applies its own column test later.
+    //    Candidate phase signals come from the ambiguities of the station's parameter set
+    //    (the previous epoch's, which is the state this seam runs on), not from h2local:
+    //    this seam runs before assembly, and an arc without a local column this epoch still
+    //    carries valid MW information for the DD.  The row builder applies its own column
+    //    test later.
     // ---------------------------------------------------------------------------
     // cons -> sat -> channel pair -> station index -> Arc
     std::map<char, std::map<std::string, std::map<PairKey, std::map<std::size_t, Arc>>>> pool;
@@ -312,19 +311,13 @@ void networkSdEwlAr(NetworkRun& run, const NetworkEpoch& ep) {
     for (std::size_t i = 0; i < stations.size(); ++i) {
         if (i >= present.size() || !present[i]) continue;
         NetStation& st = stations[i];
-        if (!st.mw_slip || !st.sm) continue;      // no MW accumulator at this station
+        if (!st.mw_slip) continue;      // no MW accumulator at this station
 
         // (satellite, band) -> the estimated phase signals on that band, ascending.
         std::map<std::pair<std::string, char>, std::vector<std::string>> cand;
-        for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
+        for (const auto& [amb, sidx] : st.params.amb) {
             (void)sidx;
-            const auto parts = StateKeys::parseAmbiguityKey(key);
-            if (!parts) continue;
-            const std::string& sig = parts->signal;
-            const std::optional<ObservableId> obs_id =
-                ObservableId::parse(systemOfSat(parts->satellite), sig);
-            if (!obs_id || obs_id->type != ObsType::Phase) continue;
-            cand[{ parts->satellite, obs_id->signal.digit }].push_back(sig);
+            cand[{ net::satKey(amb.sat), amb.signal.digit }].push_back(net::signalKey(amb.signal));
         }
         for (auto& kv : cand) std::sort(kv.second.begin(), kv.second.end());
 
@@ -779,7 +772,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
     // phase_leveling && (mw_detect || turbo_edit).  Without it the station-epoch is
     // counted and skipped; the count keeps an armed but inactive feature visible
     // (invariant #4).
-    if (!st.mw_slip || !st.sm) {
+    if (!st.mw_slip) {
         ++ctr.skip_no_detector;
         tr("NO_DETECTOR", {}, {}, {}, {}, {}, {}, 0, 0, false, 0.0, 0.0, 0.0, 0.0, 0.0);
         return;
@@ -791,26 +784,24 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
 
     // --- Correction frame -------------------------------------------------------------
     // The station's whole block is in the correction frame: networkSplitStation_ fills
-    // y from `em.innovations` = z − h(x_lin), with x_lin = st.sm->getStateVector().  A
-    // pseudo-observation must follow the same convention, or it asserts an absolute
-    // value against a design that solves for a correction.  The error would be large
-    // here: the raw MW mean carries λ_EWL·N_EWL with N_EWL in the thousands of cycles
-    // (|z_SD| of hundreds to thousands of metres against a 0.13 m row σ).
+    // y from `em.innovations` = z − h(x_lin), with x_lin the station's linearization point
+    // (the values of its parameter set).  A pseudo-observation must follow the same
+    // convention, or it asserts an absolute value against a design that solves for a
+    // correction.  The error would be large here: the raw MW mean carries λ_EWL·N_EWL with
+    // N_EWL in the thousands of cycles (|z_SD| of hundreds to thousands of metres against a
+    // 0.13 m row σ).
     //
     // Which columns need the x_lin term: the local ambiguity states are seeded from
     // code-minus-phase and reseeded on slips, so their term is large; it is the term
     // a correction-frame row subtracts as `z_lin` (z_corr = z_mw − z_lin).  The shared
-    // satellite phase/code-bias states are allocated at value 0 by MeasurementModel, as
+    // satellite phase/code-bias states are born at value 0 in the station's parameter set, as
     // shared states the network solves, and never written back from the solve, so their
     // term is currently zero.  It is included rather than assumed, so that a future
-    // seeding change cannot skew the frame unnoticed.
-    const Eigen::VectorXd x_lin = st.sm->getStateVector();
-    // Shared PB/CB state indices at this station (distinct from the estimator's border
-    // column indices).  A column may be registered by another station; this station then
-    // holds no state and its x_lin contribution is 0, which matches its real rows (em.H
-    // has no such column, so the innovations omit it).
-    std::map<std::pair<std::string, std::string>, int> pb_state, cb_state;
-    sdEwlFillBiasStates(v, pb_state, cb_state);
+    // seeding change cannot skew the frame unnoticed.  The shared PB/CB columns are looked
+    // up in the station's parameter set (distinct from the estimator's border column
+    // indices).  A column may be registered by another station; this station then holds no
+    // state and its x_lin contribution is 0, which matches its real rows (em.H has no such
+    // column, so the innovations omit it).
 
     // Ambiguity candidates per (satellite, band), then the arcs by constellation and the rows.
     using Cand = std::tuple<std::string, int, int>;
@@ -818,7 +809,7 @@ void networkAppendSdEwlRows(const GnssConfig& config_, NetStation& st, const Net
     sdEwlFillCandidates(v, cand);
 
     std::map<char, std::vector<SdEwlArc>> by_const;
-    sdEwlResolveArcs(v, x_lin, pb_state, cb_state, cand, by_const);
+    sdEwlResolveArcs(v, cand, by_const);
     sdEwlBuildGroups(v, by_const);
 }
 

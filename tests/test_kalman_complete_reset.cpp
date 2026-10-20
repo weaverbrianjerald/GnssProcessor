@@ -64,7 +64,7 @@ struct FilterChain {
 
     explicit FilterChain(GnssConfig c)
         : cfg(std::move(c)), products(cfg, log), rinex(cfg, log, products),
-          states(5, log, cfg), model(cfg, products, log, rinex, states),
+          states(5, log, cfg), model(cfg, products, log, rinex),
           filter(states, cfg, log, model) {}
 };
 

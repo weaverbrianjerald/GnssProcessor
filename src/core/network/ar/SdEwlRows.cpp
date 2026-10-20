@@ -16,9 +16,9 @@
 #include "network/ar/SdEwlAr.hpp"             // sdEwlBands, SdEwlFix
 #include "network/state/RunContext.hpp"
 #include "common/Constants.hpp"
-#include "common/GnssIdentity.hpp"            // systemOfSat, letterOfSat, ObservableId
-#include "filter/StateKeySchema.hpp"           // StateKeys
-#include "filter/StateManager.hpp"
+#include "common/GnssIdentity.hpp"            // letterOfSat, SatId, SignalId
+#include "common/ParamRef.hpp"                 // satPhaseBiasRef, satCodeBiasRef
+#include "network/state/StationParams.hpp"     // the station's parameter set
 #include "slip/MwSlipDetector.hpp"             // MwArcZdMean, arcZdMean
 
 #include <fmt/format.h>
@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -34,54 +35,29 @@
 
 namespace GnssProcessor {
 
-void sdEwlFillBiasStates(const SdEwlRowView& v,
-                         std::map<std::pair<std::string, std::string>, int>& pb_state,
-                         std::map<std::pair<std::string, std::string>, int>& cb_state) {
-    NetStation& st = v.st;
-
-    for (const auto& kv : st.sm->getSatPhaseBiasStates()) {
-        const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-        if (p) pb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
-    }
-    for (const auto& kv : st.sm->getSatBiasStates()) {
-        const auto p = StateKeys::parseSatBiasKey(kv.first);
-        if (p) cb_state[{ p->satellite, p->signal }] = static_cast<int>(kv.second);
-    }
-}
-
 void sdEwlFillCandidates(const SdEwlRowView& v, SdEwlCandidates& cand) {
-    NetStation& st = v.st;
+    const NetStation& st = v.st;
     const std::map<int, int>& h2local = v.h2local;
 
     // --- This station's per-(satellite, band) ambiguity candidates ---------------------
-    // Built once from StateManager's own key map (the authority) rather than by
-    // reconstructing a key string per candidate: the ambiguity key format belongs to the
-    // state layer, and a reconstructed key that does not round-trip fails without any
-    // error (every arc looks absent).  A candidate also needs a local column this epoch:
+    // Built once from the station's parameter set (every ambiguity of the set is the phase
+    // signal of a satellite).  A candidate also needs a local column this epoch:
     // h2local presence means "this arc has a phase row in A_r now".  Sorted ascending
     // by signal name so the pair search below follows a strict total order
     // (byte-identity: an insertion-order-dependent pick changes the row set from run to
     // run).  Entries are (signal, A_r local column, global state index); the state
     // index serves the correction-frame x_lin term, the local column the design.
-    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
-        const auto parts = StateKeys::parseAmbiguityKey(key);
-        if (!parts) continue;
-        const std::string& sig = parts->signal;
-        const auto phase = ObservableId::parse(systemOfSat(parts->satellite), sig);
-        if (!phase || phase->type != ObsType::Phase) continue;
-        const auto hit = h2local.find(static_cast<int>(sidx));
+    for (const auto& [amb, sidx] : st.params.amb) {
+        const auto hit = h2local.find(sidx);
         if (hit == h2local.end()) continue;         // no phase row on this arc this epoch
-        cand[{ parts->satellite, phase->signal.digit }].emplace_back(sig, hit->second,
-                                                                     static_cast<int>(sidx));
+        cand[{ net::satKey(amb.sat), amb.signal.digit }].emplace_back(net::signalKey(amb.signal),
+                                                                      hit->second, sidx);
     }
     for (auto& kv : cand)
         std::sort(kv.second.begin(), kv.second.end());   // ascending signal name first
 }
 
-void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                      const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                      const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                      const SdEwlCandidates& cand,
+void sdEwlResolveArcs(const SdEwlRowView& v, const SdEwlCandidates& cand,
                       std::map<char, std::vector<SdEwlArc>>& by_const) {
     const std::vector<PppObservation>& sta_obs = v.sta_obs;
 
@@ -89,14 +65,11 @@ void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
     // One satellite at a time. A satellite that cannot form an arc is counted and traced
     // inside sdEwlResolveSat and does not stop the others.
     for (const auto& o : sta_obs) {
-        sdEwlResolveSat(v, x_lin, pb_state, cb_state, cand, o, by_const);
+        sdEwlResolveSat(v, cand, o, by_const);
     }
 }
 
-void sdEwlResolveSat(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                     const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                     const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                     const SdEwlCandidates& cand, const PppObservation& o,
+void sdEwlResolveSat(const SdEwlRowView& v, const SdEwlCandidates& cand, const PppObservation& o,
                      std::map<char, std::vector<SdEwlArc>>& by_const) {
     auto& ctr = v.ctr;
     const auto& tr = v.tr;
@@ -132,7 +105,7 @@ void sdEwlResolveSat(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
     const double f1 = fb1, f2 = fb2;
     if (!sdEwlCheckPair(v, o, f1, f2, ps)) return;
 
-    sdEwlBuildArc(v, x_lin, pb_state, cb_state, o, cons, f1, f2, ps, by_const);
+    sdEwlBuildArc(v, o, cons, f1, f2, ps, by_const);
 }
 
 bool sdEwlElectPair(const SdEwlRowView& v, const PppObservation& o, char cons,
@@ -259,10 +232,7 @@ bool sdEwlCheckPair(const SdEwlRowView& v, const PppObservation& o, double f1, d
     return true;
 }
 
-void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                   const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                   const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                   const PppObservation& o, char cons, double f1, double f2,
+void sdEwlBuildArc(const SdEwlRowView& v, const PppObservation& o, char cons, double f1, double f2,
                    const SdEwlPairSearch& ps, std::map<char, std::vector<SdEwlArc>>& by_const) {
     const NetworkEstimator& est = v.est;
     const auto& cfg = v.cfg;
@@ -278,14 +248,23 @@ void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
     const std::size_t& n_cand = ps.n_cand;
     const SdEwlFix* my_fix = ps.my_fix;
 
-    const auto xAt = [&x_lin](int idx) -> double {
-        return (idx >= 0 && idx < static_cast<int>(x_lin.size())) ? x_lin(idx) : 0.0;
+    // The station's linearization point at a state index, from its parameter set.
+    const StationParams& params = v.st.params;
+    const auto xAt = [&params](int idx) -> double {
+        return (idx >= 0 && idx < static_cast<int>(params.slots.size())) ? slotAt(params, idx).x_lin : 0.0;
     };
 
-    const auto stateOf = [](const std::map<std::pair<std::string, std::string>, int>& m,
-                            const std::string& sat, const std::string& sig) -> int {
-        const auto it = m.find({ sat, sig });
-        return it == m.end() ? -1 : it->second;
+    // The linearization point of this satellite's shared bias on the signal an observation
+    // code names, or 0 when the station holds none: a column another station registered has
+    // no state here, which matches the real rows (the innovations omit it).
+    const std::optional<SatId> sat = SatId::parse(o.satellite);
+    const auto phaseBiasAt = [&](const std::string& signal) -> double {
+        const std::optional<SignalId> sig = sat ? SignalId::fromObsCode(sat->sys, signal) : std::nullopt;
+        return sig ? xAt(findParam(params, satPhaseBiasRef(*sat, *sig))) : 0.0;
+    };
+    const auto codeBiasAt = [&](const std::string& code) -> double {
+        const std::optional<SignalId> sig = sat ? SignalId::fromObsCode(sat->sys, code) : std::nullopt;
+        return sig ? xAt(findParam(params, satCodeBiasRef(*sat, *sig))) : 0.0;
     };
 
     SdEwlArc a;
@@ -355,10 +334,10 @@ void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
     // the ambiguity columns, can drop the matching linearization terms at one site.
     a.pred_amb_m = (a.lam_ewl / a.lam_b1) * xAt(sidx1)
                  - (a.lam_ewl / a.lam_b2) * xAt(sidx2);
-    a.pred_bias_m = (f1 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig1))
-                  - (f2 / (f1 - f2)) * xAt(stateOf(pb_state, o.satellite, sig2))
-                  - (f1 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code1))
-                  - (f2 / (f1 + f2)) * xAt(stateOf(cb_state, o.satellite, zd.code2));
+    a.pred_bias_m = (f1 / (f1 - f2)) * phaseBiasAt(sig1)
+                  - (f2 / (f1 - f2)) * phaseBiasAt(sig2)
+                  - (f1 / (f1 + f2)) * codeBiasAt(zd.code1)
+                  - (f2 / (f1 + f2)) * codeBiasAt(zd.code2);
     a.pred_m = a.pred_amb_m + a.pred_bias_m;
     a.sig1 = sig1;
     a.sig2 = sig2;

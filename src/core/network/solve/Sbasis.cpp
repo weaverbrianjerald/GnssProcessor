@@ -354,7 +354,7 @@ NetworkSbasis::PivotPick NetworkSbasis::electClockPivot(const std::vector<std::s
 NetworkSbasis::ChannelFamily NetworkSbasis::channelFamilyOf(
     const std::string& constellation, const std::string& signal) {
     // Raw RINEX-3 code observable, "C<band><attribute>".  The attribute is not
-    // canonicalized on input (MeasurementModel keys the sat-bias state on the raw
+    // canonicalized on input (the sat-bias state is keyed on the raw
     // 3-character code), so this reads the receiver's own declaration.
     //
     // The §7 allow-list is enforced here rather than at the call site: only

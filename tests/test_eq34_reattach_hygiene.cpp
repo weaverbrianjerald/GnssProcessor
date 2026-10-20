@@ -23,7 +23,7 @@
  *      counter, and an election whose pin set is identical to the one without the feature.
  *
  * The eq34 chain election is exercised directly (it reads only station names and the
- * candidate census, never a StateManager); the hygiene seam gets real StateManagers
+ * candidate census, never a parameter set); the hygiene seam gets real parameter sets
  * because it prunes phase-bias states and reads pending-reseed flags.
  */
 
@@ -34,6 +34,8 @@
 #include "config/GnssConfig.hpp"
 #include "network/solve/AnchorHygiene.hpp"
 #include "network/solve/ChainDatum.hpp"
+#include "network/state/StationParams.hpp"
+#include "support/StationParamsBuilder.hpp"
 #include "network/driver/RunTypes.hpp"
 #include "filter/StateKeySchema.hpp"
 #include "logging/LogManager.hpp"
@@ -56,7 +58,6 @@ using namespace GnssProcessor;
 
 namespace {
 
-constexpr std::size_t kPppCoreSize = 5;
 constexpr const char* kSig = "L1C";
 
 /// Empty C3c slip funnel.  Every test in this file is about reattach hygiene, not slips,
@@ -129,8 +130,8 @@ struct StationSpec {
 };
 
 /// Build the pieces the election consumes: NetStation names, the presence mask and the
-/// PhaseDatumCandidates census.  Stations get no StateManager, since the chain election
-/// never touches one (see the file banner); the hygiene tests below add real ones.
+/// PhaseDatumCandidates census.  Stations get no columns, since the chain election
+/// never reads one (see the file banner); the hygiene tests below add real ones.
 struct Census {
     std::vector<NetStation> stations;
     std::vector<bool> present;
@@ -157,16 +158,14 @@ Census makeCensus(const std::vector<StationSpec>& spec) {
     return c;
 }
 
-/// Attach a real StateManager holding one satellite phase-bias state and one ambiguity
-/// per tracked satellite: the states the hygiene seam reads and prunes.
-void attachStateManagers(Census& c, const std::vector<StationSpec>& spec,
-                         LogManager& log, const GnssConfig& cfg) {
+/// Give each station a parameter set holding one satellite phase-bias column and one ambiguity
+/// per tracked satellite: the columns the hygiene seam reads and prunes.
+void attachParamSets(Census& c, const std::vector<StationSpec>& spec, const GnssConfig& cfg) {
     for (std::size_t i = 0; i < spec.size(); ++i) {
-        c.stations[i].sm = std::make_unique<StateManager>(kPppCoreSize, log, cfg);
+        c.stations[i].params = startStationParams(cfg, Eigen::Vector3d::Zero());
         for (const auto& sat : spec[i].sats) {
-            c.stations[i].sm->addSatPhaseBiasState(
-                StateKeys::makeSatPhaseBiasKey(sat, kSig), 0.0);
-            c.stations[i].sm->addAmbiguity(StateKeys::makeAmbiguityKey(sat, kSig), 0.0);
+            gnss_test::bornSatPhaseBias(c.stations[i].params, sat, kSig);
+            gnss_test::bornAmbiguity(c.stations[i].params, sat, kSig);
         }
     }
 }
@@ -248,7 +247,7 @@ TEST(Eq34ReattachHygiene, MatureHostPreferredOverColdHostRegardlessOfRank) {
         { "MATR", { "G29", "G01" },  1 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
 
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.anchor_hygiene_on);
@@ -291,7 +290,7 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
         { "BBBB", { "G29", "G01" },  9 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
 
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     // The incumbent is a station that is not present at all (its arc ended), which
@@ -307,10 +306,10 @@ TEST(Eq34ReattachHygiene, ColdOnlyCandidatesBlockTheReattachAndPruneTheKey) {
     // the per-station column sets stay consistent with the gated union (the coverage
     // gate's disposition, byte for byte).
     for (const auto& st : c.stations) {
-        EXPECT_EQ(st.sm->getSatPhaseBiasStates().count(
-                      StateKeys::makeSatPhaseBiasKey("G29", kSig)), 0u);
-        EXPECT_EQ(st.sm->getSatPhaseBiasStates().count(
-                      StateKeys::makeSatPhaseBiasKey("G01", kSig)), 1u);
+        EXPECT_LT(findParam(st.params, satPhaseBiasRef(gnss_test::satOf("G29"),
+                                                       gnss_test::signalOf(System::GPS, kSig))), 0);
+        EXPECT_GE(findParam(st.params, satPhaseBiasRef(gnss_test::satOf("G01"),
+                                                       gnss_test::signalOf(System::GPS, kSig))), 0);
     }
 
     std::set<std::string> shared;
@@ -341,7 +340,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
         { "BBBB", { "G29", "G01" },  9 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 1000.0);
@@ -350,7 +349,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
     // kMin epochs.
     for (int ep = 1; ep < kMin; ++ep) {
         Census ce = makeCensus(spec);
-        attachStateManagers(ce, spec, log, *cfg);
+        attachParamSets(ce, spec, *cfg);
         const AnchorHygiene hyg = runHygiene(ctx, *cfg, ce, 1000.0 + 30.0 * ep);
         EXPECT_EQ(ce.cnd.union_keys.count("G29_L1C"), 0u)
             << "released at epoch " << ep << " with every host still cold";
@@ -365,7 +364,7 @@ TEST(Eq34ReattachHygiene, HoldOutPersistsUntilAHostConvergesThenReleases) {
 
     // The epoch the arcs reach the threshold, the hold releases and the key returns.
     Census cr = makeCensus(spec);
-    attachStateManagers(cr, spec, log, *cfg);
+    attachParamSets(cr, spec, *cfg);
     const AnchorHygiene hyg = runHygiene(ctx, *cfg, cr, 2000.0);
     EXPECT_EQ(hyg.arcAge(0, "G29_L1C"), kMin);
     EXPECT_EQ(cr.cnd.union_keys.count("G29_L1C"), 1u);
@@ -400,7 +399,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
     {
         auto cfg = loadCfg(log, "warm_none", armed(/*min_arc_ep=*/5));
         Census c = makeCensus(spec);
-        attachStateManagers(c, spec, log, *cfg);
+        attachParamSets(c, spec, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";   // an incumbent, but never emitted
         runHygiene(ctx, *cfg, c, 1000.0);
@@ -416,7 +415,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
                            + "    \"eq34_prior_realization_max_gap_s\": 600.0,\n");
         ASSERT_DOUBLE_EQ(cfg->getNetworkConfig().eq34_prior_realization_max_gap_s, 600.0);
         Census c = makeCensus(spec);
-        attachStateManagers(c, spec, log, *cfg);
+        attachParamSets(c, spec, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 1000.0 - 900.0);   // 900 s ago > 600 s horizon
@@ -432,7 +431,7 @@ TEST(Eq34ReattachHygiene, ColdHostIsOnlyRefusedAgainstAFreshEmittedRealization) 
     {
         auto cfg = loadCfg(log, "warm_fresh", armed(/*min_arc_ep=*/5));
         Census c = makeCensus(spec);
-        attachStateManagers(c, spec, log, *cfg);
+        attachParamSets(c, spec, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         markRealizedAt(ctx, "G29_L1C", 970.0);            // emitted one epoch ago
         runHygiene(ctx, *cfg, c, 1000.0);
@@ -461,7 +460,7 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
         { "BBBB", { "G29", "G01" },  9 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
 
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     ASSERT_TRUE(ctx.knobs.pin_bridge_on);
@@ -497,13 +496,13 @@ TEST(Eq34ReattachHygiene, BridgeHoldsTheSolvedLevelAndExpiresAtItsStalenessBound
     for (int k = 0; k < 3; ++k) {
         (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = k;
         Census c2 = makeCensus(spec);
-        attachStateManagers(c2, spec, log, *cfg);
+        attachParamSets(c2, spec, *cfg);
         hyg = runHygiene(ctx, *cfg, c2, 1030.0 + 30.0 * k);
         EXPECT_TRUE(hyg.isBridged("G29_L1C")) << "dropped early at folds=" << k;
     }
     (*net::getSig(ctx.entities.sat_signals, "G29_L1C", &net::SatSignalState::pin_bridge)).folds = 3;   // == phase_datum_bridge_max_ep
     Census c3 = makeCensus(spec);
-    attachStateManagers(c3, spec, log, *cfg);
+    attachParamSets(c3, spec, *cfg);
     hyg = runHygiene(ctx, *cfg, c3, 1200.0);
     EXPECT_FALSE(hyg.isBridged("G29_L1C"));
     EXPECT_EQ(ctx.counters.hyg.bridge_drop_stale, 1);
@@ -533,7 +532,7 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
     for (int feed = 0; feed < 2; ++feed) {
         auto cfg = loadCfg(log, "bridge_slip", armed(/*min_arc_ep=*/5, /*bridge=*/true));
         Census c = makeCensus(spec);
-        attachStateManagers(c, spec, log, *cfg);
+        attachParamSets(c, spec, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
         markRealizedAt(ctx, "G29_L1C", 970.0);
@@ -541,12 +540,12 @@ TEST(Eq34ReattachHygiene, BridgeDropsOnASlipOfItsOwnKeyFromEitherFeed) {
         ASSERT_TRUE(runHygiene(ctx, *cfg, c, 1000.0).isBridged("G29_L1C"));
 
         Census c2 = makeCensus(spec);
-        attachStateManagers(c2, spec, log, *cfg);
+        attachParamSets(c2, spec, *cfg);
         std::set<std::pair<int, std::string>> funnel;
         if (feed == 0) {
             funnel.insert({ 0, "G29_L1C" });               // slip funnel
         } else {
-            c2.stations[0].sm->markAmbiguityPendingReseed("G29_L1C");  // leveling refloat
+            markPendingReseed(c2.stations[0].params, "G29_L1C");  // leveling refloat
         }
         const AnchorHygiene hyg = runHygiene(ctx, *cfg, c2, 1030.0, funnel);
 
@@ -575,7 +574,7 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
         { "BBBB", { "G29" },  9 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     net::putSig(ctx.entities, "G29_L1C", &net::SatSignalState::anchor_incumbent) = "GONE";
     markRealizedAt(ctx, "G29_L1C", 970.0);
@@ -595,7 +594,7 @@ TEST(Eq34ReattachHygiene, WarmResumeSeedsEveryPresentArcAsMature) {
         { "BBBB", { "G29" },         9 },
     };
     Census c2 = makeCensus(spec2);
-    attachStateManagers(c2, spec2, log, *cfg);
+    attachParamSets(c2, spec2, *cfg);
     const AnchorHygiene hyg2 = runHygiene(ctx, *cfg, c2, 1030.0);
     EXPECT_EQ(hyg2.arcAge(0, "G07_L1C"), 1);
     EXPECT_EQ(hyg2.arcAge(0, "G29_L1C"), 8);
@@ -612,7 +611,7 @@ TEST(Eq34ReattachHygiene, DisarmedIsStructurallyInert) {
         { "BBBB", { "G29", "G01" },  9 },
     };
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
     EXPECT_FALSE(ctx.knobs.anchor_hygiene_on);
     EXPECT_EQ(ctx.knobs.eq34_min_arc_ep, 0);
@@ -748,7 +747,7 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionDeseatsASlippedIncumbentTreeEdge) {
                                   : ""));
         ASSERT_EQ(cfg->networkPhaseDatumEq34SlipAwareElection(), slip_aware);
         Census c = makeCensus(spec);
-        attachStateManagers(c, spec, log, *cfg);
+        attachParamSets(c, spec, *cfg);
         NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
         std::set<std::string> shared;
         EpochEvents ev;
@@ -820,7 +819,7 @@ TEST(Eq34ReattachHygiene, SlipAwareElectionReadmitsAnUnavoidableSlippedTreeEdge)
                        armed(/*min_arc_ep=*/0)
                        + "    \"phase_datum_eq34_slip_aware_election\": true,\n");
     Census c = makeCensus(spec);
-    attachStateManagers(c, spec, log, *cfg);
+    attachParamSets(c, spec, *cfg);
     NetworkRunContext ctx(*cfg, cfg->getNetworkConfig());
 
     const std::set<std::pair<int, std::string>> slip{ { 0, "G09_L1C" } };

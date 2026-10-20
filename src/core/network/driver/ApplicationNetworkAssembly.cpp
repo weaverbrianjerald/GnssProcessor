@@ -38,6 +38,8 @@
 #include "network/ar/SdEwlAr.hpp"               // the shared EWL band table (sdEwlBands) + increment-2a decision (SD EWL)
 #include "network/carry/Coupling.hpp"       // conditional coupling-row builder
 #include "network/assembly/ParamInventory.hpp" // the parameter inventory and the receiver IFB rule
+#include "network/assembly/SharedAdmission.hpp" // the shared satellite parameters of a station
+#include "network/state/StationParams.hpp"
 #include "network/assembly/Contributions.hpp" // row tags and the contribution tallies
 #include "network/qc/PrefitCensus.hpp"   // structural fuse (SPEC_prefit_census_observability, INC-2)
 #include "network/diag/ShDevVtec.hpp"     // networkShDevCarryAge
@@ -159,7 +161,7 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
     };
     // CB-ADM phase co-gate feed: the run-latched admitted code-key set (null unless
     // the flag is armed and the census ran).  It is passed into every
-    // ensureNetworkSharedStates call, so a signal whose code was quarantined also
+    // networkAdmitSharedStates call, so a signal whose code was quarantined also
     // allocates no phase-bias state, and shared_phase_keys (built from the states)
     // excludes it consistently.  Null: byte-identical.
     const std::set<std::string>* cbadm_admit =
@@ -200,7 +202,8 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
             emitEpochStatus("sync_skip", {});   // only week/tow available
             return EpochAction::SkipEpoch;
         }
-        piv.mm->ensureNetworkSharedStates(modeled.front(), {}, cbadm_admit);  // allow all pivot phase signals (minus CB-ADM quarantined)
+        // allow all pivot phase signals (minus those the code-bias admission census quarantined)
+        networkAdmitSharedStates(rowContextOf(config_, piv), piv.params, modeled.front(), {}, cbadm_admit);
         present.front() = true;
         for (const auto& [sat, why] : piv_drops) {
             if (why == DropReason::None) continue;
@@ -211,8 +214,8 @@ EpochAction Application::networkPassAHead_(NetworkRun& run, const NetworkEpoch& 
     }
 
     if (!phase_datum_prioritized)
-        for (const auto& kv : stations.front().sm->getSatPhaseBiasStates())
-            shared_phase_keys.insert(kv.first);
+        for (const auto& kv : stations.front().params.shared.sat_phase_bias)
+            shared_phase_keys.insert(satPhaseBiasText(kv.first));
     return EpochAction::Proceed;
 }
 
@@ -389,8 +392,8 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
         std::map<std::string, int> sat_station_count;
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
-            for (const auto& kv : stations[i].sm->getSatClockStates())
-                ++sat_station_count[StateKeys::satelliteFromSatClockKey(kv.first)];
+            for (const auto& kv : stations[i].params.shared.sat_clock)
+                ++sat_station_count[net::satKey(kv.first)];
         }
         std::set<std::string> dropped_sats;
         for (const auto& kv : sat_station_count)
@@ -415,17 +418,15 @@ void Application::networkAssemblyPrefilter_(NetworkRun& run, const NetworkEpoch&
                               [&](const PppObservation& o) { return dropped_sats.count(o.satellite) != 0; }),
                           obs.end());
                 // Prune the now-orphaned shared states.
-                StateManager& sm = *stations[i].sm;
-                std::set<std::string> keep_clk, keep_pb;
-                for (const auto& kv : sm.getSatClockStates())
-                    if (!dropped_sats.count(StateKeys::satelliteFromSatClockKey(kv.first)))
-                        keep_clk.insert(kv.first);
-                for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                    const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                    if (p && !dropped_sats.count(p->satellite)) keep_pb.insert(kv.first);
-                }
-                sm.pruneSatClockStatesExcept(keep_clk);
-                sm.pruneSatPhaseBiasStatesExcept(keep_pb);
+                StationParams& set = stations[i].params;
+                std::set<SatId> keep_clk_ids;
+                std::set<SatSignalId> keep_pb_ids;
+                for (const auto& kv : set.shared.sat_clock)
+                    if (!dropped_sats.count(net::satKey(kv.first))) keep_clk_ids.insert(kv.first);
+                for (const auto& kv : set.shared.sat_phase_bias)
+                    if (!dropped_sats.count(net::satKey(kv.first.sat))) keep_pb_ids.insert(kv.first);
+                pruneSatClockExcept(set, keep_clk_ids);
+                pruneSatPhaseBiasExcept(set, keep_pb_ids);
             }
         }
     }
@@ -468,8 +469,8 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     std::set<std::string> clk_seen;
     for (size_t i = 0; i < stations.size(); ++i) {
         if (!present[i]) continue;
-        for (const auto& kv : stations[i].sm->getSatClockStates()) {
-            const std::string sat = StateKeys::satelliteFromSatClockKey(kv.first);
+        for (const auto& kv : stations[i].params.shared.sat_clock) {
+            const std::string sat = net::satKey(kv.first);
             est.registerClock(sat);
             if (clk_seen.insert(sat).second) registered_clock_sats.push_back(sat);
         }
@@ -486,7 +487,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
     // (sat,signal) code columns registered this epoch.
     //
     // The phase co-gate is not applied here.  It sits upstream, at
-    // phase-bias state allocation in MeasurementModel::ensureNetworkSharedStates,
+    // phase-bias state allocation in networkAdmitSharedStates,
     // and it keys off the run-latched census-admitted set, not off
     // cbadm_reg_code_keys, the narrower per-epoch registered subset.  Two separate
     // reasons, both load-bearing:
@@ -517,8 +518,10 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
         std::map<std::string, int> code_epoch_count;   // admitted "sat|sig" -> #present stations this epoch
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
-            for (const auto& kv : stations[i].sm->getSatBiasStates())
-                if (ctx.admission.isAdmitted(kv.first)) ++code_epoch_count[kv.first];
+            for (const auto& kv : stations[i].params.shared.sat_code_bias) {
+                const std::string code_key = satCodeBiasText(kv.first);
+                if (ctx.admission.isAdmitted(code_key)) ++code_epoch_count[code_key];
+            }
         }
         for (const auto& [key, cnt] : code_epoch_count)
             if (cnt >= 2) cbadm_reg_code_keys.insert(key);
@@ -528,7 +531,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
         if (!parts) continue;
         // Register every shared_phase_key unconditionally: the CB-ADM phase
         // co-gate sits upstream at phase-bias state allocation
-        // (MeasurementModel::ensureNetworkSharedStates, cbadm_admitted_code_keys),
+        // (networkAdmitSharedStates, cbadm_admitted_code_keys),
         // so shared_phase_keys already excludes a quarantined signal's phase.
         // Gating here instead would break the "every shared_phase_key is a
         // registered column" invariant that eq34/carry/snapshot rely on (crash).
@@ -548,7 +551,7 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
             // ("C26|L2X|PB"), while the admission census and cbadm_reg_code_keys
             // carry the code one ("C26|C2X").  The companion mapping is
             // L<band><attr> -> C<band><attr>, the same transform the state-alloc
-            // co-gate applies (MeasurementModel::ensureNetworkSharedStates).
+            // co-gate applies (networkAdmitSharedStates).
             // Reusing the phase signal unchanged would match nothing and leave this
             // counter permanently 0, inert wiring that reads as "no orphans"
             // (standing invariant #4).
@@ -597,8 +600,8 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
             std::map<std::string, int> cb_station_count;   // "sat|signal" -> #stations
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
-                for (const auto& kv : stations[i].sm->getSatBiasStates())
-                    ++cb_station_count[kv.first];
+                for (const auto& kv : stations[i].params.shared.sat_code_bias)
+                    ++cb_station_count[satCodeBiasText(kv.first)];
             }
             std::set<std::string> keep_keys;
             for (const auto& [key, cnt] : cb_station_count)
@@ -606,18 +609,19 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
 
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
-                StateManager& sm = *stations[i].sm;
-                std::set<std::string> station_keep;
-                for (const auto& kv : sm.getSatBiasStates()) {
-                    if (!keep_keys.count(kv.first)) continue;
-                    station_keep.insert(kv.first);
-                    const auto parts = StateKeys::parseSatBiasKey(kv.first);
-                    if (!parts) continue;
-                    est.registerCodeBias(parts->satellite, parts->signal);
-                    if (cb_seen.insert(kv.first).second)
-                        registered_code_keys.emplace_back(parts->satellite, parts->signal);
+                StationParams& set = stations[i].params;
+                std::set<SatSignalId> station_keep_ids;
+                for (const auto& kv : set.shared.sat_code_bias) {
+                    const std::string code_key = satCodeBiasText(kv.first);
+                    if (!keep_keys.count(code_key)) continue;
+                    station_keep_ids.insert(kv.first);
+                    const std::string sat = net::satKey(kv.first.sat);
+                    const std::string signal = kv.first.signal.obsCode(ObsType::Code);
+                    est.registerCodeBias(sat, signal);
+                    if (cb_seen.insert(code_key).second)
+                        registered_code_keys.emplace_back(sat, signal);
                 }
-                sm.pruneSatBiasStatesExcept(station_keep);
+                pruneSatCodeBiasExcept(set, station_keep_ids);
             }
         } else {
             // --- CB-ADM on: run-latched admission, per-epoch >=2 registration and
@@ -630,19 +634,19 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
             // epoch and re-registers when coverage returns.
             for (size_t i = 0; i < stations.size(); ++i) {
                 if (!present[i]) continue;
-                StateManager& sm = *stations[i].sm;
-                std::set<std::string> station_keep;
-                for (const auto& kv : sm.getSatBiasStates()) {
-                    station_keep.insert(kv.first);   // never pruned while the flag is on
-                    const auto parts = StateKeys::parseSatBiasKey(kv.first);
-                    if (!parts) continue;            // malformed key: kept (harmless), never registered
-                    if (cbadm_reg_code_keys.count(kv.first)) {
-                        est.registerCodeBias(parts->satellite, parts->signal);
-                        if (cb_seen.insert(kv.first).second)
-                            registered_code_keys.emplace_back(parts->satellite, parts->signal);
-                    } else if (!adm.isAdmitted(kv.first)
-                               && !adm.seen.count(kv.first)
-                               && adm.late_tracked.insert(kv.first).second) {
+                StationParams& set = stations[i].params;
+                for (const auto& kv : set.shared.sat_code_bias) {
+                    // never pruned while the flag is on
+                    const std::string code_key = satCodeBiasText(kv.first);
+                    const std::string sat = net::satKey(kv.first.sat);
+                    const std::string signal = kv.first.signal.obsCode(ObsType::Code);
+                    if (cbadm_reg_code_keys.count(code_key)) {
+                        est.registerCodeBias(sat, signal);
+                        if (cb_seen.insert(code_key).second)
+                            registered_code_keys.emplace_back(sat, signal);
+                    } else if (!adm.isAdmitted(code_key)
+                               && !adm.seen.count(code_key)
+                               && adm.late_tracked.insert(code_key).second) {
                         // A key the census never classified was first seen after the
                         // window and is implicitly quarantined (invariant #4
                         // telemetry).  An admitted key that is only below the
@@ -651,7 +655,6 @@ EpochAction Application::networkAssemblyRegisterColumns_(NetworkRun& run, const 
                         ++ctx.counters.n_cb_late_quarantined;
                     }
                 }
-                sm.pruneSatBiasStatesExcept(station_keep);
             }
         }
     }
@@ -759,7 +762,7 @@ EpochAction Application::networkPassB_(NetworkRun& run, const NetworkEpoch& ep, 
     // Split into a parallel produce phase (pure per-station compute into
     // pre-sized slots, no shared write) and a serial consume phase that scatters
     // each block into the shared arrowhead in deterministic station order.
-    // computeMeasurementUpdate, splitStation and the pivot pin fold touch only
+    // networkStationRows, splitStation and the pivot pin fold touch only
     // station i's own state and const queries on `est` (its column layout is
     // frozen after registration; addStation is the only mutation and runs
     // serially below), so the produced blocks and their add order are identical

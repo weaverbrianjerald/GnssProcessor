@@ -57,7 +57,6 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
 #include <cmath>
@@ -556,7 +555,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     // R_{ENU→ECEF} δp_ENU and the columns of enuToEcefMatrix are the E/N/U
     // unit vectors in ECEF.  The partial is copied as is rather than rebuilt
     // from obs.los: `em.H` and `em.innovations` come from one linearization,
-    // so y ≈ H δx holds row by row for every observable the measurement model
+    // so y ≈ H δx holds row by row for every observable the observation equation
     // can produce, and a sign convention re-derived per row type would be a
     // second source of truth that could disagree.
     //
@@ -575,8 +574,7 @@ StationStep networkCongruenceRowGeometry(StationBuild& build) {
     // A mis-rotated Jacobian would attribute a real offset to the wrong
     // direction.
     if (!(congruence_rows && em.H.rows() > 0 && st.ecef.norm() > 1.0)) return StationStep::Next;
-    const Eigen::Index pos_i =
-        static_cast<Eigen::Index>(st.sm->getPositionIndex());
+    const Eigen::Index pos_i = static_cast<Eigen::Index>(st.params.position[0]);
     if (pos_i >= 0 && pos_i + 2 < em.H.cols()) {
         const Coordinates::Llh llh = Coordinates::ecefToLlh(st.ecef);
         const Eigen::Matrix3d R_enu2ecef =

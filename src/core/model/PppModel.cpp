@@ -15,15 +15,13 @@
  *  - Observation paths:  processIonoFreeObservation / processIonoFreePair,
  *                        processUncombinedObservation.
  *
- * External data and state bookkeeping come from ProductParser, RinexParser and
- * StateManager.
+ * External data come from ProductParser and RinexParser.
  */
 
 #include "config/GnssConfig.hpp"
 #include "model/PppModel.hpp"
 #include "common/PppTypes.hpp"
 #include "rinex/RinexParser.hpp"
-#include "filter/StateManager.hpp"
 #include "products/ProductParser.hpp"
 #include "products/StationInfoFile.hpp"
 #include "common/Constants.hpp"
@@ -203,16 +201,13 @@ std::vector<std::string> activeFrequencyBands(
      * @param product_parser External products (SP3/CLK/...).
      * @param log_manager Diagnostic output.
      * @param rinex_parser Observation metadata and receiver info.
-     * @param state_manager Ambiguity bookkeeping and state access.
      */
     PppModel::PppModel(const GnssConfig& config, ProductParser& product_parser,
-        LogManager& log_manager, const RinexParser& rinex_parser,
-        StateManager& state_manager)
+        LogManager& log_manager, const RinexParser& rinex_parser)
         : config_(config),
         product_parser_(product_parser),
         log_manager_(log_manager),
         rinex_parser_(rinex_parser),
-        state_manager_(state_manager),
         ppp_utils_(log_manager),
         // Pass cache reference to geometry
         geometry_(config, ProductCache::getInstance(), rinex_parser, log_manager),

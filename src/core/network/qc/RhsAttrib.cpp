@@ -182,7 +182,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
     out.datum     = plan_datum;
     if (x_s && x_s->size() == n) out.x_s = *x_s;
     // The station-local readout's inputs, read now because the kernel and the
-    // state managers move on after the epoch: each item's local-column names and the
+    // station parameter sets move on after the epoch: each item's local-column names and the
     // kernel's reconstruction of its locals at x_s, terms apart.  Only when asked (a LOC:
     // label is named) and with x_s, so every other capture, the flight recorder's
     // per-epoch retention among them, does no extra work.
@@ -193,8 +193,7 @@ void networkAttribCaptureFrame(NetworkAttribFrame& out, const SyncedEpoch& se,
             const std::size_t i = roster[k];
             const StationAssembly& R = asm_res[i];
             out.local_names.push_back(
-                stations[i].sm ? rhsAttribLocalColumnNames(R, *stations[i].sm)
-                               : std::vector<std::string>(static_cast<std::size_t>(R.A_r.cols())));
+                rhsAttribLocalColumnNames(R, stations[i].params));
             NetworkNormalEquations::StationReconstructionParts parts;
             // reconstructStationParts throws std::out_of_range / std::invalid_argument on a
             // bad slot or width (both std::logic_error); such an item keeps empty parts and
@@ -741,13 +740,13 @@ RhsAttribLocalLabel parseRhsAttribLocalLabel(const std::string& label) {
 }
 
 std::vector<std::string> rhsAttribLocalColumnNames(const StationAssembly& R,
-                                                   const StateManager& sm) {
+                                                   const StationParams& set) {
     std::vector<std::string> names(static_cast<std::size_t>(R.A_r.cols()));
-    const std::vector<std::string> state = sm.getStateLabels();
     for (const auto& [sidx, col] : R.h2local) {
         if (sidx < 0 || col < 0 || col >= R.A_r.cols()) continue;
-        if (static_cast<std::size_t>(sidx) >= state.size()) continue;
-        names[static_cast<std::size_t>(col)] = state[static_cast<std::size_t>(sidx)];
+        const auto k = static_cast<std::size_t>(sidx);
+        if (k >= set.slots.size()) continue;
+        names[static_cast<std::size_t>(col)] = stateLabel(set.slots[k], k);
     }
     return names;
 }

@@ -10,6 +10,7 @@
 #include "common/GnssIdentity.hpp"   // obsTypeOf
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/Entities.hpp"   // net::satSignalKey
 #include "filter/StateKeySchema.hpp"
 
 #include <algorithm>
@@ -105,10 +106,10 @@ void networkSecondPhaseEpochTail(NetworkRun& run, const NetworkEpoch& ep) {
     for (const auto& [key, bits] : relevel_ev.free_cause) {
         const int sta = key.first;
         if (sta < 0 || sta >= static_cast<int>(stations.size())) continue;
-        const auto parts = StateKeys::parseAmbiguityKey(key.second);
-        if (!parts) continue;
+        const auto id = net::satSignalKey(key.second);
+        if (!id) continue;
         if (!stations[static_cast<std::size_t>(sta)].spc_cells.count(
-                StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
+                StateKeys::makeSatPhaseBiasKey(net::satKey(id->sat), net::signalKey(id->signal))))
             continue;
         ++C.slip_arcs;
         if (bits & RelevelEpochState::kCauseMw)        ++C.slip_mw;
@@ -126,11 +127,9 @@ void networkSecondPhaseEpochTail(NetworkRun& run, const NetworkEpoch& ep) {
     //     station's name.
     net::forEach(ctx.entities.sat_signals, &net::SatSignalState::anchor_incumbent,
                  [&](const SatSignalId& id, const std::string& name) {
-        const std::string amb = net::ambKey(id);
-        const auto parts = StateKeys::parseAmbiguityKey(amb);
-        if (!parts) return;
+        if (id.sat == SatId{} || id.signal == SignalId{}) return;   // an anchor names a satellite and a signal
         const std::string cell =
-            StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal);
+            StateKeys::makeSatPhaseBiasKey(net::satKey(id.sat), net::signalKey(id.signal));
         for (const auto& st : stations) {
             if (st.name != name) continue;
             if (st.spc_cells.count(cell)) ++C.anchors;

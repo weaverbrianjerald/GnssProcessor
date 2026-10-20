@@ -62,7 +62,7 @@
  *
  * ## Scope of this file (phase B)
  *
- * Pure numeric leaf, header-only, with no `ApplicationNetwork` / `StateManager` /
+ * Pure numeric leaf, header-only, with no `ApplicationNetwork` / station-parameter /
  * `NetworkNormalEquations` coupling (following the standalone classes
  * `NetworkCarryVce` / `NeqAccumulator`).  It owns the z-store data structure, the
  * fundamental-cycle algebra, the lifecycle transforms, and a small Kalman

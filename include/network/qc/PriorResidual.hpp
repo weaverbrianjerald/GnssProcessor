@@ -151,7 +151,7 @@
  * ## Isolation and testing
  *
  * Pure numeric leaf class in the @ref NetworkCarryVce / @c NeqAccumulator mould:
- * header-only, no @c ApplicationNetwork coupling, no @c StateManager, no I/O.
+ * header-only, no @c ApplicationNetwork coupling, no station state, no I/O.
  * It takes @ref Input rows and returns ladders; @c tests/network/test_prior_residual_census.cpp
  * drives it directly with synthetic rows of known truth.  The per-epoch trace,
  * event and aggregate emission lives in @c network/qc/PriorResidual.cpp, the

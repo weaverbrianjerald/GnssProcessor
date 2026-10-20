@@ -13,6 +13,7 @@
 #include "common/PppUtils.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguity columns
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 
@@ -393,11 +394,11 @@ int networkOraclePinFit(
     };
     std::map<std::pair<std::string, std::string>, Fam> fams;
     for (const auto& [fam_key, a_name] : anchor_of) {
-        // fam_key is the family's ambiguity key "<sat>_<signal>" (StateKeySchema).
-        const auto parts = StateKeys::parseAmbiguityKey(fam_key);
-        if (!parts) continue;
-        const std::string& sat = parts->satellite;
-        const std::string& sig = parts->signal;
+        // fam_key is the family's ambiguity key text, "<sat>_<signal>".
+        const auto fam_id = net::satSignalKey(fam_key);
+        if (!fam_id) continue;
+        const std::string sat = net::satKey(fam_id->sat);
+        const std::string sig = net::signalKey(fam_id->signal);
         const auto iit = idx_of.find(a_name);
         if (iit == idx_of.end()) continue;
         const auto tit = pin.truth.find({iit->second, sat, sig});
@@ -800,16 +801,15 @@ void networkOraclePinPriors(StationCarryFrame& carry) {
     // Closure stated by the run-end clause: offered = rows + gauge-pinned
     // skipped + no column.
     if (!(legacy_local_inject && opin_on)) return;
-    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
-        const auto parts = StateKeys::parseAmbiguityKey(key);
-        if (!parts) continue;
+    for (const auto& [arc, amb_idx] : st.params.amb) {
+        const std::string arc_sat    = net::satKey(arc.sat);
+        const std::string arc_signal = net::signalKey(arc.signal);
         const auto pit = opin_table->find(
-            std::make_tuple(static_cast<int>(i), parts->satellite,
-                            parts->signal));
+            std::make_tuple(static_cast<int>(i), arc_sat, arc_signal));
         if (pit == opin_table->end()) continue;
         ++R.opin_offered;
         if (networkIsGaugePinned(stations, phase_datum_prioritized,
-                                  i, parts->satellite, parts->signal)) {
+                                  i, arc_sat, arc_signal)) {
             // The anchor's 1e10 datum pin defines this family's gauge;
             // a second row here would fight it.  The table build skips
             // anchors too; this check is the authoritative backstop, and
@@ -817,8 +817,7 @@ void networkOraclePinPriors(StationCarryFrame& carry) {
             ++R.opin_gauge_skipped;
             continue;
         }
-        const int amb_idx = static_cast<int>(sidx);
-        if (amb_idx < 0 || amb_idx >= x_lin.size()) {
+        if (amb_idx >= x_lin.size()) {
             ++R.opin_no_column; continue;
         }
         const auto hit = h2local.find(amb_idx);
@@ -833,7 +832,7 @@ void networkOraclePinPriors(StationCarryFrame& carry) {
         }
         inj.emplace_back(static_cast<Eigen::Index>(hit->second), lam, eta,
                          makeRowTag(ContributionKind::PriorAmbiguityOraclePin,
-                                    parts->satellite, parts->signal));
+                                    arc_sat, arc_signal));
         ++R.opin_rows;
     }
 }

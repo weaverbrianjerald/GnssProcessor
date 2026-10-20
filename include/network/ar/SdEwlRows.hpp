@@ -1,8 +1,8 @@
 #pragma once
 /**
  * @file SdEwlRows.hpp
- * @brief The SD pre-reduce EWL row builder as named stages: the correction-frame state
- *        indices, the ambiguity candidates, the arc resolution, and the whitened groups.
+ * @brief The SD pre-reduce EWL row builder as named stages: the ambiguity candidates, the arc
+ *        resolution, and the whitened groups.
  *
  * `networkAppendSdEwlRows` (SdEwlAr.cpp, declared in SdEwlAr.hpp) builds a
  * @ref SdEwlRowView once per station-epoch and calls the stages in order. The algebra, the
@@ -133,18 +133,9 @@ struct SdEwlRowView {
 };
 
 /**
- * @brief Fills the station's shared phase-bias and code-bias state indices, keyed by
- *        (satellite, signal). A column another station registered has no state here and
- *        reads as absent, which matches the real rows (the innovations omit it).
- */
-void sdEwlFillBiasStates(const SdEwlRowView& v,
-                         std::map<std::pair<std::string, std::string>, int>& pb_state,
-                         std::map<std::pair<std::string, std::string>, int>& cb_state);
-
-/**
- * @brief Fills the station's per-(satellite, band) ambiguity candidates from
- *        StateManager's own key map, each list sorted ascending by signal name so the pair
- *        search that follows is a strict total order (byte identity).
+ * @brief Fills the station's per-(satellite, band) ambiguity candidates from the ambiguities
+ *        of its parameter set that have a phase row this epoch, each list sorted ascending by
+ *        signal name so the pair search that follows is a strict total order (byte identity).
  */
 void sdEwlFillCandidates(const SdEwlRowView& v, SdEwlCandidates& cand);
 
@@ -152,10 +143,7 @@ void sdEwlFillCandidates(const SdEwlRowView& v, SdEwlCandidates& cand);
  * @brief Resolves every eligible satellite of the station into an arc, grouped by
  *        constellation: one call of @ref sdEwlResolveSat per observation, in order.
  */
-void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                      const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                      const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                      const SdEwlCandidates& cand,
+void sdEwlResolveArcs(const SdEwlRowView& v, const SdEwlCandidates& cand,
                       std::map<char, std::vector<SdEwlArc>>& by_const);
 
 /**
@@ -164,17 +152,11 @@ void sdEwlResolveArcs(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
  *        stages in order; every skip is counted and traced with its cause and ends the
  *        satellite.
  * @param v          Station-epoch handles.
- * @param x_lin      The station's linearization point.
- * @param pb_state   Phase-bias state indices by (satellite, signal).
- * @param cb_state   Code-bias state indices by (satellite, signal).
  * @param cand       Ambiguity candidates by (satellite, band).
  * @param o          The satellite's observation.
  * @param by_const   Resolved arcs by constellation letter (appended to).
  */
-void sdEwlResolveSat(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                     const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                     const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                     const SdEwlCandidates& cand, const PppObservation& o,
+void sdEwlResolveSat(const SdEwlRowView& v, const SdEwlCandidates& cand, const PppObservation& o,
                      std::map<char, std::vector<SdEwlArc>>& by_const);
 
 /**
@@ -208,12 +190,11 @@ bool sdEwlCheckPair(const SdEwlRowView& v, const PppObservation& o, double f1, d
 
 /**
  * @brief Builds the arc of the elected pair: statistics and floors, the attached integer,
- *        the four shared bias columns, and the arc's half of the linearization. A missing
- *        shared column skips the satellite; otherwise the arc is appended to @p by_const.
+ *        the four shared bias columns, and the arc's half of the linearization, which is read
+ *        from the station's parameter set (a bias the station holds no column for reads as
+ *        zero). A missing shared column skips the satellite; otherwise the arc is appended to
+ *        @p by_const.
  * @param v          Station-epoch handles.
- * @param x_lin      The station's linearization point.
- * @param pb_state   Phase-bias state indices by (satellite, signal).
- * @param cb_state   Code-bias state indices by (satellite, signal).
  * @param o          The satellite's observation.
  * @param cons       The satellite's constellation letter.
  * @param f1         Lower band frequency, Hz.
@@ -221,10 +202,7 @@ bool sdEwlCheckPair(const SdEwlRowView& v, const PppObservation& o, double f1, d
  * @param ps         The pair-search state.
  * @param by_const   Resolved arcs by constellation letter (appended to).
  */
-void sdEwlBuildArc(const SdEwlRowView& v, const Eigen::VectorXd& x_lin,
-                   const std::map<std::pair<std::string, std::string>, int>& pb_state,
-                   const std::map<std::pair<std::string, std::string>, int>& cb_state,
-                   const PppObservation& o, char cons, double f1, double f2,
+void sdEwlBuildArc(const SdEwlRowView& v, const PppObservation& o, char cons, double f1, double f2,
                    const SdEwlPairSearch& ps, std::map<char, std::vector<SdEwlArc>>& by_const);
 
 /**

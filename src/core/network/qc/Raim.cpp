@@ -21,7 +21,6 @@
 #include "network/diag/AmbStateTrace.hpp"    // ambStateNoteErase (RF-1 §7.4 D3 erase inventory)
 #include "network/ar/AmbFloat.hpp"          // ambFloatDrop (RF-1 step 4: the bounded drop)
 #include "network/ar/ArSuspect.hpp"         // arSuspectNote (the search's suspect-corner mask)
-#include "filter/StateManager.hpp"            // stations[i].sm->markAmbiguityPendingReseed
 #include "network/diag/RunTraces.hpp"       // trace streams + emitEvent
 #include "products/NetworkStateSnapshot.hpp"  // networkWarmupRampLifted
 
@@ -978,8 +977,9 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         // the reduced shared RHS b_red = u_s − N_sr N_rr⁻¹ u_r
                         // algebraically unchanged (SPEC_deweight_release_hygiene §7.2).  It
                         // is kept because it is the actuator on phase-leveling runs.
-                        if (inj_reseed)
-                            stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                        if (inj_reseed) {
+                            markPendingReseed(stations[i].params, pa.amb_key);
+                        }
                         ++n;
                     }
                 return n;
@@ -1146,7 +1146,7 @@ void networkPostFitRaim(NetworkRun& run, const NetworkEpoch& ep, NetworkPostFitH
                         }
                     }
                     // Bookkeeping under carry_invariant (see refloat_sat_at above).
-                    stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                    markPendingReseed(stations[i].params, pa.amb_key);
                     ++n_refloat;
                 }
         }
@@ -1446,20 +1446,19 @@ StationStep networkRaimColumnCensus(StationBuild& build) {
     // the off path.
     if (!(raim_ci_on || pd_handover_continuous)) return StationStep::Next;
     const Eigen::VectorXd& x_lin_qc = build.postUpdateState();
-    for (const auto& [key, sidx] : st.sm->getAmbiguities()) {
-        const auto parts = StateKeys::parseAmbiguityKey(key);
-        if (!parts) continue;
-        if (networkIsGaugePinned(stations, phase_datum_prioritized,
-                                  i, parts->satellite, parts->signal))
+    for (const auto& [arc, sidx] : st.params.amb) {
+        const std::string satellite = net::satKey(arc.sat);
+        const std::string signal    = net::signalKey(arc.signal);
+        if (networkIsGaugePinned(stations, phase_datum_prioritized, i, satellite, signal))
             continue;  // anchored (gauge-pinned): its 1e10 pin defines the
                        // gauge, so its post-fit residual is not a fault test
-        const int amb_idx = static_cast<int>(sidx);
+        const int amb_idx = sidx;
         if (amb_idx < 0 || amb_idx >= x_lin_qc.size()) continue;
         const auto hit = h2local.find(amb_idx);
         if (hit == h2local.end()) continue;  // column not in A_r this epoch
         R.qc_amb.push_back(PlAmb{static_cast<Eigen::Index>(hit->second),
-                                 parts->satellite, parts->signal,
-                                 x_lin_qc(amb_idx), key});
+                                 satellite, signal,
+                                 x_lin_qc(amb_idx), net::ambKey(arc)});
     }
     return StationStep::Next;
 }

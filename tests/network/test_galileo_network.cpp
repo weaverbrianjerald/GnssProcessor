@@ -52,7 +52,7 @@
 #include "network/solve/Estimator.hpp"
 #include "network/assembly/MultiGnss.hpp"
 #include "network/solve/Sbasis.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkProductIO.hpp"
@@ -463,22 +463,29 @@ TEST(GalileoNetworkTest, InterSystemBiasAllocatedPerStationForGalileoOnly) {
         networkConfig("[ \"GPS\", \"Galileo\" ]", kGpsGalPriorities));
     GnssConfig cfg;
     ASSERT_TRUE(cfg.loadFromJson(p, log));
-    StateManager a(5, log, cfg);
-    StateManager b(5, log, cfg);
-    for (const StateManager* sm : { &a, &b }) {
-        const auto& isb = sm->getSystemTimeOffsetStates();
-        ASSERT_EQ(isb.size(), 1u);
-        EXPECT_EQ(isb.begin()->first, "Galileo");
-        EXPECT_LT(isb.begin()->second, sm->getStateSize());
+    const StationParams a = startStationParams(cfg, Eigen::Vector3d(1.0, 2.0, 3.0));
+    const StationParams b = startStationParams(cfg, Eigen::Vector3d(4.0, 5.0, 6.0));
+    for (const StationParams* set : { &a, &b }) {
+        ASSERT_EQ(set->isb.size(), 1u);
+        EXPECT_EQ(set->isb.begin()->first, System::Galileo);
+        EXPECT_LT(static_cast<std::size_t>(set->isb.begin()->second), set->slots.size());
+        // The core: the position (held), the clock, the wet delay, then the inter-system bias.
+        EXPECT_EQ(set->slots.size(), 6u);
+        EXPECT_EQ(set->clock, 3);
+        EXPECT_EQ(set->zwd, 4);
+        EXPECT_EQ(set->isb.begin()->second, 5);
     }
+    EXPECT_EQ(a.slots[0].x_lin, 1.0);
+    EXPECT_EQ(b.slots[2].x_lin, 6.0);
     std::error_code ec; fs::remove(p, ec);
 
     const fs::path q = writeTempConfig("isb_gps",
         networkConfig("[ \"GPS\" ]", "{ \"GPS\": [\"C1C\", \"L1C\", \"C2W\", \"L2W\"] }"));
     GnssConfig cfg2;
     ASSERT_TRUE(cfg2.loadFromJson(q, log));
-    StateManager c(5, log, cfg2);
-    EXPECT_TRUE(c.getSystemTimeOffsetStates().empty());
+    const StationParams c = startStationParams(cfg2, Eigen::Vector3d::Zero());
+    EXPECT_TRUE(c.isb.empty());
+    EXPECT_EQ(c.slots.size(), 5u);
     fs::remove(q, ec);
 }
 

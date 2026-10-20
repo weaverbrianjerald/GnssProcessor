@@ -2506,7 +2506,7 @@ namespace GnssProcessor {
                       "station-epoch carrying the smallest eigenvalue of the rejected local "
                       "block, the near-zero eigenvalue COUNT, the pivot triple "
                       "(d_min/d_ref/d_max) the decision used, and the top-5 |weight| columns "
-                      "of the null eigenvector as StateManager labels.  One symmetric "
+                      "of the null eigenvector as parameter labels.  One symmetric "
                       "eigen-decomposition per REJECTED block only; the rejection and the "
                       "station drop are unchanged (measure-only, solve byte-identical).");
         }
@@ -3177,7 +3177,7 @@ namespace GnssProcessor {
         // (syncPppStateToStateVector, the PPP-path writer of x(clock), never runs
         // from ApplicationNetwork), so a free-running receiver's whole clock offset
         // leaks uniformly into every cold ambiguity seed through
-        // computeAmbiguitySeed's clk_term = x(clock) = 0.  When on, the state
+        // the ambiguity seed's clock term, x(clock) = 0.  When on, the state
         // pre-pass writes the median GPS code residual into x(clock) once per
         // station.  Default off => the seeder is never called (byte-identical).
         network_cold_clock_seed_ = jval<bool>(

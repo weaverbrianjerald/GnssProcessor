@@ -25,7 +25,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -91,8 +91,7 @@ struct Harness {
         for (int k = 0; k < n_stations; ++k) {
             stations.emplace_back();
             stations.back().name = (k == 0) ? kSta : kSta2;
-            stations.back().sm =
-                std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+            stations.back().params = startStationParams(config, Eigen::Vector3d::Zero());
             present.push_back(true);
             for (const char* s : { "L1C", "L2W", "L5Q" }) addCarry(kSat, s, k);
         }

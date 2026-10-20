@@ -10,6 +10,7 @@
 
 #include "slip/CycleSlipManager.hpp"
 #include "slip/CycleSlipEpochWork.hpp"
+#include "measurement/ObservationEquation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iterator>
@@ -511,7 +512,7 @@ void CycleSlipManager::forcePivotHandoverAndApplyDeferred(SlipEpochWork& w) {
             cons, "MW slip on BSSD pivot signal");
     }
     pivot_mgr.handlePivotHandover(
-        modeled_obs, state_manager, epoch_prefix,
+        modeled_obs, state_manager, meas_model.ambiguitySeedInput(), epoch_prefix,
         /*forced_only=*/true, exclude_sats);
 
     const auto& pivots_after = pivot_mgr.getPivotSatellites();

@@ -22,7 +22,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -53,7 +53,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -125,12 +124,10 @@ StationStep networkZwdRowCapture(StationBuild& build) {
     // pool re-host pattern), so the capture works through the
     // phase-leveling warmup window and on no-leveling lineages.
     if (!(zwd_capture && !R.pl_zwd_present)) return StationStep::Next;
-    const size_t tropo_idx_sz = st.sm->getTropoIndex();
-    if (tropo_idx_sz != std::numeric_limits<size_t>::max()) {
-        const int tropo_idx = static_cast<int>(tropo_idx_sz);
+    const int tropo_idx = st.params.zwd;   // -1: the station has no wet-delay column
+    if (tropo_idx >= 0) {
         const Eigen::VectorXd& x_lin_z = build.postUpdateState();
-        if (tropo_idx >= 0 && tropo_idx < x_lin_z.size()
-            && std::isfinite(x_lin_z(tropo_idx))) {
+        if (tropo_idx < x_lin_z.size() && std::isfinite(x_lin_z(tropo_idx))) {
             const auto zhit = h2local.find(tropo_idx);
             if (zhit != h2local.end()) {
                 R.pl_zwd_present = true;
@@ -200,10 +197,9 @@ void networkZwdCarryPrior(StationCarryFrame& carry) {
     //     epoch folds the restored Z-row posterior, later epochs the rolling
     //     re-stash (the validated (cz) mechanism with a retirement clock).
     if (!(legacy_local_inject && (zwd_on || zwd_seam_live))) return;
-    const size_t tropo_idx_sz = st.sm->getTropoIndex();
-    if (tropo_idx_sz != std::numeric_limits<size_t>::max()) {
-        const int tropo_idx = static_cast<int>(tropo_idx_sz);
-        if (tropo_idx >= 0 && tropo_idx < x_lin.size()) {
+    const int tropo_idx = st.params.zwd;   // -1: the station has no wet-delay column
+    if (tropo_idx >= 0) {
+        if (tropo_idx < x_lin.size()) {
             const auto zhit = h2local.find(tropo_idx);
             if (zhit != h2local.end() && std::isfinite(x_lin(tropo_idx))) {
                 const Eigen::Index zcol = static_cast<Eigen::Index>(zhit->second);

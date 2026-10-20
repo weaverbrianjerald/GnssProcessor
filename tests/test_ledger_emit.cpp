@@ -717,15 +717,13 @@ struct ModelFixture {
     fs::path   path;
     std::unique_ptr<ProductParser> pp;
     std::unique_ptr<RinexParser>   rp;
-    std::unique_ptr<StateManager>  sm;
     std::unique_ptr<PppModel>      model;
     explicit ModelFixture(const std::string& tag) {
         path = writeTempConfig(tag, "");
         EXPECT_TRUE(cfg.loadFromJson(path, log));
         pp    = std::make_unique<ProductParser>(cfg, log);
         rp    = std::make_unique<RinexParser>(cfg, log, *pp);
-        sm    = std::make_unique<StateManager>(5, log, cfg);
-        model = std::make_unique<PppModel>(cfg, *pp, log, *rp, *sm);
+        model = std::make_unique<PppModel>(cfg, *pp, log, *rp);
         model->setCanonicalTraceLabel("AAAA");
     }
     ~ModelFixture() { std::error_code ec; fs::remove(path, ec); }

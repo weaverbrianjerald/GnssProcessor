@@ -15,6 +15,7 @@
 #include "common/EpochMeasurement.hpp"
 #include <Eigen/Dense>
 #include <map>
+#include <set>
 #include <vector>
 
 namespace GnssProcessor {
@@ -26,6 +27,7 @@ struct StationCarryFrame;                  // network/assembly/StationBuild.hpp
 enum class StationStep : std::uint8_t;     // network/assembly/StationBuild.hpp
 class GnssConfig;
 class NetworkEstimator;
+struct StationParams;
 class SphericalHarmonicIonosphere;
 class GlobalIonosphereMap;
 struct GlobalVtecShConfig;
@@ -73,6 +75,42 @@ void networkSplitStation(const GnssConfig& config_, NetStation& st, const Networ
                          Eigen::MatrixXd& A_s, Eigen::MatrixXd& A_r, Eigen::VectorXd& w,
                          Eigen::VectorXd& y, std::map<int, int>& h2local,
                          std::vector<ParamDisposition>& col_disp, std::vector<RowTag>& tags);
+
+/**
+ * @brief The extra-band code rows of a station that the split excludes (zero weight)
+ *        because the knob estimates the receiver IFB, with the station's
+ *        counts and edge state kept.
+ *
+ * An extra-band code row carries the satellite's extra-band code bias.  When that bias
+ * is a shared column this epoch the column takes it, and the row informs the receiver
+ * IFB.  When it is not (the satellite's key is held by fewer than two stations, so
+ * PASS A pruned it, or CB-ADM keeps it as a station-local sponge) the row carries the
+ * whole satellite bias, metres, with nothing to take it up: an estimated, carried IFB
+ * would integrate a share of it and push it onto the station's other extra-band rows
+ * and their ionosphere, and with the IFB term held instead the row closes the
+ * station's geometry-free level direction with that bias (the ionosphere, the receiver
+ * DCB and the ambiguities move with it).  Neither is information, so the row is
+ * excluded: the split sets its weight to zero, and a local column that then has no
+ * weighted row (the IFB itself, a sponge) is left out of the block.  A zero weight is
+ * a defined case for every reader of the row weights (the block cofactor check counts
+ * such a block as not checkable; the standardized residuals read zero).
+ *
+ * Called by @ref networkSplitStation only when @ref RxIfbRule::estimated_by_knob, inside the
+ * parallel produce phase: it reads the station's parameter set and measurement update and
+ * writes only the station's own @p s (the rows excluded, the governed columns left with no
+ * weighted row, the registration edges, and the family signals).  The set holds the columns of
+ * this epoch's rows; the split has not yet decided their dispositions.
+ *
+ * @param s           The station's band-5 receiver-delay state (written).
+ * @param set         The station's parameter set (governed columns, satellite code-bias
+ *                    columns).
+ * @param em          The station's measurement update (H and the row identities
+ *                    @c satellite_ids / @c signal_types).
+ * @param shared_cols The H columns the split scattered into the shared border.
+ * @return The data rows to exclude, ascending.
+ */
+std::vector<int> rxIfbExcludedRows(RxIfbStationState& s, const StationParams& set,
+                                   const EpochMeasurement& em, const std::set<int>& shared_cols);
 
 // ---- End of the PASS B station steps, declarations ----
 

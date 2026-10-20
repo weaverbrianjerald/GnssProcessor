@@ -16,7 +16,7 @@
 #include "config/GnssConfig.hpp"         // network.ambiguity_resolution (run-end gate)
 #include "network/ar/ArcLife.hpp"     // carryLifeOf: the one reader of the carry's life fields
 #include "network/runend/RunEnd.hpp"      // NetworkRunEndView
-#include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
+#include "network/state/Entities.hpp"     // net::satSignalKey, net::satKey
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -173,8 +173,8 @@ void arSuspectFoldEpoch(ArSuspectLedger& L, long long now_ep, double now_s, int 
     });
     // (4) This epoch's free-epoch latch, whatever detector filled it.
     for (const auto& [sta, amb_key] : relevel.free_ambs) {
-        const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-        if (parts) arSuspectNote(L, sta, parts->satellite, now_ep, kArSuspectFree, c);
+        if (const std::optional<SatSignalId> arc = net::satSignalKey(amb_key))
+            arSuspectNote(L, sta, net::satKey(arc->sat), now_ep, kArSuspectFree, c);
     }
 }
 

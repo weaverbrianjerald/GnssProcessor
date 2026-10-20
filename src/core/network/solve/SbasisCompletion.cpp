@@ -28,7 +28,6 @@
 #include "network/qc/RobustStats.hpp"
 #include "network/assembly/RowClassify.hpp"   // the row tags' readers: the pools' admission rule
 #include "network/solve/Sbasis.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "products/LiveEphemerisStore.hpp"
 #include "products/NetworkProductEmitter.hpp"
 #include "math/TimeUtils.hpp"
@@ -91,11 +90,9 @@ Eigen::VectorXd networkSbcContinuityTargets(const NetworkRunContext& ctx, const 
         }
         net::forEach(ctx.entities.sat_signals, &net::SatSignalState::pb_level_prev,
                      [&](const SatSignalId& id, double v) {
-            const std::string key = net::ambKey(id);
-            const auto parts = StateKeys::parseAmbiguityKey(key);   // "G01_L1C"
-            if (!parts || !std::isfinite(v)) return;
+            if (id.sat == SatId{} || id.signal == SignalId{} || !std::isfinite(v)) return;
             try {
-                sbc_x_prev(est.phaseBiasColumn(parts->satellite, parts->signal)) = v;
+                sbc_x_prev(est.phaseBiasColumn(net::satKey(id.sat), net::signalKey(id.signal))) = v;
             } catch (...) {}
         });
         net::forEach(ctx.entities.constellations, &net::ConstellationState::channels,

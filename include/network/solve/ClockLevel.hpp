@@ -7,7 +7,7 @@
  *        (docs/refound/CTU_coupling_time_update_2026-09-28.md section 9.3).
  *
  * The level direction of satellite s moves its clock column and every one of its
- * phase-bias columns by the same amount.  MeasurementModel.cpp writes the satellite
+ * phase-bias columns by the same amount.  The station row builder (StationRows.cpp) writes the satellite
  * clock with a -1 partial on code and phase rows (the per-satellite clock block) and
  * the satellite phase bias with a +1 partial on phase rows only (the per-satellite
  * signal phase-bias block), and networkSplitStation_ in ApplicationNetworkAssembly.cpp

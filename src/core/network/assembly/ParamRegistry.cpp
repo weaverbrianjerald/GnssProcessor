@@ -59,24 +59,6 @@ NetworkParamKind paramKindOf(SharedParamKind kind) {
     return NetworkParamKind::SatClock;
 }
 
-const char* paramKindName(NetworkParamKind kind) {
-    switch (kind) {
-        case NetworkParamKind::SatClock:     return "sat_clock";
-        case NetworkParamKind::SatPhaseBias: return "sat_phase_bias";
-        case NetworkParamKind::SatCodeBias:  return "sat_code_bias";
-        case NetworkParamKind::VtecSh:       return "vtec_sh";
-        case NetworkParamKind::Ambiguity:    return "ambiguity";
-        case NetworkParamKind::Zwd:          return "zwd";
-        case NetworkParamKind::SlantIono:    return "slant_iono";
-        case NetworkParamKind::RxClock:      return "rx_clock";
-        case NetworkParamKind::RxPhaseBias:  return "rx_phase_bias";
-        case NetworkParamKind::RxCodeBias:   return "rx_code_bias";
-        case NetworkParamKind::PhaseColour:  return "phase_colour";
-        case NetworkParamKind::RxPosition:   return "rx_position";
-    }
-    return "?";
-}
-
 const char* paramQRuleName(ParamQRule rule) {
     switch (rule) {
         case ParamQRule::None:                return "none";

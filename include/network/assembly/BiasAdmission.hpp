@@ -74,7 +74,7 @@ struct SyncedEpoch;  ///< rinex/MultiRinexSync.hpp: the census input (forward-de
  *
  * Default-constructed with @c active==false (the off / census-never-ran state),
  * so a NetworkRunContext holding one by value costs nothing until @ref runCensus
- * fills it.  The admitted set uses the key format of the StateManager sat-bias
+ * fills it.  The admitted set uses the key format of the parameter-set sat-bias
  * states, @c "satellite|signal" (@ref StateKeys::makeSatBiasKey), so the
  * registration site can test membership directly against @c
  * getSatBiasStates() keys.
@@ -89,7 +89,7 @@ struct NetworkBiasAdmission {
 
     /// @brief One (sat,signal) code pair observed during the census window.
     struct Pair {
-        std::string key;                     ///< "satellite|signal" (== the StateManager sat-bias key).
+        std::string key;                     ///< "satellite|signal" (== the parameter-set sat-bias key).
         std::string satellite;               ///< RINEX satellite id (e.g. "C21").
         std::string signal;                  ///< RINEX code obs id (e.g. "C2I").
         int         support{0};              ///< # stations supporting the pair (tier-1 sustained-support count).

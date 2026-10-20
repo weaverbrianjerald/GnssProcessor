@@ -17,7 +17,6 @@
 #include "network/state/RunContext.hpp"      // ctx.knobs / ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"          // config_.getNetworkConfig()
 #include "network/assembly/RowClassify.hpp"  // rowTagAt, isCodeObservationKind, rowObservationCode
-#include "filter/StateManager.hpp"        // markAmbiguityPendingReseed
 #include "network/diag/RunTraces.hpp"   // emitEvent
 
 #include <spdlog/spdlog.h>
@@ -984,7 +983,7 @@ void networkGrossLosAct(NetworkRunContext& ctx,
                 // Under carry_invariant this mark is bookkeeping; on the
                 // phase-leveling vehicle it is the actuator (the same asymmetry the
                 // RAIM erase documents).
-                if (stations[i].sm) stations[i].sm->markAmbiguityPendingReseed(pa.amb_key);
+                markPendingReseed(stations[i].params, pa.amb_key);
             }
             // The gross-LOS writer of the arc-ledger reason buffer.
             // The screen's published action is a code-row deweight (a cap, not a

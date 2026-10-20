@@ -89,7 +89,7 @@ void networkAssemblyTally(NetworkRun& run, const NetworkEpoch& ep,
 // everything else through const references: the run context (knobs, carry maps, counters),
 // the configuration, the estimator's column layout, the setup, the epoch, every other station.
 // A write to shared state does not compile, except through a pointer member, where const
-// stops: each station's sm, model, mm, mw_slip, iono_var, turbo_edit and if_slip (reached
+// stops: each station's params, model, rows, mw_slip, iono_var, turbo_edit and if_slip (reached
 // through setup.stations), the setup's sync, brdc_apriori, sh_model, sh_model2,
 // product_writer and consumer, and ctx.carry.slip_oracle, oracle_pin and rhs_prev_frame.
 //
@@ -133,7 +133,7 @@ struct StationBuild {
     const std::unique_ptr<GlobalIonosphereMap>& gim;     ///< Application::gim_ for the GIM rows (null unless loaded).
     // ---- this station, writable ----
     const int        i;   ///< Roster index (the frozen loop variable's type: the carry keys are tuple<int, ...>).
-    NetStation&      st;  ///< Its state manager and measurement model.
+    NetStation&      st;  ///< Its parameter set and row inputs.
     StationAssembly& R;   ///< Its slot, asm_res[i].
     // ---- what one step hands a later one ----
     EpochMeasurement em;  ///< The measurement update (data_rows writes, congruence_geometry reads).
@@ -146,7 +146,7 @@ struct StationBuild {
      *
      * The data rows step seeds any new states while it computes the update, so a copy taken
      * before it (the update's own argument) is shorter than this one. Every later step reads
-     * the same vector: no step writes the station's state manager, so the first caller's copy
+     * the same vector: no step writes the station's parameter set, so the first caller's copy
      * is the copy each of them would have made. Call only after the data rows step.
      *
      * @return The copy, valid for the rest of this station's build.
@@ -165,8 +165,10 @@ struct StationBuildStep {
     StationBuildFn      build;   ///< Gates itself at its first line.
 };
 inline constexpr std::size_t kStationBuildStepCount = 12;
+/// The type of a station build's step table.
+using StationBuildSteps = std::array<StationBuildStep, kStationBuildStepCount>;
 /// The station build, in walk order (src/core/network/assembly/StationBuild.cpp).
-extern const std::array<StationBuildStep, kStationBuildStepCount> kStationBuildSteps;
+extern const StationBuildSteps kStationBuildSteps;
 
 /// An ambiguity column waiting for the station's local block (or its per-column fallback):
 /// written by the ambiguity step, read by the local-block step (a local struct before step PB1b).
@@ -256,16 +258,32 @@ void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd&
                               Eigen::VectorXd& w, Eigen::VectorXd& y);
 
 /**
- * @brief Builds one station's block: walks kStationBuildSteps in order.
+ * @brief Builds one station's block: walks a step table in order.
  * @param build One station's build.
+ * @param steps The steps (kStationBuildSteps in a run; a unit test passes its own).
  * @return false when a step ended the build (the slot names the cause).
  */
-bool networkStationBuild(StationBuild& build);
+bool networkStationBuild(StationBuild& build, const StationBuildSteps& steps = kStationBuildSteps);
+
+/**
+ * @brief One station's turn of the produce loop: builds its block and records a throw in its slot.
+ *
+ * The walk (networkStationBuild) sets @c R.ok when the block is complete.  A throw is caught
+ * here: @c R.threw and @c R.err say that the station has no usable block this epoch (the solve
+ * drops it with a warning).  The station's births write its set as they go, so the set is as the
+ * births left it on every exit, and the readers that run before the station's next split (the
+ * slip drains, the admissions, the election) find those columns.
+ *
+ * Writes only the station's own state: its slot and its set.
+ *
+ * @param build One station's build.
+ * @param steps The steps (kStationBuildSteps in a run; a unit test passes its own).
+ */
+void networkStationAssemble(StationBuild& build, const StationBuildSteps& steps = kStationBuildSteps);
 
 /**
  * @brief PASS B's parallel produce: one station's block per OpenMP iteration, into its own
- *        slot.  The frozen loop, its present test and its catch; the body is the walk of
- *        kStationBuildSteps (networkStationBuild).
+ *        slot.  The frozen loop and its present test; the body is networkStationAssemble.
  *
  * An epoch writer in EP1's form (run, ep, kept, outputs), a row of
  * tests/network/test_network_epoch_contract.cpp; called by Application::networkPassB_.

@@ -22,7 +22,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -53,7 +53,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -157,7 +156,7 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
     //     design.
     //
     //     Why the mean is a prediction, not the last value: the producer never
-    //     writes its solution back into the station StateManager, so
+    //     writes its solution back into the station's parameter set, so
     //     x_lin(clock) is constant over the run and x_r carries the whole
     //     clock, including a ~0.3 m/s drift, i.e. 9 m per 30 s epoch (0.29994
     //     m/s on the sim truth bed, against 0.299 m of RW jitter).  A
@@ -191,13 +190,12 @@ void networkRxClockBlockColumns(StationCarryFrame& carry) {
         const double dt_ep = networkEpochSpacingS(pl_now_s, ctx.carry.pl_prev_now_s, pl_max_gap_s);
         struct RxCand { std::string kind; int sidx; };
         std::vector<RxCand> rx_cand;
-        const size_t clk_sz = st.sm->getClockIndex();
-        if (clk_sz != std::numeric_limits<size_t>::max())
-            rx_cand.push_back(RxCand{std::string{}, static_cast<int>(clk_sz)});
+        const StationParams& params = st.params;
+        if (params.clock >= 0)
+            rx_cand.push_back(RxCand{std::string{}, params.clock});
         if (rxclk_isb)
-            for (const auto& [sys, sidx] : st.sm->getSystemTimeOffsetStates())
-                if (sidx != std::numeric_limits<size_t>::max())
-                    rx_cand.push_back(RxCand{sys, static_cast<int>(sidx)});
+            for (const auto& [sys, isb_slot] : params.isb)
+                rx_cand.push_back(RxCand{systemName(sys), isb_slot});
         rxclk_pred.reserve(rx_cand.size());
         for (const RxCand& rc : rx_cand) {
             if (rc.sidx < 0 || rc.sidx >= x_lin.size()) continue;
@@ -289,7 +287,7 @@ void networkHarvestRxClock(NetworkRun& run, const NetworkEpoch& ep, HarvestBorde
     //     harvest block, run the (bias, drift) filter, and prune the stale entries.
     //
     //     The drift is central to the design.  The producer never writes its
-    //     solution back into the station StateManager, so x_lin(clock) is set once
+    //     solution back into the station's parameter set, so x_lin(clock) is set once
     //     (0, or the latched cold_clock_seed median) and is constant for the run:
     //     x_r carries the entire clock, including a ramp of about 0.3 m/s, i.e. 9 m
     //     per 30 s epoch (0.29994 m/s on the sim truth bed, with 0.299 m random-walk

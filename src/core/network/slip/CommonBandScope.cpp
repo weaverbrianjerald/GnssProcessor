@@ -32,8 +32,7 @@
 #include "network/state/RunContext.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: its live bands
 #include "network/diag/RunTraces.hpp"
 #include "slip/IfPhaseSlipDetector.hpp"
 #include "network/slip/SlipQc.hpp"
@@ -408,7 +407,7 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
     // ---- One verdict per (station, satellite) ------------------------------
     for (int i = i_lo; i < n_sta_total; ++i) {
         if (i < 0 || static_cast<std::size_t>(i) >= pa.sta_cb_ev.size()) continue;
-        if (!present[static_cast<std::size_t>(i)] || !stations[i].sm) continue;
+        if (!present[static_cast<std::size_t>(i)]) continue;
         for (const auto& [sat, ev_in] : pa.sta_cb_ev[static_cast<std::size_t>(i)]) {
             // Rule F3 (§14.12).  At an epoch the receiver flagged and no MW pair
             // could see (every sample of the satellite withheld, §14.11),
@@ -438,9 +437,9 @@ void networkCommonBandVerdictEpoch(const PassABuffers& pa,
             // B = the arc's tracked phase bands, i.e. the live ambiguity signals
             // the drains would act on.
             std::set<std::string> live;
-            for (const auto& kv : stations[i].sm->getAmbiguities()) {
-                const auto parts = StateKeys::parseAmbiguityKey(kv.first);
-                if (parts && parts->satellite == sat) live.insert(parts->signal);
+            for (const auto& [arc, slot] : stations[i].params.amb) {
+                (void)slot;
+                if (net::satKey(arc.sat) == sat) live.insert(net::signalKey(arc.signal));
             }
             if (live.size() < 2) continue;  // nothing a band scope can narrow
 

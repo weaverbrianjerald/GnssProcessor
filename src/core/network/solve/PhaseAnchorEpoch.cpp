@@ -94,8 +94,8 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
     //     a clean gauge at another station instead of jumping.
     if (!phase_datum_prioritized) {
         shared_phase_keys.clear();
-        for (const auto& kv : stations.front().sm->getSatPhaseBiasStates())
-            shared_phase_keys.insert(kv.first);
+        for (const auto& kv : stations.front().params.shared.sat_phase_bias)
+            shared_phase_keys.insert(satPhaseBiasText(kv.first));
     } else {
         // This epoch's candidate census and the network.phase_datum_min_stations
         // coverage gate (filter/NetworkPhaseDatum, INC-8b).  It is built once here and
@@ -496,8 +496,9 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
             // reset.
             if (ctx.knobs.pd_held_basis)
                 for (const auto& h : handovers) {
-                    const auto pk = StateKeys::parseAmbiguityKey(h.amb);
+                    const auto pk = net::satSignalKey(h.amb);
                     if (!pk) continue;
+                    const std::string pk_sat = net::satKey(pk->sat);
                     const PhaseBasisEntry* be =
                         net::getSig(ctx.entities.sat_signals, h.amb, &SG::phase_basis);
                     const double dlt = be ? (be->value - be->prev_value) : 0.0;
@@ -514,7 +515,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
                                            ? !h.continuous
                                            : std::abs(dlt) > kStsExactTolM;
                     if (steps) {
-                        net::markSat(entities, pk->satellite, net::Disc::UraRetro);
+                        net::markSat(entities, pk_sat, net::Disc::UraRetro);
                         ++ctx.counters.n_pb_basis_declared;
                         if (!h.continuous) ++ctx.counters.n_pb_basis_declared_cold;
                     }
@@ -625,26 +626,27 @@ void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep)
     // shared_phase_keys), that is, if it is a vertex of the D2 graph.  A station whose
     // σ-keys are all gated allocates no RPB and keeps the legacy lumping.  The set is
     // re-derived each epoch (allocate what is needed, prune the rest), before
-    // est.reset() and PASS B, so buildJacobianRow's +1 RPB coefficient sees the column
+    // est.reset() and PASS B, so the observation equation's +1 RPB coefficient sees the column
     // and splitStation routes it into the local block A_r.  A spanning tree touches
     // every vertex, so every RPB-carrying station carries ≥1 tree-edge pin ⇒ its N_rr
     // stays PD.  Inert (no allocation) when eq34 is off.
     if (phase_datum_eq34) {
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i]) continue;
-            StateManager& sm = *stations[i].sm;
-            std::set<std::string> need_rpb;
-            for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                if (!shared_phase_keys.count(kv.first)) continue;   // gated → legacy lump
-                const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (!p || p->satellite.empty()) continue;
-                need_rpb.insert(StateKeys::makeReceiverPhaseBiasKey(
-                    systemName(systemOfSat(p->satellite)), p->signal));
+            StationParams& set = stations[i].params;
+            std::set<SignalId, SignalNameOrder> need_rpb;
+            for (const auto& kv : set.shared.sat_phase_bias) {
+                if (!shared_phase_keys.count(satPhaseBiasText(kv.first))) continue;   // gated → legacy lump
+                if (kv.first.sat == SatId{}) continue;
+                need_rpb.insert(kv.first.signal);
             }
-            for (const auto& rk : need_rpb)
-                if (sm.getReceiverPhaseBiasIndex(rk) < 0)
-                    sm.addReceiverPhaseBiasState(rk, 0.0);
-            sm.pruneReceiverPhaseBiasStatesExcept(need_rpb);
+            for (const SignalId& rk : need_rpb)
+                if (set.rx_pb.count(rk) == 0) {
+                    LocalSlot slot;
+                    slot.ref = rxPhaseBiasRef(rk.sys, rk);
+                    addParam(set, slot);
+                }
+            pruneReceiverPhaseBiasExcept(set, need_rpb);
         }
     }
 }

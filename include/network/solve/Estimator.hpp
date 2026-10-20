@@ -12,7 +12,7 @@
  *      phase bias), which fixes the shared column layout;
  *   2. @ref beginEpoch: open a fresh arrowhead system of that width;
  *   3. @ref addStation per station: pre-formed local-vs-shared design rows, built
- *      by the caller from each station's single-receiver `MeasurementModel` (the
+ *      by the caller from each station's single-receiver row builder (the
  *      network applies no receiver-side differencing);
  *   4. @ref solve with an explicit minimum-constraint @ref Datum.  The reduced
  *      shared satellite system is rank-deficient by the gauge freedoms (overall
@@ -26,7 +26,7 @@
  * Scope (W4-S2a): the single-epoch estimator core, validated on a synthetic
  * noise-free network (truth recovery up to the declared S-transform).  Outside
  * this class: the `runNetwork()` epoch loop (S2b: MultiRinexSync `by_station`,
- * the per-station design rows from the live `MeasurementModel`, the between-epoch
+ * the per-station design rows from the station row builder, the between-epoch
  * time update, the config flags); the `SbasisDeclaration` and the null-space rank
  * gate in @c NetworkSbasis (W5), which formalize the minimal pin set that
  * @ref Datum carries here; and cross-station QC (network RAIM).

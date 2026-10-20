@@ -32,7 +32,7 @@ void networkSlipFunnelOpen(NetworkRun& run, const NetworkEpoch& ep, NetworkSlipF
     // This epoch's slip event feed for the DD invariant carry: the (app station index,
     // ambiguity key) pairs the PASS-A slip detectors flagged.  It is filled at the
     // detection site (the network/slip/SlipQc.cpp drains) rather than read from
-    // pending-reseed at fold time, because PASS-B MeasurementModel::compute re-seeds
+    // pending-reseed at fold time, because PASS-B networkBirthLocalStates re-seeds
     // and clears the pending-reseed flag before buildCarryDdPriors runs (the flag is a
     // one-shot the assembly consumes).  It is recorded regardless of carry_warm (the
     // detectors run cold, and the DD carry is live from epoch 1), so the carry is

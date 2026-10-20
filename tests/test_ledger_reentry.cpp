@@ -38,7 +38,7 @@
 #include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -112,8 +112,7 @@ struct Harness {
     Harness() {
         stations.emplace_back();
         stations.front().name = kSta;
-        stations.front().sm =
-            std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+        stations.front().params = startStationParams(config, Eigen::Vector3d::Zero());
         addCarry(kSig1);
         addCarry(kSig2);
         se.time = GnssTime{2313, 271200.0};

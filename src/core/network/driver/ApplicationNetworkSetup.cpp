@@ -38,7 +38,7 @@
  * Each solution epoch runs the arrowhead estimator end to end:
  *
  *   PASS A (layout)  For each present station, PppModel::computeModels, then
- *       MeasurementModel::ensureNetworkSharedStates pre-allocates the shared
+ *       networkAdmitSharedStates pre-allocates the shared
  *       satellite states (per-satellite clock, per-(sat, signal) phase bias)
  *       behind the same usability gate the measurement build uses.  The datum
  *       (pivot) station is processed first, so its usable phase-signal set
@@ -48,7 +48,7 @@
  *       signal in the pivot's set.
  *
  *   PASS B (assembly)  For each present station,
- *       MeasurementModel::computeMeasurementUpdate produces an undifferenced
+ *       networkStationRows produces an undifferenced
  *       H / innovation / R block (no receiver-side differencing,
  *       DifferencingMode::None).  Its columns are split: the satellite clock (−1)
  *       and phase-bias (+1) columns scatter into the shared border A_s; the three
@@ -757,9 +757,26 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // drops a sparse code (PppModel::setSignalAllowlist).
     // network.phase_bias_min_station_fraction floats it instead: the observation is
     // kept but its satellite phase-bias state is withheld
-    // (MeasurementModel::setPhaseBiasSignalAllowlist), so the float ambiguity absorbs
+    // (the allow-list networkAdmitSharedStates reads), so the float ambiguity absorbs
     // the bias and the signal is not AR-eligible.  Both default to 0 (empty
     // allowlists, byte-identical).
+    // A network station has the layout of its own parameter set: the receiver clock, the wet
+    // delay and one inter-system bias per constellation.  The single-receiver filter's optional
+    // columns are not part of it.
+    {
+        const auto ignored = [&](bool on, const char* key) {
+            if (on) log->warn("Network: {} is set but a network station has no such parameter; "
+                              "it is ignored.", key);
+        };
+        ignored(config_.estimateVelocity(), "estimation.estimate_velocity");
+        ignored(config_.estimatePhaseClock(), "estimation.estimate_phase_clock");
+        ignored(config_.estimateTropoGradients(), "estimation.estimate_tropo_gradients");
+        ignored(config_.enableImu(), "imu.enabled");
+        ignored(config_.getStateAmbiguityBasis() == StateAmbiguityBasis::NlWl,
+                "estimation.state_ambiguity_basis nl_wl");
+        ignored(config_.enableBetweenSatelliteSd(), "estimation.between_satellite_sd.enabled");
+    }
+
     std::map<std::string, std::set<std::string>> signal_allowlist;       // drop gate (code and phase)
     std::map<std::string, std::set<std::string>> phase_bias_allowlist;   // float gate (phase only)
     const double sig_cover_min = config_.networkSignalMinStationFraction();
@@ -847,9 +864,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     }
 
     // --- Phase 4: per-station Kalman resources (pivot at index 0) -----------
-    // Each station gets a single-receiver StateManager (coordinates fixed at the
+    // Each station gets a parameter set (coordinates fixed at the
     // configured ECEF, or at its ARP reduction under network.station_marker_to_arp),
-    // a PppModel bound to its RinexParser, and a MeasurementModel.  The pivot is
+    // a PppModel bound to its RinexParser, and its row inputs.  The pivot is
     // built first so PASS A can seed its phase-signal set before the others.
     auto& stations = setup.stations;
     // Stations whose RINEX receiver antenna matched no loaded ATX entry (zero receiver
@@ -902,7 +919,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // observations refer to the antenna and the ATX phase-centre model is defined
         // relative to the antenna reference point.  The reduction happens here, once,
         // before st.ecef reaches the state vector (x0 below), the PppModel, the
-        // MeasurementModel, st.pstate or any geometry, through the same
+        // row inputs, st.pstate or any geometry, through the same
         // Coordinates::markerToArp that the held-out consumer's truth uses.
         // markerToArp is an exact no-op at or below a 1e-6 m eccentricity, so a
         // 0/0/0 station is bit-for-bit unchanged in either knob state.
@@ -942,13 +959,9 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
             }
         }
         st.is_pivot  = is_pivot;
-        st.sm        = std::make_unique<StateManager>(5, log_manager_, config_);  // pos(3)+clk(1)+tropo(1)
-        Eigen::VectorXd x0 = st.sm->getStateVector();
-        x0.head<3>() = st.ecef;
-        st.sm->setStateVector(x0);
-        st.sm->setStateEpochTime(synced.front().time);
+        st.params    = startStationParams(config_, st.ecef);   // the set holds the core columns before the first epoch
         st.model = std::make_unique<PppModel>(
-            config_, *product_parser_, log_manager_, *parser, *st.sm);
+            config_, *product_parser_, log_manager_, *parser);
         // Label the canonical-signal rider with the station name, unconditionally.  The
         // latch's own "locked for GPS …" line goes to the ppp_model logger, which is
         // empty in every run, so the labelled rider (RS-8, SPEC_event_harness §21.16)
@@ -982,17 +995,15 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
         // a priori (null in every other mode, byte-identical).  buildStation never builds
         // the held-out consumer, which reconstructs brdc(iode) + C from the store.
         st.model->setBroadcastClockApriori(setup.brdc_apriori.get());
-        st.mm = std::make_unique<MeasurementModel>(
-            *st.sm, *st.model, config_, log_manager_);
-        // Phase-bias float gate: withhold satellite phase-bias states for signals
-        // below network coverage (empty allowlist ⇒ no-op, every phase signal gets one).
-        if (!phase_bias_allowlist.empty()) st.mm->setPhaseBiasSignalAllowlist(phase_bias_allowlist);
-        // Seed this station's measurement-model frequency helper with its own
-        // RINEX-header GLONASS FCN slots, so the GLONASS iono coefficient and
-        // carrier wavelength in the Jacobian use the actual channel (not the
-        // compiled-in default table).  Harmless for GPS/Galileo-only stations
-        // (empty map).  Matters only under enableGlonassNetwork().
-        st.mm->setGlonassSlots(parser->getGlonassFreqSlots());
+        // The station's row inputs.  The phase-bias float gate withholds the satellite phase
+        // bias of signals below network coverage (an empty allowlist admits every phase
+        // signal).  The frequency helper takes the station's own RINEX-header GLONASS FCN slots,
+        // so the GLONASS iono coefficient and carrier wavelength in the Jacobian use the actual
+        // channel, not the compiled-in default table (an empty map for GPS and Galileo; matters
+        // only under enableGlonassNetwork()).
+        st.rows = std::make_unique<StationRowInputs>(config_, *st.model, log_manager_,
+                                                     parser->getGlonassFreqSlots(),
+                                                     phase_bias_allowlist);
 
         // Receiver-antenna ATX match check (startup diagnostic and the optional station
         // exclusion, network.exclude_unmodeled_antenna_stations).  A receiver antenna
@@ -1335,7 +1346,7 @@ int Application::networkSetup_(NetworkSetupResult& setup) {
     // === Per-station compute parallelism ====================================
     // PASS A (geometry) and the produce half of PASS B (measurement assembly) are
     // embarrassingly parallel across stations: each owns an independent
-    // StateManager / PppModel / MeasurementModel, and the audited call trees touch
+    // parameter set / PppModel / row inputs, and the audited call trees touch
     // no shared mutable state (product stores are const after load; the
     // per-instance model caches are thread-private; the live SSR/ephemeris
     // singletons are mutex-guarded, and in post-processing they are empty except

@@ -10,7 +10,7 @@
 
 #include "network/state/RunContext.hpp"     // ctx.carry / ctx.counters
 #include "config/GnssConfig.hpp"         // config_.getNetworkConfig()
-#include "filter/StateKeySchema.hpp"     // StateKeys::parse*
+#include "network/state/Entities.hpp"     // net::satSignalKey, net::satKey
 #include "network/slip/RawObservables.hpp"// SlipQcChannel
 #include "network/diag/RunTraces.hpp"  // traces.emitEvent
 
@@ -99,9 +99,9 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
                 if (amb.empty() || chord.u < 0
                     || static_cast<std::size_t>(chord.u) >= slip_qc.epoch.verdict.size())
                     continue;
-                const auto parts = StateKeys::parseAmbiguityKey(amb);
-                if (!parts) continue;
-                const std::string& sat = parts->satellite;
+                const auto arc = net::satSignalKey(amb);
+                if (!arc) continue;
+                const std::string sat = net::satKey(arc->sat);
                 if (slip_qc.epoch.stepped.count({ chord.u, sat })) continue;  // real step ⇒ re-tap
                 const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
                 const auto vit = vmap.find(sat);
@@ -401,11 +401,12 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             // population, not removed.
             if (retap_only && slip_qc.epoch.computed && chord.u >= 0
                 && static_cast<std::size_t>(chord.u) < slip_qc.epoch.verdict.size()) {
-                if (const auto pk = StateKeys::parseAmbiguityKey(ait->second)) {
+                if (const auto pk = net::satSignalKey(ait->second)) {
+                    const std::string pk_sat = net::satKey(pk->sat);
                     const auto& vmap = slip_qc.epoch.verdict[static_cast<std::size_t>(chord.u)];
-                    const auto vit = vmap.find(pk->satellite);
+                    const auto vit = vmap.find(pk_sat);
                     if (vit != vmap.end() && vit->second.measured
-                        && !slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
+                        && !slip_qc.epoch.stepped.count({chord.u, pk_sat})) {
                         ctx.carry.carry_innov_pending_flat.insert({chord.u, ait->second});
                     }
                 }
@@ -419,8 +420,8 @@ void networkInstallCarry(NetworkRun& run, const NetworkEpoch& ep, EpochEvents& e
             if (nc.slip_qc.gap_instrument) {
                 ++slip_qc.counters.d5_retaps;
                 if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs;
-                if (const auto pk = StateKeys::parseAmbiguityKey(ait->second))
-                    if (slip_qc.epoch.stepped.count({chord.u, pk->satellite})) {
+                if (const auto pk = net::satSignalKey(ait->second))
+                    if (slip_qc.epoch.stepped.count({chord.u, net::satKey(pk->sat)})) {
                         ++slip_qc.counters.d5_retaps_stepped;
                         if (first_this_epoch) ++slip_qc.counters.d5_retap_ambs_stepped;
                     }

@@ -21,7 +21,7 @@
 #include "network/assembly/Contributions.hpp"
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/ParamInventory.hpp"
-#include "filter/StateKeySchema.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set
 #include "rinex/MultiRinexSync.hpp"
 #include <Eigen/Dense>
 #include <algorithm>
@@ -52,7 +52,6 @@
 #include "network/solve/SolveStations.hpp" // the consume and the in-solve track (PB1a)
 #include "network/solve/ChainDatum.hpp"    // networkEq34PinAudit
 #include "network/ar/ArSuspect.hpp"      // arSuspectNote: the AR search's suspect-corner stamps
-#include "filter/StateKeySchema.hpp"
 #include "network/driver/RunTypes.hpp"      // run-loop record types: NetStation / StationAssembly / carry PODs (INC-2)
 #include "network/qc/RobustStats.hpp"   // median/MAD robust attribution helpers (INC-2)
 #include "logging/CsvRotator.hpp"     // size-based rotation of the unbounded service CSVs (P1)
@@ -159,16 +158,15 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
         // thing at 1 s and 30 s cadence and no nominal-rate config is needed.
         // Floored at one epoch: a same-epoch re-fold still pays one q.
         const double dt_ep = networkEpochSpacingS(pl_now_s, ctx.carry.pl_prev_now_s, pl_max_gap_s);
-        for (const auto& [isat, iidx_sz] : st.sm->getIonosphereStates()) {
-            const int iidx = static_cast<int>(iidx_sz);
-            if (iidx < 0 || iidx >= x_lin.size()) continue;
+        for (const auto& [isat_id, iidx] : st.params.iono) {
+            if (iidx >= x_lin.size()) continue;
             if (!std::isfinite(x_lin(iidx))) continue;
             const auto ihit = h2local.find(iidx);
             if (ihit == h2local.end()) continue;  // iono column not in A_r this epoch
             const Eigen::Index icol = static_cast<Eigen::Index>(ihit->second);
-            R.pl_iono.emplace_back(isat, icol, x_lin(iidx));
+            R.pl_iono.emplace_back(net::satKey(isat_id), icol, x_lin(iidx));
             const LocalCarry* iit =
-                net::getLos(los_rows, static_cast<int>(i), isat, &net::LosState::iono_blk);
+                net::get(los_rows, LosId{StationId{i}, isat_id}, &net::LosState::iono_blk);
             if (iit == nullptr) continue;  // first sighting / post-erase: cold by design
             const double igap = pl_now_s - iit->last_seen_s;
             if (carryPastHorizon(pl_now_s, iit->last_seen_s, iono_blk_gap_s)) {
@@ -186,8 +184,7 @@ void networkSlantIonoBlockColumns(StationCarryFrame& carry) {
                 icol, x_lin(iidx), iit, ivar_eff,
                 std::max(0.0, igap), /*vce_fac=*/1.0,
                 /*is_zwd=*/false, /*is_iono=*/true});
-            if (const auto col_sat = SatId::parse(isat))   // its block row's tag
-                iono_bc.back().sat = *col_sat;
+            iono_bc.back().sat = isat_id;   // its block row's tag
         }
     }
 }

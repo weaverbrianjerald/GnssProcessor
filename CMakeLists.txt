@@ -95,12 +95,17 @@ add_library(gnss_core STATIC
     src/core/filter/ResidualHistoryTracker.cpp
     src/core/measurement/MeasurementModel.cpp
     src/core/measurement/MeasurementModelStates.cpp
+    src/core/measurement/MeasurementModelSeeds.cpp
     src/core/measurement/MeasurementModelRow.cpp
+    src/core/measurement/ObservationEquation.cpp
+    src/core/measurement/RowTrace.cpp
+    src/core/measurement/UserParamView.cpp
+    src/core/measurement/Seeds.cpp
     src/core/measurement/MeasurementModelVariance.cpp
     src/core/measurement/MeasurementModelDd.cpp
-    src/core/measurement/MeasurementModelNetwork.cpp
     src/core/measurement/MeasurementBuilder.cpp
     src/core/measurement/StateInitializer.cpp
+    src/core/measurement/ReceiverBias.cpp
     src/core/measurement/BssdTransform.cpp
     src/core/measurement/BrsdTransform.cpp
     src/core/model/PppModel.cpp
@@ -298,6 +303,9 @@ add_library(gnss_core STATIC
     src/core/network/assembly/StationAnchors.cpp
     src/core/network/assembly/StationCarry.cpp
     src/core/network/assembly/StationSplit.cpp
+    src/core/network/assembly/StationRows.cpp
+    src/core/network/assembly/LocalBirth.cpp
+    src/core/network/assembly/SharedAdmission.cpp
     src/core/network/carry/ZwdCarry.cpp
     src/core/network/diag/ShHealth.cpp
     src/core/network/diag/Leveling.cpp
@@ -338,6 +346,7 @@ add_library(gnss_core STATIC
     src/core/network/assembly/CanonicalPairAdmission.cpp
     src/core/network/assembly/SecondBandAdmission.cpp
     src/core/network/state/ArcLedger.cpp
+    src/core/network/state/StationParams.cpp
     src/core/network/solve/AnchorReentry.cpp
     src/core/network/slip/OraclePin.cpp
     src/core/network/slip/OraclePinSetup.cpp
@@ -356,6 +365,7 @@ add_library(gnss_core STATIC
     src/core/filter/NeqAccumulator.cpp
     src/core/common/SignalBand.cpp
     src/core/common/GnssIdentity.cpp
+    src/core/common/ParamRef.cpp
  "src/core/math/Coordinates.cpp" "src/core/math/Interpolate.cpp")
 target_include_directories(gnss_core PUBLIC include)
 # KalmanFilter.cpp emits more COFF sections than the default object format
@@ -598,6 +608,7 @@ add_executable(gnss_tests
     tests/test_config_extends.cpp
     tests/test_sd_ewl_prereduce.cpp
     tests/network/test_sd_ewl_integer.cpp
+    tests/network/test_sd_ewl_station_params.cpp
     tests/test_ssr_store_injection.cpp
     tests/test_realtime_seams.cpp
     tests/test_consumer_disc_carry.cpp
@@ -670,7 +681,13 @@ add_executable(gnss_tests
     tests/test_windup_restart_targets.cpp
     tests/network/test_network_param_registry.cpp
     tests/test_gnss_identity.cpp
+    tests/test_param_ref.cpp
+    tests/test_observation_equation.cpp
+    tests/test_row_trace.cpp
+    tests/test_seeds.cpp
     tests/network/test_network_param_inventory.cpp
+    tests/network/test_station_params.cpp
+    tests/network/test_station_births.cpp
     tests/network/test_network_rx_extra_band_delay.cpp
     tests/network/test_network_contributions.cpp
     tests/network/test_service_mode_clock_refusals.cpp

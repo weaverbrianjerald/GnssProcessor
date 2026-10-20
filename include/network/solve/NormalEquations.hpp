@@ -6,7 +6,7 @@
  * The numerical core of the minimum-constraint S-system network producer
  * (`ProcessingMode::PPP_RTK_Network`): per-station local normals are reduced onto
  * a shared satellite-parameter block without touching the single-receiver core.
- * Each station keeps its own `MeasurementModel`/`StateManager`, so the
+ * Each station keeps its own parameter set and row builder, so the
  * single-receiver invariants hold, and contributes pre-formed local
  * normal-equation blocks here, coupled to the other stations only through the
  * shared satellite border.
@@ -50,7 +50,7 @@
  * border, and the per-epoch swept block becomes N independent station blocks.
  *
  * Scope: linear algebra over abstract shared and local blocks.  The kernel owns
- * no GNSS state, no `StateManager`, no epoch loop and no `StateKeySchema` keys,
+ * no GNSS state, no station state, no epoch loop and no `StateKeySchema` keys,
  * and it accumulates no goodness-of-fit, so it reports no error bars.  Its two
  * consumers supply those:
  *   - `NetworkEstimator`, the epoch driver: per-station block assembly, time
@@ -1548,7 +1548,7 @@ public:
      * read of the same @f$N_{rr}^r@f$ the test rejected (including any folded
      * @ref StationPrior): its smallest eigenpair, the count of eigenvalues under the
      * relative cutoff, and the pivot triple the decision used.  The caller maps the
-     * largest-|weight| entries of @ref null_vec to StateManager labels through its
+     * largest-|weight| entries of @ref null_vec to parameter labels through its
      * own @c h2local map (the kernel has no label vocabulary), the same mapping
      * @c network.neq_export_epoch uses.
      *

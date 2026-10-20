@@ -37,7 +37,6 @@
 #include "network/solve/ClockAnchor.hpp"      // guarded temporal clock anchor
 #include "network/state/CarryDisposition.hpp" // the decided-once fold disposition
 #include "network/solve/PivotHandover.hpp"   // datumChangeAffectsKey (handover scope predicate)
-#include "filter/StateKeySchema.hpp"         // StateKeys::parseAmbiguityKey
 #include "math/TimeUtils.hpp"                // TimeUtils::continuousGpsSeconds
 
 #include <fmt/format.h>

@@ -12,11 +12,14 @@
  *    validateMeasurementUpdate, and the forwarders to PivotManager.
  *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates, one
  *    member per state category, called in a fixed order.
- *  - MeasurementModelRow.cpp: one row (isUsableMeasurement, buildJacobianRow)
- *    and the product coverage checks they use.
- *  - MeasurementModelVariance.cpp: the variance of one row (rowVariance).
+ *  - MeasurementModelRow.cpp: the row's Jacobian and predicted observable
+ *    (buildJacobianRow, over the term list of measurement/ObservationEquation.hpp
+ *    and the lookup of measurement/UserParamView.hpp), and the definitions of the
+ *    usability rule and the product coverage checks (free functions,
+ *    measurement/RowRules.hpp).
+ *  - MeasurementModelVariance.cpp: the definition of rowVariance, the variance
+ *    of one row (a free function, measurement/RowRules.hpp).
  *  - MeasurementModelDd.cpp: the baseline double-difference build, in stages.
- *  - MeasurementModelNetwork.cpp: the network producer's surface.
  *
  * Heavy sub-tasks are delegated:
  *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
@@ -27,6 +30,8 @@
 #include "model/PppModel.hpp"
 #include "common/PppTypes.hpp"
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/ObservationEquation.hpp"
+#include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <stdexcept>
 #include <cmath>
@@ -53,7 +58,7 @@ namespace GnssProcessor {
     MeasurementModel::MeasurementModel(StateManager& state_manager, const PppModel& ppp_model,
         const GnssConfig& config, LogManager& log_manager)
         : state_manager_(state_manager), ppp_model_(ppp_model), config_(config), log_manager_(log_manager),
-          state_initializer_(config, ppp_model, state_manager, log_manager),
+          state_initializer_(config, ppp_model, log_manager),
           pivot_manager_(config, log_manager),
           bssd_transform_(config, state_manager, pivot_manager_, log_manager),
           dd_pivot_manager_(config, log_manager),
@@ -65,19 +70,14 @@ namespace GnssProcessor {
             config_.getSignalPriorities().size(), modeLabel(config_));
     }
 
-    void MeasurementModel::setGlonassSlots(const std::map<std::string, int>& slots) {
-        // Seeds this station's frequency helper with the FCN slots from its RINEX
-        // header, so the GLONASS frequency-dependent Jacobian terms (the iono
-        // coefficient alpha = (f_L1/f)^2 and the per-slot carrier wavelength) use
-        // the actual channel instead of the compiled-in default table.  PppModel
-        // seeds its own helper the same way, once; the network driver calls this
-        // for each station.
-        ppp_utils_.setGlonassSlots(slots);
-    }
-
     const SsrCorrectionStore& MeasurementModel::ssrStore() const {
         return ssr_store_override_ ? *ssr_store_override_
                                    : SsrCorrectionStore::getInstance();
+    }
+
+    const ClockRefMap& MeasurementModel::clockRefs() const {
+        return clock_refs_override_ ? *clock_refs_override_
+                                    : ProductCache::getInstance().getClockRefSignals();
     }
 
     // ===================================================================
@@ -129,40 +129,45 @@ namespace GnssProcessor {
     // Row geometry gate
     // ===================================================================
 
-    bool MeasurementModel::hasValidGeometry(const PppObservation& obs,
-                                            const std::string& epoch_prefix) const {
+    bool hasValidGeometry(const GnssConfig& config, LogManager& log_manager,
+                          const PppObservation& obs, const std::string& epoch_prefix) {
         // Validate stored geometry
         if (obs.sat_pos.norm() < 1.9e7 || !obs.sat_pos.allFinite()) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored satellite position for {} at TOW {:.3f}: norm={:.3e} m, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.sat_pos.norm(), modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.sat_pos.norm(), modeLabel(config));
             return false;
         }
         if (obs.range < 1.5e7 || !std::isfinite(obs.range)) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored range for {} at TOW {:.3f}: {:.3f} m, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.range, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.range, modeLabel(config));
             return false;
         }
-        if (obs.elevation < config_.getElevationMaskDeg()) {
-            log_manager_.getLogger("measurement_model")->debug(
+        if (obs.elevation < config.getElevationMaskDeg()) {
+            log_manager.getLogger("measurement_model")->debug(
                 "{}Satellite {} below elevation mask at TOW {:.3f}, elevation={:.3f} deg, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.elevation, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.elevation, modeLabel(config));
             return false;
         }
         if (obs.los.norm() < 0.5 || !obs.los.allFinite()) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid stored LOS for {} at TOW {:.3f}, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, modeLabel(config));
             return false;
         }
         if (obs.mf_w <= 0.0 || !std::isfinite(obs.mf_w)) {
-            log_manager_.getLogger("measurement_model")->warn(
+            log_manager.getLogger("measurement_model")->warn(
                 "{}Invalid wet mapping function for {} at TOW {:.3f}: {:.3f}, mode={}",
-                epoch_prefix, obs.satellite, obs.time.tow, obs.mf_w, modeLabel(config_));
+                epoch_prefix, obs.satellite, obs.time.tow, obs.mf_w, modeLabel(config));
             return false;
         }
         return true;
+    }
+
+    bool MeasurementModel::hasValidGeometry(const PppObservation& obs,
+                                            const std::string& epoch_prefix) const {
+        return GnssProcessor::hasValidGeometry(config_, log_manager_, obs, epoch_prefix);
     }
 
     // --- computeMeasurementUpdate: top-level orchestrator ---
@@ -188,11 +193,11 @@ namespace GnssProcessor {
         // would freeze every non-GPS ISB at 0 for the whole session once GPS joins
         // later.  The seed is retried each epoch until GPS is present.
         if (!state_initializer_.isIsbInitialized()) {
-            if (state_initializer_.initializeInterSystemBiases(observations, epoch_prefix))
+            if (initializeInterSystemBiases(observations, epoch_prefix))
                 state_initializer_.markIsbInitialized();
         }
         if (!state_initializer_.isPhaseClockInitialized() && config_.estimatePhaseClock()) {
-            state_initializer_.initializePhaseClockOffset(observations, epoch_prefix);
+            initializePhaseClockOffset(observations, epoch_prefix);
             state_initializer_.markPhaseClockInitialized();
         }
 
@@ -212,7 +217,7 @@ namespace GnssProcessor {
 
         // --- First-epoch code bias seeding ---
         if (!state_initializer_.isCodeBiasInitialized() && config_.estimateIfb()) {
-            state_initializer_.initializeCodeBiases(observations, epoch_prefix);
+            initializeCodeBiases(observations, epoch_prefix);
             state_initializer_.markCodeBiasInitialized();
         }
 
@@ -238,7 +243,8 @@ namespace GnssProcessor {
         size_t num_obs = 0;
         for (const auto& obs : observations)
             for (const auto& [ref_type, observed] : obs.observed)
-                if (isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix))
+                if (isUsableMeasurement(config_, log_manager_, bssd_pivot_signals_, obs, ref_type,
+                                        excluded_measurements, epoch_prefix))
                     ++num_obs;
 
         if (num_obs == 0) {
@@ -261,7 +267,8 @@ namespace GnssProcessor {
             if (!hasValidGeometry(obs, epoch_prefix)) continue;
 
             for (const auto& [ref_type, observed] : obs.observed) {
-                if (!isUsableMeasurement(obs, ref_type, excluded_measurements, epoch_prefix)) continue;
+                if (!isUsableMeasurement(config_, log_manager_, bssd_pivot_signals_, obs, ref_type,
+                                        excluded_measurements, epoch_prefix)) continue;
 
                 try {
                     Eigen::VectorXd jacobian;
@@ -270,7 +277,7 @@ namespace GnssProcessor {
                         continue;
 
                     update.innovations(row) = observed - predicted;
-                    update.R_v(row) = rowVariance(obs, ref_type);
+                    update.R_v(row) = rowVariance(rowProducts(), obs, ref_type);
 
                     update.H.row(row) = jacobian;
                     update.satellite_ids.push_back(obs.satellite);
@@ -393,7 +400,8 @@ namespace GnssProcessor {
         const std::string& epoch_prefix,
         bool forced_only)
     {
-        pivot_manager_.handlePivotHandover(observations, state_manager_, epoch_prefix, forced_only);
+        pivot_manager_.handlePivotHandover(observations, state_manager_, ambiguitySeedInput(),
+                                           epoch_prefix, forced_only);
     }
 
     // -------------------------------------------------------------------

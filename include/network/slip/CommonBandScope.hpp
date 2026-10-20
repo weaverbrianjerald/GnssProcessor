@@ -108,7 +108,7 @@
  * off run's run-end line already states what arming would have narrowed.
  */
 
-#include "filter/StateKeySchema.hpp"   // StateKeys::parseAmbiguityKey
+#include "network/state/Entities.hpp"   // net::satSignalKey, net::satKey
 
 #include <map>
 #include <set>
@@ -378,9 +378,9 @@ inline SplitRefCount networkSplitReferencedSats(
     std::map<std::string, std::pair<std::string, bool>> per_sat;
     std::map<std::string, int> n_fam;
     for (const auto& [amb, sta] : anchor_incumbent) {
-        const auto parts = StateKeys::parseAmbiguityKey(amb);   // "<sat>_<signal>"
-        if (!parts) continue;
-        const std::string& sat = parts->satellite;
+        const auto id = net::satSignalKey(amb);   // "<sat>_<signal>"
+        if (!id) continue;
+        const std::string sat = net::satKey(id->sat);
         ++n_fam[sat];
         auto it = per_sat.find(sat);
         if (it == per_sat.end()) per_sat.emplace(sat, std::make_pair(sta, false));

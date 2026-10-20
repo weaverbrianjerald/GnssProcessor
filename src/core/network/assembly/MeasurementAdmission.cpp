@@ -11,7 +11,6 @@
 #include "common/GnssIdentity.hpp"
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "math/TimeUtils.hpp"   // GnssTime (event stamps)
 
@@ -234,7 +233,6 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
         if (i >= present.size() || !present[i]) continue;
         if (i >= modeled.size()) continue;
         NetStation& st = stations[i];
-        if (!st.sm) continue;
         const int si = static_cast<int>(i);
 
         // ---- (1) gather the raw terms ------------------------------------
@@ -359,7 +357,6 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                    > max_frac * static_cast<double>(n_sats);
 
         // ---- (4) the response --------------------------------------------
-        StateManager& sm = *st.sm;
         std::set<std::string> withheld_pb;   // "sat|signal" phase-bias identities
         std::set<std::string> withheld_cb;   // sat-code-bias state keys
         std::set<std::string> emptied_sats;  // satellites left with no observable at all
@@ -463,7 +460,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                     if (carry_slipped_ambs.insert({si, amb}).second) ++ctr.refloat_ambs;
                 }
                 if (carry_warm) {
-                    sm.markAmbiguityPendingReseed(amb);
+                    markPendingReseed(st.params, amb);
                     ++ctr.refloat_reseeds;
                 }
             }
@@ -730,10 +727,10 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                     } else if (++a.clean_run >= heal_ep) {
                         // Readmit through the normal funnel with a fresh seed.  The
                         // band has been out of `observed` for at least heal_ep
-                        // epochs, so `ensureRequiredStates` has already pruned its
+                        // epochs, so `networkBirthLocalStates` has already pruned its
                         // ambiguity and this seam pruned its bias states, but the
                         // invariant-DD chord is keyed independently of the
-                        // StateManager, so the re-tap is what delivers "a heal never
+                        // parameter set, so the re-tap is what delivers "a heal never
                         // restores the old states".  The band is not withheld this
                         // epoch: that is what admission means.
                         ++ctr.heals;
@@ -756,7 +753,7 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
                                     ++ctr.refloat_ambs;
                             }
                             if (carry_warm) {
-                                sm.markAmbiguityPendingReseed(amb);
+                                markPendingReseed(st.params, amb);
                                 ++ctr.refloat_reseeds;
                             }
                         }
@@ -814,35 +811,35 @@ void networkMeasurementAdmission(NetworkRun& run, const NetworkEpoch& ep, EpochP
         }
 
         if (prune_states) {
-            std::set<std::string> keep_pb;
-            for (const auto& kv : sm.getSatPhaseBiasStates()) {
-                const auto p = StateKeys::parseSatPhaseBiasKey(kv.first);
-                if (p && (withheld_pb.count(p->satellite + "|" + p->signal)
-                          || emptied_sats.count(p->satellite))) {
+            StationParams& set = st.params;
+            std::set<SatSignalId> keep_pb_ids;
+            for (const auto& kv : set.shared.sat_phase_bias) {
+                if (withheld_pb.count(net::holdKey(kv.first))
+                    || emptied_sats.count(net::satKey(kv.first.sat))) {
                     ++ctr.withheld_pb_pruned;
                     continue;
                 }
-                keep_pb.insert(kv.first);
+                keep_pb_ids.insert(kv.first);
             }
-            sm.pruneSatPhaseBiasStatesExcept(keep_pb);
+            pruneSatPhaseBiasExcept(set, keep_pb_ids);
 
-            std::set<std::string> keep_cb;
-            for (const auto& kv : sm.getSatBiasStates()) {
-                if (withheld_cb.count(kv.first)) { ++ctr.withheld_cb_pruned; continue; }
-                keep_cb.insert(kv.first);
+            std::set<SatSignalId> keep_cb_ids;
+            for (const auto& kv : set.shared.sat_code_bias) {
+                if (withheld_cb.count(satCodeBiasText(kv.first))) { ++ctr.withheld_cb_pruned; continue; }
+                keep_cb_ids.insert(kv.first);
             }
-            sm.pruneSatBiasStatesExcept(keep_cb);
+            pruneSatCodeBiasExcept(set, keep_cb_ids);
 
             if (!emptied_sats.empty()) {
-                std::set<std::string> keep_clk;
-                for (const auto& kv : sm.getSatClockStates()) {
-                    if (emptied_sats.count(StateKeys::satelliteFromSatClockKey(kv.first))) {
+                std::set<SatId> keep_clk_ids;
+                for (const auto& kv : set.shared.sat_clock) {
+                    if (emptied_sats.count(net::satKey(kv.first))) {
                         ++ctr.withheld_clk_pruned;
                         continue;
                     }
-                    keep_clk.insert(kv.first);
+                    keep_clk_ids.insert(kv.first);
                 }
-                sm.pruneSatClockStatesExcept(keep_clk);
+                pruneSatClockExcept(set, keep_clk_ids);
             }
         }
     }

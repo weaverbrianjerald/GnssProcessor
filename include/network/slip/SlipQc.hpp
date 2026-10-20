@@ -445,7 +445,7 @@ void networkSlipDrainT0Repairs(const PassABuffers& pa, const GnssConfig& config_
  *
  * @param pa                 PASS-A buffers (reads sta_mw_refloat).
  * @param config_            Config (mw_detect gate read inside).
- * @param stations           Station roster (StateManager pending-reseed marks).
+ * @param stations           Station roster (parameter-set pending-reseed marks).
  * @param present            Per-station PASS-A presence.
  * @param modeled            Per-station modeled observations (LLI flag scan).
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
@@ -527,14 +527,14 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @brief The arcs a wind-up accumulator restart of (station @p i, satellite
  *        @p sat) steps, as (ambiguity key, signal) pairs.
  *
- * The satellite's live ambiguity columns in @p sm, in the map's order, when it
+ * The satellite's live ambiguity columns in @p params, in the map's order, when it
  * has any.  Otherwise, a re-entering arc whose column was pruned with the gap:
  * the (station, satellite)'s leveling carry entries in @p arcs whose age
  * (@p pl_now_s minus @c last_seen_s) lies in [0, @p pl_max_gap_s], on the
- * synthesised key (@c StateKeys::makeAmbiguityKey) the PASS-B inject reads.
+ * synthesised ambiguity key the PASS-B inject reads.
  * Empty when neither exists, which is the restart with nothing to free.
  *
- * @param sm            The station's state manager (read-only).
+ * @param params        The station's parameter set (read-only): its ambiguities are the live columns.
  * @param i             App station index (the carry (the arc table)'s first key).
  * @param sat           Satellite id.
  * @param arcs   The leveling carry (the arc table); null reaches live columns only.
@@ -552,7 +552,7 @@ void networkSlipDrainMwRefloat(const PassABuffers& pa, const GnssConfig& config_
  * @return The targets, live columns first-and-only when any exist.
  */
 std::vector<std::pair<std::string, std::string>> networkWindupRestartTargets(
-        const StateManager& sm, int i, const std::string& sat,
+        const StationParams& params, int i, const std::string& sat,
         const net::ArcTable* arcs,
         double pl_now_s, double pl_max_gap_s, bool* via_carry = nullptr,
         const ArcLedger* arc_ledger = nullptr, RosterN3bCensus* n3b = nullptr);
@@ -667,13 +667,13 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * (satellite, signal), because a detected slip happens on an arc that is being
  * measured this epoch.  A re-entry is the opposite case: the arc left the model
  * set, so its ambiguity column was pruned with the gap, and PASS B's measurement
- * pre-pass (@c MeasurementModel::ensureRequiredStates) re-creates it only after
+ * pre-pass (@c networkBirthLocalStates) re-creates it only after
  * every PASS-A slip drain has run.  A drain that walked the live map would match
  * nothing and free no arc.
  *
  * The key is therefore built with @c StateKeys::makeAmbiguityKey, the format the
  * PASS-B inject site reads (@c relevel.free_ambs.count({i, key}) over
- * @c StateManager::getAmbiguities() keys) and the format the gap-instrumentation arc
+ * the parameter set's ambiguity keys) and the format the gap-instrumentation arc
  * classification synthesizes, so a freed arc reads @c shifted_fresh there by
  * construction.  The question "is there anything to protect?" is asked of the
  * carry: a @ref LocalCarry entry for (station, satellite, signal) whose
@@ -707,7 +707,7 @@ void networkSlipDrainWindupRestart(const GnssConfig& config_,
  * @ref SlipQcCounters, and the counters partition their population (see the
  * block comment there).
  *
- * @param stations             Station roster; @c sm is modified (pending-reseed marks).
+ * @param stations             Station roster; @c params is modified (pending-reseed marks).
  * @param present              Per-station PASS-A presence (absent stations produce no resumptions anyway).
  * @param i_lo                 First non-pivot station index (0 under the prioritized datum).
  * @param n_sta_total          Station count.
@@ -1024,7 +1024,7 @@ BridgeReplaceOutcome networkSlipBridgeV3Replace(
  * @param pa                 PASS-A buffers (reads sta_if_resets).
  * @param config_            Config (if_phase_td gate + 5 knobs read inside).
  * @param stations           Station roster: detector arc resets, EWMA scale
- *                           updates, StateManager pending-reseed marks.
+ *                           updates, parameter-set pending-reseed marks.
  * @param present            Per-station PASS-A presence.
  * @param i_lo               First non-pivot station index (0 under prioritized datum).
  * @param n_sta_total        Station count.
@@ -1120,7 +1120,7 @@ void networkSlipIfTdDriver(const PassABuffers& pa, const GnssConfig& config_,
  * @param arc_free           This epoch's staged directives (every mode; the
  *                           non-@c free_epoch ones are skipped here and taken
  *                           by the T4 block).
- * @param stations           Station roster; @c sm is modified (pending-reseed marks).
+ * @param stations           Station roster; @c params is modified (pending-reseed marks).
  * @param present            Per-station PASS-A presence.
  * @param n_sta_total        Station count.
  * @param carry_invariant    DD invariant carry vehicle armed.

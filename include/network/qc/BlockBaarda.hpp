@@ -131,7 +131,7 @@
  * ## Isolation and testing
  *
  * A pure numeric leaf, like @ref NetworkCarryVce and @ref NetworkPriorResidual:
- * header-only, with no ApplicationNetwork coupling, no StateManager and no I/O.
+ * header-only, with no ApplicationNetwork coupling, no station state and no I/O.
  * It takes @ref Input blocks and returns ladders; @c tests/network/test_block_baarda.cpp
  * drives it directly with synthetic blocks of known truth.  The per-epoch trace,
  * event and aggregate emission is in @c network/qc/BlockBaarda.cpp, the only

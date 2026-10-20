@@ -9,6 +9,7 @@
 
 #include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"   // systemOfSat, letterOfSat, constellationKey, SignalId
+#include "network/state/StationParams.hpp"   // the stations' parameter sets: the satellite code biases
 #include "config/GnssConfig.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "network/solve/ChainDatum.hpp"
@@ -80,12 +81,12 @@ std::set<std::string> networkIscBridgedRoster(const std::vector<NetStation>& sta
     std::set<std::string> isc_bridged;
     if (config_.getNetworkConfig().sat_isc_state) {
         for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i] || !stations[i].sm) continue;
+            if (!present[i]) continue;
             // sat -> the signals this station holds for it
             std::map<std::string, std::set<std::string>> by_sat;
-            for (const auto& kv : stations[i].sm->getSatBiasStates()) {
-                const auto parts = StateKeys::parseSatBiasKey(kv.first);
-                if (parts) by_sat[parts->satellite].insert(parts->signal);
+            for (const auto& [code, slot] : stations[i].params.shared.sat_code_bias) {
+                (void)slot;
+                by_sat[net::satKey(code.sat)].insert(code.signal.obsCode(ObsType::Code));
             }
             for (const auto& [sat, sigs] : by_sat) {
                 // The band digit of each signal, read once; a code that does not parse
@@ -128,13 +129,13 @@ std::set<std::string> networkExtraBandRoster(const std::vector<NetStation>& stat
     std::set<std::string> extra_band_determined;
     if (config_.getNetworkConfig().sat_gf_extra_band_free) {
         for (size_t i = 0; i < stations.size(); ++i) {
-            if (!present[i] || !stations[i].sm) continue;
+            if (!present[i]) continue;
             // sat -> the code signals this station holds for it (the sat-bias state map
             // is code-only: NetworkBiasAdmission admits raw 'C' observables alone).
             std::map<std::string, std::set<std::string>> by_sat;
-            for (const auto& kv : stations[i].sm->getSatBiasStates()) {
-                const auto parts = StateKeys::parseSatBiasKey(kv.first);
-                if (parts) by_sat[parts->satellite].insert(parts->signal);
+            for (const auto& [code, slot] : stations[i].params.shared.sat_code_bias) {
+                (void)slot;
+                by_sat[net::satKey(code.sat)].insert(code.signal.obsCode(ObsType::Code));
             }
             for (const auto& [sat, sigs] : by_sat) {
                 const System sys = systemOfSat(sat);
@@ -363,7 +364,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
         auto freqOf = [&](const std::string& sat, const std::string& sig) -> double {
             for (size_t i = 0; i < stations.size(); ++i)
                 if (present[i]) {
-                    const double f = stations[i].mm->carrierFrequency(sig, sat);
+                    const double f = stations[i].rows->freq.getFrequency(sig, systemOfSat(sat), sat);
                     if (std::isfinite(f) && f > 0.0) return f;
                 }
             return 0.0;

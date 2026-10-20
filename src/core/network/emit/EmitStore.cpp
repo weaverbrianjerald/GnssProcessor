@@ -23,7 +23,6 @@
 #include "network/emit/PbHold.hpp"
 #include "network/emit/BrdcWire.hpp"      // native broadcast clock wire stamp
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "math/Coordinates.hpp"
 #include "products/NetworkProductIO.hpp"
 
@@ -163,17 +162,15 @@ void networkEmitStore(NetworkRun& run, const NetworkEpoch& ep, NetworkSolutionEp
         EmitRebaseArcs rb_arcs;   // (const,signal) -> (station index, satellite), walk order
         for (size_t i = 0; i < stations.size(); ++i) {
             if (!present[i] || est_index_of[i] < 0) continue;
-            for (const auto& [amb, sidx] : stations[i].sm->getAmbiguities()) {
+            for (const auto& [arc, sidx] : stations[i].params.amb) {
                 (void)sidx;
-                const auto parts = StateKeys::parseAmbiguityKey(amb);
-                if (!parts || parts->satellite.empty()
-                    || systemOfSat(parts->satellite) == System::GLONASS)
+                const std::string sat    = net::satKey(arc.sat);
+                const std::string signal = net::signalKey(arc.signal);
+                if (sat.empty() || systemOfSat(sat) == System::GLONASS)
                     continue;   // GLONASS FDMA excluded (no common-λ integer DD)
-                if (!shared_phase_keys.count(
-                        StateKeys::makeSatPhaseBiasKey(parts->satellite, parts->signal)))
+                if (!shared_phase_keys.count(StateKeys::makeSatPhaseBiasKey(sat, signal)))
                     continue;   // not an eq34 graph arc (gated/legacy lump)
-                rb_arcs[{letterOfSat(parts->satellite), parts->signal}].emplace_back(
-                    static_cast<int>(i), parts->satellite);
+                rb_arcs[{letterOfSat(sat), signal}].emplace_back(static_cast<int>(i), sat);
             }
         }
         // (sat,signal) -> global component id (1-based).

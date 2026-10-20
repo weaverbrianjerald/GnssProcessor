@@ -33,7 +33,7 @@
  * Each solution epoch runs the arrowhead estimator end to end:
  *
  *   PASS A (layout)  Per station, PppModel::computeModels, then
- *       MeasurementModel::ensureNetworkSharedStates pre-allocates the shared
+ *       networkAdmitSharedStates pre-allocates the shared
  *       satellite states (per-satellite clock, per-(sat, signal) phase bias)
  *       behind the same usability gate the measurement build uses.  The datum
  *       (pivot) station goes first, so its usable phase-signal set restricts the
@@ -41,7 +41,7 @@
  *       shared column layout is then registered: a clock for every satellite any
  *       station sees, and a phase bias for each signal in the pivot's set.
  *
- *   PASS B (assembly)  MeasurementModel::computeMeasurementUpdate produces an
+ *   PASS B (assembly)  networkStationRows produces an
  *       undifferenced H / innovation / R block per station
  *       (DifferencingMode::None).  Its columns split three ways: satellite clock
  *       (−1) and phase bias (+1) scatter into the shared border A_s; the three

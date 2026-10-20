@@ -14,7 +14,7 @@
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"      // NetworkRunEndView
 #include "network/driver/RunGroups.hpp"   // NetworkRunEndInputs::engines.slip_qc
-#include "filter/StateKeySchema.hpp"     // StateKeys::parseAmbiguityKey
+#include "network/state/StationParams.hpp"   // the station's parameter set: the ambiguities of the pair
 #include "rinex/MultiRinexSync.hpp"      // SyncedEpoch
 #include "network/slip/SlipQc.hpp"        // NetStation, RelevelEpochState, RelevelPend, SlipQcChannel, commonBandMayFree, NetworkRunTraces
 
@@ -149,17 +149,17 @@ GfJumpAction gfJumpFreePair(SlipQcChannel& qc, NetStation& st, int i,
                                      RelevelPend>* relevel_pend,
                             const CommonBandEpoch* common_band) {
     GfJumpAction act;
-    StateManager& sm = *st.sm;
-    for (const auto& [amb_key, sidx] : sm.getAmbiguities()) {
-        (void)sidx;
-        const auto parts = StateKeys::parseAmbiguityKey(amb_key);
-        if (!parts || parts->satellite != sat) continue;
-        if (parts->signal != sig1 && parts->signal != sig2) continue;
+    for (const auto& [arc, slot] : st.params.amb) {
+        (void)slot;
+        if (net::satKey(arc.sat) != sat) continue;
+        const std::string arc_signal = net::signalKey(arc.signal);
+        if (arc_signal != sig1 && arc_signal != sig2) continue;
+        const std::string amb_key = net::ambKey(arc);
         ++act.matched;
-        if (!commonBandMayFree(common_band, i, sat, parts->signal)) {
+        if (!commonBandMayFree(common_band, i, sat, arc_signal)) {
             ++act.cb_kept;
             if (!act.cb_kept_sigs.empty()) act.cb_kept_sigs += "+";
-            act.cb_kept_sigs += parts->signal;
+            act.cb_kept_sigs += arc_signal;
             continue;
         }
         const std::pair<int, std::string> key{i, amb_key};
@@ -174,7 +174,7 @@ GfJumpAction gfJumpFreePair(SlipQcChannel& qc, NetStation& st, int i,
         // as at every other freeing site.
         if (carry_invariant) carry_slipped_ambs.insert(key);
         if (!carry_warm) continue;
-        sm.markAmbiguityPendingReseed(amb_key);
+        markPendingReseed(st.params, amb_key);
         ++act.freed;
         if (relevel) {
             relevel->free_ambs.insert(key);

@@ -54,7 +54,7 @@
  * constraint-realized datums the folded rows pin the clock gauges instead, so the
  * reduced shared normals are full-rank and the gate's declared dimension is 0.
  *
- * Not a state owner (StateManager stays the single source of truth for state
+ * Not a state owner (the station parameter sets stay the single source of truth for state
  * layout): a per-epoch builder over the live registered column set.
  */
 
@@ -212,7 +212,7 @@ struct SbasisDeclaration {
     /// @c NetworkProductReader::checkContract.  Empty means unset: nothing is
     /// written, so replay and older readers are unaffected, as with @c gid=.
     std::string eq34_datum_receiver;
-    /// Satellite bias sign convention (matches kSsr*BiasSign at MeasurementModel).
+    /// Satellite bias sign convention (matches kSsr*BiasSign in the observation equation).
     double bias_sign{ +1.0 };
     /// Declared wind-up / yaw-attitude model id; producer and consumer must agree
     /// ("nominal" = yaw steering from sun/velocity geometry, eclipse AR ungated).

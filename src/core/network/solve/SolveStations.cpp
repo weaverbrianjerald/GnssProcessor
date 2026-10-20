@@ -79,17 +79,17 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                              std::nullopt, std::nullopt, action, "no_pd_record");
             return;
         }
-        // Local column -> StateManager label, through the assembly's own h2local
-        // map (the same inverse network.neq_export_epoch uses).  The kernel has no
-        // label vocabulary, so the naming must happen here.
+        // Local column -> state label, through the assembly's own h2local map (the
+        // same inverse network.neq_export_epoch uses).  The kernel has no label
+        // vocabulary, so the naming must happen here.
         std::vector<std::string> names(static_cast<std::size_t>(f.n_local), "?");
         {
-            const auto sm_labels = sta.sm->getStateLabels();
             for (const auto& kv : RA.h2local) {
                 const auto lc = static_cast<std::size_t>(kv.second);
-                if (kv.second >= 0 && lc < names.size()
-                    && static_cast<std::size_t>(kv.first) < sm_labels.size())
-                    names[lc] = sm_labels[static_cast<std::size_t>(kv.first)];
+                const auto k  = static_cast<std::size_t>(kv.first);
+                if (kv.second >= 0 && lc < names.size() && kv.first >= 0
+                    && k < sta.params.slots.size())
+                    names[lc] = stateLabel(sta.params.slots[k], k);
             }
         }
         // Top-5 |weight| entries of the null eigenvector, descending.
@@ -104,7 +104,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
                               if (fa != fb) return fa > fb;
                               return a < b;              // determinism on ties
                           });
-        // DIR-row style: FAMILY|SAT|SIG=weight.  The StateManager key delimiters
+        // DIR-row style: FAMILY|SAT|SIG=weight.  The state labels' key delimiters
         // (':' after the family tag, the first '_' inside the key) become '|'; an
         // iono-free signal combo keeps its own underscore (AMB|G01|L1C_L5Q).
         auto dirName = [](std::string s) {
@@ -185,7 +185,7 @@ bool networkAssemblyConsume(NetworkRun& run, const NetworkEpoch& ep, EpochPassA&
             continue;
         }
         if (R.threw || !R.ok) {
-            // computeMeasurementUpdate / splitStation threw.  Under threads the
+            // networkStationRows / splitStation threw.  Under threads the
             // exception must be caught inside the produce loop, so its disposition
             // is decided here, matching the addStation policy below: a failed pivot
             // (legacy datum) skips the epoch, any other station is dropped.

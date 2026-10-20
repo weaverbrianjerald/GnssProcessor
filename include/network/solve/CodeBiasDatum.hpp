@@ -45,7 +45,7 @@ void networkCodeBiasDatum(NetworkRun& run, const NetworkEpoch& ep, EpochWorkspac
  * @brief The (satellite, signal) inter-signal corrections some present station's data determine
  *        this epoch (RF-0f): a satellite's signal is bridged when one present station carries it
  *        and a same-band companion in its own code-bias state map.
- * @param stations The network's stations (read: sm).
+ * @param stations The network's stations (read: params).
  * @param present  Which stations are present this epoch (read).
  * @param config_  The configuration (read: network.sat_isc_state).
  * @return Keys "sat|signal"; empty unless network.sat_isc_state.
@@ -57,7 +57,7 @@ std::set<std::string> networkIscBridgedRoster(const std::vector<NetStation>& sta
 /**
  * @brief The (satellite, extra signal, pin pair) code-bias columns the data determine this
  *        epoch (B5D): one present station carrying code on both pin bands and on the extra band.
- * @param stations The network's stations (read: sm).
+ * @param stations The network's stations (read: params).
  * @param present  Which stations are present this epoch (read).
  * @param config_  The configuration (read: network.sat_gf_extra_band_free).
  * @return Keys "sat|signal|b1b2"; empty unless network.sat_gf_extra_band_free.

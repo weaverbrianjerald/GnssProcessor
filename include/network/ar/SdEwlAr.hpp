@@ -104,8 +104,8 @@
  * Runs serially inside the caller's SB_PREASM bracket, after
  * `networkAssemblyPrefilter_` (satellites seen by < 2 stations are erased there, and an
  * integer decided for a satellite that then vanishes is wasted work), after the
- * phase-datum election and the eq34 RPB allocation (both mutate the `StateManager`
- * layout), after `networkAssemblyRegisterColumns_` (which can still skip the epoch), and
+ * phase-datum election and the eq34 RPB allocation (both mutate the station's
+ * state layout), after `networkAssemblyRegisterColumns_` (which can still skip the epoch), and
  * before `networkPassB_`, whose parallel produce loop reads the published result.  The
  * published map is therefore written once per epoch and read-only during produce; a lazy
  * fill or a memo written inside produce would race.
@@ -277,7 +277,7 @@ struct NetworkEpoch;            // network/driver/Epoch.hpp
  *   - @p log = run.log: Run logger (per-epoch summary at debug level).
  *   - @p traces = run.traces: Trace sinks (`network_sd_ewl_ar.csv`, armed only with
  *     `sd_ewl.trace && sd_ewl.fix_enable`).
- *   - @p setup = run.setup: Station roster (MW detectors + state managers).
+ *   - @p setup = run.setup: Station roster (MW detectors + parameter sets).
  *   - @p se = ep.se: This epoch (week/tow for the trace).
  *   - @p now_s = ep.clock.pl_now_s: Continuous GPS seconds. Currently unused: arc continuity
  *     is judged by the detector's lagged sample count. A time-based continuity test would use
@@ -391,7 +391,7 @@ StationStep networkSdEwlStationRows(StationBuild& build);
  * on an absent key, so both are wrapped.  It writes only this station's own blocks,
  * @c st.sd_ewl_ctr and @p trace_rows; no shared state is mutated.
  *
- * @param st        This station (provides @c mw_slip, @c sm, @c name, the counters).
+ * @param st        This station (provides @c mw_slip, @c params, @c name, the counters).
  * @param est       Shared-column lookup only (const).
  * @param sta_obs   This station's modeled observations this epoch.
  * @param h2local   Global state index → local column within @p A_r.

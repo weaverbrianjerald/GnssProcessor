@@ -30,7 +30,7 @@ struct AmbLevelArcTestAccess {
             e.config_, e.log_manager_, *e.product_parser_);
         e.state_manager_ = std::make_unique<StateManager>(5, e.log_manager_, e.config_);
         e.ppp_model_ = std::make_unique<PppModel>(
-            e.config_, *e.product_parser_, e.log_manager_, *e.rinex_parser_, *e.state_manager_);
+            e.config_, *e.product_parser_, e.log_manager_, *e.rinex_parser_);
         e.meas_model_ = std::make_unique<MeasurementModel>(
             *e.state_manager_, *e.ppp_model_, e.config_, e.log_manager_);
         e.meas_model_->setSsrStore(&store);

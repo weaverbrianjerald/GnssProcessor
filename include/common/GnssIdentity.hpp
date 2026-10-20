@@ -260,6 +260,26 @@ namespace GnssProcessor {
     }
 
     /**
+     * @brief The RINEX frequency digit that names a physical band for a constellation: the
+     *        inverse of @ref bandOfDigit.
+     *
+     * Reads the traits table: the digit of the first entry of @p sys whose band is @p band.
+     * BeiDou B2I and B2b share digit '7', so @c bandOfDigit(BeiDou, digitOfBand(BeiDou, B2b))
+     * reads B2I, not B2b: the digit does not tell them apart.
+     *
+     * @param sys  The constellation.
+     * @param band The physical band.
+     * @return The digit, or '\0' for a band the constellation does not use (and for
+     *         @c System::Unknown).
+     */
+    constexpr char digitOfBand(System sys, FrequencyBand band) {
+        const ConstellationTraits& t = traitsOf(sys);
+        for (std::size_t i = 0; i < t.n_bands; ++i)
+            if (t.bands[i].band == band) return t.bands[i].digit;
+        return '\0';
+    }
+
+    /**
      * @brief The constellation of a RINEX satellite-id letter.
      *
      * The single letter policy: 'G', 'E', 'R', 'C', 'J', 'S' map to their constellation;

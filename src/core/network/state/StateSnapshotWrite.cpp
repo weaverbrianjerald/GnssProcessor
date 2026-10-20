@@ -24,6 +24,7 @@
 #include "network/carry/InvariantCarryDriver.hpp"   // branch-faithful carry (de)serialization (RTB-7(c))
 #include "network/emit/ClockEmitRebase.hpp"       // CLK-R held frame, written with the snapshot (§18.10)
 #include "network/emit/EmitRebase.hpp"            // eq34 emit re-base frame, written with the snapshot (RS-5, §21.10)
+#include "network/state/StationParams.hpp"   // the stations' parameter sets: the code-bias linearization points
 #include "math/TimeUtils.hpp"                // GnssTime
 #include "products/NetworkProductEmitter.hpp"
 #include "products/NetworkStateSnapshot.hpp"
@@ -98,7 +99,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // generation id, URA/ramp metrics and the emitter's disc-counter, baseline and
         // first-sighting bookkeeping, plus the optional capture groups below.  The
         // per-station filter state is not snapshotted, by design: per-station cycle-slip
-        // arcs and slip-detector history, per-station StateManager ambiguity / iono /
+        // arcs and slip-detector history, per-station ambiguity / iono /
         // receiver-bias marks, and per-station covariance.  On a warm resume those layers
         // cold-start and re-warm within a few epochs, and the post-fit RAIM absorbs the
         // transient; serializing the large per-station covariance blocks would add nothing
@@ -437,9 +438,9 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // reference of the RC row.  The RC row above carries the rx-CB carry's numerator;
         // the gate that decides whether that prior is folded tests `value_abs − x_lin(cb)`
         // against a fixed 5.13 m bar, and x_lin is the one-shot seed that
-        // StateInitializer::initializeCodeBiases wrote on this station's first processed
-        // epoch and never revises.  It is not in ctx.carry but in the station's own state
-        // vector, which is why this block reads `stations`.
+        // the first-epoch code-bias seed wrote on this station's first processed
+        // epoch and never revises.  It is not in ctx.carry but in the station's own parameter
+        // set, which is why this block reads `stations`.
         //
         // Read-only and after the emit, like the blocks above, so arming it moves no
         // estimate and no trace: an x_lin shift is an exact solve no-op for a state that
@@ -447,7 +448,7 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
         // Keyed exactly as the RC rows, (roster index, CB state key), so the restore can
         // pair them without a second identity, and screened for finiteness at the source
         // for a stronger form of the RC reason: a non-finite linearization point would
-        // corrupt the first epoch's iono and ambiguity seeds through computeRawResidual,
+        // corrupt the first epoch's iono and ambiguity seeds through the raw residual,
         // not only one fold.
         //
         // Driven by the RC rows themselves, not by the station's code-bias state set: one
@@ -463,16 +464,12 @@ void networkWriteStateSnapshot(NetworkRun& run, const NetworkEpoch& ep) {
             for (const auto& [key, l] : snap.rx_cb_carry) {
                 (void)l;
                 if (key.first < 0 || key.first >= static_cast<int>(stations.size())) continue;
-                const auto& st = stations[static_cast<std::size_t>(key.first)];
-                if (!st.sm) continue;
-                const auto& cbs = st.sm->getCodeBiasStates();
-                const auto cit = cbs.find(key.second);
-                if (cit == cbs.end()) continue;
-                const Eigen::VectorXd xs = st.sm->getStateVector();
-                const Eigen::Index cb_idx = static_cast<Eigen::Index>(cit->second);
-                if (cb_idx < 0 || cb_idx >= xs.size()) continue;
-                if (!std::isfinite(xs(cb_idx))) continue;
-                snap.rx_cb_lin[{key.first, key.second}] = xs(cb_idx);
+                const StationParams& params = stations[static_cast<std::size_t>(key.first)].params;
+                const int cb_idx = findReceiverCodeBias(params, key.second);
+                if (cb_idx < 0) continue;
+                const double x_lin = slotAt(params, cb_idx).x_lin;
+                if (!std::isfinite(x_lin)) continue;
+                snap.rx_cb_lin[{key.first, key.second}] = x_lin;
             }
             ctx.counters.snap_rxcb_lin_rows_last =
                 static_cast<long long>(snap.rx_cb_lin.size());

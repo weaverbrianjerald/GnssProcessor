@@ -6,8 +6,9 @@
  * Owns the births, seeds and prunes of the dynamic states a single-receiver
  * epoch requires (slant ionosphere, phase colour, per-band or NL/WL
  * ambiguities with the BSSD pivot-relative seeds, receiver and satellite code
- * biases), the network cold receiver-clock pre-seed, the marks that keep an
- * ambiguity out of AR, and the band-count warning.  ensureRequiredStates calls
+ * biases), the marks that keep an ambiguity out of AR, and the band-count
+ * warning; the network cold receiver-clock pre-seed it calls is in
+ * MeasurementModelSeeds.cpp with the other seeds.  ensureRequiredStates calls
  * one member per category in a fixed order; the order is a dependency chain
  * (the ionosphere is seeded before the clock pre-seed and the ambiguities, the
  * pivot seeds before the non-pivot seeds, the satellite code-bias seed reads
@@ -19,6 +20,7 @@
  */
 
 #include "measurement/MeasurementModel.hpp"
+#include "measurement/Seeds.hpp"
 #include "filter/StateKeySchema.hpp"
 #include <algorithm>
 #include <cmath>
@@ -121,12 +123,7 @@ namespace GnssProcessor {
         ensurePerBandAmbiguities(observations, epoch_prefix, need);
         ensureNlWlAmbiguities(observations, epoch_prefix, need);
 
-        // The prune passes the ambiguity prune sink, which records the removed
-        // columns so the arc ledger can state that the column a later re-entry
-        // lands on is a fresh one.  The sink is null unless the network producer
-        // armed the recorder, so every other path is unaffected.
-        state_manager_.pruneAmbiguitiesExcept(need.required_ambiguities,
-                                              state_manager_.ambiguityPruneSink());
+        state_manager_.pruneAmbiguitiesExcept(need.required_ambiguities);
 
         warnAmbiguityBandCount(epoch_prefix, need);
         markUnresolvableAmbiguities(observations, epoch_prefix, need);
@@ -266,7 +263,18 @@ namespace GnssProcessor {
                     state_manager_.setIonosphereAzimuth(obs.satellite, obs.azimuth);
                 }
 
-                const auto iono_seed_opt = state_initializer_.computeIonosphereSeed(obs);
+                const auto iono_seed_opt = seedIonosphere(
+                    residualSeedInput(), obs,
+                    [this](const std::string& satellite, const std::string& signal) {
+                        return ppp_model_.hasBiasEntry(satellite, signal);
+                    });
+                if (iono_seed_opt.has_value())
+                    log_manager_.getLogger("state_initializer")->debug(
+                        "Iono seed for {} from {}/{}: P1-mod1={:.3f}, P2-mod2={:.3f}, "
+                        "alpha1={:.4f}, alpha2={:.4f}, seed={:.3f} m",
+                        obs.satellite, iono_seed_opt->code_a, iono_seed_opt->code_b,
+                        iono_seed_opt->range_a_m, iono_seed_opt->range_b_m,
+                        iono_seed_opt->alpha_a, iono_seed_opt->alpha_b, iono_seed_opt->value_m);
                 // When no BIA-covered code pair is available, the seed
                 // would otherwise inherit raw differential code biases
                 // (e.g. BeiDou with placeholder zero-valued BIA entries).
@@ -274,7 +282,7 @@ namespace GnssProcessor {
                 // filter freely converges to the true iono via subsequent
                 // measurements rather than trusting the zero too tightly.
                 constexpr double kUnseededIonoStdScale = 10.0;
-                const double iono_seed = iono_seed_opt.value_or(0.0);
+                const double iono_seed = iono_seed_opt ? iono_seed_opt->value_m : 0.0;
                 const double std_scale = iono_seed_opt.has_value() ? 1.0 : kUnseededIonoStdScale;
                 state_manager_.addIonosphereState(obs.satellite, iono_seed, std_scale);
                 log_manager_.getLogger("measurement_model")->debug(
@@ -315,26 +323,6 @@ namespace GnssProcessor {
         state_manager_.prunePhaseColourStatesExcept(keep);
     }
 
-    void MeasurementModel::preseedColdReceiverClock(const std::vector<PppObservation>& observations,
-                                                    const std::string& epoch_prefix) {
-        // --- Cold-start receiver-clock pre-seed (network.cold_clock_seed) ---
-        // Runs after the iono seed (so computeRawResidual removes the seeded
-        // slant iono from the code residual) and before the ambiguity seeds of
-        // the members called after it, once per station.  On the network path
-        // nothing else solves the
-        // receiver clock before the ambiguities are first seeded, so without
-        // this step a free-running receiver's full clock offset (1 ms is about
-        // 3e5 m) enters every cold ambiguity seed equally, through
-        // computeAmbiguitySeed's clk_term = x(clock) = 0.  The latch is set only
-        // on success, as for the ISB initialization.  With the knob off the
-        // seeder is never called and the output is byte-identical.
-        if (config_.networkColdClockSeed()
-            && !state_initializer_.isClockSeedInitialized()) {
-            if (state_initializer_.seedColdReceiverClock(observations, epoch_prefix))
-                state_initializer_.markClockSeedInitialized();
-        }
-    }
-
     void MeasurementModel::computePivotSeeds(const std::vector<PppObservation>& observations,
                                              RequiredStates& need) const {
         const bool nlwl = need.nlwl;
@@ -367,7 +355,7 @@ namespace GnssProcessor {
                     if (ref_type.empty() || ref_type[0] != 'L') continue;
                     const std::string pkey = cons + "|" + ref_type;
                     pivot_abs_seeds[pkey] =
-                        state_manager_.computeAmbiguitySeed(obs, ref_type, x_seed);
+                        ambiguitySeed(obs, ref_type, x_seed);
                 }
             }
         }
@@ -389,7 +377,7 @@ namespace GnssProcessor {
                 if (!std::isfinite(lambda_ref) || lambda_ref <= 0.0) continue;
 
                 const double nl_seed_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, ref_sig, x_seed)
+                    ambiguitySeed(obs, ref_sig, x_seed)
                     / lambda_ref;
                 pivot_abs_seeds[cons + "|NL"] = nl_seed_cyc;
 
@@ -399,7 +387,7 @@ namespace GnssProcessor {
                         obs.system, b_sig, obs.satellite);
                     if (!std::isfinite(lambda_b) || lambda_b <= 0.0) continue;
                     const double n_b_cyc =
-                        state_manager_.computeAmbiguitySeed(obs, b_sig, x_seed)
+                        ambiguitySeed(obs, b_sig, x_seed)
                         / lambda_b;
                     // WL canonical = N_low_band - N_high_band.  ref_band is the
                     // lowest observed band, so it is the lower of the pair and
@@ -442,7 +430,7 @@ namespace GnssProcessor {
 
                 if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
-                    double seed = state_manager_.computeAmbiguitySeed(obs, ref_type, x_now);
+                    double seed = ambiguitySeed(obs, ref_type, x_now);
 
                     if (bssd_active) {
                         const std::string cons = PppUtils::getSystemString(obs.satellite);
@@ -575,7 +563,7 @@ namespace GnssProcessor {
                 if (needs_seed) {
                     const Eigen::VectorXd x_now = state_manager_.getStateVector();
                     double nl_seed_cyc =
-                        state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                        ambiguitySeed(obs, ref_sig, x_now)
                         / lambda_ref;
                     if (bssd_active) {
                         if (is_pivot) {
@@ -624,10 +612,10 @@ namespace GnssProcessor {
 
                 const Eigen::VectorXd x_now = state_manager_.getStateVector();
                 const double nl_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, ref_sig, x_now)
+                    ambiguitySeed(obs, ref_sig, x_now)
                     / lambda_ref;
                 const double n_b_cyc =
-                    state_manager_.computeAmbiguitySeed(obs, b_sig, x_now)
+                    ambiguitySeed(obs, b_sig, x_now)
                     / lambda_b;
                 // Canonical sign: WL_<low>_<high> stores N_low - N_high.
                 const char a = std::min(ref_band, b);
@@ -767,8 +755,8 @@ namespace GnssProcessor {
                     const std::string amb_key = obs.satellite + "_" + ref_type;
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
-                        !phaseBiasCoveredForAr(obs.satellite, ref_type, obs.time);
-                    const bool missing_atx = !ifCombHasFullRxAtx(ref_type, obs.system);
+                        !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
+                    const bool missing_atx = !ifCombHasFullRxAtx(rowProducts(), ref_type, obs.system);
                     if (missing_bia || missing_atx) {
                         state_manager_.markAmbiguityUnresolvable(amb_key);
                         log_manager_.getLogger("measurement_model")->trace(
@@ -786,7 +774,7 @@ namespace GnssProcessor {
                     const std::string amb_key = obs.satellite + "_" + ref_type;
                     if (!required_ambiguities.count(amb_key)) continue;
                     const bool missing_bia =
-                        !phaseBiasCoveredForAr(obs.satellite, ref_type, obs.time);
+                        !phaseBiasCoveredForAr(rowProducts(), obs.satellite, ref_type, obs.time);
                     if (missing_bia) {
                         state_manager_.markAmbiguityUnresolvable(amb_key);
                         log_manager_.getLogger("measurement_model")->trace(
@@ -807,7 +795,7 @@ namespace GnssProcessor {
             for (const auto& obs : observations) {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
-                    const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite);
+                    const auto bias = state_initializer_.resolveReceiverBias(ref_type, obs.system, obs.satellite, clockRefs());
                     if (!std::isfinite(bias.coefficient) || bias.state_key.empty()) continue;
                     // GLONASS network producer: allocate only the GLONASS per-FCN-slot
                     // IFB.  GPS/Galileo receiver DCB/IFB states are intentionally absent
@@ -992,14 +980,15 @@ namespace GnssProcessor {
             }
         };
 
-        // In the PPP-RTK network producer, ensureNetworkSharedStates owns the
-        // satellite code-bias states (a shared border column, allocated and pruned
-        // together with the satellite clock and phase bias), as it owns the
-        // satellite clock and phase bias.  This single-receiver fallback path skips
-        // them, so the two paths never manage the same per-(sat,signal) states.  The
-        // network admits every GPS/Galileo raw code signal regardless of .BIA
-        // coverage; the .BIA/SSR gate below is a user-side concern that does not
-        // apply when the network estimates its own OSB.
+        // In the PPP-RTK network producer, the network's shared admission
+        // (networkAdmitSharedStates) owns the satellite code-bias states (a shared
+        // border column, allocated and pruned together with the satellite clock and
+        // phase bias), as it owns the satellite clock and phase bias.  This
+        // single-receiver fallback path skips them, so the two paths never manage
+        // the same per-(sat,signal) states.  The network admits every GPS/Galileo
+        // raw code signal regardless of .BIA coverage; the .BIA/SSR gate below is a
+        // user-side concern that does not apply when the network estimates its own
+        // OSB.
         const bool network_owns_sat_bias =
             config_.getProcessingMode() == ProcessingMode::PPP_RTK_Network;
         std::set<std::string> required_sat_biases;
@@ -1019,7 +1008,7 @@ namespace GnssProcessor {
                     if (config_.enableGlonassIfb() && config_.estimateIfb()
                         && obs.system == System::GLONASS
                         && !state_initializer_.resolveReceiverBias(
-                                ref_type, obs.system, obs.satellite).state_key.empty())
+                                ref_type, obs.system, obs.satellite, clockRefs()).state_key.empty())
                         continue;
                     // "Already corrected?" consults both bias sources, not only the
                     // static .BIA product.  Real-time has no .BIA, so hasBiasEntry
@@ -1033,8 +1022,8 @@ namespace GnssProcessor {
                     // correction.  The strict prune below drops the state on the
                     // epoch SSR coverage arrives mid-arc; ensureRequiredStates
                     // re-creates it if coverage disappears.
-                    if (biaCoversSignal(obs.satellite, ref_type)
-                        || ssrCoversCodeSignal(obs.satellite, ref_type, obs.time)) continue;
+                    if (biaCoversSignal(rowProducts(), obs.satellite, ref_type)
+                        || ssrCoversCodeSignal(rowProducts(), obs.satellite, ref_type, obs.time)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);
@@ -1049,7 +1038,7 @@ namespace GnssProcessor {
                 for (const auto& [ref_type, observed] : obs.observed) {
                     if (ref_type.empty() || ref_type[0] != 'C') continue;
                     if (ref_type.find('_') == std::string::npos) continue;
-                    if (ifCombHasFullBia(obs.satellite, ref_type)) continue;
+                    if (ifCombHasFullBia(rowProducts(), obs.satellite, ref_type)) continue;
                     if (!signalCoveredByPivot(obs.satellite, ref_type)) continue;
                     const std::string key = obs.satellite + "|" + ref_type;
                     required_sat_biases.insert(key);

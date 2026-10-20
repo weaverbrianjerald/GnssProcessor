@@ -1,7 +1,7 @@
 #pragma once
 
 #include "filter/StateManager.hpp"
-#include "measurement/AbsorbedSharedStates.hpp"  // StationAbsorbed (the network's withheld shared states)
+#include "measurement/RowRules.hpp"             // RowProducts, PivotSignalMap (the row rules are free functions)
 #include "model/PppModel.hpp"
 #include "config/GnssConfig.hpp"
 #include "common/Constants.hpp"
@@ -24,6 +24,8 @@
 namespace GnssProcessor {
 
     class SsrCorrectionStore;
+    struct ObsInput;
+    struct ObservationEquation;
 
     /**
      * @file MeasurementModel.hpp
@@ -35,7 +37,8 @@ namespace GnssProcessor {
      * design matrix H and noise R, and offers outlier/quality validation helpers.
      *
      * Heavy sub-tasks are delegated:
-     *  - StateInitializer:  first-epoch ISB, phase clock, and code bias seeding.
+     *  - StateInitializer:  the first-epoch seeding latches and the receiver code-bias resolver
+     *                       (the seed values are measurement/Seeds.hpp).
      *  - PivotManager:  pivot selection, handover, and state re-referencing.
      *  - BssdTransform:     between-satellite single-difference S-transformation.
      *
@@ -45,11 +48,19 @@ namespace GnssProcessor {
      *    validateMeasurementUpdate; the BSSD forwarders.
      *  - MeasurementModelStates.cpp: the state pre-pass ensureRequiredStates and
      *    its members, one per state category (the table at ensureRequiredStates).
-     *  - MeasurementModelRow.cpp: isUsableMeasurement, buildJacobianRow (the
-     *    observation equation) and the product coverage checks.
-     *  - MeasurementModelVariance.cpp: rowVariance, the variance of one row.
+     *  - MeasurementModelRow.cpp: buildJacobianRow (the observation equation as a
+     *    term list, measurement/ObservationEquation.hpp, over the state through
+     *    measurement/UserParamView.hpp); also the definitions of the row rules
+     *    isUsableMeasurement and the product coverage checks (free functions,
+     *    measurement/RowRules.hpp).  A row's decomposition trace is the free
+     *    function of measurement/RowTrace.hpp, shared with the network producer.
+     *  - MeasurementModelSeeds.cpp: the first-epoch seeding of the single-receiver
+     *    state (inter-system biases, phase clock, receiver code biases, the cold
+     *    receiver clock) and the ambiguity seed: the values come from
+     *    measurement/Seeds.hpp, this file applies them to the @c StateManager.
+     *  - MeasurementModelVariance.cpp: the definition of rowVariance, the
+     *    variance of one row (a free function, measurement/RowRules.hpp).
      *  - MeasurementModelDd.cpp: the baseline double-difference build, as stages.
-     *  - MeasurementModelNetwork.cpp: the network-only surface.
      */
     class MeasurementModel {
     public:
@@ -68,7 +79,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Compute the measurement update for a single epoch (single
-         *        receiver: PPP, PPP-RTK, and each network station).
+         *        receiver: PPP, PPP-RTK and the closed-loop consumer).
          *
          * Runs, in order: the first-epoch inter-system bias and phase-clock
          * seeds (@c StateInitializer), the differencing strategy's pivot pass,
@@ -96,137 +107,6 @@ namespace GnssProcessor {
         GnssProcessor::EpochMeasurement computeMeasurementUpdate(const std::vector<PppObservation>& observations,
             const Eigen::VectorXd& current_state,
             const std::set<std::string>& excluded_measurements = {});
-
-        // -------------------------------------------------------------------
-        // Network-only surface (the PPP-RTK network producer):
-        // from ensureNetworkSharedStates to carrierFrequency below,
-        // and the private members marked "network only".  The out-of-line
-        // definitions are in MeasurementModelNetwork.cpp, except
-        // setGlonassSlots (MeasurementModel.cpp).
-        // -------------------------------------------------------------------
-
-        /**
-         * @brief Pre-allocate the shared satellite states owned by the PPP-RTK
-         *        network producer's joint estimator (per-satellite clock,
-         *        per-(satellite, signal) phase bias and code bias), so this
-         *        station's @c H carries their columns this epoch.
-         *
-         * No-op unless @c ProcessingMode::PPP_RTK_Network and uncombined.  These
-         * state families are consume-only in @c buildJacobianRow (this function is
-         * their only creator), so without this pre-pass their Jacobian
-         * columns would be all zero and the satellites would receive no information
-         * from this station.  Each family is allocated only when its estimation
-         * toggle is on.  GLONASS is skipped unless the GLONASS network scope is
-         * enabled, and then receives a clock column only (no shared phase or code
-         * bias under FDMA).
-         *
-         * The admission gate mirrors the row-assembly loop in
-         * @c computeMeasurementUpdate (obs-level geometry and elevation checks plus
-         * @c isUsableMeasurement), so the allocated column set is exactly the set
-         * @c buildJacobianRow writes and never a superset.  An over-allocated
-         * all-zero column would be an unobserved gauge that the null-space rank
-         * gate rejects.  States no longer required are pruned, so a dropped
-         * satellite or signal leaves no stale column.
-         *
-         * Every shared state a gate here withholds from the station (GLONASS
-         * code-only scope, coverage allowlist, pivot allowlist, CB-ADM co-gate) is
-         * noted in @ref absorbedSharedStates, which this call clears first: the
-         * parameter inventory counts each as an absorbed instance (the
-         * record is measurement/AbsorbedSharedStates.hpp, the inventory
-         * network/assembly/ParamInventory.hpp).
-         *
-         * @param observations This station's modeled observations for the epoch.
-         * @param allowed_phase_keys If non-empty, restrict phase-bias allocation to
-         *        these @c "<sat>|<signal>|PB" keys: the datum (pivot) station's
-         *        set, so every shared phase-bias column has a pivot-receiver
-         *        ambiguity pin fixing its gauge.  Empty allocates for every usable
-         *        raw phase signal, which is how the pivot set is seeded.
-         * @param cbadm_admitted_code_keys If non-null, a phase bias is allocated
-         *        only when its companion code key (@c "<sat>|C<band><attr>") is in
-         *        this set, so a signal whose code pair the CB-ADM census has
-         *        quarantined also has its shared phase bias withheld.  Null
-         *        (feature off or census inactive) is byte-identical.
-         */
-        void ensureNetworkSharedStates(const std::vector<PppObservation>& observations,
-                                       const std::set<std::string>& allowed_phase_keys = {},
-                                       const std::set<std::string>* cbadm_admitted_code_keys = nullptr);
-
-        /**
-         * @brief The shared satellite states withheld from this station this epoch
-         *        (network producer only).
-         *
-         * Cleared and refilled by @ref ensureNetworkSharedStates in PASS A, then
-         * extended by the serial gates that prune a state the station had allocated
-         * (@ref noteAbsorbedSharedState).  Read by @c recordStationParams after the
-         * station's split.  Empty in every other mode: nothing writes it there.
-         *
-         * @return The station's list for the epoch.
-         */
-        const StationAbsorbed& absorbedSharedStates() const { return absorbed_shared_; }
-
-        /**
-         * @brief Note a shared satellite state a network gate withheld from this
-         *        station after allocation (the anchored-union coverage gate, the eq34
-         *        hygiene block): appended to @ref absorbedSharedStates.
-         *
-         * @param container @c StateContainer::SatPhaseBiasStates or @c SatBiasStates.
-         * @param key       The state's key in the station's state manager.
-         * @param reason    The gate.
-         */
-        void noteAbsorbedSharedState(StateContainer container, std::string_view key,
-                                     AbsorbedReason reason);
-
-        /**
-         * @brief Install a network coverage allowlist for satellite phase-bias states.
-         *
-         * System display name (e.g. "GPS") -> the phase signals permitted a
-         * per-(sat,signal) phase-bias state.  An absent constellation or empty map
-         * permits every phase signal (the byte-identical default).  Where a
-         * constellation is listed, an unlisted signal is skipped in
-         * @ref ensureNetworkSharedStates: no phase-bias state is allocated, so its
-         * float ambiguity absorbs the bias and the signal is not AR-eligible.  The
-         * network producer populates this from per-station coverage
-         * (network.phase_bias_min_station_fraction).
-         */
-        void setPhaseBiasSignalAllowlist(std::map<std::string, std::set<std::string>> allowlist) {
-            phase_bias_signal_allowlist_ = std::move(allowlist);
-        }
-
-        /**
-         * @brief Seed the model's frequency helper with GLONASS FCN slot numbers.
-         *
-         * GLONASS is FDMA, so the carrier frequency, and with it the iono
-         * coefficient and wavelength @c buildJacobianRow uses, depends on each
-         * satellite's channel.  This model's private @c PppUtils is constructed
-         * un-seeded and falls back to the compiled default channel table.  Only
-         * the network driver calls this (per station, from the station's RINEX
-         * "GLONASS SLOT / FRQ #" header).  The post-processing and real-time
-         * constructions do not, so a GLONASS uncombined user run takes the
-         * default table here while @c PppModel uses the header slots
-         * (identical whenever the header equals the table).
-         *
-         * @param slots satellite-id -> FCN channel number.
-         */
-        void setGlonassSlots(const std::map<std::string, int>& slots);
-
-        /**
-         * @brief Carrier frequency (Hz) of an observation code on a satellite.
-         *
-         * Exposes the private @c PppUtils lookup so the network driver can form the
-         * iono-free (clock-preserving) combination weights for the satellite
-         * code-bias IF datum pin: the OSB's GF/DCB part is emitted while its IF
-         * part lives in the estimable clock.  GLONASS uses the seeded FCN slots
-         * (@ref setGlonassSlots); GPS/Galileo are per-signal constants.  Returns 0
-         * for an unknown code/satellite.
-         *
-         * @param obs_code  RINEX observation code (e.g. "C1C").
-         * @param satellite Satellite id (e.g. "G05"); its first letter gives the system.
-         * @return The carrier frequency in Hz, or 0 when unknown.
-         */
-        double carrierFrequency(const std::string& obs_code,
-                                const std::string& satellite) const;
-
-        // ------------------- end of the network-only surface -------------------
 
         /**
          * @brief Compute a DD measurement update from two per-receiver
@@ -406,6 +286,44 @@ namespace GnssProcessor {
         const StateInitializer& getStateInitializer() const { return state_initializer_; }
 
         /**
+         * @brief The float ambiguity a phase signal of a satellite is born at (m): its
+         *        observation less the terms the ambiguity seed knows, at state vector @p x.
+         *
+         * The seed @c ensureRequiredStates births and re-seeds with, and that the
+         * Kalman filter's outlier response, the cycle-slip repair and the pivot
+         * handover re-seed with.  Absolute (an undifferenced ambiguity): the caller makes
+         * it relative to a pivot or divides it by a wavelength.  See measurement/Seeds.hpp.
+         *
+         * @param obs      The satellite's modeled observation.
+         * @param ref_type The phase signal, or an iono-free pair of phase signals.
+         * @param x        The state vector to evaluate the terms at.
+         * @return The seed (m); 0 when the signal has no observed or modeled value.
+         */
+        double ambiguitySeed(const PppObservation& obs, const std::string& ref_type,
+                             const Eigen::VectorXd& x) const;
+
+        /**
+         * @brief The equation inputs of an ambiguity seed: this model's row inputs with
+         *        the GLONASS FDMA bands taken at channel 0, the number the ambiguity seed
+         *        has always used.
+         *
+         * For a caller that re-seeds an ambiguity without holding the model (the pivot
+         * handover); pass it to @c seedAmbiguityOfState.
+         *
+         * @return Non-owning references into this model.
+         */
+        ObsInput ambiguitySeedInput() const;
+
+        /**
+         * @brief The equation inputs of the residual seeds (inter-system bias, cold clock,
+         *        phase clock, receiver code biases, slant ionosphere): this model's row
+         *        inputs with the frequency helper of the state initializer, whose GLONASS
+         *        channels are the default table, the number those seeds have always used.
+         * @return Non-owning references into this model.
+         */
+        ObsInput residualSeedInput() const;
+
+        /**
          * @brief Inject a non-owning SSR-correction store override (DI seam for
          *        the PPP-RTK closed-loop harness).
          *
@@ -422,6 +340,18 @@ namespace GnssProcessor {
          */
         void setSsrStore(const SsrCorrectionStore* store) { ssr_store_override_ = store; }
 
+        /**
+         * @brief Inject the .BIA clock-reference observables the receiver code biases are
+         *        referenced to (the test seam of the receiver code-bias resolver).
+         *
+         * The resolver, the Jacobian row and the code-bias seed read these per constellation
+         * letter; by default they are the process-wide product cache's, which a unit test
+         * cannot fill without loading a product.  @c nullptr (the default) restores the cache.
+         *
+         * @param refs Non-owning map (must outlive this object) or @c nullptr for the cache.
+         */
+        void setClockRefs(const ClockRefMap* refs) { clock_refs_override_ = refs; }
+
     private:
         // -------------------------------------------------------------------
         // Core dependencies (non-owning references)
@@ -432,29 +362,6 @@ namespace GnssProcessor {
         const GnssConfig& config_;
         LogManager& log_manager_;
 
-        // --- Network only (MeasurementModelNetwork.cpp) ---------
-
-        /// Network phase-bias coverage allowlist (see @ref setPhaseBiasSignalAllowlist).
-        /// system → admitted phase signals.  Empty (default) = allow every signal.
-        std::map<std::string, std::set<std::string>> phase_bias_signal_allowlist_;
-
-        /// The shared states withheld from this station this epoch (see
-        /// @ref absorbedSharedStates).  Network producer only.
-        StationAbsorbed absorbed_shared_;
-
-        /**
-         * @brief Whether @p signal may get a satellite phase-bias state under the
-         *        network coverage allowlist (@ref setPhaseBiasSignalAllowlist).
-         *
-         * @param system System display name (e.g. "GPS").
-         * @param signal Raw phase code (e.g. "L1C").
-         * @return True when the feature is off (empty allowlist) or the system is
-         *         not gated; else whether the allowlist admits the signal.
-         */
-        bool phaseBiasAdmitted(const std::string& system, const std::string& signal) const;
-
-        // --- End of the network-only members --------------------------------
-
         /// Non-owning SSR store override; nullptr -> process-wide singleton.
         /// Set via setSsrStore() for the closed-loop consumer (see header).
         const SsrCorrectionStore* ssr_store_override_{ nullptr };
@@ -462,6 +369,14 @@ namespace GnssProcessor {
         /// Resolve the active SSR store (override when set, else the singleton).
         /// Defined in the .cpp where the full type is visible.
         const SsrCorrectionStore& ssrStore() const;
+
+        /// Non-owning clock-reference override; nullptr -> the product cache's map.
+        /// Set via setClockRefs() (unit tests).
+        const ClockRefMap* clock_refs_override_{ nullptr };
+
+        /// Resolve the active clock-reference observables (override when set, else the
+        /// product cache's).  Defined in the .cpp.
+        const ClockRefMap& clockRefs() const;
 
         // -------------------------------------------------------------------
         // Delegate components
@@ -540,7 +455,7 @@ namespace GnssProcessor {
         ///
         /// Key: constellation ("GPS"), Value: set of signals
         /// ({"L1W","L1C","C1W","C1C","L2W","C2W",...}).
-        std::map<std::string, std::set<std::string>> bssd_pivot_signals_;
+        PivotSignalMap bssd_pivot_signals_;
 
         /// Per-satellite NL reference band for the @c StateAmbiguityBasis::NlWl
         /// path.  Cleared and rebuilt by @c ensureRequiredStates every epoch as
@@ -558,129 +473,62 @@ namespace GnssProcessor {
         Eigen::Vector3d tc_f_b_ = Eigen::Vector3d::Zero();
 
         // -------------------------------------------------------------------
-        // Product coverage checks (MeasurementModelRow.cpp)
+        // Row rules (free functions of measurement/RowRules.hpp)
         // -------------------------------------------------------------------
 
         /**
-         * @brief Check whether both component signals of an IF combination
-         *        have BIA product coverage.
-         * @param satellite Satellite id.
-         * @param if_key    Iono-free pair "a_b"; any other key counts as covered.
-         * @return True when both signals have a .BIA entry (or the key is not a pair).
+         * @brief The configuration, product tables and SSR store the row rules read
+         *        (measurement/RowRules.hpp), resolved now: the store is the override when
+         *        one is set, else the process-wide singleton.
+         * @return Three non-owning references into this model's dependencies.
          */
-        bool ifCombHasFullBia(const std::string& satellite,
-                              const std::string& if_key) const;
+        RowProducts rowProducts() const { return RowProducts{config_, ppp_model_, ssrStore()}; }
+
+        // -------------------------------------------------------------------
+        // First-epoch seeding (MeasurementModelSeeds.cpp)
+        //
+        // Each member asks measurement/Seeds.hpp for the values from the first
+        // epoch's observations and applies them to the state manager.  The
+        // callers latch them (StateInitializer).
+        // -------------------------------------------------------------------
 
         /**
-         * @brief Whether the live SSR stream supplies a code bias for this exact
-         *        (satellite, raw signal), i.e. whether @c ssr_bias_term will
-         *        correct the row in @c buildJacobianRow.
+         * @brief Seed the inter-system biases from the first epoch's code residuals.
          *
-         * Matches the apply-site activation: false in the network producer mode
-         * (which estimates satellite biases as states rather than importing
-         * them); otherwise a presence check via
-         * @c SsrCorrectionStore::hasCodeBias.  When the A5 staleness gate is on,
-         * the check is age-gated with the same effective stale-hold limit as the
-         * apply site: a bias the gate has dropped no longer defines this row's
-         * datum, so the sat-bias state and the no-BIA downweight apply again.
-         * Used to suppress redundant per-(satellite, signal) sat-bias state
-         * allocation for signals the stream already corrects.  Post-processing
-         * leaves the SSR store empty, so this is always false there and the
-         * state layout is byte-identical.
+         * The median code residual of each constellation less the time reference's.
+         * Logs the warning that the time reference has no code observation.
          *
-         * @param obs_time Observation epoch for the staleness comparison
-         *        (ignored unless @c enableSsrBiasMaxAge).
-         *
-         * @note Raw signals only.  IF-combined rows (key contains '_') get
-         *       @c ssr_bias_term = 0 (SSR code biases are per raw signal), so
-         *       their sat-bias state stays the only correction and must not be
-         *       suppressed; pass raw signal keys here.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
+         * @return True when the time reference had code (the seeds are final); false
+         *         to retry next epoch.  Latch on true only: latching on false would
+         *         leave every non-reference bias at 0 when the reference joins later.
          */
-        bool ssrCoversCodeSignal(const std::string& satellite,
-                                 const std::string& signal,
-                                 const GnssTime& obs_time) const;
+        bool initializeInterSystemBiases(const std::vector<PppObservation>& observations,
+                                         const std::string& epoch_prefix);
 
         /**
-         * @brief Whether a .BIA entry counts as bias coverage for the
-         *        "already corrected?" gates: code rows (sat-bias absorber
-         *        allocation, no-BIA code downweight) and phase rows (AR
-         *        eligibility via @c phaseBiasCoveredForAr).
-         *
-         * Legacy semantics (default): a pure @c hasBiasEntry presence check.  A
-         * .BIA that is loaded but not applied (@c enable_code_phase_bias false,
-         * e.g. forced off by @c network.estimate_iono_sh and inherited by the
-         * derived closed-loop consumer) still reports coverage, so the row runs
-         * at full code weight with no absorber while carrying the raw satellite
-         * OSB content.  With @c model_corrections.bias_coverage_requires_apply
-         * the entry counts only while @c enable_code_phase_bias is actually
-         * folding it into @c obs.modeled.  The network producer
-         * (@c ProcessingMode::PPP_RTK_Network) keeps legacy semantics under
-         * either setting: its code rows are corrected by network-estimated
-         * shared code-bias states, not by the .BIA.
+         * @brief Seed the phase-clock offset from the code-minus-phase residual
+         *        difference, and tighten its covariance to the seed's accuracy.
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
          */
-        bool biaCoversSignal(const std::string& satellite,
-                             const std::string& signal) const;
+        void initializePhaseClockOffset(const std::vector<PppObservation>& observations,
+                                        const std::string& epoch_prefix);
 
         /**
-         * @brief Whether the live SSR stream supplies a phase bias for this
-         *        exact (satellite, raw signal), i.e. whether the phase
-         *        @c ssr_bias_term will correct the row in @c buildJacobianRow.
+         * @brief Seed the receiver DCB and IFB states from the cross-band code residual
+         *        differences, or from the warm resume's restored linearization points.
          *
-         * Phase-channel counterpart of @c ssrCoversCodeSignal: false in the
-         * network producer mode (which estimates satellite phase biases as
-         * states rather than importing them); otherwise a presence check via
-         * @c SsrCorrectionStore::getPhaseBias, age-gated with the same
-         * effective stale-hold limit as the apply site when the A5 staleness
-         * gate is on.  Post-processing leaves the SSR store empty, so this is
-         * always false there.
+         * Must run after @ref ensureRequiredStates has created the states and seeded the
+         * slant ionosphere.  Counts each covered key of the restore on the state
+         * initializer's out-slots.
          *
-         * @param obs_time Observation epoch for the staleness comparison
-         *        (ignored unless @c enableSsrBiasMaxAge).
+         * @param observations This epoch's modeled observations.
+         * @param epoch_prefix Log prefix.
          */
-        bool ssrCoversPhaseSignal(const std::string& satellite,
-                                  const std::string& signal,
-                                  const GnssTime& obs_time) const;
-
-        /**
-         * @brief AR-eligibility phase-bias coverage for an ambiguity's signal:
-         *        whether the satellite phase bias on this (satellite, signal)
-         *        is removed from the phase observable, so that its float
-         *        ambiguity may be fixed to an integer.
-         *
-         * With @c network.require_signal_integer_for_ar on, a covering network
-         * phase bias present in the SSR store (age-gated when the staleness gate
-         * is on) that declares @c signal_integer = false vetoes eligibility; for
-         * an IF key, either component can veto.  With the toggle off, or with no
-         * such bias in the store, the checks below decide unchanged.
-         *
-         * Legacy semantics (default,
-         * @c model_corrections.bias_coverage_requires_apply off): raw .BIA
-         * presence (@c ifCombHasFullBia for IF-combined keys, @c hasBiasEntry
-         * for raw signals), byte-identical to the original gate.  With the
-         * toggle on, a signal is covered iff the .BIA entry is actually applied
-         * (@c biaCoversSignal) or a live network/SSR phase bias corrects the row
-         * (@c ssrCoversPhaseSignal); for an IF key, both components must be
-         * covered by the same source.  This lets the closed-loop PPP-RTK
-         * consumer, which inherits @c enable_code_phase_bias=false from the
-         * producer, key AR eligibility on the network PB products it applies
-         * rather than on a .BIA it does not apply.
-         *
-         * @param signal Raw phase signal (e.g. "L1C") or IF key ("L1C_L5Q").
-         * @param obs_time Observation epoch for the SSR staleness comparison.
-         */
-        bool phaseBiasCoveredForAr(const std::string& satellite,
-                                   const std::string& signal,
-                                   const GnssTime& obs_time) const;
-
-        /**
-         * @brief Check whether both component signals of an IF combination
-         *        have receiver antenna ATX coverage (PCO/PCV).
-         * @param if_key Iono-free pair "a_b"; any other key counts as covered.
-         * @param system The satellite's system.
-         * @return True when both signals have a receiver ATX entry (or the key is
-         *         not a pair).
-         */
-        bool ifCombHasFullRxAtx(const std::string& if_key, System system) const;
+        void initializeCodeBiases(const std::vector<PppObservation>& observations,
+                                  const std::string& epoch_prefix);
 
         // -------------------------------------------------------------------
         // State pre-pass (MeasurementModelStates.cpp)
@@ -711,16 +559,16 @@ namespace GnssProcessor {
          * | 1 | collectRequiredStates         | keep sets (no state)            | a code or phase signal the BSSD pivot tracks (a)            |                                                        |                                                    |
          * | 2 | addHoldProtectedKeys          | keep sets (no state)            | a key the soft-LLI / gap bridge holds                       |                                                        |                                                    |
          * | 3 | collectNlWlKeys               | NL/WL keys (no state)           | NL/WL basis                                                 |                                                        |                                                    |
-         * | 4 | ensureIonosphereStates        | slant ionosphere                | uncombined; a code or phase row of the satellite            | StateInitializer::computeIonosphereSeed, else 0 (b)    | (initial_std.ionosphere x s)^2 / sin^2(el) (c)     |
+         * | 4 | ensureIonosphereStates        | slant ionosphere                | uncombined; a code or phase row of the satellite            | seedIonosphere (Seeds.hpp), else 0 (b)                 | (initial_std.ionosphere x s)^2 / sin^2(el) (c)     |
          * | 5 | ensurePhaseColourStates       | phase colour (network)          | network.phase_colour_state; an uncombined phase row         | 0                                                      | network.phase_colour_sigma_zen_m^2                 |
-         * | 6 | preseedColdReceiverClock      | receiver clock (network)        | network.cold_clock_seed, until a seed succeeds (no birth)   | median GPS code residual (seedColdReceiverClock)       | unchanged                                          |
-         * | 7 | computePivotSeeds             | BSSD pivot seeds (no state)     | BSSD                                                        | StateManager::computeAmbiguitySeed per pivot signal    |                                                    |
-         * | 8 | ensurePerBandAmbiguities      | ambiguity, per band             | per-band basis; a phase key, new or pending reseed          | computeAmbiguitySeed, pivot-relative under BSSD (d)    | substituted-ATX override, else 1000 m (e)          |
-         * | 9 | ensureNlWlAmbiguities         | ambiguity, NL and WL            | NL/WL basis; as row 8                                       | computeAmbiguitySeed / wavelength, in cycles (d)       | as row 8 (the same number, on a state in cycles)   |
+         * | 6 | preseedColdReceiverClock      | receiver clock (network)        | network.cold_clock_seed, until a seed succeeds (no birth)   | median GPS code residual (seedColdClock)               | unchanged                                          |
+         * | 7 | computePivotSeeds             | BSSD pivot seeds (no state)     | BSSD                                                        | ambiguitySeed per pivot signal                         |                                                    |
+         * | 8 | ensurePerBandAmbiguities      | ambiguity, per band             | per-band basis; a phase key, new or pending reseed          | ambiguitySeed, pivot-relative under BSSD (d)           | substituted-ATX override, else 1000 m (e)          |
+         * | 9 | ensureNlWlAmbiguities         | ambiguity, NL and WL            | NL/WL basis; as row 8                                       | ambiguitySeed / wavelength, in cycles (d)              | as row 8 (the same number, on a state in cycles)   |
          * | - | pruneAmbiguitiesExcept        | ambiguity prune (in the driver) | a key not in the keep set (rows 1 to 3)                     |                                                        |                                                    |
          * |10 | warnAmbiguityBandCount        | band count (no state)           | per-band basis; Dual or Triple                              |                                                        |                                                    |
          * |11 | markUnresolvableAmbiguities   | AR eligibility flags            | per-band basis (f)                                          |                                                        |                                                    |
-         * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then StateInitializer::initializeCodeBiases once    | initial_std.code_bias^2                            |
+         * |12 | ensureReceiverCodeBiasStates  | receiver code bias              | estimate_ifb, uncombined; a code row with a bias key (g)    | 0, then initializeCodeBiases once (seedCodeBias)       | initial_std.code_bias^2                            |
          * |13 | ensureSatCodeBiasStates       | satellite code bias (user path) | estimate_sat_biases, not the network; uncovered code (h)    | the sat-bias cache, else the row's innovation (i)      | the cached variance, else initial_std.sat_bias^2   |
          *
          * Notes.  (a) GLONASS is skipped under BSSD unless enable_glonass_bssd.
@@ -740,12 +588,12 @@ namespace GnssProcessor {
          * (h) A raw code (uncombined) or iono-free code pair without .BIA or SSR
          * coverage that the BSSD pivot tracks; an uncombined GLONASS signal with a
          * per-slot IFB key is excluded.  The network producer allocates its
-         * satellite code biases in @ref ensureNetworkSharedStates.  (i) From
+         * satellite code biases itself (network/assembly/SharedAdmission.hpp).  (i) From
          * buildJacobianRow, re-referenced to the pivot's innovation under BSSD.
          *
-         * The network producer's own shared states (satellite clock, phase bias
-         * and code bias) are not in this table: @ref ensureNetworkSharedStates
-         * allocates them in PASS A, before this pre-pass runs.
+         * The network producer's own parameters (shared satellite clock, phase bias
+         * and code bias, and the station's local states) are not born here: the network
+         * station has its own set (network/state/StationParams.hpp).
          *
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix (empty: the log pattern carries the time).
@@ -789,7 +637,7 @@ namespace GnssProcessor {
         /**
          * @brief Slant ionosphere (uncombined): born for each satellite with a
          *        code or phase row; seeded from the geometry-free code pair
-         *        (@c StateInitializer::computeIonosphereSeed, reframed by the
+         *        (@c seedIonosphere, reframed by the
          *        network's LV-1 seed frame when installed), else 0 with ten times
          *        the initial std; pruned to the keep set.
          * @param observations This epoch's modeled observations.
@@ -813,7 +661,7 @@ namespace GnssProcessor {
          * @brief Cold receiver-clock pre-seed (network only:
          *        network.cold_clock_seed, once per station): no birth; seeds the
          *        receiver clock from the median GPS code residual
-         *        (@c StateInitializer::seedColdReceiverClock) before any
+         *        (@c seedColdClock) before any
          *        ambiguity is seeded.
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix.
@@ -823,7 +671,7 @@ namespace GnssProcessor {
 
         /**
          * @brief BSSD pivot seeds (no state written): each pivot's absolute
-         *        ambiguity seed per signal (@c StateManager::computeAmbiguitySeed),
+         *        ambiguity seed per signal (@ref ambiguitySeed),
          *        in cycles as NL and WL on the NL/WL basis; the non-pivot
          *        ambiguities are seeded relative to them.
          * @param observations This epoch's modeled observations.
@@ -835,7 +683,7 @@ namespace GnssProcessor {
         /**
          * @brief Per-band ambiguities: born for each phase key of the keep set,
          *        or re-seeded when pending reseed; seeded from
-         *        @c StateManager::computeAmbiguitySeed (minus the pivot's seed
+         *        @ref ambiguitySeed (minus the pivot's seed
          *        under BSSD, 0 for the pivot); initial std from the substituted-ATX
          *        override, else the StateManager default.
          * @param observations This epoch's modeled observations.
@@ -850,7 +698,7 @@ namespace GnssProcessor {
          * @brief NL/WL ambiguities (NL/WL basis): one NL (cycles on the reference
          *        band) and one WL per other band, born or re-seeded as the
          *        per-band ambiguities; seeded from
-         *        @c StateManager::computeAmbiguitySeed over the wavelengths
+         *        @ref ambiguitySeed over the wavelengths
          *        (pivot-relative under BSSD).
          * @param observations This epoch's modeled observations.
          * @param epoch_prefix Log prefix.
@@ -899,7 +747,7 @@ namespace GnssProcessor {
         /**
          * @brief Satellite code biases (estimate_sat_biases; user path, the
          *        network producer allocates its own in
-         *        @ref ensureNetworkSharedStates): born for each code signal (raw,
+         *        network/assembly/SharedAdmission.hpp): born for each code signal (raw,
          *        or iono-free pair) without .BIA or SSR coverage that the BSSD
          *        pivot tracks; restored from the sat-bias cache, else seeded from
          *        the row's innovation (re-referenced to the pivot under BSSD);
@@ -913,31 +761,9 @@ namespace GnssProcessor {
                                      const RequiredStates& need);
 
         // -------------------------------------------------------------------
-        // One row: usability, geometry and the observation equation
+        // One row: geometry and the observation equation
         // (MeasurementModelRow.cpp; hasValidGeometry in MeasurementModel.cpp)
         // -------------------------------------------------------------------
-
-        /**
-         * @brief Whether an observation's signal enters this epoch's update.
-         *
-         * False for: GLONASS under BSSD unless enable_glonass_bssd; a code,
-         * phase or Doppler signal the BSSD pivot does not track; a signal that
-         * is neither code nor phase (nor Doppler with velocity estimation); an
-         * iono-free pair in uncombined mode, a raw signal in iono-free mode, a
-         * Doppler pair; a signal without an observed, variance and modeled
-         * value; a row the Kalman filter's rebuild loop excluded
-         * (@c "<sat>_<signal>", logged at debug).
-         *
-         * @param obs          The satellite's modeled observation.
-         * @param ref_type     The signal (a RINEX code, or an iono-free pair "a_b").
-         * @param excluded     The rebuild loop's excluded row signatures.
-         * @param epoch_prefix Log prefix.
-         * @return True when the signal is usable.
-         */
-        bool isUsableMeasurement(const PppObservation& obs,
-            const std::string& ref_type,
-            const std::set<std::string>& excluded,
-            const std::string& epoch_prefix) const;
 
         /**
          * @brief The row loop's per-satellite geometry gate: a finite satellite
@@ -947,9 +773,9 @@ namespace GnssProcessor {
          *        mapping function.
          *
          * Logs the failing check (warn; debug for the elevation mask).  The
-         * network pre-pass @ref ensureNetworkSharedStates repeats the five
-         * checks without the logs, so the shared columns it allocates are the
-         * ones the rows write.
+         * network producer's shared-parameter admission repeats the five checks
+         * without the logs, so the shared columns it allocates are the ones the
+         * rows write.
          *
          * @param obs          The satellite's modeled observation.
          * @param epoch_prefix Log prefix.
@@ -962,20 +788,27 @@ namespace GnssProcessor {
          * @brief Build one row of H and the predicted observable: the
          *        single-receiver observation equation.
          *
-         * Code and phase rows: the a-priori model value plus the range
-         * correction for the position's offset from the linearization point,
-         * and one term per estimated or applied quantity: zenith wet delay,
-         * receiver clock (no column under BSSD), phase clock (phase rows),
-         * troposphere gradients, inter-system bias, slant ionosphere
-         * (uncombined; +alpha on code, -alpha on phase), receiver code bias
-         * (code, estimate_ifb), satellite code bias (estimate_sat_biases), the
-         * network producer's satellite phase bias, receiver phase bias and
-         * satellite clock, the SSR satellite bias (no state; not on the network
-         * producer), the ambiguity (phase; per band, or lambda_b (NL - s WL) on
-         * the NL/WL basis) and the network's phase colour.  Doppler rows:
+         * Code and phase rows: the term list of the observation equation
+         * (@c observationEquation, measurement/ObservationEquation.hpp) over this
+         * model's state vector (@c UserParamView), summed for the predicted
+         * observable and scattered into the row.  The terms are the a-priori model
+         * value, the range correction for the position's offset from the
+         * linearization point, and one per estimated or applied quantity: zenith
+         * wet delay, receiver clock (no column under BSSD), phase clock (phase
+         * rows), troposphere gradients, inter-system bias, slant ionosphere
+         * (uncombined; +alpha on code, -alpha on phase), receiver code bias (code,
+         * estimate_ifb), satellite code bias (estimate_sat_biases), the network
+         * producer's satellite phase bias, receiver phase bias and satellite clock,
+         * the SSR satellite bias (no state; not on the network producer), the
+         * ambiguity (phase; per band, or lambda_b (NL - s WL) on the NL/WL basis)
+         * and the network's phase colour.  Doppler rows (@ref buildDopplerRow):
          * velocity, clock rate, inter-system rate and the tightly coupled IMU
-         * partials.  Prints the PHASE-DECOMP and CODE-DECOMP traces at trace
-         * level.
+         * partials.  At trace level a code or phase row prints its decomposition
+         * (@c traceRowDecomposition, measurement/RowTrace.hpp).
+         *
+         * The network producer builds its rows from the same equation over a
+         * station's own parameter set (network/assembly/StationRows.hpp), not
+         * through this member.
          *
          * @param obs        The satellite's modeled observation.
          * @param ref_type   The signal (a RINEX code, or an iono-free pair "a_b").
@@ -985,7 +818,9 @@ namespace GnssProcessor {
          * @param predicted  Out: the predicted observable (m).
          * @return False when the row cannot be built: a Doppler row without a
          *         velocity state, or a phase row whose ambiguity state (or, on
-         *         the NL/WL basis, reference band or wavelength) is missing.
+         *         the NL/WL basis, reference band or wavelength) is missing, or a
+         *         row whose satellite or signal text is not a canonical RINEX id
+         *         where a state key must be formed from it.
          */
         bool buildJacobianRow(const PppObservation& obs,
             const std::string& ref_type,
@@ -994,31 +829,29 @@ namespace GnssProcessor {
             Eigen::VectorXd& jacobian,
             double& predicted) const;
 
-        // -------------------------------------------------------------------
-        // One row's variance (MeasurementModelVariance.cpp)
-        // -------------------------------------------------------------------
+        /**
+         * @brief What the observation equation reads besides the observation and the
+         *        state: this model's configuration, tables, SSR store, frequency
+         *        helper, receiver-bias resolver and NL/WL reference bands.
+         * @return Non-owning references into this model.
+         */
+        ObsInput obsInput() const;
 
         /**
-         * @brief The measurement variance of one row (m^2): the stochastic-model
-         *        variance plus the consumer's network-correction terms, times the
-         *        no-BIA code downweight.
-         *
-         * In order: obs.variances[ref_type]; with consume_combined_sigma and a
-         * fresh network correction carrying a combined sigma, that sigma
-         * (age-inflated) in place of the next two terms; otherwise the network
-         * URA with the ZOH clock-staleness term and the held-clock fallback,
-         * and on phase rows the network phase-bias sigma; then, without
-         * estimate_sat_biases, the no-BIA downweight factor on a code row
-         * without .BIA or SSR coverage.  The network producer's own rows get
-         * none of the network terms.
-         *
-         * @param obs      The satellite's modeled observation.
-         * @param ref_type The signal (one with a variance: the row loop admits
-         *                 only usable signals).
-         * @return The row's variance, before the row loop's non-finite guard.
+         * @brief The Doppler row: velocity, receiver clock rate, inter-system rate and,
+         *        with tightly coupled IMU, the attitude and accelerometer-bias partials.
+         * @param obs       The satellite's modeled observation.
+         * @param ref_type  The Doppler signal.
+         * @param x         The state vector the row is evaluated at.
+         * @param jacobian  Out: the row of H (sized and zeroed by the caller).
+         * @param predicted Out: the predicted Doppler (m/s).
+         * @return False without a velocity state.
          */
-        double rowVariance(const PppObservation& obs,
-                           const std::string& ref_type) const;
+        bool buildDopplerRow(const PppObservation& obs,
+            const std::string& ref_type,
+            const Eigen::VectorXd& x,
+            Eigen::VectorXd& jacobian,
+            double& predicted) const;
 
         // -------------------------------------------------------------------
         // BSSD delegation (forwarders to PivotManager)

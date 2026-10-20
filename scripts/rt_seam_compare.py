@@ -102,8 +102,21 @@ def mask(line: str) -> str:
     return line
 
 
+def read_log_text(p: pathlib.Path) -> str:
+    """Text of a console or main log.  Windows PowerShell 5.1 writes the console log (Tee-Object)
+    as UTF-16 with a byte-order mark; read as a single-byte codec every character is followed by
+    a NUL and no mask below matches, so a wall-clock line would differ.  A byte-order mark picks
+    the codec, any other file is read as before."""
+    raw = p.read_bytes()
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return raw.decode("utf-16", errors="replace")
+    if raw[:3] == b"\xef\xbb\xbf":
+        return raw[3:].decode("utf-8", errors="replace")
+    return p.read_text(errors="replace")
+
+
 def read_masked(p: pathlib.Path):
-    return [mask(l) for l in p.read_text(errors="replace").splitlines()]
+    return [mask(l) for l in read_log_text(p).splitlines()]
 
 
 def compare_arm(a: pathlib.Path, b: pathlib.Path, arm: str):

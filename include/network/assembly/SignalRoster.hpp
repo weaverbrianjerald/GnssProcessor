@@ -701,7 +701,7 @@ namespace GnssProcessor {
         long long lc_arc_unknown{ 0 };        ///< entries the ledger has never seen at all.
         long long lc_tracking_no_entry{ 0 };  ///< modelled arcs in Tracking with no carry entry.
 
-        // --- (d) StateManager ambiguity presence against the ledger ------------
+        // --- (d) parameter-set ambiguity presence against the ledger ------------
         long long amb_states{ 0 };            ///< ambiguity states examined, summed over epochs (denominator).
         long long amb_arc_gapped{ 0 };        ///< states alive while their arc is Gap (carried across a gap).
         long long amb_destroyed_in_gap{ 0 };  ///< arcs in Gap within the horizon whose state is gone.
@@ -797,7 +797,7 @@ namespace GnssProcessor {
         long long lc_adm_arc_unknown{ 0 };        ///< carry entries the admitted side has never seen.
         long long lc_adm_tracking_no_entry{ 0 };  ///< modelled arcs admitted-Tracking with no carry entry.
 
-        // --- (d) StateManager ambiguities against the admitted lifecycle -------
+        // --- (d) parameter-set ambiguities against the admitted lifecycle -------
         long long amb_adm_arc_gapped{ 0 };        ///< states alive while their admitted arc is Gap.
         long long amb_adm_arc_unknown{ 0 };       ///< states with no admitted arc at all.
         long long amb_adm_destroyed_in_gap{ 0 };  ///< admitted arcs in a Gap within the horizon whose state is gone.
@@ -946,7 +946,7 @@ namespace GnssProcessor {
      */
     void networkSignalRosterArm(NetworkRunContext& ctx, const GnssConfig& config_,
                                 const std::shared_ptr<spdlog::logger>& log,
-                                const std::vector<NetStation>& stations);
+                                std::vector<NetStation>& stations);
 
     struct NetworkRun;              // network/driver/Run.hpp
     struct NetworkEpoch;            // network/driver/Epoch.hpp

@@ -171,7 +171,7 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
 - [RKD](RKD_retired_key_deletion_2026-10-14.md): closed, 2026-10-14: the 144 retired network keys and five lane keys
   they orphan deleted with their code (149 ledger rows, 784 to 635; 30 C++ files); landed after the same-build
   golden comparison passed (only declared text moves on the goldens).
-- [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: card NOM's standard on the user side; waves A and B LANDED 2026-10-15 (KalmanFilter, CycleSlipManager, MeasurementModel, the MW, TurboEdit and IF detectors, StateManager, the PPP pipeline: identical on 16 user arms and both goldens, run-start and run-end tables added, the BSSD smoother crash fixed); wave C and five behaviour fixes open.
+- [UOM](UOM_user_object_model_2026-10-13.md): open, 2026-10-13: card NOM's standard on the user side; waves A and B LANDED 2026-10-15 (KalmanFilter, CycleSlipManager, MeasurementModel, the MW, TurboEdit and IF detectors, StateManager, the PPP pipeline: identical on 16 user arms and both goldens, run-start and run-end tables added, the BSSD smoother crash fixed); wave C and five behaviour fixes open. The step N6 notices (branch `nom/n6`): [UOM_n6_user_side_edits_2026-10-17.md](UOM_n6_user_side_edits_2026-10-17.md).
 - [SEA](SEA_seasonal_term_outside_window_2026-10-16.md): open, 2026-10-16: the seasonal term of a SIF coordinate
   outside its block windows follows the NGS M-PAGES v1.2 rule (the covering block; the first block before all
   windows, the last after all, the block that ended last inside a gap) instead of dropping to zero while the linear

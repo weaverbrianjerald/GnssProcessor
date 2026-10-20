@@ -107,7 +107,7 @@
  * about 1300 map entries at 63 stations, against about 7500 rows × 950 columns.
  *
  * The proxy has one gap: an observable present in `modeled` can still fail to
- * produce a row inside @c computeMeasurementUpdate.  Edges therefore require that
+ * produce a row inside @c networkStationRows.  Edges therefore require that
  * the station was folded this epoch (@c est_index_of >= 0) and that the observable
  * appears in both the `observed` and `modeled` maps.  The remaining gap is a known
  * limit of the proxy; the census does not measure it.

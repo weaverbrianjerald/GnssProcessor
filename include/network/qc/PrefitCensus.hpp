@@ -46,8 +46,8 @@
  *
  * Centring removes a station-wide level such as an unabsorbed receiver-clock
  * offset on the phase rows.  It does not handle a cell born this epoch inside
- * such a station: the state initializer seeds a fresh ambiguity so that the
- * cell's own innovation is about 0, which against an established station level
+ * such a station: the birth seed gives a fresh ambiguity the value that makes the
+ * cell's own innovation about 0, which against an established station level
  * of 10⁵ m reads as s ≈ 10⁷.  Counted as exceedances, healthy births would
  * dominate the event stream.
  *
@@ -301,7 +301,7 @@ int networkPrefitFuseStation(NetworkRunContext& ctx, NetworkRunTraces& traces,
  * @param log           Run logger (invariant-#4 dead-wiring warns).
  * @param traces        PREFIT / TOPOLOGY events.
  * @param se            This synced epoch.
- * @param stations      Station roster (names + state managers for the birth detail).
+ * @param stations      Station roster (names + parameter sets for the birth detail).
  * @param est           The solved estimator (shared-column labels).
  * @param asm_res       PASS A/B station assemblies.
  * @param est_index_of  Station → kernel slot (−1 = not folded this epoch).

@@ -30,6 +30,7 @@
 // The run-end reports at the end of this file:
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/StationParams.hpp"   // the station's parameter set: the election's ambiguity values
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -236,11 +237,12 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         if (!present[i]) continue;
         for (const auto& [amb, pbkey] : usable_keys[i]) {
             if (!union_keys.count(amb)) continue;          // gated out
-            const auto p = StateKeys::parseSatPhaseBiasKey(pbkey);
-            if (!p || p->satellite.empty()) continue;
-            const GKey g{ systemOfSat(p->satellite), p->signal };
-            grp_sats[g].insert(p->satellite);
-            grp_arcs[g][i].push_back(p->satellite);
+            const auto p = net::satPhaseBiasKey(pbkey);
+            if (!p || p->sat == SatId{}) continue;
+            const std::string pb_sat = net::satKey(p->sat);
+            const GKey g{ p->sat.sys, net::signalKey(p->signal) };
+            grp_sats[g].insert(pb_sat);
+            grp_arcs[g][i].push_back(pb_sat);
         }
     }
 
@@ -398,11 +400,10 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
         };
         for (const auto& [sid, srow] : sig_rows) {
             if (!srow.anchor_incumbent) continue;
-            const std::string amb = net::ambKey(sid);
             const std::string& sta = *srow.anchor_incumbent;
-            const auto a = StateKeys::parseAmbiguityKey(amb);
-            if (!a || systemOfSat(a->satellite) != grp_sys || a->signal != grp_sig) continue;
-            seedEdge(sta, a->satellite);
+            if (sid.sat == SatId{} || sid.signal == SignalId{}) continue;   // a row that names no arc
+            if (sid.sat.sys != grp_sys || net::signalKey(sid.signal) != grp_sig) continue;
+            seedEdge(sta, net::satKey(sid.sat));
         }
         const std::string rx_suffix =
             "|" + constellationKey(grp_sys) + "|" + grp_sig;
@@ -614,9 +615,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                 double seed_x = std::numeric_limits<double>::quiet_NaN();
                 bool   frame_shiftable = false;
                 auto ambStateValue = [&]() -> double {
-                    const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                    const int sidx = findAmbiguity(stations[ri].params, amb);
                     if (sidx < 0) return std::numeric_limits<double>::quiet_NaN();
-                    return stations[ri].sm->getStateVector()(sidx);
+                    return slotAt(stations[ri].params, sidx).x_lin;
                 };
                 if (eq34_seed_round && !std::isfinite(carry_val) && roundable) {
                     // Freeze after first realization (INC-1, SPEC §8.5): a frame is
@@ -639,10 +640,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
                     } else {
                     const double lam = grp_lambda;
                     if (std::isfinite(lam) && lam > 0.0) {
-                        const int sidx = stations[ri].sm->getAmbiguityIndex(amb);
+                        const int sidx = findAmbiguity(stations[ri].params, amb);
                         if (sidx >= 0) {
-                            const double x =
-                                stations[ri].sm->getStateVector()(sidx);
+                            const double x = slotAt(stations[ri].params, sidx).x_lin;
                             if (std::isfinite(x)) {
                                 if (eq34_seed_rehost) seed_x = x;   // re-host step baseline (INC-2)
                                 target = lam * std::round(x / lam);
@@ -988,11 +988,11 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             const std::string amb = net::ambKey(sid);
             const std::string& sta = *srow.anchor_incumbent;
             if (this_epoch_anchor.count(amb)) continue;    // re-seen live
-            const auto a = StateKeys::parseAmbiguityKey(amb);
-            if (!a) continue;
+            if (sid.sat == SatId{} || sid.signal == SignalId{}) continue;   // a row that names no arc
             auto gi = gname2idx.find(sta);
             if (gi == gname2idx.end()
-                || !carryAlive(gi->second, a->satellite, a->signal)) continue;  // dead ⇒ drop
+                || !carryAlive(gi->second, net::satKey(sid.sat), net::signalKey(sid.signal)))
+                continue;  // dead ⇒ drop
             this_epoch_anchor.emplace(amb, sta);
             new_retained_edges.emplace(static_cast<int>(gi->second), amb);
             const std::string* sr = net::getSig(sig_rows, amb, &net::SatSignalState::eq34_sat_root);
@@ -1027,9 +1027,9 @@ const bool eq34_seed_rehost = ctx.knobs.eq34_seed_round_rehost;
             const std::pair<int, std::string> k = net::arcPair(aid);
             const double tgt = *arow.eq34_prev_target;
             if (new_prev_target.count(k)) continue;
-            const auto a = StateKeys::parseAmbiguityKey(k.second);
-            if (!a) continue;
-            if (!carryAlive(static_cast<size_t>(k.first), a->satellite, a->signal)) continue;
+            if (aid.sat == SatId{} || aid.signal == SignalId{}) continue;   // a row that names no arc
+            if (!carryAlive(static_cast<size_t>(k.first), net::satKey(aid.sat), net::signalKey(aid.signal)))
+                continue;
             new_prev_target.emplace(k, tgt);
         }
     }

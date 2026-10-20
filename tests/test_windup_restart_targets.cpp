@@ -26,7 +26,7 @@
 #include "network/state/Entities.hpp"
 #include "network/state/ArcLedger.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
+#include "support/StationParamsBuilder.hpp"
 #include "logging/LogManager.hpp"
 #include "network/slip/SlipQc.hpp"
 
@@ -50,16 +50,14 @@ using CarryMap = net::ArcTable;
 struct Harness {
     LogManager                    log_manager;
     GnssConfig                    config;
-    std::unique_ptr<StateManager> sm;
+    StationParams                 params;   // the set the targets read
     CarryMap                      carry;
     double                        now_s{271200.0};
     double                        max_gap_s{900.0};
 
-    Harness() { sm = std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config); }
+    Harness() { params = startStationParams(config, Eigen::Vector3d::Zero()); }
 
-    void addLive(const char* sat, const char* sig) {
-        sm->addAmbiguity(StateKeys::makeAmbiguityKey(sat, sig), 0.0);
-    }
+    void addLive(const char* sat, const char* sig) { gnss_test::bornAmbiguity(params, sat, sig); }
     void addCarry(int station, const char* sat, const char* sig, double age_s) {
         LocalCarry lc{};
         lc.value_abs   = 0.0;
@@ -68,7 +66,7 @@ struct Harness {
         net::putArcIn(carry, std::make_tuple(station, std::string(sat), std::string(sig)), &net::ArcState::amb) = lc;
     }
     std::vector<std::pair<std::string, std::string>> targets(const CarryMap* c, bool* via) const {
-        return networkWindupRestartTargets(*sm, 0, kSat, c, now_s, max_gap_s, via);
+        return networkWindupRestartTargets(params, 0, kSat, c, now_s, max_gap_s, via);
     }
 };
 
@@ -160,7 +158,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     const auto site = static_cast<std::size_t>(RosterN3bSite::WindupRestartArcs);
     bool via = false;
     // L1C admitted in the ledger; L2W carried with no ledger record: both named.
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(h.params, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_TRUE(via);
@@ -173,7 +171,7 @@ TEST(WindupRestartTargets, LedgerNamesTheCarriedArcsAndTheCarryAnswersBeforeIt) 
     ledger.observe(k1, true);
     ledger.observe(k2, true);
     ledger.admitEpoch(std::set<ArcLedger::Key>{ k1, k2 }, edges);
-    EXPECT_EQ(networkWindupRestartTargets(*h.sm, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
+    EXPECT_EQ(networkWindupRestartTargets(h.params, 0, kSat, &ents.arcs, h.now_s, h.max_gap_s,
                                           &via, &ledger, &census),
               keys({ kSig1, kSig2 }));
     EXPECT_EQ(census.count[site].compared, 2);

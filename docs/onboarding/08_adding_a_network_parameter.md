@@ -17,7 +17,7 @@ steps only.
 
 | # | Step | Where | Mark |
 | --- | --- | --- | --- |
-| 1 | State, allocation, observation partial | `StateManager`, `MeasurementModel.cpp` | REQUIRED |
+| 1 | State, birth, observation partial | `StationParams`, `LocalBirth.cpp`, `ObservationEquation.cpp` | REQUIRED |
 | 2 | Declared treatment: kind, inventory class | `NetworkParamRegistry`, `NetworkParamInventory` | REQUIRED |
 | 3 | Station split, local block column | `StationSplit.cpp`, `StationBuild.cpp` | REQUIRED, no edit by default |
 | 4 | Carry: inject, harvest, kind, responses | `ZwdCarry.cpp`, `LocalCarryHarvest.cpp` | WHEN CARRIED |
@@ -28,27 +28,35 @@ steps only.
 
 ---
 
-## 1. The model borrowed from the user side (REQUIRED)
+## 1. The station set and the observation equation (REQUIRED)
 
 `buildStation` (`src\core\network\driver\ApplicationNetworkSetup.cpp`) gives each station a
-`StateManager`, a `PppModel` and a `MeasurementModel`; the producer takes the column layout
-and the linearization point from them. It runs no station Kalman filter and writes no
-solution back, so `filter.process_noise.*` does not apply; time behaviour comes from the
-network's carry.
+`StationParams` set (`startStationParams`), a `PppModel` and the row inputs (`StationRowInputs`,
+`src\core\network\assembly\StationRows.cpp`); the producer takes the column layout and the
+linearization point from the set. It runs no station Kalman filter and writes no solution back,
+so `filter.process_noise.*` does not apply; time behaviour comes from the network's carry.
 
-**State.** The ZWD is a fixed core column: the `StateManager` constructor assigns
-`tropo_idx_`, `getTropoIndex()` returns it, and it has no string key. A fixed column needs
-the constructor assignment, an accessor and a `getStateLabels` entry, behind a config flag.
-A keyed state (ambiguity, per-satellite ionosphere) instead needs a `make`/`parse` pair in
-`include\filter\StateKeySchema.hpp`, an `add...State` function in `StateManager`
-(`addIonosphereState`) and a creation site in `MeasurementModel`.
+**State.** The ZWD is a fixed core column: `startStationParams`
+(`src\core\network\state\StationParams.cpp`) lays it out, `StationParams::zwd` holds its
+slot, and it has no string key. A fixed column needs a field of `StationParams`, a line in
+`startStationParams` and a case in `addParam` and in `findParam`. A keyed state (ambiguity,
+per-satellite ionosphere) instead needs a typed map in the set with the same two cases, a seed
+function in `include\measurement\Seeds.hpp` when it is born from data, and a birth: a local
+column in `networkBirthLocalStates` (`src\core\network\assembly\LocalBirth.cpp`), a shared
+one in `networkAdmitSharedStates` (`SharedAdmission.cpp`). The births fix the order of the
+columns, which the local block factorizes in (page 7). A trace that prints the parameter as
+text takes it from `userKey()` (`UserParamView.cpp`).
 
-**Partial.** `MeasurementModel::buildJacobianRow` writes
-`jacobian(state_manager_.getTropoIndex()) = mapping_wet;` (`PppObservation::mf_w`) and adds
-`mapping_wet * zwd` to the predicted observable. A new column needs the same two things.
-The gradient has both already: `estimation.estimate_tropo_gradients` (default false)
-allocates `getTropoGradientNorthIndex()` and `getTropoGradientEastIndex()`, with partials
-`mf_grad * cos_az` and `mf_grad * sin_az`. For it the recipe starts at step 2.
+**Partial.** The observation equation (`observationEquation()` in
+`src\core\measurement\ObservationEquation.cpp`) gives the ZWD term the partial `mapping_wet`
+(`PppObservation::mf_w`) at the ZWD's slot and the product `mapping_wet * zwd` in the
+predicted observable. A new column needs the same two things: a term in that function,
+named by a `ParamRef` (`include\common\ParamRef.hpp`) and found in the set by
+`NetView::find()` (`network\assembly\StationRows.hpp`).
+The gradient has the terms already, with partials `mf_grad * cos_az` and `mf_grad * sin_az`
+(the user-side flag `estimation.estimate_tropo_gradients`, which a network run warns about and
+ignores). The set has no gradient column, so for it the recipe adds the column (above) and then
+continues at step 2.
 
 **Default off.** Standing invariant 6 (`CLAUDE.md`): with the knob off the output is
 byte-identical, so each step tests its config value at its first line, as every row of
@@ -59,23 +67,26 @@ byte-identical, so each step tests its config value at its first line, as every 
 Three run-start tables describe a parameter; each needs a row.
 
 - **Registry kind** ("Network (param model)"): an enumerator of `NetworkParamKind` and
-  `kNetworkParamKindCount` in `include\network\assembly\ParamRegistry.hpp` (at most 32 kinds);
-  a case in `paramKindName` and a block in `NetworkParamRegistry::build` in
+  `kNetworkParamKindCount` in `include\common\ParamRef.hpp` (at most 32 kinds);
+  a case in `paramKindName` (`src\core\common\ParamRef.cpp`) and a block in
+  `NetworkParamRegistry::build` in
   `src\core\network\assembly\ParamRegistry.cpp`, copied from the `Zwd` block (`estimated`,
   `carried`, `q_rule`, `gap_horizon_s`, `route`, `source`). Uncarried: `carried` false,
   route `NotCarried`.
-- **Inventory class** ("Network (parameters as armed)"): a `StateContainer` value
-  (`include\measurement\AbsorbedSharedStates.hpp`; the ZWD's is `TropoIndex`), then in
-  `src\core\network\assembly\ParamInventory.cpp` a `put` line in `listStateColumns`, a case in
-  `classifyStateColumn` (`case SC::TropoIndex: c.kind = PK::Zwd;`) and lines in
-  `paramClassLabel` and `stateContainerName`. Otherwise the column is `Unlisted` (the enum
-  comment names gradients) and lands on the "unclassified" integrity line, which must read
-  0. Two components can be two `ParamForm` values of one kind.
+- **Inventory class** ("Network (parameters as armed)"): `paramInstanceOf`
+  (`src\core\common\ParamRef.cpp`) reads the class from the `ParamRef` (the ZWD's is kind
+  `Zwd`), and `src\core\network\assembly\ParamInventory.cpp` needs a line in
+  `paramClassLabel`. A column that no typed map of the set takes keeps its slot and is counted in
+  `StationParams::untyped`; a withheld satellite parameter whose identity cannot be typed lands on
+  the "unclassified" integrity line, which must read 0. Two components can be two `ParamForm`
+  values of one kind. The set holds the column once `addParam` (`StationParams.cpp`) puts it in
+  the typed map of its kind, and a new kind needs a map there.
 - **Contribution sets** ("Network (contributions as armed)"): the kind in `kCodeRow` and
   `kPhaseRow` of `src\core\network\assembly\Contributions.cpp`, where the ZWD is in both.
 
-Trace labels: `buildLocalLabels` (`StationBlock.cpp`) and `localColumnLabels`
-(`RedundancyCensus.cpp`); an unlabelled column prints positional names.
+Trace labels: `blockLabel` (`StationBlock.cpp`), `censusLabel` (`RedundancyCensus.cpp`) and
+`stateLabel` (`StationParams.cpp`, the single-receiver layout's labels, read by the RHS attribution
+and the station-drop event), each a case per kind; an unlabelled column prints positional names.
 
 ## 3. The station split and the local block column (REQUIRED, no edit by default)
 
@@ -103,7 +114,8 @@ colour; `tests\network\test_network_station_build.cpp` pins it.
 Template: the diagonal route of `src\core\network\carry\ZwdCarry.cpp`.
 
 **Inject** (PASS B, parallel): `networkZwdCarryPrior`, row `zwd` of `kStationCarrySteps`.
-Copy the gate at the first line; the column through `h2local.find(tropo_idx)`; the record
+Copy the gate at the first line; the column's slot from the station's set (`st.params.zwd`, a
+typed map or a field of `StationParams` for another kind), then `h2local.find(tropo_idx)`; the record
 `R.pl_zwd = PlZwd{zcol, x_lin}`; the entry from `net::get(sta_rows, ...)`; the gap test
 `carryPastHorizon`; and the prior pushed to `inj` with
 `RowTag{ContributionKind::PriorZwdCarry, {}, {}}`, `lambda = 1 / (var + q * gap)`. Trap:
@@ -205,11 +217,12 @@ tables of step 2 print it.
 
 ## Known rough edges
 
-- **The network borrows the user-side `StateManager` and `MeasurementModel`.** A parameter
-  begins as a user-side state; the network classifies and labels it afterwards. A user-side
-  flag changes the network layout with no network key and no ledger row
-  (`estimation.estimate_tropo_gradients` has neither). A separate future step, in which the
-  network owns its parameter set, removes this.
+- **The set shares its vocabulary with the user side.** The observation equation, the seeds and
+  the receiver-bias rule are the single-receiver path's, so the network layout is fixed by
+  `startStationParams` and not by user-side flags: a network run that sets one warns at start and
+  ignores it. A parameter is still named by a `ParamRef` and printed in the traces and the
+  snapshot as the user-side state key (`userKey()`), a naming contract that the trace columns and
+  the snapshot records keep.
 - **The ZWD is a noisy template.** Its carry, in-block route, seam window, capture and
   census hooks are history the golden posture does not use. `NetworkParamKind::PhaseColour`,
   the last estimated kind in the enum, is a second template for steps 2 to 4.

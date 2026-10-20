@@ -35,13 +35,13 @@
 #include "network/state/RunContext.hpp"
 #include "common/GnssIdentity.hpp"
 #include "network/ar/ArcGraph.hpp"   // arcgraph::Dsu
-#include "filter/StateKeySchema.hpp"
 #include "network/diag/RunTraces.hpp"
 
 // The run-end reports at the end of this file:
 #include "config/GnssConfig.hpp"
 #include "network/runend/RunEnd.hpp"
 #include "network/driver/RunTypes.hpp"
+#include "network/state/Entities.hpp"   // net::satPhaseBiasKey
 #include <memory>
 #include <spdlog/spdlog.h>
 #include "network/driver/Epoch.hpp"   // NetworkEpoch
@@ -253,10 +253,11 @@ std::vector<NetDatumGraphPrediction> netDatumGraphChannelFamilies(
     };
 
     for (const auto& pk : shared_phase_keys) {
-        const auto parts = StateKeys::parseSatPhaseBiasKey(pk);
-        if (!parts || parts->satellite.empty()) continue;   // never guess a key
-        ++touch(parts->satellite,
-                netDatumGraphFamilyOf(parts->satellite, parts->signal, x_rule)).n_pb;
+        const auto pb = net::satPhaseBiasKey(pk);
+        if (!pb) continue;   // never guess a key
+        const std::string pb_sat    = net::satKey(pb->sat);
+        const std::string pb_signal = net::signalKey(pb->signal);
+        ++touch(pb_sat, netDatumGraphFamilyOf(pb_sat, pb_signal, x_rule)).n_pb;
     }
     for (const auto& [sat, sig] : registered_code_keys) {
         if (sat.empty()) continue;
@@ -425,7 +426,7 @@ void networkDatumGraphCensus(NetworkRun& run, const NetworkEpoch& ep) {
             for (const auto& kv : ob.observed) {
                 const std::string& code = kv.first;
                 // An observable with no modeled counterpart produces no row; the
-                // measurement model would have nothing to difference against.
+                // row builder would have no modeled value to difference against.
                 if (!ob.modeled.count(code)) continue;
                 supported = true;
                 if (obsTypeOf(code) != ObsType::Code) continue;

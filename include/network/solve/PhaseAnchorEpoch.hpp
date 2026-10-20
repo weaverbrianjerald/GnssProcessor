@@ -50,7 +50,7 @@ void networkPhaseAnchorEpoch(NetworkRun& run, const NetworkEpoch& ep, EpochPassA
  * (allocate what is needed, prune the rest), before est.reset() and PASS B.  Inert (no
  * allocation) unless network.phase_datum_eq34.
  *
- * @param run The run: the stations' StateManagers (written).
+ * @param run The run: the stations' parameter sets (written).
  * @param ep  The epoch, read: pass_a.present, pass_a.shared_phase_keys.
  */
 void networkReceiverPhaseBiasAllocation(NetworkRun& run, const NetworkEpoch& ep);

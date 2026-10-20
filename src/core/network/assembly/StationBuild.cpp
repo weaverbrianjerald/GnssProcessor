@@ -18,13 +18,13 @@
 #include "rinex/MultiRinexSync.hpp"
 #include <spdlog/spdlog.h>
 #include <fmt/format.h>
+#include <exception>
 #include "network/carry/Coupling.hpp"
 #include "network/assembly/Contributions.hpp"
 #include "network/assembly/ParamInventory.hpp"
 #include "network/assembly/Responses.hpp"
 #include <Eigen/Dense>   // LLT in networkWriteWhitenedRows
 #include "network/slip/OraclePin.hpp"
-#include "filter/StateKeySchema.hpp"
 #include "network/qc/Congruence.hpp"
 #include "network/assembly/IonoConstraintRows.hpp"
 #include "network/carry/LevelingCarry.hpp"
@@ -120,7 +120,7 @@ namespace {
 using CK = ContributionKind;
 }  // namespace
 
-const std::array<StationBuildStep, kStationBuildStepCount> kStationBuildSteps = {{
+const StationBuildSteps kStationBuildSteps = {{
     {"data_rows", "filter/NetworkStationSplit",
      kindBit(CK::DataCode) | kindBit(CK::DataCodeCompanion) | kindBit(CK::DataPhase) |
      kindBit(CK::DataPhaseSecond),
@@ -231,16 +231,35 @@ void networkWriteWhitenedRows(const Eigen::MatrixXd& cov, const Eigen::MatrixXd&
 
 const Eigen::VectorXd& StationBuild::postUpdateState() {
     if (!post_state_ready) {
-        post_state = st.sm->getStateVector();
+        // The set was built after the measurement update, from the state vector, and its
+        // slots hold that vector's values bit for bit.
+        post_state.resize(static_cast<Eigen::Index>(st.params.slots.size()));
+        for (std::size_t k = 0; k < st.params.slots.size(); ++k)
+            post_state(static_cast<Eigen::Index>(k)) = st.params.slots[k].x_lin;
         post_state_ready = true;
     }
     return post_state;
 }
 
-bool networkStationBuild(StationBuild& build) {
-    for (const StationBuildStep& s : kStationBuildSteps)
+bool networkStationBuild(StationBuild& build, const StationBuildSteps& steps) {
+    for (const StationBuildStep& s : steps)
         if (s.build(build) == StationStep::Done) return false;
     return true;
+}
+
+void networkStationAssemble(StationBuild& build, const StationBuildSteps& steps) {
+    StationAssembly& R = build.R;
+    try {
+        if (!networkStationBuild(build, steps)) return;   // empty innovations or an H/state mismatch
+        R.ok = true;
+        return;
+    } catch (const std::exception& ex) {
+        R.threw = true; R.err = ex.what();
+    } catch (...) {
+        R.threw = true; R.err = "unknown exception";
+    }
+    // The station's births write its set as they go, so a step that threw leaves the set as
+    // the births left it, and the readers of the next epoch's PASS A find those columns.
 }
 
 void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,
@@ -268,17 +287,9 @@ void networkAssemblyProduce(NetworkRun& run, const NetworkEpoch& ep,
     #pragma omp parallel for schedule(dynamic) num_threads(n_threads) if(parallel_on)
     for (int i = 0; i < n_sta_total; ++i) {
         if (!present[i]) continue;
-        StationAssembly& R = asm_res[i];
-        try {
-            NetStation& st = stations[i];
-            StationBuild build{ctx, config_, est, setup, se, epoch_clock, pass_a, events, gim, i, st, R};
-            if (!networkStationBuild(build)) continue;   // empty innovations or an H/state mismatch
-            R.ok = true;
-        } catch (const std::exception& ex) {
-            R.threw = true; R.err = ex.what();
-        } catch (...) {
-            R.threw = true; R.err = "unknown exception";
-        }
+        StationBuild build{ctx, config_, est, setup, se, epoch_clock, pass_a, events, gim, i,
+                           stations[i], asm_res[i]};
+        networkStationAssemble(build);
     }
 }
 

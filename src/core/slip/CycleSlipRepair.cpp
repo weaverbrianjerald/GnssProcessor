@@ -101,7 +101,7 @@ void CycleSlipManager::resetAmbiguityBssdAware(
 
     // Re-seed the float value only when the satellite and the pivot are both
     // observed this epoch.  In BSSD mode the state stores N_sat - N_pivot;
-    // seeding with the absolute N_sat (what computeAmbiguitySeed returns for a
+    // seeding with the absolute N_sat (what ambiguitySeed returns for a
     // single obs) is off by N_pivot, possibly many cycles, and the filter
     // needs many epochs to remove that offset, often rejecting good
     // observations as outliers meanwhile.  When the pivot obs is missing
@@ -123,8 +123,8 @@ void CycleSlipManager::resetAmbiguityBssdAware(
             }
         }
         const double sd_seed =
-            state_manager.computeAmbiguitySeed(*obs_sat, signal, x)
-          - state_manager.computeAmbiguitySeed(*obs_piv, piv_signal, x);
+            meas_model.ambiguitySeed(*obs_sat, signal, x)
+          - meas_model.ambiguitySeed(*obs_piv, piv_signal, x);
 
         Eigen::VectorXd x_mod = x;
         x_mod(aidx) = sd_seed;

@@ -45,7 +45,6 @@
 
 #include "config/GnssConfig.hpp"
 #include "filter/StateKeySchema.hpp"
-#include "filter/StateManager.hpp"
 #include "logging/LogManager.hpp"
 #include "network/diag/RunTraces.hpp"
 #include "rinex/MultiRinexSync.hpp"
@@ -62,6 +61,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include "support/StationParamsBuilder.hpp"   // bornAmbiguity
 #include "support/TestTempDir.hpp"   // per-process, per-test scratch directory
 
 namespace GnssProcessor {
@@ -112,11 +112,10 @@ struct Harness {
     explicit Harness(bool with_states = true) {
         stations.emplace_back();
         stations.front().name = kSta;
-        stations.front().sm =
-            std::make_unique<StateManager>(/*core_state_size=*/5, log_manager, config);
+        stations.front().params = startStationParams(config, Eigen::Vector3d::Zero());
         if (with_states) {
-            stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig1), 0.0);
-            stations.front().sm->addAmbiguity(StateKeys::makeAmbiguityKey(kSat, kSig2), 0.0);
+            gnss_test::bornAmbiguity(stations.front().params, kSat, kSig1);
+            gnss_test::bornAmbiguity(stations.front().params, kSat, kSig2);
         }
         addCarry(kSig1);
         addCarry(kSig2);
@@ -166,8 +165,8 @@ struct Harness {
     }
 
     bool pendingReseed(const char* sig) const {
-        return stations.front().sm->isAmbiguityPendingReseed(
-            StateKeys::makeAmbiguityKey(kSat, sig));
+        return GnssProcessor::pendingReseed(stations.front().params,
+                                            StateKeys::makeAmbiguityKey(kSat, sig));
     }
     bool freed(const char* sig) const {
         return relevel.free_ambs.count({0, StateKeys::makeAmbiguityKey(kSat, sig)}) != 0;
@@ -239,7 +238,7 @@ TEST(GapReentryRelevel, ShiftedReturnFreesBothBandsOnAWarmLevelingCarry) {
 // would be inert on the whole population it exists for.
 TEST(GapReentryRelevel, StateAbsentAtDrainTimeIsTheCommonCaseAndStillFrees) {
     Harness h(/*with_states=*/false);
-    ASSERT_TRUE(h.stations.front().sm->getAmbiguities().empty());
+    ASSERT_TRUE(h.stations.front().params.amb.empty());
     h.addResumption(/*measurable=*/true, /*shifted=*/true, /*lli1=*/1, /*lli2=*/1);
     h.run(/*carry_invariant=*/false, /*carry_warm=*/true, /*relevel_armed=*/true);
 

@@ -10,7 +10,7 @@
 #include "common/PppObservation.hpp"
 #include "config/GnssConfig.hpp"
 #include "network/driver/RunTypes.hpp"
-#include "filter/StateManager.hpp"
+#include "network/state/StationParams.hpp"   // the stations' parameter sets: the inter-system biases
 
 #include <algorithm>
 #include <set>
@@ -59,11 +59,10 @@ void networkMultiGnssEpoch(NetworkRun& run, const NetworkEpoch& ep) {
     std::map<std::string, long long> isb_holders;          // system -> stations holding a state
     std::map<std::string, std::set<std::string>> sats;     // letter -> satellites this epoch
     for (std::size_t i = 0; i < stations.size() && i < modeled.size(); ++i) {
-        if (stations[i].sm)
-            for (const auto& [sys, idx] : stations[i].sm->getSystemTimeOffsetStates()) {
-                (void)idx;
-                ++isb_holders[sys];
-            }
+        for (const auto& [sys, slot] : stations[i].params.isb) {
+            (void)slot;
+            ++isb_holders[systemName(sys)];
+        }
         if (i < present.size() && !present[i]) {
             // A dropped station still says what its epoch looked like: a non-GPS-only
             // epoch is counted whether or not the PD test dropped it (the drop itself
