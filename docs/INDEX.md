@@ -188,6 +188,10 @@ GPS only; nothing armed; the single-band rule is built behind `network.second_ba
 key on at 6 h it reproduces GEC-s).
 [BDSB](refound/BDSB_beidou_continued_2026-10-19.md), the BDS card's continuation (open, 2026-10-19: the identity gate and the 6 h grade repeated
 from fresh arms, key off 24 IDENTICAL, key on reproduces GEC-s, census median change against GEC-s 0.0000 m).
+[MDAY](refound/MDAY_multiday_candidate_2026-10-19.md), the field golden and the BeiDou candidate on five 24 h days, DOY 128 to 132 of 2024
+(closed, 2026-10-20: both postures run healthy and accurate on every day, WTZZ00DEU at most 0.060 m per hour after ignition, census median
+site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130; candidate against golden: census
+paired median -0.8 to -3.8 mm, no site worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four days; nothing armed).
 
 ### `resume-seam` — [topics/resume-seam.md](topics/resume-seam.md)
 

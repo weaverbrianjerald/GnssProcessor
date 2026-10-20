@@ -206,3 +206,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   the parent side after the two declared run-end census lines; products and traces also identical against `w3base`. Key on at 6 h:
   no station rejected (2,160 with the rule off), heal and S-basis completion silent, WTZZ00DEU within 0.6 mm of GEC-s, census median
   change against GEC-s 0.0000 m, no site above 6 mm. UNVALIDATED, not armed.
+- [MDAY](MDAY_multiday_candidate_2026-10-19.md): closed, 2026-10-20: the field golden (GPS + Galileo) and the BeiDou candidate (second-band
+  admission, per-signal wire, sparse normals) on five 24 h days, DOY 128 to 132 of 2024, one Release exe (DOY 132 to 23:54:30, the
+  DOY 133 products being absent). All ten arms exit 0 and emit every epoch. WTZZ00DEU at most 0.060 m (golden) and 0.047 m (candidate) per hour after
+  ignition, census median site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130
+  (2.2 m). Candidate against golden: census paired median -0.8 to -3.8 mm, none worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four
+  days, hour 1 better in the median; cost about twice. One wire difference read (G03 on DOY 130). Not armed.
