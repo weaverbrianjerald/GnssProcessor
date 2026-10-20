@@ -212,3 +212,9 @@ verdict); the detail they carried is in each card's STATUS block and Outcome par
   Emitted satellite clocks move 5 to 7 mm RMS (a per-satellite level); WTZZ00DEU and the 16 census sites by at most 2.4 mm; the
   SINEX as grading truth moves the census median -1.35 mm (CEDU00AUS -11.5 mm). Nothing armed, phase 2 not built.
 - [PLANT](PLANT_planted_coordinate_offsets_2026-10-19.md): closed, 2026-10-19: one sim station's held coordinate planted wrong by 1 cm to 1 km, East and Up: wire 28.5 (East) and 6.2 (Up) mm of satellite-clock RMS per metre, consumer up to 3.4 mm per metre, no tier acts below 1 km; congruence screen names the station at 10 m at once, at 1 m after hours; 1 km Up declared at epoch 1, 1 km East poisons the network (47 other stations declared, consumer 335 m); measurement only, nothing armed.
+- [MDAY](MDAY_multiday_candidate_2026-10-19.md): closed, 2026-10-20: the field golden (GPS + Galileo) and the BeiDou candidate (second-band
+  admission, per-signal wire, sparse normals) on five 24 h days, DOY 128 to 132 of 2024, one Release exe (DOY 132 to 23:54:30, the
+  DOY 133 products being absent). All ten arms exit 0 and emit every epoch. WTZZ00DEU at most 0.060 m (golden) and 0.047 m (candidate) per hour after
+  ignition, census median site 0.02 to 0.07 m, no consumer above 1 m after hour 1 except the golden's ARHT00ATA for 26 min on DOY 130
+  (2.2 m). Candidate against golden: census paired median -0.8 to -3.8 mm, none worse than +2.9 mm, ARHT00ATA -0.08 to -0.13 m on four
+  days, hour 1 better in the median; cost about twice. One wire difference read (G03 on DOY 130). Not armed.
