@@ -97,6 +97,7 @@ add_library(gnss_core STATIC
     src/core/measurement/MeasurementModelSeeds.cpp
     src/core/measurement/MeasurementModelRow.cpp
     src/core/measurement/ObservationEquation.cpp
+    src/core/measurement/RowTrace.cpp
     src/core/measurement/UserParamView.cpp
     src/core/measurement/Seeds.cpp
     src/core/measurement/MeasurementModelVariance.cpp
@@ -649,6 +650,7 @@ add_executable(gnss_tests
     tests/test_gnss_identity.cpp
     tests/test_param_ref.cpp
     tests/test_observation_equation.cpp
+    tests/test_row_trace.cpp
     tests/test_seeds.cpp
     tests/network/test_network_param_inventory.cpp
     tests/network/test_station_params.cpp

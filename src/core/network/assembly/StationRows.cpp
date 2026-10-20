@@ -8,6 +8,7 @@
 #include "config/GnssConfig.hpp"
 #include "logging/LogManager.hpp"
 #include "measurement/RowRules.hpp"
+#include "measurement/RowTrace.hpp"
 #include "model/PppModel.hpp"
 #include "products/ProductCache.hpp"
 #include "products/SsrCorrectionStore.hpp"
@@ -118,9 +119,12 @@ EpochMeasurement networkStationRows(const StationRowContext& c, const StationPar
             try {
                 const ObservationEquation eq = observationEquation(input, obs, ref_type, lookup);
                 if (!eq.usable) continue;
-                const double predicted = evaluate(eq);
+                ObsTermValues terms;
+                const bool decomposed = wantsRowDecomposition(c.log, obs);
+                const double predicted = evaluate(eq, decomposed ? &terms : nullptr);
                 Eigen::VectorXd jacobian = Eigen::VectorXd::Zero(static_cast<Eigen::Index>(state_size));
                 scatterDense(eq, jacobian);
+                if (decomposed) traceRowDecomposition(c.log, obs, ref_type, predicted, terms);
 
                 const auto r = static_cast<Eigen::Index>(row);
                 update.innovations(r) = entry.second - predicted;

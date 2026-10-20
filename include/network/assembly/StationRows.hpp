@@ -23,6 +23,8 @@
  * the variance from the stochastic model.  The columns of the dense matrix are the slots of
  * the set.  A signal with no equation (a satellite or signal text that is not a canonical
  * RINEX identity) is left out.
+ * At trace level each row also prints its decomposition (measurement/RowTrace.hpp), the line
+ * the single-receiver model prints for its rows.
  *
  * Plain value types and free functions; no behaviour classes.
  */

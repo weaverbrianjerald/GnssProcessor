@@ -275,7 +275,9 @@ first-epoch code-bias seed. The seed values are the pure functions of `measureme
 the births apply them to the set. `networkStationRows` (`network\assembly\StationRows.cpp`)
 then builds the station's rows over the set through the observation equation
 (`measurement\ObservationEquation.hpp`), with `NetView` as the lookup and `scatterDense` writing
-the dense Jacobian. A shared parameter reads zero there, as its linearization point does.
+the dense Jacobian. A shared parameter reads zero there, as its linearization point does. At
+trace level each row also prints its PHASE-DECOMP or CODE-DECOMP line (`measurement\RowTrace.hpp`),
+the same function the single-receiver model calls.
 
 A pending re-seed is a mark on the set (`markPendingReseed`, `pendingReseed`,
 `clearPendingReseed`), independent of whether the column exists: a slip drain, RAIM or a screen

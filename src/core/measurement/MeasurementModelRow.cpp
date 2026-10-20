@@ -13,7 +13,8 @@
  * partials into the row.  A Doppler row (velocity, clock rate, inter-system rate and the
  * tightly coupled IMU partials) has its own function, since those columns exist only in a
  * single-receiver configuration.  The coverage checks decide whether a .BIA product or the SSR
- * stream already corrects a signal.
+ * stream already corrects a signal.  At trace level a row also prints its decomposition
+ * (measurement/RowTrace.hpp), the function the network producer's row loop calls too.
  */
 
 #include "measurement/MeasurementModel.hpp"
@@ -22,6 +23,7 @@
 #include "common/PppUtils.hpp"
 #include "common/SignalBand.hpp"
 #include "measurement/ObservationEquation.hpp"
+#include "measurement/RowTrace.hpp"
 #include "measurement/UserParamView.hpp"
 #include "products/SsrCorrectionStore.hpp"
 #include <cmath>
@@ -245,10 +247,10 @@ namespace GnssProcessor {
             observationEquation(obsInput(), obs, ref_type, ParamLookup(view));
         if (eq.usable) {
             ObsTermValues terms;
-            const bool decomposed = wantsRowDecomposition(obs);
+            const bool decomposed = wantsRowDecomposition(log_manager_, obs);
             predicted = evaluate(eq, decomposed ? &terms : nullptr);
             scatterDense(eq, jacobian);
-            if (decomposed) traceRowDecomposition(obs, ref_type, predicted, terms);
+            if (decomposed) traceRowDecomposition(log_manager_, obs, ref_type, predicted, terms);
         }
         return eq.usable;
     }
@@ -304,71 +306,6 @@ namespace GnssProcessor {
         }
 
         return true;
-    }
-
-    bool MeasurementModel::wantsRowDecomposition(const PppObservation& obs) const {
-        return !obs.satellite.empty()
-            && log_manager_.getLogger("measurement_model")->should_log(spdlog::level::trace);
-    }
-
-    // PHASE-DECOMP diagnostic (trace, "measurement_model"): prints the
-    // zero-difference predicted phase and the terms that carry a clock,
-    // ionosphere, bias or ambiguity, so that a wandering float or a product
-    // datum step can be attributed to one channel.  It is not a complete
-    // decomposition: the a-priori model, the range correction, the zenith wet
-    // delay, the troposphere gradients, the inter-system bias and the
-    // phase-colour term are in predicted and are not printed.  ssr_pbias is
-    // the applied network/SSR satellite phase-bias term (0 when the store has
-    // no entry for this (sat, signal); the closed-loop datum attribution uses
-    // this term); sat_pbias is the network producer's estimated
-    // per-(sat,signal) phase-bias state, plus the receiver phase-bias split
-    // state when that is armed (inert elsewhere); sat_clk is the producer's
-    // residual satellite-clock state; amb is the float-ambiguity contribution
-    // in metres (NL/WL basis included).
-    //
-    // CODE-DECOMP diagnostic: for any code signal, prints the zero-difference
-    // predicted observable and the clock, ionosphere and bias terms in it, so
-    // that a residual of hundreds of metres or kilometres can be attributed.
-    // It is not a complete decomposition: the a-priori model, the range
-    // correction, the zenith wet delay, the troposphere gradients, the
-    // inter-system bias and the network satellite-clock term (on every network
-    // producer code row) are in predicted and are not printed.  rx_clk is the
-    // receiver-clock state (0 under BSSD, where the between-sat SD removes the
-    // physical clock, so zd_innov here still contains it, equally on every
-    // signal, and it cancels only after differencing); iono is the
-    // per-sat slant-iono term (+alpha*I on code); ssr_cbias is the SSR code
-    // bias matched by the exact RINEX obs code (0 if the provider's set lacks
-    // this code); sat_bias is the estimated per-(sat,signal) state; bia_cbias
-    // prints the receiver DCB/IFB state term.  A .BIA code bias
-    // (enable_code_phase_bias) is applied in PppModel and is already part of
-    // obs.modeled.
-    void MeasurementModel::traceRowDecomposition(const PppObservation& obs,
-        const std::string& ref_type,
-        double predicted,
-        const ObsTermValues& terms) const {
-
-        auto lg = log_manager_.getLogger("measurement_model");
-        const double observed_val =
-            obs.observed.count(ref_type) ? obs.observed.at(ref_type) : 0.0;
-        if (classifyMeasurement(ref_type) == MeasurementType::Phase) {
-            lg->trace("PHASE-DECOMP {} {} tow={:.1f} observed={:.3f} predicted={:.3f} "
-                      "zd_innov={:+.3f}m | rx_clk={:+.3f} phase_clk={:+.3f} "
-                      "iono={:+.3f} ssr_pbias={:+.3f} sat_pbias={:+.3f} "
-                      "sat_clk={:+.3f} amb={:+.3f}",
-                      obs.satellite, ref_type, obs.time.tow, observed_val, predicted,
-                      observed_val - predicted, terms[ObsEffect::ReceiverClock],
-                      terms[ObsEffect::PhaseClock], terms[ObsEffect::Ionosphere],
-                      terms[ObsEffect::SsrBias], terms[ObsEffect::SatellitePhaseBias],
-                      terms[ObsEffect::SatelliteClock], terms[ObsEffect::Ambiguity]);
-        } else {
-            lg->trace("CODE-DECOMP {} {} tow={:.1f} observed={:.3f} predicted={:.3f} "
-                      "zd_innov={:+.3f}m | rx_clk={:+.3f} iono={:+.3f} ssr_cbias={:+.3f} "
-                      "sat_bias={:+.3f} bia_cbias={:+.3f}",
-                      obs.satellite, ref_type, obs.time.tow, observed_val, predicted,
-                      observed_val - predicted, terms[ObsEffect::ReceiverClock],
-                      terms[ObsEffect::Ionosphere], terms[ObsEffect::SsrBias],
-                      terms[ObsEffect::SatelliteCodeBias], terms[ObsEffect::ReceiverCodeBias]);
-        }
     }
 
 } // namespace GnssProcessor

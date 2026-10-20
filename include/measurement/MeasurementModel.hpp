@@ -26,7 +26,6 @@ namespace GnssProcessor {
     class SsrCorrectionStore;
     struct ObsInput;
     struct ObservationEquation;
-    struct ObsTermValues;
 
     /**
      * @file MeasurementModel.hpp
@@ -53,7 +52,8 @@ namespace GnssProcessor {
      *    term list, measurement/ObservationEquation.hpp, over the state through
      *    measurement/UserParamView.hpp); also the definitions of the row rules
      *    isUsableMeasurement and the product coverage checks (free functions,
-     *    measurement/RowRules.hpp).
+     *    measurement/RowRules.hpp).  A row's decomposition trace is the free
+     *    function of measurement/RowTrace.hpp, shared with the network producer.
      *  - MeasurementModelSeeds.cpp: the first-epoch seeding of the single-receiver
      *    state (inter-system biases, phase clock, receiver code biases, the cold
      *    receiver clock) and the ambiguity seed: the values come from
@@ -79,7 +79,7 @@ namespace GnssProcessor {
 
         /**
          * @brief Compute the measurement update for a single epoch (single
-         *        receiver: PPP, PPP-RTK, and each network station).
+         *        receiver: PPP, PPP-RTK and the closed-loop consumer).
          *
          * Runs, in order: the first-epoch inter-system bias and phase-clock
          * seeds (@c StateInitializer), the differencing strategy's pivot pass,
@@ -803,8 +803,12 @@ namespace GnssProcessor {
          * ambiguity (phase; per band, or lambda_b (NL - s WL) on the NL/WL basis)
          * and the network's phase colour.  Doppler rows (@ref buildDopplerRow):
          * velocity, clock rate, inter-system rate and the tightly coupled IMU
-         * partials.  Prints the PHASE-DECOMP and CODE-DECOMP traces at trace
-         * level.
+         * partials.  At trace level a code or phase row prints its decomposition
+         * (@c traceRowDecomposition, measurement/RowTrace.hpp).
+         *
+         * The network producer builds its rows from the same equation over a
+         * station's own parameter set (network/assembly/StationRows.hpp), not
+         * through this member.
          *
          * @param obs        The satellite's modeled observation.
          * @param ref_type   The signal (a RINEX code, or an iono-free pair "a_b").
@@ -848,27 +852,6 @@ namespace GnssProcessor {
             const Eigen::VectorXd& x,
             Eigen::VectorXd& jacobian,
             double& predicted) const;
-
-        /**
-         * @brief Whether the row's decomposition trace will print (the satellite is named
-         *        and the model's logger is at trace level).
-         * @param obs The satellite's modeled observation.
-         * @return True when @ref traceRowDecomposition would write a line.
-         */
-        bool wantsRowDecomposition(const PppObservation& obs) const;
-
-        /**
-         * @brief Prints the PHASE-DECOMP or CODE-DECOMP trace of a row: the predicted
-         *        observable and the clock, ionosphere, bias and ambiguity terms in it.
-         * @param obs       The satellite's modeled observation.
-         * @param ref_type  The signal.
-         * @param predicted The row's predicted observable.
-         * @param terms     The value of each term of the row's equation.
-         */
-        void traceRowDecomposition(const PppObservation& obs,
-            const std::string& ref_type,
-            double predicted,
-            const ObsTermValues& terms) const;
 
         // -------------------------------------------------------------------
         // BSSD delegation (forwarders to PivotManager)
