@@ -85,12 +85,6 @@ struct LocalSlot {
     /// An ambiguity the integer search leaves out because no phase bias is applied to its
     /// signal this epoch (the measurement pre-pass marks it, and clears every mark first).
     bool             unresolvable{false};
-    /// A column here that no typed identity names (a layout column of
-    /// the single-receiver filter, or a key the classifier refuses).  @ref ref is left at its
-    /// default and means nothing (it would read as the receiver clock); the slot is in no typed
-    /// map, so no reader of a family sees it, and the inventory lists it as unclassified.  It
-    /// keeps slot k the column k.
-    bool             unnamed{false};
     /// The elevation (degrees) of the line of sight a phase colour belongs to this epoch, the
     /// argument of its stationary prior; NaN for every other parameter and for a phase colour
     /// with none recorded.
@@ -201,9 +195,9 @@ struct StationParams {
     /// counted by the inventory, never recorded.
     std::size_t decided{0};
 
-    /// "<container>:<key>" of each state column the classifier refused (held as an unnamed
-    /// slot), then "absorbed <container>:<key>" of each withheld state it refused.  Empty on a
-    /// sound run; printed by the inventory as its integrity line.
+    /// "absorbed <container>:<key>" of each withheld shared parameter whose identity could not be
+    /// typed (a signal the constellation does not carry), in the gates' order.  Empty on a sound
+    /// run; printed by the inventory as its integrity line.
     std::vector<std::string> unclassified;
 };
 

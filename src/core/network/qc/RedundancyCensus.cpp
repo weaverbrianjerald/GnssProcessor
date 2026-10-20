@@ -176,7 +176,6 @@ std::map<Eigen::Index, std::string> localColumnLabels(const StationAssembly& R,
     std::map<Eigen::Index, std::string> out;
     for (std::size_t k = 0; k < set.slots.size(); ++k) {
         const LocalSlot& s = set.slots[k];
-        if (s.unnamed) continue;
         const auto hit = R.h2local.find(static_cast<int>(k));
         if (hit == R.h2local.end() || hit->second < 0) continue;
         std::string label = censusLabel(s.ref);

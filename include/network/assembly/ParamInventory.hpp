@@ -454,8 +454,8 @@ namespace GnssProcessor {
         bool                            filled{false};     ///< The station reached the split this epoch.
         /// One per classified column with a disposition, then one per absorbed instance.
         std::vector<StationParamRecord> records;
-        /// "<container>:<key>" of every column the classifier refused, and of every withheld
-        /// state it refused (prefixed "absorbed ").
+        /// "absorbed <container>:<key>" of every withheld shared parameter whose identity could
+        /// not be typed (@ref StationParams::unclassified).
         std::vector<std::string>        unclassified;
         /// Classified columns the split gave no disposition (its disposition vector is
         /// shorter than the state): a defect, counted and printed, never filled in.
@@ -469,11 +469,11 @@ namespace GnssProcessor {
     /**
      * @brief Record a station's inventory after its split, from the station's parameter set.
      *
-     * One record per named slot of @p set with the disposition the split gave it, in column
-     * order, then one per withheld shared state (@ref StationShared::absorbed) with disposition
-     * @c Absorbed and its reason.  The slot's counters are the set's: the columns no typed
-     * identity names (@ref StationParams::unclassified, listed, never dropped), the named
-     * columns past the end of the split's dispositions (counted in @c no_disposition, never
+     * One record per slot of @p set with the disposition the split gave it, in column order,
+     * then one per withheld shared state (@ref StationShared::absorbed) with disposition
+     * @c Absorbed and its reason.  The slot's counters are the set's: the withheld states whose
+     * identity could not be typed (@ref StationParams::unclassified, listed, never dropped),
+     * the columns past the end of the split's dispositions (counted in @c no_disposition, never
      * given a disposition by default) and the withheld states whose absorbing column the
      * station no longer holds (@ref StationShared::absorbed_no_absorber).  Pure per-station
      * work: reads @p set, writes only @p slot (safe inside the parallel PASS B).
@@ -542,7 +542,7 @@ namespace GnssProcessor {
         long long unreached_state_mismatch{0};  ///< Assembled, but H's column count differed from the state size (@c state_mismatch).
         long long unreached_exception{0};       ///< Assembled, but an exception before the split (@c threw), or no flag set.
         std::vector<char> stations;                      ///< stations[i] != 0: station i counted at least once.
-        long long unclassified{0};                       ///< Columns (and withheld states) the classifier refused.
+        long long unclassified{0};                       ///< Withheld states whose identity could not be typed (the printed line counts them as columns).
         std::map<std::string, long long> unclassified_labels;  ///< "<container>:<key>" -> columns (first 50 labels kept).
         long long no_disposition{0};                     ///< Columns the split gave no disposition (@ref StationParamSlot::no_disposition).
         /// Withheld states without their absorbing column at the split

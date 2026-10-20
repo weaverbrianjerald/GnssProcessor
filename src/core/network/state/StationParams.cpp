@@ -44,10 +44,6 @@ int slotOf(const Map& map, const Key& key) {
 bool addParam(StationParams& set, const LocalSlot& slot) {
     const int index = static_cast<int>(set.slots.size());
     set.slots.push_back(slot);
-    if (slot.unnamed) {
-        ++set.untyped;
-        return false;
-    }
     const ParamRef& r = slot.ref;
     bool placed = false;
     using PK = NetworkParamKind;
@@ -215,28 +211,26 @@ std::string familyPrefix(StateFamily f) { return specOf(f).label_prefix; }
 std::string stateLabel(const LocalSlot& slot, std::size_t index) {
     using PK = NetworkParamKind;
     const ParamRef& r = slot.ref;
-    if (!slot.unnamed) {
-        switch (r.kind) {
-            case PK::RxPosition:
-                return r.axis == 0 ? "POS_X" : (r.axis == 1 ? "POS_Y" : "POS_Z");
-            case PK::RxClock:
-                if (r.core == UserCore::PhaseClock) return "PHASE_CLK";
-                if (r.core != UserCore::None) break;
-                return r.form == ParamForm::Isb ? "ISB_" + keyText(r) : std::string("CLK");
-            case PK::Zwd:
-                if (r.core == UserCore::GradientNorth) return "TGRAD_N";
-                if (r.core == UserCore::GradientEast) return "TGRAD_E";
-                return "ZWD";
-            case PK::SlantIono:    return familyPrefix(StateFamily::Ionosphere) + keyText(r);
-            case PK::Ambiguity:    return familyPrefix(StateFamily::Ambiguity) + keyText(r);
-            case PK::RxCodeBias:   return familyPrefix(StateFamily::ReceiverCodeBias) + keyText(r);
-            case PK::SatCodeBias:  return familyPrefix(StateFamily::SatBias) + keyText(r);
-            case PK::SatPhaseBias: return familyPrefix(StateFamily::SatPhaseBias) + keyText(r);
-            case PK::RxPhaseBias:  return familyPrefix(StateFamily::ReceiverPhaseBias) + keyText(r);
-            case PK::PhaseColour:  return familyPrefix(StateFamily::PhaseColour) + keyText(r);
-            case PK::SatClock:     return familyPrefix(StateFamily::SatClock) + keyText(r);
-            case PK::VtecSh:       break;
-        }
+    switch (r.kind) {
+        case PK::RxPosition:
+            return r.axis == 0 ? "POS_X" : (r.axis == 1 ? "POS_Y" : "POS_Z");
+        case PK::RxClock:
+            if (r.core == UserCore::PhaseClock) return "PHASE_CLK";
+            if (r.core != UserCore::None) break;
+            return r.form == ParamForm::Isb ? "ISB_" + keyText(r) : std::string("CLK");
+        case PK::Zwd:
+            if (r.core == UserCore::GradientNorth) return "TGRAD_N";
+            if (r.core == UserCore::GradientEast) return "TGRAD_E";
+            return "ZWD";
+        case PK::SlantIono:    return familyPrefix(StateFamily::Ionosphere) + keyText(r);
+        case PK::Ambiguity:    return familyPrefix(StateFamily::Ambiguity) + keyText(r);
+        case PK::RxCodeBias:   return familyPrefix(StateFamily::ReceiverCodeBias) + keyText(r);
+        case PK::SatCodeBias:  return familyPrefix(StateFamily::SatBias) + keyText(r);
+        case PK::SatPhaseBias: return familyPrefix(StateFamily::SatPhaseBias) + keyText(r);
+        case PK::RxPhaseBias:  return familyPrefix(StateFamily::ReceiverPhaseBias) + keyText(r);
+        case PK::PhaseColour:  return familyPrefix(StateFamily::PhaseColour) + keyText(r);
+        case PK::SatClock:     return familyPrefix(StateFamily::SatClock) + keyText(r);
+        case PK::VtecSh:       break;
     }
     return "STATE_" + std::to_string(index);
 }

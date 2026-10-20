@@ -216,7 +216,6 @@ std::vector<std::string> stationBlockLabels(const StationAssembly& R, const Stat
     std::vector<std::string> labels(static_cast<std::size_t>(n_local));
     for (std::size_t k = 0; k < set.slots.size(); ++k) {
         const LocalSlot& s = set.slots[k];
-        if (s.unnamed) continue;
         const auto hit = R.h2local.find(static_cast<int>(k));
         if (hit == R.h2local.end() || hit->second < 0) continue;
         const Eigen::Index c = static_cast<Eigen::Index>(hit->second);

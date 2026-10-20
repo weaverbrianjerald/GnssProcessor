@@ -188,7 +188,7 @@ Eigen::VectorXd redundancy(const Spectrum& sp, const Eigen::MatrixXd& A_r,
  * labels: the audit's @c clk, @c zwd, @c rxcb:<key>, @c iono:<sat>, @c amb:<sat>:<signal>, plus
  * @c pos:<xyz>, @c isb:<system>, @c satbias:<key>, @c satpb:<key>, @c rxpb:<key> and
  * @c satclk:<key>.  The phase colour has no label: its column appears in a span as
- * @c col<k>, and an unnamed slot (a layout column of the single-receiver filter) the same.
+ * @c col<k>.
  *
  * @param R       The station's assembly of the epoch (its @c h2local).
  * @param set     The station's parameter set, built at the same epoch's split.

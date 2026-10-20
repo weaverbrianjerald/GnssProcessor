@@ -76,7 +76,8 @@ Three run-start tables describe a parameter; each needs a row.
 - **Inventory class** ("Network (parameters as armed)"): `paramInstanceOf`
   (`src\core\common\ParamRef.cpp`) reads the class from the `ParamRef` (the ZWD's is kind
   `Zwd`), and `src\core\network\assembly\ParamInventory.cpp` needs a line in
-  `paramClassLabel`. A column the typed maps of the set do not hold (an unnamed slot) lands on
+  `paramClassLabel`. A column that no typed map of the set takes keeps its slot and is counted in
+  `StationParams::untyped`; a withheld satellite parameter whose identity cannot be typed lands on
   the "unclassified" integrity line, which must read 0. Two components can be two `ParamForm`
   values of one kind. The set holds the column once `addParam` (`StationParams.cpp`) puts it in
   the typed map of its kind, and a new kind needs a map there.

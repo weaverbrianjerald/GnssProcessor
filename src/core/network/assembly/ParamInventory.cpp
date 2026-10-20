@@ -312,12 +312,10 @@ void recordStationParams(const StationParams& set, int station, StationParamSlot
     slot.absorbed_no_absorber = set.shared.absorbed_no_absorber;
     slot.filled = true;
     const StationId id{station};
-    // The columns of the set with the disposition the split just gave them.  A column the set
-    // holds only as an unnamed slot is listed under `unclassified`; a named one past the end of
-    // the split's dispositions is counted, never given a disposition by default.
+    // The columns of the set with the disposition the split just gave them.  One past the end
+    // of the split's dispositions is counted, never given a disposition by default.
     for (std::size_t k = 0; k < set.slots.size(); ++k) {
         const LocalSlot& s = set.slots[k];
-        if (s.unnamed) continue;
         if (k >= set.decided) {
             ++slot.no_disposition;
             continue;

@@ -303,8 +303,8 @@ std::vector<Eigen::Index> unobservableLocalColumns(const Eigen::VectorXd& pivots
  * Read from the station's parameter set through the assembly's state-index to local-column
  * map (@c h2local).  The labels: @c iono:<sat>, @c amb:<key> (the ambiguity's state key,
  * "G05_L1C"), @c rxcb:<key>, @c rpb:<key>, @c zwd and @c rx_clock.  A column nothing here
- * names (an inter-system bias, a phase colour, an unnamed slot) is absent: the census
- * reports it by position (@c loc<column>).
+ * names (an inter-system bias, a phase colour) is absent: the census reports it by position
+ * (@c loc<column>).
  *
  * @param R   The station's assembly of the epoch.
  * @param set The station's parameter set, built at the same epoch's split.
