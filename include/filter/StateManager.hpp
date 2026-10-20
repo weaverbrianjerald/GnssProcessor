@@ -1350,42 +1350,12 @@ namespace GnssProcessor {
          * ambiguity keys must remain (e.g. from the current epoch measurement set).
          *
          * @param keep_keys   Set of ambiguity keys to keep.
-         * @param removed_out Optional sink; the keys this call removes are appended
-         *                    to it.  The prune itself does not depend on the sink,
-         *                    which only lets the arc ledger record that a column
-         *                    disappeared inside a gap, so the arc's next re-entry can
-         *                    state that it returns to a re-created column.  Null (the
-         *                    default) records nothing and costs nothing.
-         */
-        void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys,
-                                    std::vector<std::string>* removed_out = nullptr);
-
-        /**
-         * @brief Arm the prune's key recorder.
          *
-         * Off by default, so a run that does not ask for it allocates and copies
-         * nothing. The network producer arms it on every run, with the signal
-         * roster and arc ledger, which are built on every network run,
-         * and drains @ref takePrunedAmbiguities once per epoch.
+         * @note The network producer's station parameter set has its own prune
+         *       (@c pruneAmbiguitiesExcept of @c StationParams.hpp), which records the
+         *       removed keys for the arc ledger; this one records nothing.
          */
-        void setRecordPrunedAmbiguities(bool on) { record_pruned_ambiguities_ = on; }
-
-        /**
-         * @brief The sink @c MeasurementModel passes to @ref pruneAmbiguitiesExcept.
-         *
-         * Null unless @ref setRecordPrunedAmbiguities armed the recorder, so the
-         * call site expresses the recording and the state manager owns the buffer.
-         */
-        std::vector<std::string>* ambiguityPruneSink() {
-            return record_pruned_ambiguities_ ? &pruned_ambiguities_ : nullptr;
-        }
-
-        /// @brief Take and clear the keys pruned since the last drain.
-        std::vector<std::string> takePrunedAmbiguities() {
-            std::vector<std::string> out;
-            out.swap(pruned_ambiguities_);
-            return out;
-        }
+        void pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys);
 
         // -------------------------------------------------------------------
         // IMU bias states (GNSS/INS integration)
@@ -1515,10 +1485,6 @@ namespace GnssProcessor {
         std::map<std::string, size_t> system_time_offset_indices_; //!< Map system name -> state index.
         std::map<std::string, size_t> system_time_rate_offset_indices_; //!< Map system name -> ISBR state index (clock-rate inter-system offset; allocated when velocity is estimated and BSSD is off).
         std::map<std::string, size_t> ambiguity_indices_; //!< Map ambiguity key -> state index.
-        /// Recorder for the keys @ref pruneAmbiguitiesExcept removes.
-        /// Off by default; only the three recorder accessors touch these members.
-        bool record_pruned_ambiguities_{false};
-        std::vector<std::string> pruned_ambiguities_;
         std::map<std::string, uint64_t> ambiguity_generations_; //!< Continuity generation for each live ambiguity.
         uint64_t next_ambiguity_generation_{ 0 }; //!< Monotone across removals; zero denotes a missing key.
         std::set<std::string> unresolvable_ambiguities_; //!< Ambiguity keys excluded from integer AR (incomplete product coverage).

@@ -311,44 +311,6 @@ ParamRef phaseColourRef(SatId sat) {
 // Reference and instance
 // =======================================================================
 
-ParamRef paramRefOf(const ParamInstanceId& id, std::uint8_t axis) {
-    using PK = NetworkParamKind;
-    const ParamClass& c = id.cls;
-    switch (c.kind) {
-        case PK::RxPosition:   return rxPositionRef(axis);
-        case PK::Zwd:          return zwdRef();
-        case PK::RxClock:      return c.form == ParamForm::Isb ? isbRef(c.sys) : rxClockRef();
-        case PK::SlantIono:    return slantIonoRef(id.sat);
-        case PK::PhaseColour:  return phaseColourRef(id.sat);
-        case PK::SatClock:     return satClockRef(id.sat);
-        case PK::SatPhaseBias: return satPhaseBiasRef(id.sat, c.signal);
-        case PK::SatCodeBias:
-            return c.form == ParamForm::IfPair
-                       ? satCodeBiasIfRef(id.sat, SignalPair{c.signal, c.signal_b})
-                       : satCodeBiasRef(id.sat, c.signal);
-        case PK::RxPhaseBias:  return rxPhaseBiasRef(c.sys, c.signal);
-        case PK::RxCodeBias: {
-            RxCbKey key;
-            key.sys      = c.sys;
-            key.form     = c.form;
-            key.band     = c.band;
-            key.signal   = c.signal;
-            key.glo_slot = id.glo_slot;
-            return rxCodeBiasRef(key);
-        }
-        case PK::Ambiguity:
-            switch (c.form) {
-                case ParamForm::IfPair:     return ambiguityIfRef(id.sat, SignalPair{c.signal, c.signal_b});
-                case ParamForm::NarrowLane: return narrowLaneRef(id.sat, c.band);
-                case ParamForm::WideLane:   return wideLaneRef(id.sat, c.band, c.band_b);
-                default:                    return ambiguityRef(id.sat, c.signal);
-            }
-        case PK::VtecSh:
-            break;
-    }
-    return ParamRef{};
-}
-
 ParamInstanceId paramInstanceOf(const ParamRef& ref, StationId station) {
     using PK = NetworkParamKind;
     ParamInstanceId id;

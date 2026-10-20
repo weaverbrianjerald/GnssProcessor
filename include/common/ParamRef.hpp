@@ -156,7 +156,7 @@ const char* paramFormName(ParamForm f);
  *
  * (x): the receiver code-bias forms without a signal keep their class when the system
  * name in the key is not a known constellation (@c System::Unknown); see
- * @c classifyStateColumn.  A band is read from the key's RINEX digit through
+ * @c receiverCodeBiasKey.  A band is read from the key's RINEX digit through
  * @ref bandOfDigit (BeiDou digit '7' reads as B2I).  @c vtec_sh is never a station
  * column.
  */
@@ -271,7 +271,7 @@ struct SignalNameOrder {
  * @brief The key of a station's receiver code-bias map: one differential bias, inter-frequency
  *        bias, inter-signal correction or GLONASS per-slot inter-frequency bias.
  *
- * The fields a form does not use keep their defaults, as @c classifyStateColumn leaves them:
+ * The fields a form does not use keep their defaults, as @c receiverCodeBiasKey leaves them:
  *
  * | form        | state key                  | fields used          |
  * |-------------|----------------------------|----------------------|
@@ -528,28 +528,11 @@ ParamRef wideLaneRef(SatId sat, FrequencyBand ref_band, FrequencyBand band);
 ParamRef phaseColourRef(SatId sat);
 
 /**
- * @brief The reference of a classified instance: the identity the observation equation and
- *        the station's parameter set name it by.
- *
- * Fills the fields the instance's (kind, form) carries (the table of @ref ParamRef) and
- * leaves the others at their defaults.  The station of @p id is dropped.  The receiver
- * code-bias forms and the satellite-keyed forms with no typed reference (a kind with no
- * form here) convert as their form says; a class the table does not list (kind
- * @c VtecSh) gives the default reference.
- *
- * @param id   The instance (as @c classifyStateColumn reads it).
- * @param axis Component of the receiver position (kind rx_position only: the classifier
- *             reads the three position columns alike).
- * @return The reference.
- */
-ParamRef paramRefOf(const ParamInstanceId& id, std::uint8_t axis = 0);
-
-/**
  * @brief The instance of a reference: the class, satellite and GLONASS slot a table line
  *        and a record are made of.
  *
- * The inverse of @ref paramRefOf for every reference the factories above build and a
- * classified instance converts to: the constellation of the class is the satellite's for a
+ * Fills the fields the reference's (kind, form) carries (the table of @ref ParamClass) and
+ * leaves the others at their defaults: the constellation of the class is the satellite's for a
  * satellite-keyed kind and the reference's own otherwise.
  *
  * @param ref     The reference.

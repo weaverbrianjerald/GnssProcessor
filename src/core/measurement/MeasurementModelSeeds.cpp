@@ -174,27 +174,17 @@ namespace GnssProcessor {
         const Eigen::VectorXd x = state_manager_.getStateVector();
         const UserParamView view(state_manager_, x, static_cast<std::size_t>(x.size()));
         const CodeBiasSeeds result =
-            seedCodeBias(residualSeedInput(), ParamLookup(view), observations,
-                         state_initializer_.codeBiasSeedOverride());
+            seedCodeBias(residualSeedInput(), ParamLookup(view), observations, /*restore=*/{});
         auto log = log_manager_.getLogger("state_initializer");
 
-        for (std::size_t i = 0; i < result.refused; ++i)
-            state_initializer_.noteCodeBiasRestore(/*applied=*/false);
         if (result.seeds.empty()) return;
 
         Eigen::VectorXd x_updated = x;
         for (const CodeBiasSeed& seed : result.seeds) {
             x_updated(view.find(rxCodeBiasRef(seed.key)).column) = seed.value_m;
             const std::string key = userCodeBiasKey(seed.key);
-            if (seed.restored) {
-                state_initializer_.noteCodeBiasRestore(/*applied=*/true);
-                log->info("{}RS-9: code bias {} seeded from the RESTORED "
-                          "linearization point: {:.6f} m (the one-epoch code "
-                          "median is NOT used)", epoch_prefix, key, seed.value_m);
-            } else {
-                log->info("{}Initialized code bias {}: {:.3f} m from {} satellites",
-                          epoch_prefix, key, seed.value_m, seed.n_sats);
-            }
+            log->info("{}Initialized code bias {}: {:.3f} m from {} satellites",
+                      epoch_prefix, key, seed.value_m, seed.n_sats);
         }
         state_manager_.setStateVector(x_updated);
     }

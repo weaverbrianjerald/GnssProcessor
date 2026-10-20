@@ -199,8 +199,6 @@ std::string satPhaseBiasText(const SatSignalId& id) { return userKey(satPhaseBia
 
 std::string satCodeBiasText(const SatSignalId& id) { return userKey(satCodeBiasRef(id.sat, id.signal)); }
 
-std::string satClockText(const SatId& sat) { return userKey(satClockRef(sat)); }
-
 namespace {
 
 /// The label prefix of a dynamic state family.

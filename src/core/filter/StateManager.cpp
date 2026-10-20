@@ -632,8 +632,7 @@ namespace GnssProcessor {
         return true;
     }
 
-    void StateManager::pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys,
-                                              std::vector<std::string>* removed_out) {
+    void StateManager::pruneAmbiguitiesExcept(const std::set<std::string>& keep_keys) {
         auto logger = log_manager_.getLogger("state_manager");
         if (ambiguity_indices_.empty()) {
             logger->trace("pruneAmbiguitiesExcept: no ambiguities to prune");
@@ -652,12 +651,6 @@ namespace GnssProcessor {
         }
 
         logger->info("Pruning {} ambiguities (keeping {} keys)", to_remove.size(), keep_keys.size());
-        // The prune always shrinks the state vector.  A caller that passes
-        // removed_out also receives the removed keys, so the arc ledger can
-        // record that a later re-entry returns to a fresh column.  With the
-        // default null sink nothing is reported.
-        if (removed_out != nullptr)
-            removed_out->insert(removed_out->end(), to_remove.begin(), to_remove.end());
         for (const auto& key : to_remove)
             removeAmbiguity(key);
     }

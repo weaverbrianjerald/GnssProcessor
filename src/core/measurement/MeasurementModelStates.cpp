@@ -123,12 +123,7 @@ namespace GnssProcessor {
         ensurePerBandAmbiguities(observations, epoch_prefix, need);
         ensureNlWlAmbiguities(observations, epoch_prefix, need);
 
-        // The prune passes the ambiguity prune sink, which records the removed
-        // columns so the arc ledger can state that the column a later re-entry
-        // lands on is a fresh one.  The sink is null unless the network producer
-        // armed the recorder, so every other path is unaffected.
-        state_manager_.pruneAmbiguitiesExcept(need.required_ambiguities,
-                                              state_manager_.ambiguityPruneSink());
+        state_manager_.pruneAmbiguitiesExcept(need.required_ambiguities);
 
         warnAmbiguityBandCount(epoch_prefix, need);
         markUnresolvableAmbiguities(observations, epoch_prefix, need);

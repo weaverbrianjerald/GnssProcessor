@@ -13,7 +13,7 @@
  * the signals of both golden configurations and over every signal the classifier knows:
  *  - the inter-system bias: @c System with @c SystemNameOrder;
  *  - the receiver phase bias: @c SignalId with @c SignalNameOrder;
- *  - the receiver code bias: @c RxCbKey, with the classifier as the witness that the typed
+ *  - the receiver code bias: @c RxCbKey, with @c receiverCodeBiasKey as the witness that the typed
  *    key means what the state key says;
  *  - the satellite-signal and satellite families: @c SatSignalId and @c SatId against the
  *    real key makers (the suffixes "|PB" and "|SC" included).
@@ -265,7 +265,7 @@ TEST(ParamRefTest, SignalNameOrderMatchesTheReceiverPhaseBiasKeysOverEveryClassi
 namespace {
 
 /// The receiver code-bias map of one universe: the typed order against the string order,
-/// and the classifier's reading of every key against the typed fields.
+/// and the key parser's reading of every key against the typed fields.
 void expectRxCbOrder(const SignalUniverse& u) {
     std::vector<RxCbKey> keys = rxCbKeys(u);
     ASSERT_FALSE(keys.empty());
@@ -433,12 +433,10 @@ TEST(ParamRefTest, TheKindsAndFormsKeepTheirTableNames) {
 
 namespace {
 
-/// A reference converted to its instance and back, and rendered as the state key it stands for.
+/// A reference converted to its instance, and rendered as the state key it stands for.
 void expectConverts(const ParamRef& ref, const std::string& key, bool renders_back = true) {
     const ParamInstanceId id = paramInstanceOf(ref);
     EXPECT_EQ(id.cls.kind, ref.kind) << key;
-    EXPECT_EQ(paramRefOf(id, ref.axis), ref) << key << " -> " << describe(ref);
-    EXPECT_EQ(paramInstanceOf(paramRefOf(id, ref.axis)), id) << key;
     if (renders_back) EXPECT_EQ(userKey(ref), key) << describe(ref);
 }
 

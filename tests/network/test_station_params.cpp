@@ -522,7 +522,6 @@ TEST(StationParamsTest, KeyTextAndStateLabelAreTheStateKeyFormats) {
     EXPECT_EQ(label(satCodeBiasRef(g05, gnss_test::signalOf(System::GPS, "C1C"))), "SATB:G05|C1C");
 
     // The texts the epoch's shared-key sets carry.
-    EXPECT_EQ(satClockText(g05), "G05|SC");
     EXPECT_EQ(satPhaseBiasText(SatSignalId{g05, gnss_test::signalOf(System::GPS, "L2W")}), "G05|L2W|PB");
     EXPECT_EQ(satCodeBiasText(SatSignalId{g05, gnss_test::signalOf(System::GPS, "C1C")}), "G05|C1C");
 }
@@ -604,7 +603,7 @@ std::vector<std::string> expectedBlockLabels(const StationAssembly& R, const Sta
     for (const auto& [id, idx] : set.shared.sat_code_bias)   put(idx, "satbias:" + satCodeBiasText(id));
     for (const auto& [id, idx] : set.shared.sat_phase_bias)  put(idx, "satpb:" + satPhaseBiasText(id));
     for (const auto& [sig, idx] : set.rx_pb)  put(idx, "rxpb:" + keyText(rxPhaseBiasRef(sig.sys, sig)));
-    for (const auto& [sat, idx] : set.shared.sat_clock)      put(idx, "satclk:" + satClockText(sat));
+    for (const auto& [sat, idx] : set.shared.sat_clock)      put(idx, "satclk:" + net::satKey(sat) + "|SC");
     for (const auto& [arc, idx] : set.amb)    put(idx, "amb:" + net::satKey(arc.sat) + ':' + net::signalKey(arc.signal));
     return labels;
 }

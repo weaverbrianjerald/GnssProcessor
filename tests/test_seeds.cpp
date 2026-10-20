@@ -1369,54 +1369,6 @@ TEST_F(CodeBiasSeedsTest, WithoutAClockReferenceAConstellationHasNoSeeds) {
     }
 }
 
-TEST_F(CodeBiasSeedsTest, TheModelWritesTheSeedsAndCountsTheRestoreOnTheInitializersSlots) {
-    fillClockRefs();
-    const std::string dcb  = keyText(System::GPS, ParamForm::Dcb);
-    const std::string ifb5 = keyText(System::GPS, ParamForm::Ifb, '5');
-    // One key restored, one covered with an unusable value, one that nothing samples.
-    const std::map<std::string, double> installed = {
-        {dcb, 1.5}, {ifb5, std::numeric_limits<double>::quiet_NaN()}, {"GLONASS_DCB", 9.0}};
-
-    struct FirstEpoch {
-        std::map<std::string, double> code_bias;   ///< The code-bias states after the first epoch, by key.
-        long long applied{0};
-        long long uncovered{0};
-    };
-    // The first epoch of a model: the states are born, then seeded behind the one-shot latch.
-    const auto first_epoch = [&](const std::string& tag, const std::map<std::string, double>& restore) {
-        FirstEpoch out;
-        gnss_test::ModelStack s;
-        EXPECT_TRUE(s.load(log, tag, "ppp-rtk", "", R"(, "estimate_ifb": true)", false));
-        s.model->setClockRefs(&clock_refs);
-        if (!restore.empty())
-            s.model->getStateInitializer().setCodeBiasSeedOverride(restore, &out.applied,
-                                                                   &out.uncovered);
-        std::vector<PppObservation> sats = biasSatellites();
-        spreadCodes(sats);
-        s.model->computeMeasurementUpdate(sats, s.states->getStateVector());
-        const Eigen::VectorXd x = s.states->getStateVector();
-        for (const auto& [key, index] : s.states->getCodeBiasStates())
-            out.code_bias[key] = x(static_cast<Eigen::Index>(index));
-        return out;
-    };
-
-    const FirstEpoch plain    = first_epoch("seeds_model_plain", {});
-    const FirstEpoch restored = first_epoch("seeds_model_restored", installed);
-    ASSERT_EQ(plain.code_bias.size(), 4u);
-    ASSERT_EQ(restored.code_bias.size(), 4u);
-    EXPECT_EQ(plain.applied, 0);
-    EXPECT_EQ(plain.uncovered, 0);
-
-    // The restored key holds the installed value; the refused key and the two uncovered ones
-    // hold the median the plain run formed; the counters read one applied and one refused.
-    EXPECT_EQ(restored.applied, 1);
-    EXPECT_EQ(restored.uncovered, 1);
-    EXPECT_EQ(restored.code_bias.at(dcb), 1.5);
-    for (const auto& [key, value] : restored.code_bias)
-        if (key != dcb) EXPECT_TRUE(sameBits(value, plain.code_bias.at(key))) << key;
-    EXPECT_NE(plain.code_bias.at(dcb), 1.5);
-}
-
 // ===========================================================================
 // The slant ionosphere seed
 // ===========================================================================

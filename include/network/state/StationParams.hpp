@@ -336,13 +336,6 @@ std::string satPhaseBiasText(const SatSignalId& id);
 std::string satCodeBiasText(const SatSignalId& id);
 
 /**
- * @brief The text of a satellite's clock ("G05|SC").
- * @param sat The satellite.
- * @return The key text.
- */
-std::string satClockText(const SatId& sat);
-
-/**
  * @brief The label of a slot's column in the single-receiver layout, for a
  *        slot of the set.
  *
